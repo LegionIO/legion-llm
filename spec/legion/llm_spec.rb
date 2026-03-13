@@ -43,8 +43,10 @@ RSpec.describe Legion::LLM do
 
   describe '.chat' do
     it 'returns a RubyLLM::Chat instance' do
+      fake_chat = instance_double(RubyLLM::Chat)
+      allow(RubyLLM).to receive(:chat).with(model: 'gpt-4o', provider: :openai).and_return(fake_chat)
       chat = described_class.chat(model: 'gpt-4o', provider: :openai)
-      expect(chat).to be_a(RubyLLM::Chat)
+      expect(chat).to be(fake_chat)
     end
   end
 

@@ -19,17 +19,25 @@ module Legion
         secret = Legion::Crypt.read(config[:vault_path])
         return unless secret.is_a?(Hash)
 
+        apply_vault_credentials(provider, config, secret)
+      rescue StandardError => e
+        Legion::Logging.warn "Failed to resolve #{provider} credentials from Vault: #{e.message}"
+      end
+
+      def apply_vault_credentials(provider, config, secret)
         case provider
         when :bedrock
-          config[:api_key]       ||= secret[:access_key] || secret[:aws_access_key_id]
-          config[:secret_key]    ||= secret[:secret_key] || secret[:aws_secret_access_key]
-          config[:session_token] ||= secret[:session_token] || secret[:aws_session_token]
-          config[:region]        ||= secret[:region]
+          apply_bedrock_vault_credentials(config, secret)
         when :anthropic, :openai, :gemini
           config[:api_key] ||= secret[:api_key] || secret[:token]
         end
-      rescue StandardError => e
-        Legion::Logging.warn "Failed to resolve #{provider} credentials from Vault: #{e.message}"
+      end
+
+      def apply_bedrock_vault_credentials(config, secret)
+        config[:api_key]       ||= secret[:access_key] || secret[:aws_access_key_id]
+        config[:secret_key]    ||= secret[:secret_key] || secret[:aws_secret_access_key]
+        config[:session_token] ||= secret[:session_token] || secret[:aws_session_token]
+        config[:region]        ||= secret[:region]
       end
 
       def apply_provider_config(provider, config)
