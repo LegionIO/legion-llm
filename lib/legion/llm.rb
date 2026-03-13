@@ -72,8 +72,8 @@ module Legion
       # @param agent_class [Class] a RubyLLM::Agent subclass
       # @param kwargs [Hash] additional options
       # @return [RubyLLM::Agent]
-      def agent(agent_class, **kwargs)
-        agent_class.new(**kwargs)
+      def agent(agent_class, **)
+        agent_class.new(**)
       end
 
       private

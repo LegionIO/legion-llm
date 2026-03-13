@@ -5,41 +5,41 @@ module Legion
     module Settings
       def self.default
         {
-          enabled: true,
-          connected: false,
-          default_model: nil,
+          enabled:          true,
+          connected:        false,
+          default_model:    nil,
           default_provider: nil,
-          providers: providers
+          providers:        providers
         }
       end
 
       def self.providers
         {
-          bedrock: {
-            enabled: false,
-            api_key: nil,
-            secret_key: nil,
+          bedrock:   {
+            enabled:       false,
+            api_key:       nil,
+            secret_key:    nil,
             session_token: nil,
-            region: 'us-east-2',
-            vault_path: nil
+            region:        'us-east-2',
+            vault_path:    nil
           },
           anthropic: {
-            enabled: false,
-            api_key: nil,
+            enabled:    false,
+            api_key:    nil,
             vault_path: nil
           },
-          openai: {
-            enabled: false,
-            api_key: nil,
+          openai:    {
+            enabled:    false,
+            api_key:    nil,
             vault_path: nil
           },
-          gemini: {
-            enabled: false,
-            api_key: nil,
+          gemini:    {
+            enabled:    false,
+            api_key:    nil,
             vault_path: nil
           },
-          ollama: {
-            enabled: false,
+          ollama:    {
+            enabled:  false,
             base_url: 'http://localhost:11434'
           }
         }
