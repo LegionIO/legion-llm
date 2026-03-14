@@ -57,7 +57,7 @@ Provider-specific fields:
 
 | Provider | Additional Fields |
 |----------|------------------|
-| **Bedrock** | `secret_key`, `session_token`, `region` (default: `us-east-2`) |
+| **Bedrock** | `secret_key`, `session_token`, `region` (default: `us-east-2`), `bearer_token` (alternative to SigV4 — for AWS Identity Center/SSO) |
 | **Ollama** | `base_url` (default: `http://localhost:11434`) |
 
 ### Vault Credential Resolution
@@ -69,6 +69,7 @@ When `vault_path` is set and `Legion::Crypt::Vault` is connected, credentials ar
 | Bedrock | `access_key` / `aws_access_key_id` | `api_key` |
 | Bedrock | `secret_key` / `aws_secret_access_key` | `secret_key` |
 | Bedrock | `session_token` / `aws_session_token` | `session_token` |
+| Bedrock | `bearer_token` / `aws_bearer_token` | `bearer_token` (Identity Center/SSO) |
 | Anthropic / OpenAI / Gemini | `api_key` / `token` | `api_key` |
 
 Direct configuration (setting `api_key` in settings) takes precedence over Vault-resolved values.
