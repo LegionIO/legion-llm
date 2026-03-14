@@ -34,6 +34,7 @@ module Legion
       end
 
       def apply_bedrock_vault_credentials(config, secret)
+        config[:bearer_token]  ||= secret[:bearer_token] || secret[:aws_bearer_token]
         config[:api_key]       ||= secret[:access_key] || secret[:aws_access_key_id]
         config[:secret_key]    ||= secret[:secret_key] || secret[:aws_secret_access_key]
         config[:session_token] ||= secret[:session_token] || secret[:aws_session_token]
@@ -58,15 +59,25 @@ module Legion
       end
 
       def configure_bedrock(config)
-        return unless config[:api_key] && config[:secret_key]
+        has_sigv4  = config[:api_key] && config[:secret_key]
+        has_bearer = config[:bearer_token]
+        return unless has_sigv4 || has_bearer
+
+        require 'legion/llm/bedrock_bearer_auth' if has_bearer
 
         RubyLLM.configure do |c|
-          c.bedrock_api_key       = config[:api_key]
-          c.bedrock_secret_key    = config[:secret_key]
-          c.bedrock_session_token = config[:session_token] if config[:session_token]
-          c.bedrock_region        = config[:region] || 'us-east-2'
+          if has_bearer
+            c.bedrock_bearer_token = config[:bearer_token]
+          else
+            c.bedrock_api_key       = config[:api_key]
+            c.bedrock_secret_key    = config[:secret_key]
+            c.bedrock_session_token = config[:session_token] if config[:session_token]
+          end
+          c.bedrock_region = config[:region] || 'us-east-2'
         end
-        Legion::Logging.info "Configured Bedrock provider (#{config[:region]})"
+
+        auth_mode = has_bearer ? 'bearer token' : 'SigV4'
+        Legion::Logging.info "Configured Bedrock provider (#{config[:region]}, #{auth_mode})"
       end
 
       def configure_anthropic(config)

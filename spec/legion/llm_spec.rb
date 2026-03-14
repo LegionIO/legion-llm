@@ -25,6 +25,7 @@ RSpec.describe Legion::LLM do
   describe '.start and .shutdown' do
     before do
       Legion::Settings[:llm][:providers][:ollama][:enabled] = true
+      allow(described_class).to receive(:ping_provider)
     end
 
     it 'marks connected on start' do
@@ -51,6 +52,8 @@ RSpec.describe Legion::LLM do
   end
 
   describe 'auto_configure_defaults' do
+    before { allow(described_class).to receive(:ping_provider) }
+
     it 'picks bedrock when bedrock is the first enabled provider' do
       Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
       described_class.start
@@ -104,6 +107,58 @@ RSpec.describe Legion::LLM do
         Legion::Settings.merge_settings('crypt', { vault: { connected: false } })
         expect(test_class.vault_available?).to be false
       end
+    end
+
+    describe '#configure_bedrock' do
+      it 'configures with SigV4 when api_key and secret_key are present' do
+        test_class.send(:configure_bedrock, {
+          api_key: 'AKID', secret_key: 'SECRET', region: 'us-east-2'
+        })
+        expect(RubyLLM.config.bedrock_api_key).to eq('AKID')
+        expect(RubyLLM.config.bedrock_secret_key).to eq('SECRET')
+      end
+
+      it 'configures with bearer token when bearer_token is present' do
+        test_class.send(:configure_bedrock, {
+          bearer_token: 'my-bearer-token', region: 'us-east-2'
+        })
+        expect(RubyLLM.config.bedrock_bearer_token).to eq('my-bearer-token')
+        expect(RubyLLM.config.bedrock_region).to eq('us-east-2')
+      end
+
+      it 'skips config when no credentials are provided' do
+        RubyLLM.config.bedrock_api_key = nil
+        RubyLLM.config.bedrock_bearer_token = nil
+        test_class.send(:configure_bedrock, { region: 'us-east-2' })
+        expect(RubyLLM.config.bedrock_api_key).to be_nil
+        expect(RubyLLM.config.bedrock_bearer_token).to be_nil
+      end
+    end
+  end
+
+  describe 'Bedrock bearer auth monkey patch' do
+    before do
+      require 'legion/llm/bedrock_bearer_auth'
+    end
+
+    it 'adds bedrock_bearer_token accessor to Configuration' do
+      expect(RubyLLM::Configuration.instance_methods).to include(:bedrock_bearer_token, :bedrock_bearer_token=)
+    end
+
+    it 'changes configuration_requirements when bearer token is set' do
+      RubyLLM.config.bedrock_bearer_token = 'test-token'
+      reqs = RubyLLM::Providers::Bedrock.configuration_requirements
+      expect(reqs).to eq(%i[bedrock_bearer_token bedrock_region])
+    end
+
+    it 'keeps SigV4 requirements when no bearer token is set' do
+      RubyLLM.config.bedrock_bearer_token = nil
+      reqs = RubyLLM::Providers::Bedrock.configuration_requirements
+      expect(reqs).to eq(%i[bedrock_api_key bedrock_secret_key bedrock_region])
+    end
+
+    after do
+      RubyLLM.config.bedrock_bearer_token = nil
     end
   end
 end

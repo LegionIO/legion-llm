@@ -19,6 +19,7 @@ module Legion
         @started = true
         Legion::Settings[:llm][:connected] = true
         Legion::Logging.info 'Legion::LLM started'
+        ping_provider
       end
 
       def shutdown
@@ -92,22 +93,29 @@ module Legion
         auto_configure_defaults
       end
 
-      def auto_configure_defaults
-        provider_defaults = {
-          bedrock:   { model: 'us.anthropic.claude-sonnet-4-6-v1', provider: :bedrock },
-          anthropic: { model: 'claude-sonnet-4-6', provider: :anthropic },
-          openai:    { model: 'gpt-4o', provider: :openai },
-          gemini:    { model: 'gemini-2.0-flash', provider: :gemini },
-          ollama:    { model: 'llama3', provider: :ollama }
-        }
+      def ping_provider
+        model = settings[:default_model]
+        provider = settings[:default_provider]
+        return unless model && provider
 
-        provider_defaults.each do |provider, defaults|
-          config = settings[:providers][provider]
+        start_time = Time.now
+        response = RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
+        elapsed = ((Time.now - start_time) * 1000).round
+        Legion::Logging.info "LLM ping #{provider}/#{model}: pong (#{elapsed}ms)"
+      rescue StandardError => e
+        Legion::Logging.warn "LLM ping failed for #{provider}/#{model}: #{e.message}"
+      end
+
+      def auto_configure_defaults
+        settings[:providers].each do |provider, config|
           next unless config&.dig(:enabled)
 
-          settings[:default_model]    = defaults[:model]
-          settings[:default_provider] = defaults[:provider]
-          Legion::Logging.info "Auto-configured default: #{defaults[:model]} via #{defaults[:provider]}"
+          model = config[:default_model]
+          next unless model
+
+          settings[:default_model]    = model
+          settings[:default_provider] = provider
+          Legion::Logging.info "Auto-configured default: #{model} via #{provider}"
           break
         end
       end
