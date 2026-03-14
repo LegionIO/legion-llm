@@ -78,6 +78,10 @@ Each provider has: `enabled`, `api_key`, `vault_path`, plus provider-specific ke
 
 Vault credential resolution: When `vault_path` is set and Legion::Crypt::Vault is connected, credentials are fetched from Vault at startup. Keys map to provider-specific fields automatically.
 
+Bedrock supports two auth modes:
+- **SigV4** (default): `api_key` + `secret_key` (+ optional `session_token`)
+- **Bearer token**: `bearer_token` for AWS Identity Center/SSO. When set, `bedrock_bearer_auth.rb` is required lazily to monkey-patch RubyLLM's Bedrock provider.
+
 ### Auto-Detection Priority
 
 When no defaults are configured, the first enabled provider is used:
@@ -95,6 +99,7 @@ When no defaults are configured, the first enabled provider is used:
 | `lib/legion/llm.rb` | Entry point: start, shutdown, chat, embed, agent |
 | `lib/legion/llm/settings.rb` | Default settings, auto-merge into Legion::Settings |
 | `lib/legion/llm/providers.rb` | Provider config, Vault resolution, RubyLLM configuration |
+| `lib/legion/llm/bedrock_bearer_auth.rb` | Monkey-patch for Bedrock AWS Bearer Token auth (Identity Center/SSO alternative to SigV4) — required lazily when `bearer_token` is set |
 | `lib/legion/llm/version.rb` | Version constant |
 | `lib/legion/llm/helpers/llm.rb` | Extension helper mixin |
 | `spec/legion/llm_spec.rb` | Tests for settings, lifecycle, providers, auto-config |
