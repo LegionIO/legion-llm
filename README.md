@@ -243,6 +243,69 @@ session.with_tools(CodeAnalyzer, SecurityScanner)
 response = session.ask("Review this PR: #{diff}")
 ```
 
+### Routing
+
+legion-llm includes a dynamic routing engine that selects the best provider and tier based on intent, health, and cost. Routing is **disabled by default** — opt in via settings.
+
+#### Three Tiers
+
+| Tier | Target | Use Case |
+|------|--------|----------|
+| `local` | Ollama | Privacy-sensitive or offline workloads |
+| `fleet` | Legion Transport (AMQP) | Distributed inference across the cluster |
+| `cloud` | API providers (Bedrock, Anthropic, OpenAI, Gemini) | Full-capability cloud inference |
+
+#### Intent-Based Dispatch
+
+Pass an `intent:` hash to route based on privacy, capability, or cost requirements:
+
+```ruby
+# Route to local tier for strict privacy
+result = llm_chat("Summarize this PII data", intent: { privacy: :strict })
+
+# Route to cloud tier for advanced reasoning
+result = llm_chat("Solve this proof", intent: { capability: :advanced })
+
+# Explicit tier override
+result = llm_chat("Translate this", tier: :cloud, model: "claude-sonnet-4-6")
+```
+
+Same parameters work on `Legion::LLM.chat` and `llm_session`:
+
+```ruby
+chat = Legion::LLM.chat(intent: { privacy: :strict, capability: :basic })
+session = llm_session(tier: :local)
+```
+
+#### Settings
+
+Add routing configuration under the `llm` key:
+
+```json
+{
+  "llm": {
+    "routing": {
+      "enabled": true,
+      "rules": [
+        {
+          "name": "privacy_local",
+          "priority": 100,
+          "match": { "privacy": "strict" },
+          "target": { "tier": "local" }
+        }
+      ],
+      "health": {
+        "failure_threshold": 3,
+        "recovery_window": 60,
+        "latency_window": 10
+      }
+    }
+  }
+}
+```
+
+When routing is disabled (the default), `chat`, `llm_chat`, and `llm_session` behave exactly as before — no behavior change until you opt in.
+
 ### Building an LLM-Powered LEX
 
 A complete example of a LEX extension that uses LLM for intelligent processing:
