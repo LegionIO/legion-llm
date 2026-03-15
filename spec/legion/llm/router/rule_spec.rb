@@ -7,15 +7,15 @@ require 'legion/llm/router/rule'
 RSpec.describe Legion::LLM::Router::Rule do
   let(:rule_hash) do
     {
-      name:             :privacy_local,
-      when:             { privacy: :high, capability: :chat },
-      then:             { tier: :local, provider: :ollama, model: 'llama3' },
-      priority:         10,
-      constraint:       'privacy_high',
-      fallback:         'fleet',
-      cost_multiplier:  0.5,
-      schedule:         '0 2 * * *',
-      note:             'Route high-privacy requests locally'
+      name:            :privacy_local,
+      when:            { privacy: :high, capability: :chat },
+      then:            { tier: :local, provider: :ollama, model: 'llama3' },
+      priority:        10,
+      constraint:      'privacy_high',
+      fallback:        'fleet',
+      cost_multiplier: 0.5,
+      schedule:        '0 2 * * *',
+      note:            'Route high-privacy requests locally'
     }
   end
 
@@ -184,9 +184,9 @@ RSpec.describe Legion::LLM::Router::Rule do
 
     it 'compacts metadata when fallback is nil' do
       r = described_class.from_hash(
-        name: :no_fallback_rule,
-        when: {},
-        then: { tier: :local, provider: :ollama, model: 'llama3' },
+        name:            :no_fallback_rule,
+        when:            {},
+        then:            { tier: :local, provider: :ollama, model: 'llama3' },
         cost_multiplier: 2.0
       )
       resolution = r.to_resolution
@@ -196,9 +196,9 @@ RSpec.describe Legion::LLM::Router::Rule do
 
     it 'compacts metadata when cost_multiplier is default 1.0' do
       r = described_class.from_hash(
-        name: :default_cost_rule,
-        when: {},
-        then: { tier: :local, provider: :ollama, model: 'llama3' },
+        name:     :default_cost_rule,
+        when:     {},
+        then:     { tier: :local, provider: :ollama, model: 'llama3' },
         fallback: 'cloud'
       )
       resolution = r.to_resolution

@@ -42,7 +42,6 @@ module Legion
 
         def reset!
           @health_tracker = nil
-          @cached_rules   = nil
         end
 
         # Check whether a tier can be used right now.

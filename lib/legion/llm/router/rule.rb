@@ -17,7 +17,7 @@ module Legion
             target:          h[:then]  || {},
             priority:        h.fetch(:priority, 0),
             constraint:      h[:constraint],
-            fallback:        h[:fallback] ? h[:fallback].to_sym : nil,
+            fallback:        h[:fallback]&.to_sym,
             cost_multiplier: h.fetch(:cost_multiplier, 1.0),
             schedule:        h[:schedule],
             note:            h[:note]
@@ -69,12 +69,12 @@ module Legion
         private
 
         def within_hours?(ranges, now)
-          current = now.hour * 60 + now.min
+          current = (now.hour * 60) + now.min
           ranges.any? do |range|
             start_str, end_str = range.split('-')
             start_min = time_str_to_minutes(start_str)
             end_min   = time_str_to_minutes(end_str)
-            current >= start_min && current <= end_min
+            current.between?(start_min, end_min)
           end
         end
 
@@ -85,7 +85,7 @@ module Legion
 
         def time_str_to_minutes(str)
           parts = str.split(':')
-          parts[0].to_i * 60 + parts[1].to_i
+          (parts[0].to_i * 60) + parts[1].to_i
         end
       end
     end

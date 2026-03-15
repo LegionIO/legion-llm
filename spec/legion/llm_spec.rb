@@ -112,16 +112,16 @@ RSpec.describe Legion::LLM do
     describe '#configure_bedrock' do
       it 'configures with SigV4 when api_key and secret_key are present' do
         test_class.send(:configure_bedrock, {
-          api_key: 'AKID', secret_key: 'SECRET', region: 'us-east-2'
-        })
+                          api_key: 'AKID', secret_key: 'SECRET', region: 'us-east-2'
+                        })
         expect(RubyLLM.config.bedrock_api_key).to eq('AKID')
         expect(RubyLLM.config.bedrock_secret_key).to eq('SECRET')
       end
 
       it 'configures with bearer token when bearer_token is present' do
         test_class.send(:configure_bedrock, {
-          bearer_token: 'my-bearer-token', region: 'us-east-2'
-        })
+                          bearer_token: 'my-bearer-token', region: 'us-east-2'
+                        })
         expect(RubyLLM.config.bedrock_bearer_token).to eq('my-bearer-token')
         expect(RubyLLM.config.bedrock_region).to eq('us-east-2')
       end

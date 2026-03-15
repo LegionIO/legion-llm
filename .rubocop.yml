@@ -53,4 +53,4 @@ Naming/PredicateMethod:
   Enabled: false
 
 Metrics/ParameterLists:
-  Max: 8
+  Max: 9
