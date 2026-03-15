@@ -4,6 +4,7 @@ require 'ruby_llm'
 require 'legion/llm/version'
 require 'legion/llm/settings'
 require 'legion/llm/providers'
+require 'legion/llm/router'
 
 module Legion
   module LLM
@@ -43,9 +44,20 @@ module Legion
       # Create a new chat session
       # @param model [String] model ID (e.g., "us.anthropic.claude-sonnet-4-6-v1")
       # @param provider [Symbol] provider slug (e.g., :bedrock, :anthropic)
+      # @param intent [Hash, nil] routing intent (capability, privacy, etc.)
+      # @param tier [Symbol, nil] explicit tier override — skips rule matching
       # @param kwargs [Hash] additional options passed to RubyLLM.chat
       # @return [RubyLLM::Chat]
-      def chat(model: nil, provider: nil, **kwargs)
+      # TODO: fleet tier dispatch via Transport (Phase 3)
+      def chat(model: nil, provider: nil, intent: nil, tier: nil, **kwargs)
+        if (intent || tier) && Router.routing_enabled?
+          resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
+          if resolution
+            model    = resolution.model
+            provider = resolution.provider
+          end
+        end
+
         model    ||= settings[:default_model]
         provider ||= settings[:default_provider]
 
@@ -99,7 +111,7 @@ module Legion
         return unless model && provider
 
         start_time = Time.now
-        response = RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
+        RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
         elapsed = ((Time.now - start_time) * 1000).round
         Legion::Logging.info "LLM ping #{provider}/#{model}: pong (#{elapsed}ms)"
       rescue StandardError => e
