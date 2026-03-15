@@ -1,5 +1,10 @@
 # frozen_string_literal: true
 
+require 'simplecov'
+SimpleCov.start do
+  add_filter '/spec/'
+end
+
 require 'webmock/rspec'
 
 # Stub Legion::Logging and Legion::Settings before loading legion-llm

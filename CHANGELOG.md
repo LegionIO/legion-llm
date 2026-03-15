@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [Unreleased]
+
+### Changed
+- Added SimpleCov for test coverage reporting
+
 ## [0.2.1]
 
 ### Added
