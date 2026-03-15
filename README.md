@@ -233,6 +233,9 @@ result = llm_chat("Summarize this text", instructions: "Be concise")
 # Chat with tools
 result = llm_chat("Check the weather", tools: [WeatherLookup])
 
+# With prompt compression (reduces input tokens for cost/speed)
+result = llm_chat("Summarize the data", instructions: "Be concise", compress: 2)
+
 # Embeddings
 embedding = llm_embed("some text to embed")
 
@@ -245,15 +248,31 @@ response = session.ask("Review this PR: #{diff}")
 
 ### Routing
 
-legion-llm includes a dynamic routing engine that selects the best provider and tier based on intent, health, and cost. Routing is **disabled by default** — opt in via settings.
+legion-llm includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health. Routing is **disabled by default** — opt in via settings.
 
 #### Three Tiers
 
+```
+┌─────────────────────────────────────────────────────────┐
+│              Legion::LLM Router (per-node)               │
+│                                                          │
+│  Tier 1: LOCAL  → Ollama on this machine (direct HTTP)   │
+│          Zero network overhead, no Transport              │
+│                                                          │
+│  Tier 2: FLEET  → Ollama on Mac Studios / GPU servers    │
+│          Via Legion::Transport (AMQP) when local can't   │
+│          serve the model (Phase 2, not yet built)        │
+│                                                          │
+│  Tier 3: CLOUD  → Bedrock / Anthropic / OpenAI / Gemini │
+│          Existing provider API calls                     │
+└─────────────────────────────────────────────────────────┘
+```
+
 | Tier | Target | Use Case |
 |------|--------|----------|
-| `local` | Ollama | Privacy-sensitive or offline workloads |
-| `fleet` | Legion Transport (AMQP) | Distributed inference across the cluster |
-| `cloud` | API providers (Bedrock, Anthropic, OpenAI, Gemini) | Full-capability cloud inference |
+| `local` | Ollama on localhost | Privacy-sensitive, offline, or low-latency workloads |
+| `fleet` | Shared hardware via Legion::Transport | Larger models on dedicated GPU servers (Phase 2) |
+| `cloud` | API providers (Bedrock, Anthropic, OpenAI, Gemini) | Frontier models, full-capability inference |
 
 #### Intent-Based Dispatch
 
@@ -263,10 +282,13 @@ Pass an `intent:` hash to route based on privacy, capability, or cost requiremen
 # Route to local tier for strict privacy
 result = llm_chat("Summarize this PII data", intent: { privacy: :strict })
 
-# Route to cloud tier for advanced reasoning
-result = llm_chat("Solve this proof", intent: { capability: :advanced })
+# Route to cloud for reasoning tasks
+result = llm_chat("Solve this proof", intent: { capability: :reasoning })
 
-# Explicit tier override
+# Minimize cost — prefers local/fleet over cloud
+result = llm_chat("Translate this", intent: { cost: :minimize })
+
+# Explicit tier override (bypasses rules)
 result = llm_chat("Translate this", tier: :cloud, model: "claude-sonnet-4-6")
 ```
 
@@ -275,6 +297,31 @@ Same parameters work on `Legion::LLM.chat` and `llm_session`:
 ```ruby
 chat = Legion::LLM.chat(intent: { privacy: :strict, capability: :basic })
 session = llm_session(tier: :local)
+```
+
+#### Intent Dimensions
+
+| Dimension | Values | Default | Effect |
+|-----------|--------|---------|--------|
+| `privacy` | `:strict`, `:normal` | `:normal` | `:strict` -> never cloud (via constraint rules) |
+| `capability` | `:basic`, `:moderate`, `:reasoning` | `:moderate` | Higher prefers larger/cloud models |
+| `cost` | `:minimize`, `:normal` | `:normal` | `:minimize` prefers local/fleet |
+
+#### Routing Resolution
+
+```
+1. Caller passes intent: { privacy: :strict, capability: :basic }
+2. Router merges with default_intent (fills missing dimensions)
+3. Load rules from settings, filter by:
+   a. Intent match (all `when` conditions must match)
+   b. Schedule window (valid_from/valid_until, hours, days)
+   c. Constraints (e.g., never_cloud strips cloud-tier rules)
+   d. Tier availability (is Ollama running? is Transport loaded?)
+4. Score remaining candidates:
+   effective_priority = rule.priority
+                      + health_tracker.adjustment(provider)
+                      + (1.0 - cost_multiplier) * 10
+5. Return Resolution for highest-scoring candidate
 ```
 
 #### Settings
@@ -286,25 +333,128 @@ Add routing configuration under the `llm` key:
   "llm": {
     "routing": {
       "enabled": true,
+      "default_intent": { "privacy": "normal", "capability": "moderate", "cost": "normal" },
+      "tiers": {
+        "local": { "provider": "ollama" },
+        "fleet": { "queue": "llm.inference", "timeout_seconds": 30 },
+        "cloud": { "providers": ["bedrock", "anthropic"] }
+      },
+      "health": {
+        "window_seconds": 300,
+        "circuit_breaker": { "failure_threshold": 3, "cooldown_seconds": 60 },
+        "latency_penalty_threshold_ms": 5000
+      },
       "rules": [
         {
           "name": "privacy_local",
+          "when": { "privacy": "strict" },
+          "then": { "tier": "local", "provider": "ollama", "model": "llama3" },
           "priority": 100,
-          "match": { "privacy": "strict" },
-          "target": { "tier": "local" }
+          "constraint": "never_cloud"
+        },
+        {
+          "name": "reasoning_cloud",
+          "when": { "capability": "reasoning" },
+          "then": { "tier": "cloud", "provider": "bedrock", "model": "us.anthropic.claude-sonnet-4-6-v1" },
+          "priority": 50,
+          "cost_multiplier": 1.0
+        },
+        {
+          "name": "anthropic_promo",
+          "when": { "cost": "normal" },
+          "then": { "tier": "cloud", "provider": "anthropic", "model": "claude-sonnet-4-6" },
+          "priority": 60,
+          "cost_multiplier": 0.5,
+          "schedule": {
+            "valid_from": "2026-03-15T00:00:00",
+            "valid_until": "2026-03-29T23:59:59",
+            "hours": ["00:00-06:00", "18:00-23:59"]
+          },
+          "note": "Double token promotion — off-peak hours only"
         }
-      ],
-      "health": {
-        "failure_threshold": 3,
-        "recovery_window": 60,
-        "latency_window": 10
-      }
+      ]
     }
   }
 }
 ```
 
+#### Routing Rules
+
+Each rule is a hash with:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | String | Yes | Unique rule identifier |
+| `when` | Hash | Yes | Intent conditions to match (`privacy`, `capability`, `cost`) |
+| `then` | Hash | No | Target: `{ tier:, provider:, model: }` |
+| `priority` | Integer | No (default 0) | Higher wins when multiple rules match |
+| `constraint` | String | No | Hard constraint (e.g., `never_cloud`) |
+| `fallback` | String | No | Fallback tier if primary is unavailable |
+| `cost_multiplier` | Float | No (default 1.0) | Lower = cheaper = routing bonus |
+| `schedule` | Hash | No | Time-based activation window |
+| `note` | String | No | Human-readable note |
+
+#### Health Tracking
+
+The `HealthTracker` adjusts effective priorities at runtime based on provider health signals:
+
+- **Circuit breaker**: After consecutive failures, a provider's circuit opens (penalty: -50) then transitions to half_open (penalty: -25) after a cooldown period
+- **Latency penalty**: Rolling window tracks average latency; providers above threshold receive priority penalties
+- **Pluggable signals**: Any LEX can feed custom signals (e.g., GPU utilization, budget tracking) via `register_handler`
+
+```ruby
+# Report signals (typically called by LEX extensions)
+tracker = Legion::LLM::Router.health_tracker
+tracker.report(provider: :anthropic, signal: :error, value: 1)
+tracker.report(provider: :ollama, signal: :latency, value: 1200)
+
+# Check state
+tracker.circuit_state(:anthropic)  # -> :closed, :open, or :half_open
+tracker.adjustment(:anthropic)     # -> Integer (priority offset)
+
+# Add custom signal handler
+tracker.register_handler(:gpu_utilization) { |data| ... }
+```
+
 When routing is disabled (the default), `chat`, `llm_chat`, and `llm_session` behave exactly as before — no behavior change until you opt in.
+
+### Prompt Compression
+
+`Legion::LLM::Compressor` strips low-signal words from prompts before sending to the API, reducing input token count and cost. Compression is deterministic (same input always produces the same output), preserving prompt caching compatibility.
+
+#### Levels
+
+| Level | Name | What It Removes |
+|-------|------|-----------------|
+| 0 | None | Nothing |
+| 1 | Light | Articles (a, an, the), filler adverbs (just, very, really, basically, ...) |
+| 2 | Moderate | + sentence connectives (however, moreover, furthermore, ...) |
+| 3 | Aggressive | + low-signal words (also, then, please, note, that, ...) + whitespace normalization |
+
+Code blocks (fenced and inline) are never modified. Negation words are never removed.
+
+#### Usage
+
+```ruby
+# Direct API
+text = Legion::LLM::Compressor.compress("The very important system prompt", level: 2)
+
+# Via llm_chat helper (compresses both message and instructions)
+result = llm_chat("Analyze the data", instructions: "Be very concise", compress: 2)
+```
+
+#### Router Integration
+
+Routing rules can specify `compress_level` in their target to auto-compress for cost-sensitive tiers:
+
+```json
+{
+  "name": "cloud_compressed",
+  "priority": 50,
+  "when": { "capability": "chat" },
+  "then": { "tier": "cloud", "provider": "bedrock", "model": "claude-sonnet-4-6", "compress_level": 2 }
+}
+```
 
 ### Building an LLM-Powered LEX
 
@@ -378,8 +528,10 @@ bundle exec rspec
 Tests use stubbed `Legion::Logging` and `Legion::Settings` modules (no need for the full LegionIO stack):
 
 ```bash
-bundle exec rspec                    # Run all tests
-bundle exec rspec spec/legion/llm_spec.rb  # Run specific test file
+bundle exec rspec                              # Run all 153 tests
+bundle exec rubocop                            # Lint (0 offenses)
+bundle exec rspec spec/legion/llm_spec.rb      # Run specific test file
+bundle exec rspec spec/legion/llm/router_spec.rb  # Router tests only
 ```
 
 ## Dependencies
