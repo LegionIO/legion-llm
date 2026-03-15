@@ -29,6 +29,10 @@ Legion::LLM.start
 Legion::LLM (lib/legion/llm.rb)
 ├── Settings         # Default config, provider settings
 ├── Providers        # Provider configuration and Vault credential resolution
+├── Router           # Rule matching, health tracking, dynamic dispatch
+│   ├── Resolution   # Value object returned by Router.resolve
+│   ├── Rule         # Single routing rule with intent matching and schedule windows
+│   └── HealthTracker # Circuit breaker and latency rolling window per provider
 └── Helpers::LLM     # Extension helper mixin (llm_chat, llm_embed, llm_session)
 ```
 
@@ -51,13 +55,16 @@ Legion::LLM (lib/legion/llm.rb)
 ## Key Interfaces
 
 ```ruby
-Legion::LLM.start                    # Configure providers, set defaults
-Legion::LLM.shutdown                 # Cleanup
-Legion::LLM.chat(model:, provider:)  # -> RubyLLM::Chat
-Legion::LLM.embed(text, model:)      # -> RubyLLM::Embedding
-Legion::LLM.agent(AgentClass)        # -> RubyLLM::Agent instance
-Legion::LLM.started?                 # -> Boolean
-Legion::LLM.settings                 # -> Hash
+Legion::LLM.start                             # Configure providers, set defaults
+Legion::LLM.shutdown                          # Cleanup
+Legion::LLM.chat(model:, provider:,           # -> RubyLLM::Chat
+                 intent:, tier:)
+Legion::LLM.embed(text, model:)               # -> RubyLLM::Embedding
+Legion::LLM.agent(AgentClass)                 # -> RubyLLM::Agent instance
+Legion::LLM.started?                          # -> Boolean
+Legion::LLM.settings                          # -> Hash
+Legion::LLM::Router.resolve(intent:, tier:)   # -> Router::Resolution
+Legion::LLM::Router.health_tracker            # -> Router::HealthTracker
 ```
 
 ## Settings
@@ -71,6 +78,11 @@ Settings read from `Legion::Settings[:llm]`:
 | `default_model` | String | `nil` | Default model ID (auto-detected if nil) |
 | `default_provider` | Symbol | `nil` | Default provider (auto-detected if nil) |
 | `providers` | Hash | See below | Per-provider configuration |
+| `routing.enabled` | Boolean | `false` | Enable dynamic routing engine |
+| `routing.rules` | Array | `[]` | Ordered routing rules (matched by priority) |
+| `routing.health.failure_threshold` | Integer | `3` | Failures before circuit opens |
+| `routing.health.recovery_window` | Integer | `60` | Seconds before circuit half-opens |
+| `routing.health.latency_window` | Integer | `10` | Rolling window size for latency tracking |
 
 ### Provider Settings
 
@@ -101,6 +113,10 @@ When no defaults are configured, the first enabled provider is used:
 | `lib/legion/llm/providers.rb` | Provider config, Vault resolution, RubyLLM configuration |
 | `lib/legion/llm/bedrock_bearer_auth.rb` | Monkey-patch for Bedrock AWS Bearer Token auth (Identity Center/SSO alternative to SigV4) — required lazily when `bearer_token` is set |
 | `lib/legion/llm/version.rb` | Version constant |
+| `lib/legion/llm/router.rb` | Router entry point: resolve, health_tracker, tier selection |
+| `lib/legion/llm/router/resolution.rb` | Value object: tier, provider, model, rule_name, cost_multiplier |
+| `lib/legion/llm/router/rule.rb` | Single routing rule: intent matching, schedule windows, priority |
+| `lib/legion/llm/router/health_tracker.rb` | Circuit breaker + latency rolling window per provider |
 | `lib/legion/llm/helpers/llm.rb` | Extension helper mixin |
 | `spec/legion/llm_spec.rb` | Tests for settings, lifecycle, providers, auto-config |
 | `spec/spec_helper.rb` | Stubbed Legion::Logging and Legion::Settings for testing |

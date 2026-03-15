@@ -9,7 +9,27 @@ module Legion
           connected:        false,
           default_model:    nil,
           default_provider: nil,
-          providers:        providers
+          providers:        providers,
+          routing:          routing_defaults
+        }
+      end
+
+      def self.routing_defaults
+        {
+          enabled:        false,
+          default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
+          tiers:          {
+            local: { provider: 'ollama' },
+            fleet: { queue: 'llm.inference', timeout_seconds: 30 },
+            cloud: { providers: %w[bedrock anthropic] }
+          },
+          health:         {
+            window_seconds:               300,
+            circuit_breaker:              { failure_threshold: 3, cooldown_seconds: 60 },
+            latency_penalty_threshold_ms: 5000,
+            budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
+          },
+          rules:          []
         }
       end
 

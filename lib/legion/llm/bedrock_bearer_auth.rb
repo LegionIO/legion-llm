@@ -30,7 +30,7 @@ module RubyLLM
       module Auth
         private
 
-        alias_method :sigv4_sign_headers, :sign_headers
+        alias sigv4_sign_headers sign_headers
 
         def sign_headers(method, path, body, base_url: api_base)
           if @config.bedrock_bearer_token
