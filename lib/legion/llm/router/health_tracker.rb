@@ -77,9 +77,9 @@ module Legion
           register_handler(:error) do |payload|
             provider = payload[:provider]
             ensure_circuit(provider)
-            circuit  = @circuits[provider]
+            circuit = @circuits[provider]
 
-            if circuit[:state] == :half_open
+            if circuit_state(provider) == :half_open
               circuit[:state]     = :open
               circuit[:opened_at] = Time.now
             else

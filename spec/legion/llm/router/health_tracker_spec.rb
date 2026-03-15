@@ -130,12 +130,13 @@ RSpec.describe Legion::LLM::Router::HealthTracker do
   describe 'success during half_open' do
     before do
       3.times { tracker.report(provider: provider, signal: :error, value: nil) }
+      # Simulate cooldown elapsed so circuit_state computes :half_open naturally
       circuit = tracker.instance_variable_get(:@circuits)[provider]
-      circuit[:state]     = :half_open
       circuit[:opened_at] = Time.now - 61
     end
 
     it 'closes the circuit on success' do
+      expect(tracker.circuit_state(provider)).to eq(:half_open)
       tracker.report(provider: provider, signal: :success, value: nil)
       expect(tracker.circuit_state(provider)).to eq(:closed)
     end
@@ -151,16 +152,16 @@ RSpec.describe Legion::LLM::Router::HealthTracker do
   describe 'error during half_open' do
     before do
       3.times { tracker.report(provider: provider, signal: :error, value: nil) }
+      # Simulate cooldown elapsed so circuit_state computes :half_open naturally
       circuit = tracker.instance_variable_get(:@circuits)[provider]
-      circuit[:state]     = :half_open
       circuit[:opened_at] = Time.now - 61
     end
 
     it 're-opens the circuit on error' do
+      expect(tracker.circuit_state(provider)).to eq(:half_open)
       tracker.report(provider: provider, signal: :error, value: nil)
-      # opened_at is refreshed, so it should now be :open (not half_open)
-      circuit = tracker.instance_variable_get(:@circuits)[provider]
-      expect(circuit[:state]).to eq(:open)
+      # opened_at is refreshed to now, so cooldown has NOT elapsed -> :open
+      expect(tracker.circuit_state(provider)).to eq(:open)
     end
 
     it 'returns -50 adjustment after re-opening' do
