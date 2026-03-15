@@ -40,6 +40,15 @@ RSpec.describe Legion::LLM::Router::Resolution do
       expect(r.metadata).to eq(meta)
     end
 
+    it 'defaults compress_level to 0' do
+      expect(resolution.compress_level).to eq(0)
+    end
+
+    it 'stores explicit compress_level' do
+      r = described_class.new(tier: :cloud, provider: :bedrock, model: 'claude-sonnet-4-6', compress_level: 2)
+      expect(r.compress_level).to eq(2)
+    end
+
     it 'coerces string tier to symbol' do
       r = described_class.new(tier: 'cloud', provider: :anthropic, model: 'claude-sonnet-4-6')
       expect(r.tier).to eq(:cloud)
@@ -87,11 +96,12 @@ RSpec.describe Legion::LLM::Router::Resolution do
   describe '#to_h' do
     it 'returns expected hash with defaults' do
       expect(resolution.to_h).to eq(
-        tier:     :local,
-        provider: :ollama,
-        model:    'llama3',
-        rule:     nil,
-        metadata: {}
+        tier:           :local,
+        provider:       :ollama,
+        model:          'llama3',
+        rule:           nil,
+        metadata:       {},
+        compress_level: 0
       )
     end
 
@@ -104,11 +114,12 @@ RSpec.describe Legion::LLM::Router::Resolution do
         metadata: { latency_ms: 120 }
       )
       expect(r.to_h).to eq(
-        tier:     :cloud,
-        provider: :anthropic,
-        model:    'claude-sonnet-4-6',
-        rule:     :default_cloud,
-        metadata: { latency_ms: 120 }
+        tier:           :cloud,
+        provider:       :anthropic,
+        model:          'claude-sonnet-4-6',
+        rule:           :default_cloud,
+        metadata:       { latency_ms: 120 },
+        compress_level: 0
       )
     end
   end

@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.2.1]
+
+### Added
+- `Legion::LLM::Compressor` module for deterministic prompt compression
+- Three compression levels: light (articles/filler), moderate (+connectives), aggressive (+low-signal words, whitespace collapse)
+- Code block protection (fenced and inline code preserved)
+- `compress_level` field on `Router::Resolution` for routing-driven compression
+- `compress:` parameter on `llm_chat` helper for opt-in compression
+- Routing rules can specify `compress_level` in target to auto-compress for cost-sensitive tiers
+
 ## [0.2.0]
 
 ### Added

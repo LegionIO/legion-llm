@@ -13,8 +13,15 @@ module Legion
         # @param tools [Array<Class>] optional RubyLLM::Tool subclasses
         # @param instructions [String] optional system instructions
         # @return [RubyLLM::Message] the assistant response
-        def llm_chat(message, model: nil, provider: nil, intent: nil, tier: nil, tools: [], instructions: nil)
+        def llm_chat(message, model: nil, provider: nil, intent: nil, tier: nil, tools: [], instructions: nil,
+                     compress: 0)
           chat = Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier)
+
+          if compress.positive?
+            message = Legion::LLM::Compressor.compress(message, level: compress)
+            instructions = Legion::LLM::Compressor.compress(instructions, level: compress) if instructions
+          end
+
           chat.with_instructions(instructions) if instructions
           chat.with_tools(*tools) unless tools.empty?
           chat.ask(message)

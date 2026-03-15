@@ -29,11 +29,12 @@ Legion::LLM.start
 Legion::LLM (lib/legion/llm.rb)
 ├── Settings         # Default config, provider settings, routing defaults
 ├── Providers        # Provider configuration and Vault credential resolution
+├── Compressor       # Deterministic prompt compression (3 levels, code-block-aware)
 ├── Router           # Dynamic weighted routing engine
-│   ├── Resolution   # Value object: tier, provider, model, rule name, metadata
+│   ├── Resolution   # Value object: tier, provider, model, rule name, metadata, compress_level
 │   ├── Rule         # Routing rule: intent matching, schedule windows, constraints
 │   └── HealthTracker # Circuit breaker, latency rolling window, pluggable signal handlers
-└── Helpers::LLM     # Extension helper mixin (llm_chat, llm_embed, llm_session)
+└── Helpers::LLM     # Extension helper mixin (llm_chat, llm_embed, llm_session, compress:)
 ```
 
 ### Routing Architecture
@@ -104,6 +105,10 @@ Legion::LLM.chat(intent: { privacy: :strict })              # Intent-based routi
 Legion::LLM.chat(tier: :cloud, model: 'claude-sonnet-4-6')  # Explicit tier override
 Legion::LLM.embed(text, model:)                             # Embeddings (no routing)
 Legion::LLM.agent(AgentClass)                               # Agent instance
+
+# Compressor
+Legion::LLM::Compressor.compress(text, level: 1)                  # -> String (deterministic)
+Legion::LLM::Compressor.stopwords_for_level(2)                    # -> Array of words
 
 # Router
 Legion::LLM::Router.resolve(intent:, tier:, model:, provider:)  # -> Resolution or nil
@@ -233,12 +238,13 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/settings.rb` | Default settings including routing_defaults, auto-merge into Legion::Settings |
 | `lib/legion/llm/providers.rb` | Provider config, Vault resolution, RubyLLM configuration |
 | `lib/legion/llm/bedrock_bearer_auth.rb` | Monkey-patch for Bedrock Bearer Token auth — required lazily |
+| `lib/legion/llm/compressor.rb` | Deterministic prompt compression: 3 levels, code-block-aware, stopword removal |
 | `lib/legion/llm/router.rb` | Router module: resolve, health_tracker, select_candidates pipeline |
-| `lib/legion/llm/router/resolution.rb` | Value object: tier, provider, model, rule, metadata, tier query methods |
+| `lib/legion/llm/router/resolution.rb` | Value object: tier, provider, model, rule, metadata, compress_level |
 | `lib/legion/llm/router/rule.rb` | Rule class: from_hash, matches_intent?, within_schedule?, to_resolution |
 | `lib/legion/llm/router/health_tracker.rb` | HealthTracker: circuit breaker, latency window, pluggable signal handlers |
-| `lib/legion/llm/version.rb` | Version constant (0.2.0) |
-| `lib/legion/llm/helpers/llm.rb` | Extension helper mixin: llm_chat, llm_embed, llm_session |
+| `lib/legion/llm/version.rb` | Version constant (0.2.1) |
+| `lib/legion/llm/helpers/llm.rb` | Extension helper mixin: llm_chat (with compress:), llm_embed, llm_session |
 | `spec/legion/llm_spec.rb` | Tests: settings, lifecycle, providers, auto-config |
 | `spec/legion/llm/integration_spec.rb` | Tests: routing integration with chat() |
 | `spec/legion/llm/router_spec.rb` | Tests: Router.resolve, priority selection, constraints, health |
@@ -247,6 +253,8 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/router/rule_schedule_spec.rb` | Tests: Rule schedule evaluation |
 | `spec/legion/llm/router/health_tracker_spec.rb` | Tests: circuit breaker, latency, signal handlers |
 | `spec/legion/llm/router/settings_spec.rb` | Tests: routing defaults in settings |
+| `spec/legion/llm/compressor_spec.rb` | Tests: compression levels, code-block protection, determinism |
+| `spec/legion/llm/helpers/llm_spec.rb` | Tests: helper mixin with compress integration |
 | `spec/spec_helper.rb` | Stubbed Legion::Logging and Legion::Settings for testing |
 
 ## Extension Integration

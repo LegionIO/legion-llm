@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    legion-llm (0.1.0)
+    legion-llm (0.2.1)
       legion-logging
       legion-settings
       ruby_llm (>= 1.0)

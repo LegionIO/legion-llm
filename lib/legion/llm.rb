@@ -5,6 +5,7 @@ require 'legion/llm/version'
 require 'legion/llm/settings'
 require 'legion/llm/providers'
 require 'legion/llm/router'
+require 'legion/llm/compressor'
 
 module Legion
   module LLM

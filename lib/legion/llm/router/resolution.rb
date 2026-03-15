@@ -4,14 +4,15 @@ module Legion
   module LLM
     module Router
       class Resolution
-        attr_reader :tier, :provider, :model, :rule, :metadata
+        attr_reader :tier, :provider, :model, :rule, :metadata, :compress_level
 
-        def initialize(tier:, provider:, model:, rule: nil, metadata: {})
-          @tier     = tier.to_sym
-          @provider = provider.to_sym
-          @model    = model
-          @rule     = rule
-          @metadata = metadata
+        def initialize(tier:, provider:, model:, rule: nil, metadata: {}, compress_level: 0)
+          @tier           = tier.to_sym
+          @provider       = provider.to_sym
+          @model          = model
+          @rule           = rule
+          @metadata       = metadata
+          @compress_level = compress_level.to_i
         end
 
         def local?
@@ -28,11 +29,12 @@ module Legion
 
         def to_h
           {
-            tier:     @tier,
-            provider: @provider,
-            model:    @model,
-            rule:     @rule,
-            metadata: @metadata
+            tier:           @tier,
+            provider:       @provider,
+            model:          @model,
+            rule:           @rule,
+            metadata:       @metadata,
+            compress_level: @compress_level
           }
         end
       end

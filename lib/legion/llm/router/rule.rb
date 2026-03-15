@@ -46,10 +46,12 @@ module Legion
         end
 
         def to_resolution
+          target_without_compress = @target.except(:compress_level)
           Resolution.new(
-            **@target,
-            rule:     @name,
-            metadata: { cost_multiplier: @cost_multiplier, fallback: @fallback }.compact
+            **target_without_compress,
+            rule:           @name,
+            metadata:       { cost_multiplier: @cost_multiplier, fallback: @fallback }.compact,
+            compress_level: @target.fetch(:compress_level, 0)
           )
         end
 

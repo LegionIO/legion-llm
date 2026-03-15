@@ -205,5 +205,25 @@ RSpec.describe Legion::LLM::Router::Rule do
       expect(resolution.metadata[:cost_multiplier]).to eq(1.0)
       expect(resolution.metadata[:fallback]).to eq(:cloud)
     end
+
+    it 'passes compress_level from target to resolution' do
+      r = described_class.from_hash(
+        name: :compressed_cloud,
+        when: { capability: :chat },
+        then: { tier: :cloud, provider: :bedrock, model: 'claude-sonnet-4-6', compress_level: 2 }
+      )
+      resolution = r.to_resolution
+      expect(resolution.compress_level).to eq(2)
+    end
+
+    it 'defaults compress_level to 0 when not in target' do
+      r = described_class.from_hash(
+        name: :no_compress,
+        when: {},
+        then: { tier: :local, provider: :ollama, model: 'llama3' }
+      )
+      resolution = r.to_resolution
+      expect(resolution.compress_level).to eq(0)
+    end
   end
 end
