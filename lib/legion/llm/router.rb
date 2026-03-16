@@ -3,6 +3,8 @@
 require_relative 'router/resolution'
 require_relative 'router/rule'
 require_relative 'router/health_tracker'
+require_relative 'discovery/ollama'
+require_relative 'discovery/system'
 
 module Legion
   module LLM
@@ -100,8 +102,11 @@ module Legion
           # 4. Reject rules excluded by active constraints
           unconstrained = scheduled.reject { |r| excluded_by_constraint?(r, constraints) }
 
+          # 4.5 Reject Ollama rules where model is not pulled or doesn't fit
+          discovered = unconstrained.reject { |r| excluded_by_discovery?(r) }
+
           # 5. Filter by tier availability
-          unconstrained.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
+          discovered.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
         end
 
         def excluded_by_constraint?(rule, constraints)
@@ -112,6 +117,40 @@ module Legion
           constraints.any? do |c|
             c.to_s == 'never_cloud' && tier == :cloud
           end
+        end
+
+        def excluded_by_discovery?(rule)
+          return false unless discovery_enabled?
+
+          tier     = (rule.target[:tier] || rule.target['tier'])&.to_sym
+          provider = (rule.target[:provider] || rule.target['provider'])&.to_sym
+          model    = rule.target[:model] || rule.target['model']
+
+          return false unless tier == :local && provider == :ollama && model
+
+          return true unless Discovery::Ollama.model_available?(model)
+
+          model_bytes = Discovery::Ollama.model_size(model)
+          available   = Discovery::System.available_memory_mb
+          return false if model_bytes.nil? || available.nil?
+
+          floor = discovery_settings[:memory_floor_mb] || 2048
+          model_mb = model_bytes / 1024 / 1024
+          model_mb > (available - floor)
+        end
+
+        def discovery_enabled?
+          ds = discovery_settings
+          ds.fetch(:enabled, true)
+        end
+
+        def discovery_settings
+          llm = Legion::Settings[:llm]
+          return {} unless llm.is_a?(Hash)
+
+          (llm[:discovery] || {}).transform_keys(&:to_sym)
+        rescue StandardError
+          {}
         end
 
         def pick_best(candidates)
