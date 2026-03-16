@@ -6,9 +6,13 @@ require 'legion/llm/settings'
 require 'legion/llm/providers'
 require 'legion/llm/router'
 require 'legion/llm/compressor'
+require 'legion/llm/quality_checker'
+require 'legion/llm/escalation_history'
 
 module Legion
   module LLM
+    class EscalationExhausted < StandardError; end
+
     class << self
       include Legion::LLM::Providers
 
@@ -48,27 +52,26 @@ module Legion
       # @param provider [Symbol] provider slug (e.g., :bedrock, :anthropic)
       # @param intent [Hash, nil] routing intent (capability, privacy, etc.)
       # @param tier [Symbol, nil] explicit tier override — skips rule matching
+      # @param escalate [Boolean, nil] enable escalation retry loop (nil = auto from settings)
+      # @param max_escalations [Integer, nil] max escalation attempts override
+      # @param quality_check [Proc, nil] custom quality check callable
+      # @param message [String, nil] message to send (required for escalation)
       # @param kwargs [Hash] additional options passed to RubyLLM.chat
       # @return [RubyLLM::Chat]
       # TODO: fleet tier dispatch via Transport (Phase 3)
-      def chat(model: nil, provider: nil, intent: nil, tier: nil, **kwargs)
-        if (intent || tier) && Router.routing_enabled?
-          resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
-          if resolution
-            model    = resolution.model
-            provider = resolution.provider
-          end
+      def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
+               max_escalations: nil, quality_check: nil, message: nil, **)
+        escalate = escalation_enabled? if escalate.nil?
+
+        if escalate && message
+          chat_with_escalation(
+            model: model, provider: provider, intent: intent, tier: tier,
+            max_escalations: max_escalations, quality_check: quality_check,
+            message: message, **
+          )
+        else
+          chat_single(model: model, provider: provider, intent: intent, tier: tier, **)
         end
-
-        model    ||= settings[:default_model]
-        provider ||= settings[:default_provider]
-
-        opts = {}
-        opts[:model]    = model    if model
-        opts[:provider] = provider if provider
-        opts.merge!(kwargs)
-
-        RubyLLM.chat(**opts)
       end
 
       # Generate embeddings
@@ -92,6 +95,114 @@ module Legion
       end
 
       private
+
+      def chat_single(model:, provider:, intent:, tier:, **kwargs)
+        if (intent || tier) && Router.routing_enabled?
+          resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
+          if resolution
+            model    = resolution.model
+            provider = resolution.provider
+          end
+        end
+
+        model    ||= settings[:default_model]
+        provider ||= settings[:default_provider]
+
+        opts = {}
+        opts[:model]    = model    if model
+        opts[:provider] = provider if provider
+        opts.merge!(kwargs)
+
+        RubyLLM.chat(**opts)
+      end
+
+      def chat_with_escalation(model:, provider:, intent:, tier:, max_escalations:, quality_check:, message:, **kwargs)
+        chain = Router.resolve_chain(
+          intent: intent, tier: tier, model: model, provider: provider,
+          max_escalations: max_escalations
+        )
+
+        threshold = escalation_quality_threshold
+        history = []
+
+        chain.each do |resolution|
+          start_time = Time.now
+          begin
+            opts = { model: resolution.model, provider: resolution.provider }
+            opts.merge!(kwargs)
+            chat_obj = RubyLLM.chat(**opts)
+            response = chat_obj.ask(message)
+
+            duration_ms = ((Time.now - start_time) * 1000).round
+            result = QualityChecker.check(response, quality_threshold: threshold, quality_check: quality_check)
+
+            if result.passed
+              report_health(:success, resolution, duration_ms)
+              history << build_attempt(resolution, :success, [], duration_ms)
+              attach_escalation_history(response, history, resolution, chain)
+              publish_escalation_event(history, :success) if history.size > 1
+              return response
+            else
+              report_health(:quality_failure, resolution, duration_ms, failures: result.failures)
+              history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
+            end
+          rescue StandardError => e
+            duration_ms = ((Time.now - start_time) * 1000).round
+            report_health(:error, resolution, duration_ms)
+            history << build_attempt(resolution, :error, [e.class.name], duration_ms)
+          end
+        end
+
+        publish_escalation_event(history, :exhausted) if history.size > 1
+        raise EscalationExhausted, "All #{history.size} escalation attempts failed"
+      end
+
+      def build_attempt(resolution, outcome, failures, duration_ms)
+        { model: resolution.model, provider: resolution.provider, tier: resolution.tier,
+          outcome: outcome, failures: failures, duration_ms: duration_ms }
+      end
+
+      def attach_escalation_history(response, history, resolution, chain)
+        return unless response.respond_to?(:extend)
+
+        response.extend(EscalationHistory)
+        history.each { |h| response.record_escalation_attempt(**h) }
+        response.final_resolution = resolution
+        response.escalation_chain = chain
+      end
+
+      def report_health(signal, resolution, duration_ms, failures: nil)
+        return unless Router.routing_enabled?
+
+        metadata = { duration_ms: duration_ms }
+        metadata[:failures] = failures if failures
+        Router.health_tracker.report(provider: resolution.provider, signal: signal, value: 1, metadata: metadata)
+        Router.health_tracker.report(provider: resolution.provider, signal: :latency, value: duration_ms, metadata: {})
+      end
+
+      def publish_escalation_event(history, final_outcome)
+        return unless defined?(Legion::Transport)
+
+        Legion::Logging.debug("Escalation event: #{final_outcome}, #{history.size} attempts") if Legion.const_defined?('Logging')
+      rescue StandardError
+        nil
+      end
+
+      def escalation_enabled?
+        routing = settings[:routing]
+        return false unless routing.is_a?(Hash)
+
+        esc = routing[:escalation] || {}
+        esc[:enabled] == true
+      end
+
+      def escalation_quality_threshold
+        routing = settings[:routing]
+        return 50 unless routing.is_a?(Hash)
+
+        esc = routing[:escalation] || {}
+        esc.fetch(:quality_threshold, 50)
+      end
 
       def set_defaults
         default_model    = settings[:default_model]

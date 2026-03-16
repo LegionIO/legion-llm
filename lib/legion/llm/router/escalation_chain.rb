@@ -20,7 +20,7 @@ module Legion
         def each(&)
           return enum_for(:each) unless block_given?
 
-          @resolutions.first(@max_attempts).each(&)
+          padded_resolutions.each(&)
         end
 
         def size
@@ -33,6 +33,15 @@ module Legion
 
         def to_a
           @resolutions.dup
+        end
+
+        private
+
+        def padded_resolutions
+          return @resolutions.first(@max_attempts) if @resolutions.size >= @max_attempts
+
+          last = @resolutions.last
+          (@resolutions + Array.new(@max_attempts - @resolutions.size) { last }).first(@max_attempts)
         end
       end
     end
