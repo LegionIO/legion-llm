@@ -12,7 +12,7 @@ Or add to your Gemfile and `bundle install`.
 
 ## Configuration
 
-Add to your LegionIO settings directory:
+Add to your LegionIO settings directory (e.g. `~/.legionio/settings/llm.json`):
 
 ```json
 {
@@ -23,14 +23,15 @@ Add to your LegionIO settings directory:
       "bedrock": {
         "enabled": true,
         "region": "us-east-2",
-        "vault_path": "legion/bedrock"
+        "bearer_token": ["vault://secret/data/llm/bedrock#bearer_token", "env://AWS_BEARER_TOKEN"]
       },
       "anthropic": {
         "enabled": false,
-        "vault_path": "legion/anthropic"
+        "api_key": "env://ANTHROPIC_API_KEY"
       },
       "openai": {
-        "enabled": false
+        "enabled": false,
+        "api_key": "env://OPENAI_API_KEY"
       },
       "ollama": {
         "enabled": false,
@@ -41,7 +42,7 @@ Add to your LegionIO settings directory:
 }
 ```
 
-Credentials are resolved from Vault automatically when `vault_path` is set and Legion::Crypt is connected.
+Credentials are resolved automatically by the universal secret resolver in `legion-settings` (v1.3.0+). Use `vault://` URIs for Vault secrets, `env://` for environment variables, or plain strings for static values. Array values act as fallback chains — the first non-nil result wins.
 
 ### Provider Configuration
 
@@ -50,8 +51,7 @@ Each provider supports these common fields:
 | Field | Type | Description |
 |-------|------|-------------|
 | `enabled` | Boolean | Enable this provider (default: `false`) |
-| `api_key` | String | API key (resolved from Vault if `vault_path` set) |
-| `vault_path` | String | Vault secret path for credential resolution |
+| `api_key` | String | API key (supports `vault://`, `env://`, or plain string) |
 
 Provider-specific fields:
 
@@ -60,19 +60,23 @@ Provider-specific fields:
 | **Bedrock** | `secret_key`, `session_token`, `region` (default: `us-east-2`), `bearer_token` (alternative to SigV4 — for AWS Identity Center/SSO) |
 | **Ollama** | `base_url` (default: `http://localhost:11434`) |
 
-### Vault Credential Resolution
+### Credential Resolution
 
-When `vault_path` is set and `Legion::Crypt::Vault` is connected, credentials are fetched from Vault at startup. The secret keys map to provider fields automatically:
+All credential fields support the universal `vault://` and `env://` URI schemes provided by `legion-settings`. Use array values for fallback chains:
 
-| Provider | Vault Key | Maps To |
-|----------|-----------|---------|
-| Bedrock | `access_key` / `aws_access_key_id` | `api_key` |
-| Bedrock | `secret_key` / `aws_secret_access_key` | `secret_key` |
-| Bedrock | `session_token` / `aws_session_token` | `session_token` |
-| Bedrock | `bearer_token` / `aws_bearer_token` | `bearer_token` (Identity Center/SSO) |
-| Anthropic / OpenAI / Gemini | `api_key` / `token` | `api_key` |
+```json
+{
+  "bedrock": {
+    "enabled": true,
+    "api_key": ["vault://secret/data/llm/bedrock#access_key", "env://AWS_ACCESS_KEY_ID"],
+    "secret_key": ["vault://secret/data/llm/bedrock#secret_key", "env://AWS_SECRET_ACCESS_KEY"],
+    "bearer_token": ["vault://secret/data/llm/bedrock#bearer_token", "env://AWS_BEARER_TOKEN"],
+    "region": "us-east-2"
+  }
+}
+```
 
-Direct configuration (setting `api_key` in settings) takes precedence over Vault-resolved values.
+By the time `Legion::LLM.start` runs, all `vault://` and `env://` references have already been resolved to plain strings by `Legion::Settings.resolve_secrets!` (called in the boot sequence after `Legion::Crypt.start`). The `env://` scheme works even when Vault is not connected.
 
 ### Auto-Detection
 
@@ -91,7 +95,7 @@ If no `default_model` or `default_provider` is set, legion-llm auto-detects from
 ### Lifecycle
 
 ```ruby
-Legion::LLM.start       # Configure providers, resolve Vault credentials, warm discovery caches, set defaults, ping provider
+Legion::LLM.start       # Configure providers, warm discovery caches, set defaults, ping provider
 Legion::LLM.shutdown     # Mark disconnected, clean up
 Legion::LLM.started?     # -> Boolean
 Legion::LLM.settings     # -> Hash (current LLM settings)
@@ -556,10 +560,10 @@ end
 
 | Provider | Config Key | Credential Source | Notes |
 |----------|-----------|-------------------|-------|
-| AWS Bedrock | `bedrock` | Vault (`access_key`, `secret_key`) or direct | Default region: us-east-2 |
-| Anthropic | `anthropic` | Vault (`api_key`) or direct | Direct API access |
-| OpenAI | `openai` | Vault (`api_key`) or direct | GPT models |
-| Google Gemini | `gemini` | Vault (`api_key`) or direct | Gemini models |
+| AWS Bedrock | `bedrock` | `vault://`, `env://`, or direct | Default region: us-east-2, SigV4 or Bearer Token auth |
+| Anthropic | `anthropic` | `vault://`, `env://`, or direct | Direct API access |
+| OpenAI | `openai` | `vault://`, `env://`, or direct | GPT models |
+| Google Gemini | `gemini` | `vault://`, `env://`, or direct | Gemini models |
 | Ollama | `ollama` | Local, no credentials needed | Local inference |
 
 ## Integration with LegionIO
