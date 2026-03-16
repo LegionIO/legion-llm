@@ -418,6 +418,39 @@ tracker.register_handler(:gpu_utilization) { |data| ... }
 
 When routing is disabled (the default), `chat`, `llm_chat`, and `llm_session` behave exactly as before — no behavior change until you opt in.
 
+#### Local Model Discovery
+
+When the Ollama provider is enabled, legion-llm discovers which models are actually pulled and checks available system memory before routing to local models. This prevents the router from selecting models that aren't installed or that won't fit in RAM.
+
+Discovery uses lazy TTL-based caching (default: 60 seconds). At startup, caches are warmed and logged:
+
+```
+Ollama: 3 models available (llama3.1:8b, qwen2.5:32b, nomic-embed-text)
+System: 65536 MB total, 42000 MB available
+```
+
+Configure under `discovery`:
+
+```json
+{
+  "llm": {
+    "discovery": {
+      "enabled": true,
+      "refresh_seconds": 60,
+      "memory_floor_mb": 2048
+    }
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | Boolean | `true` | Master switch for discovery checks |
+| `refresh_seconds` | Integer | `60` | TTL for discovery caches |
+| `memory_floor_mb` | Integer | `2048` | Minimum free MB to reserve for OS |
+
+When a routing rule targets a local Ollama model that isn't pulled or won't fit in available memory (minus `memory_floor_mb`), the rule is silently skipped and the next best candidate is used. If discovery fails (Ollama not running, unknown OS), checks are bypassed permissively.
+
 ### Prompt Compression
 
 `Legion::LLM::Compressor` strips low-signal words from prompts before sending to the API, reducing input token count and cost. Compression is deterministic (same input always produces the same output), preserving prompt caching compatibility.
