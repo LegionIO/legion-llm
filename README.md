@@ -91,7 +91,7 @@ If no `default_model` or `default_provider` is set, legion-llm auto-detects from
 ### Lifecycle
 
 ```ruby
-Legion::LLM.start       # Configure providers from settings, resolve Vault credentials, set defaults
+Legion::LLM.start       # Configure providers, resolve Vault credentials, warm discovery caches, set defaults, ping provider
 Legion::LLM.shutdown     # Mark disconnected, clean up
 Legion::LLM.started?     # -> Boolean
 Legion::LLM.settings     # -> Hash (current LLM settings)
@@ -316,7 +316,8 @@ session = llm_session(tier: :local)
    a. Intent match (all `when` conditions must match)
    b. Schedule window (valid_from/valid_until, hours, days)
    c. Constraints (e.g., never_cloud strips cloud-tier rules)
-   d. Tier availability (is Ollama running? is Transport loaded?)
+   d. Discovery (Ollama model pulled? Model fits in available RAM?)
+   e. Tier availability (is Ollama running? is Transport loaded?)
 4. Score remaining candidates:
    effective_priority = rule.priority
                       + health_tracker.adjustment(provider)
@@ -453,7 +454,7 @@ When a routing rule targets a local Ollama model that isn't pulled or won't fit 
 
 ### Model Escalation
 
-When an LLM call fails (API error, timeout, or quality issue), the escalation system automatically retries with more capable models:
+When an LLM call fails (API error, timeout, or quality issue), the escalation system automatically retries with more capable models. If all attempts fail, `Legion::LLM::EscalationExhausted` is raised.
 
 ```ruby
 # Enable escalation and ask in one call
@@ -464,11 +465,14 @@ response = Legion::LLM.chat(
   quality_check: ->(r) { r.content.include?('SELECT') }
 )
 
-# Check if escalation occurred
-response.escalated?          # => true/false
-response.escalation_history  # => [{model:, provider:, outcome:, ...}]
+# Check if escalation occurred (true only when more than one attempt was made)
+response.escalated?          # => true if >1 attempt was made
+response.escalation_history  # => [{model:, provider:, tier:, outcome:, failures:, duration_ms:}, ...]
 response.final_resolution    # => Resolution that succeeded
+response.escalation_chain    # => EscalationChain used for this call
 ```
+
+Raises `Legion::LLM::EscalationExhausted` if all attempts are exhausted.
 
 Configure globally in settings:
 

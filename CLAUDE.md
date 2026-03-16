@@ -20,26 +20,29 @@ Legion::LLM.start
   ├── 2. For each enabled provider:
   │     ├── Resolve credentials from Vault (if vault_path set)
   │     └── Configure RubyLLM provider
-  └── 3. Auto-detect default model from first enabled provider
+  ├── 3. Run discovery (if Ollama enabled): warm model + system memory caches
+  ├── 4. Auto-detect default model from first enabled provider
+  └── 5. Ping provider (if default_model + default_provider set): send test request, log latency
 ```
 
 ### Module Structure
 
 ```
 Legion::LLM (lib/legion/llm.rb)
+├── EscalationExhausted # Raised when all escalation attempts are exhausted
 ├── Settings         # Default config, provider settings, routing defaults, discovery defaults
 ├── Providers        # Provider configuration and Vault credential resolution
 ├── Compressor       # Deterministic prompt compression (3 levels, code-block-aware)
 ├── Discovery        # Runtime introspection for local model availability and system resources
 │   ├── Ollama       # Queries Ollama /api/tags for pulled models (TTL-cached)
 │   └── System       # Queries OS memory: macOS (vm_stat/sysctl), Linux (/proc/meminfo)
-├── QualityChecker   # Response quality heuristics (empty, too_short, repetition, json_parse) + pluggable callable
-├── EscalationHistory # Mixin for response objects: escalation_history, escalated?, final_resolution
+├── QualityChecker   # Response quality heuristics (empty, too_short, repetition, json_parse, json_expected) + pluggable callable
+├── EscalationHistory # Mixin for response objects: escalation_history, escalated?, final_resolution, escalation_chain
 ├── Router           # Dynamic weighted routing engine
 │   ├── Resolution   # Value object: tier, provider, model, rule name, metadata, compress_level
 │   ├── Rule         # Routing rule: intent matching, schedule windows, constraints
 │   ├── HealthTracker # Circuit breaker, latency rolling window, pluggable signal handlers
-│   └── EscalationChain # Ordered fallback resolution chain with max_attempts cap
+│   └── EscalationChain # Ordered fallback resolution chain with max_attempts cap (pads last resolution if chain is short)
 └── Helpers::LLM     # Extension helper mixin (llm_chat, llm_embed, llm_session, compress:)
 ```
 
@@ -133,9 +136,10 @@ tracker.circuit_state(:anthropic)                                 # -> :closed/:
 tracker.register_handler(:gpu_utilization) { |data| ... }         # Extend with new signals
 
 # Escalation
-Legion::LLM.chat(message:, escalate: true, max_escalations: 3, quality_check:) # Escalating chat
+Legion::LLM.chat(message:, escalate: true, max_escalations: 3, quality_check:) # Escalating chat — raises EscalationExhausted if all attempts fail
+Legion::LLM::EscalationExhausted                                                # raised when all escalation attempts are exhausted
 Legion::LLM::Router.resolve_chain(intent:, tier:, max_escalations:)            # -> EscalationChain
-Legion::LLM::QualityChecker.check(response, quality_check:)                    # -> QualityResult
+Legion::LLM::QualityChecker.check(response, quality_threshold: 50, json_expected: false, quality_check: nil) # -> QualityResult
 ```
 
 ## Settings
@@ -276,7 +280,7 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/discovery/system.rb` | OS memory introspection (macOS + Linux) with TTL cache |
 | `lib/legion/llm/version.rb` | Version constant (0.3.0) |
 | `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
-| `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin for responses |
+| `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin: `escalation_history`, `escalated?`, `final_resolution`, `escalation_chain` |
 | `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
 | `lib/legion/llm/transport/exchanges/escalation.rb` | AMQP exchange for escalation events |
 | `lib/legion/llm/transport/messages/escalation_event.rb` | AMQP message for escalation events |
@@ -364,7 +368,6 @@ bundle exec rubocop  # 31 files, 0 offenses
 
 - **Fleet tier (Phase 2)**: `lex-llm-fleet` extension — inference workers on Mac Studios / NVIDIA servers, dispatched via Legion::Transport AMQP queues
 - **Advanced signals (Phase 3)**: Budget tracking, lex-metering integration, GPU utilization monitoring
-- **Timezone support**: `within_schedule?` converts hours/days via TZInfo (v0.2.3); `valid_from`/`valid_until` timestamps with offsets handled by `Time.parse`
 
 ---
 
