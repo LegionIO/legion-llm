@@ -336,15 +336,29 @@ llm_session(intent: { capability: :reasoning })
 
 ## Vault Integration
 
-Provider credentials are resolved from Vault when:
-1. `vault_path` is set on the provider config
-2. `Legion::Crypt` is defined and Vault is connected (`Legion::Settings[:crypt][:vault][:connected]`)
+Provider credentials are resolved by the universal `Legion::Settings::Resolver` (in `legion-settings`), not by legion-llm itself. Use `vault://` and `env://` URI references directly in settings values:
 
-Key mapping:
-- **Bedrock**: `access_key`/`aws_access_key_id` -> `api_key`, `secret_key`/`aws_secret_access_key` -> `secret_key`
-- **Anthropic/OpenAI/Gemini**: `api_key`/`token` -> `api_key`
+```json
+{
+  "llm": {
+    "providers": {
+      "bedrock": {
+        "enabled": true,
+        "bearer_token": ["vault://secret/data/llm/bedrock#bearer_token", "env://AWS_BEARER_TOKEN"],
+        "region": "us-east-2"
+      },
+      "anthropic": {
+        "enabled": true,
+        "api_key": "env://ANTHROPIC_API_KEY"
+      }
+    }
+  }
+}
+```
 
-Direct config values take precedence over Vault-resolved values.
+By the time `Legion::LLM.start` runs, all `vault://` and `env://` references have already been resolved to plain strings by `Legion::Settings.resolve_secrets!` (called in the boot sequence after `Legion::Crypt.start`).
+
+The legacy `vault_path` per-provider setting was removed in v0.3.1.
 
 ## Testing
 
