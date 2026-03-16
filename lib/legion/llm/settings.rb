@@ -56,26 +56,22 @@ module Legion
             secret_key:    nil,
             session_token: nil,
             bearer_token:  nil,
-            region:        'us-east-2',
-            vault_path:    nil
+            region:        'us-east-2'
           },
           anthropic: {
             enabled:       false,
             default_model: 'claude-sonnet-4-6',
-            api_key:       nil,
-            vault_path:    nil
+            api_key:       nil
           },
           openai:    {
             enabled:       false,
             default_model: 'gpt-4o',
-            api_key:       nil,
-            vault_path:    nil
+            api_key:       nil
           },
           gemini:    {
             enabled:       false,
             default_model: 'gemini-2.0-flash',
-            api_key:       nil,
-            vault_path:    nil
+            api_key:       nil
           },
           ollama:    {
             enabled:       false,

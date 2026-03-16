@@ -105,13 +105,6 @@ RSpec.describe Legion::LLM do
       end
     end
 
-    describe '#vault_available?' do
-      it 'returns false when Vault is not connected' do
-        Legion::Settings.merge_settings('crypt', { vault: { connected: false } })
-        expect(test_class.vault_available?).to be false
-      end
-    end
-
     describe '#configure_bedrock' do
       it 'configures with SigV4 when api_key and secret_key are present' do
         test_class.send(:configure_bedrock, {
