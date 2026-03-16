@@ -16,6 +16,7 @@ module Legion
         Legion::Logging.debug 'Legion::LLM is running start'
 
         configure_providers
+        run_discovery
         set_defaults
 
         @started = true
@@ -104,6 +105,21 @@ module Legion
 
         # Auto-detect: use first enabled provider's sensible default
         auto_configure_defaults
+      end
+
+      def run_discovery
+        return unless settings.dig(:providers, :ollama, :enabled)
+
+        Discovery::Ollama.refresh!
+        Discovery::System.refresh!
+
+        names = Discovery::Ollama.model_names
+        count = names.size
+        Legion::Logging.info "Ollama: #{count} model#{'s' unless count == 1} available (#{names.join(', ')})"
+        Legion::Logging.info "System: #{Discovery::System.total_memory_mb} MB total, " \
+                             "#{Discovery::System.available_memory_mb} MB available"
+      rescue StandardError => e
+        Legion::Logging.warn "Discovery failed: #{e.message}"
       end
 
       def ping_provider

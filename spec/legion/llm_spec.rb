@@ -26,6 +26,9 @@ RSpec.describe Legion::LLM do
     before do
       Legion::Settings[:llm][:providers][:ollama][:enabled] = true
       allow(described_class).to receive(:ping_provider)
+      stub_request(:get, 'http://localhost:11434/api/tags')
+        .to_return(status: 200, body: { 'models' => [] }.to_json)
+      allow(Legion::LLM::Discovery::System).to receive(:platform).and_return(:unknown)
     end
 
     it 'marks connected on start' do
