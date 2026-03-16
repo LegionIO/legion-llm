@@ -12,16 +12,25 @@ module Legion
         # @param tier [Symbol, nil] explicit tier override
         # @param tools [Array<Class>] optional RubyLLM::Tool subclasses
         # @param instructions [String] optional system instructions
+        # @param escalate [Boolean, nil] enable model escalation on low-quality responses
+        # @param max_escalations [Integer, nil] max escalation attempts
+        # @param quality_check [Proc, nil] callable that returns true if response is acceptable
         # @return [RubyLLM::Message] the assistant response
-        def llm_chat(message, model: nil, provider: nil, intent: nil, tier: nil, tools: [], instructions: nil,
-                     compress: 0)
-          chat = Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier)
-
+        def llm_chat(message, model: nil, provider: nil, intent: nil, tier: nil, tools: [], instructions: nil, # rubocop:disable Metrics/ParameterLists
+                     compress: 0, escalate: nil, max_escalations: nil, quality_check: nil)
           if compress.positive?
             message = Legion::LLM::Compressor.compress(message, level: compress)
             instructions = Legion::LLM::Compressor.compress(instructions, level: compress) if instructions
           end
 
+          # When escalation is active, chat() handles ask() internally via message: kwarg
+          if escalate
+            return Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier,
+                                    escalate: true, max_escalations: max_escalations,
+                                    quality_check: quality_check, message: message)
+          end
+
+          chat = Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier, escalate: false)
           chat.with_instructions(instructions) if instructions
           chat.with_tools(*tools) unless tools.empty?
           chat.ask(message)
@@ -42,7 +51,7 @@ module Legion
         # @param tier [Symbol, nil] explicit tier override
         # @return [RubyLLM::Chat]
         def llm_session(model: nil, provider: nil, intent: nil, tier: nil)
-          Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier)
+          Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier, escalate: false)
         end
       end
     end

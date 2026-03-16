@@ -47,4 +47,28 @@ RSpec.describe Legion::Extensions::Helpers::LLM do
       expect(mock_chat).to have_received(:ask).with('The very important question')
     end
   end
+
+  describe 'escalation passthrough' do
+    it 'passes escalation kwargs to Legion::LLM.chat and returns response' do
+      response = double('Response', content: 'escalated result')
+      expect(Legion::LLM).to receive(:chat).with(
+        hash_including(escalate: true, max_escalations: 5, message: 'test prompt')
+      ).and_return(response)
+
+      result = instance.llm_chat('test prompt', escalate: true, max_escalations: 5)
+      expect(result).to eq(response)
+    end
+
+    it 'does not pass message: when escalate is not set' do
+      mock_chat2 = double('RubyLLM::Chat')
+      expect(Legion::LLM).to receive(:chat).with(
+        hash_including(escalate: false)
+      ).and_return(mock_chat2)
+      expect(mock_chat2).not_to receive(:with_instructions)
+      expect(mock_chat2).not_to receive(:with_tools)
+      allow(mock_chat2).to receive(:ask).with('test').and_return(double('Response'))
+
+      instance.llm_chat('test')
+    end
+  end
 end
