@@ -33,10 +33,13 @@ Legion::LLM (lib/legion/llm.rb)
 ├── Discovery        # Runtime introspection for local model availability and system resources
 │   ├── Ollama       # Queries Ollama /api/tags for pulled models (TTL-cached)
 │   └── System       # Queries OS memory: macOS (vm_stat/sysctl), Linux (/proc/meminfo)
+├── QualityChecker   # Response quality heuristics (empty, too_short, repetition, json_parse) + pluggable callable
+├── EscalationHistory # Mixin for response objects: escalation_history, escalated?, final_resolution
 ├── Router           # Dynamic weighted routing engine
 │   ├── Resolution   # Value object: tier, provider, model, rule name, metadata, compress_level
 │   ├── Rule         # Routing rule: intent matching, schedule windows, constraints
-│   └── HealthTracker # Circuit breaker, latency rolling window, pluggable signal handlers
+│   ├── HealthTracker # Circuit breaker, latency rolling window, pluggable signal handlers
+│   └── EscalationChain # Ordered fallback resolution chain with max_attempts cap
 └── Helpers::LLM     # Extension helper mixin (llm_chat, llm_embed, llm_session, compress:)
 ```
 
@@ -128,6 +131,11 @@ tracker.report(provider: :ollama, signal: :latency, value: 1200) # Feed latency
 tracker.adjustment(:anthropic)                                    # -> Integer (priority offset)
 tracker.circuit_state(:anthropic)                                 # -> :closed/:open/:half_open
 tracker.register_handler(:gpu_utilization) { |data| ... }         # Extend with new signals
+
+# Escalation
+Legion::LLM.chat(message:, escalate: true, max_escalations: 3, quality_check:) # Escalating chat
+Legion::LLM::Router.resolve_chain(intent:, tier:, max_escalations:)            # -> EscalationChain
+Legion::LLM::QualityChecker.check(response, quality_check:)                    # -> QualityResult
 ```
 
 ## Settings
@@ -182,6 +190,9 @@ Nested under `Legion::Settings[:llm][:routing]`:
 | `health.budget.daily_limit_usd` | Float | `nil` | Daily cloud spend limit (future) |
 | `health.budget.monthly_limit_usd` | Float | `nil` | Monthly cloud spend limit (future) |
 | `rules` | Array | `[]` | Routing rules (see below) |
+| `escalation.enabled` | Boolean | `false` | Enable model escalation on retry |
+| `escalation.max_attempts` | Integer | `3` | Max escalation attempts per call |
+| `escalation.quality_threshold` | Integer | `50` | Min response character length |
 
 ### Routing Rules
 
@@ -237,7 +248,7 @@ Discovery is lazy TTL-cached: data refreshes on the next `Router.resolve` call a
 
 In-memory signal consumer with pluggable handlers. Adjusts effective priorities at runtime.
 
-**Built-in signals:** `:error` (circuit breaker), `:success` (circuit recovery), `:latency` (rolling window penalty)
+**Built-in signals:** `:error` (circuit breaker), `:success` (circuit recovery), `:latency` (rolling window penalty), `:quality_failure` (half-weight circuit breaker, 6 failures to trip vs 3 for hard errors)
 
 **Circuit breaker states:**
 - `:closed` (normal, adjustment = 0)
@@ -263,8 +274,13 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/router/health_tracker.rb` | HealthTracker: circuit breaker, latency window, pluggable signal handlers |
 | `lib/legion/llm/discovery/ollama.rb` | Ollama /api/tags discovery with TTL cache |
 | `lib/legion/llm/discovery/system.rb` | OS memory introspection (macOS + Linux) with TTL cache |
-| `lib/legion/llm/version.rb` | Version constant (0.2.3) |
-| `lib/legion/llm/helpers/llm.rb` | Extension helper mixin: llm_chat (with compress:), llm_embed, llm_session |
+| `lib/legion/llm/version.rb` | Version constant (0.3.0) |
+| `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
+| `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin for responses |
+| `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
+| `lib/legion/llm/transport/exchanges/escalation.rb` | AMQP exchange for escalation events |
+| `lib/legion/llm/transport/messages/escalation_event.rb` | AMQP message for escalation events |
+| `lib/legion/llm/helpers/llm.rb` | Extension helper mixin: llm_chat (with compress:, escalate:, max_escalations:, quality_check:), llm_embed, llm_session |
 | `spec/legion/llm_spec.rb` | Tests: settings, lifecycle, providers, auto-config |
 | `spec/legion/llm/integration_spec.rb` | Tests: routing integration with chat() |
 | `spec/legion/llm/router_spec.rb` | Tests: Router.resolve, priority selection, constraints, health |
@@ -280,6 +296,12 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/discovery/router_integration_spec.rb` | Tests: Router discovery filtering |
 | `spec/legion/llm/discovery/startup_spec.rb` | Tests: Startup discovery warmup |
 | `spec/legion/llm/discovery/settings_spec.rb` | Tests: Discovery settings defaults |
+| `spec/legion/llm/quality_checker_spec.rb` | QualityChecker tests |
+| `spec/legion/llm/escalation_history_spec.rb` | EscalationHistory tests |
+| `spec/legion/llm/escalation_integration_spec.rb` | chat() escalation loop tests |
+| `spec/legion/llm/router/escalation_chain_spec.rb` | EscalationChain tests |
+| `spec/legion/llm/router/resolve_chain_spec.rb` | Router.resolve_chain tests |
+| `spec/legion/llm/transport/escalation_spec.rb` | Transport tests |
 | `spec/spec_helper.rb` | Stubbed Legion::Logging and Legion::Settings for testing |
 
 ## Extension Integration
@@ -325,7 +347,7 @@ Direct config values take precedence over Vault-resolved values.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 225 examples, 0 failures
+bundle exec rspec    # 269 examples, 0 failures
 bundle exec rubocop  # 31 files, 0 offenses
 ```
 
@@ -335,6 +357,8 @@ bundle exec rubocop  # 31 files, 0 offenses
 - `docs/plans/2026-03-14-llm-dynamic-routing-implementation.md` — Implementation plan
 - `docs/plans/2026-03-15-ollama-discovery-design.md` — Ollama discovery design (approved)
 - `docs/plans/2026-03-15-ollama-discovery-implementation.md` — Discovery implementation plan
+- `docs/plans/2026-03-16-llm-escalation-design.md` — Model escalation design (approved)
+- `docs/plans/2026-03-16-llm-escalation-implementation.md` — Escalation implementation plan
 
 ## Future (Not Yet Built)
 

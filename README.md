@@ -451,6 +451,36 @@ Configure under `discovery`:
 
 When a routing rule targets a local Ollama model that isn't pulled or won't fit in available memory (minus `memory_floor_mb`), the rule is silently skipped and the next best candidate is used. If discovery fails (Ollama not running, unknown OS), checks are bypassed permissively.
 
+### Model Escalation
+
+When an LLM call fails (API error, timeout, or quality issue), the escalation system automatically retries with more capable models:
+
+```ruby
+# Enable escalation and ask in one call
+response = Legion::LLM.chat(
+  message: "Generate a SQL query for user analytics",
+  escalate: true,
+  max_escalations: 3,
+  quality_check: ->(r) { r.content.include?('SELECT') }
+)
+
+# Check if escalation occurred
+response.escalated?          # => true/false
+response.escalation_history  # => [{model:, provider:, outcome:, ...}]
+response.final_resolution    # => Resolution that succeeded
+```
+
+Configure globally in settings:
+
+```yaml
+llm:
+  routing:
+    escalation:
+      enabled: true
+      max_attempts: 3
+      quality_threshold: 50
+```
+
 ### Prompt Compression
 
 `Legion::LLM::Compressor` strips low-signal words from prompts before sending to the API, reducing input token count and cost. Compression is deterministic (same input always produces the same output), preserving prompt caching compatibility.
@@ -561,7 +591,7 @@ bundle exec rspec
 Tests use stubbed `Legion::Logging` and `Legion::Settings` modules (no need for the full LegionIO stack):
 
 ```bash
-bundle exec rspec                              # Run all 153 tests
+bundle exec rspec                              # Run all 269 tests
 bundle exec rubocop                            # Lint (0 offenses)
 bundle exec rspec spec/legion/llm_spec.rb      # Run specific test file
 bundle exec rspec spec/legion/llm/router_spec.rb  # Router tests only

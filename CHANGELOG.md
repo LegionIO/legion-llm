@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-16
+
+### Added
+- Model escalation on retry: automatic fallback to more capable models on hard or quality failures
+- `Router.resolve_chain` returns ordered `EscalationChain` of fallback resolutions
+- `QualityChecker` module with built-in heuristics (empty, too_short, repetition, json_parse) and pluggable checks
+- `EscalationHistory` mixin tracks attempts on response objects (`escalated?`, `escalation_history`, `final_resolution`)
+- `chat(escalate: true, message:)` retry loop with configurable `max_escalations:` and `quality_check:`
+- HealthTracker `:quality_failure` signal with half-weight failure counting (6 quality failures to trip circuit)
+- AMQP transport: `llm.escalation` exchange + `EscalationEvent` message for fleet-wide observability
+- Settings: `routing.escalation.enabled`, `max_attempts`, `quality_threshold`
+- Helper passthrough: `llm_chat` accepts `escalate:`, `max_escalations:`, `quality_check:`
+
 ## [0.2.3]
 
 ### Added
