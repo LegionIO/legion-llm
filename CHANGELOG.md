@@ -1,6 +1,10 @@
 # Legion LLM Changelog
 
-## [Unreleased]
+## [0.3.1] - 2026-03-16
+
+### Removed
+- `vault_path` provider setting (superseded by universal `vault://` resolver in legion-settings 1.3.0)
+- `resolve_credentials` and related methods from Providers module
 
 ## [0.3.0] - 2026-03-16
 
