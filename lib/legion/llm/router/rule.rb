@@ -17,7 +17,7 @@ module Legion
             target:          h[:then]  || {},
             priority:        h.fetch(:priority, 0),
             constraint:      h[:constraint],
-            fallback:        h[:fallback]&.to_sym,
+            fallback:        h[:fallback].is_a?(Hash) ? h[:fallback].transform_keys(&:to_sym) : h[:fallback]&.to_sym,
             cost_multiplier: h.fetch(:cost_multiplier, 1.0),
             schedule:        h[:schedule],
             note:            h[:note]

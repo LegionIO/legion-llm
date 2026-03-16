@@ -3,6 +3,7 @@
 require_relative 'router/resolution'
 require_relative 'router/rule'
 require_relative 'router/health_tracker'
+require_relative 'router/escalation_chain'
 require_relative 'discovery/ollama'
 require_relative 'discovery/system'
 
@@ -27,6 +28,14 @@ module Legion
           candidates = select_candidates(rules, merged)
           best = pick_best(candidates)
           best&.to_resolution
+        end
+
+        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil)
+          max = max_escalations || escalation_max_attempts
+          return chain_from_defaults(model, provider, max) unless routing_enabled? && (intent || tier)
+          return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model)], max_attempts: max) if tier
+
+          chain_from_intent(intent, max)
         end
 
         def health_tracker
@@ -203,6 +212,66 @@ module Legion
             Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6'
           else 'llama3'
           end
+        end
+
+        def chain_from_defaults(model, provider, max)
+          fallback_model    = model || default_settings_model
+          fallback_provider = (provider || default_settings_provider)&.to_sym
+          res = Resolution.new(tier: :cloud, provider: fallback_provider || :bedrock, model: fallback_model || 'claude-sonnet-4-6')
+          EscalationChain.new(resolutions: [res], max_attempts: max)
+        end
+
+        def chain_from_intent(intent, max)
+          merged     = intent ? merge_defaults(intent) : {}
+          rules      = load_rules
+          candidates = select_candidates(rules, merged)
+          sorted     = candidates.sort_by { |r| -effective_priority(r) }
+          resolutions = sorted.map(&:to_resolution)
+          resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
+          resolutions = resolutions.uniq { |r| [r.provider, r.model] }
+          EscalationChain.new(resolutions: resolutions, max_attempts: max)
+        end
+
+        def build_fallback_chain(primary_rule, candidates, default_chain)
+          chain = [primary_rule.to_resolution]
+          current = primary_rule
+
+          while current.fallback
+            fallback_target = current.fallback
+            if fallback_target.is_a?(Hash)
+              fb = fallback_target.transform_keys(&:to_sym)
+              fb_tier     = fb[:tier]&.to_sym || :cloud
+              fb_provider = fb[:provider]&.to_sym || default_provider_for_tier(fb_tier)
+              fb_model    = fb[:model] || default_model_for_tier(fb_tier)
+              chain << Resolution.new(tier: fb_tier, provider: fb_provider, model: fb_model)
+              break
+            else
+              next_rule = candidates.find { |r| r.name == fallback_target.to_s }
+              break unless next_rule
+
+              chain << next_rule.to_resolution
+              current = next_rule
+            end
+          end
+
+          remaining = default_chain.reject { |r| chain.any? { |c| c.provider == r.provider && c.model == r.model } }
+          chain + remaining
+        end
+
+        def escalation_max_attempts
+          settings = routing_settings
+          esc = (settings[:escalation] || {}).transform_keys(&:to_sym)
+          esc.fetch(:max_attempts, 3)
+        end
+
+        def default_settings_model
+          llm = Legion::Settings[:llm]
+          llm[:default_model] if llm.is_a?(Hash)
+        end
+
+        def default_settings_provider
+          llm = Legion::Settings[:llm]
+          llm[:default_provider] if llm.is_a?(Hash)
         end
       end
     end

@@ -253,7 +253,29 @@ RSpec.describe Legion::LLM::Router::HealthTracker do
     end
   end
 
-  # ─── 15. Stale latency entries beyond window are ignored ─────────────────────
+  # ─── 15. quality_failure signal ──────────────────────────────────────────────
+
+  describe ':quality_failure signal' do
+    it 'increments failures at half weight' do
+      tracker.report(provider: :test, signal: :quality_failure, value: 1)
+      expect(tracker.circuit_state(:test)).to eq(:closed)
+      5.times { tracker.report(provider: :test, signal: :quality_failure, value: 1) }
+      expect(tracker.circuit_state(:test)).to eq(:open)
+    end
+
+    it 'does not trip circuit with fewer than threshold equivalent failures' do
+      4.times { tracker.report(provider: :test, signal: :quality_failure, value: 1) }
+      expect(tracker.circuit_state(:test)).to eq(:closed)
+    end
+
+    it 'combines with hard errors toward threshold' do
+      2.times { tracker.report(provider: :test, signal: :error, value: 1) }
+      2.times { tracker.report(provider: :test, signal: :quality_failure, value: 1) }
+      expect(tracker.circuit_state(:test)).to eq(:open)
+    end
+  end
+
+  # ─── 16. Stale latency entries beyond window are ignored ─────────────────────
 
   describe 'latency window pruning' do
     it 'ignores latency entries older than window_seconds' do

@@ -83,7 +83,7 @@ module Legion
               circuit[:state]     = :open
               circuit[:opened_at] = Time.now
             else
-              circuit[:failures] += 1
+              circuit[:failures] += 1.0
               if circuit[:failures] >= @failure_threshold
                 circuit[:state]     = :open
                 circuit[:opened_at] = Time.now
@@ -100,6 +100,23 @@ module Legion
             circuit[:opened_at] = nil
           end
 
+          register_handler(:quality_failure) do |payload|
+            provider = payload[:provider]
+            ensure_circuit(provider)
+            circuit = @circuits[provider]
+
+            if circuit_state(provider) == :half_open
+              circuit[:state]     = :open
+              circuit[:opened_at] = Time.now
+            else
+              circuit[:failures] += 0.5
+              if circuit[:failures] >= @failure_threshold
+                circuit[:state]     = :open
+                circuit[:opened_at] = Time.now
+              end
+            end
+          end
+
           register_handler(:latency) do |payload|
             provider = payload[:provider]
             @latency_window[provider] ||= []
@@ -108,7 +125,7 @@ module Legion
         end
 
         def ensure_circuit(provider)
-          @circuits[provider] ||= { state: :closed, failures: 0, opened_at: nil }
+          @circuits[provider] ||= { state: :closed, failures: 0.0, opened_at: nil }
         end
 
         def circuit_adjustment(provider)
