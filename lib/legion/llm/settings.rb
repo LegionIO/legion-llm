@@ -38,6 +38,11 @@ module Legion
             latency_penalty_threshold_ms: 5000,
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },
+          escalation:     {
+            enabled:           false,
+            max_attempts:      3,
+            quality_threshold: 50
+          },
           rules:          []
         }
       end

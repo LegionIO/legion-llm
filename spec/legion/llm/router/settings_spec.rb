@@ -123,6 +123,16 @@ RSpec.describe Legion::LLM::Settings do
     end
   end
 
+  describe 'escalation defaults' do
+    it 'includes escalation settings in routing defaults' do
+      routing = Legion::LLM::Settings.routing_defaults
+      expect(routing[:escalation]).to be_a(Hash)
+      expect(routing[:escalation][:enabled]).to be false
+      expect(routing[:escalation][:max_attempts]).to eq(3)
+      expect(routing[:escalation][:quality_threshold]).to eq(50)
+    end
+  end
+
   # ─── Integration: routing key wired into default ──────────────────────────────
 
   describe 'routing key in default hash' do
