@@ -160,17 +160,72 @@ RSpec.describe Legion::LLM::Router::Rule do
       end
     end
 
-    context 'timezone key is stored but not used for conversion' do
-      it 'does not raise when timezone is present' do
+    context 'timezone conversion' do
+      it 'evaluates hours in the specified timezone' do
+        # 2026-03-15 20:00 UTC = 2026-03-15 14:00 CST (America/Chicago is UTC-6 in winter, UTC-5 in DST)
+        utc_now = Time.utc(2026, 3, 15, 20, 0, 0)
+        # In Chicago this is 15:00 (CDT, UTC-5 in March after DST)
+        # Schedule allows 14:00-16:00 Chicago time — should match
+        schedule = {
+          'hours'    => ['14:00-16:00'],
+          'timezone' => 'America/Chicago'
+        }
+        rule = build_rule(schedule)
+        expect(rule.within_schedule?(utc_now)).to be true
+      end
+
+      it 'rejects hours that match UTC but not the specified timezone' do
+        # 2026-03-15 15:00 UTC = 2026-03-15 10:00 CDT
+        utc_now = Time.utc(2026, 3, 15, 15, 0, 0)
+        # Schedule allows 14:00-16:00 Chicago time — 10:00 CDT should NOT match
+        schedule = {
+          'hours'    => ['14:00-16:00'],
+          'timezone' => 'America/Chicago'
+        }
+        rule = build_rule(schedule)
+        expect(rule.within_schedule?(utc_now)).to be false
+      end
+
+      it 'evaluates days in the specified timezone' do
+        # 2026-03-16 02:00 UTC Monday = 2026-03-15 21:00 CDT Sunday in Chicago
+        utc_now = Time.utc(2026, 3, 16, 2, 0, 0)
+        schedule = {
+          'days'     => ['sunday'],
+          'timezone' => 'America/Chicago'
+        }
+        rule = build_rule(schedule)
+        expect(rule.within_schedule?(utc_now)).to be true
+      end
+
+      it 'rejects days that match UTC but not the specified timezone' do
+        # 2026-03-16 02:00 UTC Monday = 2026-03-15 Sunday in Chicago
+        utc_now = Time.utc(2026, 3, 16, 2, 0, 0)
+        schedule = {
+          'days'     => ['monday'],
+          'timezone' => 'America/Chicago'
+        }
+        rule = build_rule(schedule)
+        expect(rule.within_schedule?(utc_now)).to be false
+      end
+
+      it 'works without timezone (backward compatible)' do
         now = Time.now
         schedule = {
           'valid_from'  => (now - 3600).iso8601,
-          'valid_until' => (now + 3600).iso8601,
-          'timezone'    => 'America/Chicago'
+          'valid_until' => (now + 3600).iso8601
         }
         rule = build_rule(schedule)
-        expect { rule.within_schedule?(now) }.not_to raise_error
         expect(rule.within_schedule?(now)).to be true
+      end
+
+      it 'raises TZInfo::InvalidTimezoneIdentifier for an invalid timezone' do
+        utc_now = Time.utc(2026, 3, 15, 12, 0, 0)
+        schedule = {
+          'hours'    => ['11:00-13:00'],
+          'timezone' => 'Fake/Timezone'
+        }
+        rule = build_rule(schedule)
+        expect { rule.within_schedule?(utc_now) }.to raise_error(TZInfo::InvalidTimezoneIdentifier)
       end
     end
   end

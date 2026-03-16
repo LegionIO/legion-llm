@@ -28,4 +28,5 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'legion-logging'
   spec.add_dependency 'legion-settings'
   spec.add_dependency 'ruby_llm', '>= 1.0'
+  spec.add_dependency 'tzinfo', '>= 2.0'
 end

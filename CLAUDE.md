@@ -91,6 +91,7 @@ Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet of
 | Gem | Purpose |
 |-----|---------|
 | `ruby_llm` (>= 1.0) | Multi-provider LLM client |
+| `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 | `legion-logging` | Logging |
 | `legion-settings` | Configuration |
 
@@ -216,7 +217,7 @@ Rules can include a `schedule` hash for time-based activation:
 | `valid_until` | ISO 8601 | `"2026-03-29T23:59:59"` |
 | `hours` | Array of "HH:MM-HH:MM" | `["00:00-06:00", "18:00-23:59"]` |
 | `days` | Array of day names | `["monday", "tuesday"]` |
-| `timezone` | IANA timezone | `"America/Chicago"` (stored, not yet used for conversion) |
+| `timezone` | IANA timezone | `"America/Chicago"` (converts `now` via TZInfo before evaluating hours/days) |
 
 All fields optional. Omit any to mean "always active."
 
@@ -262,7 +263,7 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/router/health_tracker.rb` | HealthTracker: circuit breaker, latency window, pluggable signal handlers |
 | `lib/legion/llm/discovery/ollama.rb` | Ollama /api/tags discovery with TTL cache |
 | `lib/legion/llm/discovery/system.rb` | OS memory introspection (macOS + Linux) with TTL cache |
-| `lib/legion/llm/version.rb` | Version constant (0.2.2) |
+| `lib/legion/llm/version.rb` | Version constant (0.2.3) |
 | `lib/legion/llm/helpers/llm.rb` | Extension helper mixin: llm_chat (with compress:), llm_embed, llm_session |
 | `spec/legion/llm_spec.rb` | Tests: settings, lifecycle, providers, auto-config |
 | `spec/legion/llm/integration_spec.rb` | Tests: routing integration with chat() |
@@ -324,7 +325,7 @@ Direct config values take precedence over Vault-resolved values.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 220 examples, 0 failures
+bundle exec rspec    # 225 examples, 0 failures
 bundle exec rubocop  # 31 files, 0 offenses
 ```
 
@@ -339,7 +340,7 @@ bundle exec rubocop  # 31 files, 0 offenses
 
 - **Fleet tier (Phase 2)**: `lex-llm-fleet` extension — inference workers on Mac Studios / NVIDIA servers, dispatched via Legion::Transport AMQP queues
 - **Advanced signals (Phase 3)**: Budget tracking, lex-metering integration, GPU utilization monitoring
-- **Timezone support**: `within_schedule?` stores timezone but does not convert yet (needs TZInfo)
+- **Timezone support**: `within_schedule?` converts hours/days via TZInfo (v0.2.3); `valid_from`/`valid_until` timestamps with offsets handled by `Time.parse`
 
 ---
 

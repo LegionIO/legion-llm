@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.2.3]
+
+### Added
+- Timezone support for routing schedule windows via TZInfo
+- `within_schedule?` converts `now` to the schedule's IANA timezone before evaluating hours and days
+- `tzinfo` (>= 2.0) runtime dependency
+
 ## [0.2.2]
 
 ### Added

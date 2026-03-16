@@ -59,6 +59,7 @@ module Legion
           return true if @schedule.nil? || (@schedule.respond_to?(:empty?) && @schedule.empty?)
 
           sched = @schedule.transform_keys(&:to_s)
+          now = localize(now, sched['timezone'])
 
           return false if sched['valid_from']  && now < Time.parse(sched['valid_from'])
           return false if sched['valid_until'] && now > Time.parse(sched['valid_until'])
@@ -69,6 +70,13 @@ module Legion
         end
 
         private
+
+        def localize(time, timezone_name)
+          return time unless timezone_name
+
+          require 'tzinfo'
+          TZInfo::Timezone.get(timezone_name).to_local(time)
+        end
 
         def within_hours?(ranges, now)
           current = (now.hour * 60) + now.min

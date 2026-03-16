@@ -572,6 +572,7 @@ bundle exec rspec spec/legion/llm/router_spec.rb  # Router tests only
 | Gem | Purpose |
 |-----|---------|
 | `ruby_llm` (>= 1.0) | Multi-provider LLM client |
+| `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 | `legion-logging` | Logging |
 | `legion-settings` | Configuration |
 
