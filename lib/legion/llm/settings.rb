@@ -10,7 +10,16 @@ module Legion
           default_model:    nil,
           default_provider: nil,
           providers:        providers,
-          routing:          routing_defaults
+          routing:          routing_defaults,
+          discovery:        discovery_defaults
+        }
+      end
+
+      def self.discovery_defaults
+        {
+          enabled:         true,
+          refresh_seconds: 60,
+          memory_floor_mb: 2048
         }
       end
 
