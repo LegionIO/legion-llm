@@ -35,6 +35,17 @@ module Legion
         @store.key?(key.to_sym)
       end
 
+      def dig(*keys)
+        keys = keys.map(&:to_sym)
+        result = @store
+        keys.each do |k|
+          return nil unless result.is_a?(Hash)
+
+          result = result[k]
+        end
+        result
+      end
+
       def merge_settings(key, defaults)
         current = @store[key.to_sym] || {}
         @store[key.to_sym] = defaults.merge(current)

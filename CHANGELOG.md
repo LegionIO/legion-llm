@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.3.2] - 2026-03-16
+
+### Added
+- `Legion::LLM::Embeddings` module — structured wrapper around RubyLLM.embed with `generate`, `generate_batch`, `default_model`
+- `Legion::LLM::ShadowEval` module — parallel evaluation on cheaper model with configurable sample rate for quality comparison
+- `Legion::LLM::StructuredOutput` module — JSON schema enforcement with native `response_format` for capable models and prompt-based fallback with retry logic
+- `embed_batch` and `structured` convenience methods on `Legion::LLM`
+- `Settings.dig` support in spec_helper for nested settings access in tests
+
 ## [0.3.1] - 2026-03-16
 
 ### Removed

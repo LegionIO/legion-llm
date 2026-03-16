@@ -74,16 +74,30 @@ module Legion
         end
       end
 
-      # Generate embeddings
+      # Generate embeddings via Embeddings module
       # @param text [String, Array<String>] text to embed
       # @param model [String] embedding model ID
-      # @return [RubyLLM::Embedding]
-      def embed(text, model: nil)
-        if model
-          RubyLLM.embed(text, model: model)
-        else
-          RubyLLM.embed(text)
-        end
+      # @return [Hash] { vector:, model:, dimensions:, tokens: }
+      def embed(text, **)
+        require 'legion/llm/embeddings'
+        Embeddings.generate(text: text, **)
+      end
+
+      # Batch embed multiple texts
+      # @param texts [Array<String>] texts to embed
+      # @return [Array<Hash>]
+      def embed_batch(texts, **)
+        require 'legion/llm/embeddings'
+        Embeddings.generate_batch(texts: texts, **)
+      end
+
+      # Generate structured JSON output from LLM
+      # @param messages [Array<Hash>] conversation messages
+      # @param schema [Hash] JSON schema to enforce
+      # @return [Hash] { data:, raw:, model:, valid: }
+      def structured(messages:, schema:, **)
+        require 'legion/llm/structured_output'
+        StructuredOutput.generate(messages: messages, schema: schema, **)
       end
 
       # Create a configured agent instance

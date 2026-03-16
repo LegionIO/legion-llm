@@ -38,6 +38,9 @@ Legion::LLM (lib/legion/llm.rb)
 │   └── System       # Queries OS memory: macOS (vm_stat/sysctl), Linux (/proc/meminfo)
 ├── QualityChecker   # Response quality heuristics (empty, too_short, repetition, json_parse, json_expected) + pluggable callable
 ├── EscalationHistory # Mixin for response objects: escalation_history, escalated?, final_resolution, escalation_chain
+├── Embeddings       # Structured embedding wrapper: generate, generate_batch, default_model
+├── ShadowEval       # Parallel shadow evaluation on cheaper models with sampling
+├── StructuredOutput # JSON schema enforcement with native response_format and prompt fallback
 ├── Router           # Dynamic weighted routing engine
 │   ├── Resolution   # Value object: tier, provider, model, rule name, metadata, compress_level
 │   ├── Rule         # Routing rule: intent matching, schedule windows, constraints
@@ -278,7 +281,10 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/router/health_tracker.rb` | HealthTracker: circuit breaker, latency window, pluggable signal handlers |
 | `lib/legion/llm/discovery/ollama.rb` | Ollama /api/tags discovery with TTL cache |
 | `lib/legion/llm/discovery/system.rb` | OS memory introspection (macOS + Linux) with TTL cache |
-| `lib/legion/llm/version.rb` | Version constant (0.3.0) |
+| `lib/legion/llm/embeddings.rb` | Embeddings module: generate, generate_batch, default_model |
+| `lib/legion/llm/shadow_eval.rb` | Shadow evaluation: enabled?, should_sample?, evaluate, compare |
+| `lib/legion/llm/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
+| `lib/legion/llm/version.rb` | Version constant (0.3.2) |
 | `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
 | `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin: `escalation_history`, `escalated?`, `final_resolution`, `escalation_chain` |
 | `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
@@ -306,6 +312,9 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/router/escalation_chain_spec.rb` | EscalationChain tests |
 | `spec/legion/llm/router/resolve_chain_spec.rb` | Router.resolve_chain tests |
 | `spec/legion/llm/transport/escalation_spec.rb` | Transport tests |
+| `spec/legion/llm/embeddings_spec.rb` | Embeddings tests |
+| `spec/legion/llm/shadow_eval_spec.rb` | ShadowEval tests |
+| `spec/legion/llm/structured_output_spec.rb` | StructuredOutput tests |
 | `spec/spec_helper.rb` | Stubbed Legion::Logging and Legion::Settings for testing |
 
 ## Extension Integration
@@ -365,7 +374,7 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 269 examples, 0 failures
+bundle exec rspec    # 287 examples, 0 failures
 bundle exec rubocop  # 31 files, 0 offenses
 ```
 
