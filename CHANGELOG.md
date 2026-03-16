@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.2.2]
+
+### Added
+- `Legion::LLM::Discovery::Ollama` module — queries Ollama `/api/tags` for pulled models with TTL cache
+- `Legion::LLM::Discovery::System` module — queries OS memory (macOS `vm_stat`/`sysctl`, Linux `/proc/meminfo`) with TTL cache
+- Router step 4.5: rejects Ollama rules where model is not pulled or exceeds available memory
+- Discovery settings: `enabled`, `refresh_seconds`, `memory_floor_mb` under `Legion::Settings[:llm][:discovery]`
+- Startup discovery: logs available Ollama models and system memory when Ollama provider is enabled
+
 ### Changed
 - Added SimpleCov for test coverage reporting
 

@@ -27,9 +27,12 @@ Legion::LLM.start
 
 ```
 Legion::LLM (lib/legion/llm.rb)
-├── Settings         # Default config, provider settings, routing defaults
+├── Settings         # Default config, provider settings, routing defaults, discovery defaults
 ├── Providers        # Provider configuration and Vault credential resolution
 ├── Compressor       # Deterministic prompt compression (3 levels, code-block-aware)
+├── Discovery        # Runtime introspection for local model availability and system resources
+│   ├── Ollama       # Queries Ollama /api/tags for pulled models (TTL-cached)
+│   └── System       # Queries OS memory: macOS (vm_stat/sysctl), Linux (/proc/meminfo)
 ├── Router           # Dynamic weighted routing engine
 │   ├── Resolution   # Value object: tier, provider, model, rule name, metadata, compress_level
 │   ├── Rule         # Routing rule: intent matching, schedule windows, constraints
@@ -66,7 +69,8 @@ Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet of
    a. Intent match (all `when` conditions must match)
    b. Schedule window (valid_from/valid_until, hours, days)
    c. Constraints (e.g., never_cloud strips cloud-tier rules)
-   d. Tier availability (is Ollama running? is Transport loaded?)
+   d. Discovery (Ollama model pulled? Model fits in available RAM?)
+   e. Tier availability (is Ollama running? is Transport loaded?)
 4. Score remaining candidates:
    effective_priority = rule.priority
                       + health_tracker.adjustment(provider)
@@ -137,6 +141,7 @@ Settings read from `Legion::Settings[:llm]`:
 | `default_provider` | Symbol | `nil` | Default provider (auto-detected if nil) |
 | `providers` | Hash | See below | Per-provider configuration |
 | `routing` | Hash | See below | Dynamic routing engine configuration |
+| `discovery` | Hash | See below | Ollama model discovery and system memory settings |
 
 ### Provider Settings
 
@@ -215,6 +220,18 @@ Rules can include a `schedule` hash for time-based activation:
 
 All fields optional. Omit any to mean "always active."
 
+### Discovery Settings
+
+Nested under `Legion::Settings[:llm][:discovery]`:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | Boolean | `true` | Master switch for discovery checks |
+| `refresh_seconds` | Integer | `60` | TTL for both discovery caches |
+| `memory_floor_mb` | Integer | `2048` | Minimum free MB to reserve for OS |
+
+Discovery is lazy TTL-cached: data refreshes on the next `Router.resolve` call after TTL expires. At startup, caches are warmed if Ollama is enabled. When disabled, all discovery checks are bypassed (permissive).
+
 ### HealthTracker
 
 In-memory signal consumer with pluggable handlers. Adjusts effective priorities at runtime.
@@ -243,7 +260,9 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/router/resolution.rb` | Value object: tier, provider, model, rule, metadata, compress_level |
 | `lib/legion/llm/router/rule.rb` | Rule class: from_hash, matches_intent?, within_schedule?, to_resolution |
 | `lib/legion/llm/router/health_tracker.rb` | HealthTracker: circuit breaker, latency window, pluggable signal handlers |
-| `lib/legion/llm/version.rb` | Version constant (0.2.1) |
+| `lib/legion/llm/discovery/ollama.rb` | Ollama /api/tags discovery with TTL cache |
+| `lib/legion/llm/discovery/system.rb` | OS memory introspection (macOS + Linux) with TTL cache |
+| `lib/legion/llm/version.rb` | Version constant (0.2.2) |
 | `lib/legion/llm/helpers/llm.rb` | Extension helper mixin: llm_chat (with compress:), llm_embed, llm_session |
 | `spec/legion/llm_spec.rb` | Tests: settings, lifecycle, providers, auto-config |
 | `spec/legion/llm/integration_spec.rb` | Tests: routing integration with chat() |
@@ -255,6 +274,11 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/router/settings_spec.rb` | Tests: routing defaults in settings |
 | `spec/legion/llm/compressor_spec.rb` | Tests: compression levels, code-block protection, determinism |
 | `spec/legion/llm/helpers/llm_spec.rb` | Tests: helper mixin with compress integration |
+| `spec/legion/llm/discovery/ollama_spec.rb` | Tests: Ollama model discovery, TTL, error handling |
+| `spec/legion/llm/discovery/system_spec.rb` | Tests: System memory introspection |
+| `spec/legion/llm/discovery/router_integration_spec.rb` | Tests: Router discovery filtering |
+| `spec/legion/llm/discovery/startup_spec.rb` | Tests: Startup discovery warmup |
+| `spec/legion/llm/discovery/settings_spec.rb` | Tests: Discovery settings defaults |
 | `spec/spec_helper.rb` | Stubbed Legion::Logging and Legion::Settings for testing |
 
 ## Extension Integration
@@ -300,14 +324,16 @@ Direct config values take precedence over Vault-resolved values.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 153 examples, 0 failures
-bundle exec rubocop  # 21 files, 0 offenses
+bundle exec rspec    # 220 examples, 0 failures
+bundle exec rubocop  # 31 files, 0 offenses
 ```
 
 ## Design Documents
 
 - `docs/plans/2026-03-14-llm-dynamic-routing-design.md` — Full design (approved)
 - `docs/plans/2026-03-14-llm-dynamic-routing-implementation.md` — Implementation plan
+- `docs/plans/2026-03-15-ollama-discovery-design.md` — Ollama discovery design (approved)
+- `docs/plans/2026-03-15-ollama-discovery-implementation.md` — Discovery implementation plan
 
 ## Future (Not Yet Built)
 

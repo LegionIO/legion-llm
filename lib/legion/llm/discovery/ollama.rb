@@ -31,7 +31,7 @@ module Legion
               parsed = ::JSON.parse(response.body)
               @models = parsed['models'] || []
             else
-              @models = [] unless @models
+              @models ||= []
             end
           rescue StandardError
             @models ||= []

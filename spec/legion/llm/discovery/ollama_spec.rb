@@ -11,7 +11,7 @@ RSpec.describe Legion::LLM::Discovery::Ollama do
       'models' => [
         { 'name' => 'llama3.1:8b',       'size' => 4_700_000_000, 'digest' => 'sha256:abc' },
         { 'name' => 'qwen2.5:32b',       'size' => 20_000_000_000, 'digest' => 'sha256:def' },
-        { 'name' => 'nomic-embed-text',   'size' => 274_000_000,   'digest' => 'sha256:ghi' }
+        { 'name' => 'nomic-embed-text', 'size' => 274_000_000, 'digest' => 'sha256:ghi' }
       ]
     }
   end
