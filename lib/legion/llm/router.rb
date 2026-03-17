@@ -4,6 +4,7 @@ require_relative 'router/resolution'
 require_relative 'router/rule'
 require_relative 'router/health_tracker'
 require_relative 'router/escalation_chain'
+require_relative 'router/gateway_interceptor'
 require_relative 'discovery/ollama'
 require_relative 'discovery/system'
 

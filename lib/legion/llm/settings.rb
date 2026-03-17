@@ -11,7 +11,8 @@ module Legion
           default_provider: nil,
           providers:        providers,
           routing:          routing_defaults,
-          discovery:        discovery_defaults
+          discovery:        discovery_defaults,
+          gateway:          gateway_defaults
         }
       end
 
@@ -44,6 +45,18 @@ module Legion
             quality_threshold: 50
           },
           rules:          []
+        }
+      end
+
+      def self.gateway_defaults
+        {
+          enabled:            false,
+          endpoint:           nil,
+          api_key:            nil,
+          timeout_seconds:    30,
+          model_policy:       {},
+          headers:            {},
+          fallback_to_direct: true
         }
       end
 

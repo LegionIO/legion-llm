@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.3.3] - 2026-03-17
+
+### Added
+- `Router::GatewayInterceptor`: optional gateway routing mode for cloud-tier LLM calls
+- Gateway settings: endpoint, API key, model policy per risk tier, fallback_to_direct
+- Identity header builder: X-Agent-Id, X-Tenant-Id, X-AIRB-Project-Id, X-Risk-Tier
+- Model selection policy: fnmatch-based allowlist per risk tier
+- Wired gateway interceptor into `chat_single` for automatic cloud-tier interception
+
 ## [0.3.2] - 2026-03-16
 
 ### Added

@@ -114,6 +114,7 @@ module Legion
         if (intent || tier) && Router.routing_enabled?
           resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
           if resolution
+            resolution = Router::GatewayInterceptor.intercept(resolution, context: kwargs.fetch(:context, {}))
             model    = resolution.model
             provider = resolution.provider
           end
