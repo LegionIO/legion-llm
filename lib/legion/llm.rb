@@ -19,6 +19,9 @@ module Legion
       def start
         Legion::Logging.debug 'Legion::LLM is running start'
 
+        require 'legion/llm/claude_config_loader'
+        ClaudeConfigLoader.load
+
         configure_providers
         run_discovery
         set_defaults
