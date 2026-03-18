@@ -61,8 +61,7 @@ Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet of
 │          Zero network overhead, no Transport              │
 │                                                          │
 │  Tier 2: FLEET  → Ollama on Mac Studios / GPU servers    │
-│          Via Legion::Transport (AMQP) when local can't   │
-│          serve the model (Phase 2, not yet built)        │
+│          Via lex-llm-gateway RPC over AMQP               │
 │                                                          │
 │  Tier 3: CLOUD  → Bedrock / Anthropic / OpenAI / Gemini │
 │          Existing provider API calls                     │
@@ -87,6 +86,19 @@ Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet of
 5. Return Resolution for highest-scoring candidate
 ```
 
+### Gateway Integration (lex-llm-gateway)
+
+When `lex-llm-gateway` is installed, `chat`, `embed`, and `structured` automatically delegate to the gateway for metering and fleet dispatch. The gateway is loaded via `begin/rescue LoadError` — optional, not a hard dependency.
+
+```
+Caller → Legion::LLM.chat(message:)
+  └─ gateway loaded? → Gateway::Runners::Inference.chat (meters, fleet dispatch)
+       └─ Legion::LLM.chat_direct (routing, escalation, RubyLLM)
+  └─ no gateway? → Legion::LLM.chat_direct (same path, no metering)
+```
+
+The `_direct` variants (`chat_direct`, `embed_direct`, `structured_direct`) bypass gateway delegation. The gateway's `call_llm` uses these to avoid infinite recursion.
+
 ### Integration with LegionIO
 
 - **Service**: `setup_llm` called between data and supervision in startup sequence
@@ -94,6 +106,7 @@ Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet of
 - **Helpers**: `Legion::Extensions::Helpers::LLM` auto-loaded when gem is present
 - **Readiness**: Registers as `:llm` in `Legion::Readiness`
 - **Shutdown**: `Legion::LLM.shutdown` called during service shutdown
+- **Gateway**: `lex-llm-gateway` auto-loaded if present; provides metering and fleet RPC
 
 ## Dependencies
 
@@ -103,6 +116,7 @@ Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet of
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 | `legion-logging` | Logging |
 | `legion-settings` | Configuration |
+| `lex-llm-gateway` (optional) | Metering over RMQ, fleet RPC dispatch, disk spool — auto-loaded if present |
 
 ## Key Interfaces
 
@@ -113,11 +127,15 @@ Legion::LLM.shutdown                 # Cleanup
 Legion::LLM.started?                 # -> Boolean
 Legion::LLM.settings                 # -> Hash
 
-# Chat (with optional routing)
-Legion::LLM.chat(model:, provider:)                         # Direct (no routing)
+# Chat (delegates to gateway when loaded, otherwise direct)
+Legion::LLM.chat(message: 'hello', model:, provider:)       # Gateway-metered if available
 Legion::LLM.chat(intent: { privacy: :strict })              # Intent-based routing
 Legion::LLM.chat(tier: :cloud, model: 'claude-sonnet-4-6')  # Explicit tier override
-Legion::LLM.embed(text, model:)                             # Embeddings (no routing)
+Legion::LLM.chat_direct(message:, model:, provider:)        # Bypass gateway (no metering)
+Legion::LLM.embed(text, model:)                             # Embeddings (gateway-metered)
+Legion::LLM.embed_direct(text, model:)                      # Bypass gateway
+Legion::LLM.structured(messages:, schema:)                  # Structured (gateway-metered)
+Legion::LLM.structured_direct(messages:, schema:)           # Bypass gateway
 Legion::LLM.agent(AgentClass)                               # Agent instance
 
 # Compressor
@@ -284,7 +302,7 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/embeddings.rb` | Embeddings module: generate, generate_batch, default_model |
 | `lib/legion/llm/shadow_eval.rb` | Shadow evaluation: enabled?, should_sample?, evaluate, compare |
 | `lib/legion/llm/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
-| `lib/legion/llm/version.rb` | Version constant (0.3.3) |
+| `lib/legion/llm/version.rb` | Version constant (0.3.5) |
 | `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
 | `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin: `escalation_history`, `escalated?`, `final_resolution`, `escalation_chain` |
 | `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
@@ -315,6 +333,7 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/embeddings_spec.rb` | Embeddings tests |
 | `spec/legion/llm/shadow_eval_spec.rb` | ShadowEval tests |
 | `spec/legion/llm/structured_output_spec.rb` | StructuredOutput tests |
+| `spec/legion/llm/gateway_integration_spec.rb` | Tests: gateway delegation and _direct bypass |
 | `spec/spec_helper.rb` | Stubbed Legion::Logging and Legion::Settings for testing |
 
 ## Extension Integration
@@ -374,8 +393,8 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 287 examples, 0 failures
-bundle exec rubocop  # 31 files, 0 offenses
+bundle exec rspec    # 304 examples, 0 failures
+bundle exec rubocop  # 52 files, 0 offenses
 ```
 
 ## Design Documents
@@ -389,8 +408,8 @@ bundle exec rubocop  # 31 files, 0 offenses
 
 ## Future (Not Yet Built)
 
-- **Fleet tier (Phase 2)**: `lex-llm-fleet` extension — inference workers on Mac Studios / NVIDIA servers, dispatched via Legion::Transport AMQP queues
-- **Advanced signals (Phase 3)**: Budget tracking, lex-metering integration, GPU utilization monitoring
+- **Advanced signals**: Budget tracking, GPU utilization monitoring, per-tenant spend limits
+- **Fleet auto-scaling**: Dynamic worker pool sizing based on queue depth and latency
 
 ---
 
