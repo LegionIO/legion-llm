@@ -284,7 +284,7 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/embeddings.rb` | Embeddings module: generate, generate_batch, default_model |
 | `lib/legion/llm/shadow_eval.rb` | Shadow evaluation: enabled?, should_sample?, evaluate, compare |
 | `lib/legion/llm/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
-| `lib/legion/llm/version.rb` | Version constant (0.3.2) |
+| `lib/legion/llm/version.rb` | Version constant (0.3.3) |
 | `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
 | `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin: `escalation_history`, `escalated?`, `final_resolution`, `escalation_chain` |
 | `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
