@@ -66,12 +66,10 @@ RSpec.describe 'Legion::LLM.chat router integration' do
     end
 
     it 'ignores intent and falls through to defaults without routing the call' do
-      # With routing disabled, intent is ignored; RubyLLM.chat receives no model/provider (defaults nil)
-      chat_double = double('chat')
-      allow(RubyLLM).to receive(:chat).and_return(chat_double)
+      # With routing disabled, intent is ignored and Router.resolve is never called
+      allow(RubyLLM).to receive(:chat).and_return(double('chat'))
+      expect(Legion::LLM::Router).not_to receive(:resolve)
       Legion::LLM.chat(intent: { capability: :basic })
-      # Verify Router was NOT used to override anything (call went through with no model/provider)
-      expect(RubyLLM).to have_received(:chat).with(no_args)
     end
   end
 

@@ -55,7 +55,14 @@ RSpec.describe Legion::LLM do
   end
 
   describe 'auto_configure_defaults' do
-    before { allow(described_class).to receive(:ping_provider) }
+    before do
+      allow(described_class).to receive(:ping_provider)
+      allow(described_class).to receive(:ollama_running?).and_return(false)
+      allow(Legion::LLM::ClaudeConfigLoader).to receive(:load)
+      # Clear any env-var-seeded defaults so auto_configure_defaults actually runs
+      Legion::Settings[:llm][:default_model]    = nil
+      Legion::Settings[:llm][:default_provider] = nil
+    end
 
     it 'picks bedrock when bedrock is the first enabled provider' do
       Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
@@ -64,6 +71,7 @@ RSpec.describe Legion::LLM do
     end
 
     it 'picks anthropic when only anthropic is enabled' do
+      Legion::Settings[:llm][:providers][:bedrock][:bearer_token] = nil
       Legion::Settings[:llm][:providers][:anthropic][:enabled] = true
       described_class.start
       expect(Legion::Settings[:llm][:default_provider]).to eq(:anthropic)

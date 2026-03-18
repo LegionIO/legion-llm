@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.3.4] - 2026-03-18
+
+### Added
+- Auto-configure LLM providers from environment variables (`AWS_BEARER_TOKEN_BEDROCK`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `GEMINI_API_KEY`)
+- `ANTHROPIC_MODEL` env var sets default model for Anthropic and Bedrock providers
+- Import Claude CLI config from `~/.claude/settings.json` and `~/.claude.json`
+- Auto-detect Ollama via local port probe (no env var needed)
+- Auto-enable providers when credentials are found in environment
+
 ## [0.3.3] - 2026-03-17
 
 ### Added

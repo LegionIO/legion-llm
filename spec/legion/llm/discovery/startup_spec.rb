@@ -40,6 +40,7 @@ RSpec.describe 'LLM startup discovery' do
   context 'when Ollama provider is disabled' do
     before do
       Legion::Settings[:llm][:providers][:ollama][:enabled] = false
+      allow(Legion::LLM).to receive(:ollama_running?).and_return(false)
     end
 
     it 'does not refresh discovery caches' do

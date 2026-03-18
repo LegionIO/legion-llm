@@ -38,10 +38,10 @@ module Legion
           Legion::Logging.debug 'Imported Anthropic API key from Claude CLI config'
         end
 
-        if config[:openaiApiKey] && providers.dig(:openai, :api_key).nil?
-          providers[:openai][:api_key] = config[:openaiApiKey]
-          Legion::Logging.debug 'Imported OpenAI API key from Claude CLI config'
-        end
+        return unless config[:openaiApiKey] && providers.dig(:openai, :api_key).nil?
+
+        providers[:openai][:api_key] = config[:openaiApiKey]
+        Legion::Logging.debug 'Imported OpenAI API key from Claude CLI config'
       end
 
       def apply_model_preference(config)
