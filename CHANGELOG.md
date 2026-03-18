@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.3.5] - 2026-03-18
+
+### Added
+- Gateway integration: `chat`, `embed`, `structured` delegate to `lex-llm-gateway` when loaded for automatic metering and fleet dispatch
+- `chat_direct`, `embed_direct`, `structured_direct` methods bypass gateway (used by gateway runners to avoid recursion)
+- Gateway integration spec (8 examples)
+
 ## [0.3.4] - 2026-03-18
 
 ### Added

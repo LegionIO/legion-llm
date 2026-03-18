@@ -9,6 +9,12 @@ require 'legion/llm/compressor'
 require 'legion/llm/quality_checker'
 require 'legion/llm/escalation_history'
 
+begin
+  require 'legion/extensions/llm/gateway'
+rescue LoadError
+  nil
+end
+
 module Legion
   module LLM
     class EscalationExhausted < StandardError; end
@@ -50,20 +56,24 @@ module Legion
         end
       end
 
-      # Create a new chat session
-      # @param model [String] model ID (e.g., "us.anthropic.claude-sonnet-4-6-v1")
-      # @param provider [Symbol] provider slug (e.g., :bedrock, :anthropic)
-      # @param intent [Hash, nil] routing intent (capability, privacy, etc.)
-      # @param tier [Symbol, nil] explicit tier override — skips rule matching
-      # @param escalate [Boolean, nil] enable escalation retry loop (nil = auto from settings)
-      # @param max_escalations [Integer, nil] max escalation attempts override
-      # @param quality_check [Proc, nil] custom quality check callable
-      # @param message [String, nil] message to send (required for escalation)
-      # @param kwargs [Hash] additional options passed to RubyLLM.chat
-      # @return [RubyLLM::Chat]
-      # TODO: fleet tier dispatch via Transport (Phase 3)
+      # Create a new chat session — delegates to lex-llm-gateway when available
+      # for automatic metering and fleet dispatch
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
                max_escalations: nil, quality_check: nil, message: nil, **)
+        if gateway_loaded? && message
+          return gateway_chat(model: model, provider: provider, intent: intent,
+                              tier: tier, message: message, escalate: escalate,
+                              max_escalations: max_escalations, quality_check: quality_check, **)
+        end
+
+        chat_direct(model: model, provider: provider, intent: intent, tier: tier,
+                    escalate: escalate, max_escalations: max_escalations,
+                    quality_check: quality_check, message: message, **)
+      end
+
+      # Direct chat bypassing gateway — used by gateway runners to avoid recursion
+      def chat_direct(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
+                      max_escalations: nil, quality_check: nil, message: nil, **)
         escalate = escalation_enabled? if escalate.nil?
 
         if escalate && message
@@ -77,11 +87,15 @@ module Legion
         end
       end
 
-      # Generate embeddings via Embeddings module
-      # @param text [String, Array<String>] text to embed
-      # @param model [String] embedding model ID
-      # @return [Hash] { vector:, model:, dimensions:, tokens: }
+      # Generate embeddings — delegates to gateway when available
       def embed(text, **)
+        return Legion::Extensions::LLM::Gateway::Runners::Inference.embed(text: text, **) if gateway_loaded?
+
+        embed_direct(text, **)
+      end
+
+      # Direct embed bypassing gateway
+      def embed_direct(text, **)
         require 'legion/llm/embeddings'
         Embeddings.generate(text: text, **)
       end
@@ -94,11 +108,19 @@ module Legion
         Embeddings.generate_batch(texts: texts, **)
       end
 
-      # Generate structured JSON output from LLM
-      # @param messages [Array<Hash>] conversation messages
-      # @param schema [Hash] JSON schema to enforce
-      # @return [Hash] { data:, raw:, model:, valid: }
+      # Generate structured JSON output — delegates to gateway when available
       def structured(messages:, schema:, **)
+        if gateway_loaded?
+          return Legion::Extensions::LLM::Gateway::Runners::Inference.structured(
+            messages: messages, schema: schema, **
+          )
+        end
+
+        structured_direct(messages: messages, schema: schema, **)
+      end
+
+      # Direct structured bypassing gateway
+      def structured_direct(messages:, schema:, **)
         require 'legion/llm/structured_output'
         StructuredOutput.generate(messages: messages, schema: schema, **)
       end
@@ -112,6 +134,14 @@ module Legion
       end
 
       private
+
+      def gateway_loaded?
+        defined?(Legion::Extensions::LLM::Gateway::Runners::Inference)
+      end
+
+      def gateway_chat(**)
+        Legion::Extensions::LLM::Gateway::Runners::Inference.chat(**)
+      end
 
       def chat_single(model:, provider:, intent:, tier:, **kwargs)
         if (intent || tier) && Router.routing_enabled?
