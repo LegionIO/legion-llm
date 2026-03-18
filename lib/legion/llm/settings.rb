@@ -4,10 +4,11 @@ module Legion
   module LLM
     module Settings
       def self.default
+        model_override = ENV.fetch('ANTHROPIC_MODEL', nil)
         {
           enabled:          true,
           connected:        false,
-          default_model:    nil,
+          default_model:    model_override,
           default_provider: nil,
           providers:        providers,
           routing:          routing_defaults,
@@ -68,23 +69,23 @@ module Legion
             api_key:       nil,
             secret_key:    nil,
             session_token: nil,
-            bearer_token:  nil,
+            bearer_token:  'env://AWS_BEARER_TOKEN_BEDROCK',
             region:        'us-east-2'
           },
           anthropic: {
             enabled:       false,
             default_model: 'claude-sonnet-4-6',
-            api_key:       nil
+            api_key:       'env://ANTHROPIC_API_KEY'
           },
           openai:    {
             enabled:       false,
             default_model: 'gpt-4o',
-            api_key:       nil
+            api_key:       ['env://OPENAI_API_KEY', 'env://CODEX_API_KEY']
           },
           gemini:    {
             enabled:       false,
             default_model: 'gemini-2.0-flash',
-            api_key:       nil
+            api_key:       'env://GEMINI_API_KEY'
           },
           ollama:    {
             enabled:       false,

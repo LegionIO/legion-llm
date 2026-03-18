@@ -4,11 +4,43 @@ module Legion
   module LLM
     module Providers
       def configure_providers
+        auto_enable_from_resolved_credentials
         settings[:providers].each do |provider, config|
           next unless config[:enabled]
 
           apply_provider_config(provider, config)
         end
+      end
+
+      def auto_enable_from_resolved_credentials
+        settings[:providers].each do |provider, config|
+          next if config[:enabled]
+
+          has_creds = case provider
+                      when :bedrock
+                        config[:bearer_token] || (config[:api_key] && config[:secret_key])
+                      when :ollama
+                        ollama_running?(config)
+                      else
+                        config[:api_key]
+                      end
+          next unless has_creds
+
+          config[:enabled] = true
+          Legion::Logging.info "Auto-enabled #{provider} provider (credentials found)"
+        end
+      end
+
+      def ollama_running?(config)
+        require 'socket'
+        url = config[:base_url] || 'http://localhost:11434'
+        host_part = url.gsub(%r{^https?://}, '').split(':')
+        addr = host_part[0]
+        port = (host_part[1] || '11434').to_i
+        Socket.tcp(addr, port, connect_timeout: 1).close
+        true
+      rescue StandardError
+        false
       end
 
       def apply_provider_config(provider, config)
