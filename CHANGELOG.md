@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.3.7] - 2026-03-19
+
+### Added
+- `ResponseCache` module for async response delivery via memcached with spool overflow at 8MB
+- `DaemonClient` module for HTTP routing to LegionIO daemon with health caching (30s TTL)
+- `Legion::LLM.ask` one-shot method: daemon-first routing with direct RubyLLM fallback
+- `DaemonDeniedError` and `DaemonRateLimitedError` error classes
+- Daemon settings: `daemon.url` and `daemon.enabled` in defaults
+- HTTP status code contract: 200 (cached), 201 (sync), 202 (async poll), 403, 429, 503
+
 ## [0.3.6] - 2026-03-18
 
 ### Added

@@ -8,6 +8,8 @@ require 'legion/llm/router'
 require 'legion/llm/compressor'
 require 'legion/llm/quality_checker'
 require 'legion/llm/escalation_history'
+require_relative 'llm/response_cache'
+require_relative 'llm/daemon_client'
 
 begin
   require 'legion/extensions/llm/gateway'
@@ -18,6 +20,8 @@ end
 module Legion
   module LLM
     class EscalationExhausted < StandardError; end
+    class DaemonDeniedError < StandardError; end
+    class DaemonRateLimitedError < StandardError; end
 
     class << self
       include Legion::LLM::Providers
@@ -69,6 +73,19 @@ module Legion
         chat_direct(model: model, provider: provider, intent: intent, tier: tier,
                     escalate: escalate, max_escalations: max_escalations,
                     quality_check: quality_check, message: message, **)
+      end
+
+      # Send a single message — daemon-first, falls through to direct on unavailability.
+      def ask(message:, model: nil, provider: nil, intent: nil, tier: nil,
+              context: {}, identity: nil, &)
+        if DaemonClient.available?
+          result = daemon_ask(message: message, model: model, provider: provider,
+                              context: context, tier: tier, identity: identity)
+          return result if result
+        end
+
+        ask_direct(message: message, model: model, provider: provider,
+                   intent: intent, tier: tier, &)
       end
 
       # Direct chat bypassing gateway — used by gateway runners to avoid recursion
@@ -134,6 +151,41 @@ module Legion
       end
 
       private
+
+      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
+        result = DaemonClient.chat(
+          message: message, model: model, provider: provider,
+          context: context, tier_preference: tier || :auto
+        )
+
+        case result[:status]
+        when :immediate, :created
+          result[:body]
+        when :accepted
+          ResponseCache.poll(result[:request_id])
+        when :denied
+          raise DaemonDeniedError, result.dig(:error, :message) || 'Access denied'
+        when :rate_limited
+          raise DaemonRateLimitedError, "Rate limited. Retry after #{result[:retry_after]}s"
+        end
+        # Returns nil for :unavailable/:error — caller falls through to direct
+      end
+
+      def ask_direct(message:, model: nil, provider: nil, intent: nil, tier: nil, &block)
+        session = chat_direct(model: model, provider: provider, intent: intent, tier: tier)
+        response = block ? session.ask(message, &block) : session.ask(message)
+
+        {
+          status:   :done,
+          response: response.content,
+          meta:     {
+            tier:       :direct,
+            model:      session.model.to_s,
+            tokens_in:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
+            tokens_out: response.respond_to?(:output_tokens) ? response.output_tokens : nil
+          }
+        }
+      end
 
       def gateway_loaded?
         defined?(Legion::Extensions::LLM::Gateway::Runners::Inference)

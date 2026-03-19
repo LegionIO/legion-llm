@@ -13,7 +13,15 @@ module Legion
           providers:        providers,
           routing:          routing_defaults,
           discovery:        discovery_defaults,
-          gateway:          gateway_defaults
+          gateway:          gateway_defaults,
+          daemon:           daemon_defaults
+        }
+      end
+
+      def self.daemon_defaults
+        {
+          url:     nil,
+          enabled: false
         }
       end
 
