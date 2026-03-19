@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.3.6] - 2026-03-18
+
+### Added
+- Add `lex-claude`, `lex-gemini`, `lex-openai` as runtime dependencies (AI provider extensions)
+
 ## [0.3.5] - 2026-03-18
 
 ### Added
