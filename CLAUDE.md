@@ -400,12 +400,10 @@ bundle exec rubocop  # 52 files, 0 offenses
 
 ## Design Documents
 
-- `docs/plans/2026-03-14-llm-dynamic-routing-design.md` — Full design (approved)
-- `docs/plans/2026-03-14-llm-dynamic-routing-implementation.md` — Implementation plan
-- `docs/plans/2026-03-15-ollama-discovery-design.md` — Ollama discovery design (approved)
-- `docs/plans/2026-03-15-ollama-discovery-implementation.md` — Discovery implementation plan
-- `docs/plans/2026-03-16-llm-escalation-design.md` — Model escalation design (approved)
-- `docs/plans/2026-03-16-llm-escalation-implementation.md` — Escalation implementation plan
+- `docs/work/completed/2026-03-14-llm-dynamic-routing-design.md` — Full design (approved)
+- `docs/work/completed/2026-03-14-llm-dynamic-routing-implementation.md` — Implementation plan
+- `docs/work/completed/2026-03-16-llm-escalation-design.md` — Model escalation design (approved)
+- `docs/work/completed/2026-03-16-llm-escalation-implementation.md` — Escalation implementation plan
 
 ## Future (Not Yet Built)
 
