@@ -8,6 +8,7 @@ require 'legion/llm/router'
 require 'legion/llm/compressor'
 require 'legion/llm/quality_checker'
 require 'legion/llm/escalation_history'
+require 'legion/llm/hooks'
 require_relative 'llm/response_cache'
 require_relative 'llm/daemon_client'
 
@@ -22,6 +23,7 @@ module Legion
     class EscalationExhausted < StandardError; end
     class DaemonDeniedError < StandardError; end
     class DaemonRateLimitedError < StandardError; end
+    class PrivacyModeError < StandardError; end
 
     class << self
       include Legion::LLM::Providers
@@ -64,15 +66,18 @@ module Legion
       # for automatic metering and fleet dispatch
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
                max_escalations: nil, quality_check: nil, message: nil, **)
-        if gateway_loaded? && message
-          return gateway_chat(model: model, provider: provider, intent: intent,
-                              tier: tier, message: message, escalate: escalate,
-                              max_escalations: max_escalations, quality_check: quality_check, **)
+        if defined?(Legion::Telemetry::OpenInference)
+          Legion::Telemetry::OpenInference.llm_span(
+            model: (model || settings[:default_model]).to_s, provider: provider&.to_s, input: message
+          ) do |_span|
+            _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier, escalate: escalate, max_escalations: max_escalations,
+                           quality_check: quality_check, message: message, **)
+          end
+        else
+          _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier,
+                         escalate: escalate, max_escalations: max_escalations,
+                         quality_check: quality_check, message: message, **)
         end
-
-        chat_direct(model: model, provider: provider, intent: intent, tier: tier,
-                    escalate: escalate, max_escalations: max_escalations,
-                    quality_check: quality_check, message: message, **)
       end
 
       # Send a single message — daemon-first, falls through to direct on unavailability.
@@ -106,9 +111,13 @@ module Legion
 
       # Generate embeddings — delegates to gateway when available
       def embed(text, **)
-        return Legion::Extensions::LLM::Gateway::Runners::Inference.embed(text: text, **) if gateway_loaded?
-
-        embed_direct(text, **)
+        if defined?(Legion::Telemetry::OpenInference)
+          Legion::Telemetry::OpenInference.embedding_span(
+            model: (settings[:default_model] || 'unknown').to_s
+          ) { |_span| _dispatch_embed(text, **) }
+        else
+          _dispatch_embed(text, **)
+        end
       end
 
       # Direct embed bypassing gateway
@@ -127,13 +136,13 @@ module Legion
 
       # Generate structured JSON output — delegates to gateway when available
       def structured(messages:, schema:, **)
-        if gateway_loaded?
-          return Legion::Extensions::LLM::Gateway::Runners::Inference.structured(
-            messages: messages, schema: schema, **
-          )
+        if defined?(Legion::Telemetry::OpenInference)
+          Legion::Telemetry::OpenInference.llm_span(
+            model: (settings[:default_model] || 'unknown').to_s, input: messages.to_s
+          ) { |_span| _dispatch_structured(messages: messages, schema: schema, **) }
+        else
+          _dispatch_structured(messages: messages, schema: schema, **)
         end
-
-        structured_direct(messages: messages, schema: schema, **)
       end
 
       # Direct structured bypassing gateway
@@ -151,6 +160,49 @@ module Legion
       end
 
       private
+
+      def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **)
+        messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
+        resolved_model = model || settings[:default_model]
+
+        if defined?(Legion::LLM::Hooks)
+          blocked = Legion::LLM::Hooks.run_before(messages: messages, model: resolved_model)
+          return blocked[:response] if blocked
+        end
+
+        result = if gateway_loaded? && message
+                   gateway_chat(model: model, provider: provider, intent: intent,
+                                tier: tier, message: message, escalate: escalate,
+                                max_escalations: max_escalations, quality_check: quality_check, **)
+                 else
+                   chat_direct(model: model, provider: provider, intent: intent, tier: tier,
+                               escalate: escalate, max_escalations: max_escalations,
+                               quality_check: quality_check, message: message, **)
+                 end
+
+        if defined?(Legion::LLM::Hooks)
+          blocked = Legion::LLM::Hooks.run_after(response: result, messages: messages, model: resolved_model)
+          return blocked[:response] if blocked
+        end
+
+        result
+      end
+
+      def _dispatch_embed(text, **)
+        return Legion::Extensions::LLM::Gateway::Runners::Inference.embed(text: text, **) if gateway_loaded?
+
+        embed_direct(text, **)
+      end
+
+      def _dispatch_structured(messages:, schema:, **)
+        if gateway_loaded?
+          return Legion::Extensions::LLM::Gateway::Runners::Inference.structured(
+            messages: messages, schema: schema, **
+          )
+        end
+
+        structured_direct(messages: messages, schema: schema, **)
+      end
 
       def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
         result = DaemonClient.chat(
@@ -172,6 +224,7 @@ module Legion
       end
 
       def ask_direct(message:, model: nil, provider: nil, intent: nil, tier: nil, &block)
+        assert_cloud_allowed! if effective_tier_is_cloud?(tier, provider)
         session = chat_direct(model: model, provider: provider, intent: intent, tier: tier)
         response = block ? session.ask(message, &block) : session.ask(message)
 
@@ -202,7 +255,10 @@ module Legion
             resolution = Router::GatewayInterceptor.intercept(resolution, context: kwargs.fetch(:context, {}))
             model    = resolution.model
             provider = resolution.provider
+            assert_cloud_allowed! if resolution.tier.to_sym == :cloud
           end
+        elsif tier
+          assert_cloud_allowed! if tier.to_sym == :cloud
         end
 
         model    ||= settings[:default_model]
@@ -302,6 +358,31 @@ module Legion
 
         esc = routing[:escalation] || {}
         esc.fetch(:quality_threshold, 50)
+      end
+
+      def enterprise_privacy?
+        if Legion.const_defined?('Settings') && Legion::Settings.respond_to?(:enterprise_privacy?)
+          Legion::Settings.enterprise_privacy?
+        else
+          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+        end
+      end
+
+      def assert_cloud_allowed!
+        return unless enterprise_privacy?
+
+        raise PrivacyModeError,
+              'Cloud LLM tier is disabled: enterprise_data_privacy is enabled. ' \
+              'Only Tier 0 (cache) and Tier 1 (local Ollama) are permitted.'
+      end
+
+      def effective_tier_is_cloud?(tier, provider)
+        return tier.to_sym == :cloud if tier
+        return false unless enterprise_privacy?
+
+        resolved = provider || settings[:default_provider]
+        cloud_providers = %i[anthropic bedrock openai gemini azure]
+        cloud_providers.include?(resolved&.to_sym)
       end
 
       def set_defaults

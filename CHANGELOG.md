@@ -1,5 +1,27 @@
 # Legion LLM Changelog
 
+## [0.3.11] - 2026-03-20
+
+### Added
+- `Legion::LLM::Hooks` module with before/after chat hook registry
+- `Hooks.before_chat` and `Hooks.after_chat` for registering interceptor blocks
+- `Hooks.run_before` and `Hooks.run_after` with `:block` action support for guardrail enforcement
+- `Hooks.reset!` for test isolation
+- Before/after hook invocation wired into `_dispatch_chat` for transparent request interception
+
+## [0.3.10] - 2026-03-20
+
+### Added
+- `PrivacyModeError` raised when cloud LLM tier is used with `enterprise_data_privacy` enabled
+- `assert_cloud_allowed!` guard in `chat_single` and `ask_direct` blocks cloud-tier dispatch
+- `Router.tier_available?(:cloud)` returns false when enterprise privacy mode is active
+- Cloud provider detection covers bedrock, anthropic, openai, gemini, and azure
+
+## [0.3.9] - 2026-03-20
+
+### Added
+- OpenInference OTel span wrapping for chat, embed, and structured methods
+
 ## [0.3.8] - 2026-03-20
 
 ### Added
