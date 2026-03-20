@@ -2,7 +2,7 @@
 
 LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension.
 
-**Version**: 0.3.6
+**Version**: 0.3.8
 
 ## Installation
 
@@ -60,6 +60,7 @@ Provider-specific fields:
 | Provider | Additional Fields |
 |----------|------------------|
 | **Bedrock** | `secret_key`, `session_token`, `region` (default: `us-east-2`), `bearer_token` (alternative to SigV4 — for AWS Identity Center/SSO) |
+| **Azure** | `api_base` (Azure OpenAI endpoint URL, required), `auth_token` (bearer token alternative to `api_key`) |
 | **Ollama** | `base_url` (default: `http://localhost:11434`) |
 
 ### Credential Resolution
@@ -90,7 +91,8 @@ If no `default_model` or `default_provider` is set, legion-llm auto-detects from
 | 2 | Anthropic | `claude-sonnet-4-6` |
 | 3 | OpenAI | `gpt-4o` |
 | 4 | Gemini | `gemini-2.0-flash` |
-| 5 | Ollama | `llama3` |
+| 5 | Azure | (endpoint-specific) |
+| 6 | Ollama | `llama3` |
 
 ## Core API
 
@@ -101,6 +103,32 @@ Legion::LLM.start       # Configure providers, warm discovery caches, set defaul
 Legion::LLM.shutdown     # Mark disconnected, clean up
 Legion::LLM.started?     # -> Boolean
 Legion::LLM.settings     # -> Hash (current LLM settings)
+```
+
+### One-Shot Ask
+
+`Legion::LLM.ask` is a convenience method for single-turn requests. It routes daemon-first (via the LegionIO REST API if running and configured) and falls back to direct RubyLLM:
+
+```ruby
+# Synchronous response
+response = Legion::LLM.ask("What is the capital of France?")
+puts response[:content]
+
+# The daemon path returns cached (HTTP 200), synchronous (HTTP 201), or async (HTTP 202) responses
+# HTTP 403 raises DaemonDeniedError; HTTP 429 raises DaemonRateLimitedError
+```
+
+Configure daemon routing under `llm.daemon`:
+
+```json
+{
+  "llm": {
+    "daemon": {
+      "enabled": true,
+      "url": "http://127.0.0.1:4567"
+    }
+  }
+}
 ```
 
 ### Chat
@@ -266,8 +294,7 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 │          Zero network overhead, no Transport              │
 │                                                          │
 │  Tier 2: FLEET  → Ollama on Mac Studios / GPU servers    │
-│          Via Legion::Transport (AMQP) when local can't   │
-│          serve the model (Phase 2, not yet built)        │
+│          Via lex-llm-gateway RPC over AMQP               │
 │                                                          │
 │  Tier 3: CLOUD  → Bedrock / Anthropic / OpenAI / Gemini │
 │          Existing provider API calls                     │
@@ -277,7 +304,7 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 | Tier | Target | Use Case |
 |------|--------|----------|
 | `local` | Ollama on localhost | Privacy-sensitive, offline, or low-latency workloads |
-| `fleet` | Shared hardware via Legion::Transport | Larger models on dedicated GPU servers (Phase 2) |
+| `fleet` | Shared hardware via lex-llm-gateway (AMQP) | Larger models on dedicated GPU servers |
 | `cloud` | API providers (Bedrock, Anthropic, OpenAI, Gemini) | Frontier models, full-capability inference |
 
 #### Intent-Based Dispatch
@@ -566,6 +593,7 @@ end
 | Anthropic | `anthropic` | `vault://`, `env://`, or direct | Direct API access |
 | OpenAI | `openai` | `vault://`, `env://`, or direct | GPT models |
 | Google Gemini | `gemini` | `vault://`, `env://`, or direct | Gemini models |
+| Azure AI | `azure` | `vault://`, `env://`, or direct | Azure OpenAI endpoint; `api_base` + `api_key` or `auth_token` |
 | Ollama | `ollama` | Local, no credentials needed | Local inference |
 
 ## Integration with LegionIO

@@ -8,7 +8,7 @@
 Core LegionIO gem providing LLM capabilities to all extensions. Wraps ruby_llm to provide a consistent interface for chat, embeddings, tool use, and agents across multiple providers (Bedrock, Anthropic, OpenAI, Gemini, Ollama). Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
 
 **GitHub**: https://github.com/LegionIO/legion-llm
-**Version**: 0.3.6
+**Version**: 0.3.8
 **License**: Apache-2.0
 
 ## Architecture
@@ -31,8 +31,12 @@ Legion::LLM.start
 ```
 Legion::LLM (lib/legion/llm.rb)
 ├── EscalationExhausted # Raised when all escalation attempts are exhausted
+├── DaemonDeniedError   # Raised when daemon returns HTTP 403
+├── DaemonRateLimitedError # Raised when daemon returns HTTP 429
 ├── Settings         # Default config, provider settings, routing defaults, discovery defaults
-├── Providers        # Provider configuration and Vault credential resolution
+├── Providers        # Provider configuration and Vault credential resolution (includes Azure `configure_azure`)
+├── DaemonClient     # HTTP routing to LegionIO daemon with 30s health cache
+├── ResponseCache    # Async response delivery via memcached with spool overflow
 ├── Compressor       # Deterministic prompt compression (3 levels, code-block-aware)
 ├── Discovery        # Runtime introspection for local model availability and system resources
 │   ├── Ollama       # Queries Ollama /api/tags for pulled models (TTL-cached)
@@ -128,6 +132,9 @@ Legion::LLM.shutdown                 # Cleanup
 Legion::LLM.started?                 # -> Boolean
 Legion::LLM.settings                 # -> Hash
 
+# One-shot convenience (daemon-first, direct fallback)
+Legion::LLM.ask(message, model:, provider:)                 # -> Hash with :content key; raises DaemonDeniedError/DaemonRateLimitedError
+
 # Chat (delegates to gateway when loaded, otherwise direct)
 Legion::LLM.chat(message: 'hello', model:, provider:)       # Gateway-metered if available
 Legion::LLM.chat(intent: { privacy: :strict })              # Intent-based routing
@@ -196,7 +203,8 @@ When no defaults are configured, the first enabled provider is used:
 2. Anthropic -> `claude-sonnet-4-6`
 3. OpenAI -> `gpt-4o`
 4. Gemini -> `gemini-2.0-flash`
-5. Ollama -> `llama3`
+5. Azure -> (endpoint-specific, from `api_base`)
+6. Ollama -> `llama3`
 
 ### Routing Settings
 
@@ -293,6 +301,9 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/settings.rb` | Default settings including routing_defaults, auto-merge into Legion::Settings |
 | `lib/legion/llm/providers.rb` | Provider config, Vault resolution, RubyLLM configuration |
 | `lib/legion/llm/bedrock_bearer_auth.rb` | Monkey-patch for Bedrock Bearer Token auth — required lazily |
+| `lib/legion/llm/claude_config_loader.rb` | Import Claude CLI config from `~/.claude/settings.json` and `~/.claude.json` |
+| `lib/legion/llm/response_cache.rb` | Async response delivery via memcached with spool overflow at 8MB |
+| `lib/legion/llm/daemon_client.rb` | HTTP routing to LegionIO daemon with health caching (30s TTL) |
 | `lib/legion/llm/compressor.rb` | Deterministic prompt compression: 3 levels, code-block-aware, stopword removal |
 | `lib/legion/llm/router.rb` | Router module: resolve, health_tracker, select_candidates pipeline |
 | `lib/legion/llm/router/resolution.rb` | Value object: tier, provider, model, rule, metadata, compress_level |
@@ -303,7 +314,7 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/embeddings.rb` | Embeddings module: generate, generate_batch, default_model |
 | `lib/legion/llm/shadow_eval.rb` | Shadow evaluation: enabled?, should_sample?, evaluate, compare |
 | `lib/legion/llm/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
-| `lib/legion/llm/version.rb` | Version constant (0.3.6) |
+| `lib/legion/llm/version.rb` | Version constant (0.3.8) |
 | `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
 | `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin: `escalation_history`, `escalated?`, `final_resolution`, `escalation_chain` |
 | `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
