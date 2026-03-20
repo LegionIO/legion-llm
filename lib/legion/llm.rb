@@ -22,6 +22,7 @@ module Legion
     class EscalationExhausted < StandardError; end
     class DaemonDeniedError < StandardError; end
     class DaemonRateLimitedError < StandardError; end
+    class PrivacyModeError < StandardError; end
 
     class << self
       include Legion::LLM::Providers
@@ -207,6 +208,7 @@ module Legion
       end
 
       def ask_direct(message:, model: nil, provider: nil, intent: nil, tier: nil, &block)
+        assert_cloud_allowed! if effective_tier_is_cloud?(tier, provider)
         session = chat_direct(model: model, provider: provider, intent: intent, tier: tier)
         response = block ? session.ask(message, &block) : session.ask(message)
 
@@ -237,7 +239,10 @@ module Legion
             resolution = Router::GatewayInterceptor.intercept(resolution, context: kwargs.fetch(:context, {}))
             model    = resolution.model
             provider = resolution.provider
+            assert_cloud_allowed! if resolution.tier.to_sym == :cloud
           end
+        elsif tier
+          assert_cloud_allowed! if tier.to_sym == :cloud
         end
 
         model    ||= settings[:default_model]
@@ -337,6 +342,31 @@ module Legion
 
         esc = routing[:escalation] || {}
         esc.fetch(:quality_threshold, 50)
+      end
+
+      def enterprise_privacy?
+        if Legion.const_defined?('Settings') && Legion::Settings.respond_to?(:enterprise_privacy?)
+          Legion::Settings.enterprise_privacy?
+        else
+          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+        end
+      end
+
+      def assert_cloud_allowed!
+        return unless enterprise_privacy?
+
+        raise PrivacyModeError,
+              'Cloud LLM tier is disabled: enterprise_data_privacy is enabled. ' \
+              'Only Tier 0 (cache) and Tier 1 (local Ollama) are permitted.'
+      end
+
+      def effective_tier_is_cloud?(tier, provider)
+        return tier.to_sym == :cloud if tier
+        return false unless enterprise_privacy?
+
+        resolved = provider || settings[:default_provider]
+        cloud_providers = %i[anthropic bedrock openai gemini azure]
+        cloud_providers.include?(resolved&.to_sym)
       end
 
       def set_defaults

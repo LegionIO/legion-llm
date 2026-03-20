@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.3.10] - 2026-03-20
+
+### Added
+- `PrivacyModeError` raised when cloud LLM tier is used with `enterprise_data_privacy` enabled
+- `assert_cloud_allowed!` guard in `chat_single` and `ask_direct` blocks cloud-tier dispatch
+- `Router.tier_available?(:cloud)` returns false when enterprise privacy mode is active
+- Cloud provider detection covers bedrock, anthropic, openai, gemini, and azure
+
 ## [0.3.9] - 2026-03-20
 
 ### Added

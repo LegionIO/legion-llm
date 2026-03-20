@@ -61,7 +61,9 @@ module Legion
         # :fleet — available when Legion::Transport is loaded
         # :cloud — always available
         def tier_available?(tier)
-          return Legion.const_defined?('Transport') if tier.to_sym == :fleet
+          sym = tier.to_sym
+          return false if sym == :cloud && privacy_mode?
+          return Legion.const_defined?('Transport') if sym == :fleet
 
           true
         end
@@ -161,6 +163,14 @@ module Legion
           (llm[:discovery] || {}).transform_keys(&:to_sym)
         rescue StandardError
           {}
+        end
+
+        def privacy_mode?
+          if Legion.const_defined?('Settings') && Legion::Settings.respond_to?(:enterprise_privacy?)
+            Legion::Settings.enterprise_privacy?
+          else
+            ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+          end
         end
 
         def pick_best(candidates)
