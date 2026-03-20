@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.3.8] - 2026-03-20
+
+### Added
+- Azure AI Foundry provider: `api_base`, `api_key`, `auth_token` settings
+- `configure_azure` wires RubyLLM for Azure OpenAI endpoints (api-key or bearer token auth)
+- Azure added to auto-detection priority chain (position 5, between Gemini and Ollama)
+- Credentials support `vault://` and `env://` resolver URIs via settings secret resolver
+
 ## [0.3.7] - 2026-03-19
 
 ### Added

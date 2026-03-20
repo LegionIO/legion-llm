@@ -95,6 +95,13 @@ module Legion
             default_model: 'gemini-2.0-flash',
             api_key:       'env://GEMINI_API_KEY'
           },
+          azure:     {
+            enabled:       false,
+            default_model: nil,
+            api_base:      nil,
+            api_key:       nil,
+            auth_token:    nil
+          },
           ollama:    {
             enabled:       false,
             default_model: 'llama3',

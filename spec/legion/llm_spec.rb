@@ -14,7 +14,13 @@ RSpec.describe Legion::LLM do
 
     it 'includes all provider configs' do
       providers = described_class.settings[:providers]
-      expect(providers.keys).to include(:bedrock, :anthropic, :openai, :gemini, :ollama)
+      expect(providers.keys).to include(:bedrock, :anthropic, :openai, :gemini, :azure, :ollama)
+    end
+
+    it 'places azure between gemini and ollama in provider order' do
+      keys = described_class.settings[:providers].keys
+      expect(keys.index(:azure)).to be > keys.index(:gemini)
+      expect(keys.index(:azure)).to be < keys.index(:ollama)
     end
 
     it 'defaults bedrock region to us-east-2' do
@@ -136,6 +142,36 @@ RSpec.describe Legion::LLM do
         test_class.send(:configure_bedrock, { region: 'us-east-2' })
         expect(RubyLLM.config.bedrock_api_key).to be_nil
         expect(RubyLLM.config.bedrock_bearer_token).to be_nil
+      end
+    end
+
+    describe '#configure_azure' do
+      it 'configures with api_key when api_base and api_key are present' do
+        test_class.send(:configure_azure, {
+                          api_base: 'https://my-resource.openai.azure.com', api_key: 'az-key-123'
+                        })
+        expect(RubyLLM.config.azure_api_base).to eq('https://my-resource.openai.azure.com')
+        expect(RubyLLM.config.azure_api_key).to eq('az-key-123')
+      end
+
+      it 'configures with auth_token when api_base and auth_token are present' do
+        test_class.send(:configure_azure, {
+                          api_base: 'https://my-resource.openai.azure.com', auth_token: 'bearer-tok'
+                        })
+        expect(RubyLLM.config.azure_api_base).to eq('https://my-resource.openai.azure.com')
+        expect(RubyLLM.config.azure_ai_auth_token).to eq('bearer-tok')
+      end
+
+      it 'skips config when api_base is missing' do
+        RubyLLM.config.azure_api_base = nil
+        test_class.send(:configure_azure, { api_key: 'az-key-123' })
+        expect(RubyLLM.config.azure_api_base).to be_nil
+      end
+
+      it 'skips config when both api_key and auth_token are missing' do
+        RubyLLM.config.azure_api_base = nil
+        test_class.send(:configure_azure, { api_base: 'https://test.openai.azure.com' })
+        expect(RubyLLM.config.azure_api_base).to be_nil
       end
     end
   end

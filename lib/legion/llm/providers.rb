@@ -19,6 +19,8 @@ module Legion
           has_creds = case provider
                       when :bedrock
                         config[:bearer_token] || (config[:api_key] && config[:secret_key])
+                      when :azure
+                        config[:api_base] && (config[:api_key] || config[:auth_token])
                       when :ollama
                         ollama_running?(config)
                       else
@@ -53,6 +55,8 @@ module Legion
           configure_openai(config)
         when :gemini
           configure_gemini(config)
+        when :azure
+          configure_azure(config)
         when :ollama
           configure_ollama(config)
         else
@@ -107,6 +111,20 @@ module Legion
           c.gemini_api_key = config[:api_key]
         end
         Legion::Logging.info 'Configured Gemini provider'
+      end
+
+      def configure_azure(config)
+        api_base = config[:api_base]
+        api_key = config[:api_key]
+        auth_token = config[:auth_token]
+        return unless api_base && (api_key || auth_token)
+
+        RubyLLM.configure do |c|
+          c.azure_api_base = api_base
+          c.azure_api_key = api_key if api_key
+          c.azure_ai_auth_token = auth_token if auth_token
+        end
+        Legion::Logging.info "Configured Azure AI Foundry provider (#{api_base})"
       end
 
       def configure_ollama(config)
