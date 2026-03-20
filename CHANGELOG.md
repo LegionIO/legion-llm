@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.3.9] - 2026-03-20
+
+### Added
+- OpenInference OTel span wrapping for chat, embed, and structured methods
+
 ## [0.3.8] - 2026-03-20
 
 ### Added
