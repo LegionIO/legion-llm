@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.3.11] - 2026-03-20
+
+### Added
+- `Legion::LLM::Hooks` module with before/after chat hook registry
+- `Hooks.before_chat` and `Hooks.after_chat` for registering interceptor blocks
+- `Hooks.run_before` and `Hooks.run_after` with `:block` action support for guardrail enforcement
+- `Hooks.reset!` for test isolation
+- Before/after hook invocation wired into `_dispatch_chat` for transparent request interception
+
 ## [0.3.10] - 2026-03-20
 
 ### Added
