@@ -8,6 +8,7 @@ require 'legion/llm/router'
 require 'legion/llm/compressor'
 require 'legion/llm/quality_checker'
 require 'legion/llm/escalation_history'
+require 'legion/llm/hooks'
 require_relative 'llm/response_cache'
 require_relative 'llm/daemon_client'
 
@@ -161,15 +162,30 @@ module Legion
       private
 
       def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **)
-        if gateway_loaded? && message
-          return gateway_chat(model: model, provider: provider, intent: intent,
-                              tier: tier, message: message, escalate: escalate,
-                              max_escalations: max_escalations, quality_check: quality_check, **)
+        messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
+        resolved_model = model || settings[:default_model]
+
+        if defined?(Legion::LLM::Hooks)
+          blocked = Legion::LLM::Hooks.run_before(messages: messages, model: resolved_model)
+          return blocked[:response] if blocked
         end
 
-        chat_direct(model: model, provider: provider, intent: intent, tier: tier,
-                    escalate: escalate, max_escalations: max_escalations,
-                    quality_check: quality_check, message: message, **)
+        result = if gateway_loaded? && message
+                   gateway_chat(model: model, provider: provider, intent: intent,
+                                tier: tier, message: message, escalate: escalate,
+                                max_escalations: max_escalations, quality_check: quality_check, **)
+                 else
+                   chat_direct(model: model, provider: provider, intent: intent, tier: tier,
+                               escalate: escalate, max_escalations: max_escalations,
+                               quality_check: quality_check, message: message, **)
+                 end
+
+        if defined?(Legion::LLM::Hooks)
+          blocked = Legion::LLM::Hooks.run_after(response: result, messages: messages, model: resolved_model)
+          return blocked[:response] if blocked
+        end
+
+        result
       end
 
       def _dispatch_embed(text, **)
