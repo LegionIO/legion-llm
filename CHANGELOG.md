@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.3.12] - 2026-03-19
+
+### Added
+- `Legion::LLM::Cache` module with deterministic SHA256 key generation, guarded `get`/`set`, and `enabled?` check
+- Application-level response caching in `chat_direct` via `legion-cache` (Legion::Cache guard required)
+- Cache skip conditions: `cache: false` option, `temperature > 0`, nil message, or cache disabled
+- Cache hits return `{ cached: true }` merged into response metadata
+- Anthropic prompt caching support: injects `cache_control: { type: "ephemeral" }` into system messages longer than `min_tokens` when provider is anthropic
+- `prompt_caching` settings section with `enabled`, `min_tokens`, `response_cache.enabled`, `response_cache.ttl_seconds` defaults
+- 25 new specs in `spec/legion/llm/cache_spec.rb` covering key determinism, hit/miss flows, skip conditions, and Legion::Cache unavailability guard
+
 ## [0.3.11] - 2026-03-20
 
 ### Added

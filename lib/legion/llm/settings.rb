@@ -14,7 +14,8 @@ module Legion
           routing:          routing_defaults,
           discovery:        discovery_defaults,
           gateway:          gateway_defaults,
-          daemon:           daemon_defaults
+          daemon:           daemon_defaults,
+          prompt_caching:   prompt_caching_defaults
         }
       end
 
@@ -22,6 +23,17 @@ module Legion
         {
           url:     nil,
           enabled: false
+        }
+      end
+
+      def self.prompt_caching_defaults
+        {
+          enabled:        true,
+          min_tokens:     1024,
+          response_cache: {
+            enabled:     true,
+            ttl_seconds: 300
+          }
         }
       end
 

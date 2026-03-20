@@ -9,6 +9,7 @@ require 'legion/llm/compressor'
 require 'legion/llm/quality_checker'
 require 'legion/llm/escalation_history'
 require 'legion/llm/hooks'
+require 'legion/llm/cache'
 require_relative 'llm/response_cache'
 require_relative 'llm/daemon_client'
 
@@ -95,18 +96,40 @@ module Legion
 
       # Direct chat bypassing gateway — used by gateway runners to avoid recursion
       def chat_direct(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
-                      max_escalations: nil, quality_check: nil, message: nil, **)
-        escalate = escalation_enabled? if escalate.nil?
+                      max_escalations: nil, quality_check: nil, message: nil, **kwargs)
+        cache_opt   = kwargs.delete(:cache) { true }
+        temperature = kwargs.delete(:temperature)
 
-        if escalate && message
-          chat_with_escalation(
-            model: model, provider: provider, intent: intent, tier: tier,
-            max_escalations: max_escalations, quality_check: quality_check,
-            message: message, **
-          )
-        else
-          chat_single(model: model, provider: provider, intent: intent, tier: tier, **)
+        escalate = escalation_enabled? if escalate.nil?
+        cache_key = build_cache_key(model, provider, message, temperature) if cacheable?(cache_opt, temperature, message)
+
+        if cache_key
+          cached = Cache.get(cache_key)
+          if cached
+            Legion::Logging.debug 'Legion::LLM cache hit'
+            cached_response = cached.dup
+            cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
+            return cached_response
+          end
         end
+
+        result = if escalate && message
+                   chat_with_escalation(
+                     model: model, provider: provider, intent: intent, tier: tier,
+                     max_escalations: max_escalations, quality_check: quality_check,
+                     message: message, temperature: temperature, **kwargs
+                   )
+                 else
+                   chat_single(model: model, provider: provider, intent: intent, tier: tier,
+                               temperature: temperature, **kwargs)
+                 end
+
+        if cache_key && result.is_a?(Hash)
+          ttl = settings.dig(:prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
+          Cache.set(cache_key, result, ttl: ttl)
+        end
+
+        result
       end
 
       # Generate embeddings — delegates to gateway when available
@@ -268,6 +291,9 @@ module Legion
         opts[:model]    = model    if model
         opts[:provider] = provider if provider
         opts.merge!(kwargs)
+        opts.delete(:temperature) if opts[:temperature].nil?
+
+        inject_anthropic_cache_control!(opts, provider)
 
         RubyLLM.chat(**opts)
       end
@@ -342,6 +368,37 @@ module Legion
         Legion::Logging.debug("Escalation event: #{final_outcome}, #{history.size} attempts") if Legion.const_defined?('Logging')
       rescue StandardError
         nil
+      end
+
+      def cacheable?(cache_opt, temperature, message)
+        cache_opt != false && temperature.to_f.zero? && message && Cache.enabled?
+      end
+
+      def build_cache_key(model, provider, message, temperature)
+        messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
+        Cache.key(
+          model:       model || settings[:default_model],
+          provider:    provider || settings[:default_provider],
+          messages:    messages_arr,
+          temperature: temperature
+        )
+      end
+
+      def inject_anthropic_cache_control!(opts, provider)
+        resolved_provider = (provider || settings[:default_provider])&.to_sym
+        return unless resolved_provider == :anthropic
+
+        caching_settings = settings[:prompt_caching] || {}
+        return unless caching_settings[:enabled] != false
+
+        min_tokens = caching_settings[:min_tokens] || 1024
+        instructions = opts[:instructions]
+        return unless instructions.is_a?(String) && instructions.length > min_tokens
+
+        opts[:instructions] = {
+          content:       instructions,
+          cache_control: { type: 'ephemeral' }
+        }
       end
 
       def escalation_enabled?
