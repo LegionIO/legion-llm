@@ -64,15 +64,18 @@ module Legion
       # for automatic metering and fleet dispatch
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
                max_escalations: nil, quality_check: nil, message: nil, **)
-        if gateway_loaded? && message
-          return gateway_chat(model: model, provider: provider, intent: intent,
-                              tier: tier, message: message, escalate: escalate,
-                              max_escalations: max_escalations, quality_check: quality_check, **)
+        if defined?(Legion::Telemetry::OpenInference)
+          Legion::Telemetry::OpenInference.llm_span(
+            model: (model || settings[:default_model]).to_s, provider: provider&.to_s, input: message
+          ) do |_span|
+            _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier, escalate: escalate, max_escalations: max_escalations,
+                           quality_check: quality_check, message: message, **)
+          end
+        else
+          _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier,
+                         escalate: escalate, max_escalations: max_escalations,
+                         quality_check: quality_check, message: message, **)
         end
-
-        chat_direct(model: model, provider: provider, intent: intent, tier: tier,
-                    escalate: escalate, max_escalations: max_escalations,
-                    quality_check: quality_check, message: message, **)
       end
 
       # Send a single message — daemon-first, falls through to direct on unavailability.
@@ -106,9 +109,13 @@ module Legion
 
       # Generate embeddings — delegates to gateway when available
       def embed(text, **)
-        return Legion::Extensions::LLM::Gateway::Runners::Inference.embed(text: text, **) if gateway_loaded?
-
-        embed_direct(text, **)
+        if defined?(Legion::Telemetry::OpenInference)
+          Legion::Telemetry::OpenInference.embedding_span(
+            model: (settings[:default_model] || 'unknown').to_s
+          ) { |_span| _dispatch_embed(text, **) }
+        else
+          _dispatch_embed(text, **)
+        end
       end
 
       # Direct embed bypassing gateway
@@ -127,13 +134,13 @@ module Legion
 
       # Generate structured JSON output — delegates to gateway when available
       def structured(messages:, schema:, **)
-        if gateway_loaded?
-          return Legion::Extensions::LLM::Gateway::Runners::Inference.structured(
-            messages: messages, schema: schema, **
-          )
+        if defined?(Legion::Telemetry::OpenInference)
+          Legion::Telemetry::OpenInference.llm_span(
+            model: (settings[:default_model] || 'unknown').to_s, input: messages.to_s
+          ) { |_span| _dispatch_structured(messages: messages, schema: schema, **) }
+        else
+          _dispatch_structured(messages: messages, schema: schema, **)
         end
-
-        structured_direct(messages: messages, schema: schema, **)
       end
 
       # Direct structured bypassing gateway
@@ -151,6 +158,34 @@ module Legion
       end
 
       private
+
+      def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **)
+        if gateway_loaded? && message
+          return gateway_chat(model: model, provider: provider, intent: intent,
+                              tier: tier, message: message, escalate: escalate,
+                              max_escalations: max_escalations, quality_check: quality_check, **)
+        end
+
+        chat_direct(model: model, provider: provider, intent: intent, tier: tier,
+                    escalate: escalate, max_escalations: max_escalations,
+                    quality_check: quality_check, message: message, **)
+      end
+
+      def _dispatch_embed(text, **)
+        return Legion::Extensions::LLM::Gateway::Runners::Inference.embed(text: text, **) if gateway_loaded?
+
+        embed_direct(text, **)
+      end
+
+      def _dispatch_structured(messages:, schema:, **)
+        if gateway_loaded?
+          return Legion::Extensions::LLM::Gateway::Runners::Inference.structured(
+            messages: messages, schema: schema, **
+          )
+        end
+
+        structured_direct(messages: messages, schema: schema, **)
+      end
 
       def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
         result = DaemonClient.chat(
