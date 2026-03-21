@@ -12,6 +12,9 @@ require 'legion/llm/hooks'
 require 'legion/llm/cache'
 require_relative 'llm/response_cache'
 require_relative 'llm/daemon_client'
+require_relative 'llm/arbitrage'
+require_relative 'llm/batch'
+require_relative 'llm/scheduling'
 
 begin
   require 'legion/extensions/llm/gateway'

@@ -15,7 +15,10 @@ module Legion
           discovery:        discovery_defaults,
           gateway:          gateway_defaults,
           daemon:           daemon_defaults,
-          prompt_caching:   prompt_caching_defaults
+          prompt_caching:   prompt_caching_defaults,
+          arbitrage:        arbitrage_defaults,
+          batch:            batch_defaults,
+          scheduling:       scheduling_defaults
         }
       end
 
@@ -78,6 +81,34 @@ module Legion
           model_policy:       {},
           headers:            {},
           fallback_to_direct: true
+        }
+      end
+
+      def self.arbitrage_defaults
+        {
+          enabled:            false,
+          prefer_cheapest:    true,
+          quality_floor:      0.7,
+          cost_table_refresh: 86_400,
+          cost_table:         {}
+        }
+      end
+
+      def self.batch_defaults
+        {
+          enabled:          false,
+          window_seconds:   300,
+          max_batch_size:   100,
+          eligible_intents: %w[batch background low_priority]
+        }
+      end
+
+      def self.scheduling_defaults
+        {
+          enabled:         false,
+          peak_hours_utc:  '14-22',
+          defer_intents:   %w[batch background],
+          max_defer_hours: 8
         }
       end
 
