@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'legion/llm/hooks/rag_guard'
+require 'legion/llm/hooks/response_guard'
+
 module Legion
   module LLM
     module Hooks

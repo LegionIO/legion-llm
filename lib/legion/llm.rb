@@ -184,7 +184,7 @@ module Legion
 
       private
 
-      def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **)
+      def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **kwargs)
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         resolved_model = model || settings[:default_model]
 
@@ -196,17 +196,19 @@ module Legion
         result = if gateway_loaded? && message
                    gateway_chat(model: model, provider: provider, intent: intent,
                                 tier: tier, message: message, escalate: escalate,
-                                max_escalations: max_escalations, quality_check: quality_check, **)
+                                max_escalations: max_escalations, quality_check: quality_check, **kwargs)
                  else
                    chat_direct(model: model, provider: provider, intent: intent, tier: tier,
                                escalate: escalate, max_escalations: max_escalations,
-                               quality_check: quality_check, message: message, **)
+                               quality_check: quality_check, message: message, **kwargs)
                  end
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_after(response: result, messages: messages, model: resolved_model)
           return blocked[:response] if blocked
         end
+
+        result = apply_response_guards(result, kwargs) if response_guards_enabled? && result.is_a?(Hash)
 
         result
       end
@@ -368,6 +370,24 @@ module Legion
         Legion::Logging.debug("Escalation event: #{final_outcome}, #{history.size} attempts") if Legion.const_defined?('Logging')
       rescue StandardError
         nil
+      end
+
+      def response_guards_enabled?
+        settings.dig(:response_guards, :enabled) == true
+      end
+
+      def apply_response_guards(result, kwargs)
+        context = kwargs[:context]
+        response_text = result[:response] || result[:content]
+        guard_result = Hooks::ResponseGuard.guard_response(
+          response: response_text, context: context
+        )
+
+        Legion::Logging.warn "Response guard failed: #{guard_result.inspect}" if !guard_result[:passed] && Legion.const_defined?('Logging')
+
+        result.merge(_guard_result: guard_result)
+      rescue StandardError
+        result
       end
 
       def cacheable?(cache_opt, temperature, message)
