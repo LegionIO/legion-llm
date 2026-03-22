@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.3.15] - 2026-03-21
+
+### Changed
+- Pin ruby_llm dependency from `>= 1.0` to `~> 1.13` to prevent breaking changes from a future 2.0 release
+
 ## [0.3.14] - 2026-03-21
 
 ### Added
