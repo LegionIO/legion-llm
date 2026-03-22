@@ -124,7 +124,7 @@ module Legion
                    )
                  else
                    chat_single(model: model, provider: provider, intent: intent, tier: tier,
-                               temperature: temperature, **kwargs)
+                               temperature: temperature, message: message, **kwargs)
                  end
 
         if cache_key && result.is_a?(Hash)
@@ -184,6 +184,10 @@ module Legion
       def agent(agent_class, **)
         agent_class.new(**)
       end
+
+      FRAMEWORK_KEYS = %i[request_id source timestamp datetime task_id parent_id master_id
+                          check_subtask generate_task catch_exceptions worker_id principal_id
+                          principal_type].freeze
 
       private
 
@@ -276,7 +280,7 @@ module Legion
         Legion::Extensions::LLM::Gateway::Runners::Inference.chat(**)
       end
 
-      def chat_single(model:, provider:, intent:, tier:, **kwargs)
+      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs)
         if (intent || tier) && Router.routing_enabled?
           resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
           if resolution
@@ -295,12 +299,15 @@ module Legion
         opts = {}
         opts[:model]    = model    if model
         opts[:provider] = provider if provider
-        opts.merge!(kwargs)
+        opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
         opts.delete(:temperature) if opts[:temperature].nil?
 
         inject_anthropic_cache_control!(opts, provider)
 
-        RubyLLM.chat(**opts)
+        session = RubyLLM.chat(**opts)
+        return session unless message
+
+        session.ask(message)
       end
 
       def chat_with_escalation(model:, provider:, intent:, tier:, max_escalations:, quality_check:, message:, **kwargs)

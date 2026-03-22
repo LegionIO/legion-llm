@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.3.16] - 2026-03-22
+
+### Fixed
+- `chat_single` now accepts and forwards `message:` kwarg, calling `session.ask(message)` when present instead of returning a bare session object
+- `chat_direct` passes `message:` through to `chat_single` in the non-escalation branch
+- Add `FRAMEWORK_KEYS` constant to strip Runner.run metadata kwargs (`task_id`, `source`, `timestamp`, etc.) before passing to RubyLLM
+- Move `FRAMEWORK_KEYS` out of `private` scope (constants are not affected by `private` in Ruby)
+
 ## [0.3.15] - 2026-03-21
 
 ### Changed

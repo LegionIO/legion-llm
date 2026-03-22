@@ -198,6 +198,7 @@ RSpec.describe Legion::LLM::Cache do
 
     before do
       allow(RubyLLM).to receive(:chat).and_return(mock_response)
+      allow(mock_response).to receive(:ask).and_return({})
     end
 
     it 'skips cache when cache: false is passed' do
