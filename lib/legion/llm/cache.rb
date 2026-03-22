@@ -68,7 +68,8 @@ module Legion
         else
           Legion::LLM::Settings.default
         end
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.warn("LLM cache settings unavailable: #{e.message}") if defined?(Legion::Logging)
         {}
       end
     end

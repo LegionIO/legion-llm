@@ -41,7 +41,8 @@ module Legion
         port = (host_part[1] || '11434').to_i
         Socket.tcp(addr, port, connect_timeout: 1).close
         true
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.debug("Ollama connection check failed: #{e.message}") if defined?(Legion::Logging)
         false
       end
 

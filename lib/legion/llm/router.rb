@@ -177,7 +177,8 @@ module Legion
           return {} unless llm.is_a?(Hash)
 
           (llm[:discovery] || {}).transform_keys(&:to_sym)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("Router discovery_settings unavailable: #{e.message}") if defined?(Legion::Logging)
           {}
         end
 

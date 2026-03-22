@@ -57,6 +57,7 @@ module Legion
           parsed = Legion::JSON.load(result[:content])
           { data: parsed, raw: result[:content], model: result[:model], valid: true, retried: true }
         rescue StandardError => e
+          Legion::Logging.warn("StructuredOutput retry failed: #{e.message}") if defined?(Legion::Logging)
           { data: nil, error: e.message, valid: false }
         end
 

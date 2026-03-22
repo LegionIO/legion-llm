@@ -56,7 +56,8 @@ module Legion
               inputs:         [{ input: context.to_s, output: response.to_s, expected: nil }]
             )
             result.dig(:summary, :avg_score) || 0.0
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.debug("RagGuard evaluator #{evaluator_name} failed: #{e.message}") if defined?(Legion::Logging)
             0.0
           end
 

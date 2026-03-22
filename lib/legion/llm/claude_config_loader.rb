@@ -20,7 +20,8 @@ module Legion
 
         require 'json'
         ::JSON.parse(File.read(path), symbolize_names: true)
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.debug("ClaudeConfigLoader could not read #{path}: #{e.message}") if defined?(Legion::Logging)
         {}
       end
 

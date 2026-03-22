@@ -95,7 +95,8 @@ module Legion
 
           b = llm[:batch] || llm['batch'] || {}
           b.is_a?(Hash) ? b.transform_keys(&:to_sym) : {}
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("Batch settings unavailable: #{e.message}") if defined?(Legion::Logging)
           {}
         end
 

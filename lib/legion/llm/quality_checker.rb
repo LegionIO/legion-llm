@@ -47,7 +47,8 @@ module Legion
         def valid_json?(content)
           ::JSON.parse(content)
           true
-        rescue ::JSON::ParserError
+        rescue ::JSON::ParserError => e
+          Legion::Logging.debug("QualityChecker JSON validation failed: #{e.message}") if defined?(Legion::Logging)
           false
         end
       end

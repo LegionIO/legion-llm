@@ -78,7 +78,8 @@ module Legion
         @health_checked_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
         Legion::Logging.info("Daemon health check result=#{healthy ? 'healthy' : 'unhealthy'} url=#{daemon_url}") if defined?(Legion::Logging)
         healthy
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.warn("Daemon health check failed: #{e.message}") if defined?(Legion::Logging)
         mark_unhealthy
         false
       end
@@ -155,7 +156,8 @@ module Legion
         return nil unless daemon.is_a?(Hash)
 
         daemon[:url]
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.warn("DaemonClient fetch_daemon_url failed: #{e.message}") if defined?(Legion::Logging)
         nil
       end
 
@@ -163,7 +165,8 @@ module Legion
         return {} if body.nil? || body.strip.empty?
 
         ::JSON.parse(body, symbolize_names: true)
-      rescue ::JSON::ParserError
+      rescue ::JSON::ParserError => e
+        Legion::Logging.debug("DaemonClient JSON parse failed for response body: #{e.message}") if defined?(Legion::Logging)
         {}
       end
 

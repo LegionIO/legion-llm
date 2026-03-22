@@ -82,7 +82,8 @@ module Legion
 
           arb = llm[:arbitrage] || llm['arbitrage'] || {}
           arb.is_a?(Hash) ? arb.transform_keys(&:to_sym) : {}
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("Arbitrage settings unavailable: #{e.message}") if defined?(Legion::Logging)
           {}
         end
 

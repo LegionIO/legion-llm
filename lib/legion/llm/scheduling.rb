@@ -67,7 +67,8 @@ module Legion
 
           s = llm[:scheduling] || llm['scheduling'] || {}
           s.is_a?(Hash) ? s.transform_keys(&:to_sym) : {}
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("Scheduling settings unavailable: #{e.message}") if defined?(Legion::Logging)
           {}
         end
 
@@ -81,7 +82,8 @@ module Legion
           start_h = Integer(parts[0], 10)
           end_h   = Integer(parts[1], 10)
           (start_h..end_h)
-        rescue ArgumentError
+        rescue ArgumentError => e
+          Legion::Logging.debug("Scheduling peak_hours_utc parse failed, using default: #{e.message}") if defined?(Legion::Logging)
           DEFAULT_PEAK_RANGE
         end
 

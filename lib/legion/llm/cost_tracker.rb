@@ -86,7 +86,8 @@ module Legion
 
           pricing = Legion::Settings.dig(:'legion-llm', :pricing)
           pricing.is_a?(Hash) ? pricing : {}
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("CostTracker settings unavailable: #{e.message}") if defined?(Legion::Logging)
           {}
         end
       end

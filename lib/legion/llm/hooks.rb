@@ -24,7 +24,8 @@ module Legion
             return result if result.is_a?(Hash) && result[:action] == :block
           end
           nil
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("LLM before_chat hook failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
 
@@ -34,7 +35,8 @@ module Legion
             return result if result.is_a?(Hash) && result[:action] == :block
           end
           nil
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("LLM after_chat hook failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
 

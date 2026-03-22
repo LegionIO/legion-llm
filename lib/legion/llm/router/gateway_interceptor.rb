@@ -56,7 +56,8 @@ module Legion
           return {} unless llm.is_a?(Hash)
 
           (llm[:gateway] || {}).transform_keys(&:to_sym)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.warn("GatewayInterceptor settings unavailable: #{e.message}") if defined?(Legion::Logging)
           {}
         end
       end

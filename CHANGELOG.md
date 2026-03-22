@@ -1,5 +1,24 @@
 # Legion LLM Changelog
 
+## [0.3.19] - 2026-03-22
+
+### Changed
+- Added `Legion::Logging` calls to all silent rescue blocks (28 total) so no exception is swallowed without a trace
+- `arbitrage.rb`, `batch.rb`, `scheduling.rb`, `router.rb`, `gateway_interceptor.rb`: `.warn` on settings unavailable
+- `cache.rb`: `.warn` on llm_settings failure
+- `claude_config_loader.rb`: `.debug` on JSON read failure (expected for missing files)
+- `cost_tracker.rb`: `.warn` on settings_pricing failure
+- `daemon_client.rb`: `.warn` on health check failure and fetch_daemon_url failure, `.debug` on JSON parse failure
+- `discovery/ollama.rb`: `.debug` on base_url and discovery_settings failures
+- `discovery/system.rb`: `.debug` on discovery_settings failure
+- `embeddings.rb`: `.warn` on batch embedding failure
+- `hooks/rag_guard.rb`: `.debug` on individual evaluator failure
+- `hooks.rb`: `.warn` on before_chat and after_chat hook failures
+- `providers.rb`: `.debug` on Ollama connection check failure
+- `quality_checker.rb`: `.debug` on JSON validation failure
+- `structured_output.rb`: `.warn` on retry failure
+- `llm.rb`: `.debug` on lex-llm-gateway LoadError, `.warn` on escalation attempt failure, publish_escalation_event failure, and apply_response_guards failure
+
 ## [0.3.18] - 2026-03-22
 
 ### Added

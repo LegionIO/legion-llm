@@ -73,7 +73,8 @@ module Legion
             return 'http://localhost:11434' unless Legion.const_defined?('Settings')
 
             Legion::Settings[:llm].dig(:providers, :ollama, :base_url) || 'http://localhost:11434'
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.debug("Discovery::Ollama base_url lookup failed, using default: #{e.message}") if defined?(Legion::Logging)
             'http://localhost:11434'
           end
 
@@ -81,7 +82,8 @@ module Legion
             return {} unless Legion.const_defined?('Settings')
 
             Legion::Settings[:llm][:discovery] || {}
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.debug("Discovery::Ollama discovery_settings unavailable: #{e.message}") if defined?(Legion::Logging)
             {}
           end
         end

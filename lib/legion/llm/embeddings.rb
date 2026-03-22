@@ -31,6 +31,7 @@ module Legion
             { vector: vec, model: model, dimensions: vec&.size || 0, index: i }
           end
         rescue StandardError => e
+          Legion::Logging.warn("Batch embedding failed: #{e.message}") if defined?(Legion::Logging)
           texts.map { |_| { vector: nil, model: model, error: e.message } }
         end
 

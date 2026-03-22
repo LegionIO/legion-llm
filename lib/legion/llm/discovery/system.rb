@@ -133,7 +133,8 @@ module Legion
             return {} unless Legion.const_defined?('Settings')
 
             Legion::Settings[:llm][:discovery] || {}
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.debug("Discovery::System discovery_settings unavailable: #{e.message}") if defined?(Legion::Logging)
             {}
           end
         end

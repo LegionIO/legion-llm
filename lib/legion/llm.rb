@@ -20,7 +20,8 @@ require_relative 'llm/cost_tracker'
 
 begin
   require 'legion/extensions/llm/gateway'
-rescue LoadError
+rescue LoadError => e
+  Legion::Logging.debug("lex-llm-gateway not available: #{e.message}") if defined?(Legion::Logging)
   nil
 end
 
@@ -344,6 +345,7 @@ module Legion
             end
           rescue StandardError => e
             duration_ms = ((Time.now - start_time) * 1000).round
+            Legion::Logging.warn("Escalation attempt failed model=#{resolution.model}: #{e.message}") if defined?(Legion::Logging)
             report_health(:error, resolution, duration_ms)
             history << build_attempt(resolution, :error, [e.class.name], duration_ms)
           end
@@ -380,7 +382,8 @@ module Legion
         return unless defined?(Legion::Transport)
 
         Legion::Logging.debug("Escalation event: #{final_outcome}, #{history.size} attempts") if Legion.const_defined?('Logging')
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.warn("publish_escalation_event failed: #{e.message}") if defined?(Legion::Logging)
         nil
       end
 
@@ -398,7 +401,8 @@ module Legion
         Legion::Logging.warn "Response guard failed: #{guard_result.inspect}" if !guard_result[:passed] && Legion.const_defined?('Logging')
 
         result.merge(_guard_result: guard_result)
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.warn("apply_response_guards failed: #{e.message}") if defined?(Legion::Logging)
         result
       end
 
