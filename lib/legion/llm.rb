@@ -15,6 +15,8 @@ require_relative 'llm/daemon_client'
 require_relative 'llm/arbitrage'
 require_relative 'llm/batch'
 require_relative 'llm/scheduling'
+require_relative 'llm/off_peak'
+require_relative 'llm/cost_tracker'
 
 begin
   require 'legion/extensions/llm/gateway'

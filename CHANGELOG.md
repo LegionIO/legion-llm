@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.3.17] - 2026-03-22
+
+### Added
+- `Legion::LLM::OffPeak` module for off-peak scheduling: `peak_hour?`, `should_defer?(priority:)`, `next_off_peak` — defers non-urgent LLM requests during configurable peak hours (default 14:00-22:00 UTC)
+- `Legion::LLM::CostTracker` module for per-request cost tracking: `record(model:, input_tokens:, output_tokens:)`, `summary(since:)` with by-model breakdown, configurable pricing table via settings, thread-safe accumulator
+
 ## [0.3.16] - 2026-03-22
 
 ### Fixed
