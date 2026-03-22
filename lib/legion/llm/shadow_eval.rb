@@ -17,6 +17,7 @@ module Legion
 
         def evaluate(primary_response:, messages: nil, shadow_model: nil) # rubocop:disable Lint/UnusedMethodArgument
           shadow_model ||= Legion::Settings.dig(:llm, :shadow, :model) || 'gpt-4o-mini'
+          Legion::Logging.debug("ShadowEval triggered primary_model=#{primary_response[:model]} shadow_model=#{shadow_model}") if defined?(Legion::Logging)
 
           shadow_response = Legion::LLM.send(:chat_single,
                                              model: shadow_model, provider: nil,
@@ -27,6 +28,7 @@ module Legion
           Legion::Events.emit('llm.shadow_eval', comparison) if defined?(Legion::Events)
           comparison
         rescue StandardError => e
+          Legion::Logging.warn("ShadowEval failed shadow_model=#{shadow_model}: #{e.message}") if defined?(Legion::Logging)
           { error: e.message, shadow_model: shadow_model }
         end
 

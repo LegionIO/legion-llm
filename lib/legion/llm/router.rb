@@ -28,7 +28,17 @@ module Legion
           rules = load_rules
           candidates = select_candidates(rules, merged)
           best = pick_best(candidates)
-          best&.to_resolution
+          resolution = best&.to_resolution
+
+          if resolution
+            if defined?(Legion::Logging)
+              Legion::Logging.info("Routed to tier=#{resolution.tier} provider=#{resolution.provider} model=#{resolution.model} via rule='#{resolution.rule}'")
+            end
+          elsif defined?(Legion::Logging)
+            Legion::Logging.debug('Router: no rules matched, resolution is nil')
+          end
+
+          resolution
         end
 
         def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil)
@@ -100,6 +110,8 @@ module Legion
         end
 
         def select_candidates(rules, intent)
+          Legion::Logging.debug("Router: selecting candidates from #{rules.size} rules") if defined?(Legion::Logging)
+
           # 1. Collect constraints from constraint rules that match the intent
           constraints = rules
                         .select { |r| r.constraint && r.matches_intent?(intent) }
@@ -118,7 +130,11 @@ module Legion
           discovered = unconstrained.reject { |r| excluded_by_discovery?(r) }
 
           # 5. Filter by tier availability
-          discovered.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
+          final = discovered.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
+
+          Legion::Logging.debug("Router: #{final.size} candidates after filtering (started with #{rules.size})") if defined?(Legion::Logging)
+
+          final
         end
 
         def excluded_by_constraint?(rule, constraints)

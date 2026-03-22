@@ -76,6 +76,7 @@ module Legion
         healthy = response.code == '200'
         @healthy           = healthy
         @health_checked_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+        Legion::Logging.info("Daemon health check result=#{healthy ? 'healthy' : 'unhealthy'} url=#{daemon_url}") if defined?(Legion::Logging)
         healthy
       rescue StandardError
         mark_unhealthy
@@ -84,6 +85,7 @@ module Legion
 
       # Marks the daemon as unhealthy and records the timestamp.
       def mark_unhealthy
+        Legion::Logging.warn("Daemon marked unhealthy url=#{daemon_url}") if defined?(Legion::Logging)
         @healthy           = false
         @health_checked_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
       end
@@ -128,9 +130,11 @@ module Legion
           data = parsed.fetch(:data, {})
           { status: :accepted, request_id: data[:request_id], poll_key: data[:poll_key] }
         when 403
+          Legion::Logging.warn("Daemon returned 403 Denied url=#{daemon_url}") if defined?(Legion::Logging)
           { status: :denied, error: parsed.fetch(:error, parsed) }
         when 429
           retry_after = extract_retry_after(response, parsed)
+          Legion::Logging.warn("Daemon returned 429 RateLimited url=#{daemon_url} retry_after=#{retry_after}") if defined?(Legion::Logging)
           { status: :rate_limited, retry_after: retry_after }
         when 503
           { status: :unavailable }

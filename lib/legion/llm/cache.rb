@@ -27,10 +27,14 @@ module Legion
         return nil unless available?
 
         raw = Legion::Cache.get(cache_key)
-        return nil if raw.nil?
+        if raw.nil?
+          Legion::Logging.debug("LLM cache miss key=#{cache_key}") if defined?(Legion::Logging)
+          return nil
+        end
 
         ::JSON.parse(raw, symbolize_names: true)
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.warn("LLM cache get error key=#{cache_key}: #{e.message}") if defined?(Legion::Logging)
         nil
       end
 
@@ -39,8 +43,10 @@ module Legion
         return false unless available?
 
         Legion::Cache.set(cache_key, ::JSON.dump(response), ttl)
+        Legion::Logging.debug("LLM cache write key=#{cache_key} ttl=#{ttl}") if defined?(Legion::Logging)
         true
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.warn("LLM cache set error key=#{cache_key}: #{e.message}") if defined?(Legion::Logging)
         false
       end
 

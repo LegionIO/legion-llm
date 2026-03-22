@@ -39,9 +39,17 @@ module Legion
 
         def matches_intent?(intent)
           @conditions.all? do |key, value|
-            return false unless intent.key?(key)
+            unless intent.key?(key)
+              Legion::Logging.debug("Rule '#{@name}' rejected: missing intent key=#{key}") if defined?(Legion::Logging)
+              return false
+            end
 
-            intent[key].to_s == value.to_s
+            unless intent[key].to_s == value.to_s
+              Legion::Logging.debug("Rule '#{@name}' rejected: intent #{key}=#{intent[key]} != #{value}") if defined?(Legion::Logging)
+              return false
+            end
+
+            true
           end
         end
 
@@ -60,16 +68,31 @@ module Legion
 
           sched = @schedule.transform_keys(&:to_s)
           now = localize(now, sched['timezone'])
-
-          return false if sched['valid_from']  && now < Time.parse(sched['valid_from'])
-          return false if sched['valid_until'] && now > Time.parse(sched['valid_until'])
-          return false if sched['hours'] && !within_hours?(sched['hours'], now)
-          return false if sched['days']  && !on_allowed_day?(sched['days'], now)
-
-          true
+          schedule_rejection(sched, now).nil?
         end
 
         private
+
+        def schedule_rejection(sched, now)
+          if sched['valid_from'] && now < Time.parse(sched['valid_from'])
+            Legion::Logging.debug("Rule '#{@name}' rejected: before valid_from=#{sched['valid_from']}") if defined?(Legion::Logging)
+            return :valid_from
+          end
+          if sched['valid_until'] && now > Time.parse(sched['valid_until'])
+            Legion::Logging.debug("Rule '#{@name}' rejected: after valid_until=#{sched['valid_until']}") if defined?(Legion::Logging)
+            return :valid_until
+          end
+          if sched['hours'] && !within_hours?(sched['hours'], now)
+            Legion::Logging.debug("Rule '#{@name}' rejected: outside schedule hours=#{sched['hours']}") if defined?(Legion::Logging)
+            return :hours
+          end
+          if sched['days'] && !on_allowed_day?(sched['days'], now)
+            Legion::Logging.debug("Rule '#{@name}' rejected: outside schedule days=#{sched['days']}") if defined?(Legion::Logging)
+            return :days
+          end
+
+          nil
+        end
 
         def localize(time, timezone_name)
           return time unless timezone_name

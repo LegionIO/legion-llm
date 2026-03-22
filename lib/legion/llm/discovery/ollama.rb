@@ -30,10 +30,13 @@ module Legion
             if response.success?
               parsed = ::JSON.parse(response.body)
               @models = parsed['models'] || []
+              Legion::Logging.debug("Discovery::Ollama model list refreshed count=#{@models.size}") if defined?(Legion::Logging)
             else
+              Legion::Logging.warn("Discovery::Ollama HTTP failure status=#{response.status}") if defined?(Legion::Logging)
               @models ||= []
             end
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Discovery::Ollama HTTP failure: #{e.message}") if defined?(Legion::Logging)
             @models ||= []
           ensure
             @last_refreshed_at = Time.now

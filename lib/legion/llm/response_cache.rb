@@ -26,6 +26,7 @@ module Legion
 
       # Writes error details and marks status as :error.
       def fail_request(request_id, code:, message:, ttl: DEFAULT_TTL)
+        Legion::Logging.warn("ResponseCache fail_request request_id=#{request_id} code=#{code} message=#{message}") if defined?(Legion::Logging)
         payload = ::JSON.dump({ code: code, message: message })
         cache_set(error_key(request_id), payload, ttl)
         cache_set(status_key(request_id), 'error', ttl)
@@ -69,6 +70,7 @@ module Legion
 
         loop do
           current = status(request_id)
+          Legion::Logging.debug("ResponseCache poll request_id=#{request_id} status=#{current}") if defined?(Legion::Logging)
 
           case current
           when :done
@@ -120,6 +122,7 @@ module Legion
 
       private_class_method def self.write_response(request_id, response_text, ttl)
         if response_text.bytesize > SPOOL_THRESHOLD
+          Legion::Logging.warn("ResponseCache spool overflow request_id=#{request_id} bytes=#{response_text.bytesize}") if defined?(Legion::Logging)
           FileUtils.mkdir_p(SPOOL_DIR)
           path = File.join(SPOOL_DIR, "#{request_id}.txt")
           File.write(path, response_text)

@@ -12,7 +12,9 @@ module Legion
         # @param time [Time] time to check (defaults to now)
         # @return [Boolean]
         def peak_hour?(time = Time.now.utc)
-          PEAK_HOURS.cover?(time.hour)
+          result = PEAK_HOURS.cover?(time.hour)
+          Legion::Logging.debug("OffPeak peak_hour check hour=#{time.hour} peak=#{result}") if defined?(Legion::Logging)
+          result
         end
 
         # Returns true when a non-urgent request should be deferred to off-peak.

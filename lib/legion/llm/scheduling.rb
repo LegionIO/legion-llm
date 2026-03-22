@@ -24,7 +24,9 @@ module Legion
           return false unless enabled?
           return false if urgency.to_sym == :immediate
 
-          eligible_for_deferral?(intent.to_sym) && peak_hours?
+          result = eligible_for_deferral?(intent.to_sym) && peak_hours?
+          Legion::Logging.debug("Scheduling defer decision intent=#{intent} urgency=#{urgency} defer=#{result}") if defined?(Legion::Logging)
+          result
         end
 
         # Returns true if the current UTC hour falls within the configured peak window.

@@ -56,7 +56,9 @@ module Legion
 
           return nil if scored.empty?
 
-          scored.min_by { |_model, cost| cost }&.first
+          selected = scored.min_by { |_model, cost| cost }&.first
+          Legion::Logging.debug("Arbitrage selected model=#{selected} capability=#{capability}") if defined?(Legion::Logging)
+          selected
         end
 
         # Returns the merged cost table: defaults overridden by any settings-defined entries.

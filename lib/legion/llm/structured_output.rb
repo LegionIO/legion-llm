@@ -26,6 +26,7 @@ module Legion
                                                 json_schema: { name: 'response', schema: schema } },
                              **opts.except(:attempt))
           else
+            Legion::Logging.debug("StructuredOutput using prompt-based fallback for model=#{model}") if defined?(Legion::Logging)
             instruction = "You MUST respond with valid JSON matching this schema:\n" \
                           "```json\n#{Legion::JSON.dump(schema)}\n```\n" \
                           'Respond with ONLY the JSON object, no other text.'
@@ -37,8 +38,10 @@ module Legion
         end
 
         def handle_parse_error(error, messages, schema, model, result, **opts)
-          if retry_enabled? && (opts[:attempt] || 0) < max_retries
-            retry_with_instruction(messages, schema, model, attempt: (opts[:attempt] || 0) + 1, **opts)
+          attempt = opts[:attempt] || 0
+          Legion::Logging.warn("StructuredOutput JSON parse failure attempt=#{attempt} model=#{model}: #{error.message}") if defined?(Legion::Logging)
+          if retry_enabled? && attempt < max_retries
+            retry_with_instruction(messages, schema, model, attempt: attempt + 1, **opts)
           else
             { data: nil, error: "JSON parse failed: #{error.message}", raw: result&.dig(:content), valid: false }
           end

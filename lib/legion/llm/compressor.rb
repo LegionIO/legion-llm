@@ -19,10 +19,12 @@ module Legion
         def compress(text, level: LIGHT)
           return text if text.nil? || text.empty? || level <= NONE
 
+          original_length = text.length
           segments = split_segments(text)
           result = segments.map { |seg| seg[:protected] ? seg[:text] : compress_prose(seg[:text], level) }.join
 
           result = collapse_whitespace(result) if level >= AGGRESSIVE
+          Legion::Logging.debug("Compressor applied level=#{level} original=#{original_length} compressed=#{result.length}") if defined?(Legion::Logging)
           result
         end
 

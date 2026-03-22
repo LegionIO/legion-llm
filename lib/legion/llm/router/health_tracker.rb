@@ -49,7 +49,10 @@ module Legion
 
           if circuit[:state] == :open
             elapsed = Time.now - circuit[:opened_at]
-            return :half_open if elapsed >= @cooldown_seconds
+            if elapsed >= @cooldown_seconds
+              Legion::Logging.warn("Circuit open->half_open for provider=#{provider} (cooldown elapsed)") if defined?(Legion::Logging)
+              return :half_open
+            end
           end
 
           circuit[:state]
@@ -82,11 +85,13 @@ module Legion
             if circuit_state(provider) == :half_open
               circuit[:state]     = :open
               circuit[:opened_at] = Time.now
+              Legion::Logging.warn("Circuit half_open->open for provider=#{provider} (error during probe)") if defined?(Legion::Logging)
             else
               circuit[:failures] += 1.0
               if circuit[:failures] >= @failure_threshold
                 circuit[:state]     = :open
                 circuit[:opened_at] = Time.now
+                Legion::Logging.warn("Circuit closed->open for provider=#{provider} (failures=#{circuit[:failures]})") if defined?(Legion::Logging)
               end
             end
           end
@@ -94,10 +99,12 @@ module Legion
           register_handler(:success) do |payload|
             provider = payload[:provider]
             ensure_circuit(provider)
+            prev_state          = circuit_state(provider)
             circuit             = @circuits[provider]
             circuit[:failures]  = 0
             circuit[:state]     = :closed
             circuit[:opened_at] = nil
+            Legion::Logging.warn("Circuit #{prev_state}->closed for provider=#{provider}") if defined?(Legion::Logging) && prev_state != :closed
           end
 
           register_handler(:quality_failure) do |payload|
@@ -108,11 +115,13 @@ module Legion
             if circuit_state(provider) == :half_open
               circuit[:state]     = :open
               circuit[:opened_at] = Time.now
+              Legion::Logging.warn("Circuit half_open->open for provider=#{provider} (quality failure during probe)") if defined?(Legion::Logging)
             else
               circuit[:failures] += 0.5
               if circuit[:failures] >= @failure_threshold
                 circuit[:state]     = :open
                 circuit[:opened_at] = Time.now
+                Legion::Logging.warn("Circuit closed->open for provider=#{provider} (quality failures=#{circuit[:failures]})") if defined?(Legion::Logging)
               end
             end
           end
@@ -152,7 +161,9 @@ module Legion
           return 0 if avg <= LATENCY_THRESHOLD_MS
 
           multiplier = (avg / LATENCY_THRESHOLD_MS).floor
-          [LATENCY_PENALTY_STEP * multiplier, OPEN_PENALTY].max
+          penalty = [LATENCY_PENALTY_STEP * multiplier, OPEN_PENALTY].max
+          Legion::Logging.debug("Latency penalty applied to provider=#{provider} avg_ms=#{avg.round} penalty=#{penalty}") if defined?(Legion::Logging)
+          penalty
         end
       end
     end

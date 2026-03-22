@@ -94,7 +94,8 @@ module Legion
           def fetch_macos_total
             raw = `sysctl -n hw.memsize`.strip.to_i
             @total_memory_mb = raw / 1024 / 1024
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Discovery::System sysctl command failed: #{e.message}") if defined?(Legion::Logging)
             @total_memory_mb = nil
           end
 
@@ -104,7 +105,8 @@ module Legion
             free     = vm_output[/Pages free:\s+(\d+)/, 1].to_i
             inactive = vm_output[/Pages inactive:\s+(\d+)/, 1].to_i
             @available_memory_mb = (free + inactive) * page_size / 1024 / 1024
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Discovery::System vm_stat command failed: #{e.message}") if defined?(Legion::Logging)
             @available_memory_mb = nil
           end
 
@@ -112,7 +114,8 @@ module Legion
             meminfo = File.read('/proc/meminfo')
             total_kb = meminfo[/MemTotal:\s+(\d+)/, 1].to_i
             @total_memory_mb = total_kb / 1024
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Discovery::System /proc/meminfo read failed: #{e.message}") if defined?(Legion::Logging)
             @total_memory_mb = nil
           end
 
@@ -121,7 +124,8 @@ module Legion
             free_kb     = meminfo[/MemFree:\s+(\d+)/, 1].to_i
             inactive_kb = meminfo[/Inactive:\s+(\d+)/, 1].to_i
             @available_memory_mb = (free_kb + inactive_kb) / 1024
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Discovery::System /proc/meminfo available read failed: #{e.message}") if defined?(Legion::Logging)
             @available_memory_mb = nil
           end
 

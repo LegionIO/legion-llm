@@ -1,5 +1,27 @@
 # Legion LLM Changelog
 
+## [0.3.18] - 2026-03-22
+
+### Added
+- Logging across routing, health tracking, caching, and discovery subsystems
+- `Router.resolve`: `.info` on route decision (tier/provider/model/rule), `.debug` on candidate filtering counts, `.debug` when no rules match
+- `Router::HealthTracker`: `.warn` on circuit state transitions (closed->open, half_open->open, open->half_open, any->closed), `.debug` on latency penalty applied
+- `Router::Rule`: `.debug` on intent mismatch, schedule constraint rejections (valid_from, valid_until, hours, days)
+- `Cache`: `.debug` on cache miss and cache write, `.warn` on swallowed get/set errors
+- `ResponseCache`: `.warn` on spool overflow to disk, `.debug` on async poll status, `.warn` on fail_request
+- `DaemonClient`: `.warn` on mark_unhealthy, `.warn` on 403/429 responses, `.info` on health check result
+- `StructuredOutput`: `.warn` on JSON parse failure with attempt count, `.debug` when using prompt-based fallback
+- `Compressor`: `.debug` on compression applied (level, original length, compressed length)
+- `Discovery::Ollama`: `.warn` on HTTP failure, `.debug` on model list refresh with count
+- `Discovery::System`: `.warn` on system command failures (sysctl, vm_stat, /proc/meminfo)
+- `ShadowEval`: `.debug` on evaluation triggered, `.warn` on failure
+- `Scheduling`: `.debug` on defer decision
+- `OffPeak`: `.debug` on peak hour check result
+- `Arbitrage`: `.debug` on model selection result
+
+### Changed
+- `Router::Rule#within_schedule?` refactored to extract `schedule_rejection` helper (reduces cyclomatic complexity)
+
 ## [0.3.17] - 2026-03-22
 
 ### Added
