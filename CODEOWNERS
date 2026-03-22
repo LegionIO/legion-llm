@@ -1,1 +1,40 @@
+# Default owner — all files
 * @Esity
+
+# Core library code
+# lib/ @Esity @future-ai-team
+
+# Router (dynamic weighted routing, intent, escalation)
+# lib/legion/llm/router/ @Esity @future-ai-team
+# lib/legion/llm/router.rb @Esity @future-ai-team
+
+# Provider configuration
+# lib/legion/llm/providers.rb @Esity @future-ai-team
+
+# Discovery (Ollama, system memory)
+# lib/legion/llm/discovery/ @Esity @future-ai-team
+
+# Embeddings
+# lib/legion/llm/embeddings.rb @Esity @future-ai-team
+
+# Structured output and quality checking
+# lib/legion/llm/structured_output.rb @Esity @future-ai-team
+# lib/legion/llm/quality_checker.rb @Esity @future-ai-team
+
+# Compressor
+# lib/legion/llm/compressor.rb @Esity @future-ai-team
+
+# Transport (escalation events)
+# lib/legion/llm/transport/ @Esity @future-infra-team
+
+# Extension helper mixin
+# lib/legion/llm/helpers/ @Esity @future-core-team
+
+# Specs
+# spec/ @Esity @future-contributors
+
+# Documentation
+# *.md @Esity @future-docs-team
+
+# CI/CD
+# .github/ @Esity
