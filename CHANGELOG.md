@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.3.20] - 2026-03-22
+
+### Changed
+- Tightened gemspec dependency version constraints: `legion-logging >= 1.2.8`, `legion-settings >= 1.3.12`
+
 ## [0.3.19] - 2026-03-22
 
 ### Changed
