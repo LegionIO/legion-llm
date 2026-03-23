@@ -101,13 +101,30 @@ module Legion
         end
 
         def submit_single(entry, provider:, model:)
+          response = Legion::LLM.chat_direct(
+            messages: entry[:messages],
+            model:    model,
+            **entry[:opts]
+          )
+
           {
-            status:   :batched,
+            status:   :completed,
+            model:    model,
+            provider: provider,
+            id:       entry[:id],
+            response: response,
+            meta:     { batched: true, queued_at: entry[:queued_at], completed_at: Time.now.utc }
+          }
+        rescue StandardError => e
+          Legion::Logging.warn("Batch submit_single failed for #{entry[:id]}: #{e.message}") if defined?(Legion::Logging)
+          {
+            status:   :failed,
             model:    model,
             provider: provider,
             id:       entry[:id],
             response: nil,
-            meta:     { batched: true, queued_at: entry[:queued_at] }
+            error:    e.message,
+            meta:     { batched: true, queued_at: entry[:queued_at], failed_at: Time.now.utc }
           }
         end
       end

@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.3.22] - 2026-03-23
+
+### Changed
+- `Batch.submit_single` now calls `Legion::LLM.chat_direct` instead of returning a stub response
+- Batch flush returns `status: :completed` on success or `status: :failed` with error on exception
+- `OffPeak` module now delegates to `Scheduling` (consolidated duplicate peak-hour logic)
+- `Scheduling.peak_hours?` and `Scheduling.next_off_peak` accept optional `time` parameter
+
 ## [0.3.21] - 2026-03-23
 
 ### Added

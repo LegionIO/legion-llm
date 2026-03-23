@@ -29,9 +29,9 @@ module Legion
           result
         end
 
-        # Returns true if the current UTC hour falls within the configured peak window.
-        def peak_hours?
-          hour = Time.now.utc.hour
+        # Returns true if the given UTC hour falls within the configured peak window.
+        def peak_hours?(time = Time.now.utc)
+          hour = time.is_a?(Time) ? time.hour : Time.now.utc.hour
           peak_range.cover?(hour)
         end
 
@@ -39,19 +39,19 @@ module Legion
         # Off-peak begins at the hour after the peak window ends.
         #
         # @return [Time] next off-peak start time
-        def next_off_peak
-          now = Time.now.utc
+        def next_off_peak(time = Time.now.utc)
+          now = time.is_a?(Time) ? time : Time.now.utc
           peak_end = peak_range.last
           max_defer = settings.fetch(:max_defer_hours, 8)
 
-          next_time = if now.hour < peak_range.first
-                        # Before peak — off-peak is now
-                        now
-                      else
-                        # During or after peak — next off-peak is at peak_end + 1
+          next_time = if peak_hours?(now)
+                        # During peak — next off-peak is at peak_end + 1
                         candidate = Time.utc(now.year, now.month, now.day, peak_end + 1, 0, 0)
                         candidate += 86_400 if candidate <= now
                         candidate
+                      else
+                        # Already off-peak — return now
+                        now
                       end
 
           # Cap at max_defer_hours from now

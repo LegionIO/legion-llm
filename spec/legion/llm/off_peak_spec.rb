@@ -94,17 +94,17 @@ RSpec.describe Legion::LLM::OffPeak do
       expect(result).to eq(frozen)
     end
 
-    it 'returns the peak-end boundary hour when during peak' do
+    it 'returns the first off-peak hour when during peak' do
       frozen = Time.utc(2026, 3, 21, 16, 0, 0)
       result = described_class.next_off_peak(frozen)
-      expect(result.hour).to eq(22)
+      expect(result.hour).to eq(23)
       expect(result.min).to eq(0)
     end
 
-    it 'returns the current time when at the last peak hour (22:00 UTC)' do
+    it 'returns the next off-peak hour when at the last peak hour (22:00 UTC)' do
       frozen = Time.utc(2026, 3, 21, 22, 0, 0)
       result = described_class.next_off_peak(frozen)
-      expect(result).to eq(frozen)
+      expect(result.hour).to eq(23)
     end
 
     it 'returns a time on the same day as the reference time' do

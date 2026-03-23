@@ -7,6 +7,7 @@ RSpec.describe Legion::LLM::Batch do
   before do
     described_class.reset!
     Legion::Settings[:llm][:batch] = { enabled: true, window_seconds: 0, max_batch_size: 100 }
+    allow(Legion::LLM).to receive(:chat_direct).and_return({ content: 'test response' })
   end
 
   after do
@@ -97,7 +98,7 @@ RSpec.describe Legion::LLM::Batch do
         results = described_class.flush
         result = results.first
         expect(result).to include(:id, :status, :result)
-        expect(result[:status]).to eq(:batched)
+        expect(result[:status]).to eq(:completed)
       end
 
       it 'invokes callbacks with the result' do
@@ -110,7 +111,7 @@ RSpec.describe Legion::LLM::Batch do
         )
         described_class.flush
         expect(received).to be_a(Hash)
-        expect(received[:status]).to eq(:batched)
+        expect(received[:status]).to eq(:completed)
       end
 
       it 'groups requests by provider and model' do
