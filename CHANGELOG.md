@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.3.29] - 2026-03-23
+
+### Added
+- `EscalationTracker`: global escalation history with summary analytics
+- Tracks model escalations (from_model, to_model, reason, tier changes)
+- `summary` aggregates by reason, source model, and target model
+- `escalation_rate` reports escalation frequency within configurable time windows
+- Capped at 200 entries with automatic eviction
+
 ## [0.3.28] - 2026-03-23
 
 ### Added
