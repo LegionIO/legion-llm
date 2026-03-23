@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.3.24] - 2026-03-23
+
+### Added
+- Auto cost-tracking hook: records per-request cost via `CostTracker` after every LLM call
+- `Hooks::CostTracking.install` registers an `after_chat` hook during `LLM.start`
+- Extracts usage tokens and model from response, feeds into in-memory `CostTracker.record`
+- Opt-out via `llm.cost_tracking.auto: false` in settings
+- 9 specs covering hook installation, token extraction, model fallback, and edge cases
+
 ## [0.3.23] - 2026-03-23
 
 ### Added

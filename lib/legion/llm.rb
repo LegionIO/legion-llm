@@ -499,6 +499,9 @@ module Legion
       def install_hooks
         metering_enabled = settings.dig(:metering, :auto) != false
         Hooks::Metering.install if metering_enabled
+
+        cost_tracking_enabled = settings.dig(:cost_tracking, :auto) != false
+        Hooks::CostTracking.install if cost_tracking_enabled
       rescue StandardError => e
         Legion::Logging.debug("LLM hook installation failed: #{e.message}") if defined?(Legion::Logging)
       end
