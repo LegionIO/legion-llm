@@ -55,6 +55,39 @@ module Legion
           end
         end
 
+        # Removes near-duplicate messages from a conversation history.
+        # Uses Jaccard similarity on word sets to detect duplicates.
+        # Keeps the last occurrence of similar messages.
+        #
+        # @param messages [Array<Hash>] messages with :role and :content keys
+        # @param threshold [Float] similarity threshold (0.0-1.0) above which messages are considered duplicates
+        # @return [Hash] { messages: Array, removed: Integer, original_count: Integer }
+        def deduplicate_messages(messages, threshold: 0.85)
+          return { messages: [], removed: 0, original_count: 0 } if messages.nil? || messages.empty?
+
+          kept = []
+          removed = 0
+
+          messages.reverse_each do |msg|
+            content = msg[:content].to_s
+            next kept.unshift(msg) if content.length < 20
+
+            duplicate = kept.any? do |existing|
+              next false unless existing[:role] == msg[:role]
+
+              jaccard_similarity(content, existing[:content].to_s) >= threshold
+            end
+
+            if duplicate
+              removed += 1
+            else
+              kept.unshift(msg)
+            end
+          end
+
+          { messages: kept, removed: removed, original_count: messages.size }
+        end
+
         def stopwords_for_level(level)
           return [] if level <= NONE
 
@@ -112,6 +145,16 @@ module Legion
 
         def summarize_model
           (defined?(Legion::Settings) && Legion::Settings.dig(:llm, :compressor, :model)) || 'gpt-4o-mini'
+        end
+
+        def jaccard_similarity(text_a, text_b)
+          words_a = text_a.downcase.scan(/\w+/).to_set
+          words_b = text_b.downcase.scan(/\w+/).to_set
+          return 0.0 if words_a.empty? && words_b.empty?
+
+          intersection = (words_a & words_b).size.to_f
+          union = (words_a | words_b).size.to_f
+          union.zero? ? 0.0 : intersection / union
         end
 
         def log_debug(msg)

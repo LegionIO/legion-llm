@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.3.31] - 2026-03-23
+
+### Added
+- `Compressor.deduplicate_messages`: removes near-duplicate messages from conversation history using Jaccard similarity on word sets
+- Configurable similarity threshold (default 0.85), keeps last occurrence, same-role-only comparison
+- Skips short messages (< 20 chars) to avoid false positives
+
 ## [0.3.30] - 2026-03-23
 
 ### Added

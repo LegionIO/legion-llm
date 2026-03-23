@@ -183,6 +183,71 @@ RSpec.describe Legion::LLM::Compressor do
     end
   end
 
+  describe '.deduplicate_messages' do
+    it 'returns empty for nil' do
+      result = described_class.deduplicate_messages(nil)
+      expect(result[:messages]).to eq([])
+      expect(result[:removed]).to eq(0)
+    end
+
+    it 'keeps unique messages' do
+      messages = [
+        { role: 'user', content: 'How does caching work in Legion?' },
+        { role: 'assistant', content: 'Legion uses Redis or Memcached via legion-cache.' },
+        { role: 'user', content: 'What about persistence?' }
+      ]
+      result = described_class.deduplicate_messages(messages)
+      expect(result[:messages].size).to eq(3)
+      expect(result[:removed]).to eq(0)
+    end
+
+    it 'removes near-duplicate messages keeping the last occurrence' do
+      messages = [
+        { role: 'user', content: 'How does the caching system work in Legion framework?' },
+        { role: 'assistant', content: 'It uses Redis.' },
+        { role: 'user', content: 'How does the caching system work in the Legion framework?' }
+      ]
+      result = described_class.deduplicate_messages(messages)
+      expect(result[:removed]).to eq(1)
+      expect(result[:messages].size).to eq(2)
+      expect(result[:messages].last[:content]).to include('Legion framework')
+    end
+
+    it 'skips very short messages' do
+      messages = [
+        { role: 'user', content: 'yes' },
+        { role: 'assistant', content: 'ok' },
+        { role: 'user', content: 'yes' }
+      ]
+      result = described_class.deduplicate_messages(messages)
+      expect(result[:removed]).to eq(0)
+    end
+
+    it 'only deduplicates within the same role' do
+      messages = [
+        { role: 'user', content: 'The caching system uses Redis and Memcached for storage.' },
+        { role: 'assistant', content: 'The caching system uses Redis and Memcached for storage.' }
+      ]
+      result = described_class.deduplicate_messages(messages)
+      expect(result[:removed]).to eq(0)
+    end
+
+    it 'respects custom threshold' do
+      messages = [
+        { role: 'user', content: 'Tell me about the caching system in Legion please.' },
+        { role: 'assistant', content: 'Sure, here is the info.' },
+        { role: 'user', content: 'Tell me about caching in Legion.' }
+      ]
+      # With a very high threshold (0.99), these should not be considered duplicates
+      result = described_class.deduplicate_messages(messages, threshold: 0.99)
+      expect(result[:removed]).to eq(0)
+
+      # With a lower threshold, they should be deduplicated
+      result = described_class.deduplicate_messages(messages, threshold: 0.5)
+      expect(result[:removed]).to eq(1)
+    end
+  end
+
   describe '.stopwords_for_level' do
     it 'returns empty array for level 0' do
       expect(described_class.stopwords_for_level(0)).to be_empty
