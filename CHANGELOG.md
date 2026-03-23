@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.3.32] - 2026-03-23
+
+### Added
+- `Hooks::Reflection`: after_chat hook that extracts knowledge from conversations
+- Detects decisions, patterns, and facts using regex markers
+- Publishes extracted entries to Apollo via AMQP or direct ingest
+- Cooldown-based dedup (5 min) and async extraction to avoid blocking
+- `summary` method for introspection of extraction history
+
 ## [0.3.31] - 2026-03-23
 
 ### Added

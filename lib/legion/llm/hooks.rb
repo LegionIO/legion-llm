@@ -5,6 +5,7 @@ require 'legion/llm/hooks/response_guard'
 require 'legion/llm/hooks/metering'
 require 'legion/llm/hooks/cost_tracking'
 require 'legion/llm/hooks/budget_guard'
+require 'legion/llm/hooks/reflection'
 
 module Legion
   module LLM
