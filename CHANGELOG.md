@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.3.27] - 2026-03-23
+
+### Added
+- `Compressor.summarize_messages` for LLM-based conversation summarization
+- Uses configurable model (default: gpt-4o-mini) for context window compression
+- Falls back to aggressive stopword compression when LLM unavailable
+- Short conversations returned uncompressed to avoid unnecessary API calls
+
 ## [0.3.26] - 2026-03-23
 
 ### Changed

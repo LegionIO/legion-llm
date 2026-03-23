@@ -129,6 +129,60 @@ RSpec.describe Legion::LLM::Compressor do
     end
   end
 
+  describe '.summarize_messages' do
+    it 'returns empty summary for nil messages' do
+      result = described_class.summarize_messages(nil)
+      expect(result[:summary]).to eq('')
+      expect(result[:original_count]).to eq(0)
+    end
+
+    it 'returns empty summary for empty messages' do
+      result = described_class.summarize_messages([])
+      expect(result[:summary]).to eq('')
+      expect(result[:original_count]).to eq(0)
+    end
+
+    it 'returns uncompressed for short conversations' do
+      messages = [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' }
+      ]
+      result = described_class.summarize_messages(messages)
+      expect(result[:compressed]).to be false
+      expect(result[:original_count]).to eq(2)
+    end
+
+    it 'falls back to stopword compression when LLM unavailable' do
+      long_messages = 200.times.map do |i|
+        { role: i.even? ? 'user' : 'assistant', content: "This is a very really just quite important message number #{i} with lots of content." }
+      end
+      result = described_class.summarize_messages(long_messages, max_tokens: 500)
+      expect(result[:compressed]).to be true
+      expect(result[:method]).to eq(:stopword)
+    end
+
+    it 'uses LLM when available' do
+      fake_response = double('Response', content: 'Summary of conversation')
+      fake_session = double('Session')
+      allow(fake_session).to receive(:ask).and_return(fake_response)
+
+      llm_mod = Module.new do
+        def self.chat_direct(**)
+          @session
+        end
+      end
+      llm_mod.instance_variable_set(:@session, fake_session)
+      stub_const('Legion::LLM', llm_mod)
+
+      long_messages = 200.times.map do |i|
+        { role: i.even? ? 'user' : 'assistant', content: "Important message #{i} with significant content here." }
+      end
+      result = described_class.summarize_messages(long_messages, max_tokens: 500)
+      expect(result[:compressed]).to be true
+      expect(result[:summary]).to eq('Summary of conversation')
+    end
+  end
+
   describe '.stopwords_for_level' do
     it 'returns empty array for level 0' do
       expect(described_class.stopwords_for_level(0)).to be_empty

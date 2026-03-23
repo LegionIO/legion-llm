@@ -15,6 +15,17 @@ module Legion
         3 => %w[also then still even already yet again please note that]
       }.freeze
 
+      SUMMARIZE_PROMPT = <<~PROMPT
+        Summarize this conversation concisely. Preserve:
+        - Key decisions and conclusions
+        - Code snippets and file paths
+        - Action items and next steps
+        - Technical details that would be needed to continue the conversation
+
+        Omit pleasantries, repetition, and verbose explanations.
+        Return only the summary, no preamble.
+      PROMPT
+
       class << self
         def compress(text, level: LIGHT)
           return text if text.nil? || text.empty? || level <= NONE
@@ -26,6 +37,22 @@ module Legion
           result = collapse_whitespace(result) if level >= AGGRESSIVE
           Legion::Logging.debug("Compressor applied level=#{level} original=#{original_length} compressed=#{result.length}") if defined?(Legion::Logging)
           result
+        end
+
+        def summarize_messages(messages, max_tokens: 2000)
+          return { summary: '', original_count: 0 } if messages.nil? || messages.empty?
+
+          text = messages.map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n\n")
+          return { summary: text, original_count: messages.size, compressed: false } if text.length < max_tokens * 4
+
+          summary = llm_summarize(text, max_tokens)
+          if summary
+            log_debug("summarize_messages: #{messages.size} messages -> #{summary.length} chars")
+            { summary: summary, original_count: messages.size, compressed: true }
+          else
+            fallback = compress(text, level: AGGRESSIVE)
+            { summary: fallback, original_count: messages.size, compressed: true, method: :stopword }
+          end
         end
 
         def stopwords_for_level(level)
@@ -70,6 +97,25 @@ module Legion
 
         def collapse_whitespace(text)
           text.gsub(/\n{3,}/, "\n\n")
+        end
+
+        def llm_summarize(text, max_tokens)
+          return nil unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:chat_direct)
+
+          session = Legion::LLM.chat_direct(model: summarize_model)
+          response = session.ask("#{SUMMARIZE_PROMPT}\n\n#{text[0, max_tokens * 8]}")
+          response.content
+        rescue StandardError => e
+          log_debug("llm_summarize failed: #{e.message}")
+          nil
+        end
+
+        def summarize_model
+          (defined?(Legion::Settings) && Legion::Settings.dig(:llm, :compressor, :model)) || 'gpt-4o-mini'
+        end
+
+        def log_debug(msg)
+          Legion::Logging.debug("Compressor: #{msg}") if defined?(Legion::Logging)
         end
       end
     end
