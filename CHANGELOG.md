@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.3.25] - 2026-03-23
+
+### Added
+- `Hooks::BudgetGuard` before_chat hook: blocks LLM calls when session cost budget is exceeded
+- `BudgetGuard.status` returns enforcing state, spent, remaining, and ratio
+- `BudgetGuard.remaining` returns remaining budget in USD
+- Configurable via `llm.budget.session_usd` in settings (disabled when 0 or unset)
+- Auto-installed during `LLM.start` only when budget is configured
+- 10 specs covering blocking, passthrough, remaining, status, and enforcing checks
+
 ## [0.3.24] - 2026-03-23
 
 ### Added
