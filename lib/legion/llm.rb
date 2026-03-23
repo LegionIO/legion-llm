@@ -46,6 +46,8 @@ module Legion
         run_discovery
         set_defaults
 
+        install_hooks
+
         @started = true
         Legion::Settings[:llm][:connected] = true
         Legion::Logging.info 'Legion::LLM started'
@@ -492,6 +494,13 @@ module Legion
         resolved = provider || settings[:default_provider]
         cloud_providers = %i[anthropic bedrock openai gemini azure]
         cloud_providers.include?(resolved&.to_sym)
+      end
+
+      def install_hooks
+        metering_enabled = settings.dig(:metering, :auto) != false
+        Hooks::Metering.install if metering_enabled
+      rescue StandardError => e
+        Legion::Logging.debug("LLM hook installation failed: #{e.message}") if defined?(Legion::Logging)
       end
 
       def set_defaults

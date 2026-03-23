@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.3.23] - 2026-03-23
+
+### Added
+- Auto-metering hook: records token usage after every LLM call via gateway MeteringWriter or AMQP transport
+- `Hooks::Metering.install` registers an `after_chat` hook during `LLM.start`
+- Extracts input/output tokens, provider, model, status from response
+- Opt-out via `llm.metering.auto: false` in settings
+- 11 specs covering hook installation, data extraction, availability checks, and edge cases
+
 ## [0.3.22] - 2026-03-23
 
 ### Changed

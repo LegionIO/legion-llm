@@ -2,6 +2,7 @@
 
 require 'legion/llm/hooks/rag_guard'
 require 'legion/llm/hooks/response_guard'
+require 'legion/llm/hooks/metering'
 
 module Legion
   module LLM
