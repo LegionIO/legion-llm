@@ -78,6 +78,20 @@ module Legion
           queue.size
         end
 
+        # Returns a summary of current batch queue state.
+        def status
+          entries = queue.dup
+          oldest = entries.min_by { |e| e[:queued_at] }
+          {
+            enabled:        enabled?,
+            queue_size:     entries.size,
+            max_batch_size: settings.fetch(:max_batch_size, 100),
+            window_seconds: settings.fetch(:window_seconds, 300),
+            oldest_queued:  oldest ? oldest[:queued_at].iso8601 : nil,
+            by_priority:    entries.group_by { |e| e[:priority] }.transform_values(&:size)
+          }
+        end
+
         # Clears the queue (useful for testing).
         def reset!
           @queue = []

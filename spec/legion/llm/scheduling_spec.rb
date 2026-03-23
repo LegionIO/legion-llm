@@ -189,4 +189,36 @@ RSpec.describe Legion::LLM::Scheduling do
       expect(result).to be <= cap
     end
   end
+
+  describe '.status' do
+    before do
+      Legion::Settings[:llm][:scheduling] = {
+        enabled:         true,
+        peak_hours_utc:  '14-22',
+        max_defer_hours: 6
+      }
+    end
+
+    it 'returns a hash with scheduling state' do
+      s = described_class.status
+      expect(s[:enabled]).to be true
+      expect(s[:peak_range]).to eq('14..22')
+      expect(s[:max_defer_hours]).to eq(6)
+      expect(s).to have_key(:peak_hours)
+      expect(s).to have_key(:next_off_peak)
+      expect(s).to have_key(:defer_intents)
+    end
+
+    it 'shows peak_hours as true during peak' do
+      frozen = Time.utc(2026, 3, 21, 16, 0, 0)
+      allow(Time).to receive(:now).and_return(frozen)
+      expect(described_class.status[:peak_hours]).to be true
+    end
+
+    it 'shows peak_hours as false outside peak' do
+      frozen = Time.utc(2026, 3, 21, 8, 0, 0)
+      allow(Time).to receive(:now).and_return(frozen)
+      expect(described_class.status[:peak_hours]).to be false
+    end
+  end
 end

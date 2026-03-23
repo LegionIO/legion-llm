@@ -163,6 +163,26 @@ RSpec.describe Legion::LLM::Batch do
     end
   end
 
+  describe '.status' do
+    it 'returns hash with queue state' do
+      s = described_class.status
+      expect(s[:queue_size]).to eq(0)
+      expect(s).to have_key(:enabled)
+      expect(s).to have_key(:max_batch_size)
+      expect(s).to have_key(:window_seconds)
+    end
+
+    it 'reflects enqueued items and priorities' do
+      described_class.enqueue(messages: [{ role: 'user', content: 'a' }], model: 'gpt-4o', priority: :normal)
+      described_class.enqueue(messages: [{ role: 'user', content: 'b' }], model: 'gpt-4o', priority: :low)
+      s = described_class.status
+      expect(s[:queue_size]).to eq(2)
+      expect(s[:by_priority][:normal]).to eq(1)
+      expect(s[:by_priority][:low]).to eq(1)
+      expect(s[:oldest_queued]).to be_a(String)
+    end
+  end
+
   describe '.reset!' do
     it 'clears the queue' do
       described_class.enqueue(messages: [{ role: 'user', content: 'hi' }], model: 'gpt-4o')

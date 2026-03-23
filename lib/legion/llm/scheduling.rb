@@ -59,6 +59,18 @@ module Legion
           [next_time, cap].min
         end
 
+        # Returns a hash summarizing current scheduling state.
+        def status
+          {
+            enabled:         enabled?,
+            peak_hours:      peak_hours?,
+            peak_range:      peak_range.to_s,
+            next_off_peak:   peak_hours? ? next_off_peak.iso8601 : 'now',
+            defer_intents:   defer_intents,
+            max_defer_hours: settings.fetch(:max_defer_hours, 8)
+          }
+        end
+
         private
 
         def settings

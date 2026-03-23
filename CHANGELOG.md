@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.3.30] - 2026-03-23
+
+### Added
+- `Scheduling.status`: returns hash with current scheduling state (peak hours, defer intents, next off-peak)
+- `Batch.status`: returns hash with queue size, priority breakdown, oldest entry, config
+
 ## [0.3.29] - 2026-03-23
 
 ### Added
