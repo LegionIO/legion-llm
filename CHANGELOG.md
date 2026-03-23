@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.3.26] - 2026-03-23
+
+### Changed
+- Enhanced ShadowEval with result history, cost comparison, and summary analytics
+- `compare` now includes primary_cost, shadow_cost, and cost_savings ratio
+- Added `history`, `clear_history`, and `summary` class methods
+- History capped at 100 entries with automatic eviction
+- Cost estimation uses CostTracker pricing when available
+
 ## [0.3.25] - 2026-03-23
 
 ### Added
