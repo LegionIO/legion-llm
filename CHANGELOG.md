@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.3.21] - 2026-03-23
+
+### Added
+- `Legion::LLM::ToolRegistry` thread-safe tool class registry for auto-attaching tools to chat sessions
+- Wire ToolRegistry into `chat_single` so globally registered tools are available in every session
+
+### Fixed
+- Fix `CostTracker.settings_pricing` reading from wrong settings key (`:'legion-llm'` instead of `:llm`)
+- Fix `ShadowEval.evaluate` not passing `messages:` to shadow model (shadow got no context to respond to)
+
 ## [0.3.20] - 2026-03-22
 
 ### Changed

@@ -17,6 +17,7 @@ require_relative 'llm/batch'
 require_relative 'llm/scheduling'
 require_relative 'llm/off_peak'
 require_relative 'llm/cost_tracker'
+require_relative 'llm/tool_registry'
 
 begin
   require 'legion/extensions/llm/gateway'
@@ -119,6 +120,9 @@ module Legion
           end
         end
 
+        if defined?(Legion::Logging)
+          Legion::Logging.debug "[LLM] chat_direct escalate=#{escalate} message_present=#{!message.nil?} model=#{model} provider=#{provider}"
+        end
         result = if escalate && message
                    chat_with_escalation(
                      model: model, provider: provider, intent: intent, tier: tier,
@@ -129,6 +133,7 @@ module Legion
                    chat_single(model: model, provider: provider, intent: intent, tier: tier,
                                temperature: temperature, message: message, **kwargs)
                  end
+        Legion::Logging.debug "[LLM] chat_direct result_class=#{result.class} result_nil=#{result.nil?}" if defined?(Legion::Logging)
 
         if cache_key && result.is_a?(Hash)
           ttl = settings.dig(:prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
@@ -283,7 +288,11 @@ module Legion
         Legion::Extensions::LLM::Gateway::Runners::Inference.chat(**)
       end
 
-      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs)
+      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+        explicit_tools = kwargs.delete(:tools)
+        tools = explicit_tools || ToolRegistry.tools
+        tools = nil if tools.empty?
+
         if (intent || tier) && Router.routing_enabled?
           resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
           if resolution
@@ -307,10 +316,17 @@ module Legion
 
         inject_anthropic_cache_control!(opts, provider)
 
+        if defined?(Legion::Logging)
+          Legion::Logging.debug "[LLM] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
+        end
         session = RubyLLM.chat(**opts)
+        tools&.each { |tool| session.with_tool(tool) }
         return session unless message
 
-        session.ask(message)
+        Legion::Logging.debug '[LLM] chat_single calling session.ask' if defined?(Legion::Logging)
+        response = session.ask(message)
+        Legion::Logging.debug "[LLM] chat_single response_class=#{response.class} response_nil=#{response.nil?}" if defined?(Legion::Logging)
+        response
       end
 
       def chat_with_escalation(model:, provider:, intent:, tier:, max_escalations:, quality_check:, message:, **kwargs)

@@ -15,14 +15,14 @@ module Legion
           rand < rate
         end
 
-        def evaluate(primary_response:, messages: nil, shadow_model: nil) # rubocop:disable Lint/UnusedMethodArgument
+        def evaluate(primary_response:, messages: nil, shadow_model: nil)
           shadow_model ||= Legion::Settings.dig(:llm, :shadow, :model) || 'gpt-4o-mini'
           Legion::Logging.debug("ShadowEval triggered primary_model=#{primary_response[:model]} shadow_model=#{shadow_model}") if defined?(Legion::Logging)
 
           shadow_response = Legion::LLM.send(:chat_single,
                                              model: shadow_model, provider: nil,
-                                             intent: nil, tier: nil,
-                                             skip_shadow: true)
+                                             messages: messages, intent: nil,
+                                             tier: nil)
 
           comparison = compare(primary_response, shadow_response, shadow_model)
           Legion::Events.emit('llm.shadow_eval', comparison) if defined?(Legion::Events)

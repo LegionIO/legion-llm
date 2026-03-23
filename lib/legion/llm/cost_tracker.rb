@@ -84,7 +84,7 @@ module Legion
         def settings_pricing
           return {} unless defined?(Legion::Settings)
 
-          pricing = Legion::Settings.dig(:'legion-llm', :pricing)
+          pricing = Legion::Settings.dig(:llm, :pricing)
           pricing.is_a?(Hash) ? pricing : {}
         rescue StandardError => e
           Legion::Logging.warn("CostTracker settings unavailable: #{e.message}") if defined?(Legion::Logging)
