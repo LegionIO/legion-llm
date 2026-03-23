@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.3.28] - 2026-03-23
+
+### Added
+- QualityChecker: truncation detection for responses cut off mid-sentence
+- QualityChecker: refusal detection for model refusal patterns ("I can't", "as an AI")
+- REFUSAL_PATTERNS constant with configurable regex patterns
+- 6 new specs covering truncation and refusal detection
+
 ## [0.3.27] - 2026-03-23
 
 ### Added

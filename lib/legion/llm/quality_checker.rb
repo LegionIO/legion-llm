@@ -11,6 +11,13 @@ module Legion
       REPETITION_THRESHOLD  = 3
       DEFAULT_QUALITY_THRESHOLD = 50
 
+      REFUSAL_PATTERNS = [
+        /\bI (?:can(?:'t|not)|cannot|won't|am unable to)\b/i,
+        /\bI'm not able to\b/i,
+        /\bas an AI\b/i,
+        /\bI don't have (?:the ability|access)\b/i
+      ].freeze
+
       class << self
         def check(response, quality_threshold: DEFAULT_QUALITY_THRESHOLD, json_expected: false, quality_check: nil)
           failures = []
@@ -21,6 +28,8 @@ module Legion
           unless failures.include?(:empty_response)
             failures << :too_short if content.length < quality_threshold
             failures << :repetition if repetitive?(content)
+            failures << :truncated if truncated?(content)
+            failures << :refusal if refusal?(content)
             failures << :json_parse_failure if json_expected && !valid_json?(content)
           end
 
@@ -42,6 +51,20 @@ module Legion
           end
 
           false
+        end
+
+        def truncated?(content)
+          return false if content.length < 100
+
+          last_chars = content[-3..]
+          return true if last_chars&.match?(/\w{3}\z/) && !content.end_with?('.', '!', '?', '`', '"', "'", ')', ']', '}', "\n")
+
+          false
+        end
+
+        def refusal?(content)
+          first_line = content.lines.first.to_s
+          REFUSAL_PATTERNS.any? { |pat| first_line.match?(pat) }
         end
 
         def valid_json?(content)
