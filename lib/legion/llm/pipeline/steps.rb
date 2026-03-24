@@ -10,3 +10,4 @@ module Legion
 end
 
 require_relative 'steps/gaia_advisory'
+require_relative 'steps/post_response'

@@ -213,13 +213,6 @@ module Legion
           )
         end
 
-        def extract_tokens
-          return {} unless @raw_response.respond_to?(:input_tokens)
-
-          input  = @raw_response.input_tokens.to_i
-          output = @raw_response.output_tokens.to_i
-          { input: input, output: output, total: input + output }
-        end
       end
     end
   end
