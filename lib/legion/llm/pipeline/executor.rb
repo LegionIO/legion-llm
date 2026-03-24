@@ -6,6 +6,7 @@ module Legion
       class Executor
         include Steps::GaiaAdvisory
         include Steps::PostResponse
+        include Steps::RagContext
 
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
                     :audit, :warnings, :discovered_tools
@@ -134,7 +135,6 @@ module Legion
           )
         end
 
-        def step_rag_context; end
 
         def step_routing
           @timestamps[:routing_start] = Time.now
@@ -192,6 +192,12 @@ module Legion
           end
 
           ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
+
+          injected_system = EnrichmentInjector.inject(
+            system:      @request.system,
+            enrichments: @enrichments
+          )
+          session.with_instructions(injected_system) if injected_system
 
           message_content = @request.messages.last&.dig(:content)
           @raw_response = message_content ? session.ask(message_content) : session
