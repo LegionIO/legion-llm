@@ -6,24 +6,24 @@ module Legion
       module GaiaCaller
         module_function
 
-        def chat(message:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil, **kwargs)
+        def chat(message:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil, caller: nil, **kwargs)
           request = Request.build(
             messages: [{ role: :user, content: message }],
             system:   kwargs[:system],
             routing:  { provider: kwargs[:provider], model: kwargs[:model] }.compact,
-            caller:   gaia_caller(phase),
+            caller:   caller || gaia_caller(phase),
             tracing:  gaia_tracing(phase, tick_trace_id, tick_span_id)
           )
           Executor.new(request).call
         end
 
-        def structured(message:, schema:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil, **kwargs)
+        def structured(message:, schema:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil, caller: nil, **kwargs)
           request = Request.build(
             messages:        [{ role: :user, content: message }],
             system:          kwargs[:system],
             routing:         { provider: kwargs[:provider], model: kwargs[:model] }.compact,
             response_format: { type: :json_schema, schema: schema },
-            caller:          gaia_caller(phase),
+            caller:          caller || gaia_caller(phase),
             tracing:         gaia_tracing(phase, tick_trace_id, tick_span_id)
           )
           Executor.new(request).call

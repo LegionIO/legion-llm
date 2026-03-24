@@ -82,6 +82,88 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
     end
   end
 
+  describe 'caller: parameter forwarding' do
+    let(:custom_caller) do
+      { requested_by: { identity: 'system:guardrails', type: :system, credential: :internal } }
+    end
+    let(:executor_double) do
+      double('Executor').tap do |e|
+        allow(e).to receive(:call).and_return(
+          Legion::LLM::Pipeline::Response.build(
+            request_id: 'r', conversation_id: 'c',
+            message: { role: :assistant, content: 'ok' }
+          )
+        )
+      end
+    end
+
+    describe '.chat with caller:' do
+      it 'forwards explicit caller: to Pipeline::Request' do
+        captured_request = nil
+        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+          captured_request = req
+          executor_double
+        end
+
+        described_class.chat(message: 'hello', caller: custom_caller)
+
+        expect(captured_request.caller).to eq(custom_caller)
+      end
+
+      it 'derives :system profile from explicit caller with system type' do
+        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+          expect(Legion::LLM::Pipeline::Profile.derive(req.caller)).to eq(:system)
+          executor_double
+        end
+
+        described_class.chat(message: 'hello', caller: custom_caller)
+      end
+
+      it 'falls back to gaia_caller when caller: is nil' do
+        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+          expect(Legion::LLM::Pipeline::Profile.derive(req.caller)).to eq(:gaia)
+          expect(req.caller[:requested_by][:identity]).to start_with('gaia:tick:')
+          executor_double
+        end
+
+        described_class.chat(message: 'hello')
+      end
+    end
+
+    describe '.structured with caller:' do
+      it 'forwards explicit caller: to Pipeline::Request' do
+        captured_request = nil
+        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+          captured_request = req
+          executor_double
+        end
+
+        described_class.structured(message: 'analyze', schema: { type: :object }, caller: custom_caller)
+
+        expect(captured_request.caller).to eq(custom_caller)
+      end
+
+      it 'derives :system profile from explicit caller with system type' do
+        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+          expect(Legion::LLM::Pipeline::Profile.derive(req.caller)).to eq(:system)
+          executor_double
+        end
+
+        described_class.structured(message: 'analyze', schema: { type: :object }, caller: custom_caller)
+      end
+
+      it 'falls back to gaia_caller when caller: is nil' do
+        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+          expect(Legion::LLM::Pipeline::Profile.derive(req.caller)).to eq(:gaia)
+          expect(req.caller[:requested_by][:identity]).to start_with('gaia:tick:')
+          executor_double
+        end
+
+        described_class.structured(message: 'analyze', schema: { type: :object })
+      end
+    end
+  end
+
   describe '.gaia_caller' do
     it 'returns caller hash with system type and internal credential' do
       caller_hash = described_class.gaia_caller('reflection')

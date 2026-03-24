@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.4.6] - 2026-03-23
+
+### Changed
+- `Pipeline::GaiaCaller.chat` and `.structured` now accept an explicit `caller:` keyword parameter and forward it to `Pipeline::Request.build`; falls back to `gaia_caller(phase)` when nil (default, no behaviour change)
+
 ## [0.4.5] - 2026-03-23
 
 ### Fixed
