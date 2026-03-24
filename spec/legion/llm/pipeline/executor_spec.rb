@@ -70,4 +70,30 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
       expect(keys).not_to include('billing:budget_check')
     end
   end
+
+  describe 'error classification in provider call' do
+    it 'wraps RubyLLM 429 as RateLimitError' do
+      executor = described_class.new(request)
+      allow(RubyLLM).to receive(:chat).and_raise(
+        Faraday::TooManyRequestsError.new(nil, { status: 429 })
+      )
+      expect { executor.call }.to raise_error(Legion::LLM::RateLimitError)
+    end
+
+    it 'wraps RubyLLM 401 as AuthError' do
+      executor = described_class.new(request)
+      allow(RubyLLM).to receive(:chat).and_raise(
+        Faraday::UnauthorizedError.new(nil, { status: 401 })
+      )
+      expect { executor.call }.to raise_error(Legion::LLM::AuthError)
+    end
+
+    it 'wraps generic provider errors as ProviderError' do
+      executor = described_class.new(request)
+      allow(RubyLLM).to receive(:chat).and_raise(
+        Faraday::ServerError.new(nil, { status: 500 })
+      )
+      expect { executor.call }.to raise_error(Legion::LLM::ProviderError)
+    end
+  end
 end

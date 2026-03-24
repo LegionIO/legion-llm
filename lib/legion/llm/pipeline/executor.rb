@@ -162,6 +162,18 @@ module Legion
           @raw_response = message_content ? session.ask(message_content) : session
 
           @timestamps[:provider_end] = Time.now
+          record_provider_response
+        rescue Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+          raise Legion::LLM::AuthError, e.message
+        rescue Faraday::TooManyRequestsError => e
+          raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
+        rescue Faraday::ServerError => e
+          raise Legion::LLM::ProviderError, e.message
+        rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
+          raise Legion::LLM::ProviderDown, e.message
+        end
+
+        def record_provider_response
           @timeline.record(
             category: :provider, key: 'provider:response_received',
             exchange_id: @exchange_id, direction: :inbound,
@@ -169,6 +181,12 @@ module Legion
             from: "provider:#{@resolved_provider}", to: 'pipeline',
             duration_ms: ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).to_i
           )
+        end
+
+        def extract_retry_after(error)
+          return nil unless error.respond_to?(:response) && error.response.is_a?(Hash)
+
+          error.response[:headers]&.fetch('retry-after', nil)&.to_i
         end
 
         def step_response_normalization; end
