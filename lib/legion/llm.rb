@@ -196,7 +196,7 @@ module Legion
 
       FRAMEWORK_KEYS = %i[request_id source timestamp datetime task_id parent_id master_id
                           check_subtask generate_task catch_exceptions worker_id principal_id
-                          principal_type].freeze
+                          principal_type caller].freeze
 
       private
 
@@ -336,7 +336,7 @@ module Legion
           start_time = Time.now
           begin
             opts = { model: resolution.model, provider: resolution.provider }
-            opts.merge!(kwargs)
+            opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
             chat_obj = RubyLLM.chat(**opts)
             response = chat_obj.ask(message)
 

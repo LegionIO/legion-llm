@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.5.1] - 2026-03-24
+
+### Fixed
+- add `:caller` to `FRAMEWORK_KEYS` so caller identity is stripped before reaching `RubyLLM.chat` — fixes `unknown keyword: :caller` crash in non-pipeline paths (session creation, escalation)
+
 ## [0.5.0] - 2026-03-24
 
 ### Changed
