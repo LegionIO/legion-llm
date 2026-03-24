@@ -29,8 +29,8 @@ module Legion
           Executor.new(request).call
         end
 
-        def embed(text:, **kwargs)
-          LLM.embed(text, **kwargs)
+        def embed(text:, **)
+          LLM.embed(text, **)
         end
 
         def gaia_caller(phase)

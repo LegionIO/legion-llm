@@ -13,28 +13,28 @@ module Legion
 
             advisory = ::Legion::Gaia.advise(
               conversation_id: @request.conversation_id,
-              messages: @request.messages,
-              caller: @request.caller
+              messages:        @request.messages,
+              caller:          @request.caller
             )
 
             return if advisory.nil? || advisory.empty?
 
             @enrichments['gaia:advisory'] = {
-              content: advisory_summary(advisory),
-              data: advisory,
+              content:   advisory_summary(advisory),
+              data:      advisory,
               timestamp: Time.now
             }
 
             if advisory[:system_prompt]
               @enrichments['gaia:system_prompt'] = {
-                content: advisory[:system_prompt],
+                content:   advisory[:system_prompt],
                 timestamp: Time.now
               }
             end
 
             if advisory[:routing_hint]
               @enrichments['gaia:routing_hint'] = {
-                data: advisory[:routing_hint],
+                data:      advisory[:routing_hint],
                 timestamp: Time.now
               }
             end

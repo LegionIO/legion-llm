@@ -20,10 +20,10 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
       end
 
       result = described_class.chat(
-        message: 'summarize this',
-        phase: 'knowledge_retrieval',
+        message:       'summarize this',
+        phase:         'knowledge_retrieval',
         tick_trace_id: 'trace_abc',
-        tick_span_id: 'span_123'
+        tick_span_id:  'span_123'
       )
 
       expect(result).to be_a(Legion::LLM::Pipeline::Response)

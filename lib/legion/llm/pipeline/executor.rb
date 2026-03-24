@@ -211,7 +211,6 @@ module Legion
             test:            @request.test
           )
         end
-
       end
     end
   end

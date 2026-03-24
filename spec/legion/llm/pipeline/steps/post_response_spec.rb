@@ -6,6 +6,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::PostResponse do
   let(:klass) do
     Class.new do
       include Legion::LLM::Pipeline::Steps::PostResponse
+
       attr_accessor :request, :enrichments, :timeline, :warnings, :audit,
                     :raw_response, :tracing, :timestamps, :resolved_provider,
                     :resolved_model, :exchange_id
@@ -29,7 +30,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::PostResponse do
   let(:request) do
     Legion::LLM::Pipeline::Request.build(
       messages: [{ role: :user, content: 'hello' }],
-      caller: { requested_by: { identity: 'user:matt', type: :user } }
+      caller:   { requested_by: { identity: 'user:matt', type: :user } }
     )
   end
 

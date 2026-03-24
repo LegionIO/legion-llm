@@ -6,6 +6,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::GaiaAdvisory do
   let(:klass) do
     Class.new do
       include Legion::LLM::Pipeline::Steps::GaiaAdvisory
+
       attr_accessor :request, :enrichments, :timeline, :warnings
 
       def initialize(request)
@@ -20,7 +21,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::GaiaAdvisory do
   let(:request) do
     Legion::LLM::Pipeline::Request.build(
       messages: [{ role: :user, content: 'list files' }],
-      caller: { requested_by: { identity: 'user:matt', type: :user } }
+      caller:   { requested_by: { identity: 'user:matt', type: :user } }
     )
   end
 
@@ -28,10 +29,10 @@ RSpec.describe Legion::LLM::Pipeline::Steps::GaiaAdvisory do
     it 'populates enrichments when GAIA returns advisory' do
       gaia_mod = Module.new
       allow(gaia_mod).to receive(:advise).and_return({
-                                                        valence: [0.7],
-                                                        tool_hint: ['list_files'],
-                                                        suppress: [:billing]
-                                                      })
+                                                       valence:   [0.7],
+                                                       tool_hint: ['list_files'],
+                                                       suppress:  [:billing]
+                                                     })
       stub_const('Legion::Gaia', gaia_mod)
       allow(gaia_mod).to receive(:started?).and_return(true)
 
