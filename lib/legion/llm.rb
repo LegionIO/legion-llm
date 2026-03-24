@@ -23,6 +23,7 @@ require_relative 'llm/scheduling'
 require_relative 'llm/off_peak'
 require_relative 'llm/cost_tracker'
 require_relative 'llm/tool_registry'
+require_relative 'llm/override_confidence'
 
 module Legion
   module LLM
