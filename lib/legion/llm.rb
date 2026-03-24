@@ -80,18 +80,18 @@ module Legion
       # Create a new chat session — delegates to lex-llm-gateway when available
       # for automatic metering and fleet dispatch
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
-               max_escalations: nil, quality_check: nil, message: nil, **)
+               max_escalations: nil, quality_check: nil, message: nil, **, &block)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.llm_span(
             model: (model || settings[:default_model]).to_s, provider: provider&.to_s, input: message
           ) do |_span|
             _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier, escalate: escalate, max_escalations: max_escalations,
-                           quality_check: quality_check, message: message, **)
+                           quality_check: quality_check, message: message, **, &block)
           end
         else
           _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier,
                          escalate: escalate, max_escalations: max_escalations,
-                         quality_check: quality_check, message: message, **)
+                         quality_check: quality_check, message: message, **, &block)
         end
       end
 
@@ -212,17 +212,17 @@ module Legion
         false
       end
 
-      def chat_via_pipeline(**)
+      def chat_via_pipeline(**, &block)
         request = Pipeline::Request.from_chat_args(**)
         executor = Pipeline::Executor.new(request)
-        executor.call
+        block ? executor.call_stream(&block) : executor.call
       end
 
-      def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **kwargs)
+      def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **kwargs, &block)
         if pipeline_enabled? && message
           return chat_via_pipeline(model: model, provider: provider, intent: intent, tier: tier,
                                    message: message, escalate: escalate, max_escalations: max_escalations,
-                                   quality_check: quality_check, **kwargs)
+                                   quality_check: quality_check, **kwargs, &block)
         end
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]

@@ -30,6 +30,21 @@ RSpec.describe 'Pipeline integration with Legion::LLM.chat' do
     expect(result.timeline).not_to be_empty
   end
 
+  describe 'streaming via pipeline' do
+    it 'uses call_stream when block is given' do
+      mock_session = double('session', with_tool: nil)
+      allow(RubyLLM).to receive(:chat).and_return(mock_session)
+      mock_response = double('response', content: 'streamed', input_tokens: 5, output_tokens: 3)
+      allow(mock_session).to receive(:ask).and_yield('stre').and_yield('amed').and_return(mock_response)
+
+      chunks = []
+      result = Legion::LLM.chat(message: 'hello') { |chunk| chunks << chunk }
+
+      expect(chunks).to eq(%w[stre amed])
+      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+    end
+  end
+
   it 'falls back to legacy path when pipeline is disabled' do
     Legion::Settings[:llm][:pipeline_enabled] = false
     mock_session = double('RubyLLM::Chat')
