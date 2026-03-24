@@ -20,8 +20,8 @@ module Legion
 
               tool_exchange_id = Tracing.exchange_id
               result = ToolDispatcher.dispatch(
-                tool_call: tc,
-                source: source,
+                tool_call:   tc,
+                source:      source,
                 exchange_id: tool_exchange_id
               )
 
@@ -36,7 +36,7 @@ module Legion
               @timeline.record(
                 category: :tool, key: "tool:result:#{tc[:name] || tc['name']}",
                 exchange_id: tool_exchange_id, direction: :inbound,
-                detail: "#{result[:result].to_s[0..100]}",
+                detail: result[:result].to_s[0..100].to_s,
                 from: "tool:#{tc[:name] || tc['name']}", to: 'pipeline',
                 data: { status: result[:status] }
               )

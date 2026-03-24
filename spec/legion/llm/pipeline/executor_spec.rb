@@ -84,6 +84,4 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
       expect(executor).to respond_to(:discovered_tools)
     end
   end
-
 end
-

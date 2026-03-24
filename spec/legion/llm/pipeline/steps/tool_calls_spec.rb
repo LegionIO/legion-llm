@@ -6,6 +6,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
   let(:klass) do
     Class.new do
       include Legion::LLM::Pipeline::Steps::ToolCalls
+
       attr_accessor :request, :enrichments, :timeline, :warnings,
                     :discovered_tools, :raw_response, :exchange_id
 
@@ -29,15 +30,17 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
       ]
 
       step.raw_response = double(
-        content: nil,
+        content:    nil,
         tool_calls: [{ name: 'list_files', arguments: { path: '.' }, id: 'call_1' }]
       )
       allow(step.raw_response).to receive(:respond_to?).with(:tool_calls).and_return(true)
 
-      allow(Legion::LLM::Pipeline::ToolDispatcher).to receive(:dispatch).and_return({
-        status: :success, result: '["a.rb"]', source: { type: :mcp, server: 'filesystem' },
+      dispatch_result = {
+        status: :success, result: '["a.rb"]',
+        source: { type: :mcp, server: 'filesystem' },
         duration_ms: 45
-      })
+      }
+      allow(Legion::LLM::Pipeline::ToolDispatcher).to receive(:dispatch).and_return(dispatch_result)
 
       step.step_tool_calls
 

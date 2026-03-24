@@ -30,7 +30,7 @@ module Legion
                    end
 
           result.merge(
-            source: source,
+            source:      source,
             exchange_id: exchange_id,
             duration_ms: ((Time.now - start_time) * 1000).to_i
           )
@@ -46,9 +46,9 @@ module Legion
           return nil unless override
 
           {
-            type: :extension,
-            lex: override[:lex] || override['lex'],
-            runner: override[:runner] || override['runner'],
+            type:     :extension,
+            lex:      override[:lex] || override['lex'],
+            runner:   override[:runner] || override['runner'],
             function: override[:function] || override['function']
           }
         end
@@ -64,7 +64,7 @@ module Legion
 
         def dispatch_extension(tool_call, source)
           segments = (source[:lex] || '').delete_prefix('lex-').split('-')
-          runner_path = (['Legion', 'Extensions'] + segments.map(&:capitalize) + ['Runners', source[:runner]]).join('::')
+          runner_path = (%w[Legion Extensions] + segments.map(&:capitalize) + ['Runners', source[:runner]]).join('::')
 
           runner = Kernel.const_get(runner_path)
           fn = source[:function].to_sym

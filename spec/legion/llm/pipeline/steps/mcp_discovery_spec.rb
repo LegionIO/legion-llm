@@ -6,6 +6,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::McpDiscovery do
   let(:klass) do
     Class.new do
       include Legion::LLM::Pipeline::Steps::McpDiscovery
+
       attr_accessor :request, :enrichments, :timeline, :warnings, :discovered_tools
 
       def initialize(request)
@@ -21,7 +22,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::McpDiscovery do
   let(:request) do
     Legion::LLM::Pipeline::Request.build(
       messages: [{ role: :user, content: 'list files' }],
-      tools: []
+      tools:    []
     )
   end
 
@@ -29,10 +30,10 @@ RSpec.describe Legion::LLM::Pipeline::Steps::McpDiscovery do
     it 'discovers tools from MCP servers' do
       pool_mod = Module.new
       allow(pool_mod).to receive(:all_tools).and_return([
-        { name: 'list_files', description: 'List files in directory',
-          input_schema: { properties: { path: { type: 'string' } } },
-          source: { type: :mcp, server: 'filesystem' } }
-      ])
+                                                          { name: 'list_files', description: 'List files in directory',
+                                                            input_schema: { properties: { path: { type: 'string' } } },
+                                                            source: { type: :mcp, server: 'filesystem' } }
+                                                        ])
       stub_const('Legion::MCP::Client::Pool', pool_mod)
 
       step = klass.new(request)

@@ -10,8 +10,8 @@ RSpec.describe Legion::LLM::Pipeline::ToolDispatcher do
 
       conn = double('Connection')
       allow(conn).to receive(:call_tool).and_return({
-        content: [{ type: 'text', text: '["a.rb"]' }]
-      })
+                                                      content: [{ type: 'text', text: '["a.rb"]' }]
+                                                    })
 
       pool_mod = Module.new
       allow(pool_mod).to receive(:connection_for).with('filesystem').and_return(conn)
@@ -39,8 +39,8 @@ RSpec.describe Legion::LLM::Pipeline::ToolDispatcher do
       source = { type: :mcp, server: 'github' }
 
       allow(Legion::Settings).to receive(:dig).with(:mcp, :overrides).and_return({
-        'close_pr' => { lex: 'lex-github', runner: 'PullRequest', function: 'close' }
-      })
+                                                                                   'close_pr' => { lex: 'lex-github', runner: 'PullRequest', function: 'close' }
+                                                                                 })
 
       runner = double('PullRequest')
       allow(runner).to receive(:close).and_return({ closed: true })

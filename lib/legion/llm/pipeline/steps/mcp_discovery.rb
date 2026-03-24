@@ -19,18 +19,18 @@ module Legion
 
             mcp_tools.each do |tool|
               @discovered_tools << {
-                name: tool[:name],
+                name:        tool[:name],
                 description: tool[:description],
-                parameters: tool[:input_schema],
-                source: tool[:source]
+                parameters:  tool[:input_schema],
+                source:      tool[:source]
               }
             end
 
             if mcp_tools.any?
               servers = mcp_tools.map { |t| t.dig(:source, :server) }.uniq
               @enrichments['mcp:tool_discovery'] = {
-                content: "#{mcp_tools.length} tools from #{servers.length} servers",
-                data: { tool_count: mcp_tools.length, servers: servers },
+                content:   "#{mcp_tools.length} tools from #{servers.length} servers",
+                data:      { tool_count: mcp_tools.length, servers: servers },
                 timestamp: Time.now
               }
             end

@@ -50,7 +50,7 @@ RSpec.describe 'MCP Client end-to-end pipeline integration' do
 
       result = Legion::LLM::Pipeline::ToolDispatcher.dispatch(
         tool_call: { name: 'list_files', arguments: { path: '.' } },
-        source: { type: :mcp, server: 'filesystem' }
+        source:    { type: :mcp, server: 'filesystem' }
       )
 
       expect(result[:status]).to eq(:success)
@@ -62,8 +62,8 @@ RSpec.describe 'MCP Client end-to-end pipeline integration' do
   describe 'override mechanism' do
     it 'replaces MCP tool with LEX runner when override is configured' do
       allow(Legion::Settings).to receive(:dig).with(:mcp, :overrides).and_return({
-        'list_files' => { lex: 'lex-filesystem', runner: 'Files', function: 'list' }
-      })
+                                                                                   'list_files' => { lex: 'lex-filesystem', runner: 'Files', function: 'list' }
+                                                                                 })
 
       runner = double('Files')
       allow(runner).to receive(:list).with(path: '.').and_return(['app.rb'])
@@ -71,7 +71,7 @@ RSpec.describe 'MCP Client end-to-end pipeline integration' do
 
       result = Legion::LLM::Pipeline::ToolDispatcher.dispatch(
         tool_call: { name: 'list_files', arguments: { path: '.' } },
-        source: { type: :mcp, server: 'filesystem' }
+        source:    { type: :mcp, server: 'filesystem' }
       )
 
       expect(result[:status]).to eq(:success)

@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.4.1] - 2026-03-23
+
+### Added
+- `Pipeline::Steps::McpDiscovery` (step 9): discovers tools from all healthy MCP servers via `Legion::MCP::Client::Pool`, merges into `discovered_tools`, records enrichment and timeline event
+- `Pipeline::ToolDispatcher`: routes tool calls to MCP client, LEX extension runner, or RubyLLM builtin; checks `Legion::Settings[:mcp][:overrides]` for LEX replacement of MCP tools
+- `Pipeline::Steps::ToolCalls` (step 14): dispatches non-builtin tool calls from LLM response via `ToolDispatcher`, records execute and result timeline events
+- `Pipeline::Executor` now includes `McpDiscovery` and `ToolCalls` step modules with `discovered_tools` reader
+- `pipeline/steps.rb` aggregator for all step modules
+
 ## [0.4.0] - 2026-03-23
 
 ### Added
