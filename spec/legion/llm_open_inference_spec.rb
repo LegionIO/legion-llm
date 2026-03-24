@@ -4,6 +4,7 @@ require 'spec_helper'
 
 RSpec.describe 'Legion::LLM OpenInference instrumentation' do
   before do
+    Legion::Settings[:llm][:pipeline_enabled] = false
     stub_const('Legion::Telemetry::OpenInference', Module.new do
       def self.open_inference_enabled?
         false

@@ -8,7 +8,7 @@ module Legion
         {
           enabled:          true,
           connected:        false,
-          pipeline_enabled: false,
+          pipeline_enabled: true,
           default_model:    model_override,
           default_provider: nil,
           providers:        providers,
