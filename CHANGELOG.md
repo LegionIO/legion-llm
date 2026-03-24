@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.4.5] - 2026-03-23
+
+### Fixed
+- `llm_chat` and `llm_session` helpers now accept and forward `caller:` to pipeline (unblocks consumer migration)
+
 ## [0.4.4] - 2026-03-23
 
 ### Added

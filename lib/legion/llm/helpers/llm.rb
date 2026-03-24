@@ -17,7 +17,7 @@ module Legion
         # @param quality_check [Proc, nil] callable that returns true if response is acceptable
         # @return [RubyLLM::Message] the assistant response
         def llm_chat(message, model: nil, provider: nil, intent: nil, tier: nil, tools: [], instructions: nil, # rubocop:disable Metrics/ParameterLists
-                     compress: 0, escalate: nil, max_escalations: nil, quality_check: nil)
+                     compress: 0, escalate: nil, max_escalations: nil, quality_check: nil, caller: nil)
           if compress.positive?
             message = Legion::LLM::Compressor.compress(message, level: compress)
             instructions = Legion::LLM::Compressor.compress(instructions, level: compress) if instructions
@@ -27,10 +27,11 @@ module Legion
           if escalate
             return Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier,
                                     escalate: true, max_escalations: max_escalations,
-                                    quality_check: quality_check, message: message)
+                                    quality_check: quality_check, message: message, caller: caller)
           end
 
-          chat = Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier, escalate: false)
+          chat = Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier,
+                                  escalate: false, caller: caller)
           chat.with_instructions(instructions) if instructions
           chat.with_tools(*tools) unless tools.empty?
           chat.ask(message)
@@ -50,8 +51,8 @@ module Legion
         # @param intent [Hash, nil] routing intent (capability, privacy, etc.)
         # @param tier [Symbol, nil] explicit tier override
         # @return [RubyLLM::Chat]
-        def llm_session(model: nil, provider: nil, intent: nil, tier: nil)
-          Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier, escalate: false)
+        def llm_session(model: nil, provider: nil, intent: nil, tier: nil, caller: nil)
+          Legion::LLM.chat(model: model, provider: provider, intent: intent, tier: tier, escalate: false, caller: caller)
         end
       end
     end
