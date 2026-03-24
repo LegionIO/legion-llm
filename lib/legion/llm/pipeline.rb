@@ -6,6 +6,7 @@ require_relative 'pipeline/profile'
 require_relative 'pipeline/tracing'
 require_relative 'pipeline/timeline'
 require_relative 'pipeline/executor'
+require_relative 'pipeline/tool_dispatcher'
 require_relative 'pipeline/steps'
 
 module Legion
