@@ -24,13 +24,6 @@ require_relative 'llm/off_peak'
 require_relative 'llm/cost_tracker'
 require_relative 'llm/tool_registry'
 
-begin
-  require 'legion/extensions/llm/gateway'
-rescue LoadError => e
-  Legion::Logging.debug("lex-llm-gateway not available: #{e.message}") if defined?(Legion::Logging)
-  nil
-end
-
 module Legion
   module LLM
     class EscalationExhausted < StandardError; end
@@ -233,15 +226,9 @@ module Legion
           return blocked[:response] if blocked
         end
 
-        result = if gateway_loaded? && message
-                   gateway_chat(model: model, provider: provider, intent: intent,
-                                tier: tier, message: message, escalate: escalate,
-                                max_escalations: max_escalations, quality_check: quality_check, **kwargs)
-                 else
-                   chat_direct(model: model, provider: provider, intent: intent, tier: tier,
-                               escalate: escalate, max_escalations: max_escalations,
-                               quality_check: quality_check, message: message, **kwargs)
-                 end
+        result = chat_direct(model: model, provider: provider, intent: intent, tier: tier,
+                             escalate: escalate, max_escalations: max_escalations,
+                             quality_check: quality_check, message: message, **kwargs)
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_after(response: result, messages: messages, model: resolved_model)
@@ -254,18 +241,10 @@ module Legion
       end
 
       def _dispatch_embed(text, **)
-        return Legion::Extensions::LLM::Gateway::Runners::Inference.embed(text: text, **) if gateway_loaded?
-
         embed_direct(text, **)
       end
 
       def _dispatch_structured(messages:, schema:, **)
-        if gateway_loaded?
-          return Legion::Extensions::LLM::Gateway::Runners::Inference.structured(
-            messages: messages, schema: schema, **
-          )
-        end
-
         structured_direct(messages: messages, schema: schema, **)
       end
 
@@ -303,14 +282,6 @@ module Legion
             tokens_out: response.respond_to?(:output_tokens) ? response.output_tokens : nil
           }
         }
-      end
-
-      def gateway_loaded?
-        defined?(Legion::Extensions::LLM::Gateway::Runners::Inference)
-      end
-
-      def gateway_chat(**)
-        Legion::Extensions::LLM::Gateway::Runners::Inference.chat(**)
       end
 
       def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
