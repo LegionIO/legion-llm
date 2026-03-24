@@ -3,6 +3,9 @@
 require_relative 'pipeline/request'
 require_relative 'pipeline/response'
 require_relative 'pipeline/profile'
+require_relative 'pipeline/tracing'
+require_relative 'pipeline/timeline'
+require_relative 'pipeline/executor'
 
 module Legion
   module LLM
