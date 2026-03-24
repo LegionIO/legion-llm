@@ -33,20 +33,25 @@ module Legion
         def publish(request:, response:)
           event = build_event(request: request, response: response)
 
-          if defined?(Legion::Transport)
-            Legion::Transport::Messages::Dynamic.new(
-              function: 'llm_audit',
-              opts: event,
-              exchange: EXCHANGE,
-              routing_key: ROUTING_KEY
-            ).publish
-          else
-            Legion::Logging.debug('audit publish skipped: transport unavailable') if defined?(Legion::Logging)
+          begin
+            if defined?(Legion::Transport) &&
+               defined?(Legion::Transport::Messages::Dynamic)
+              Legion::Transport::Messages::Dynamic.new(
+                function: 'llm_audit',
+                opts: event,
+                exchange: EXCHANGE,
+                routing_key: ROUTING_KEY
+              ).publish
+            else
+              Legion::Logging.debug('audit publish skipped: transport unavailable') if defined?(Legion::Logging)
+            end
+          rescue StandardError => e
+            Legion::Logging.warn("audit publish failed: #{e.message}") if defined?(Legion::Logging)
           end
 
           event
         rescue StandardError => e
-          Legion::Logging.warn("audit publish failed: #{e.message}") if defined?(Legion::Logging)
+          Legion::Logging.warn("audit build_event failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
       end
