@@ -4,6 +4,7 @@ module Legion
   module LLM
     module Pipeline
       class Executor
+        include Steps::Rbac
         include Steps::GaiaAdvisory
         include Steps::PostResponse
         include Steps::RagContext
@@ -96,18 +97,6 @@ module Legion
             category: :internal, key: 'context:loaded',
             direction: :internal, detail: "loaded #{history.size} prior messages",
             from: 'conversation_store', to: 'pipeline'
-          )
-        end
-
-        def step_rbac
-          @audit[:'rbac:permission_check'] = {
-            outcome: :success, detail: 'permitted (not yet enforced)',
-            duration_ms: 0, timestamp: Time.now
-          }
-          @timeline.record(
-            category: :audit, key: 'rbac:permission_check',
-            direction: :internal, detail: 'permitted (not yet enforced)',
-            from: 'pipeline', to: 'rbac'
           )
         end
 
