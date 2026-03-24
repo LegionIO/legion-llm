@@ -158,6 +158,12 @@ module Legion
 
           ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
 
+          injected_system = EnrichmentInjector.inject(
+            system: @request.system,
+            enrichments: @enrichments
+          )
+          session.with_instructions(injected_system) if injected_system
+
           message_content = @request.messages.last&.dig(:content)
           @raw_response = message_content ? session.ask(message_content) : session
 

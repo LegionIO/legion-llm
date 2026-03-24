@@ -70,6 +70,38 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
       expect(keys).not_to include('billing:budget_check')
     end
 
+    describe 'enrichment injection' do
+      it 'injects RAG context into system prompt before provider call' do
+        rag_request = Legion::LLM::Pipeline::Request.build(
+          messages: [{ role: :user, content: 'what is pgvector?' }],
+          system: 'You are helpful.',
+          context_strategy: :rag
+        )
+
+        apollo_runner = double('Knowledge')
+        allow(apollo_runner).to receive(:retrieve_relevant).and_return({
+          success: true,
+          entries: [{ content: 'pgvector is a PostgreSQL extension', content_type: 'fact', confidence: 0.9 }],
+          count: 1
+        })
+        stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+
+        mock_session = double('RubyLLM::Chat')
+        mock_response = double(content: 'test', input_tokens: 10, output_tokens: 5, model_id: 'test')
+        allow(RubyLLM).to receive(:chat).and_return(mock_session)
+        allow(mock_session).to receive(:with_tool).and_return(mock_session)
+        allow(mock_session).to receive(:ask).and_return(mock_response)
+
+        expect(mock_session).to receive(:with_instructions) do |instructions|
+          expect(instructions).to include('pgvector is a PostgreSQL extension')
+          mock_session
+        end.at_least(:once)
+
+        executor = described_class.new(rag_request)
+        executor.call
+      end
+    end
+
     describe 'RAG context step' do
       it 'calls Apollo when context_strategy is :rag' do
         rag_request = Legion::LLM::Pipeline::Request.build(
