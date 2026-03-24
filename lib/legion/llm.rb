@@ -143,14 +143,14 @@ module Legion
         result
       end
 
-      # Generate embeddings — delegates to gateway when available
+      # Generate embeddings
       def embed(text, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.embedding_span(
             model: (settings[:default_model] || 'unknown').to_s
-          ) { |_span| _dispatch_embed(text, **) }
+          ) { |_span| embed_direct(text, **) }
         else
-          _dispatch_embed(text, **)
+          embed_direct(text, **)
         end
       end
 
@@ -168,14 +168,14 @@ module Legion
         Embeddings.generate_batch(texts: texts, **)
       end
 
-      # Generate structured JSON output — delegates to gateway when available
+      # Generate structured JSON output
       def structured(messages:, schema:, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.llm_span(
             model: (settings[:default_model] || 'unknown').to_s, input: messages.to_s
-          ) { |_span| _dispatch_structured(messages: messages, schema: schema, **) }
+          ) { |_span| structured_direct(messages: messages, schema: schema, **) }
         else
-          _dispatch_structured(messages: messages, schema: schema, **)
+          structured_direct(messages: messages, schema: schema, **)
         end
       end
 
@@ -238,14 +238,6 @@ module Legion
         result = apply_response_guards(result, kwargs) if response_guards_enabled? && result.is_a?(Hash)
 
         result
-      end
-
-      def _dispatch_embed(text, **)
-        embed_direct(text, **)
-      end
-
-      def _dispatch_structured(messages:, schema:, **)
-        structured_direct(messages: messages, schema: schema, **)
       end
 
       def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
