@@ -7,6 +7,10 @@
 - `ConversationStore` with in-memory LRU hot layer (256 conversations) and optional DB persistence via Sequel
 - Streaming pipeline support via `Executor#call_stream` — pre/post steps run normally, chunks yielded to caller
 - Pipeline steps `context_load` (Step 3) and `context_store` (Step 15) now functional
+- `Pipeline::Steps::McpDiscovery` (step 9): discovers tools from all healthy MCP servers via `Legion::MCP::Client::Pool`
+- `Pipeline::ToolDispatcher`: routes tool calls to MCP client, LEX extension runner, or RubyLLM builtin
+- `Pipeline::Steps::ToolCalls` (step 14): dispatches non-builtin tool calls from LLM response via `ToolDispatcher`
+- `pipeline/steps.rb` aggregator for all step modules
 
 ### Changed
 - Executor `step_provider_call` classifies Faraday errors into typed hierarchy
