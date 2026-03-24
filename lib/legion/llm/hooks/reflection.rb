@@ -218,7 +218,8 @@ module Legion
           defined?(Legion::Transport) &&
             Legion::Transport.respond_to?(:connected?) &&
             Legion::Transport.connected?
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("Reflection#apollo_transport? failed: #{e.message}") if defined?(Legion::Logging)
           false
         end
         private_class_method :apollo_transport?

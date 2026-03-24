@@ -77,7 +77,8 @@ module Legion
           defined?(Legion::Transport) &&
             Legion::Transport.respond_to?(:connected?) &&
             Legion::Transport.connected?
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("Metering#transport_metering? failed: #{e.message}") if defined?(Legion::Logging)
           false
         end
 

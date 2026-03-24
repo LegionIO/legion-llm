@@ -25,7 +25,8 @@ module Legion
           return true unless defined?(Legion::Crypt)
 
           !Legion::Crypt.validate_jwt(token).nil?
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("Fleet::Handler#valid_token? failed: #{e.message}") if defined?(Legion::Logging)
           false
         end
 
