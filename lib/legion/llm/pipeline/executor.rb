@@ -135,7 +135,6 @@ module Legion
           )
         end
 
-
         def step_routing
           @timestamps[:routing_start] = Time.now
           provider = @request.routing[:provider]
