@@ -67,7 +67,7 @@ module Legion
         end
 
         def with(**updates)
-          self.class.build(**to_h.merge(updates))
+          self.class.build(**to_h, **updates)
         end
       end
     end

@@ -31,9 +31,8 @@ module Legion
 
         def skip?(profile, step)
           case profile
-          when :external then false
-          when :gaia     then GAIA_SKIP.include?(step)
-          when :system   then SYSTEM_SKIP.include?(step)
+          when :gaia   then GAIA_SKIP.include?(step)
+          when :system then SYSTEM_SKIP.include?(step)
           else false
           end
         end

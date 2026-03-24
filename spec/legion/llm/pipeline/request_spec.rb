@@ -21,14 +21,14 @@ RSpec.describe Legion::LLM::Pipeline::Request do
 
     it 'accepts all schema fields' do
       req = described_class.build(
-        messages: [{ role: :user, content: 'test' }],
-        system: 'You are helpful.',
-        routing: { provider: :claude, model: 'claude-opus-4-6' },
-        tokens: { max: 8192 },
-        caller: { requested_by: { identity: 'user:matt', type: :user, credential: :session } },
+        messages:       [{ role: :user, content: 'test' }],
+        system:         'You are helpful.',
+        routing:        { provider: :claude, model: 'claude-opus-4-6' },
+        tokens:         { max: 8192 },
+        caller:         { requested_by: { identity: 'user:matt', type: :user, credential: :session } },
         classification: { level: :internal, contains_pii: false, contains_phi: false },
-        priority: :high,
-        stream: true
+        priority:       :high,
+        stream:         true
       )
       expect(req.system).to eq('You are helpful.')
       expect(req.routing[:provider]).to eq(:claude)
@@ -48,10 +48,10 @@ RSpec.describe Legion::LLM::Pipeline::Request do
   describe '.from_chat_args' do
     it 'builds request from legacy chat() kwargs' do
       req = described_class.from_chat_args(
-        message: 'hello',
-        model: 'claude-opus-4-6',
+        message:  'hello',
+        model:    'claude-opus-4-6',
         provider: :anthropic,
-        intent: { privacy: :strict }
+        intent:   { privacy: :strict }
       )
       expect(req.messages.last[:content]).to eq('hello')
       expect(req.routing[:model]).to eq('claude-opus-4-6')

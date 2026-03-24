@@ -59,11 +59,11 @@ module Legion
           settings.dig(:routing, :fleet, :timeout_seconds) || DEFAULT_TIMEOUT
         end
 
-        def publish_request(**opts)
+        def publish_request(**)
           return unless defined?(Legion::Extensions::LLM::Gateway::Transport::Messages::InferenceRequest)
 
           Legion::Extensions::LLM::Gateway::Transport::Messages::InferenceRequest.new(
-            reply_to: ReplyDispatcher.agent_queue_name, **opts
+            reply_to: ReplyDispatcher.agent_queue_name, **
           ).publish
         end
 

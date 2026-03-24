@@ -61,13 +61,13 @@ module Legion
 
         def build_response(correlation_id, response)
           {
-            correlation_id: correlation_id,
-            response: response,
-            input_tokens: extract_token(response, :input_tokens),
-            output_tokens: extract_token(response, :output_tokens),
+            correlation_id:  correlation_id,
+            response:        response,
+            input_tokens:    extract_token(response, :input_tokens),
+            output_tokens:   extract_token(response, :output_tokens),
             thinking_tokens: extract_token(response, :thinking_tokens),
-            provider: extract_field(response, :provider),
-            model_id: extract_field(response, :model)
+            provider:        extract_field(response, :provider),
+            model_id:        extract_field(response, :model)
           }
         end
 
@@ -84,9 +84,9 @@ module Legion
           channel = Legion::Transport.connection.create_channel
           channel.default_exchange.publish(
             payload,
-            routing_key: reply_to,
+            routing_key:    reply_to,
             correlation_id: correlation_id,
-            content_type: 'application/json'
+            content_type:   'application/json'
           )
           channel.close
         rescue StandardError => e

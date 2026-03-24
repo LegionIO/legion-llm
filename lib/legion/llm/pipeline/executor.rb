@@ -146,7 +146,7 @@ module Legion
           )
 
           opts = {
-            model: @resolved_model,
+            model:    @resolved_model,
             provider: @resolved_provider
           }.compact
 

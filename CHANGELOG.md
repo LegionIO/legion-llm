@@ -1,5 +1,22 @@
 # Legion LLM Changelog
 
+## [0.4.0] - 2026-03-23
+
+### Added
+- `Pipeline::Request`: Data.define struct with `.build` and `.from_chat_args` for unified request representation
+- `Pipeline::Response`: Data.define struct with `.build`, `.from_ruby_llm`, and `#with` for immutable responses
+- `Pipeline::Profile`: Caller-derived profiles (external/gaia/system) with step skip logic
+- `Pipeline::Tracing`: Distributed tracing with trace_id, span_id, and exchange_id generation
+- `Pipeline::Timeline`: Ordered event recording with participant tracking
+- `Pipeline::Executor`: 18-step pipeline skeleton with profile-aware step execution
+- `Pipeline::Steps::Metering`: Metering event builder absorbed from lex-llm-gateway
+- `CostEstimator`: Model cost estimation with fuzzy matching, absorbed from lex-llm-gateway
+- `Fleet::Dispatcher`: Fleet RPC dispatch absorbed from lex-llm-gateway
+- `Fleet::Handler`: Fleet request handler absorbed from lex-llm-gateway
+- `Fleet::ReplyDispatcher`: Correlation-based reply routing for fleet RPC
+- Feature-flagged `pipeline_enabled` setting (default: false) for incremental rollout
+- Pipeline path in `_dispatch_chat` activated by `pipeline_enabled: true`
+
 ## [0.3.32] - 2026-03-23
 
 ### Added

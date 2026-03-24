@@ -205,13 +205,13 @@ module Legion
       private
 
       def pipeline_enabled?
-        settings.dig(:pipeline_enabled) == true
+        settings[:pipeline_enabled] == true
       rescue StandardError
         false
       end
 
-      def chat_via_pipeline(**kwargs)
-        request = Pipeline::Request.from_chat_args(**kwargs)
+      def chat_via_pipeline(**)
+        request = Pipeline::Request.from_chat_args(**)
         executor = Pipeline::Executor.new(request)
         executor.call
       end

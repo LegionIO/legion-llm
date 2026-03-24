@@ -6,7 +6,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
   let(:request) do
     Legion::LLM::Pipeline::Request.build(
       messages: [{ role: :user, content: 'hello' }],
-      routing: { provider: :anthropic, model: 'claude-opus-4-6' }
+      routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
     )
   end
 
@@ -25,7 +25,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
     it 'derives profile from caller' do
       gaia_request = Legion::LLM::Pipeline::Request.build(
         messages: [{ role: :user, content: 'test' }],
-        caller: { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
+        caller:   { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
       )
       executor = described_class.new(gaia_request)
       expect(executor.profile).to eq(:gaia)
@@ -56,7 +56,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
     it 'skips governance steps for gaia profile' do
       gaia_request = Legion::LLM::Pipeline::Request.build(
         messages: [{ role: :user, content: 'test' }],
-        caller: { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
+        caller:   { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
       )
       executor = described_class.new(gaia_request)
       allow(executor).to receive(:step_provider_call).and_return(

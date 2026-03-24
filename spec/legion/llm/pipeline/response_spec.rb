@@ -6,9 +6,9 @@ RSpec.describe Legion::LLM::Pipeline::Response do
   describe '.build' do
     it 'creates a response with defaults' do
       resp = described_class.build(
-        request_id: 'req_abc',
+        request_id:      'req_abc',
         conversation_id: 'conv_xyz',
-        message: { role: :assistant, content: 'hi' }
+        message:         { role: :assistant, content: 'hi' }
       )
       expect(resp.id).to start_with('resp_')
       expect(resp.request_id).to eq('req_abc')
@@ -25,18 +25,18 @@ RSpec.describe Legion::LLM::Pipeline::Response do
   describe '.from_ruby_llm' do
     it 'converts a RubyLLM::Message-like hash to Response' do
       ruby_llm_msg = double(
-        content: 'Hello world',
-        role: 'assistant',
-        input_tokens: 100,
+        content:       'Hello world',
+        role:          'assistant',
+        input_tokens:  100,
         output_tokens: 20,
-        model_id: 'claude-opus-4-6'
+        model_id:      'claude-opus-4-6'
       )
       resp = described_class.from_ruby_llm(
         ruby_llm_msg,
-        request_id: 'req_abc',
+        request_id:      'req_abc',
         conversation_id: 'conv_xyz',
-        provider: :anthropic,
-        model: 'claude-opus-4-6'
+        provider:        :anthropic,
+        model:           'claude-opus-4-6'
       )
       expect(resp.message[:content]).to eq('Hello world')
       expect(resp.tokens[:input]).to eq(100)
@@ -49,9 +49,9 @@ RSpec.describe Legion::LLM::Pipeline::Response do
   describe '#with' do
     it 'returns a new response with updated fields' do
       resp = described_class.build(
-        request_id: 'req_abc',
+        request_id:      'req_abc',
         conversation_id: 'conv_xyz',
-        message: { role: :assistant, content: 'hi' }
+        message:         { role: :assistant, content: 'hi' }
       )
       updated = resp.with(warnings: ['test warning'])
       expect(updated.warnings).to eq(['test warning'])
