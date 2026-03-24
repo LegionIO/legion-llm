@@ -39,6 +39,15 @@ module Legion
         end
 
         def check_override(tool_name)
+          # 1. Explicit settings override
+          settings_override = check_settings_override(tool_name)
+          return settings_override if settings_override
+
+          # 2. Catalog + OverrideConfidence auto-override
+          check_catalog_override(tool_name)
+        end
+
+        def check_settings_override(tool_name)
           overrides = Legion::Settings.dig(:mcp, :overrides) rescue nil # rubocop:disable Style/RescueModifier
           return nil unless overrides.is_a?(Hash)
 
@@ -50,6 +59,21 @@ module Legion
             lex:      override[:lex] || override['lex'],
             runner:   override[:runner] || override['runner'],
             function: override[:function] || override['function']
+          }
+        end
+
+        def check_catalog_override(tool_name)
+          return nil unless defined?(Legion::Extensions::Catalog::Registry)
+          return nil unless Legion::LLM::OverrideConfidence.should_override?(tool_name)
+
+          cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
+          return nil unless cap
+
+          {
+            type:     :extension,
+            lex:      cap.extension,
+            runner:   cap.runner,
+            function: cap.function
           }
         end
 
