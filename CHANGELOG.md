@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.5.6] - 2026-03-24
+
+### Fixed
+- `AuditPublisher` now uses dedicated `Transport::Messages::AuditEvent` message class instead of `Messages::Dynamic` (Dynamic ignores `exchange:`/`routing_key:` kwargs and requires a `function_id` DB lookup — audit events were never reaching RabbitMQ)
+- Added `Transport::Exchanges::Audit` exchange class for the `llm.audit` topic exchange
+- Added `Transport::Messages::AuditEvent` message class with `routing_key 'llm.audit.complete'`
+
 ## [0.5.5] - 2026-03-24
 
 ### Changed

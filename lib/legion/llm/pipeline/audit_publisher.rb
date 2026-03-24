@@ -34,14 +34,10 @@ module Legion
           event = build_event(request: request, response: response)
 
           begin
-            if defined?(Legion::Transport) &&
-               defined?(Legion::Transport::Messages::Dynamic)
-              Legion::Transport::Messages::Dynamic.new(
-                function:    'llm_audit',
-                opts:        event,
-                exchange:    EXCHANGE,
-                routing_key: ROUTING_KEY
-              ).publish
+            if defined?(Legion::Transport)
+              require 'legion/llm/transport/exchanges/audit'
+              require 'legion/llm/transport/messages/audit_event'
+              Legion::LLM::Transport::Messages::AuditEvent.new(**event).publish
             elsif defined?(Legion::Logging)
               Legion::Logging.debug('audit publish skipped: transport unavailable')
             end
