@@ -5,6 +5,7 @@ module Legion
     module Pipeline
       class Executor
         include Steps::GaiaAdvisory
+        include Steps::PostResponse
 
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
                     :audit, :warnings
@@ -176,8 +177,6 @@ module Legion
         def step_tool_calls; end
 
         def step_context_store; end
-
-        def step_post_response; end
 
         def step_response_return; end
 

@@ -53,6 +53,32 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
       expect(response.timeline.first[:key]).to eq('tracing:init')
     end
 
+    describe 'post-response step' do
+      it 'publishes audit event for external profile' do
+        executor = described_class.new(request)
+        allow(executor).to receive(:step_provider_call).and_return(
+          { role: :assistant, content: 'test' }
+        )
+        allow(executor).to receive(:step_response_normalization).and_return(nil)
+        expect(Legion::LLM::Pipeline::AuditPublisher).to receive(:publish)
+        executor.call
+      end
+
+      it 'skips audit publish for gaia profile' do
+        gaia_request = Legion::LLM::Pipeline::Request.build(
+          messages: [{ role: :user, content: 'test' }],
+          caller: { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
+        )
+        executor = described_class.new(gaia_request)
+        allow(executor).to receive(:step_provider_call).and_return(
+          { role: :assistant, content: 'test' }
+        )
+        allow(executor).to receive(:step_response_normalization).and_return(nil)
+        expect(Legion::LLM::Pipeline::AuditPublisher).not_to receive(:publish)
+        executor.call
+      end
+    end
+
     describe 'GAIA advisory step' do
       it 'includes gaia:advisory in enrichments when GAIA available' do
         gaia_mod = Module.new
