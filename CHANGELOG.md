@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.5.5] - 2026-03-24
+
+### Changed
+- RAG context step now fires on almost all queries, not just long conversations
+- RAG only skips trivial queries (greetings, pings) when strategy is auto
+- All RAG thresholds configurable via `Legion::Settings[:llm][:rag]`: `full_limit`, `compact_limit`, `min_confidence`, `utilization_compact_threshold`, `utilization_skip_threshold`, `trivial_max_chars`, `trivial_patterns`
+- Strategy logic inverted: low utilization gets full RAG (room for context), high utilization gets compact, very high skips
+
 ## [0.5.4] - 2026-03-24
 
 ### Added

@@ -6,32 +6,64 @@ module Legion
       module Steps
         module RagContext
           def step_rag_context
-            strategy = select_context_strategy(utilization: estimate_utilization)
-            return if %i[none full].include?(strategy)
+            return unless rag_enabled?
+            return unless substantive_query?
+            return unless apollo_available_or_warn?
 
-            unless apollo_available?
-              @warnings << 'Apollo unavailable for RAG context retrieval'
-              return
-            end
+            strategy = select_context_strategy(utilization: estimate_utilization)
+            return if strategy == :none
 
             query = extract_query
-            return if query.nil? || query.empty?
-
             start_time = Time.now
             result = apollo_retrieve(query: query, strategy: strategy)
+            record_rag_enrichment(result, strategy)
+            record_rag_timeline(result, strategy, start_time)
+          rescue StandardError => e
+            @warnings << "RAG context error: #{e.message}"
+          end
 
-            if result && result[:success] && result[:entries]&.any?
-              @enrichments['rag:context_retrieval'] = {
-                content:   "#{result[:count]} entries retrieved via #{strategy}",
-                data:      {
-                  entries:  result[:entries],
-                  strategy: strategy,
-                  count:    result[:count]
-                },
-                timestamp: Time.now
-              }
-            end
+          private
 
+          def rag_settings
+            @rag_settings ||= if defined?(Legion::Settings) && !Legion::Settings[:llm].nil?
+                                Legion::Settings[:llm][:rag] || {}
+                              else
+                                {}
+                              end
+          end
+
+          def rag_enabled?
+            rag_settings.fetch(:enabled, true)
+          end
+
+          def substantive_query?
+            query = extract_query
+            return false if query.nil? || query.empty?
+
+            auto_strategy = @request.context_strategy.nil? || @request.context_strategy == :auto
+            return true unless auto_strategy
+
+            !trivial_query?(query)
+          end
+
+          def apollo_available_or_warn?
+            return true if apollo_available?
+
+            @warnings << 'Apollo unavailable for RAG context retrieval'
+            false
+          end
+
+          def record_rag_enrichment(result, strategy)
+            return unless result && result[:success] && result[:entries]&.any?
+
+            @enrichments['rag:context_retrieval'] = {
+              content:   "#{result[:count]} entries retrieved via #{strategy}",
+              data:      { entries: result[:entries], strategy: strategy, count: result[:count] },
+              timestamp: Time.now
+            }
+          end
+
+          def record_rag_timeline(result, strategy, start_time)
             @timeline.record(
               category: :enrichment, key: 'rag:context_retrieval',
               direction: :inbound,
@@ -39,20 +71,21 @@ module Legion
               from: 'apollo', to: 'pipeline',
               duration_ms: ((Time.now - start_time) * 1000).to_i
             )
-          rescue StandardError => e
-            @warnings << "RAG context error: #{e.message}"
           end
-
-          private
 
           def select_context_strategy(utilization:)
             explicit = @request.context_strategy
             return explicit if explicit && explicit != :auto
 
-            case utilization
-            when 0...0.3   then :full
-            when 0.3...0.8 then :rag_hybrid
-            else                :rag
+            skip_threshold    = rag_settings.fetch(:utilization_skip_threshold, 0.9)
+            compact_threshold = rag_settings.fetch(:utilization_compact_threshold, 0.7)
+
+            if utilization >= skip_threshold
+              :none
+            elsif utilization >= compact_threshold
+              :rag_compact
+            else
+              :rag
             end
           end
 
@@ -63,15 +96,29 @@ module Legion
             message_tokens.to_f / @request.tokens[:max]
           end
 
+          def trivial_query?(query)
+            max_chars = rag_settings.fetch(:trivial_max_chars, 20)
+            patterns  = rag_settings.fetch(:trivial_patterns, [])
+
+            return false if query.length > max_chars
+
+            normalized = query.strip.downcase.gsub(/[^a-z0-9\s]/, '')
+            patterns.any? { |p| normalized == p }
+          end
+
           def apollo_available?
             defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
           end
 
           def apollo_retrieve(query:, strategy:)
-            opts = { query: query, limit: 10, min_confidence: 0.5 }
-            opts[:limit] = 5 if strategy == :rag_hybrid
+            full_limit    = rag_settings.fetch(:full_limit, 10)
+            compact_limit = rag_settings.fetch(:compact_limit, 5)
+            confidence    = rag_settings.fetch(:min_confidence, 0.5)
 
-            ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(**opts)
+            limit = strategy == :rag_compact ? compact_limit : full_limit
+            ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
+              query: query, limit: limit, min_confidence: confidence
+            )
           end
 
           def extract_query

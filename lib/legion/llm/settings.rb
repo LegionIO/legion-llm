@@ -19,7 +19,8 @@ module Legion
           prompt_caching:   prompt_caching_defaults,
           arbitrage:        arbitrage_defaults,
           batch:            batch_defaults,
-          scheduling:       scheduling_defaults
+          scheduling:       scheduling_defaults,
+          rag:              rag_defaults
         }
       end
 
@@ -110,6 +111,19 @@ module Legion
           peak_hours_utc:  '14-22',
           defer_intents:   %w[batch background],
           max_defer_hours: 8
+        }
+      end
+
+      def self.rag_defaults
+        {
+          enabled:                       true,
+          full_limit:                    10,
+          compact_limit:                 5,
+          min_confidence:                0.5,
+          utilization_compact_threshold: 0.7,
+          utilization_skip_threshold:    0.9,
+          trivial_max_chars:             20,
+          trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank]
         }
       end
 
