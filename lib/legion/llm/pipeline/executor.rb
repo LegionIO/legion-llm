@@ -5,7 +5,10 @@ module Legion
     module Pipeline
       class Executor
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
-                    :audit, :warnings
+                    :audit, :warnings, :discovered_tools
+
+        include Steps::McpDiscovery
+        include Steps::ToolCalls
 
         STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
@@ -25,6 +28,7 @@ module Legion
           @timestamps   = { received: Time.now }
           @raw_response = nil
           @exchange_id  = nil
+          @discovered_tools = []
           @resolved_provider = nil
           @resolved_model    = nil
         end
@@ -99,7 +103,6 @@ module Legion
 
         def step_rag_context; end
 
-        def step_mcp_discovery; end
 
         def step_routing
           @timestamps[:routing_start] = Time.now
@@ -172,8 +175,6 @@ module Legion
         end
 
         def step_response_normalization; end
-
-        def step_tool_calls; end
 
         def step_context_store; end
 

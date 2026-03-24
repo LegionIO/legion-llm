@@ -70,4 +70,20 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
       expect(keys).not_to include('billing:budget_check')
     end
   end
+  describe 'MCP integration' do
+    it 'includes McpDiscovery step module' do
+      expect(described_class.ancestors).to include(Legion::LLM::Pipeline::Steps::McpDiscovery)
+    end
+
+    it 'includes ToolCalls step module' do
+      expect(described_class.ancestors).to include(Legion::LLM::Pipeline::Steps::ToolCalls)
+    end
+
+    it 'exposes discovered_tools reader' do
+      executor = described_class.new(request)
+      expect(executor).to respond_to(:discovered_tools)
+    end
+  end
+
 end
+
