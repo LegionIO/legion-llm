@@ -20,7 +20,9 @@ module Legion
 
           result = case source[:type]
                    when :mcp
-                     dispatch_mcp(tool_call, source)
+                     mcp_result = dispatch_mcp(tool_call, source)
+                     run_shadow(tool_call, source, mcp_result)
+                     mcp_result
                    when :extension
                      dispatch_extension(tool_call, source)
                    when :builtin
@@ -98,6 +100,27 @@ module Legion
 
         def dispatch_builtin(_tool_call, _source)
           { status: :passthrough, result: nil }
+        end
+
+        def run_shadow(tool_call, source, mcp_result)
+          tool_name = tool_call[:name]
+          return unless Legion::LLM::OverrideConfidence.should_shadow?(tool_name)
+          return unless defined?(Legion::Extensions::Catalog::Registry)
+
+          cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
+          return unless cap
+
+          shadow_source = { type: :extension, lex: cap.extension, runner: cap.runner, function: cap.function }
+          shadow_result = dispatch_extension(tool_call, shadow_source)
+
+          if shadow_result[:status] == :success && mcp_result[:status] == :success
+            Legion::LLM::OverrideConfidence.record_success(tool_name)
+          else
+            Legion::LLM::OverrideConfidence.record_failure(tool_name)
+          end
+        rescue StandardError => e
+          Legion::LLM::OverrideConfidence.record_failure(tool_name) if tool_name
+          Legion::Logging.debug("Shadow execution failed: #{e.message}") if defined?(Legion::Logging)
         end
       end
     end
