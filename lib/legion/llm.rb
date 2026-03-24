@@ -11,6 +11,7 @@ require 'legion/llm/escalation_history'
 require 'legion/llm/hooks'
 require 'legion/llm/cache'
 require 'legion/llm/pipeline'
+require 'legion/llm/cost_estimator'
 require_relative 'llm/response_cache'
 require_relative 'llm/daemon_client'
 require_relative 'llm/arbitrage'
@@ -202,7 +203,25 @@ module Legion
 
       private
 
+      def pipeline_enabled?
+        settings.dig(:pipeline_enabled) == true
+      rescue StandardError
+        false
+      end
+
+      def chat_via_pipeline(**kwargs)
+        request = Pipeline::Request.from_chat_args(**kwargs)
+        executor = Pipeline::Executor.new(request)
+        executor.call
+      end
+
       def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **kwargs)
+        if pipeline_enabled? && message
+          return chat_via_pipeline(model: model, provider: provider, intent: intent, tier: tier,
+                                   message: message, escalate: escalate, max_escalations: max_escalations,
+                                   quality_check: quality_check, **kwargs)
+        end
+
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         resolved_model = model || settings[:default_model]
 
