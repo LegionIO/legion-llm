@@ -31,7 +31,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor, '#call_stream' do
     executor = described_class.new(request)
     allow(executor).to receive(:step_provider_call_stream).and_return(nil)
 
-    executor.call_stream { |_chunk| }
+    executor.call_stream { |_chunk| nil }
 
     expect(executor.tracing).not_to be_nil
     expect(executor.tracing[:trace_id]).to be_a(String)
@@ -44,7 +44,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor, '#call_stream' do
     mock_response = double('response', content: 'done', input_tokens: 5, output_tokens: 3)
     allow(mock_session).to receive(:ask).and_return(mock_response)
 
-    response = executor.call_stream { |_chunk| }
+    response = executor.call_stream { |_chunk| nil }
 
     timeline_keys = response.timeline.map { |e| e[:key] }
     expect(timeline_keys).to include('tracing:init')

@@ -73,18 +73,18 @@ module Legion
       # Create a new chat session — delegates to lex-llm-gateway when available
       # for automatic metering and fleet dispatch
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
-               max_escalations: nil, quality_check: nil, message: nil, **, &block)
+               max_escalations: nil, quality_check: nil, message: nil, **, &)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.llm_span(
             model: (model || settings[:default_model]).to_s, provider: provider&.to_s, input: message
           ) do |_span|
             _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier, escalate: escalate, max_escalations: max_escalations,
-                           quality_check: quality_check, message: message, **, &block)
+                           quality_check: quality_check, message: message, **, &)
           end
         else
           _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier,
                          escalate: escalate, max_escalations: max_escalations,
-                         quality_check: quality_check, message: message, **, &block)
+                         quality_check: quality_check, message: message, **, &)
         end
       end
 
@@ -211,11 +211,11 @@ module Legion
         block ? executor.call_stream(&block) : executor.call
       end
 
-      def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **kwargs, &block)
+      def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **kwargs, &)
         if pipeline_enabled? && message
           return chat_via_pipeline(model: model, provider: provider, intent: intent, tier: tier,
                                    message: message, escalate: escalate, max_escalations: max_escalations,
-                                   quality_check: quality_check, **kwargs, &block)
+                                   quality_check: quality_check, **kwargs, &)
         end
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]

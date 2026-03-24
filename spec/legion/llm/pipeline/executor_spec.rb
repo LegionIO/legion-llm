@@ -79,9 +79,9 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
       Legion::LLM::ConversationStore.append('conv_123', role: :assistant, content: 'earlier reply')
 
       req = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'new question' }],
+        messages:        [{ role: :user, content: 'new question' }],
         conversation_id: 'conv_123',
-        routing: { provider: :anthropic, model: 'claude-opus-4-6' }
+        routing:         { provider: :anthropic, model: 'claude-opus-4-6' }
       )
       executor = described_class.new(req)
       allow(executor).to receive(:step_provider_call)
@@ -103,9 +103,9 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
 
     it 'appends request message and response to ConversationStore' do
       req = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
+        messages:        [{ role: :user, content: 'hello' }],
         conversation_id: 'conv_store_test',
-        routing: { provider: :anthropic, model: 'claude-opus-4-6' }
+        routing:         { provider: :anthropic, model: 'claude-opus-4-6' }
       )
       executor = described_class.new(req)
 

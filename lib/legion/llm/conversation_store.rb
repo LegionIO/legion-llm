@@ -117,25 +117,25 @@ module Legion
 
         def db_create_conversation(conversation_id, metadata)
           Legion::Data.connection[:conversations].insert_ignore.insert(
-            id: conversation_id,
+            id:              conversation_id,
             caller_identity: metadata[:caller_identity],
-            metadata: metadata.to_json,
-            created_at: Time.now,
-            updated_at: Time.now
+            metadata:        metadata.to_json,
+            created_at:      Time.now,
+            updated_at:      Time.now
           )
         end
 
         def db_append_message(conversation_id, msg)
           Legion::Data.connection[:conversation_messages].insert(
             conversation_id: conversation_id,
-            seq: msg[:seq],
-            role: msg[:role].to_s,
-            content: msg[:content],
-            provider: msg[:provider]&.to_s,
-            model: msg[:model]&.to_s,
-            input_tokens: msg[:input_tokens],
-            output_tokens: msg[:output_tokens],
-            created_at: msg[:created_at] || Time.now
+            seq:             msg[:seq],
+            role:            msg[:role].to_s,
+            content:         msg[:content],
+            provider:        msg[:provider]&.to_s,
+            model:           msg[:model]&.to_s,
+            input_tokens:    msg[:input_tokens],
+            output_tokens:   msg[:output_tokens],
+            created_at:      msg[:created_at] || Time.now
           )
         end
 
@@ -147,19 +147,19 @@ module Legion
         end
 
         def db_conversation_record?(conversation_id)
-          Legion::Data.connection[:conversations].where(id: conversation_id).count.positive?
+          Legion::Data.connection[:conversations].where(id: conversation_id).any?
         end
 
         def symbolize_message(row)
           {
-            seq: row[:seq],
-            role: row[:role]&.to_sym,
-            content: row[:content],
-            provider: row[:provider]&.to_sym,
-            model: row[:model],
-            input_tokens: row[:input_tokens],
+            seq:           row[:seq],
+            role:          row[:role]&.to_sym,
+            content:       row[:content],
+            provider:      row[:provider]&.to_sym,
+            model:         row[:model],
+            input_tokens:  row[:input_tokens],
             output_tokens: row[:output_tokens],
-            created_at: row[:created_at]
+            created_at:    row[:created_at]
           }
         end
 

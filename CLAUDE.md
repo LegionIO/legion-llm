@@ -8,7 +8,7 @@
 Core LegionIO gem providing LLM capabilities to all extensions. Wraps ruby_llm to provide a consistent interface for chat, embeddings, tool use, and agents across multiple providers (Bedrock, Anthropic, OpenAI, Gemini, Ollama). Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
 
 **GitHub**: https://github.com/LegionIO/legion-llm
-**Version**: 0.4.0
+**Version**: 0.4.1
 **License**: Apache-2.0
 
 ## Architecture
@@ -33,6 +33,8 @@ Legion::LLM (lib/legion/llm.rb)
 ├── EscalationExhausted # Raised when all escalation attempts are exhausted
 ├── DaemonDeniedError   # Raised when daemon returns HTTP 403
 ├── DaemonRateLimitedError # Raised when daemon returns HTTP 429
+├── LLMError / AuthError / RateLimitError / ContextOverflow / ProviderError / ProviderDown / UnsupportedCapability / PipelineError # Typed error hierarchy with retryable?
+├── ConversationStore   # In-memory LRU (256 conversations) + optional DB persistence via Sequel
 ├── Settings         # Default config, provider settings, routing defaults, discovery defaults
 ├── Providers        # Provider configuration and Vault credential resolution (includes Azure `configure_azure`)
 ├── DaemonClient     # HTTP routing to LegionIO daemon with 30s health cache
@@ -58,8 +60,9 @@ Legion::LLM (lib/legion/llm.rb)
 │   ├── Tracing      # Distributed trace_id, span_id, exchange_id generation
 │   ├── Timeline     # Ordered event recording with participant tracking
 │   ├── Executor     # 18-step pipeline skeleton with profile-aware execution
-│   └── Steps/
-│       └── Metering # Metering event builder (absorbed from lex-llm-gateway)
+│   ├── Steps/
+│   │   └── Metering # Metering event builder (absorbed from lex-llm-gateway)
+│   └── Executor#call_stream # Streaming variant: pre-provider steps, yield chunks, post-provider steps
 ├── CostEstimator    # Model cost estimation with fuzzy pricing (absorbed from lex-llm-gateway)
 ├── Fleet            # Fleet RPC dispatch (absorbed from lex-llm-gateway)
 │   ├── Dispatcher   # Fleet dispatch with timeout and availability checks
@@ -107,16 +110,7 @@ Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet of
 
 ### Gateway Integration (lex-llm-gateway)
 
-When `lex-llm-gateway` is installed, `chat`, `embed`, and `structured` automatically delegate to the gateway for metering and fleet dispatch. The gateway is loaded via `begin/rescue LoadError` — optional, not a hard dependency.
-
-```
-Caller → Legion::LLM.chat(message:)
-  └─ gateway loaded? → Gateway::Runners::Inference.chat (meters, fleet dispatch)
-       └─ Legion::LLM.chat_direct (routing, escalation, RubyLLM)
-  └─ no gateway? → Legion::LLM.chat_direct (same path, no metering)
-```
-
-The `_direct` variants (`chat_direct`, `embed_direct`, `structured_direct`) bypass gateway delegation. The gateway's `call_llm` uses these to avoid infinite recursion.
+Gateway delegation removed in v0.4.1. `chat`, `embed`, and `structured` route directly — no `begin/rescue LoadError` block, no `gateway_loaded?` check. The pipeline (when `pipeline_enabled: true`) handles metering and fleet dispatch natively. The `_direct` variants still exist as the canonical non-pipeline path for `chat_direct`, `embed_direct`, `structured_direct`.
 
 ### Integration with LegionIO
 
@@ -135,7 +129,7 @@ The `_direct` variants (`chat_direct`, `embed_direct`, `structured_direct`) bypa
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 | `legion-logging` | Logging |
 | `legion-settings` | Configuration |
-| `lex-llm-gateway` (optional) | Metering over RMQ, fleet RPC dispatch, disk spool — auto-loaded if present |
+| `lex-llm-gateway` (removed) | No longer auto-loaded; pipeline handles metering and fleet dispatch natively |
 
 ## Key Interfaces
 
@@ -329,7 +323,9 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/embeddings.rb` | Embeddings module: generate, generate_batch, default_model |
 | `lib/legion/llm/shadow_eval.rb` | Shadow evaluation: enabled?, should_sample?, evaluate, compare |
 | `lib/legion/llm/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
-| `lib/legion/llm/version.rb` | Version constant (0.3.15) |
+| `lib/legion/llm/errors.rb` | Typed error hierarchy: LLMError base + AuthError, RateLimitError, ContextOverflow, ProviderError, ProviderDown, UnsupportedCapability, PipelineError |
+| `lib/legion/llm/conversation_store.rb` | ConversationStore: in-memory LRU (256 slots) + optional Sequel DB persistence + spool fallback |
+| `lib/legion/llm/version.rb` | Version constant (0.4.1) |
 | `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
 | `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin: `escalation_history`, `escalated?`, `final_resolution`, `escalation_chain` |
 | `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
@@ -373,7 +369,11 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/embeddings_spec.rb` | Embeddings tests |
 | `spec/legion/llm/shadow_eval_spec.rb` | ShadowEval tests |
 | `spec/legion/llm/structured_output_spec.rb` | StructuredOutput tests |
-| `spec/legion/llm/gateway_integration_spec.rb` | Tests: gateway delegation and _direct bypass |
+| `spec/legion/llm/errors_spec.rb` | Tests: typed error hierarchy, retryable? predicate |
+| `spec/legion/llm/conversation_store_spec.rb` | Tests: LRU eviction, append, messages, DB fallback |
+| `spec/legion/llm/pipeline/executor_stream_spec.rb` | Tests: call_stream chunk yielding, pre/post steps |
+| `spec/legion/llm/pipeline/streaming_integration_spec.rb` | Tests: streaming end-to-end with ConversationStore |
+| `spec/legion/llm/gateway_integration_spec.rb` | Tests: gateway teardown — verifies no delegation |
 | `spec/legion/llm/cost_estimator_spec.rb` | Tests: cost estimation, fuzzy matching, pricing table |
 | `spec/legion/llm/pipeline/request_spec.rb` | Tests: Request struct builder, legacy adapter |
 | `spec/legion/llm/pipeline/response_spec.rb` | Tests: Response struct builder, RubyLLM adapter, #with |

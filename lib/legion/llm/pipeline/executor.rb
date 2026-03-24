@@ -237,7 +237,7 @@ module Legion
           end
         end
 
-        def step_provider_call_stream(&block)
+        def step_provider_call_stream(&)
           @timestamps[:provider_start] = Time.now
           @timeline.record(
             category: :provider, key: 'provider:request_sent',
@@ -253,7 +253,7 @@ module Legion
           ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
 
           message_content = @request.messages.last&.dig(:content)
-          @raw_response = session.ask(message_content, &block)
+          @raw_response = session.ask(message_content, &)
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
@@ -277,17 +277,17 @@ module Legion
 
           @request.messages.each do |msg|
             ConversationStore.append(conv_id,
-                                     role: msg[:role]&.to_sym || :user,
+                                     role:    msg[:role]&.to_sym || :user,
                                      content: msg[:content])
           end
 
-          if @raw_response&.respond_to?(:content) && @raw_response.content
+          if @raw_response.respond_to?(:content) && @raw_response.content
             ConversationStore.append(conv_id,
-                                     role: :assistant,
-                                     content: @raw_response.content,
-                                     provider: @resolved_provider,
-                                     model: @resolved_model,
-                                     input_tokens: @raw_response.respond_to?(:input_tokens) ? @raw_response.input_tokens : nil,
+                                     role:          :assistant,
+                                     content:       @raw_response.content,
+                                     provider:      @resolved_provider,
+                                     model:         @resolved_model,
+                                     input_tokens:  @raw_response.respond_to?(:input_tokens) ? @raw_response.input_tokens : nil,
                                      output_tokens: @raw_response.respond_to?(:output_tokens) ? @raw_response.output_tokens : nil)
           end
 

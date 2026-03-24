@@ -22,7 +22,7 @@ RSpec.describe 'Pipeline streaming end-to-end' do
 
     chunks = []
     result = Legion::LLM.chat(
-      message: 'test streaming',
+      message:         'test streaming',
       conversation_id: 'conv_stream_test'
     ) { |chunk| chunks << chunk }
 
@@ -53,7 +53,7 @@ RSpec.describe 'Pipeline streaming end-to-end' do
       mock_response
     end
 
-    Legion::LLM.chat(message: 'test', conversation_id: 'conv_order') { |_| }
+    Legion::LLM.chat(message: 'test', conversation_id: 'conv_order') { |_chunk| nil }
 
     expect(store_called_during_stream).to be false
   end

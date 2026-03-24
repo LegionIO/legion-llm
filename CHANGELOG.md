@@ -1,5 +1,23 @@
 # Legion LLM Changelog
 
+## [0.4.1] - 2026-03-23
+
+### Added
+- Typed error hierarchy (`AuthError`, `RateLimitError`, `ContextOverflow`, `ProviderError`, `ProviderDown`, `UnsupportedCapability`, `PipelineError`) with `retryable?` predicate
+- `ConversationStore` with in-memory LRU hot layer (256 conversations) and optional DB persistence via Sequel
+- Streaming pipeline support via `Executor#call_stream` — pre/post steps run normally, chunks yielded to caller
+- Pipeline steps `context_load` (Step 3) and `context_store` (Step 15) now functional
+
+### Changed
+- Executor `step_provider_call` classifies Faraday errors into typed hierarchy
+- `chat`, `embed`, and `structured` route directly without gateway delegation
+- `_dispatch_embed` and `_dispatch_structured` removed; dispatch inlined
+
+### Removed
+- `lex-llm-gateway` auto-loading (`begin/rescue LoadError` block removed)
+- `gateway_loaded?` and `gateway_chat` helper methods
+- `_dispatch_embed` and `_dispatch_structured` indirection methods
+
 ## [0.4.0] - 2026-03-23
 
 ### Added
