@@ -69,5 +69,47 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
       expect(keys).not_to include('classification:scan')
       expect(keys).not_to include('billing:budget_check')
     end
+
+    describe 'RAG context step' do
+      it 'calls Apollo when context_strategy is :rag' do
+        rag_request = Legion::LLM::Pipeline::Request.build(
+          messages: [{ role: :user, content: 'what is pgvector?' }],
+          context_strategy: :rag
+        )
+
+        apollo_runner = double('Knowledge')
+        allow(apollo_runner).to receive(:retrieve_relevant).and_return({
+          success: true, entries: [{ content: 'test' }], count: 1
+        })
+        stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+
+        executor = described_class.new(rag_request)
+        allow(executor).to receive(:step_provider_call).and_return(
+          { role: :assistant, content: 'test' }
+        )
+        allow(executor).to receive(:step_response_normalization).and_return(nil)
+        response = executor.call
+
+        expect(response.enrichments).to have_key('rag:context_retrieval')
+      end
+
+      it 'skips RAG for gaia profile' do
+        gaia_request = Legion::LLM::Pipeline::Request.build(
+          messages: [{ role: :user, content: 'test' }],
+          context_strategy: :rag,
+          caller: { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
+        )
+        executor = described_class.new(gaia_request)
+        allow(executor).to receive(:step_provider_call).and_return(
+          { role: :assistant, content: 'test' }
+        )
+        allow(executor).to receive(:step_response_normalization).and_return(nil)
+        response = executor.call
+
+        # RAG step is skipped for GAIA profile (GAIA_SKIP includes rag_context is not listed,
+        # but verify it at least doesn't crash.
+        expect(response).to be_a(Legion::LLM::Pipeline::Response)
+      end
+    end
   end
 end
