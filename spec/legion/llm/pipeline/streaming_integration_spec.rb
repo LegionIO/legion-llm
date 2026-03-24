@@ -59,4 +59,54 @@ RSpec.describe 'Pipeline streaming end-to-end' do
 
     expect(store_called_during_stream).to be false
   end
+
+  it 'yields chunks with a .content method when pipeline is enabled' do
+    chunk1 = double('chunk1', content: 'Hello ')
+    chunk2 = double('chunk2', content: 'world')
+    mock_session = double('session', with_tool: nil)
+    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    mock_response = double('response', content: 'Hello world', input_tokens: 10, output_tokens: 5, tool_calls: nil)
+    allow(mock_response).to receive(:respond_to?).and_return(true)
+    allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
+    allow(mock_session).to receive(:ask).and_yield(chunk1).and_yield(chunk2).and_return(mock_response)
+
+    chunks = []
+    result = Legion::LLM.chat(message: 'test') { |chunk| chunks << chunk }
+
+    expect(chunks.map(&:content)).to eq(['Hello ', 'world'])
+    expect(result).to be_a(Legion::LLM::Pipeline::Response)
+    expect(result.message[:content]).to eq('Hello world')
+  end
+
+  it 'forwards caller: to response.caller in pipeline streaming mode' do
+    mock_session = double('session', with_tool: nil)
+    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    mock_response = double('response', content: 'ok', input_tokens: 3, output_tokens: 2, tool_calls: nil)
+    allow(mock_response).to receive(:respond_to?).and_return(true)
+    allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
+    allow(mock_session).to receive(:ask).and_return(mock_response)
+
+    caller_val = { requested_by: { type: :external, identity: 'acp:my_runner' } }
+    result = Legion::LLM.chat(message: 'test', caller: caller_val) { |_chunk| nil }
+
+    expect(result.caller).to eq(caller_val)
+  end
+
+  context 'when pipeline_enabled: false' do
+    before { Legion::Settings[:llm][:pipeline_enabled] = false }
+
+    it 'streams chunks via direct path when a block is given' do
+      chunk1 = double('chunk1', content: 'Hi ')
+      chunk2 = double('chunk2', content: 'there')
+      mock_session = double('session', with_tool: nil)
+      allow(RubyLLM).to receive(:chat).and_return(mock_session)
+      mock_response = double('response', content: 'Hi there', input_tokens: 5, output_tokens: 4)
+      allow(mock_session).to receive(:ask).and_yield(chunk1).and_yield(chunk2).and_return(mock_response)
+
+      chunks = []
+      Legion::LLM.chat(message: 'test') { |chunk| chunks << chunk }
+
+      expect(chunks.map(&:content)).to eq(['Hi ', 'there'])
+    end
+  end
 end

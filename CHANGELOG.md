@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.4.7] - 2026-03-23
+
+### Fixed
+- `Legion::LLM.chat(message:) { |chunk| chunk.content }` now streams when `pipeline_enabled: false`; block is forwarded through `chat_single` to `session.ask` rather than silently ignored
+
+### Added
+- Integration specs verifying pipeline streaming yields chunks with `.content`, `caller:` flows through to `response.caller`, and non-pipeline streaming works
+
 ## [0.4.6] - 2026-03-23
 
 ### Changed

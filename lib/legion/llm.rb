@@ -219,6 +219,11 @@ module Legion
                                    quality_check: quality_check, **kwargs, &)
         end
 
+        if block_given? && message
+          return chat_single(model: model, provider: provider, intent: intent, tier: tier,
+                             message: message, **kwargs, &)
+        end
+
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         resolved_model = model || settings[:default_model]
 
@@ -277,7 +282,7 @@ module Legion
         }
       end
 
-      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &block) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
         explicit_tools = kwargs.delete(:tools)
         tools = explicit_tools || ToolRegistry.tools
         tools = nil if tools.empty?
@@ -313,7 +318,7 @@ module Legion
         return session unless message
 
         Legion::Logging.debug '[LLM] chat_single calling session.ask' if defined?(Legion::Logging)
-        response = session.ask(message)
+        response = block ? session.ask(message, &block) : session.ask(message)
         Legion::Logging.debug "[LLM] chat_single response_class=#{response.class} response_nil=#{response.nil?}" if defined?(Legion::Logging)
         response
       end
