@@ -102,7 +102,7 @@ module Legion
           { status: :passthrough, result: nil }
         end
 
-        def run_shadow(tool_call, source, mcp_result)
+        def run_shadow(tool_call, _source, mcp_result)
           tool_name = tool_call[:name]
           return unless Legion::LLM::OverrideConfidence.should_shadow?(tool_name)
           return unless defined?(Legion::Extensions::Catalog::Registry)

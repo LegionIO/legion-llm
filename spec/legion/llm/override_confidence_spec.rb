@@ -8,8 +8,8 @@ RSpec.describe Legion::LLM::OverrideConfidence do
   describe '.record' do
     it 'stores override confidence for a tool' do
       described_class.record(
-        tool: 'close_pr',
-        lex: 'lex-github:PullRequest:close',
+        tool:       'close_pr',
+        lex:        'lex-github:PullRequest:close',
         confidence: 0.5
       )
       entry = described_class.lookup('close_pr')

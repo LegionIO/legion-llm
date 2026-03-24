@@ -87,9 +87,9 @@ module Legion
         return unless defined?(Legion::Extensions::Apollo::Runners::Knowledge)
 
         results = Legion::Extensions::Apollo::Runners::Knowledge.handle_retrieve(
-          tags: %w[override mesh_confirmed],
+          tags:             %w[override mesh_confirmed],
           knowledge_domain: 'system',
-          limit: 100
+          limit:            100
         )
         return unless results.is_a?(Array)
 

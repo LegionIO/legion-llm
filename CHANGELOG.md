@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.4.2] - 2026-03-23
+
+### Added
+- `OverrideConfidence` module with 4-tier degrading storage (L0 memory, L1 cache, L2 SQLite, L3 Apollo)
+- Catalog-driven auto-override in `ToolDispatcher`: settings override first, then Catalog + confidence gate
+- Shadow mode execution: when confidence is 0.5-0.8, execute both MCP and LEX, compare results, update confidence
+- `hydrate_from_l2` and `hydrate_from_apollo` for override confidence persistence across restarts
+
 ## [0.4.1] - 2026-03-23
 
 ### Added
