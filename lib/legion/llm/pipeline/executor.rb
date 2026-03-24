@@ -4,6 +4,8 @@ module Legion
   module LLM
     module Pipeline
       class Executor
+        include Steps::GaiaAdvisory
+
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
                     :audit, :warnings
 
@@ -94,8 +96,6 @@ module Legion
             from: 'pipeline', to: 'billing'
           )
         end
-
-        def step_gaia_advisory; end
 
         def step_rag_context; end
 
