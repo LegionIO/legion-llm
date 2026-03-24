@@ -1,18 +1,14 @@
 # Legion LLM Changelog
 
-## [0.4.3] - 2026-03-23
+## [0.4.4] - 2026-03-23
 
 ### Added
-- `Pipeline::Steps::Rbac`: real RBAC enforcement in the pipeline using `Legion::Rbac.authorize!`
-  - Extracts caller identity from `@request.caller[:requested_by]` and builds a `Legion::Rbac::Principal`
-  - Checks `action: :use, resource: 'llm/pipeline'` via `Legion::Rbac.authorize!`
-  - On denial: records `:failure` audit entry and raises `Legion::LLM::PipelineError` with 403-style message
-  - Graceful degradation: if `legion-rbac` gem is not loaded, permits and logs warning
-  - Nil caller falls back to anonymous identity
-  - Gaia and system profiles skip RBAC via existing `Profile::GAIA_SKIP` / `Profile::SYSTEM_SKIP` constants
+- `Pipeline::Steps::Rbac`: real RBAC enforcement using `Legion::Rbac.authorize!`, graceful degradation when unavailable
+- `Pipeline::Steps::Classification`: real PII/PHI scan (SSN, email, phone regex + PHI keyword list); upgrade-only classification levels
+- `Pipeline::Steps::Billing`: real budget enforcement via `CostEstimator`; spending cap rejection
 
 ### Changed
-- Extracted `step_rbac` from `Executor` inline stub into `Pipeline::Steps::Rbac` module (consistent with other step modules)
+- Extracted all three governance stubs from Executor into dedicated step modules
 
 ## [0.4.2] - 2026-03-23
 

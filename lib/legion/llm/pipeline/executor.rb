@@ -5,6 +5,8 @@ module Legion
     module Pipeline
       class Executor
         include Steps::Rbac
+        include Steps::Classification
+        include Steps::Billing
         include Steps::GaiaAdvisory
         include Steps::PostResponse
         include Steps::RagContext
@@ -97,30 +99,6 @@ module Legion
             category: :internal, key: 'context:loaded',
             direction: :internal, detail: "loaded #{history.size} prior messages",
             from: 'conversation_store', to: 'pipeline'
-          )
-        end
-
-        def step_classification
-          @audit[:'classification:scan'] = {
-            outcome: :success, detail: 'scan not yet implemented',
-            duration_ms: 0, timestamp: Time.now
-          }
-          @timeline.record(
-            category: :audit, key: 'classification:scan',
-            direction: :internal, detail: 'scan not yet implemented',
-            from: 'pipeline', to: 'classification'
-          )
-        end
-
-        def step_billing
-          @audit[:'billing:budget_check'] = {
-            outcome: :success, detail: 'budget check not yet implemented',
-            duration_ms: 0, timestamp: Time.now
-          }
-          @timeline.record(
-            category: :audit, key: 'billing:budget_check',
-            direction: :internal, detail: 'budget check not yet implemented',
-            from: 'pipeline', to: 'billing'
           )
         end
 

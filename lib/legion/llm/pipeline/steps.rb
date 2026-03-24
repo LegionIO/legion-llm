@@ -11,6 +11,8 @@ end
 
 require_relative 'steps/metering'
 require_relative 'steps/rbac'
+require_relative 'steps/classification'
+require_relative 'steps/billing'
 require_relative 'steps/gaia_advisory'
 require_relative 'steps/post_response'
 require_relative 'steps/mcp_discovery'
