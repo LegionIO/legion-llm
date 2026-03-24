@@ -72,7 +72,8 @@ module Legion
 
           settings = Legion::Settings.dig(:llm, :budget, :session_usd)
           settings.to_f
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("BudgetGuard#budget_setting failed: #{e.message}") if defined?(Legion::Logging)
           0.0
         end
       end

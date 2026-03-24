@@ -89,7 +89,8 @@ module Legion
             require 'json'
             ::JSON.parse(raw, symbolize_names: true)
           end
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("ReplyDispatcher#parse_payload failed: #{e.message}") if defined?(Legion::Logging)
           {}
         end
       end

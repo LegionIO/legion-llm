@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.5.2] - 2026-03-24
+
+### Changed
+- Add debug logging to 10 swallowed `rescue StandardError` blocks: `pipeline_enabled?`, ConversationStore (load_from_db, db_conversation_exists?, db_available?), BudgetGuard (budget_setting), ReplyDispatcher (parse_payload), OverrideConfidence (sync_to_l1, sync_to_l2, lookup_l1, lookup_l2)
+
 ## [0.5.1] - 2026-03-24
 
 ### Fixed

@@ -202,7 +202,8 @@ module Legion
 
       def pipeline_enabled?
         settings[:pipeline_enabled] == true
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.debug("LLM#pipeline_enabled? failed: #{e.message}") if defined?(Legion::Logging)
         false
       end
 

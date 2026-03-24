@@ -94,7 +94,8 @@ module Legion
           return [] unless db_available?
 
           db_load_messages(conversation_id)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("ConversationStore#load_from_db failed: #{e.message}") if defined?(Legion::Logging)
           []
         end
 
@@ -102,7 +103,8 @@ module Legion
           return false unless db_available?
 
           db_conversation_record?(conversation_id)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("ConversationStore#db_conversation_exists? failed: #{e.message}") if defined?(Legion::Logging)
           false
         end
 
@@ -111,7 +113,8 @@ module Legion
             Legion::Data.respond_to?(:connection) &&
             Legion::Data.connection.respond_to?(:table_exists?) &&
             Legion::Data.connection.table_exists?(:conversations)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("ConversationStore#db_available? failed: #{e.message}") if defined?(Legion::Logging)
           false
         end
 

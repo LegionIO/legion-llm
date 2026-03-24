@@ -130,7 +130,8 @@ module Legion
           return unless entry
 
           Legion::Cache.set("override:#{tool}", Legion::JSON.dump(entry), ttl: 3600)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("OverrideConfidence#sync_to_l1 failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
 
@@ -141,7 +142,8 @@ module Legion
           return unless entry
 
           Legion::Data::Local.upsert(:override_confidence, entry, conflict_keys: [:tool])
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("OverrideConfidence#sync_to_l2 failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
 
@@ -152,7 +154,8 @@ module Legion
           return nil unless raw
 
           Legion::JSON.load(raw)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("OverrideConfidence#lookup_l1 failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
 
@@ -161,7 +164,8 @@ module Legion
 
           rows = Legion::Data::Local.query('SELECT * FROM override_confidence WHERE tool = ?', tool)
           rows&.first
-        rescue StandardError
+        rescue StandardError => e
+          Legion::Logging.debug("OverrideConfidence#lookup_l2 failed: #{e.message}") if defined?(Legion::Logging)
           nil
         end
       end
