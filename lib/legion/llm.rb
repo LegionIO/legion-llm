@@ -3,6 +3,7 @@
 require 'ruby_llm'
 require 'legion/llm/version'
 require 'legion/llm/errors'
+require 'legion/llm/conversation_store'
 require 'legion/llm/settings'
 require 'legion/llm/providers'
 require 'legion/llm/router'
