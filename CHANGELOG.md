@@ -1,9 +1,10 @@
 # Legion LLM Changelog
 
-## [0.4.8] - 2026-03-24
+## [0.5.0] - 2026-03-24
 
 ### Changed
 - **Pipeline enabled by default** (`pipeline_enabled: true`) — all `Legion::LLM.chat(message:)` calls now route through the 18-step pipeline with RBAC, classification, billing, audit, and tracing
+- Minor version bump: this is the culmination of Plans 1-6, Phase B governance, and consumer migration Waves 0-5 across 48 call sites in 9 repos
 
 ### Added
 - Pre-rollout integration test suite (20 specs) covering caller propagation, profile skip lists, streaming, conversation round-trip, error typing, and graceful degradation
