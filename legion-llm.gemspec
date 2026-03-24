@@ -25,8 +25,12 @@ Gem::Specification.new do |spec|
     'rubygems_mfa_required' => 'true'
   }
 
+  spec.add_dependency 'concurrent-ruby'
+  spec.add_dependency 'faraday'
+  spec.add_dependency 'legion-json', '>= 1.2.0'
   spec.add_dependency 'legion-logging', '>= 1.2.8'
   spec.add_dependency 'legion-settings', '>= 1.3.12'
+  spec.add_dependency 'lex-bedrock'
   spec.add_dependency 'lex-claude'
   spec.add_dependency 'lex-gemini'
   spec.add_dependency 'lex-openai'

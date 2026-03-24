@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.5.4] - 2026-03-24
+
+### Added
+- Declare `faraday` as explicit dependency (used in Ollama discovery and pipeline error handling)
+- Declare `concurrent-ruby` as explicit dependency (used in fleet reply dispatcher)
+- Declare `legion-json` as explicit dependency (used throughout for serialization)
+- Declare `lex-bedrock` as explicit dependency (enterprise AWS provider out of the box)
+
 ## [0.5.3] - 2026-03-24
 
 ### Changed
