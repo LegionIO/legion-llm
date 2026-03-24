@@ -6,6 +6,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagGuard do
   let(:klass) do
     Class.new do
       include Legion::LLM::Pipeline::Steps::RagGuard
+
       attr_accessor :enrichments, :warnings, :timeline, :raw_response
 
       def initialize

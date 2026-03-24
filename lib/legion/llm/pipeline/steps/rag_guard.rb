@@ -13,8 +13,8 @@ module Legion
             response_text = @raw_response.respond_to?(:content) ? @raw_response.content : @raw_response.to_s
 
             result = Hooks::RagGuard.check_rag_faithfulness(
-              response: response_text,
-              context: context.map { |e| e[:content] }.join("\n"),
+              response:  response_text,
+              context:   context.map { |e| e[:content] }.join("\n"),
               threshold: 0.7
             )
 

@@ -6,6 +6,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
   let(:klass) do
     Class.new do
       include Legion::LLM::Pipeline::Steps::RagContext
+
       attr_accessor :request, :enrichments, :timeline, :warnings
 
       def initialize(request)
@@ -20,7 +21,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
   describe '#select_context_strategy' do
     it 'returns :full when utilization < 0.3' do
       request = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
+        messages:         [{ role: :user, content: 'hello' }],
         context_strategy: :auto
       )
       step = klass.new(request)
@@ -29,7 +30,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
     it 'returns :recent + :rag hybrid when utilization 0.3-0.8' do
       request = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
+        messages:         [{ role: :user, content: 'hello' }],
         context_strategy: :auto
       )
       step = klass.new(request)
@@ -38,7 +39,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
     it 'returns :rag when utilization > 0.8' do
       request = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
+        messages:         [{ role: :user, content: 'hello' }],
         context_strategy: :auto
       )
       step = klass.new(request)
@@ -47,7 +48,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
     it 'respects explicit strategy override' do
       request = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
+        messages:         [{ role: :user, content: 'hello' }],
         context_strategy: :none
       )
       step = klass.new(request)
@@ -58,7 +59,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
   describe '#step_rag_context' do
     it 'skips when strategy is :none' do
       request = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
+        messages:         [{ role: :user, content: 'hello' }],
         context_strategy: :none
       )
       step = klass.new(request)
@@ -68,19 +69,19 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
     it 'populates enrichments when Apollo returns results' do
       request = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'what is pgvector?' }],
+        messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :rag
       )
 
       apollo_runner = double('Knowledge')
       allow(apollo_runner).to receive(:retrieve_relevant).and_return({
-        success: true,
-        entries: [
-          { id: 'e1', content: 'pgvector is...', content_type: 'fact', confidence: 0.85 },
-          { id: 'e2', content: 'cosine distance...', content_type: 'concept', confidence: 0.72 }
-        ],
-        count: 2
-      })
+                                                                       success: true,
+                                                                       entries: [
+                                                                         { id: 'e1', content: 'pgvector is...', content_type: 'fact', confidence: 0.85 },
+                                                                         { id: 'e2', content: 'cosine distance...', content_type: 'concept', confidence: 0.72 }
+                                                                       ],
+                                                                       count:   2
+                                                                     })
       stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
       step = klass.new(request)
@@ -91,7 +92,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
     it 'degrades gracefully when Apollo unavailable' do
       request = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
+        messages:         [{ role: :user, content: 'hello' }],
         context_strategy: :rag
       )
       hide_const('Legion::Extensions::Apollo') if defined?(Legion::Extensions::Apollo)
@@ -104,14 +105,14 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
     it 'records timeline event' do
       request = Legion::LLM::Pipeline::Request.build(
-        messages: [{ role: :user, content: 'test' }],
+        messages:         [{ role: :user, content: 'test' }],
         context_strategy: :rag
       )
 
       apollo_runner = double('Knowledge')
       allow(apollo_runner).to receive(:retrieve_relevant).and_return({
-        success: true, entries: [], count: 0
-      })
+                                                                       success: true, entries: [], count: 0
+                                                                     })
       stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
       step = klass.new(request)

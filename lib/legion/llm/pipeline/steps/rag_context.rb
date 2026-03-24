@@ -7,7 +7,7 @@ module Legion
         module RagContext
           def step_rag_context
             strategy = select_context_strategy(utilization: estimate_utilization)
-            return if strategy == :none || strategy == :full
+            return if %i[none full].include?(strategy)
 
             unless apollo_available?
               @warnings << 'Apollo unavailable for RAG context retrieval'
@@ -22,11 +22,11 @@ module Legion
 
             if result && result[:success] && result[:entries]&.any?
               @enrichments['rag:context_retrieval'] = {
-                content: "#{result[:count]} entries retrieved via #{strategy}",
-                data: {
-                  entries: result[:entries],
+                content:   "#{result[:count]} entries retrieved via #{strategy}",
+                data:      {
+                  entries:  result[:entries],
                   strategy: strategy,
-                  count: result[:count]
+                  count:    result[:count]
                 },
                 timestamp: Time.now
               }
@@ -50,10 +50,9 @@ module Legion
             return explicit if explicit && explicit != :auto
 
             case utilization
-            when 0...0.3    then :full
-            when 0.3...0.8  then :rag_hybrid
-            when 0.8...0.95 then :rag
-            else                 :rag
+            when 0...0.3   then :full
+            when 0.3...0.8 then :rag_hybrid
+            else                :rag
             end
           end
 

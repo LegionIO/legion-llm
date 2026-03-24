@@ -73,17 +73,18 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
     describe 'enrichment injection' do
       it 'injects RAG context into system prompt before provider call' do
         rag_request = Legion::LLM::Pipeline::Request.build(
-          messages: [{ role: :user, content: 'what is pgvector?' }],
-          system: 'You are helpful.',
+          messages:         [{ role: :user, content: 'what is pgvector?' }],
+          system:           'You are helpful.',
           context_strategy: :rag
         )
 
         apollo_runner = double('Knowledge')
         allow(apollo_runner).to receive(:retrieve_relevant).and_return({
-          success: true,
-          entries: [{ content: 'pgvector is a PostgreSQL extension', content_type: 'fact', confidence: 0.9 }],
-          count: 1
-        })
+                                                                         success: true,
+                                                                         entries: [{ content: 'pgvector is a PostgreSQL extension', content_type: 'fact',
+confidence: 0.9 }],
+                                                                         count:   1
+                                                                       })
         stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
         mock_session = double('RubyLLM::Chat')
@@ -105,14 +106,14 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
     describe 'RAG context step' do
       it 'calls Apollo when context_strategy is :rag' do
         rag_request = Legion::LLM::Pipeline::Request.build(
-          messages: [{ role: :user, content: 'what is pgvector?' }],
+          messages:         [{ role: :user, content: 'what is pgvector?' }],
           context_strategy: :rag
         )
 
         apollo_runner = double('Knowledge')
         allow(apollo_runner).to receive(:retrieve_relevant).and_return({
-          success: true, entries: [{ content: 'test' }], count: 1
-        })
+                                                                         success: true, entries: [{ content: 'test' }], count: 1
+                                                                       })
         stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
         executor = described_class.new(rag_request)
@@ -127,9 +128,9 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
 
       it 'skips RAG for gaia profile' do
         gaia_request = Legion::LLM::Pipeline::Request.build(
-          messages: [{ role: :user, content: 'test' }],
+          messages:         [{ role: :user, content: 'test' }],
           context_strategy: :rag,
-          caller: { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
+          caller:           { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
         )
         executor = described_class.new(gaia_request)
         allow(executor).to receive(:step_provider_call).and_return(

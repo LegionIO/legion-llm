@@ -17,7 +17,7 @@ RSpec.describe Legion::LLM::Pipeline::EnrichmentInjector do
       }
 
       result = described_class.inject(
-        system: 'You are helpful.',
+        system:      'You are helpful.',
         enrichments: enrichments
       )
 
