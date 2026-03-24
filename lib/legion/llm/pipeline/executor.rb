@@ -14,6 +14,16 @@ module Legion
           tool_calls context_store post_response response_return
         ].freeze
 
+        PRE_PROVIDER_STEPS = %i[
+          tracing_init idempotency conversation_uuid context_load
+          rbac classification billing gaia_advisory rag_context mcp_discovery
+          routing request_normalization
+        ].freeze
+
+        POST_PROVIDER_STEPS = %i[
+          response_normalization tool_calls context_store post_response response_return
+        ].freeze
+
         def initialize(request)
           @request      = request
           @profile      = Profile.derive(request.caller)
@@ -31,6 +41,15 @@ module Legion
 
         def call
           execute_steps
+          build_response
+        end
+
+        def call_stream(&block)
+          return call unless block
+
+          execute_pre_provider_steps
+          step_provider_call_stream(&block)
+          execute_post_provider_steps
           build_response
         end
 
@@ -200,6 +219,52 @@ module Legion
           return nil unless error.respond_to?(:response) && error.response.is_a?(Hash)
 
           error.response[:headers]&.fetch('retry-after', nil)&.to_i
+        end
+
+        def execute_pre_provider_steps
+          PRE_PROVIDER_STEPS.each do |step|
+            next if Profile.skip?(@profile, step)
+
+            send(:"step_#{step}")
+          end
+        end
+
+        def execute_post_provider_steps
+          POST_PROVIDER_STEPS.each do |step|
+            next if Profile.skip?(@profile, step)
+
+            send(:"step_#{step}")
+          end
+        end
+
+        def step_provider_call_stream(&block)
+          @timestamps[:provider_start] = Time.now
+          @timeline.record(
+            category: :provider, key: 'provider:request_sent',
+            exchange_id: @exchange_id, direction: :outbound,
+            detail: "streaming from #{@resolved_provider}",
+            from: 'pipeline', to: "provider:#{@resolved_provider}"
+          )
+
+          opts = { model: @resolved_model, provider: @resolved_provider }.compact
+          session = RubyLLM.chat(**opts)
+
+          (@request.tools || []).each { |tool| session.with_tool(tool) if tool.is_a?(Class) }
+          ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
+
+          message_content = @request.messages.last&.dig(:content)
+          @raw_response = session.ask(message_content, &block)
+
+          @timestamps[:provider_end] = Time.now
+          record_provider_response
+        rescue Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+          raise Legion::LLM::AuthError, e.message
+        rescue Faraday::TooManyRequestsError => e
+          raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
+        rescue Faraday::ServerError => e
+          raise Legion::LLM::ProviderError, e.message
+        rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
+          raise Legion::LLM::ProviderDown, e.message
         end
 
         def step_response_normalization; end
