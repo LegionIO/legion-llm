@@ -8,7 +8,7 @@
 Core LegionIO gem providing LLM capabilities to all extensions. Wraps ruby_llm to provide a consistent interface for chat, embeddings, tool use, and agents across multiple providers (Bedrock, Anthropic, OpenAI, Gemini, Ollama). Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
 
 **GitHub**: https://github.com/LegionIO/legion-llm
-**Version**: 0.3.15
+**Version**: 0.4.0
 **License**: Apache-2.0
 
 ## Architecture
@@ -51,6 +51,20 @@ Legion::LLM (lib/legion/llm.rb)
 │   ├── Rule         # Routing rule: intent matching, schedule windows, constraints
 │   ├── HealthTracker # Circuit breaker, latency rolling window, pluggable signal handlers
 │   └── EscalationChain # Ordered fallback resolution chain with max_attempts cap (pads last resolution if chain is short)
+├── Pipeline         # 18-step request/response pipeline (feature-flagged)
+│   ├── Request      # Data.define struct for unified request representation
+│   ├── Response     # Data.define struct for unified response representation
+│   ├── Profile      # Caller-derived profiles (external/gaia/system) for step skipping
+│   ├── Tracing      # Distributed trace_id, span_id, exchange_id generation
+│   ├── Timeline     # Ordered event recording with participant tracking
+│   ├── Executor     # 18-step pipeline skeleton with profile-aware execution
+│   └── Steps/
+│       └── Metering # Metering event builder (absorbed from lex-llm-gateway)
+├── CostEstimator    # Model cost estimation with fuzzy pricing (absorbed from lex-llm-gateway)
+├── Fleet            # Fleet RPC dispatch (absorbed from lex-llm-gateway)
+│   ├── Dispatcher   # Fleet dispatch with timeout and availability checks
+│   ├── Handler      # Fleet request handler for GPU worker nodes
+│   └── ReplyDispatcher # Correlation-based reply routing for fleet RPC
 └── Helpers::LLM     # Extension helper mixin (llm_chat, llm_embed, llm_session, compress:)
 ```
 
@@ -179,6 +193,7 @@ Settings read from `Legion::Settings[:llm]`:
 |-----|------|---------|-------------|
 | `enabled` | Boolean | `true` | Enable LLM support |
 | `connected` | Boolean | `false` | Set to true after successful start |
+| `pipeline_enabled` | Boolean | `false` | Enable 18-step pipeline for chat() dispatch |
 | `default_model` | String | `nil` | Default model ID (auto-detected if nil) |
 | `default_provider` | Symbol | `nil` | Default provider (auto-detected if nil) |
 | `providers` | Hash | See below | Per-provider configuration |
@@ -320,6 +335,19 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
 | `lib/legion/llm/transport/exchanges/escalation.rb` | AMQP exchange for escalation events |
 | `lib/legion/llm/transport/messages/escalation_event.rb` | AMQP message for escalation events |
+| `lib/legion/llm/pipeline.rb` | Pipeline module: requires all pipeline components |
+| `lib/legion/llm/pipeline/request.rb` | Pipeline::Request Data.define struct with .build and .from_chat_args |
+| `lib/legion/llm/pipeline/response.rb` | Pipeline::Response Data.define struct with .build, .from_ruby_llm, #with |
+| `lib/legion/llm/pipeline/profile.rb` | Pipeline::Profile: caller-derived profiles for step skipping |
+| `lib/legion/llm/pipeline/tracing.rb` | Pipeline::Tracing: trace_id, span_id, exchange_id generation |
+| `lib/legion/llm/pipeline/timeline.rb` | Pipeline::Timeline: ordered event recording |
+| `lib/legion/llm/pipeline/executor.rb` | Pipeline::Executor: 18-step skeleton with profile-aware execution |
+| `lib/legion/llm/pipeline/steps/metering.rb` | Pipeline::Steps::Metering: metering event builder |
+| `lib/legion/llm/cost_estimator.rb` | CostEstimator: model cost estimation with fuzzy pricing |
+| `lib/legion/llm/fleet.rb` | Fleet module: requires dispatcher, handler, reply_dispatcher |
+| `lib/legion/llm/fleet/dispatcher.rb` | Fleet::Dispatcher: fleet RPC dispatch |
+| `lib/legion/llm/fleet/handler.rb` | Fleet::Handler: fleet request handler |
+| `lib/legion/llm/fleet/reply_dispatcher.rb` | Fleet::ReplyDispatcher: correlation-based reply routing |
 | `lib/legion/llm/helpers/llm.rb` | Extension helper mixin: llm_chat (with compress:, escalate:, max_escalations:, quality_check:), llm_embed, llm_session |
 | `spec/legion/llm_spec.rb` | Tests: settings, lifecycle, providers, auto-config |
 | `spec/legion/llm/integration_spec.rb` | Tests: routing integration with chat() |
@@ -346,6 +374,17 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/shadow_eval_spec.rb` | ShadowEval tests |
 | `spec/legion/llm/structured_output_spec.rb` | StructuredOutput tests |
 | `spec/legion/llm/gateway_integration_spec.rb` | Tests: gateway delegation and _direct bypass |
+| `spec/legion/llm/cost_estimator_spec.rb` | Tests: cost estimation, fuzzy matching, pricing table |
+| `spec/legion/llm/pipeline/request_spec.rb` | Tests: Request struct builder, legacy adapter |
+| `spec/legion/llm/pipeline/response_spec.rb` | Tests: Response struct builder, RubyLLM adapter, #with |
+| `spec/legion/llm/pipeline/profile_spec.rb` | Tests: Profile derivation and step skipping |
+| `spec/legion/llm/pipeline/tracing_spec.rb` | Tests: Tracing init, exchange_id generation |
+| `spec/legion/llm/pipeline/timeline_spec.rb` | Tests: Timeline event recording, participants |
+| `spec/legion/llm/pipeline/executor_spec.rb` | Tests: Executor pipeline execution, profile skipping |
+| `spec/legion/llm/pipeline/integration_spec.rb` | Tests: Pipeline integration with chat() dispatch |
+| `spec/legion/llm/pipeline/steps/metering_spec.rb` | Tests: Metering event building |
+| `spec/legion/llm/fleet/dispatcher_spec.rb` | Tests: Fleet dispatch, availability, timeout |
+| `spec/legion/llm/fleet/handler_spec.rb` | Tests: Fleet handler, auth, response building |
 | `spec/spec_helper.rb` | Stubbed Legion::Logging and Legion::Settings for testing |
 
 ## Extension Integration
@@ -405,8 +444,8 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 304 examples, 0 failures
-bundle exec rubocop  # 52 files, 0 offenses
+bundle exec rspec    # 712 examples, 0 failures
+bundle exec rubocop  # 113 files, 0 offenses
 ```
 
 ## Design Documents
