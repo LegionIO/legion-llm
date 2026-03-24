@@ -98,6 +98,38 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
     end
   end
 
+  describe 'step_context_store' do
+    before { Legion::LLM::ConversationStore.reset! }
+
+    it 'appends request message and response to ConversationStore' do
+      req = Legion::LLM::Pipeline::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        conversation_id: 'conv_store_test',
+        routing: { provider: :anthropic, model: 'claude-opus-4-6' }
+      )
+      executor = described_class.new(req)
+
+      mock_response = double('response', content: 'hi there', input_tokens: 10, output_tokens: 5)
+      allow(RubyLLM).to receive(:chat).and_return(double('session', with_tool: nil, ask: mock_response))
+      allow(executor).to receive(:step_response_normalization)
+
+      executor.call
+
+      messages = Legion::LLM::ConversationStore.messages('conv_store_test')
+      expect(messages.size).to eq(2)
+      expect(messages.first[:role]).to eq(:user)
+      expect(messages.last[:role]).to eq(:assistant)
+      expect(messages.last[:content]).to eq('hi there')
+    end
+
+    it 'skips when no conversation_id' do
+      executor = described_class.new(request)
+      allow(executor).to receive(:step_provider_call)
+      expect(Legion::LLM::ConversationStore).not_to receive(:append)
+      executor.call
+    end
+  end
+
   describe 'error classification in provider call' do
     it 'wraps RubyLLM 429 as RateLimitError' do
       executor = described_class.new(request)

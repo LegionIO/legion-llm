@@ -206,7 +206,32 @@ module Legion
 
         def step_tool_calls; end
 
-        def step_context_store; end
+        def step_context_store
+          conv_id = @request.conversation_id
+          return unless conv_id
+
+          @request.messages.each do |msg|
+            ConversationStore.append(conv_id,
+                                     role: msg[:role]&.to_sym || :user,
+                                     content: msg[:content])
+          end
+
+          if @raw_response&.respond_to?(:content) && @raw_response.content
+            ConversationStore.append(conv_id,
+                                     role: :assistant,
+                                     content: @raw_response.content,
+                                     provider: @resolved_provider,
+                                     model: @resolved_model,
+                                     input_tokens: @raw_response.respond_to?(:input_tokens) ? @raw_response.input_tokens : nil,
+                                     output_tokens: @raw_response.respond_to?(:output_tokens) ? @raw_response.output_tokens : nil)
+          end
+
+          @timeline.record(
+            category: :internal, key: 'context:stored',
+            direction: :internal, detail: "stored to #{conv_id}",
+            from: 'pipeline', to: 'conversation_store'
+          )
+        end
 
         def step_post_response; end
 
