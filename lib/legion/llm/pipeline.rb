@@ -7,6 +7,7 @@ require_relative 'pipeline/tracing'
 require_relative 'pipeline/timeline'
 require_relative 'pipeline/steps/metering'
 require_relative 'pipeline/steps/rag_context'
+require_relative 'pipeline/steps/rag_guard'
 require_relative 'pipeline/executor'
 
 module Legion
