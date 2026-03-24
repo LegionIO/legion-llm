@@ -325,7 +325,7 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
 | `lib/legion/llm/errors.rb` | Typed error hierarchy: LLMError base + AuthError, RateLimitError, ContextOverflow, ProviderError, ProviderDown, UnsupportedCapability, PipelineError |
 | `lib/legion/llm/conversation_store.rb` | ConversationStore: in-memory LRU (256 slots) + optional Sequel DB persistence + spool fallback |
-| `lib/legion/llm/version.rb` | Version constant (0.4.1) |
+| `lib/legion/llm/version.rb` | Version constant (0.4.2) |
 | `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
 | `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin: `escalation_history`, `escalated?`, `final_resolution`, `escalation_chain` |
 | `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
@@ -339,6 +339,9 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/pipeline/timeline.rb` | Pipeline::Timeline: ordered event recording |
 | `lib/legion/llm/pipeline/executor.rb` | Pipeline::Executor: 18-step skeleton with profile-aware execution |
 | `lib/legion/llm/pipeline/steps/metering.rb` | Pipeline::Steps::Metering: metering event builder |
+| `lib/legion/llm/pipeline/steps/rag_context.rb` | Pipeline::Steps::RagContext: context strategy selection and Apollo retrieval (step 8) |
+| `lib/legion/llm/pipeline/steps/rag_guard.rb` | Pipeline::Steps::RagGuard: faithfulness check against retrieved RAG context |
+| `lib/legion/llm/pipeline/enrichment_injector.rb` | Pipeline::EnrichmentInjector: converts RAG/GAIA enrichments into system prompt |
 | `lib/legion/llm/cost_estimator.rb` | CostEstimator: model cost estimation with fuzzy pricing |
 | `lib/legion/llm/fleet.rb` | Fleet module: requires dispatcher, handler, reply_dispatcher |
 | `lib/legion/llm/fleet/dispatcher.rb` | Fleet::Dispatcher: fleet RPC dispatch |
@@ -385,6 +388,10 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/pipeline/steps/metering_spec.rb` | Tests: Metering event building |
 | `spec/legion/llm/fleet/dispatcher_spec.rb` | Tests: Fleet dispatch, availability, timeout |
 | `spec/legion/llm/fleet/handler_spec.rb` | Tests: Fleet handler, auth, response building |
+| `spec/legion/llm/pipeline/steps/rag_context_spec.rb` | Tests: RAG context strategy selection, Apollo retrieval, graceful degradation |
+| `spec/legion/llm/pipeline/steps/rag_guard_spec.rb` | Tests: RAG faithfulness checking |
+| `spec/legion/llm/pipeline/enrichment_injector_spec.rb` | Tests: enrichment injection into system prompt |
+| `spec/legion/llm/pipeline/rag_gas_integration_spec.rb` | Tests: RAG/GAS full cycle integration |
 | `spec/spec_helper.rb` | Stubbed Legion::Logging and Legion::Settings for testing |
 
 ## Extension Integration
@@ -444,8 +451,8 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 712 examples, 0 failures
-bundle exec rubocop  # 113 files, 0 offenses
+bundle exec rspec    # 794 examples, 0 failures
+bundle exec rubocop  # 142 files, 0 offenses
 ```
 
 ## Design Documents

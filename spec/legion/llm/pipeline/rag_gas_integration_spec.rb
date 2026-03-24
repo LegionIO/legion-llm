@@ -14,10 +14,10 @@ RSpec.describe 'RAG/GAS full cycle' do
   it 'RAG enriches request, response triggers audit publish' do
     apollo_runner = double('Knowledge')
     allow(apollo_runner).to receive(:retrieve_relevant).and_return({
-      success: true,
-      entries: [{ content: 'pgvector uses HNSW', content_type: 'fact', confidence: 0.9 }],
-      count: 1
-    })
+                                                                     success: true,
+                                                                     entries: [{ content: 'pgvector uses HNSW', content_type: 'fact', confidence: 0.9 }],
+                                                                     count:   1
+                                                                   })
     stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
     mock_session = double('RubyLLM::Chat')
@@ -36,9 +36,9 @@ RSpec.describe 'RAG/GAS full cycle' do
     end
 
     request = Legion::LLM::Pipeline::Request.build(
-      messages: [{ role: :user, content: 'how does pgvector search work?' }],
+      messages:         [{ role: :user, content: 'how does pgvector search work?' }],
       context_strategy: :rag,
-      caller: { requested_by: { identity: 'user:matt', type: :user } }
+      caller:           { requested_by: { identity: 'user:matt', type: :user } }
     )
 
     response = Legion::LLM::Pipeline::Executor.new(request).call
@@ -52,10 +52,11 @@ RSpec.describe 'RAG/GAS full cycle' do
   it 'injects RAG context into system prompt for provider call' do
     apollo_runner = double('Knowledge')
     allow(apollo_runner).to receive(:retrieve_relevant).and_return({
-      success: true,
-      entries: [{ content: 'pgvector is a PostgreSQL extension', content_type: 'fact', confidence: 0.9 }],
-      count: 1
-    })
+                                                                     success: true,
+                                                                     entries: [{ content: 'pgvector is a PostgreSQL extension', content_type: 'fact',
+confidence: 0.9 }],
+                                                                     count:   1
+                                                                   })
     stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
     mock_session = double('RubyLLM::Chat')
@@ -73,10 +74,10 @@ RSpec.describe 'RAG/GAS full cycle' do
     end
 
     request = Legion::LLM::Pipeline::Request.build(
-      messages: [{ role: :user, content: 'what is pgvector?' }],
-      system: 'You are helpful.',
+      messages:         [{ role: :user, content: 'what is pgvector?' }],
+      system:           'You are helpful.',
       context_strategy: :rag,
-      caller: { requested_by: { identity: 'user:matt', type: :user } }
+      caller:           { requested_by: { identity: 'user:matt', type: :user } }
     )
 
     Legion::LLM::Pipeline::Executor.new(request).call
@@ -98,9 +99,9 @@ RSpec.describe 'RAG/GAS full cycle' do
     allow(mock_session).to receive(:ask).and_return(mock_response)
 
     request = Legion::LLM::Pipeline::Request.build(
-      messages: [{ role: :user, content: 'hello' }],
+      messages:         [{ role: :user, content: 'hello' }],
       context_strategy: :rag,
-      caller: { requested_by: { identity: 'user:matt', type: :user } }
+      caller:           { requested_by: { identity: 'user:matt', type: :user } }
     )
 
     response = Legion::LLM::Pipeline::Executor.new(request).call
@@ -124,7 +125,7 @@ RSpec.describe 'RAG/GAS full cycle' do
 
     request = Legion::LLM::Pipeline::Request.build(
       messages: [{ role: :user, content: 'synthesize this' }],
-      caller: {
+      caller:   {
         requested_by: { identity: 'gaia:tick:gas_comprehend', type: :system, credential: :internal }
       }
     )

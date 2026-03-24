@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.4.2] - 2026-03-23
+
+### Added
+- `Pipeline::Steps::RagContext` (step 8): context strategy selector (full/rag_hybrid/rag/none) based on utilization, queries Apollo via `retrieve_relevant`
+- `Pipeline::Steps::RagGuard`: post-response faithfulness check against retrieved RAG context via `Hooks::RagGuard`
+- `Pipeline::EnrichmentInjector`: converts RAG and GAIA enrichments into system prompt text before provider call
+- `Pipeline::GaiaCaller`: privileged helper for GAIA/GAS LLM calls with system profile (skips governance steps)
+- `Pipeline::AuditPublisher`: publishes audit events to `llm.audit` exchange for GAS subscriber consumption
+- RAG/GAS full cycle integration test (4 examples: enrichment, injection, degradation, feedback loop prevention)
+
 ## [0.4.1] - 2026-03-23
 
 ### Added
