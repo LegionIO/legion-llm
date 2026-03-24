@@ -8,7 +8,7 @@
 Core LegionIO gem providing LLM capabilities to all extensions. Wraps ruby_llm to provide a consistent interface for chat, embeddings, tool use, and agents across multiple providers (Bedrock, Anthropic, OpenAI, Gemini, Ollama). Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
 
 **GitHub**: https://github.com/LegionIO/legion-llm
-**Version**: 0.4.1
+**Version**: 0.5.3
 **License**: Apache-2.0
 
 ## Architecture
@@ -110,7 +110,7 @@ Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet of
 
 ### Gateway Integration (lex-llm-gateway)
 
-Gateway delegation removed in v0.4.1. `chat`, `embed`, and `structured` route directly — no `begin/rescue LoadError` block, no `gateway_loaded?` check. The pipeline (when `pipeline_enabled: true`) handles metering and fleet dispatch natively. The `_direct` variants still exist as the canonical non-pipeline path for `chat_direct`, `embed_direct`, `structured_direct`.
+Gateway delegation removed in v0.4.1. `chat`, `embed`, and `structured` route directly — no `begin/rescue LoadError` block, no `gateway_loaded?` check. The pipeline (enabled by default since v0.4.8) handles metering and fleet dispatch natively. The `_direct` variants still exist as the canonical non-pipeline path for `chat_direct`, `embed_direct`, `structured_direct`.
 
 ### Integration with LegionIO
 
@@ -187,7 +187,7 @@ Settings read from `Legion::Settings[:llm]`:
 |-----|------|---------|-------------|
 | `enabled` | Boolean | `true` | Enable LLM support |
 | `connected` | Boolean | `false` | Set to true after successful start |
-| `pipeline_enabled` | Boolean | `false` | Enable 18-step pipeline for chat() dispatch |
+| `pipeline_enabled` | Boolean | `true` | Enable 18-step pipeline for chat() dispatch (enabled by default since v0.4.8) |
 | `default_model` | String | `nil` | Default model ID (auto-detected if nil) |
 | `default_provider` | Symbol | `nil` | Default provider (auto-detected if nil) |
 | `providers` | Hash | See below | Per-provider configuration |
@@ -325,7 +325,7 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
 | `lib/legion/llm/errors.rb` | Typed error hierarchy: LLMError base + AuthError, RateLimitError, ContextOverflow, ProviderError, ProviderDown, UnsupportedCapability, PipelineError |
 | `lib/legion/llm/conversation_store.rb` | ConversationStore: in-memory LRU (256 slots) + optional Sequel DB persistence + spool fallback |
-| `lib/legion/llm/version.rb` | Version constant (0.4.2) |
+| `lib/legion/llm/version.rb` | Version constant (0.5.3) |
 | `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
 | `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin: `escalation_history`, `escalated?`, `final_resolution`, `escalation_chain` |
 | `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
@@ -451,8 +451,8 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 794 examples, 0 failures
-bundle exec rubocop  # 142 files, 0 offenses
+bundle exec rspec    # 882 examples, 0 failures
+bundle exec rubocop  # 0 offenses
 ```
 
 ## Design Documents

@@ -2,7 +2,7 @@
 
 LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension.
 
-**Version**: 0.3.15
+**Version**: 0.5.3
 
 ## Installation
 
@@ -280,9 +280,32 @@ session.with_tools(CodeAnalyzer, SecurityScanner)
 response = session.ask("Review this PR: #{diff}")
 ```
 
+### Unified Pipeline
+
+All `chat()` calls flow through an 18-step request/response pipeline (enabled by default since v0.4.8). The pipeline handles RBAC, classification, RAG context retrieval, MCP tool discovery, metering, billing, audit, and GAIA advisory in a consistent sequence. Steps are skipped based on the caller profile (`:external`, `:gaia`, `:system`).
+
+```ruby
+# Pipeline is enabled by default — no configuration needed
+result = Legion::LLM.chat(message: "hello")
+
+# Disable pipeline for a specific call (not recommended — use caller: profile instead)
+# Set pipeline_enabled: false in settings to disable globally
+```
+
+The pipeline accepts a `caller:` hash describing the request origin:
+
+```ruby
+Legion::LLM.chat(
+  message: "hello",
+  caller: { requested_by: { identity: "user@example.com", type: :human, credential: :jwt } }
+)
+```
+
+System callers (type: `:system`) derive the `:system` profile, which skips governance steps to prevent recursion.
+
 ### Routing
 
-legion-llm includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health. Routing is **disabled by default** — opt in via settings.
+legion-llm includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health. Routing is **disabled by default** — opt in by setting `routing.enabled: true` in settings.
 
 #### Three Tiers
 
@@ -629,7 +652,7 @@ bundle exec rspec
 Tests use stubbed `Legion::Logging` and `Legion::Settings` modules (no need for the full LegionIO stack):
 
 ```bash
-bundle exec rspec                              # Run all 304 tests
+bundle exec rspec                              # Run all 882 tests
 bundle exec rubocop                            # Lint (0 offenses)
 bundle exec rspec spec/legion/llm_spec.rb      # Run specific test file
 bundle exec rspec spec/legion/llm/router_spec.rb  # Router tests only
