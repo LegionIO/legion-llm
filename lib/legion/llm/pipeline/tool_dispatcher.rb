@@ -20,7 +20,9 @@ module Legion
 
           result = case source[:type]
                    when :mcp
-                     dispatch_mcp(tool_call, source)
+                     mcp_result = dispatch_mcp(tool_call, source)
+                     run_shadow(tool_call, source, mcp_result)
+                     mcp_result
                    when :extension
                      dispatch_extension(tool_call, source)
                    when :builtin
@@ -39,6 +41,15 @@ module Legion
         end
 
         def check_override(tool_name)
+          # 1. Explicit settings override
+          settings_override = check_settings_override(tool_name)
+          return settings_override if settings_override
+
+          # 2. Catalog + OverrideConfidence auto-override
+          check_catalog_override(tool_name)
+        end
+
+        def check_settings_override(tool_name)
           overrides = Legion::Settings.dig(:mcp, :overrides) rescue nil # rubocop:disable Style/RescueModifier
           return nil unless overrides.is_a?(Hash)
 
@@ -50,6 +61,21 @@ module Legion
             lex:      override[:lex] || override['lex'],
             runner:   override[:runner] || override['runner'],
             function: override[:function] || override['function']
+          }
+        end
+
+        def check_catalog_override(tool_name)
+          return nil unless defined?(Legion::Extensions::Catalog::Registry)
+          return nil unless Legion::LLM::OverrideConfidence.should_override?(tool_name)
+
+          cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
+          return nil unless cap
+
+          {
+            type:     :extension,
+            lex:      cap.extension,
+            runner:   cap.runner,
+            function: cap.function
           }
         end
 
@@ -74,6 +100,27 @@ module Legion
 
         def dispatch_builtin(_tool_call, _source)
           { status: :passthrough, result: nil }
+        end
+
+        def run_shadow(tool_call, _source, mcp_result)
+          tool_name = tool_call[:name]
+          return unless Legion::LLM::OverrideConfidence.should_shadow?(tool_name)
+          return unless defined?(Legion::Extensions::Catalog::Registry)
+
+          cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
+          return unless cap
+
+          shadow_source = { type: :extension, lex: cap.extension, runner: cap.runner, function: cap.function }
+          shadow_result = dispatch_extension(tool_call, shadow_source)
+
+          if shadow_result[:status] == :success && mcp_result[:status] == :success
+            Legion::LLM::OverrideConfidence.record_success(tool_name)
+          else
+            Legion::LLM::OverrideConfidence.record_failure(tool_name)
+          end
+        rescue StandardError => e
+          Legion::LLM::OverrideConfidence.record_failure(tool_name) if tool_name
+          Legion::Logging.debug("Shadow execution failed: #{e.message}") if defined?(Legion::Logging)
         end
       end
     end

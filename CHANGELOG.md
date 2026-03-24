@@ -9,6 +9,10 @@
 - `Pipeline::GaiaCaller`: privileged helper for GAIA/GAS LLM calls with system profile (skips governance steps)
 - `Pipeline::AuditPublisher`: publishes audit events to `llm.audit` exchange for GAS subscriber consumption
 - RAG/GAS full cycle integration test (4 examples: enrichment, injection, degradation, feedback loop prevention)
+- `OverrideConfidence` module with 4-tier degrading storage (L0 memory, L1 cache, L2 SQLite, L3 Apollo)
+- Catalog-driven auto-override in `ToolDispatcher`: settings override first, then Catalog + confidence gate
+- Shadow mode execution: when confidence is 0.5-0.8, execute both MCP and LEX, compare results, update confidence
+- `hydrate_from_l2` and `hydrate_from_apollo` for override confidence persistence across restarts
 
 ## [0.4.1] - 2026-03-23
 
