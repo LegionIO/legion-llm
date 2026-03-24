@@ -4,6 +4,9 @@ module Legion
   module LLM
     module Pipeline
       class Executor
+        include Steps::GaiaAdvisory
+        include Steps::PostResponse
+
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
                     :audit, :warnings
 
@@ -126,8 +129,6 @@ module Legion
             from: 'pipeline', to: 'billing'
           )
         end
-
-        def step_gaia_advisory; end
 
         def step_rag_context; end
 
@@ -298,8 +299,6 @@ module Legion
           )
         end
 
-        def step_post_response; end
-
         def step_response_return; end
 
         def build_response
@@ -332,14 +331,6 @@ module Legion
             billing:         @request.billing,
             test:            @request.test
           )
-        end
-
-        def extract_tokens
-          return {} unless @raw_response.respond_to?(:input_tokens)
-
-          input  = @raw_response.input_tokens.to_i
-          output = @raw_response.output_tokens.to_i
-          { input: input, output: output, total: input + output }
         end
       end
     end
