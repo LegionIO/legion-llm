@@ -71,6 +71,33 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
     end
   end
 
+  describe 'step_context_load' do
+    before { Legion::LLM::ConversationStore.reset! }
+
+    it 'loads prior messages into enrichments when conversation_id present' do
+      Legion::LLM::ConversationStore.append('conv_123', role: :user, content: 'earlier message')
+      Legion::LLM::ConversationStore.append('conv_123', role: :assistant, content: 'earlier reply')
+
+      req = Legion::LLM::Pipeline::Request.build(
+        messages: [{ role: :user, content: 'new question' }],
+        conversation_id: 'conv_123',
+        routing: { provider: :anthropic, model: 'claude-opus-4-6' }
+      )
+      executor = described_class.new(req)
+      allow(executor).to receive(:step_provider_call)
+      executor.call
+      expect(executor.enrichments[:conversation_history]).to be_an(Array)
+      expect(executor.enrichments[:conversation_history].size).to eq(2)
+    end
+
+    it 'skips when no conversation_id' do
+      executor = described_class.new(request)
+      allow(executor).to receive(:step_provider_call)
+      executor.call
+      expect(executor.enrichments[:conversation_history]).to be_nil
+    end
+  end
+
   describe 'error classification in provider call' do
     it 'wraps RubyLLM 429 as RateLimitError' do
       executor = described_class.new(request)

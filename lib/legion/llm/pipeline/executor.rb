@@ -57,7 +57,20 @@ module Legion
 
         def step_conversation_uuid; end
 
-        def step_context_load; end
+        def step_context_load
+          conv_id = @request.conversation_id
+          return unless conv_id
+
+          history = ConversationStore.messages(conv_id)
+          return if history.empty?
+
+          @enrichments[:conversation_history] = history
+          @timeline.record(
+            category: :internal, key: 'context:loaded',
+            direction: :internal, detail: "loaded #{history.size} prior messages",
+            from: 'conversation_store', to: 'pipeline'
+          )
+        end
 
         def step_rbac
           @audit[:'rbac:permission_check'] = {
