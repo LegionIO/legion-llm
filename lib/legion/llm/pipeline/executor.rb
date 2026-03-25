@@ -16,12 +16,13 @@ module Legion
 
         include Steps::McpDiscovery
         include Steps::ToolCalls
+        include Steps::KnowledgeCapture
 
         STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
           rbac classification billing gaia_advisory rag_context mcp_discovery
           routing request_normalization provider_call response_normalization
-          tool_calls context_store post_response response_return
+          tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         PRE_PROVIDER_STEPS = %i[
@@ -31,7 +32,7 @@ module Legion
         ].freeze
 
         POST_PROVIDER_STEPS = %i[
-          response_normalization tool_calls context_store post_response response_return
+          response_normalization tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         def initialize(request)
