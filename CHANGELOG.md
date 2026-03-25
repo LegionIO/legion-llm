@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.5.9] - 2026-03-25
+
+### Added
+- Provider-aware embedding model resolution: `Embeddings.generate` and `generate_batch` accept `provider:` parameter
+- `PROVIDER_EMBEDDING_MODELS` constant maps providers to their default embedding models (bedrock: `amazon.titan-embed-text-v2`, openai: `text-embedding-3-small`, gemini: `text-embedding-004`, ollama: `mxbai-embed-large`)
+- Embedding fallback chain: explicit `provider:`/`model:` -> `llm.embeddings.provider`/`default_model` settings -> derive from `llm.default_provider` -> `text-embedding-3-small`
+- Embedding results now include `:provider` key in response hash
+
 ## [0.5.8] - 2026-03-25
 
 ### Added

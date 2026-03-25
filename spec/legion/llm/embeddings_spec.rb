@@ -4,6 +4,10 @@ require 'spec_helper'
 require 'legion/llm/embeddings'
 
 RSpec.describe Legion::LLM::Embeddings do
+  before do
+    allow(Legion::Settings).to receive(:dig).and_return(nil)
+  end
+
   describe '.generate' do
     it 'returns vector hash structure' do
       mock_response = double(vectors: [[0.1, 0.2, 0.3]], input_tokens: 5)
@@ -22,12 +26,26 @@ RSpec.describe Legion::LLM::Embeddings do
       expect(result[:error]).to include('provider down')
     end
 
-    it 'passes custom model and dimensions' do
+    it 'passes custom model, provider, and dimensions' do
       mock_response = double(vectors: [[0.1]], input_tokens: 1)
-      allow(RubyLLM).to receive(:embed).with('text', model: 'custom-model', dimensions: 256).and_return(mock_response)
+      allow(RubyLLM).to receive(:embed).with('text', model: 'custom-model', provider: :bedrock, dimensions: 256).and_return(mock_response)
 
-      result = described_class.generate(text: 'text', model: 'custom-model', dimensions: 256)
+      result = described_class.generate(text: 'text', model: 'custom-model', provider: :bedrock, dimensions: 256)
       expect(result[:model]).to eq('custom-model')
+      expect(result[:provider]).to eq(:bedrock)
+    end
+
+    it 'resolves provider from llm settings when not specified' do
+      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :provider).and_return(nil)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(:bedrock)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :default_model).and_return(nil)
+
+      mock_response = double(vectors: [[0.1]], input_tokens: 1)
+      allow(RubyLLM).to receive(:embed).and_return(mock_response)
+
+      result = described_class.generate(text: 'test')
+      expect(result[:provider]).to eq(:bedrock)
+      expect(result[:model]).to eq('amazon.titan-embed-text-v2')
     end
   end
 
@@ -51,14 +69,22 @@ RSpec.describe Legion::LLM::Embeddings do
   end
 
   describe '.default_model' do
-    it 'falls back to text-embedding-3-small' do
-      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :default_model).and_return(nil)
+    it 'falls back to text-embedding-3-small when no provider' do
       expect(described_class.default_model).to eq('text-embedding-3-small')
     end
 
     it 'uses configured model' do
       allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :default_model).and_return('custom')
+      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :provider).and_return(nil)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(nil)
       expect(described_class.default_model).to eq('custom')
+    end
+
+    it 'uses provider-specific default for bedrock' do
+      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :default_model).and_return(nil)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :provider).and_return(:bedrock)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(nil)
+      expect(described_class.default_model).to eq('amazon.titan-embed-text-v2')
     end
   end
 end
