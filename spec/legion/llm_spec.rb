@@ -49,6 +49,16 @@ RSpec.describe Legion::LLM do
       expect(described_class.started?).to be false
       expect(Legion::Settings[:llm][:connected]).to be false
     end
+
+    it 'resets embedding state on shutdown' do
+      Legion::LLM.instance_variable_set(:@can_embed, true)
+      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'test')
+      Legion::LLM.shutdown
+      expect(Legion::LLM.can_embed?).to be false
+      expect(Legion::LLM.embedding_provider).to be_nil
+      expect(Legion::LLM.embedding_model).to be_nil
+    end
   end
 
   describe '.chat' do

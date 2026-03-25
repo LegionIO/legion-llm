@@ -57,6 +57,9 @@ module Legion
       def shutdown
         Legion::Settings[:llm][:connected] = false
         @started = false
+        @can_embed = nil
+        @embedding_provider = nil
+        @embedding_model = nil
         Legion::Logging.info 'Legion::LLM shut down'
       end
 
