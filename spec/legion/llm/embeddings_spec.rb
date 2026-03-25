@@ -37,6 +37,59 @@ RSpec.describe 'Legion::LLM embedding capability' do
   end
 end
 
+RSpec.describe '.detect_embedding_capability' do
+  before do
+    Legion::LLM.instance_variable_set(:@can_embed, nil)
+    Legion::LLM.instance_variable_set(:@embedding_provider, nil)
+    Legion::LLM.instance_variable_set(:@embedding_model, nil)
+  end
+
+  context 'when Ollama has a preferred model' do
+    before do
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+        .and_return(false)
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+        .with('mxbai-embed-large').and_return(true)
+    end
+
+    it 'selects Ollama with that model' do
+      Legion::LLM.send(:detect_embedding_capability)
+      expect(Legion::LLM.can_embed?).to be true
+      expect(Legion::LLM.embedding_provider).to eq(:ollama)
+      expect(Legion::LLM.embedding_model).to eq('mxbai-embed-large')
+    end
+  end
+
+  context 'when Ollama has no models but bedrock is configured' do
+    before do
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+        .and_return(false)
+      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+    end
+
+    it 'falls back to bedrock' do
+      Legion::LLM.send(:detect_embedding_capability)
+      expect(Legion::LLM.can_embed?).to be true
+      expect(Legion::LLM.embedding_provider).to eq(:bedrock)
+      expect(Legion::LLM.embedding_model).to eq('amazon.titan-embed-text-v2:0')
+    end
+  end
+
+  context 'when no provider is available' do
+    before do
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+        .and_return(false)
+      Legion::Settings[:llm][:providers].each_value { |v| v[:enabled] = false }
+    end
+
+    it 'sets can_embed? to false' do
+      Legion::LLM.send(:detect_embedding_capability)
+      expect(Legion::LLM.can_embed?).to be false
+      expect(Legion::LLM.embedding_provider).to be_nil
+    end
+  end
+end
+
 RSpec.describe Legion::LLM::Embeddings do
   before do
     allow(Legion::Settings).to receive(:dig).and_return(nil)

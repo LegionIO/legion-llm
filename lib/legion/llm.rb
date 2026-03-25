@@ -43,6 +43,7 @@ module Legion
 
         configure_providers
         run_discovery
+        detect_embedding_capability
         set_defaults
 
         install_hooks
@@ -568,6 +569,59 @@ module Legion
 
         # Auto-detect: use first enabled provider's sensible default
         auto_configure_defaults
+      end
+
+      def detect_embedding_capability
+        embedding_settings = settings[:embedding] || {}
+        fallback = embedding_settings[:provider_fallback] || %w[ollama bedrock openai]
+        provider_models = embedding_settings[:provider_models] || {}
+        ollama_preferred = embedding_settings[:ollama_preferred] || %w[mxbai-embed-large bge-large snowflake-arctic-embed]
+
+        fallback.each do |provider_name|
+          provider = provider_name.to_sym
+          model = provider_models[provider_name] || provider_models[provider]
+
+          available = case provider
+                      when :ollama
+                        detect_ollama_embedding(ollama_preferred)
+                      else
+                        detect_cloud_embedding(provider)
+                      end
+
+          next unless available
+
+          @can_embed = true
+          @embedding_provider = provider
+          @embedding_model = available.is_a?(String) ? available : model&.to_s
+          Legion::Logging.info "Embedding available: #{provider}:#{@embedding_model}"
+          return
+        end
+
+        @can_embed = false
+        Legion::Logging.info 'No embedding provider available'
+      rescue StandardError => e
+        @can_embed = false
+        Legion::Logging.warn "Embedding detection failed: #{e.message}" if defined?(Legion::Logging)
+      end
+
+      def detect_ollama_embedding(preferred_models)
+        return nil unless defined?(Legion::LLM::Discovery::Ollama)
+
+        preferred_models.each do |model|
+          return model if Legion::LLM::Discovery::Ollama.model_available?(model)
+        end
+        nil
+      rescue StandardError
+        nil
+      end
+
+      def detect_cloud_embedding(provider)
+        provider_config = settings.dig(:providers, provider)
+        return nil unless provider_config.is_a?(Hash) && provider_config[:enabled]
+
+        true
+      rescue StandardError
+        nil
       end
 
       def run_discovery
