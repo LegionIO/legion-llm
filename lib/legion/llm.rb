@@ -71,13 +71,7 @@ module Legion
         @can_embed == true
       end
 
-      def embedding_provider
-        @embedding_provider
-      end
-
-      def embedding_model
-        @embedding_model
-      end
+      attr_reader :embedding_provider, :embedding_model
 
       def settings
         if Legion.const_defined?('Settings')
@@ -576,6 +570,22 @@ module Legion
 
       def detect_embedding_capability
         embedding_settings = settings[:embedding] || {}
+        found = find_embedding_provider(embedding_settings)
+        if found
+          @can_embed = true
+          @embedding_provider = found[:provider]
+          @embedding_model = found[:model]
+          Legion::Logging.info "Embedding available: #{@embedding_provider}:#{@embedding_model}"
+        else
+          @can_embed = false
+          Legion::Logging.info 'No embedding provider available'
+        end
+      rescue StandardError => e
+        @can_embed = false
+        Legion::Logging.warn "Embedding detection failed: #{e.message}" if defined?(Legion::Logging)
+      end
+
+      def find_embedding_provider(embedding_settings)
         fallback = embedding_settings[:provider_fallback] || %w[ollama bedrock openai]
         provider_models = embedding_settings[:provider_models] || {}
         ollama_preferred = embedding_settings[:ollama_preferred] || %w[mxbai-embed-large bge-large snowflake-arctic-embed]
@@ -583,32 +593,25 @@ module Legion
         fallback.each do |provider_name|
           provider = provider_name.to_sym
           model = provider_models[provider_name] || provider_models[provider]
-
-          available = case provider
-                      when :ollama
-                        detect_ollama_embedding(ollama_preferred)
-                      else
-                        detect_cloud_embedding(provider)
-                      end
-
+          available = probe_embedding_provider(provider, ollama_preferred)
           next unless available
 
-          @can_embed = true
-          @embedding_provider = provider
-          @embedding_model = available.is_a?(String) ? available : model&.to_s
-          Legion::Logging.info "Embedding available: #{provider}:#{@embedding_model}"
-          return
+          resolved_model = available.is_a?(String) ? available : model&.to_s
+          return { provider: provider, model: resolved_model }
         end
+        nil
+      end
 
-        @can_embed = false
-        Legion::Logging.info 'No embedding provider available'
-      rescue StandardError => e
-        @can_embed = false
-        Legion::Logging.warn "Embedding detection failed: #{e.message}" if defined?(Legion::Logging)
+      def probe_embedding_provider(provider, ollama_preferred)
+        case provider
+        when :ollama then detect_ollama_embedding(ollama_preferred)
+        else              detect_cloud_embedding(provider)
+        end
       end
 
       def detect_ollama_embedding(preferred_models)
         return nil unless defined?(Legion::LLM::Discovery::Ollama)
+        return nil unless settings.dig(:providers, :ollama, :enabled)
 
         preferred_models.each do |model|
           return model if Legion::LLM::Discovery::Ollama.model_available?(model)

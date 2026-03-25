@@ -46,6 +46,7 @@ RSpec.describe '.detect_embedding_capability' do
 
   context 'when Ollama has a preferred model' do
     before do
+      Legion::Settings[:llm][:providers][:ollama][:enabled] = true
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
         .and_return(false)
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
@@ -94,7 +95,7 @@ RSpec.describe 'Legion::LLM::Embeddings' do
   describe '.generate dimension enforcement' do
     let(:mock_response) do
       double('EmbedResponse',
-             vectors: [Array.new(1024, 0.1)],
+             vectors:      [Array.new(1024, 0.1)],
              input_tokens: 10)
     end
 
@@ -114,7 +115,7 @@ RSpec.describe 'Legion::LLM::Embeddings' do
     context 'when provider returns wrong dimensions' do
       let(:mock_response) do
         double('EmbedResponse',
-               vectors: [Array.new(1536, 0.1)],
+               vectors:      [Array.new(1536, 0.1)],
                input_tokens: 10)
       end
 
@@ -127,7 +128,7 @@ RSpec.describe 'Legion::LLM::Embeddings' do
     context 'when provider returns fewer dimensions' do
       let(:mock_response) do
         double('EmbedResponse',
-               vectors: [Array.new(768, 0.1)],
+               vectors:      [Array.new(768, 0.1)],
                input_tokens: 10)
       end
 
@@ -157,8 +158,8 @@ RSpec.describe 'Legion::LLM::Embeddings' do
 
     it 'uses cached provider when no explicit provider given' do
       expect(RubyLLM).to receive(:embed).with('test', hash_including(
-                                                         model: 'mxbai-embed-large', provider: :ollama
-                                                       )).and_return(double(vectors: [Array.new(1024, 0.1)], input_tokens: 5))
+                                                        model: 'mxbai-embed-large', provider: :ollama
+                                                      )).and_return(double(vectors: [Array.new(1024, 0.1)], input_tokens: 5))
 
       Legion::LLM::Embeddings.generate(text: 'test')
     end
