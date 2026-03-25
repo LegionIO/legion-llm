@@ -20,7 +20,8 @@ module Legion
           arbitrage:        arbitrage_defaults,
           batch:            batch_defaults,
           scheduling:       scheduling_defaults,
-          rag:              rag_defaults
+          rag:              rag_defaults,
+          embedding:        embedding_defaults
         }
       end
 
@@ -124,6 +125,20 @@ module Legion
           utilization_skip_threshold:    0.9,
           trivial_max_chars:             20,
           trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank]
+        }
+      end
+
+      def self.embedding_defaults
+        {
+          dimension:         1024,
+          enforce_dimension: true,
+          provider_fallback: %w[ollama bedrock openai],
+          provider_models:   {
+            ollama:  'mxbai-embed-large',
+            bedrock: 'amazon.titan-embed-text-v2:0',
+            openai:  'text-embedding-3-small'
+          },
+          ollama_preferred:  %w[mxbai-embed-large bge-large snowflake-arctic-embed]
         }
       end
 

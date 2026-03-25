@@ -19,3 +19,19 @@ RSpec.describe 'Discovery settings defaults' do
     expect(Legion::Settings[:llm][:discovery][:memory_floor_mb]).to eq(2048)
   end
 end
+
+RSpec.describe 'Embedding settings defaults' do
+  describe 'embedding settings' do
+    it 'includes embedding defaults' do
+      expect(Legion::Settings[:llm][:embedding]).to be_a(Hash)
+      expect(Legion::Settings[:llm][:embedding][:dimension]).to eq(1024)
+      expect(Legion::Settings[:llm][:embedding][:provider_fallback]).to eq(%w[ollama bedrock openai])
+    end
+
+    it 'includes ollama preferred models' do
+      preferred = Legion::Settings[:llm][:embedding][:ollama_preferred]
+      expect(preferred).to include('mxbai-embed-large')
+      expect(preferred.size).to eq(3)
+    end
+  end
+end
