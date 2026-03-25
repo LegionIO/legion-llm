@@ -90,22 +90,102 @@ RSpec.describe '.detect_embedding_capability' do
   end
 end
 
+RSpec.describe 'Legion::LLM::Embeddings' do
+  describe '.generate dimension enforcement' do
+    let(:mock_response) do
+      double('EmbedResponse',
+             vectors: [Array.new(1024, 0.1)],
+             input_tokens: 10)
+    end
+
+    before do
+      allow(RubyLLM).to receive(:embed).and_return(mock_response)
+      Legion::LLM.instance_variable_set(:@started, true)
+      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+    end
+
+    it 'returns exactly 1024 dimensions' do
+      result = Legion::LLM::Embeddings.generate(text: 'test')
+      expect(result[:vector].size).to eq(1024)
+      expect(result[:dimensions]).to eq(1024)
+    end
+
+    context 'when provider returns wrong dimensions' do
+      let(:mock_response) do
+        double('EmbedResponse',
+               vectors: [Array.new(1536, 0.1)],
+               input_tokens: 10)
+      end
+
+      it 'truncates to 1024' do
+        result = Legion::LLM::Embeddings.generate(text: 'test')
+        expect(result[:vector].size).to eq(1024)
+      end
+    end
+
+    context 'when provider returns fewer dimensions' do
+      let(:mock_response) do
+        double('EmbedResponse',
+               vectors: [Array.new(768, 0.1)],
+               input_tokens: 10)
+      end
+
+      it 'returns error for incompatible dimension' do
+        result = Legion::LLM::Embeddings.generate(text: 'test')
+        expect(result[:error]).to include('dimension')
+      end
+    end
+  end
+
+  describe '.generate when LLM not started' do
+    before { allow(Legion::LLM).to receive(:started?).and_return(false) }
+
+    it 'returns error without calling RubyLLM' do
+      result = Legion::LLM::Embeddings.generate(text: 'test')
+      expect(result[:error]).to eq('LLM not started')
+      expect(result[:vector]).to be_nil
+    end
+  end
+
+  describe '.generate with cached provider' do
+    before do
+      Legion::LLM.instance_variable_set(:@started, true)
+      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+    end
+
+    it 'uses cached provider when no explicit provider given' do
+      expect(RubyLLM).to receive(:embed).with('test', hash_including(
+                                                         model: 'mxbai-embed-large', provider: :ollama
+                                                       )).and_return(double(vectors: [Array.new(1024, 0.1)], input_tokens: 5))
+
+      Legion::LLM::Embeddings.generate(text: 'test')
+    end
+  end
+end
+
 RSpec.describe Legion::LLM::Embeddings do
   before do
     allow(Legion::Settings).to receive(:dig).and_return(nil)
     Legion::LLM.instance_variable_set(:@can_embed, nil)
     Legion::LLM.instance_variable_set(:@embedding_provider, nil)
     Legion::LLM.instance_variable_set(:@embedding_model, nil)
+    Legion::LLM.instance_variable_set(:@started, true)
+  end
+
+  after do
+    Legion::LLM.instance_variable_set(:@started, nil)
   end
 
   describe '.generate' do
     it 'returns vector hash structure' do
-      mock_response = double(vectors: [[0.1, 0.2, 0.3]], input_tokens: 5)
+      mock_response = double(vectors: [Array.new(1024, 0.1)], input_tokens: 5)
       allow(RubyLLM).to receive(:embed).and_return(mock_response)
 
       result = described_class.generate(text: 'hello world')
-      expect(result[:vector]).to eq([0.1, 0.2, 0.3])
-      expect(result[:dimensions]).to eq(3)
+      expect(result[:vector].size).to eq(1024)
+      expect(result[:dimensions]).to eq(1024)
       expect(result[:tokens]).to eq(5)
     end
 
@@ -116,37 +196,35 @@ RSpec.describe Legion::LLM::Embeddings do
       expect(result[:error]).to include('provider down')
     end
 
-    it 'passes custom model, provider, and dimensions' do
-      mock_response = double(vectors: [[0.1]], input_tokens: 1)
-      allow(RubyLLM).to receive(:embed).with('text', model: 'custom-model', provider: :bedrock, dimensions: 256).and_return(mock_response)
+    it 'passes custom model and provider' do
+      mock_response = double(vectors: [Array.new(1024, 0.1)], input_tokens: 1)
+      allow(RubyLLM).to receive(:embed).with('text', hash_including(model: 'custom-model', provider: :bedrock)).and_return(mock_response)
 
-      result = described_class.generate(text: 'text', model: 'custom-model', provider: :bedrock, dimensions: 256)
+      result = described_class.generate(text: 'text', model: 'custom-model', provider: :bedrock)
       expect(result[:model]).to eq('custom-model')
       expect(result[:provider]).to eq(:bedrock)
     end
 
     it 'resolves provider from llm settings when not specified' do
-      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :provider).and_return(nil)
       allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(:bedrock)
-      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :default_model).and_return(nil)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :embedding).and_return(nil)
 
-      mock_response = double(vectors: [[0.1]], input_tokens: 1)
+      mock_response = double(vectors: [Array.new(1024, 0.1)], input_tokens: 1)
       allow(RubyLLM).to receive(:embed).and_return(mock_response)
 
       result = described_class.generate(text: 'test')
       expect(result[:provider]).to eq(:bedrock)
-      expect(result[:model]).to eq('amazon.titan-embed-text-v2')
     end
   end
 
   describe '.generate_batch' do
     it 'returns array of vectors' do
-      mock_response = double(vectors: [[0.1, 0.2], [0.3, 0.4]])
+      mock_response = double(vectors: [Array.new(1024, 0.1), Array.new(1024, 0.2)])
       allow(RubyLLM).to receive(:embed).and_return(mock_response)
 
       results = described_class.generate_batch(texts: %w[hello world])
       expect(results.size).to eq(2)
-      expect(results.first[:vector]).to eq([0.1, 0.2])
+      expect(results.first[:vector].size).to eq(1024)
       expect(results.last[:index]).to eq(1)
     end
 
@@ -163,18 +241,14 @@ RSpec.describe Legion::LLM::Embeddings do
       expect(described_class.default_model).to eq('text-embedding-3-small')
     end
 
-    it 'uses configured model' do
-      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :default_model).and_return('custom')
-      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :provider).and_return(nil)
-      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(nil)
-      expect(described_class.default_model).to eq('custom')
-    end
-
-    it 'uses provider-specific default for bedrock' do
-      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :default_model).and_return(nil)
-      allow(Legion::Settings).to receive(:dig).with(:llm, :embeddings, :provider).and_return(:bedrock)
-      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(nil)
-      expect(described_class.default_model).to eq('amazon.titan-embed-text-v2')
+    it 'uses provider_models from embedding settings for bedrock' do
+      allow(Legion::Settings).to receive(:dig).with(:llm, :embedding).and_return(
+        { provider_models: { bedrock: 'amazon.titan-embed-text-v2:0' } }
+      )
+      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(:bedrock)
+      Legion::LLM.instance_variable_set(:@embedding_provider, :bedrock)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'amazon.titan-embed-text-v2:0')
+      expect(described_class.default_model).to eq('amazon.titan-embed-text-v2:0')
     end
   end
 end
