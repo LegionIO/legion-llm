@@ -63,6 +63,18 @@ module Legion
         @started == true
       end
 
+      def can_embed?
+        @can_embed == true
+      end
+
+      def embedding_provider
+        @embedding_provider
+      end
+
+      def embedding_model
+        @embedding_model
+      end
+
       def settings
         if Legion.const_defined?('Settings')
           Legion::Settings[:llm]

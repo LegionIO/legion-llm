@@ -3,9 +3,46 @@
 require 'spec_helper'
 require 'legion/llm/embeddings'
 
+RSpec.describe 'Legion::LLM embedding capability' do
+  before do
+    Legion::LLM.instance_variable_set(:@can_embed, nil)
+    Legion::LLM.instance_variable_set(:@embedding_provider, nil)
+    Legion::LLM.instance_variable_set(:@embedding_model, nil)
+  end
+
+  describe '.can_embed?' do
+    it 'returns false before detection' do
+      Legion::LLM.instance_variable_set(:@can_embed, nil)
+      expect(Legion::LLM.can_embed?).to be false
+    end
+
+    it 'returns true after successful detection' do
+      Legion::LLM.instance_variable_set(:@can_embed, true)
+      expect(Legion::LLM.can_embed?).to be true
+    end
+  end
+
+  describe '.embedding_provider' do
+    it 'returns the detected provider symbol' do
+      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
+      expect(Legion::LLM.embedding_provider).to eq(:ollama)
+    end
+  end
+
+  describe '.embedding_model' do
+    it 'returns the detected model string' do
+      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+      expect(Legion::LLM.embedding_model).to eq('mxbai-embed-large')
+    end
+  end
+end
+
 RSpec.describe Legion::LLM::Embeddings do
   before do
     allow(Legion::Settings).to receive(:dig).and_return(nil)
+    Legion::LLM.instance_variable_set(:@can_embed, nil)
+    Legion::LLM.instance_variable_set(:@embedding_provider, nil)
+    Legion::LLM.instance_variable_set(:@embedding_model, nil)
   end
 
   describe '.generate' do
