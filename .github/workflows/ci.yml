@@ -3,13 +3,31 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '0 9 * * 1'
 
 jobs:
   ci:
     uses: LegionIO/.github/.github/workflows/ci.yml@main
 
+  lint:
+    uses: LegionIO/.github/.github/workflows/lint-patterns.yml@main
+
+  security:
+    uses: LegionIO/.github/.github/workflows/security-scan.yml@main
+
+  version-changelog:
+    uses: LegionIO/.github/.github/workflows/version-changelog.yml@main
+
+  dependency-review:
+    uses: LegionIO/.github/.github/workflows/dependency-review.yml@main
+
+  stale:
+    if: github.event_name == 'schedule'
+    uses: LegionIO/.github/.github/workflows/stale.yml@main
+
   release:
-    needs: ci
+    needs: [ci, lint]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     uses: LegionIO/.github/.github/workflows/release.yml@main
     secrets:

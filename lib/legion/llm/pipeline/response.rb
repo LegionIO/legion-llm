@@ -3,7 +3,7 @@
 module Legion
   module LLM
     module Pipeline
-      Response = Data.define(
+      Response = ::Data.define(
         :id, :request_id, :conversation_id, :schema_version,
         :message, :routing, :tokens, :thinking, :stop, :tools,
         :stream, :cache, :retry, :timestamps, :cost, :quality,

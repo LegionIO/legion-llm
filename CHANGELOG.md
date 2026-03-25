@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [Unreleased]
+
+### Fixed
+- Fix namespace collision: use `::Data.define` instead of `Data.define` in Pipeline Request and Response to prevent resolution to `Legion::Data`
+
 ## [0.5.6] - 2026-03-24
 
 ### Fixed

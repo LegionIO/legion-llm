@@ -3,7 +3,7 @@
 module Legion
   module LLM
     module Pipeline
-      Request = Data.define(
+      Request = ::Data.define(
         :id, :conversation_id, :idempotency_key, :schema_version,
         :system, :messages, :tools, :tool_choice,
         :routing, :tokens, :stop, :generation, :thinking,
