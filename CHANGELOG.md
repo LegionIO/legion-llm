@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.5.10] - 2026-03-25
+
+### Added
+- Pipeline step 19: KnowledgeCapture — automatic writeback of LLM research synthesis to Apollo
+
 ## [0.5.9] - 2026-03-25
 
 ### Added
