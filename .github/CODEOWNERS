@@ -1,0 +1,7 @@
+# Auto-generated from team-config.yml
+# Team: ai
+#
+# To apply: scripts/apply-codeowners.sh legion-llm
+
+* @LegionIO/maintainers
+* @LegionIO/ai
