@@ -14,6 +14,7 @@ module Legion
 
         def should_defer?(priority: :normal)
           return false if priority.to_sym == :urgent
+          return false unless Scheduling.enabled?
 
           peak_hour?
         end

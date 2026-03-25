@@ -121,6 +121,10 @@ module Legion
           end
         end
 
+        urgency = kwargs.delete(:urgency) { :normal }
+        deferred = try_defer(intent: intent, urgency: urgency, model: model, provider: provider, message: message, **kwargs)
+        return deferred if deferred
+
         if defined?(Legion::Logging)
           Legion::Logging.debug "[LLM] chat_direct escalate=#{escalate} message_present=#{!message.nil?} model=#{model} provider=#{provider}"
         end
@@ -321,7 +325,35 @@ module Legion
         Legion::Logging.debug '[LLM] chat_single calling session.ask' if defined?(Legion::Logging)
         response = block ? session.ask(message, &block) : session.ask(message)
         Legion::Logging.debug "[LLM] chat_single response_class=#{response.class} response_nil=#{response.nil?}" if defined?(Legion::Logging)
+
+        if response && !block && ShadowEval.enabled?
+          msgs = session.respond_to?(:messages) ? session.messages : nil
+          maybe_shadow_evaluate(response, msgs, opts[:model])
+        end
+
         response
+      end
+
+      def try_defer(intent:, urgency:, model:, provider:, message:, **)
+        return nil unless Scheduling.enabled? && Scheduling.should_defer?(intent: intent || :normal, urgency: urgency)
+        return nil unless defined?(Batch) && Batch.enabled?
+
+        entry_id = Batch.enqueue(model: model, provider: provider, message: message, priority: urgency, **)
+        { deferred: true, batch_id: entry_id, next_off_peak: Scheduling.next_off_peak.iso8601 }
+      end
+
+      def maybe_shadow_evaluate(response, messages, primary_model)
+        return unless ShadowEval.enabled? && ShadowEval.should_sample?
+
+        Thread.new do
+          ShadowEval.evaluate(
+            primary_response: { content: response.respond_to?(:content) ? response.content : response.to_s,
+                                model: primary_model, usage: {} },
+            messages:         messages
+          )
+        rescue StandardError => e
+          Legion::Logging.debug("shadow evaluation failed: #{e.message}") if defined?(Legion::Logging)
+        end
       end
 
       def chat_with_escalation(model:, provider:, intent:, tier:, max_escalations:, quality_check:, message:, **kwargs)
@@ -390,9 +422,20 @@ module Legion
       end
 
       def publish_escalation_event(history, final_outcome)
-        return unless defined?(Legion::Transport)
+        payload = {
+          outcome:   final_outcome,
+          attempts:  history.size,
+          history:   history,
+          timestamp: Time.now.utc.iso8601
+        }
 
-        Legion::Logging.debug("Escalation event: #{final_outcome}, #{history.size} attempts") if Legion.const_defined?('Logging')
+        Legion::Events.emit('llm.escalation', **payload) if defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
+
+        Legion::Logging.info("Escalation event: #{final_outcome}, #{history.size} attempts") if defined?(Legion::Logging)
+
+        if defined?(Legion::Transport) && Legion::Transport.respond_to?(:connected?) && Legion::Transport.connected?
+          Transport::Messages::EscalationEvent.new(payload).publish
+        end
       rescue StandardError => e
         Legion::Logging.warn("publish_escalation_event failed: #{e.message}") if defined?(Legion::Logging)
         nil

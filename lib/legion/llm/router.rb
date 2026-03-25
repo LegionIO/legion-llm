@@ -38,7 +38,7 @@ module Legion
             Legion::Logging.debug('Router: no rules matched, resolution is nil')
           end
 
-          resolution
+          resolution || arbitrage_fallback(intent)
         end
 
         def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil)
@@ -79,6 +79,27 @@ module Legion
         end
 
         private
+
+        def arbitrage_fallback(intent)
+          return nil unless defined?(Arbitrage) && Arbitrage.enabled?
+
+          capability = intent&.dig(:capability) || :moderate
+          model = Arbitrage.cheapest_for(capability: capability)
+          return nil unless model
+
+          provider = Arbitrage.cost_table[model] ? infer_provider(model) : nil
+          Legion::Logging.debug("Router: arbitrage fallback selected model=#{model}") if defined?(Legion::Logging)
+          Resolution.new(tier: :cloud, provider: provider || :bedrock, model: model, rule: 'arbitrage_fallback')
+        end
+
+        def infer_provider(model)
+          return :ollama if model.include?('llama')
+          return :bedrock if model.start_with?('us.')
+          return :openai if model.start_with?('gpt')
+          return :google if model.start_with?('gemini')
+
+          :anthropic if model.start_with?('claude')
+        end
 
         def explicit_resolution(tier, provider, model)
           resolved_provider = provider ? provider.to_sym : default_provider_for_tier(tier)

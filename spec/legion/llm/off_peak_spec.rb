@@ -43,7 +43,10 @@ RSpec.describe Legion::LLM::OffPeak do
     context 'during peak hours' do
       let(:peak_time) { Time.utc(2026, 3, 21, 16, 0, 0) }
 
-      before { allow(Time).to receive(:now).and_return(peak_time) }
+      before do
+        allow(Time).to receive(:now).and_return(peak_time)
+        Legion::Settings[:llm][:scheduling] = { enabled: true }
+      end
 
       it 'returns true for normal priority' do
         expect(described_class.should_defer?(priority: :normal)).to be true

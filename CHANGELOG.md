@@ -1,8 +1,19 @@
 # Legion LLM Changelog
 
-## [Unreleased]
+## [0.5.8] - 2026-03-25
+
+### Added
+- Wire shadow evaluation sampling into `chat_single` dispatch path (closes #3)
+- ToolRegistry spec coverage: 8 examples covering register, dedup, clear, thread safety (closes #4)
+- Arbitrage as router fallback: `Router.resolve` consults `Arbitrage.cheapest_for` when no rules match (closes #5)
+- Batch thread safety: Mutex around queue, priority-sorted flush, auto-flush via `Concurrent::TimerTask` (closes #6)
+- Scheduling deferral in `chat_direct`: defers to Batch during peak hours when scheduling is enabled (closes #7)
+- `publish_escalation_event` now publishes to `Legion::Events` and AMQP transport (closes #8)
+- Arbitrage `quality_floor` filtering via `QualityChecker.model_score` when available (closes #9)
 
 ### Fixed
+- `OffPeak.should_defer?` now checks `Scheduling.enabled?` before returning true (closes #9)
+- Pre-existing ordering-dependent spec failure in `llm_spec.rb` (ToolRegistry bleed)
 - Fix namespace collision: use `::Data.define` instead of `Data.define` in Pipeline Request and Response to prevent resolution to `Legion::Data`
 
 ## [0.5.6] - 2026-03-24

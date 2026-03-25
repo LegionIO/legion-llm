@@ -44,7 +44,7 @@ module Legion
           return nil unless enabled?
 
           quality_floor = settings.fetch(:quality_floor, 0.7)
-          eligible = eligible_models(capability: capability, _quality_floor: quality_floor)
+          eligible = eligible_models(capability: capability, quality_floor: quality_floor)
 
           scored = eligible.filter_map do |model|
             cost = estimated_cost(model: model, input_tokens: input_tokens, output_tokens: output_tokens)
@@ -90,16 +90,20 @@ module Legion
         # Returns models eligible for the given capability tier based on quality floor.
         # The quality floor maps capability tiers to minimum acceptable quality scores (0.0-1.0).
         # Models that are local (cost 0) always qualify for :basic capability.
-        def eligible_models(capability:, _quality_floor: 0.7)
+        def eligible_models(capability:, quality_floor: 0.7)
           cap = capability.to_sym
 
-          # Capability tiers determine which models are semantically appropriate.
-          # :reasoning requires frontier models; :basic allows cheap/local models.
-          # _quality_floor reserved for future scoring integration.
           disqualified_for_reasoning = %w[gpt-4o-mini gemini-2.0-flash llama3]
 
-          cost_table.keys.reject do |model|
+          models = cost_table.keys.reject do |model|
             cap == :reasoning && disqualified_for_reasoning.include?(model)
+          end
+
+          return models unless defined?(Legion::LLM::QualityChecker) && QualityChecker.respond_to?(:model_score)
+
+          models.select do |model|
+            score = QualityChecker.model_score(model)
+            score.nil? || score >= quality_floor
           end
         end
       end

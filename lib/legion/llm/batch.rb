@@ -5,27 +5,21 @@ require 'securerandom'
 module Legion
   module LLM
     module Batch
+      @mutex = Mutex.new
+      @flush_timer = nil
+
       class << self
-        # Returns true when request batching is enabled in settings.
         def enabled?
           settings.fetch(:enabled, false) == true
         end
 
-        # Enqueues a request for deferred batch processing.
-        #
-        # @param messages [Array<Hash>] chat messages array
-        # @param model    [String]      model to use
-        # @param provider [Symbol, nil] provider override
-        # @param callback [Proc, nil]   called with result hash when batch is flushed
-        # @param priority [Symbol]      :normal or :low (informational only)
-        # @param opts     [Hash]        additional options forwarded to provider
-        # @return [String] batch_request_id
-        def enqueue(messages:, model:, callback: nil, provider: nil, priority: :normal, **opts)
+        def enqueue(messages: nil, model: nil, message: nil, callback: nil, provider: nil, priority: :normal, **opts)
           request_id = SecureRandom.uuid
+          msgs = messages || (message ? [{ role: 'user', content: message }] : [])
 
           entry = {
             id:        request_id,
-            messages:  messages,
+            messages:  msgs,
             model:     model,
             provider:  provider,
             callback:  callback,
@@ -34,30 +28,28 @@ module Legion
             queued_at: Time.now.utc
           }
 
-          queue << entry
-          Legion::Logging.debug "Legion::LLM::Batch enqueued #{request_id} (queue size: #{queue.size})"
+          @mutex.synchronize { queue << entry }
+          ensure_flush_timer
+          Legion::Logging.debug "Legion::LLM::Batch enqueued #{request_id} (queue size: #{queue_size})" if defined?(Legion::Logging)
           request_id
         end
 
-        # Flushes accumulated requests up to max_size.
-        # Groups entries by provider+model and invokes callbacks with a stub result.
-        # In production this would submit to provider batch APIs; here it logs and returns
-        # per-request result hashes for callback delivery.
-        #
-        # @param max_size [Integer] maximum number of requests to flush in one pass
-        # @param max_wait [Integer] only flush entries older than this many seconds (0 = all)
-        # @return [Array<Hash>] array of { id:, status:, result: } hashes
         def flush(max_size: nil, max_wait: nil)
           effective_max  = max_size || settings.fetch(:max_batch_size, 100)
           effective_wait = max_wait || settings.fetch(:window_seconds, 300)
-
           cutoff = Time.now.utc - effective_wait
-          to_flush = queue.select { |e| e[:queued_at] <= cutoff }.first(effective_max)
+
+          to_flush = @mutex.synchronize do
+            ready = queue.select { |e| e[:queued_at] <= cutoff }
+                         .sort_by { |e| priority_rank(e[:priority]) }
+                         .first(effective_max)
+            ready.each { |e| queue.delete(e) }
+            ready
+          end
 
           return [] if to_flush.empty?
 
-          to_flush.each { |e| queue.delete(e) }
-          Legion::Logging.debug "Legion::LLM::Batch flushing #{to_flush.size} request(s)"
+          Legion::Logging.debug "Legion::LLM::Batch flushing #{to_flush.size} request(s)" if defined?(Legion::Logging)
 
           groups = to_flush.group_by { |e| [e[:provider], e[:model]] }
           results = []
@@ -73,14 +65,12 @@ module Legion
           results
         end
 
-        # Returns the current number of requests in the queue.
         def queue_size
-          queue.size
+          @mutex.synchronize { queue.size }
         end
 
-        # Returns a summary of current batch queue state.
         def status
-          entries = queue.dup
+          entries = @mutex.synchronize { queue.dup }
           oldest = entries.min_by { |e| e[:queued_at] }
           {
             enabled:        enabled?,
@@ -92,15 +82,44 @@ module Legion
           }
         end
 
-        # Clears the queue (useful for testing).
         def reset!
-          @queue = []
+          @mutex.synchronize { @queue = [] }
+          stop_flush_timer
+        end
+
+        def stop_flush_timer
+          @flush_timer&.shutdown if @flush_timer.respond_to?(:shutdown)
+          @flush_timer = nil
         end
 
         private
 
         def queue
           @queue ||= []
+        end
+
+        def priority_rank(priority)
+          case priority.to_sym
+          when :urgent then 0
+          when :normal then 1
+          when :low    then 2
+          else 3
+          end
+        end
+
+        def ensure_flush_timer
+          return if @flush_timer
+          return unless defined?(Concurrent::TimerTask)
+
+          interval = settings.fetch(:window_seconds, 300)
+          return if interval <= 0
+
+          @flush_timer = Concurrent::TimerTask.new(execution_interval: interval) do
+            flush(max_wait: 0)
+          rescue StandardError => e
+            Legion::Logging.warn("Batch auto-flush failed: #{e.message}") if defined?(Legion::Logging)
+          end
+          @flush_timer.execute
         end
 
         def settings
