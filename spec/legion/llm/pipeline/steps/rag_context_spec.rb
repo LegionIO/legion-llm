@@ -144,11 +144,12 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
     it 'fires RAG on short but substantive queries' do
       apollo_runner = double('Knowledge')
-      allow(apollo_runner).to receive(:retrieve_relevant).and_return({
-                                                                       success: true,
-                                                                       entries: [{ id: 'e1', content: 'pgvector info', content_type: 'fact', confidence: 0.85 }],
-                                                                       count:   1
-                                                                     })
+      apollo_result = {
+        success: true,
+        entries: [{ id: 'e1', content: 'pgvector info', content_type: 'fact', confidence: 0.85 }],
+        count:   1
+      }
+      allow(apollo_runner).to receive(:retrieve_relevant).and_return(apollo_result)
       stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
       request = Legion::LLM::Pipeline::Request.build(
