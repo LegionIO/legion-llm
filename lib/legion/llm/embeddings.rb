@@ -2,9 +2,11 @@
 
 module Legion
   module LLM
+    class EmbeddingUnavailableError < LLMError; end
+
     module Embeddings
       PROVIDER_EMBEDDING_MODELS = {
-        bedrock:   'amazon.titan-embed-text-v2',
+        bedrock:   'amazon.titan-embed-text-v2:0',
         anthropic: nil,
         openai:    'text-embedding-3-small',
         gemini:    'text-embedding-004',
@@ -12,37 +14,32 @@ module Legion
         ollama:    'mxbai-embed-large'
       }.freeze
 
+      TARGET_DIMENSION = 1024
+
       class << self
         def generate(text:, model: nil, provider: nil, dimensions: nil)
+          return { vector: nil, model: model, provider: provider, error: 'LLM not started' } unless LLM.started?
+
           provider ||= resolve_provider
           model    ||= resolve_model(provider)
-          opts = { model: model }
-          opts[:provider]   = provider if provider
-          opts[:dimensions] = dimensions if dimensions
+          response   = RubyLLM.embed(text, **build_opts(model, provider, dimensions))
+          vector     = apply_dimension_enforcement(response.vectors.first, provider)
+          return dimension_error(model, provider, vector) if vector.is_a?(String)
 
-          response = RubyLLM.embed(text, **opts)
-          {
-            vector:     response.vectors.first,
-            model:      model,
-            provider:   provider,
-            dimensions: response.vectors.first&.size || 0,
-            tokens:     response.input_tokens
-          }
+          { vector: vector, model: model, provider: provider, dimensions: vector&.size || 0, tokens: response.input_tokens }
         rescue StandardError => e
           Legion::Logging.warn "Embedding failed (#{provider}/#{model}): #{e.message}" if defined?(Legion::Logging)
-          { vector: nil, model: model, provider: provider, error: e.message }
+          handle_embed_failure(e, text: text, failed_provider: provider, failed_model: model)
         end
 
         def generate_batch(texts:, model: nil, provider: nil, dimensions: nil)
+          return texts.map { |_| { vector: nil, error: 'LLM not started' } } unless LLM.started?
+
           provider ||= resolve_provider
           model    ||= resolve_model(provider)
-          opts = { model: model }
-          opts[:provider]   = provider if provider
-          opts[:dimensions] = dimensions if dimensions
-
-          response = RubyLLM.embed(texts, **opts)
+          response   = RubyLLM.embed(texts, **build_opts(model, provider, dimensions))
           response.vectors.each_with_index.map do |vec, i|
-            { vector: vec, model: model, provider: provider, dimensions: vec&.size || 0, index: i }
+            build_batch_entry(vec, model, provider, i)
           end
         rescue StandardError => e
           Legion::Logging.warn("Batch embedding failed (#{provider}/#{model}): #{e.message}") if defined?(Legion::Logging)
@@ -55,8 +52,89 @@ module Legion
 
         private
 
+        def build_opts(model, provider, dimensions)
+          target_dim = enforce_dimension? ? TARGET_DIMENSION : dimensions
+          opts = { model: model }
+          opts[:provider]   = provider if provider
+          opts[:dimensions] = target_dim if target_dim && provider&.to_sym == :openai
+          opts
+        end
+
+        def apply_dimension_enforcement(vector, provider)
+          return vector unless enforce_dimension? && vector.is_a?(Array)
+
+          enforce_dimensions(vector, provider)
+        end
+
+        def dimension_error(model, provider, message)
+          { vector: nil, model: model, provider: provider, error: "incompatible dimension: #{message}" }
+        end
+
+        def build_batch_entry(vec, model, provider, index)
+          vec = enforce_dimensions(vec, provider) if enforce_dimension? && vec.is_a?(Array)
+          { vector: vec.is_a?(String) ? nil : vec, model: model, provider: provider,
+            dimensions: vec.is_a?(Array) ? vec.size : 0, index: index }
+        end
+
+        def enforce_dimension?
+          embedding_settings[:enforce_dimension] != false
+        end
+
+        def enforce_dimensions(vector, _provider)
+          return vector if vector.size == TARGET_DIMENSION
+          return vector.first(TARGET_DIMENSION) if vector.size > TARGET_DIMENSION
+
+          "got #{vector.size}, need #{TARGET_DIMENSION} (provider cannot upscale)"
+        end
+
+        def handle_embed_failure(error, text:, failed_provider:, failed_model:)
+          fallback = find_fallback_provider(failed_provider)
+          if fallback
+            Legion::Logging.info "Embedding failover: #{failed_provider} -> #{fallback[:provider]}" if defined?(Legion::Logging)
+            LLM.instance_variable_set(:@embedding_provider, fallback[:provider])
+            LLM.instance_variable_set(:@embedding_model, fallback[:model])
+            generate(text: text, model: fallback[:model], provider: fallback[:provider])
+          else
+            { vector: nil, model: failed_model, provider: failed_provider, error: error.message }
+          end
+        end
+
+        def find_fallback_provider(failed_provider)
+          chain = embedding_settings[:provider_fallback] || %w[ollama bedrock openai]
+          models = embedding_settings[:provider_models] || {}
+          started = false
+
+          chain.each do |name|
+            sym = name.to_sym
+            if sym == failed_provider
+              started = true
+              next
+            end
+            next unless started
+
+            available = probe_fallback_provider(sym)
+            next unless available
+
+            model = available.is_a?(String) ? available : (models[name] || models[sym])&.to_s
+            return { provider: sym, model: model }
+          end
+          nil
+        end
+
+        def probe_fallback_provider(sym)
+          case sym
+          when :ollama
+            LLM.send(:detect_ollama_embedding,
+                     embedding_settings[:ollama_preferred] || %w[mxbai-embed-large])
+          else
+            LLM.send(:detect_cloud_embedding, sym)
+          end
+        end
+
         def resolve_provider
-          configured = Legion::Settings.dig(:llm, :embeddings, :provider)
+          return LLM.embedding_provider if LLM.embedding_provider
+
+          configured = embedding_settings[:provider]
           return configured&.to_sym if configured
 
           Legion::Settings.dig(:llm, :default_provider)&.to_sym
@@ -65,15 +143,31 @@ module Legion
         end
 
         def resolve_model(provider)
-          configured = Legion::Settings.dig(:llm, :embeddings, :default_model)
+          return LLM.embedding_model if LLM.embedding_model && provider == LLM.embedding_provider
+
+          configured = embedding_settings[:default_model]
           return configured if configured
+
+          resolve_model_from_settings(provider)
+        rescue StandardError
+          'text-embedding-3-small'
+        end
+
+        def resolve_model_from_settings(provider)
+          models = embedding_settings[:provider_models] || {}
+          pm = models[provider&.to_sym] || models[provider.to_s]
+          return pm.to_s if pm
 
           provider_default = PROVIDER_EMBEDDING_MODELS[provider&.to_sym] if provider
           return provider_default if provider_default
 
           'text-embedding-3-small'
+        end
+
+        def embedding_settings
+          Legion::Settings.dig(:llm, :embedding) || {}
         rescue StandardError
-          'text-embedding-3-small'
+          {}
         end
       end
     end

@@ -1,5 +1,21 @@
 # Legion LLM Changelog
 
+## [0.5.11] - 2026-03-25
+
+### Added
+- `Legion::LLM.can_embed?` — cached boolean for embedding capability
+- `Legion::LLM.embedding_provider` — current embedding provider symbol
+- `Legion::LLM.embedding_model` — current embedding model string
+- Boot-time embedding detection with configurable provider fallback chain (ollama -> bedrock -> openai)
+- 1024-dimension enforcement on all embedding responses (truncate if larger, reject if smaller)
+- Runtime failover: if cached embedding provider fails, walks fallback chain for next available
+- `llm.embedding.*` settings block with `provider_fallback`, `provider_models`, `ollama_preferred`, `dimension`, `enforce_dimension`
+
+### Changed
+- `Embeddings.generate` now uses cached provider/model from boot detection when no explicit provider given
+- `Embeddings.generate` enforces exactly 1024 dimensions by default (configurable via `enforce_dimension: false`)
+- Bedrock Titan model updated to `amazon.titan-embed-text-v2:0`
+
 ## [0.5.10] - 2026-03-25
 
 ### Added
