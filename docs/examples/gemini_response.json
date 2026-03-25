@@ -1,0 +1,109 @@
+{
+  "__endpoint": "Response from POST .../models/gemini-2.0-flash:generateContent",
+
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "The diagram shows a microservices architecture with three main components..."
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "index": 0,
+      "safetyRatings": [
+        {
+          "category": "HARM_CATEGORY_HARASSMENT",
+          "probability": "NEGLIGIBLE"
+        },
+        {
+          "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+          "probability": "NEGLIGIBLE"
+        }
+      ]
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 1245,
+    "candidatesTokenCount": 89,
+    "totalTokenCount": 1334
+  },
+  "modelVersion": "gemini-2.0-flash",
+
+  "__comment_tool_call_response": "When the model invokes a function, parts include functionCall:",
+  "__tool_call_example": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "read_file",
+                "args": {
+                  "path": "README.md"
+                }
+              }
+            }
+          ]
+        },
+        "finishReason": "STOP"
+      }
+    ]
+  },
+
+  "__comment_streaming": "Streaming uses streamGenerateContent endpoint, returns array of chunks:",
+  "__stream_endpoint": "POST .../models/gemini-2.0-flash:streamGenerateContent",
+  "__stream_chunks": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "The diagram"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": " shows a microservices architecture"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": " with three main components..."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 1245,
+        "candidatesTokenCount": 89,
+        "totalTokenCount": 1334
+      }
+    }
+  ]
+}

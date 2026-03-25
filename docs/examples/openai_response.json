@@ -1,0 +1,77 @@
+{
+  "id": "chatcmpl-abc123def456",
+  "object": "chat.completion",
+  "created": 1711234567,
+  "model": "gpt-4o-2024-08-06",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The diagram shows a microservices architecture with three main components..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1245,
+    "completion_tokens": 89,
+    "total_tokens": 1334
+  },
+  "system_fingerprint": "fp_abc123",
+
+  "__comment_tool_call_response": "When the model invokes a tool, the response looks like this instead:",
+  "__tool_call_example": {
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_xyz789",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\"path\": \"README.md\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ]
+  },
+
+  "__comment_streaming": "Streaming responses arrive as SSE chunks:",
+  "__stream_chunk_example": {
+    "id": "chatcmpl-abc123def456",
+    "object": "chat.completion.chunk",
+    "created": 1711234567,
+    "model": "gpt-4o-2024-08-06",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": "The diagram"
+        },
+        "finish_reason": null
+      }
+    ]
+  },
+  "__stream_final_chunk": {
+    "choices": [
+      {
+        "index": 0,
+        "delta": {},
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 1245,
+      "completion_tokens": 89,
+      "total_tokens": 1334
+    }
+  }
+}

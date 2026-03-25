@@ -1,0 +1,108 @@
+{
+  "model": "claude-opus-4-6-20250415",
+  "system": [
+    {
+      "type": "text",
+      "text": "You are a helpful coding assistant."
+    },
+    {
+      "type": "text",
+      "text": "Always respond in markdown format.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "What files are in the current directory?"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_abc123",
+          "name": "list_files",
+          "input": {
+            "path": "."
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_abc123",
+          "content": "[\"README.md\", \"src/\", \"lib/\"]"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": "The current directory contains README.md, src/, and lib/."
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What does this diagram show?"
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "iVBORw0KGgo..."
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "list_files",
+      "description": "List files in a directory",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The directory path to list"
+          }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "read_file",
+      "description": "Read the contents of a file",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The file path to read"
+          }
+        },
+        "required": ["path"]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "max_tokens": 4096,
+  "temperature": 0.7,
+  "top_p": 1.0,
+  "top_k": 40,
+  "stop_sequences": ["\n\n---"],
+  "stream": false,
+  "metadata": {
+    "user_id": "user-abc123"
+  }
+}

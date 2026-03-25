@@ -1,0 +1,91 @@
+{
+  "__comment": "Azure OpenAI response is identical to OpenAI format with some additional Azure-specific fields",
+
+  "id": "chatcmpl-abc123def456",
+  "object": "chat.completion",
+  "created": 1711234567,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The diagram shows a microservices architecture with three main components..."
+      },
+      "finish_reason": "stop",
+      "content_filter_results": {
+        "hate": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "self_harm": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "sexual": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "violence": {
+          "filtered": false,
+          "severity": "safe"
+        }
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1245,
+    "completion_tokens": 89,
+    "total_tokens": 1334
+  },
+  "system_fingerprint": "fp_abc123",
+
+  "__comment_azure_additions": "Azure adds content_filter_results on every choice and prompt_filter_results at the top level. These are NOT present in vanilla OpenAI responses.",
+  "prompt_filter_results": [
+    {
+      "prompt_index": 0,
+      "content_filter_results": {
+        "hate": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "self_harm": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "sexual": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "violence": {
+          "filtered": false,
+          "severity": "safe"
+        }
+      }
+    }
+  ],
+
+  "__comment_tool_call_response": "Tool calls are identical to vanilla OpenAI format:",
+  "__tool_call_example": {
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_xyz789",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\"path\": \"README.md\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ]
+  }
+}

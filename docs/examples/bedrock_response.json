@@ -1,0 +1,93 @@
+{
+  "__comment": "AWS Bedrock Converse API response - returned by Aws::BedrockRuntime::Client#converse",
+
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "The diagram shows a microservices architecture with three main components..."
+        }
+      ]
+    }
+  },
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 1245,
+    "output_tokens": 89,
+    "total_tokens": 1334
+  },
+  "metrics": {
+    "latency_ms": 2340
+  },
+
+  "__comment_tool_call_response": "When the model invokes a tool, content includes toolUse blocks:",
+  "__tool_call_example": {
+    "output": {
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "text": "Let me read that file for you."
+          },
+          {
+            "toolUse": {
+              "toolUseId": "toolu_xyz789",
+              "name": "read_file",
+              "input": {
+                "path": "README.md"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "stop_reason": "tool_use"
+  },
+
+  "__comment_streaming": "Streaming uses converse_stream, returns events:",
+  "__stream_events": [
+    {
+      "message_start": {
+        "role": "assistant"
+      }
+    },
+    {
+      "content_block_start": {
+        "content_block_index": 0,
+        "start": {
+          "text": ""
+        }
+      }
+    },
+    {
+      "content_block_delta": {
+        "content_block_index": 0,
+        "delta": {
+          "text": "The diagram"
+        }
+      }
+    },
+    {
+      "content_block_stop": {
+        "content_block_index": 0
+      }
+    },
+    {
+      "message_stop": {
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "metadata": {
+        "usage": {
+          "input_tokens": 1245,
+          "output_tokens": 89
+        },
+        "metrics": {
+          "latency_ms": 2340
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "__endpoint": "POST https://api.x.ai/v1/chat/completions",
+  "__auth": "Authorization: Bearer {api_key}",
+  "__comment": "xAI uses the OpenAI-compatible format. Differences from vanilla OpenAI noted below.",
+
+  "model": "grok-3",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful coding assistant."
+    },
+    {
+      "role": "user",
+      "content": "What files are in the current directory?"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_abc123",
+          "type": "function",
+          "function": {
+            "name": "list_files",
+            "arguments": "{\"path\": \".\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_abc123",
+      "content": "[\"README.md\", \"src/\", \"lib/\"]"
+    },
+    {
+      "role": "assistant",
+      "content": "The current directory contains README.md, src/, and lib/."
+    },
+    {
+      "role": "user",
+      "content": "What does this diagram show?"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "list_files",
+        "description": "List files in a directory",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "The directory path to list"
+            }
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read the contents of a file",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "The file path to read"
+            }
+          },
+          "required": ["path"]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "max_tokens": 4096,
+  "temperature": 0.7,
+  "stream": false,
+
+  "__note_differences_from_openai": [
+    "Model names: grok-3, grok-3-mini, grok-2, grok-vision-beta",
+    "No frequency_penalty / presence_penalty support",
+    "No seed parameter",
+    "No response_format parameter",
+    "Vision support via grok-vision-beta model only (not via content blocks on standard models)",
+    "Otherwise identical to OpenAI format"
+  ]
+}

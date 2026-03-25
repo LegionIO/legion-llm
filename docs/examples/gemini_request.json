@@ -1,0 +1,127 @@
+{
+  "__endpoint": "POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}",
+
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a helpful coding assistant."
+      }
+    ]
+  },
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "What files are in the current directory?"
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "functionCall": {
+            "name": "list_files",
+            "args": {
+              "path": "."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "list_files",
+            "response": {
+              "content": "[\"README.md\", \"src/\", \"lib/\"]"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "text": "The current directory contains README.md, src/, and lib/."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "What does this diagram show?"
+        },
+        {
+          "inlineData": {
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgo..."
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "list_files",
+          "description": "List files in a directory",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "The directory path to list"
+              }
+            },
+            "required": ["path"]
+          }
+        },
+        {
+          "name": "read_file",
+          "description": "Read the contents of a file",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "The file path to read"
+              }
+            },
+            "required": ["path"]
+          }
+        }
+      ]
+    }
+  ],
+  "toolConfig": {
+    "functionCallingConfig": {
+      "mode": "AUTO"
+    }
+  },
+  "generationConfig": {
+    "temperature": 0.7,
+    "topP": 1.0,
+    "topK": 40,
+    "maxOutputTokens": 4096,
+    "stopSequences": ["\n\n---"],
+    "candidateCount": 1,
+    "responseMimeType": "text/plain"
+  },
+  "safetySettings": [
+    {
+      "category": "HARM_CATEGORY_HARASSMENT",
+      "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+    },
+    {
+      "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "__comment": "AWS Bedrock Converse API - NOT a raw HTTP JSON body. This is the SDK method params passed to Aws::BedrockRuntime::Client#converse",
+  "__endpoint": "POST https://bedrock-runtime.us-east-2.amazonaws.com/model/{modelId}/converse",
+  "__auth": "AWS Signature V4 (access_key_id + secret_access_key + region)",
+
+  "model_id": "us.anthropic.claude-sonnet-4-6-v1",
+  "system": [
+    {
+      "text": "You are a helpful coding assistant."
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "What files are in the current directory?"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "toolUse": {
+            "toolUseId": "toolu_abc123",
+            "name": "list_files",
+            "input": {
+              "path": "."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "toolResult": {
+            "toolUseId": "toolu_abc123",
+            "content": [
+              {
+                "text": "[\"README.md\", \"src/\", \"lib/\"]"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "The current directory contains README.md, src/, and lib/."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "What does this diagram show?"
+        },
+        {
+          "image": {
+            "format": "png",
+            "source": {
+              "bytes": "<base64-decoded-binary>"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "tool_config": {
+    "tools": [
+      {
+        "toolSpec": {
+          "name": "list_files",
+          "description": "List files in a directory",
+          "inputSchema": {
+            "json": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "The directory path to list"
+                }
+              },
+              "required": ["path"]
+            }
+          }
+        }
+      },
+      {
+        "toolSpec": {
+          "name": "read_file",
+          "description": "Read the contents of a file",
+          "inputSchema": {
+            "json": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "The file path to read"
+                }
+              },
+              "required": ["path"]
+            }
+          }
+        }
+      }
+    ],
+    "toolChoice": {
+      "auto": {}
+    }
+  },
+  "inference_config": {
+    "maxTokens": 4096,
+    "temperature": 0.7,
+    "topP": 1.0,
+    "stopSequences": ["\n\n---"]
+  },
+  "additional_model_request_fields": {
+    "top_k": 40
+  }
+}
