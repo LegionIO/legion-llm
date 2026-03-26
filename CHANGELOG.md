@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.5.12] - 2026-03-26
+
+### Added
+- RagContext (step 8): `apollo_available?` now also returns true when `Legion::Apollo.started?`; `apollo_retrieve` calls `Legion::Apollo.retrieve(scope: :all)` to merge global + local results when the core library is available
+- KnowledgeCapture (step 19): after global writeback, also writes response content to `Legion::Apollo::Local` when started — tags with `['llm_response', model]`
+- `local_capture_enabled?` guard — only writes to local store when `Apollo::Local.started?`, no-op otherwise
+- `ingest_to_local` rescues errors and appends to `@warnings` — pipeline never crashes on local ingest failure
+
 ## [0.5.11] - 2026-03-25
 
 ### Added

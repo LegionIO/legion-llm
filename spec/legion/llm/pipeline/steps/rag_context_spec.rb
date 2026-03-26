@@ -264,4 +264,51 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
       expect(keys).to include('rag:context_retrieval')
     end
   end
+
+  describe '#apollo_available? with Legion::Apollo' do
+    it 'returns true when Legion::Apollo is started' do
+      apollo = Module.new do
+        def self.started? = true
+      end
+      stub_const('Legion::Apollo', apollo)
+      hide_const('Legion::Extensions::Apollo') if defined?(Legion::Extensions::Apollo)
+
+      request = Legion::LLM::Pipeline::Request.build(
+        messages: [{ role: :user, content: 'what is pgvector?' }]
+      )
+      step = klass.new(request)
+      expect(step.send(:apollo_available?)).to be true
+    end
+  end
+
+  describe '#apollo_retrieve via Legion::Apollo path' do
+    it 'calls Legion::Apollo.retrieve with scope: :all when Legion::Apollo is started' do
+      apollo = Module.new do
+        def self.started? = true
+
+        def self.retrieve(**_)
+          { success: true, entries: [{ id: 1, content: 'fact', confidence: 0.8 }], count: 1 }
+        end
+      end
+      stub_const('Legion::Apollo', apollo)
+      hide_const('Legion::Extensions::Apollo') if defined?(Legion::Extensions::Apollo)
+
+      request = Legion::LLM::Pipeline::Request.build(
+        messages:         [{ role: :user, content: 'what is pgvector?' }],
+        context_strategy: :rag
+      )
+      step = klass.new(request)
+
+      expect(Legion::Apollo).to receive(:retrieve).with(
+        hash_including(
+          scope: :all,
+          text:  a_string_including('what is pgvector?'),
+          limit: kind_of(Integer)
+        )
+      ).and_call_original
+
+      step.step_rag_context
+      expect(step.enrichments).to have_key('rag:context_retrieval')
+    end
+  end
 end

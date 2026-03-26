@@ -107,18 +107,36 @@ module Legion
           end
 
           def apollo_available?
-            defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
+            return true if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
+
+            defined?(::Legion::Apollo) && ::Legion::Apollo.started?
+          rescue StandardError
+            false
           end
 
           def apollo_retrieve(query:, strategy:)
             full_limit    = rag_settings.fetch(:full_limit, 10)
             compact_limit = rag_settings.fetch(:compact_limit, 5)
             confidence    = rag_settings.fetch(:min_confidence, 0.5)
-
             limit = strategy == :rag_compact ? compact_limit : full_limit
-            ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
-              query: query, limit: limit, min_confidence: confidence
-            )
+
+            if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
+              ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
+                query: query, limit: limit, min_confidence: confidence
+              )
+            elsif defined?(::Legion::Apollo)
+              begin
+                if ::Legion::Apollo.started?
+                  ::Legion::Apollo.retrieve(text: query, limit: limit, scope: :all)
+                else
+                  []
+                end
+              rescue StandardError
+                []
+              end
+            else
+              []
+            end
           end
 
           def extract_query
