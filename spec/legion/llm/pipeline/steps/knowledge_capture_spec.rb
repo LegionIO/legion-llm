@@ -57,3 +57,92 @@ RSpec.describe 'Pipeline Steps::KnowledgeCapture' do
     end
   end
 end
+
+RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
+  let(:klass) do
+    Class.new do
+      include Legion::LLM::Pipeline::Steps::KnowledgeCapture
+      include Legion::LLM::Pipeline::Steps::PostResponse
+
+      attr_accessor :request, :enrichments, :timeline, :warnings,
+                    :raw_response, :resolved_provider, :resolved_model
+
+      def initialize(request)
+        @request           = request
+        @enrichments       = {}
+        @timeline          = Legion::LLM::Pipeline::Timeline.new
+        @warnings          = []
+        @raw_response      = nil
+        @resolved_provider = :test
+        @resolved_model    = 'test-model'
+      end
+    end
+  end
+
+  let(:request) do
+    Legion::LLM::Pipeline::Request.build(
+      messages: [{ role: :user, content: 'test' }]
+    )
+  end
+
+  describe '#step_knowledge_capture local ingest' do
+    it 'does not ingest to local when Legion::Apollo::Local is not started' do
+      apollo_local = Module.new do
+        def self.started? = false
+        def self.ingest(**_) = raise('should not be called')
+      end
+      stub_const('Legion::Apollo::Local', apollo_local)
+
+      step = klass.new(request)
+      step.raw_response = double(content: 'response text', input_tokens: 10, output_tokens: 20)
+
+      expect { step.step_knowledge_capture }.not_to raise_error
+    end
+
+    it 'ingests to local when Legion::Apollo::Local is started' do
+      apollo_local = Module.new do
+        def self.started? = true
+
+        def self.ingest(**_kwargs)
+          { success: true, mode: :local, id: 1 }
+        end
+      end
+      stub_const('Legion::Apollo::Local', apollo_local)
+      allow(apollo_local).to receive(:ingest).and_call_original
+
+      step = klass.new(request)
+      step.raw_response = double(content: 'response text', input_tokens: 10, output_tokens: 20)
+
+      step.step_knowledge_capture
+      expect(apollo_local).to have_received(:ingest).with(
+        hash_including(content: 'response text', tags: array_including('llm_response'))
+      )
+    end
+
+    it 'adds no warnings on successful local ingest' do
+      apollo_local = Module.new do
+        def self.started? = true
+        def self.ingest(**_) = { success: true, mode: :local }
+      end
+      stub_const('Legion::Apollo::Local', apollo_local)
+
+      step = klass.new(request)
+      step.raw_response = double(content: 'answer', input_tokens: 5, output_tokens: 10)
+      step.step_knowledge_capture
+      expect(step.warnings.none? { |w| w.include?('local_knowledge') }).to be true
+    end
+
+    it 'adds a warning when local ingest raises' do
+      apollo_local = Module.new do
+        def self.started? = true
+        def self.ingest(**_) = raise(StandardError, 'db locked')
+      end
+      stub_const('Legion::Apollo::Local', apollo_local)
+
+      step = klass.new(request)
+      step.raw_response = double(content: 'answer', input_tokens: 5, output_tokens: 10)
+      step.step_knowledge_capture
+      expect(step.warnings.any? { |w| w.include?('local_knowledge_capture') }).to be true
+    end
+  end
+end
