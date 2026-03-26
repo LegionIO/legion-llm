@@ -298,6 +298,15 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
         context_strategy: :rag
       )
       step = klass.new(request)
+
+      expect(Legion::Apollo).to receive(:retrieve).with(
+        hash_including(
+          scope: :all,
+          text:  a_string_including('what is pgvector?'),
+          limit: kind_of(Integer)
+        )
+      ).and_call_original
+
       step.step_rag_context
       expect(step.enrichments).to have_key('rag:context_retrieval')
     end

@@ -2,7 +2,27 @@
 
 require 'spec_helper'
 
-RSpec.describe 'Pipeline Steps::KnowledgeCapture' do
+RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
+  let(:klass) do
+    Class.new do
+      include Legion::LLM::Pipeline::Steps::KnowledgeCapture
+      include Legion::LLM::Pipeline::Steps::PostResponse
+
+      attr_accessor :request, :enrichments, :timeline, :warnings,
+                    :raw_response, :resolved_provider, :resolved_model
+
+      def initialize(request)
+        @request           = request
+        @enrichments       = {}
+        @timeline          = Legion::LLM::Pipeline::Timeline.new
+        @warnings          = []
+        @raw_response      = nil
+        @resolved_provider = :test
+        @resolved_model    = 'test-model'
+      end
+    end
+  end
+
   let(:request) do
     Legion::LLM::Pipeline::Request.build(
       messages: [{ role: :user, content: 'How does X work?' }],
@@ -37,7 +57,6 @@ RSpec.describe 'Pipeline Steps::KnowledgeCapture' do
       end
 
       it 'calls evaluate_and_route' do
-        # Need to run provider_call first to populate @raw_response
         executor.call
         expect(Legion::Extensions::Apollo::Helpers::Writeback).to have_received(:evaluate_and_route)
       end
@@ -56,36 +75,14 @@ RSpec.describe 'Pipeline Steps::KnowledgeCapture' do
       end
     end
   end
-end
-
-RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
-  let(:klass) do
-    Class.new do
-      include Legion::LLM::Pipeline::Steps::KnowledgeCapture
-      include Legion::LLM::Pipeline::Steps::PostResponse
-
-      attr_accessor :request, :enrichments, :timeline, :warnings,
-                    :raw_response, :resolved_provider, :resolved_model
-
-      def initialize(request)
-        @request           = request
-        @enrichments       = {}
-        @timeline          = Legion::LLM::Pipeline::Timeline.new
-        @warnings          = []
-        @raw_response      = nil
-        @resolved_provider = :test
-        @resolved_model    = 'test-model'
-      end
-    end
-  end
-
-  let(:request) do
-    Legion::LLM::Pipeline::Request.build(
-      messages: [{ role: :user, content: 'test' }]
-    )
-  end
 
   describe '#step_knowledge_capture local ingest' do
+    let(:local_request) do
+      Legion::LLM::Pipeline::Request.build(
+        messages: [{ role: :user, content: 'test' }]
+      )
+    end
+
     it 'does not ingest to local when Legion::Apollo::Local is not started' do
       apollo_local = Module.new do
         def self.started? = false
@@ -93,7 +90,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
       end
       stub_const('Legion::Apollo::Local', apollo_local)
 
-      step = klass.new(request)
+      step = klass.new(local_request)
       step.raw_response = double(content: 'response text', input_tokens: 10, output_tokens: 20)
 
       expect { step.step_knowledge_capture }.not_to raise_error
@@ -110,7 +107,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
       stub_const('Legion::Apollo::Local', apollo_local)
       allow(apollo_local).to receive(:ingest).and_call_original
 
-      step = klass.new(request)
+      step = klass.new(local_request)
       step.raw_response = double(content: 'response text', input_tokens: 10, output_tokens: 20)
 
       step.step_knowledge_capture
@@ -126,7 +123,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
       end
       stub_const('Legion::Apollo::Local', apollo_local)
 
-      step = klass.new(request)
+      step = klass.new(local_request)
       step.raw_response = double(content: 'answer', input_tokens: 5, output_tokens: 10)
       step.step_knowledge_capture
       expect(step.warnings.none? { |w| w.include?('local_knowledge') }).to be true
@@ -139,7 +136,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
       end
       stub_const('Legion::Apollo::Local', apollo_local)
 
-      step = klass.new(request)
+      step = klass.new(local_request)
       step.raw_response = double(content: 'answer', input_tokens: 5, output_tokens: 10)
       step.step_knowledge_capture
       expect(step.warnings.any? { |w| w.include?('local_knowledge_capture') }).to be true

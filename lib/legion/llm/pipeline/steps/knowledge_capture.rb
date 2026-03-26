@@ -6,10 +6,12 @@ module Legion
       module Steps
         module KnowledgeCapture
           def step_knowledge_capture
+            response = current_response
+
             if defined?(Legion::Extensions::Apollo::Helpers::Writeback)
               Legion::Extensions::Apollo::Helpers::Writeback.evaluate_and_route(
                 request:     @request,
-                response:    current_response,
+                response:    response,
                 enrichments: @enrichments
               )
               @timeline.record(
@@ -19,7 +21,7 @@ module Legion
               )
             end
 
-            ingest_to_local if local_capture_enabled?
+            ingest_to_local(response: response) if local_capture_enabled?
           rescue StandardError => e
             @warnings << "knowledge_capture error: #{e.message}"
           end
@@ -32,8 +34,7 @@ module Legion
             false
           end
 
-          def ingest_to_local
-            response = current_response
+          def ingest_to_local(response:)
             return unless response
 
             content = response.message[:content].to_s
