@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.5.13] - 2026-03-27
+
+### Changed
+- Classification step (step 6) now auto-enables when `Settings.dig(:compliance, :classification_level)` is set, making it opt-out instead of opt-in when compliance profile is active
+
 ## [0.5.12] - 2026-03-26
 
 ### Added

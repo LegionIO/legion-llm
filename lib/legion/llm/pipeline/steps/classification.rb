@@ -20,9 +20,9 @@ module Legion
           ].freeze
 
           def step_classification
-            return unless @request.classification
+            return unless @request.classification || compliance_classification_default
 
-            classification  = @request.classification
+            classification  = @request.classification || compliance_classification_default
             declared_level  = classification[:level]
             scan            = scan_content_for_sensitive_data
             effective_level = upgrade_if_needed(declared_level, scan)
@@ -91,6 +91,17 @@ module Legion
             return declared_level if current_idx >= threshold_idx
 
             LEVELS[threshold_idx]
+          end
+
+          def compliance_classification_default
+            return nil unless defined?(Legion::Settings)
+
+            level = Legion::Settings.dig(:compliance, :classification_level)
+            return nil unless level
+
+            { level: level.to_sym }
+          rescue StandardError
+            nil
           end
         end
       end
