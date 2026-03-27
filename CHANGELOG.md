@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.5.14] - 2026-03-27
+
+### Added
+- `CodexConfigLoader`: auto-imports OpenAI bearer token from `~/.codex/auth.json` when `auth_mode` is `chatgpt` and no existing OpenAI API key is configured
+- JWT expiry validation — expired codex tokens are skipped with a debug log
+- Non-JWT tokens (plain API keys) accepted without validation
+- Falls back to vault/settings/env when codex auth file is absent or token is expired
+
 ## [0.5.13] - 2026-03-27
 
 ### Changed

@@ -41,6 +41,9 @@ module Legion
         require 'legion/llm/claude_config_loader'
         ClaudeConfigLoader.load
 
+        require 'legion/llm/codex_config_loader'
+        CodexConfigLoader.load
+
         configure_providers
         run_discovery
         detect_embedding_capability
