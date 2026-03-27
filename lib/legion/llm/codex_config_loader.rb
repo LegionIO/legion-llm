@@ -38,11 +38,40 @@ module Legion
         end
 
         providers = Legion::LLM.settings[:providers]
-        existing = providers.dig(:openai, :api_key)
-        return unless existing.nil? || (existing.is_a?(Array) && existing.all? { |v| v.is_a?(String) && v.start_with?('env://') })
+        existing_raw = providers.dig(:openai, :api_key)
+        resolved_existing = resolve_env_api_key(existing_raw)
+        return unless resolved_existing.nil? || (resolved_existing.respond_to?(:empty?) && resolved_existing.empty?)
 
         providers[:openai][:api_key] = token
         Legion::Logging.debug 'Imported OpenAI API key from Codex auth config' if defined?(Legion::Logging)
+      end
+
+      def resolve_env_api_key(value)
+        return nil if value.nil?
+
+        if value.is_a?(String)
+          return nil if value.empty?
+
+          if value.start_with?('env://')
+            env_name = value.sub('env://', '')
+            env_value = ENV.fetch(env_name, nil)
+            return nil if env_value.nil? || env_value.empty?
+
+            return env_value
+          end
+
+          return value
+        end
+
+        if value.is_a?(Array)
+          resolved = value.map { |v| resolve_env_api_key(v) }.compact
+          return nil if resolved.empty?
+          return resolved.first if resolved.length == 1
+
+          return resolved
+        end
+
+        value
       end
 
       def token_valid?(token)

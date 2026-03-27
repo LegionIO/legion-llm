@@ -39,6 +39,7 @@ RSpec.describe Legion::LLM::CodexConfigLoader do
       before do
         allow(File).to receive(:exist?).with(auth_path).and_return(true)
         allow(File).to receive(:read).with(auth_path).and_return(auth_json)
+        stub_const('ENV', ENV.to_h.except('OPENAI_API_KEY', 'CODEX_API_KEY'))
       end
 
       it 'imports the access token as openai api_key' do
@@ -50,6 +51,20 @@ RSpec.describe Legion::LLM::CodexConfigLoader do
         Legion::LLM.settings[:providers][:openai][:api_key] = 'sk-existing'
         described_class.load
         expect(Legion::LLM.settings[:providers][:openai][:api_key]).to eq('sk-existing')
+      end
+
+      it 'does not overwrite when api_key is a single env:// placeholder that resolves to a value' do
+        stub_const('ENV', ENV.to_h.merge('OPENAI_API_KEY' => 'sk-from-env'))
+        Legion::LLM.settings[:providers][:openai][:api_key] = 'env://OPENAI_API_KEY'
+        described_class.load
+        expect(Legion::LLM.settings[:providers][:openai][:api_key]).to eq('env://OPENAI_API_KEY')
+      end
+
+      it 'imports when api_key is a single env:// placeholder that resolves to nothing' do
+        stub_const('ENV', ENV.to_h.except('OPENAI_API_KEY'))
+        Legion::LLM.settings[:providers][:openai][:api_key] = 'env://OPENAI_API_KEY'
+        described_class.load
+        expect(Legion::LLM.settings[:providers][:openai][:api_key]).to eq(token)
       end
     end
 
@@ -95,6 +110,7 @@ RSpec.describe Legion::LLM::CodexConfigLoader do
       before do
         allow(File).to receive(:exist?).with(auth_path).and_return(true)
         allow(File).to receive(:read).with(auth_path).and_return(auth_json)
+        stub_const('ENV', ENV.to_h.except('OPENAI_API_KEY', 'CODEX_API_KEY'))
       end
 
       it 'treats the token as valid' do
@@ -111,6 +127,7 @@ RSpec.describe Legion::LLM::CodexConfigLoader do
       before do
         allow(File).to receive(:exist?).with(auth_path).and_return(true)
         allow(File).to receive(:read).with(auth_path).and_return(auth_json)
+        stub_const('ENV', ENV.to_h.except('OPENAI_API_KEY', 'CODEX_API_KEY'))
       end
 
       it 'accepts the token without validation' do
@@ -143,6 +160,44 @@ RSpec.describe Legion::LLM::CodexConfigLoader do
         described_class.load
         expect(Legion::LLM.settings[:providers][:openai][:api_key]).to eq(env_default)
       end
+    end
+  end
+
+  describe '.resolve_env_api_key' do
+    it 'returns nil for nil' do
+      expect(described_class.resolve_env_api_key(nil)).to be_nil
+    end
+
+    it 'returns nil for an empty string' do
+      expect(described_class.resolve_env_api_key('')).to be_nil
+    end
+
+    it 'returns the string unchanged when not an env:// placeholder' do
+      expect(described_class.resolve_env_api_key('sk-real')).to eq('sk-real')
+    end
+
+    it 'resolves an env:// placeholder to the ENV value' do
+      stub_const('ENV', ENV.to_h.merge('TEST_KEY_XYZ' => 'resolved-value'))
+      expect(described_class.resolve_env_api_key('env://TEST_KEY_XYZ')).to eq('resolved-value')
+    end
+
+    it 'returns nil when env:// placeholder points to an unset ENV var' do
+      stub_const('ENV', ENV.to_h.except('MISSING_KEY_XYZ'))
+      expect(described_class.resolve_env_api_key('env://MISSING_KEY_XYZ')).to be_nil
+    end
+
+    it 'returns nil for an array of unresolvable env:// placeholders' do
+      stub_const('ENV', {})
+      expect(described_class.resolve_env_api_key(['env://A', 'env://B'])).to be_nil
+    end
+
+    it 'returns the first resolved value from an array' do
+      stub_const('ENV', ENV.to_h.merge('KEY_A' => 'val-a'))
+      expect(described_class.resolve_env_api_key(['env://KEY_A', 'env://KEY_B'])).to eq('val-a')
+    end
+
+    it 'passes through non-string, non-array values unchanged' do
+      expect(described_class.resolve_env_api_key(42)).to eq(42)
     end
   end
 
