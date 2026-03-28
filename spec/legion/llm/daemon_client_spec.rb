@@ -277,7 +277,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   describe '.interpret_response' do
     context '200 OK' do
       it 'returns status :immediate with parsed body data' do
-        body = JSON.dump({ data: { content: 'hello', model: 'claude' } })
+        body = ::JSON.dump({ data: { content: 'hello', model: 'claude' } })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -289,7 +289,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context '201 Created' do
       it 'returns status :created with parsed body data' do
-        body = JSON.dump({ data: { content: 'created' } })
+        body = ::JSON.dump({ data: { content: 'created' } })
         response = double('Response', code: '201', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -301,7 +301,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context '202 Accepted' do
       it 'returns status :accepted with request_id and poll_key' do
-        body = JSON.dump({ data: { request_id: 'req-123', poll_key: 'poll-abc' } })
+        body = ::JSON.dump({ data: { request_id: 'req-123', poll_key: 'poll-abc' } })
         response = double('Response', code: '202', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -314,7 +314,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context '403 Forbidden' do
       it 'returns status :denied with parsed error' do
-        body = JSON.dump({ error: { message: 'Access denied' } })
+        body = ::JSON.dump({ error: { message: 'Access denied' } })
         response = double('Response', code: '403', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -326,7 +326,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context '429 Too Many Requests' do
       it 'returns status :rate_limited with retry_after as integer' do
-        body = JSON.dump({ error: { retry_after: 60 } })
+        body = ::JSON.dump({ error: { retry_after: 60 } })
         response = double('Response', code: '429', body: body)
         allow(response).to receive(:[]).with('Retry-After').and_return('60')
 
@@ -336,7 +336,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
 
       it 'falls back to Retry-After header when body has no retry_after' do
-        body = JSON.dump({})
+        body = ::JSON.dump({})
         response = double('Response', code: '429', body: body)
         allow(response).to receive(:[]).with('Retry-After').and_return('30')
 
@@ -358,7 +358,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'other error codes' do
       it 'returns status :error with code and parsed body' do
-        body = JSON.dump({ error: { message: 'Internal server error' } })
+        body = ::JSON.dump({ error: { message: 'Internal server error' } })
         response = double('Response', code: '500', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -380,7 +380,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 200' do
       it 'returns :immediate status' do
-        body = JSON.dump({ data: { content: 'hello world' } })
+        body = ::JSON.dump({ data: { content: 'hello world' } })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -392,7 +392,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 201' do
       it 'returns :created status' do
-        body = JSON.dump({ data: { content: 'created response' } })
+        body = ::JSON.dump({ data: { content: 'created response' } })
         response = double('Response', code: '201', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -404,7 +404,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 202' do
       it 'returns :accepted status with request_id and poll_key' do
-        body = JSON.dump({ data: { request_id: 'req-xyz', poll_key: 'pk-abc' } })
+        body = ::JSON.dump({ data: { request_id: 'req-xyz', poll_key: 'pk-abc' } })
         response = double('Response', code: '202', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -418,7 +418,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 403' do
       it 'returns :denied status' do
-        body = JSON.dump({ error: { message: 'forbidden' } })
+        body = ::JSON.dump({ error: { message: 'forbidden' } })
         response = double('Response', code: '403', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -430,7 +430,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 429' do
       it 'returns :rate_limited status' do
-        body = JSON.dump({ error: { retry_after: 45 } })
+        body = ::JSON.dump({ error: { retry_after: 45 } })
         response = double('Response', code: '429', body: body)
         allow(response).to receive(:[]).with('Retry-After').and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -471,7 +471,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'request_id handling' do
       it 'auto-generates request_id when not provided' do
-        body = JSON.dump({ data: {} })
+        body = ::JSON.dump({ data: {} })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -484,7 +484,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
 
       it 'uses provided request_id when given' do
-        body = JSON.dump({ data: {} })
+        body = ::JSON.dump({ data: {} })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -497,7 +497,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
 
       it 'passes tier_preference, model, and provider in the request body' do
-        body = JSON.dump({ data: {} })
+        body = ::JSON.dump({ data: {} })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -510,6 +510,228 @@ RSpec.describe Legion::LLM::DaemonClient do
 
         described_class.chat(message: 'hello', tier_preference: :cloud,
                              model: 'claude-sonnet-4-6', provider: :anthropic)
+      end
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # http_post timeout keyword
+  # ──────────────────────────────────────────────
+  describe '.http_post timeout override' do
+    before do
+      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+    end
+
+    it 'uses DEFAULT_TIMEOUT when no timeout argument is given' do
+      http = double('Net::HTTP')
+      allow(http).to receive(:open_timeout=)
+      allow(http).to receive(:request).and_return(double('Response', code: '200', body: '{}'))
+      expect(http).to receive(:read_timeout=).with(described_class::DEFAULT_TIMEOUT)
+      allow(Net::HTTP).to receive(:new).and_return(http)
+
+      described_class.http_post('/api/llm/chat', {})
+    end
+
+    it 'uses a custom timeout when provided' do
+      http = double('Net::HTTP')
+      allow(http).to receive(:open_timeout=)
+      allow(http).to receive(:request).and_return(double('Response', code: '200', body: '{}'))
+      expect(http).to receive(:read_timeout=).with(120)
+      allow(Net::HTTP).to receive(:new).and_return(http)
+
+      described_class.http_post('/api/llm/inference', {}, timeout: 120)
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # inference
+  # ──────────────────────────────────────────────
+  describe '.inference' do
+    before do
+      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+    end
+
+    context 'when daemon returns 200 with content' do
+      it 'returns status :ok with structured data' do
+        payload = { data: { content: 'The answer is 42', tool_calls: [], stop_reason: 'end_turn',
+                            model: 'claude-sonnet-4-6', input_tokens: 10, output_tokens: 5 } }
+        response = double('Response', code: '200', body: ::JSON.dump(payload))
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [{ role: 'user', content: 'hello' }])
+        expect(result[:status]).to eq(:ok)
+        expect(result[:data][:content]).to eq('The answer is 42')
+        expect(result[:data][:tool_calls]).to eq([])
+        expect(result[:data][:stop_reason]).to eq('end_turn')
+        expect(result[:data][:model]).to eq('claude-sonnet-4-6')
+        expect(result[:data][:input_tokens]).to eq(10)
+        expect(result[:data][:output_tokens]).to eq(5)
+      end
+    end
+
+    context 'when daemon returns 200 with tool_calls' do
+      it 'returns status :ok and preserves tool_calls array' do
+        tool_call = { id: 'call_1', name: 'search', arguments: { query: 'ruby docs' } }
+        payload = { data: { content: nil, tool_calls: [tool_call], stop_reason: 'tool_use',
+                            model: 'claude-sonnet-4-6', input_tokens: 20, output_tokens: 8 } }
+        response = double('Response', code: '200', body: ::JSON.dump(payload))
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [{ role: 'user', content: 'search for ruby docs' }])
+        expect(result[:status]).to eq(:ok)
+        expect(result[:data][:tool_calls].length).to eq(1)
+        expect(result[:data][:stop_reason]).to eq('tool_use')
+      end
+    end
+
+    context 'when daemon returns 200 and tool_calls is absent from body' do
+      it 'defaults tool_calls to an empty array' do
+        payload = { data: { content: 'hello', stop_reason: 'end_turn', model: 'gpt-4o',
+                            input_tokens: 5, output_tokens: 2 } }
+        response = double('Response', code: '200', body: ::JSON.dump(payload))
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:data][:tool_calls]).to eq([])
+      end
+    end
+
+    context 'request body construction' do
+      it 'sends messages and tools to /api/llm/inference' do
+        response = double('Response', code: '200',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+        messages = [{ role: 'user', content: 'hi' }]
+        tools    = [{ name: 'calculator', description: 'does math' }]
+
+        expect(described_class).to receive(:http_post) do |path, body_hash, **_kwargs|
+          expect(path).to eq('/api/llm/inference')
+          expect(body_hash[:messages]).to eq(messages)
+          expect(body_hash[:tools]).to eq(tools)
+          response
+        end
+
+        described_class.inference(messages: messages, tools: tools)
+      end
+
+      it 'omits model key when model is nil' do
+        response = double('Response', code: '200',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+
+        expect(described_class).to receive(:http_post) do |_path, body_hash, **_kwargs|
+          expect(body_hash).not_to have_key(:model)
+          response
+        end
+
+        described_class.inference(messages: [])
+      end
+
+      it 'includes model and provider when provided' do
+        response = double('Response', code: '200',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+
+        expect(described_class).to receive(:http_post) do |_path, body_hash, **_kwargs|
+          expect(body_hash[:model]).to eq('claude-sonnet-4-6')
+          expect(body_hash[:provider]).to eq(:anthropic)
+          response
+        end
+
+        described_class.inference(messages: [], model: 'claude-sonnet-4-6', provider: :anthropic)
+      end
+
+      it 'passes the timeout override to http_post' do
+        response = double('Response', code: '200',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+
+        expect(described_class).to receive(:http_post)
+          .with('/api/llm/inference', anything, timeout: 120)
+          .and_return(response)
+
+        described_class.inference(messages: [])
+      end
+
+      it 'passes a custom timeout when provided' do
+        response = double('Response', code: '200',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+
+        expect(described_class).to receive(:http_post)
+          .with('/api/llm/inference', anything, timeout: 300)
+          .and_return(response)
+
+        described_class.inference(messages: [], timeout: 300)
+      end
+    end
+
+    context 'error response codes' do
+      it 'returns :denied for 403' do
+        body = ::JSON.dump({ error: { message: 'Access denied' } })
+        response = double('Response', code: '403', body: body)
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:denied)
+        expect(result[:error]).to be_a(Hash)
+      end
+
+      it 'returns :rate_limited for 429 with retry_after' do
+        body = ::JSON.dump({ error: { retry_after: 30 } })
+        response = double('Response', code: '429', body: body)
+        allow(response).to receive(:[]).with('Retry-After').and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:rate_limited)
+        expect(result[:retry_after]).to eq(30)
+      end
+
+      it 'returns :unavailable for 503' do
+        response = double('Response', code: '503', body: '')
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:unavailable)
+      end
+
+      it 'returns :error with code for 500' do
+        body = ::JSON.dump({ error: { message: 'Internal error' } })
+        response = double('Response', code: '500', body: body)
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:error)
+        expect(result[:code]).to eq(500)
+      end
+    end
+
+    context 'when a network error occurs' do
+      it 'returns :unavailable status with the error message' do
+        allow(described_class).to receive(:http_post).and_raise(Errno::ECONNREFUSED, 'connection refused')
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:unavailable)
+        expect(result[:error]).to be_a(String)
+      end
+
+      it 'marks the daemon as unhealthy' do
+        allow(described_class).to receive(:http_post).and_raise(Errno::ECONNREFUSED, 'connection refused')
+        expect(described_class).to receive(:mark_unhealthy)
+
+        described_class.inference(messages: [])
       end
     end
   end

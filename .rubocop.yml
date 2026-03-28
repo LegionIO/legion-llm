@@ -54,3 +54,7 @@ Naming/PredicateMethod:
 
 Metrics/ParameterLists:
   Max: 9
+
+Style/RedundantConstantBase:
+  Exclude:
+    - 'spec/**/*'
