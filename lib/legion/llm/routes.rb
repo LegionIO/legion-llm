@@ -116,9 +116,15 @@ module Legion
           unless method_defined?(:validate_messages!)
             define_method(:validate_messages!) do |msg_list|
               valid = msg_list.all? do |m|
-                m.respond_to?(:key?) &&
-                  !(m[:role] || m['role']).to_s.empty? &&
-                  (m.key?(:content) || m.key?('content'))
+                next false unless m.respond_to?(:key?) && m.respond_to?(:[])
+
+                role          = m[:role] || m['role']
+                content_value = m[:content] || m['content']
+
+                !role.to_s.empty? &&
+                  (m.key?(:content) || m.key?('content')) &&
+                  !content_value.nil? &&
+                  !(content_value.respond_to?(:empty?) && content_value.empty?)
               end
               return if valid
 
