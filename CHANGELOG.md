@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.5.15] - 2026-03-28
+
+### Added
+- `Legion::LLM::Routes` Sinatra extension module (`lib/legion/llm/routes.rb`): contains all `/api/llm/*` route definitions (chat, inference, providers) extracted from `LegionIO/lib/legion/api/llm.rb`. Self-registers with `Legion::API.register_library_routes('llm', Legion::LLM::Routes)` at the end of `Legion::LLM.start`.
+
+### Changed
+- `Legion::LLM.start` now calls `register_routes` after setting `@started = true`, mounting routes onto the API if `Legion::API` is available.
+
 ## [0.5.14] - 2026-03-27
 
 ### Added

@@ -2,7 +2,7 @@
 
 LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension.
 
-**Version**: 0.5.3
+**Version**: 0.5.15
 
 ## Installation
 
@@ -652,7 +652,7 @@ bundle exec rspec
 Tests use stubbed `Legion::Logging` and `Legion::Settings` modules (no need for the full LegionIO stack):
 
 ```bash
-bundle exec rspec                              # Run all 882 tests
+bundle exec rspec                              # Run all tests
 bundle exec rubocop                            # Lint (0 offenses)
 bundle exec rspec spec/legion/llm_spec.rb      # Run specific test file
 bundle exec rspec spec/legion/llm/router_spec.rb  # Router tests only
