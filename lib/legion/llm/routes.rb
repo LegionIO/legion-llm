@@ -166,20 +166,25 @@ module Legion
 
             unless ingress_result[:success]
               Legion::Logging.error "[api/llm/chat] ingress failed: #{ingress_result}"
-              halt json_response({ error: ingress_result[:error] || ingress_result[:status] },
-                                 status_code: 502)
+              err = ingress_result[:error] || ingress_result[:status]
+              err_code    = err.respond_to?(:dig) ? (err[:code] || 'gateway_error') : err.to_s
+              err_message = err.respond_to?(:dig) ? (err[:message] || err.to_s) : err.to_s
+              halt json_error(err_code, err_message, status_code: 502)
             end
 
             result = ingress_result[:result]
 
             if result.nil?
               Legion::Logging.warn "[api/llm/chat] runner returned nil (status=#{ingress_result[:status]})"
-              halt json_response({ error: { code:    'empty_result',
-                                            message: 'Gateway runner returned no result' } },
-                                 status_code: 502)
+              halt json_error('empty_result', 'Gateway runner returned no result', status_code: 502)
             end
 
-            halt json_response({ error: result[:error] }, status_code: 502) if result.is_a?(Hash) && result[:error]
+            if result.is_a?(Hash) && result[:error]
+              re = result[:error]
+              re_code    = re.respond_to?(:dig) ? (re[:code] || 'gateway_error') : re.to_s
+              re_message = re.respond_to?(:dig) ? (re[:message] || re.to_s) : re.to_s
+              halt json_error(re_code, re_message, status_code: 502)
+            end
 
             response_content = if result.respond_to?(:content)
                                  result.content
@@ -329,7 +334,7 @@ module Legion
                         }, status_code: 200)
         rescue StandardError => e
           Legion::Logging.error "[api/llm/inference] #{e.class}: #{e.message}" if defined?(Legion::Logging)
-          json_response({ error: { code: 'inference_error', message: e.message } }, status_code: 500)
+          json_error('inference_error', e.message, status_code: 500)
         end
       end
 
