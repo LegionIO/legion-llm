@@ -26,7 +26,7 @@ module Legion
         end
 
         def create_conversation(conversation_id, **metadata)
-          conversations[conversation_id] = { messages: [], metadata: metadata, accessed_at: Time.now }
+          conversations[conversation_id] = { messages: [], metadata: metadata, lru_tick: next_tick }
           evict_if_needed
           persist_conversation(conversation_id, metadata)
         end
@@ -41,12 +41,17 @@ module Legion
 
         def reset!
           @conversations = {}
+          @lru_counter   = 0
         end
 
         private
 
         def conversations
           @conversations ||= {}
+        end
+
+        def next_tick
+          @lru_counter = (@lru_counter || 0) + 1
         end
 
         def ensure_conversation(conversation_id)
@@ -63,13 +68,13 @@ module Legion
         def touch(conversation_id)
           return unless in_memory?(conversation_id)
 
-          conversations[conversation_id][:accessed_at] = Time.now
+          conversations[conversation_id][:lru_tick] = next_tick
         end
 
         def evict_if_needed
           return unless conversations.size > self::MAX_CONVERSATIONS
 
-          oldest_id = conversations.min_by { |_, v| v[:accessed_at] }&.first
+          oldest_id = conversations.min_by { |_, v| v[:lru_tick] }&.first
           conversations.delete(oldest_id) if oldest_id
         end
 

@@ -24,6 +24,7 @@ require_relative 'llm/off_peak'
 require_relative 'llm/cost_tracker'
 require_relative 'llm/tool_registry'
 require_relative 'llm/override_confidence'
+require_relative 'llm/routes'
 
 module Legion
   module LLM
@@ -54,6 +55,7 @@ module Legion
         @started = true
         Legion::Settings[:llm][:connected] = true
         Legion::Logging.info 'Legion::LLM started'
+        register_routes
         ping_provider
       end
 
@@ -659,6 +661,15 @@ module Legion
         Legion::Logging.info "LLM ping #{provider}/#{model}: pong (#{elapsed}ms)"
       rescue StandardError => e
         Legion::Logging.warn "LLM ping failed for #{provider}/#{model}: #{e.message}"
+      end
+
+      def register_routes
+        return unless defined?(Legion::API) && Legion::API.respond_to?(:register_library_routes)
+
+        Legion::API.register_library_routes('llm', Legion::LLM::Routes)
+        Legion::Logging.debug 'Legion::LLM routes registered with API'
+      rescue StandardError => e
+        Legion::Logging.warn "Legion::LLM route registration failed: #{e.message}" if defined?(Legion::Logging)
       end
 
       def auto_configure_defaults

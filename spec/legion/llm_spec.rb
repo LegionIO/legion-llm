@@ -37,6 +37,10 @@ RSpec.describe Legion::LLM do
       allow(Legion::LLM::Discovery::System).to receive(:platform).and_return(:unknown)
     end
 
+    after do
+      described_class.shutdown if described_class.started?
+    end
+
     it 'marks connected on start' do
       described_class.start
       expect(described_class.started?).to be true
@@ -58,6 +62,20 @@ RSpec.describe Legion::LLM do
       expect(Legion::LLM.can_embed?).to be false
       expect(Legion::LLM.embedding_provider).to be_nil
       expect(Legion::LLM.embedding_model).to be_nil
+    end
+
+    it 'registers routes with Legion::API when available on start' do
+      fake_api = Module.new do
+        def self.register_library_routes(name, mod); end
+      end
+      stub_const('Legion::API', fake_api)
+      expect(Legion::API).to receive(:register_library_routes).with('llm', Legion::LLM::Routes)
+      described_class.start
+    end
+
+    it 'skips route registration when Legion::API is not defined' do
+      hide_const('Legion::API') if defined?(Legion::API)
+      expect { described_class.start }.not_to raise_error
     end
   end
 
