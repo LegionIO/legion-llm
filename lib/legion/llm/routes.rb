@@ -12,8 +12,51 @@ require 'securerandom'
 module Legion
   module LLM
     module Routes
-      def self.registered(app) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+      def self.registered(app) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/AbcSize,Metrics/MethodLength
         app.helpers do # rubocop:disable Metrics/BlockLength
+          # Minimal fallback implementations of shared API helpers.
+          # These are used when Legion::LLM::Routes is mounted on a bare Sinatra app.
+          # When mounted via Legion::API (the normal path), Legion::API::Helpers and
+          # Legion::API::Validators provide full implementations that take precedence.
+          unless method_defined?(:parse_request_body)
+            define_method(:parse_request_body) do
+              raw = request.body.read
+              return {} if raw.nil? || raw.empty?
+
+              Legion::JSON.load(raw).transform_keys(&:to_sym)
+            rescue StandardError
+              halt 400, { 'Content-Type' => 'application/json' },
+                   Legion::JSON.dump({ error: { code: 'invalid_json', message: 'request body is not valid JSON' } })
+            end
+          end
+
+          unless method_defined?(:validate_required!)
+            define_method(:validate_required!) do |body, *keys|
+              missing = keys.select { |k| body[k].nil? || (body[k].respond_to?(:empty?) && body[k].empty?) }
+              return if missing.empty?
+
+              halt 400, { 'Content-Type' => 'application/json' },
+                   Legion::JSON.dump({ error: { code:    'missing_fields',
+                                                message: "required: #{missing.join(', ')}" } })
+            end
+          end
+
+          unless method_defined?(:json_response)
+            define_method(:json_response) do |data, status_code: 200|
+              content_type :json
+              status status_code
+              Legion::JSON.dump({ data: data })
+            end
+          end
+
+          unless method_defined?(:json_error)
+            define_method(:json_error) do |code, message, status_code: 400|
+              content_type :json
+              status status_code
+              Legion::JSON.dump({ error: { code: code, message: message } })
+            end
+          end
+
           define_method(:require_llm!) do
             return if defined?(Legion::LLM) &&
                       Legion::LLM.respond_to?(:started?) &&
@@ -196,7 +239,7 @@ module Legion
           validate_required!(body, :messages)
 
           messages = body[:messages]
-          tools    = body[:tools] || []
+          raw_tools = body[:tools]
           model    = body[:model]
           provider = body[:provider]
 
@@ -206,6 +249,13 @@ module Legion
           end
 
           validate_messages!(messages)
+
+          unless raw_tools.nil? || raw_tools.is_a?(Array)
+            halt 400, { 'Content-Type' => 'application/json' },
+                 Legion::JSON.dump({ error: { code: 'invalid_tools', message: 'tools must be an array' } })
+          end
+
+          tools = raw_tools || []
 
           session = Legion::LLM.chat(
             model:    model,
