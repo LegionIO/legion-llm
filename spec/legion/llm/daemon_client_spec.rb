@@ -277,7 +277,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   describe '.interpret_response' do
     context '200 OK' do
       it 'returns status :immediate with parsed body data' do
-        body = JSON.dump({ data: { content: 'hello', model: 'claude' } })
+        body = ::JSON.dump({ data: { content: 'hello', model: 'claude' } })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -289,7 +289,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context '201 Created' do
       it 'returns status :created with parsed body data' do
-        body = JSON.dump({ data: { content: 'created' } })
+        body = ::JSON.dump({ data: { content: 'created' } })
         response = double('Response', code: '201', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -301,7 +301,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context '202 Accepted' do
       it 'returns status :accepted with request_id and poll_key' do
-        body = JSON.dump({ data: { request_id: 'req-123', poll_key: 'poll-abc' } })
+        body = ::JSON.dump({ data: { request_id: 'req-123', poll_key: 'poll-abc' } })
         response = double('Response', code: '202', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -314,7 +314,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context '403 Forbidden' do
       it 'returns status :denied with parsed error' do
-        body = JSON.dump({ error: { message: 'Access denied' } })
+        body = ::JSON.dump({ error: { message: 'Access denied' } })
         response = double('Response', code: '403', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -326,7 +326,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context '429 Too Many Requests' do
       it 'returns status :rate_limited with retry_after as integer' do
-        body = JSON.dump({ error: { retry_after: 60 } })
+        body = ::JSON.dump({ error: { retry_after: 60 } })
         response = double('Response', code: '429', body: body)
         allow(response).to receive(:[]).with('Retry-After').and_return('60')
 
@@ -336,7 +336,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
 
       it 'falls back to Retry-After header when body has no retry_after' do
-        body = JSON.dump({})
+        body = ::JSON.dump({})
         response = double('Response', code: '429', body: body)
         allow(response).to receive(:[]).with('Retry-After').and_return('30')
 
@@ -358,7 +358,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'other error codes' do
       it 'returns status :error with code and parsed body' do
-        body = JSON.dump({ error: { message: 'Internal server error' } })
+        body = ::JSON.dump({ error: { message: 'Internal server error' } })
         response = double('Response', code: '500', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -380,7 +380,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 200' do
       it 'returns :immediate status' do
-        body = JSON.dump({ data: { content: 'hello world' } })
+        body = ::JSON.dump({ data: { content: 'hello world' } })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -392,7 +392,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 201' do
       it 'returns :created status' do
-        body = JSON.dump({ data: { content: 'created response' } })
+        body = ::JSON.dump({ data: { content: 'created response' } })
         response = double('Response', code: '201', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -404,7 +404,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 202' do
       it 'returns :accepted status with request_id and poll_key' do
-        body = JSON.dump({ data: { request_id: 'req-xyz', poll_key: 'pk-abc' } })
+        body = ::JSON.dump({ data: { request_id: 'req-xyz', poll_key: 'pk-abc' } })
         response = double('Response', code: '202', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -418,7 +418,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 403' do
       it 'returns :denied status' do
-        body = JSON.dump({ error: { message: 'forbidden' } })
+        body = ::JSON.dump({ error: { message: 'forbidden' } })
         response = double('Response', code: '403', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -430,7 +430,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon returns 429' do
       it 'returns :rate_limited status' do
-        body = JSON.dump({ error: { retry_after: 45 } })
+        body = ::JSON.dump({ error: { retry_after: 45 } })
         response = double('Response', code: '429', body: body)
         allow(response).to receive(:[]).with('Retry-After').and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -471,7 +471,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'request_id handling' do
       it 'auto-generates request_id when not provided' do
-        body = JSON.dump({ data: {} })
+        body = ::JSON.dump({ data: {} })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -484,7 +484,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
 
       it 'uses provided request_id when given' do
-        body = JSON.dump({ data: {} })
+        body = ::JSON.dump({ data: {} })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -497,7 +497,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
 
       it 'passes tier_preference, model, and provider in the request body' do
-        body = JSON.dump({ data: {} })
+        body = ::JSON.dump({ data: {} })
         response = double('Response', code: '200', body: body)
         allow(response).to receive(:[]).and_return(nil)
 
@@ -555,7 +555,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       it 'returns status :ok with structured data' do
         payload = { data: { content: 'The answer is 42', tool_calls: [], stop_reason: 'end_turn',
                             model: 'claude-sonnet-4-6', input_tokens: 10, output_tokens: 5 } }
-        response = double('Response', code: '200', body: JSON.dump(payload))
+        response = double('Response', code: '200', body: ::JSON.dump(payload))
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
 
@@ -575,7 +575,7 @@ RSpec.describe Legion::LLM::DaemonClient do
         tool_call = { id: 'call_1', name: 'search', arguments: { query: 'ruby docs' } }
         payload = { data: { content: nil, tool_calls: [tool_call], stop_reason: 'tool_use',
                             model: 'claude-sonnet-4-6', input_tokens: 20, output_tokens: 8 } }
-        response = double('Response', code: '200', body: JSON.dump(payload))
+        response = double('Response', code: '200', body: ::JSON.dump(payload))
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
 
@@ -590,7 +590,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       it 'defaults tool_calls to an empty array' do
         payload = { data: { content: 'hello', stop_reason: 'end_turn', model: 'gpt-4o',
                             input_tokens: 5, output_tokens: 2 } }
-        response = double('Response', code: '200', body: JSON.dump(payload))
+        response = double('Response', code: '200', body: ::JSON.dump(payload))
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
 
@@ -602,7 +602,7 @@ RSpec.describe Legion::LLM::DaemonClient do
     context 'request body construction' do
       it 'sends messages and tools to /api/llm/inference' do
         response = double('Response', code: '200',
-                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
                                                     model: 'x', input_tokens: 1, output_tokens: 1 } }))
         allow(response).to receive(:[]).and_return(nil)
         messages = [{ role: 'user', content: 'hi' }]
@@ -620,7 +620,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
       it 'omits model key when model is nil' do
         response = double('Response', code: '200',
-                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
                                                     model: 'x', input_tokens: 1, output_tokens: 1 } }))
         allow(response).to receive(:[]).and_return(nil)
 
@@ -634,7 +634,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
       it 'includes model and provider when provided' do
         response = double('Response', code: '200',
-                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
                                                     model: 'x', input_tokens: 1, output_tokens: 1 } }))
         allow(response).to receive(:[]).and_return(nil)
 
@@ -649,7 +649,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
       it 'passes the timeout override to http_post' do
         response = double('Response', code: '200',
-                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
                                                     model: 'x', input_tokens: 1, output_tokens: 1 } }))
         allow(response).to receive(:[]).and_return(nil)
 
@@ -662,7 +662,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
       it 'passes a custom timeout when provided' do
         response = double('Response', code: '200',
-                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
                                                     model: 'x', input_tokens: 1, output_tokens: 1 } }))
         allow(response).to receive(:[]).and_return(nil)
 
@@ -676,7 +676,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'error response codes' do
       it 'returns :denied for 403' do
-        body = JSON.dump({ error: { message: 'Access denied' } })
+        body = ::JSON.dump({ error: { message: 'Access denied' } })
         response = double('Response', code: '403', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -687,7 +687,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
 
       it 'returns :rate_limited for 429 with retry_after' do
-        body = JSON.dump({ error: { retry_after: 30 } })
+        body = ::JSON.dump({ error: { retry_after: 30 } })
         response = double('Response', code: '429', body: body)
         allow(response).to receive(:[]).with('Retry-After').and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
@@ -707,7 +707,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
 
       it 'returns :error with code for 500' do
-        body = JSON.dump({ error: { message: 'Internal error' } })
+        body = ::JSON.dump({ error: { message: 'Internal error' } })
         response = double('Response', code: '500', body: body)
         allow(response).to receive(:[]).and_return(nil)
         allow(described_class).to receive(:http_post).and_return(response)
