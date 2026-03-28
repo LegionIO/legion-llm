@@ -5,7 +5,7 @@
 # and are mounted via Legion::API.register_library_routes when legion-llm boots.
 #
 # LegionIO/lib/legion/api/llm.rb is preserved for backward compatibility but guards
-# its registration with defined?(Routes::Llm) so double-registration is avoided.
+# its registration with defined?(Legion::LLM::Routes) so double-registration is avoided.
 
 require 'securerandom'
 
@@ -33,6 +33,24 @@ module Legion
           define_method(:gateway_available?) do
             defined?(Legion::Extensions::LLM::Gateway::Runners::Inference)
           end
+
+          define_method(:validate_tools!) do |tool_list|
+            unless tool_list.is_a?(Array) && tool_list.all? { |t| t.respond_to?(:transform_keys) }
+              halt 400, { 'Content-Type' => 'application/json' },
+                   Legion::JSON.dump({ error: { code:    'invalid_tools',
+                                                message: 'tools must be an array of objects' } })
+            end
+
+            invalid = tool_list.any? do |t|
+              ts = t.transform_keys(&:to_sym)
+              ts[:name].to_s.empty?
+            end
+            return unless invalid
+
+            halt 400, { 'Content-Type' => 'application/json' },
+                 Legion::JSON.dump({ error: { code:    'invalid_tools',
+                                              message: 'each tool must have a non-empty name' } })
+          end
         end
 
         register_chat(app)
@@ -58,7 +76,7 @@ module Legion
               context: {}
             )
             if tier_result[:tier]&.zero?
-              next json_response({
+              halt json_response({
                                    response:           tier_result[:response],
                                    tier:               0,
                                    latency_ms:         tier_result[:latency_ms],
@@ -82,7 +100,7 @@ module Legion
 
             unless ingress_result[:success]
               Legion::Logging.error "[api/llm/chat] ingress failed: #{ingress_result}"
-              next json_response({ error: ingress_result[:error] || ingress_result[:status] },
+              halt json_response({ error: ingress_result[:error] || ingress_result[:status] },
                                  status_code: 502)
             end
 
@@ -90,15 +108,15 @@ module Legion
 
             if result.nil?
               Legion::Logging.warn "[api/llm/chat] runner returned nil (status=#{ingress_result[:status]})"
-              next json_response({ error: { code:    'empty_result',
+              halt json_response({ error: { code:    'empty_result',
                                             message: 'Gateway runner returned no result' } },
                                  status_code: 502)
             end
 
+            halt json_response({ error: result[:error] }, status_code: 502) if result.is_a?(Hash) && result[:error]
+
             response_content = if result.respond_to?(:content)
                                  result.content
-                               elsif result.is_a?(Hash) && result[:error]
-                                 next json_response({ error: result[:error] }, status_code: 502)
                                elsif result.is_a?(Hash)
                                  result[:response] || result[:content] || result.to_s
                                else
@@ -110,7 +128,7 @@ module Legion
             meta[:tokens_in] = result.input_tokens if result.respond_to?(:input_tokens)
             meta[:tokens_out] = result.output_tokens if result.respond_to?(:output_tokens)
 
-            next json_response({ response: response_content, meta: meta }, status_code: 201)
+            halt json_response({ response: response_content, meta: meta }, status_code: 201)
           end
 
           if cache_available? && env['HTTP_X_LEGION_SYNC'] != 'true'
@@ -181,6 +199,8 @@ module Legion
           )
 
           unless tools.empty?
+            validate_tools!(tools)
+
             tool_declarations = tools.map do |t|
               ts = t.respond_to?(:transform_keys) ? t.transform_keys(&:to_sym) : t
               tname  = ts[:name].to_s
@@ -196,11 +216,11 @@ module Legion
             session.with_tools(*tool_declarations)
           end
 
-          messages.each { |m| session.add_message(m) }
+          last_user      = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
+          prior_messages = last_user ? (messages - [last_user]) : messages
+          prior_messages.each { |m| session.add_message(m) }
 
-          last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
-          prompt    = (last_user || {})[:content] || (last_user || {})['content'] || ''
-
+          prompt   = (last_user || {})[:content] || (last_user || {})['content'] || ''
           response = session.ask(prompt)
 
           tc_list = if response.respond_to?(:tool_calls) && response.tool_calls
