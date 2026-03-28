@@ -12,8 +12,8 @@ require 'securerandom'
 module Legion
   module LLM
     module Routes
-      def self.registered(app)
-        app.helpers do
+      def self.registered(app) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+        app.helpers do # rubocop:disable Metrics/BlockLength
           define_method(:require_llm!) do
             return if defined?(Legion::LLM) &&
                       Legion::LLM.respond_to?(:started?) &&
@@ -50,6 +50,19 @@ module Legion
             halt 400, { 'Content-Type' => 'application/json' },
                  Legion::JSON.dump({ error: { code:    'invalid_tools',
                                               message: 'each tool must have a non-empty name' } })
+          end
+
+          define_method(:validate_messages!) do |msg_list|
+            valid = msg_list.all? do |m|
+              m.respond_to?(:key?) &&
+                !(m[:role] || m['role']).to_s.empty? &&
+                (m.key?(:content) || m.key?('content'))
+            end
+            return if valid
+
+            halt 400, { 'Content-Type' => 'application/json' },
+                 Legion::JSON.dump({ error: { code:    'invalid_messages',
+                                              message: 'each message must be an object with non-empty role and content' } })
           end
         end
 
@@ -191,6 +204,8 @@ module Legion
             halt 400, { 'Content-Type' => 'application/json' },
                  Legion::JSON.dump({ error: { code: 'invalid_messages', message: 'messages must be an array' } })
           end
+
+          validate_messages!(messages)
 
           session = Legion::LLM.chat(
             model:    model,
