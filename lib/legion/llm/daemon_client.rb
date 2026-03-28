@@ -102,13 +102,29 @@ module Legion
         http.request(request)
       end
 
+      # POSTs a conversation-level inference request to the daemon REST API.
+      # Accepts a full messages array and optional tool schemas.
+      # Returns a status hash with structured inference fields on success.
+      def inference(messages:, tools: [], model: nil, provider: nil, timeout: 120)
+        body = { messages: messages, tools: tools }
+        body[:model]    = model    if model
+        body[:provider] = provider if provider
+
+        response = http_post('/api/llm/inference', body, timeout: timeout)
+        interpret_inference_response(response)
+      rescue StandardError => e
+        mark_unhealthy
+        { status: :unavailable, error: e.message }
+      end
+
       # Builds and sends a POST request with a JSON body.
       # Returns Net::HTTPResponse.
-      def http_post(path, body)
+      # The optional timeout: keyword overrides the default read timeout.
+      def http_post(path, body, timeout: DEFAULT_TIMEOUT)
         uri     = URI.parse("#{daemon_url}#{path}")
         http    = Net::HTTP.new(uri.host, uri.port)
         http.open_timeout = 5
-        http.read_timeout = DEFAULT_TIMEOUT
+        http.read_timeout = timeout
         request = Net::HTTP::Post.new(uri.request_uri)
         request['Content-Type'] = 'application/json'
         request.body = ::JSON.dump(body)
@@ -180,7 +196,44 @@ module Legion
         0
       end
 
-      private_class_method :fetch_daemon_url, :safe_parse, :extract_retry_after
+      # Maps an HTTP response from /api/llm/inference to a structured status hash.
+      # On 200 returns :ok with structured inference fields extracted from the body.
+      # All other codes follow the same error handling as interpret_response.
+      def interpret_inference_response(response)
+        code   = response.code.to_i
+        parsed = safe_parse(response.body)
+
+        if code == 200
+          data = parsed.fetch(:data, parsed)
+          return {
+            status: :ok,
+            data:   {
+              content:       data[:content],
+              tool_calls:    data[:tool_calls] || [],
+              stop_reason:   data[:stop_reason],
+              model:         data[:model],
+              input_tokens:  data[:input_tokens],
+              output_tokens: data[:output_tokens]
+            }
+          }
+        end
+
+        case code
+        when 403
+          Legion::Logging.warn("Daemon returned 403 Denied url=#{daemon_url}") if defined?(Legion::Logging)
+          { status: :denied, error: parsed.fetch(:error, parsed) }
+        when 429
+          retry_after = extract_retry_after(response, parsed)
+          Legion::Logging.warn("Daemon returned 429 RateLimited url=#{daemon_url} retry_after=#{retry_after}") if defined?(Legion::Logging)
+          { status: :rate_limited, retry_after: retry_after }
+        when 503
+          { status: :unavailable }
+        else
+          { status: :error, code: code, body: parsed }
+        end
+      end
+
+      private_class_method :fetch_daemon_url, :safe_parse, :extract_retry_after, :interpret_inference_response
     end
   end
 end

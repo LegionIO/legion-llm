@@ -513,4 +513,226 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
     end
   end
+
+  # ──────────────────────────────────────────────
+  # http_post timeout keyword
+  # ──────────────────────────────────────────────
+  describe '.http_post timeout override' do
+    before do
+      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+    end
+
+    it 'uses DEFAULT_TIMEOUT when no timeout argument is given' do
+      http = double('Net::HTTP')
+      allow(http).to receive(:open_timeout=)
+      allow(http).to receive(:request).and_return(double('Response', code: '200', body: '{}'))
+      expect(http).to receive(:read_timeout=).with(described_class::DEFAULT_TIMEOUT)
+      allow(Net::HTTP).to receive(:new).and_return(http)
+
+      described_class.http_post('/api/llm/chat', {})
+    end
+
+    it 'uses a custom timeout when provided' do
+      http = double('Net::HTTP')
+      allow(http).to receive(:open_timeout=)
+      allow(http).to receive(:request).and_return(double('Response', code: '200', body: '{}'))
+      expect(http).to receive(:read_timeout=).with(120)
+      allow(Net::HTTP).to receive(:new).and_return(http)
+
+      described_class.http_post('/api/llm/inference', {}, timeout: 120)
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # inference
+  # ──────────────────────────────────────────────
+  describe '.inference' do
+    before do
+      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+    end
+
+    context 'when daemon returns 200 with content' do
+      it 'returns status :ok with structured data' do
+        payload = { data: { content: 'The answer is 42', tool_calls: [], stop_reason: 'end_turn',
+                            model: 'claude-sonnet-4-6', input_tokens: 10, output_tokens: 5 } }
+        response = double('Response', code: '200', body: JSON.dump(payload))
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [{ role: 'user', content: 'hello' }])
+        expect(result[:status]).to eq(:ok)
+        expect(result[:data][:content]).to eq('The answer is 42')
+        expect(result[:data][:tool_calls]).to eq([])
+        expect(result[:data][:stop_reason]).to eq('end_turn')
+        expect(result[:data][:model]).to eq('claude-sonnet-4-6')
+        expect(result[:data][:input_tokens]).to eq(10)
+        expect(result[:data][:output_tokens]).to eq(5)
+      end
+    end
+
+    context 'when daemon returns 200 with tool_calls' do
+      it 'returns status :ok and preserves tool_calls array' do
+        tool_call = { id: 'call_1', name: 'search', arguments: { query: 'ruby docs' } }
+        payload = { data: { content: nil, tool_calls: [tool_call], stop_reason: 'tool_use',
+                            model: 'claude-sonnet-4-6', input_tokens: 20, output_tokens: 8 } }
+        response = double('Response', code: '200', body: JSON.dump(payload))
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [{ role: 'user', content: 'search for ruby docs' }])
+        expect(result[:status]).to eq(:ok)
+        expect(result[:data][:tool_calls].length).to eq(1)
+        expect(result[:data][:stop_reason]).to eq('tool_use')
+      end
+    end
+
+    context 'when daemon returns 200 and tool_calls is absent from body' do
+      it 'defaults tool_calls to an empty array' do
+        payload = { data: { content: 'hello', stop_reason: 'end_turn', model: 'gpt-4o',
+                            input_tokens: 5, output_tokens: 2 } }
+        response = double('Response', code: '200', body: JSON.dump(payload))
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:data][:tool_calls]).to eq([])
+      end
+    end
+
+    context 'request body construction' do
+      it 'sends messages and tools to /api/llm/inference' do
+        response = double('Response', code: '200',
+                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+        messages = [{ role: 'user', content: 'hi' }]
+        tools    = [{ name: 'calculator', description: 'does math' }]
+
+        expect(described_class).to receive(:http_post) do |path, body_hash, **_kwargs|
+          expect(path).to eq('/api/llm/inference')
+          expect(body_hash[:messages]).to eq(messages)
+          expect(body_hash[:tools]).to eq(tools)
+          response
+        end
+
+        described_class.inference(messages: messages, tools: tools)
+      end
+
+      it 'omits model key when model is nil' do
+        response = double('Response', code: '200',
+                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+
+        expect(described_class).to receive(:http_post) do |_path, body_hash, **_kwargs|
+          expect(body_hash).not_to have_key(:model)
+          response
+        end
+
+        described_class.inference(messages: [])
+      end
+
+      it 'includes model and provider when provided' do
+        response = double('Response', code: '200',
+                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+
+        expect(described_class).to receive(:http_post) do |_path, body_hash, **_kwargs|
+          expect(body_hash[:model]).to eq('claude-sonnet-4-6')
+          expect(body_hash[:provider]).to eq(:anthropic)
+          response
+        end
+
+        described_class.inference(messages: [], model: 'claude-sonnet-4-6', provider: :anthropic)
+      end
+
+      it 'passes the timeout override to http_post' do
+        response = double('Response', code: '200',
+                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+
+        expect(described_class).to receive(:http_post)
+          .with('/api/llm/inference', anything, timeout: 120)
+          .and_return(response)
+
+        described_class.inference(messages: [])
+      end
+
+      it 'passes a custom timeout when provided' do
+        response = double('Response', code: '200',
+                                      body: JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+
+        expect(described_class).to receive(:http_post)
+          .with('/api/llm/inference', anything, timeout: 300)
+          .and_return(response)
+
+        described_class.inference(messages: [], timeout: 300)
+      end
+    end
+
+    context 'error response codes' do
+      it 'returns :denied for 403' do
+        body = JSON.dump({ error: { message: 'Access denied' } })
+        response = double('Response', code: '403', body: body)
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:denied)
+        expect(result[:error]).to be_a(Hash)
+      end
+
+      it 'returns :rate_limited for 429 with retry_after' do
+        body = JSON.dump({ error: { retry_after: 30 } })
+        response = double('Response', code: '429', body: body)
+        allow(response).to receive(:[]).with('Retry-After').and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:rate_limited)
+        expect(result[:retry_after]).to eq(30)
+      end
+
+      it 'returns :unavailable for 503' do
+        response = double('Response', code: '503', body: '')
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:unavailable)
+      end
+
+      it 'returns :error with code for 500' do
+        body = JSON.dump({ error: { message: 'Internal error' } })
+        response = double('Response', code: '500', body: body)
+        allow(response).to receive(:[]).and_return(nil)
+        allow(described_class).to receive(:http_post).and_return(response)
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:error)
+        expect(result[:code]).to eq(500)
+      end
+    end
+
+    context 'when a network error occurs' do
+      it 'returns :unavailable status with the error message' do
+        allow(described_class).to receive(:http_post).and_raise(Errno::ECONNREFUSED, 'connection refused')
+
+        result = described_class.inference(messages: [])
+        expect(result[:status]).to eq(:unavailable)
+        expect(result[:error]).to be_a(String)
+      end
+
+      it 'marks the daemon as unhealthy' do
+        allow(described_class).to receive(:http_post).and_raise(Errno::ECONNREFUSED, 'connection refused')
+        expect(described_class).to receive(:mark_unhealthy)
+
+        described_class.inference(messages: [])
+      end
+    end
+  end
 end
