@@ -23,10 +23,20 @@ module Legion
               raw = request.body.read
               return {} if raw.nil? || raw.empty?
 
-              Legion::JSON.load(raw).transform_keys(&:to_sym)
-            rescue StandardError
-              halt 400, { 'Content-Type' => 'application/json' },
-                   Legion::JSON.dump({ error: { code: 'invalid_json', message: 'request body is not valid JSON' } })
+              begin
+                parsed = Legion::JSON.load(raw)
+              rescue StandardError
+                halt 400, { 'Content-Type' => 'application/json' },
+                     Legion::JSON.dump({ error: { code: 'invalid_json', message: 'request body is not valid JSON' } })
+              end
+
+              unless parsed.respond_to?(:transform_keys)
+                halt 400, { 'Content-Type' => 'application/json' },
+                     Legion::JSON.dump({ error: { code:    'invalid_request_body',
+                                                  message: 'request body must be a JSON object' } })
+              end
+
+              parsed.transform_keys(&:to_sym)
             end
           end
 
@@ -281,8 +291,19 @@ module Legion
             session.with_tools(*tool_declarations)
           end
 
-          last_user      = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
-          prior_messages = last_user ? (messages - [last_user]) : messages
+          last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
+          prior_messages = if last_user
+                             idx = messages.rindex(last_user)
+                             if idx
+                               duped = messages.dup
+                               duped.delete_at(idx)
+                               duped
+                             else
+                               messages
+                             end
+                           else
+                             messages
+                           end
           prior_messages.each { |m| session.add_message(m) }
 
           prompt   = (last_user || {})[:content] || (last_user || {})['content'] || ''

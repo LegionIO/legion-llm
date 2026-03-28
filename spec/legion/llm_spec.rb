@@ -37,6 +37,10 @@ RSpec.describe Legion::LLM do
       allow(Legion::LLM::Discovery::System).to receive(:platform).and_return(:unknown)
     end
 
+    after do
+      described_class.shutdown if described_class.started?
+    end
+
     it 'marks connected on start' do
       described_class.start
       expect(described_class.started?).to be true
