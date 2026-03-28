@@ -84,7 +84,8 @@ module Legion
         return true unless exp.is_a?(Integer)
 
         exp > Time.now.to_i
-      rescue StandardError
+      rescue StandardError => e
+        Legion::Logging.debug("CodexConfigLoader: failed to parse access token for exp validation: #{e.class}: #{e.message}") if defined?(Legion::Logging)
         true
       end
     end

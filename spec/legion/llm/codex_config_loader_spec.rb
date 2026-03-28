@@ -217,5 +217,12 @@ RSpec.describe Legion::LLM::CodexConfigLoader do
       token = "header.#{payload}.sig"
       expect(described_class.token_valid?(token)).to be false
     end
+
+    it 'returns true and logs a debug message when base64/JSON parsing fails' do
+      # payload part is not valid base64-encoded JSON
+      token = 'header.!!!invalid!!!.sig'
+      expect(Legion::Logging).to receive(:debug).with(/failed to parse access token/)
+      expect(described_class.token_valid?(token)).to be true
+    end
   end
 end
