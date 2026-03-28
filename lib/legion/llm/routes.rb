@@ -67,55 +67,65 @@ module Legion
             end
           end
 
-          define_method(:require_llm!) do
-            return if defined?(Legion::LLM) &&
-                      Legion::LLM.respond_to?(:started?) &&
-                      Legion::LLM.started?
+          unless method_defined?(:require_llm!)
+            define_method(:require_llm!) do
+              return if defined?(Legion::LLM) &&
+                        Legion::LLM.respond_to?(:started?) &&
+                        Legion::LLM.started?
 
-            halt 503, { 'Content-Type' => 'application/json' },
-                 Legion::JSON.dump({ error: { code:    'llm_unavailable',
-                                              message: 'LLM subsystem is not available' } })
+              halt 503, { 'Content-Type' => 'application/json' },
+                   Legion::JSON.dump({ error: { code:    'llm_unavailable',
+                                                message: 'LLM subsystem is not available' } })
+            end
           end
 
-          define_method(:cache_available?) do
-            defined?(Legion::Cache) &&
-              Legion::Cache.respond_to?(:connected?) &&
-              Legion::Cache.connected?
+          unless method_defined?(:cache_available?)
+            define_method(:cache_available?) do
+              defined?(Legion::Cache) &&
+                Legion::Cache.respond_to?(:connected?) &&
+                Legion::Cache.connected?
+            end
           end
 
-          define_method(:gateway_available?) do
-            defined?(Legion::Extensions::LLM::Gateway::Runners::Inference)
+          unless method_defined?(:gateway_available?)
+            define_method(:gateway_available?) do
+              defined?(Legion::Extensions::LLM::Gateway::Runners::Inference)
+            end
           end
 
-          define_method(:validate_tools!) do |tool_list|
-            unless tool_list.is_a?(Array) && tool_list.all? { |t| t.respond_to?(:transform_keys) }
+          unless method_defined?(:validate_tools!)
+            define_method(:validate_tools!) do |tool_list|
+              unless tool_list.is_a?(Array) && tool_list.all? { |t| t.respond_to?(:transform_keys) }
+                halt 400, { 'Content-Type' => 'application/json' },
+                     Legion::JSON.dump({ error: { code:    'invalid_tools',
+                                                  message: 'tools must be an array of objects' } })
+              end
+
+              invalid = tool_list.any? do |t|
+                ts = t.transform_keys(&:to_sym)
+                ts[:name].to_s.empty?
+              end
+              return unless invalid
+
               halt 400, { 'Content-Type' => 'application/json' },
                    Legion::JSON.dump({ error: { code:    'invalid_tools',
-                                                message: 'tools must be an array of objects' } })
+                                                message: 'each tool must have a non-empty name' } })
             end
-
-            invalid = tool_list.any? do |t|
-              ts = t.transform_keys(&:to_sym)
-              ts[:name].to_s.empty?
-            end
-            return unless invalid
-
-            halt 400, { 'Content-Type' => 'application/json' },
-                 Legion::JSON.dump({ error: { code:    'invalid_tools',
-                                              message: 'each tool must have a non-empty name' } })
           end
 
-          define_method(:validate_messages!) do |msg_list|
-            valid = msg_list.all? do |m|
-              m.respond_to?(:key?) &&
-                !(m[:role] || m['role']).to_s.empty? &&
-                (m.key?(:content) || m.key?('content'))
-            end
-            return if valid
+          unless method_defined?(:validate_messages!)
+            define_method(:validate_messages!) do |msg_list|
+              valid = msg_list.all? do |m|
+                m.respond_to?(:key?) &&
+                  !(m[:role] || m['role']).to_s.empty? &&
+                  (m.key?(:content) || m.key?('content'))
+              end
+              return if valid
 
-            halt 400, { 'Content-Type' => 'application/json' },
-                 Legion::JSON.dump({ error: { code:    'invalid_messages',
-                                              message: 'each message must be an object with non-empty role and content' } })
+              halt 400, { 'Content-Type' => 'application/json' },
+                   Legion::JSON.dump({ error: { code:    'invalid_messages',
+                                                message: 'each message must be an object with non-empty role and content' } })
+            end
           end
         end
 
@@ -127,7 +137,7 @@ module Legion
         register_inference(app)
 
         app.post '/api/llm/chat' do # rubocop:disable Metrics/BlockLength
-          Legion::Logging.debug "API: POST /api/llm/chat params=#{params.keys}"
+          Legion::Logging.debug "API: POST /api/llm/chat params=#{params.keys}" if defined?(Legion::Logging)
           require_llm!
 
           body = parse_request_body
@@ -165,7 +175,7 @@ module Legion
             )
 
             unless ingress_result[:success]
-              Legion::Logging.error "[api/llm/chat] ingress failed: #{ingress_result}"
+              Legion::Logging.error "[api/llm/chat] ingress failed: #{ingress_result}" if defined?(Legion::Logging)
               err = ingress_result[:error] || ingress_result[:status]
               err_code    = err.respond_to?(:dig) ? (err[:code] || 'gateway_error') : err.to_s
               err_message = err.respond_to?(:dig) ? (err[:message] || err.to_s) : err.to_s
@@ -175,7 +185,7 @@ module Legion
             result = ingress_result[:result]
 
             if result.nil?
-              Legion::Logging.warn "[api/llm/chat] runner returned nil (status=#{ingress_result[:status]})"
+              Legion::Logging.warn "[api/llm/chat] runner returned nil (status=#{ingress_result[:status]})" if defined?(Legion::Logging)
               halt json_error('empty_result', 'Gateway runner returned no result', status_code: 502)
             end
 
@@ -220,18 +230,18 @@ module Legion
                 }
               )
             rescue StandardError => e
-              Legion::Logging.error "API POST /api/llm/chat async: #{e.class} — #{e.message}"
+              Legion::Logging.error "API POST /api/llm/chat async: #{e.class} — #{e.message}" if defined?(Legion::Logging)
               rc.fail_request(request_id, code: 'llm_error', message: e.message)
             end
 
-            Legion::Logging.info "API: LLM chat request #{request_id} queued async"
+            Legion::Logging.info "API: LLM chat request #{request_id} queued async" if defined?(Legion::Logging)
             json_response({ request_id: request_id, poll_key: "llm:#{request_id}:status" },
                           status_code: 202)
           else
             session  = Legion::LLM.chat(model: model, provider: provider,
                                         caller: { source: 'api', path: request.path })
             response = session.ask(message)
-            Legion::Logging.info "API: LLM chat request #{request_id} completed sync model=#{session.model}"
+            Legion::Logging.info "API: LLM chat request #{request_id} completed sync model=#{session.model}" if defined?(Legion::Logging)
             json_response(
               {
                 response: response.content,
@@ -342,7 +352,7 @@ module Legion
         app.get '/api/llm/providers' do
           require_llm!
           unless gateway_available? && defined?(Legion::Extensions::LLM::Gateway::Runners::ProviderStats)
-            halt 503, json_error('gateway_unavailable', 'LLM gateway is not loaded', status_code: 503)
+            halt json_error('gateway_unavailable', 'LLM gateway is not loaded', status_code: 503)
           end
 
           stats = Legion::Extensions::LLM::Gateway::Runners::ProviderStats
@@ -355,7 +365,7 @@ module Legion
         app.get '/api/llm/providers/:name' do
           require_llm!
           unless gateway_available? && defined?(Legion::Extensions::LLM::Gateway::Runners::ProviderStats)
-            halt 503, json_error('gateway_unavailable', 'LLM gateway is not loaded', status_code: 503)
+            halt json_error('gateway_unavailable', 'LLM gateway is not loaded', status_code: 503)
           end
 
           stats = Legion::Extensions::LLM::Gateway::Runners::ProviderStats
