@@ -42,7 +42,7 @@ module Legion
       end
     end
 
-    # Band ordering from lowest to highest — defined outside the Data.define block
+    # Band ordering from lowest to highest — defined outside the ::Data.define block
     # so it is accessible as Legion::LLM::ConfidenceScore::BAND_ORDER.
     ConfidenceScore::BAND_ORDER = %i[very_low low medium high very_high].freeze
   end
