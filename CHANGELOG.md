@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.5.18] - 2026-03-29
+
+### Fixed
+- `Legion::LLM::Embeddings` now eagerly required at load time — previously lazy-required only inside `embed_direct`/`embed_batch`, causing `uninitialized constant Legion::LLM::Embeddings` when extensions (e.g. lex-apollo) referenced the constant directly
+
 ## [0.5.17] - 2026-03-28
 
 ### Added

@@ -11,6 +11,7 @@ require 'legion/llm/compressor'
 require 'legion/llm/quality_checker'
 require 'legion/llm/confidence_score'
 require 'legion/llm/confidence_scorer'
+require 'legion/llm/embeddings'
 require 'legion/llm/escalation_history'
 require 'legion/llm/hooks'
 require 'legion/llm/cache'
@@ -175,7 +176,6 @@ module Legion
 
       # Direct embed bypassing gateway
       def embed_direct(text, **)
-        require 'legion/llm/embeddings'
         Embeddings.generate(text: text, **)
       end
 
@@ -183,7 +183,6 @@ module Legion
       # @param texts [Array<String>] texts to embed
       # @return [Array<Hash>]
       def embed_batch(texts, **)
-        require 'legion/llm/embeddings'
         Embeddings.generate_batch(texts: texts, **)
       end
 
