@@ -1,0 +1,34 @@
+# frozen_string_literal: true
+
+module Legion
+  module LLM
+    module Pipeline
+      module Steps
+        module ConfidenceScoring
+          def step_confidence_scoring
+            return unless @raw_response
+
+            opts = {
+              json_expected:     @request.response_format&.dig(:type) == :json,
+              quality_threshold: @request.extra&.dig(:quality_threshold),
+              confidence_score:  @request.extra&.dig(:confidence_score),
+              confidence_bands:  @request.extra&.dig(:confidence_bands)
+            }.compact
+
+            @confidence_score = ConfidenceScorer.score(@raw_response, **opts)
+
+            @timeline.record(
+              category: :internal, key: 'confidence:scored',
+              direction: :internal,
+              detail: "score=#{@confidence_score.score.round(3)} band=#{@confidence_score.band} source=#{@confidence_score.source}",
+              from: 'pipeline', to: 'pipeline'
+            )
+          rescue StandardError => e
+            @warnings << "confidence_scoring error: #{e.message}"
+            @confidence_score = nil
+          end
+        end
+      end
+    end
+  end
+end
