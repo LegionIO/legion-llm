@@ -244,21 +244,41 @@ module Legion
             json_response({ request_id: request_id, poll_key: "llm:#{request_id}:status" },
                           status_code: 202)
           else
-            session  = Legion::LLM.chat(model: model, provider: provider,
-                                        caller: { source: 'api', path: request.path })
-            response = session.ask(message)
-            Legion::Logging.info "API: LLM chat request #{request_id} completed sync model=#{session.model}" if defined?(Legion::Logging)
-            json_response(
-              {
-                response: response.content,
-                meta:     {
-                  model:      session.model.to_s,
-                  tokens_in:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
-                  tokens_out: response.respond_to?(:output_tokens) ? response.output_tokens : nil
-                }
-              },
-              status_code: 201
-            )
+            result = Legion::LLM.chat(message: message, model: model, provider: provider,
+                                      caller: { source: 'api', path: request.path })
+            if result.is_a?(Legion::LLM::Pipeline::Response)
+              raw_msg  = result.message
+              content  = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s
+              routing  = result.routing || {}
+              resolved_model = routing[:model] || routing['model']
+              tokens = result.tokens || {}
+              Legion::Logging.info "API: LLM chat request #{request_id} completed sync model=#{resolved_model}" if defined?(Legion::Logging)
+              json_response(
+                {
+                  response: content,
+                  meta:     {
+                    model:      resolved_model.to_s,
+                    tokens_in:  tokens[:input],
+                    tokens_out: tokens[:output]
+                  }
+                },
+                status_code: 201
+              )
+            else
+              response = result
+              Legion::Logging.info "API: LLM chat request #{request_id} completed sync" if defined?(Legion::Logging)
+              json_response(
+                {
+                  response: response.respond_to?(:content) ? response.content : response.to_s,
+                  meta:     {
+                    model:      response.respond_to?(:model_id) ? response.model_id.to_s : model.to_s,
+                    tokens_in:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
+                    tokens_out: response.respond_to?(:output_tokens) ? response.output_tokens : nil
+                  }
+                },
+                status_code: 201
+              )
+            end
           end
         end
       end
@@ -288,19 +308,14 @@ module Legion
 
           tools = raw_tools || []
 
-          session = Legion::LLM.chat(
-            model:    model,
-            provider: provider,
-            caller:   { source: 'api', path: request.path }
-          )
-
+          tool_declarations = []
           unless tools.empty?
             validate_tools!(tools)
 
             tool_declarations = tools.map do |t|
               ts = t.respond_to?(:transform_keys) ? t.transform_keys(&:to_sym) : t
-              tname  = ts[:name].to_s
-              tdesc  = ts[:description].to_s
+              tname   = ts[:name].to_s
+              tdesc   = ts[:description].to_s
               tparams = ts[:parameters] || {}
               Class.new do
                 define_singleton_method(:tool_name)   { tname }
@@ -309,45 +324,55 @@ module Legion
                 define_method(:call) { |**_| raise NotImplementedError, "#{tname} executes client-side only" }
               end
             end
-            session.with_tools(*tool_declarations)
           end
 
-          last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
-          prior_messages = if last_user
-                             idx = messages.rindex(last_user)
-                             if idx
-                               duped = messages.dup
-                               duped.delete_at(idx)
-                               duped
-                             else
-                               messages
-                             end
-                           else
-                             messages
-                           end
-          prior_messages.each { |m| session.add_message(m) }
+          normalized_messages = messages.map do |m|
+            ms = m.respond_to?(:transform_keys) ? m.transform_keys(&:to_sym) : m
+            { role: ms[:role].to_s, content: ms[:content].to_s }
+          end
 
-          prompt   = (last_user || {})[:content] || (last_user || {})['content'] || ''
-          response = session.ask(prompt)
+          result = Legion::LLM.chat(
+            messages: normalized_messages,
+            model:    model,
+            provider: provider,
+            tools:    tool_declarations,
+            caller:   { source: 'api', path: request.path }
+          )
 
-          tc_list = if response.respond_to?(:tool_calls) && response.tool_calls
-                      Array(response.tool_calls).map do |tc|
-                        {
-                          id:        tc.respond_to?(:id) ? tc.id : nil,
-                          name:      tc.respond_to?(:name) ? tc.name : tc.to_s,
-                          arguments: tc.respond_to?(:arguments) ? tc.arguments : {}
-                        }
+          if result.is_a?(Legion::LLM::Pipeline::Response)
+            raw_msg   = result.message
+            content   = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s
+            routing   = result.routing || {}
+            resolved_model = routing[:model] || routing['model']
+            tokens = result.tokens || {}
+            json_response({
+                            content:       content,
+                            tool_calls:    nil,
+                            stop_reason:   result.stop&.dig(:reason)&.to_s,
+                            model:         resolved_model.to_s,
+                            input_tokens:  tokens[:input],
+                            output_tokens: tokens[:output]
+                          }, status_code: 200)
+          else
+            response = result
+            tc_list = if response.respond_to?(:tool_calls) && response.tool_calls
+                        Array(response.tool_calls).map do |tc|
+                          {
+                            id:        tc.respond_to?(:id) ? tc.id : nil,
+                            name:      tc.respond_to?(:name) ? tc.name : tc.to_s,
+                            arguments: tc.respond_to?(:arguments) ? tc.arguments : {}
+                          }
+                        end
                       end
-                    end
-
-          json_response({
-                          content:       response.content,
-                          tool_calls:    tc_list,
-                          stop_reason:   response.respond_to?(:stop_reason) ? response.stop_reason : nil,
-                          model:         session.model.to_s,
-                          input_tokens:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
-                          output_tokens: response.respond_to?(:output_tokens) ? response.output_tokens : nil
-                        }, status_code: 200)
+            json_response({
+                            content:       response.respond_to?(:content) ? response.content : response.to_s,
+                            tool_calls:    tc_list,
+                            stop_reason:   response.respond_to?(:stop_reason) ? response.stop_reason : nil,
+                            model:         response.respond_to?(:model_id) ? response.model_id.to_s : model.to_s,
+                            input_tokens:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
+                            output_tokens: response.respond_to?(:output_tokens) ? response.output_tokens : nil
+                          }, status_code: 200)
+          end
         rescue StandardError => e
           Legion::Logging.error "[api/llm/inference] #{e.class}: #{e.message}" if defined?(Legion::Logging)
           json_error('inference_error', e.message, status_code: 500)

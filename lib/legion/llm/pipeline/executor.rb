@@ -166,7 +166,11 @@ module Legion
           )
           session.with_instructions(injected_system) if injected_system
 
-          message_content = @request.messages.last&.dig(:content)
+          messages = @request.messages
+          prior    = messages.size > 1 ? messages[0..-2] : []
+          prior.each { |m| session.add_message(m) }
+
+          message_content = messages.last&.dig(:content)
           @raw_response = message_content ? session.ask(message_content) : session
 
           @timestamps[:provider_end] = Time.now
@@ -228,7 +232,11 @@ module Legion
           (@request.tools || []).each { |tool| session.with_tool(tool) if tool.is_a?(Class) }
           ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
 
-          message_content = @request.messages.last&.dig(:content)
+          messages = @request.messages
+          prior    = messages.size > 1 ? messages[0..-2] : []
+          prior.each { |m| session.add_message(m) }
+
+          message_content = messages.last&.dig(:content)
           @raw_response = session.ask(message_content, &)
 
           @timestamps[:provider_end] = Time.now

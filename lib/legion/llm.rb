@@ -230,7 +230,7 @@ module Legion
       end
 
       def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **kwargs, &)
-        if pipeline_enabled? && message
+        if pipeline_enabled? && (message || kwargs[:messages])
           return chat_via_pipeline(model: model, provider: provider, intent: intent, tier: tier,
                                    message: message, escalate: escalate, max_escalations: max_escalations,
                                    quality_check: quality_check, **kwargs, &)
