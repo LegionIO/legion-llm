@@ -1,5 +1,20 @@
 # Legion LLM Changelog
 
+## [Unreleased]
+
+### Added
+- `Legion::LLM::Helper` module at `lib/legion/llm/helper.rb` — canonical helper following cache/transport pattern
+- Layered defaults: `llm_default_model`, `llm_default_provider`, `llm_default_intent` (LEX-overridable)
+- `llm_embed_batch` — batch embedding convenience
+- `llm_structured` — structured JSON output convenience
+- `llm_ask` — daemon-first single-shot convenience
+- `llm_connected?` / `llm_can_embed?` / `llm_routing_enabled?` — status helpers
+- `llm_cost_estimate` / `llm_cost_summary` / `llm_budget_remaining` — cost and budget helpers
+- Layered model/provider/intent defaults applied to `llm_chat` and `llm_session`
+
+### Changed
+- `lib/legion/llm/helpers/llm.rb` is now a backward-compat shim that includes `Legion::LLM::Helper`
+
 ## [0.5.18] - 2026-03-29
 
 ### Fixed
