@@ -12,17 +12,18 @@ module Legion
         include Steps::RagContext
 
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
-                    :audit, :warnings, :discovered_tools
+                    :audit, :warnings, :discovered_tools, :confidence_score
 
         include Steps::McpDiscovery
         include Steps::ToolCalls
         include Steps::KnowledgeCapture
+        include Steps::ConfidenceScoring
 
         STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
           rbac classification billing gaia_advisory rag_context mcp_discovery
           routing request_normalization provider_call response_normalization
-          tool_calls context_store post_response knowledge_capture response_return
+          confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         PRE_PROVIDER_STEPS = %i[
@@ -32,7 +33,7 @@ module Legion
         ].freeze
 
         POST_PROVIDER_STEPS = %i[
-          response_normalization tool_calls context_store post_response knowledge_capture response_return
+          response_normalization confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         def initialize(request)
@@ -46,9 +47,10 @@ module Legion
           @timestamps   = { received: Time.now }
           @raw_response = nil
           @exchange_id  = nil
-          @discovered_tools = []
+          @discovered_tools  = []
           @resolved_provider = nil
           @resolved_model    = nil
+          @confidence_score  = nil
         end
 
         def call
@@ -166,7 +168,11 @@ module Legion
           )
           session.with_instructions(injected_system) if injected_system
 
-          message_content = @request.messages.last&.dig(:content)
+          messages = @request.messages
+          prior    = messages.size > 1 ? messages[0..-2] : []
+          prior.each { |m| session.add_message(m) }
+
+          message_content = messages.last&.dig(:content)
           @raw_response = message_content ? session.ask(message_content) : session
 
           @timestamps[:provider_end] = Time.now
@@ -228,7 +234,11 @@ module Legion
           (@request.tools || []).each { |tool| session.with_tool(tool) if tool.is_a?(Class) }
           ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
 
-          message_content = @request.messages.last&.dig(:content)
+          messages = @request.messages
+          prior    = messages.size > 1 ? messages[0..-2] : []
+          prior.each { |m| session.add_message(m) }
+
+          message_content = messages.last&.dig(:content)
           @raw_response = session.ask(message_content, &)
 
           @timestamps[:provider_end] = Time.now
@@ -302,7 +312,8 @@ module Legion
             caller:          @request.caller,
             classification:  @request.classification,
             billing:         @request.billing,
-            test:            @request.test
+            test:            @request.test,
+            quality:         @confidence_score&.to_h
           )
         end
       end

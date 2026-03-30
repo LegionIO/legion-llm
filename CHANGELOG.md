@@ -1,5 +1,52 @@
 # Legion LLM Changelog
 
+## [Unreleased]
+
+### Added
+- `Legion::LLM::Helper` module at `lib/legion/llm/helper.rb` — canonical helper following cache/transport pattern
+- Layered defaults: `llm_default_model`, `llm_default_provider`, `llm_default_intent` (LEX-overridable)
+- `llm_embed_batch` — batch embedding convenience
+- `llm_structured` — structured JSON output convenience
+- `llm_ask` — daemon-first single-shot convenience
+- `llm_connected?` / `llm_can_embed?` / `llm_routing_enabled?` — status helpers
+- `llm_cost_estimate` / `llm_cost_summary` / `llm_budget_remaining` — cost and budget helpers
+- Layered model/provider/intent defaults applied to `llm_chat` and `llm_session`
+
+### Changed
+- `lib/legion/llm/helpers/llm.rb` is now a backward-compat shim that includes `Legion::LLM::Helper`
+
+## [0.5.18] - 2026-03-29
+
+### Fixed
+- `Legion::LLM::Embeddings` now eagerly required at load time — previously lazy-required only inside `embed_direct`/`embed_batch`, causing `uninitialized constant Legion::LLM::Embeddings` when extensions (e.g. lex-apollo) referenced the constant directly
+
+## [0.5.17] - 2026-03-28
+
+### Added
+- `Legion::LLM::ConfidenceScore` value object (`lib/legion/llm/confidence_score.rb`): immutable struct with `score` (Float 0.0–1.0), `band` (`:very_low/:low/:medium/:high/:very_high`), `source` (`:heuristic/:logprobs/:caller_provided`), and `signals` hash. `#at_least?(band)` for band comparison. `BAND_ORDER` constant for ordered band comparison.
+- `Legion::LLM::ConfidenceScorer` module (`lib/legion/llm/confidence_scorer.rb`): computes `ConfidenceScore` from three strategy sources in priority order — (1) caller-provided score via `confidence_score:` option, (2) model-native logprobs (detected via `class.method_defined?(:logprobs)` to avoid test-double interference), (3) heuristic analysis (refusal, truncation, repetition, too_short, json_parse_failure, hedging language penalties; structured output bonus for valid JSON). Band boundaries are read from `Legion::Settings[:llm][:confidence][:bands]` at call time, per-call overrides accepted via `confidence_bands:` option.
+- `Legion::LLM::Pipeline::Steps::ConfidenceScoring` module (`lib/legion/llm/pipeline/steps/confidence_scoring.rb`): new pipeline step `step_confidence_scoring` inserted after `response_normalization`. Reads `confidence_score:`, `confidence_bands:`, and `quality_threshold:` from `request.extra`; propagates `json_expected:` from `request.response_format`. Errors are soft-caught (appended to `@warnings`, step skipped).
+- `confidence_defaults` settings method: band boundaries `{ low: 0.3, medium: 0.5, high: 0.7, very_high: 0.9 }` under `Legion::Settings[:llm][:confidence][:bands]`.
+- `confidence_score` attr_reader on `Pipeline::Executor` for post-pipeline inspection.
+- `quality:` field of `Pipeline::Response` is now populated with `@confidence_score.to_h` (score, band, source, signals).
+- 54 new specs across `confidence_score_spec.rb`, `confidence_scorer_spec.rb`, `confidence_settings_spec.rb`, and `pipeline/steps/confidence_scoring_spec.rb`.
+
+### Changed
+- `Pipeline::Executor::STEPS` and `POST_PROVIDER_STEPS` now include `:confidence_scoring` after `:response_normalization`.
+- `Legion::LLM.start` now requires `confidence_score` and `confidence_scorer` after `quality_checker`.
+
+## [0.5.16] - 2026-03-28
+
+### Fixed
+- `POST /api/llm/inference` endpoint now routes through the 18-step pipeline when `pipeline_enabled?` is true — previously it created a bare `RubyLLM` session and called `session.ask` directly, bypassing RAG (step 8), GAIA advisory (step 7), knowledge capture (step 19), billing, and classification
+- `POST /api/llm/chat` sync fallback path now routes through the pipeline (previously called `session.ask` on a bare session the same way)
+- `_dispatch_chat` pipeline gate now fires when `messages:` array is present in addition to `message:` string — `Legion::LLM.chat(messages: [...])` was silently falling through to the legacy path even with `pipeline_enabled: true`
+- `Pipeline::Executor#step_provider_call` and `#step_provider_call_stream` now inject prior messages via `session.add_message` before the final `ask` — multi-turn conversations passed as a `messages:` array now correctly preserve history at the provider level
+
+### Added
+- `spec/legion/llm/pipeline/executor_multi_turn_spec.rb`: specs verifying prior-message injection in single-turn, multi-turn, two-message, and streaming cases
+- `spec/legion/llm/routes_inference_spec.rb`: specs verifying that `Legion::LLM.chat(messages: [...])` routes through the pipeline, carries tracing/timeline, handles multi-turn history, passes tool classes, and falls back gracefully when pipeline is disabled
+
 ## [0.5.15] - 2026-03-28
 
 ### Added

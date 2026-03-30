@@ -13,6 +13,7 @@ module Legion
           default_provider: nil,
           providers:        providers,
           routing:          routing_defaults,
+          confidence:       confidence_defaults,
           discovery:        discovery_defaults,
           gateway:          gateway_defaults,
           daemon:           daemon_defaults,
@@ -22,6 +23,17 @@ module Legion
           scheduling:       scheduling_defaults,
           rag:              rag_defaults,
           embedding:        embedding_defaults
+        }
+      end
+
+      def self.confidence_defaults
+        {
+          bands: {
+            low:       0.3,
+            medium:    0.5,
+            high:      0.7,
+            very_high: 0.9
+          }
         }
       end
 

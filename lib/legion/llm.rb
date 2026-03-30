@@ -9,6 +9,9 @@ require 'legion/llm/providers'
 require 'legion/llm/router'
 require 'legion/llm/compressor'
 require 'legion/llm/quality_checker'
+require 'legion/llm/confidence_score'
+require 'legion/llm/confidence_scorer'
+require 'legion/llm/embeddings'
 require 'legion/llm/escalation_history'
 require 'legion/llm/hooks'
 require 'legion/llm/cache'
@@ -176,7 +179,6 @@ module Legion
 
       # Direct embed bypassing gateway
       def embed_direct(text, **)
-        require 'legion/llm/embeddings'
         Embeddings.generate(text: text, **)
       end
 
@@ -184,7 +186,6 @@ module Legion
       # @param texts [Array<String>] texts to embed
       # @return [Array<Hash>]
       def embed_batch(texts, **)
-        require 'legion/llm/embeddings'
         Embeddings.generate_batch(texts: texts, **)
       end
 
@@ -233,7 +234,7 @@ module Legion
       end
 
       def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **kwargs, &)
-        if pipeline_enabled? && message
+        if pipeline_enabled? && (message || kwargs[:messages])
           return chat_via_pipeline(model: model, provider: provider, intent: intent, tier: tier,
                                    message: message, escalate: escalate, max_escalations: max_escalations,
                                    quality_check: quality_check, **kwargs, &)
