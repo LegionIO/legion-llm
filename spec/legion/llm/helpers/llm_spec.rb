@@ -126,6 +126,37 @@ RSpec.describe Legion::LLM::Helper do
         hash_including(model: 'gpt-4o')
       )
     end
+
+    it 'does not apply default intent by default (routing opt-in)' do
+      intent = { privacy: 'normal', capability: 'moderate' }
+      allow(instance).to receive(:llm_default_intent).and_return(intent)
+
+      instance.llm_chat('hello')
+      expect(Legion::LLM).to have_received(:chat).with(
+        hash_including(intent: nil)
+      )
+    end
+
+    it 'applies default intent when use_default_intent: true' do
+      intent = { privacy: 'normal', capability: 'moderate' }
+      allow(instance).to receive(:llm_default_intent).and_return(intent)
+
+      instance.llm_chat('hello', use_default_intent: true)
+      expect(Legion::LLM).to have_received(:chat).with(
+        hash_including(intent: intent)
+      )
+    end
+
+    it 'explicit intent: always takes precedence over use_default_intent' do
+      explicit = { privacy: :strict }
+      default_intent = { privacy: 'normal', capability: 'moderate' }
+      allow(instance).to receive(:llm_default_intent).and_return(default_intent)
+
+      instance.llm_chat('hello', intent: explicit, use_default_intent: true)
+      expect(Legion::LLM).to have_received(:chat).with(
+        hash_including(intent: explicit)
+      )
+    end
   end
 
   describe 'escalation passthrough' do
@@ -192,6 +223,19 @@ RSpec.describe Legion::LLM::Helper do
         hash_including(model: 'gpt-4o', provider: :openai)
       )
     end
+
+    it 'does not apply default intent by default' do
+      allow(instance).to receive(:llm_default_intent).and_return({ capability: :reasoning })
+      instance.llm_session
+      expect(Legion::LLM).to have_received(:chat).with(hash_including(intent: nil))
+    end
+
+    it 'applies default intent when use_default_intent: true' do
+      intent = { capability: :reasoning }
+      allow(instance).to receive(:llm_default_intent).and_return(intent)
+      instance.llm_session(use_default_intent: true)
+      expect(Legion::LLM).to have_received(:chat).with(hash_including(intent: intent))
+    end
   end
 
   describe '#llm_structured' do
@@ -254,6 +298,14 @@ RSpec.describe Legion::LLM::Helper do
         .with(model_id: 'gpt-4o', input_tokens: 1000, output_tokens: 500)
         .and_return(0.0125)
       expect(instance.llm_cost_estimate(model: 'gpt-4o', input_tokens: 1000, output_tokens: 500)).to eq(0.0125)
+    end
+
+    it 'uses llm_default_model when model is not provided' do
+      allow(instance).to receive(:llm_default_model).and_return('claude-sonnet-4-6')
+      allow(Legion::LLM::CostEstimator).to receive(:estimate)
+        .with(model_id: 'claude-sonnet-4-6', input_tokens: 100, output_tokens: 50)
+        .and_return(0.001)
+      expect(instance.llm_cost_estimate(input_tokens: 100, output_tokens: 50)).to eq(0.001)
     end
 
     it 'returns 0.0 on error' do

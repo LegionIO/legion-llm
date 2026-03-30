@@ -35,10 +35,10 @@ module Legion
 
       def llm_chat(message, model: nil, provider: nil, intent: nil, tier: nil, tools: [], # rubocop:disable Metrics/ParameterLists
                    instructions: nil, compress: 0, escalate: nil, max_escalations: nil,
-                   quality_check: nil, caller: nil)
+                   quality_check: nil, caller: nil, use_default_intent: false)
         effective_model = model || llm_default_model
         effective_provider = provider || llm_default_provider
-        effective_intent = intent || llm_default_intent
+        effective_intent = intent || (use_default_intent ? llm_default_intent : nil)
 
         if compress.positive?
           message = Legion::LLM::Compressor.compress(message, level: compress)
@@ -68,10 +68,10 @@ module Legion
         Legion::LLM.embed_batch(texts, **)
       end
 
-      def llm_session(model: nil, provider: nil, intent: nil, tier: nil, caller: nil)
+      def llm_session(model: nil, provider: nil, intent: nil, tier: nil, caller: nil, use_default_intent: false)
         effective_model = model || llm_default_model
         effective_provider = provider || llm_default_provider
-        effective_intent = intent || llm_default_intent
+        effective_intent = intent || (use_default_intent ? llm_default_intent : nil)
 
         Legion::LLM.chat(model: effective_model, provider: effective_provider,
                          intent: effective_intent, tier: tier,
@@ -108,7 +108,8 @@ module Legion
 
       # --- Cost / Budget ---
 
-      def llm_cost_estimate(model:, input_tokens: 0, output_tokens: 0)
+      def llm_cost_estimate(model: nil, input_tokens: 0, output_tokens: 0)
+        model ||= llm_default_model
         Legion::LLM::CostEstimator.estimate(model_id: model, input_tokens: input_tokens,
                                             output_tokens: output_tokens)
       rescue StandardError
