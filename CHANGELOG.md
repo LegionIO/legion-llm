@@ -2,18 +2,24 @@
 
 ## [Unreleased]
 
+## [0.5.20] - 2026-03-30
+
 ### Added
-- `Legion::LLM::Helper` module at `lib/legion/llm/helper.rb` — canonical helper following cache/transport pattern
-- Layered defaults: `llm_default_model`, `llm_default_provider`, `llm_default_intent` (LEX-overridable)
-- `llm_embed_batch` — batch embedding convenience
-- `llm_structured` — structured JSON output convenience
-- `llm_ask` — daemon-first single-shot convenience
-- `llm_connected?` / `llm_can_embed?` / `llm_routing_enabled?` — status helpers
-- `llm_cost_estimate` / `llm_cost_summary` / `llm_budget_remaining` — cost and budget helpers
-- Layered model/provider/intent defaults applied to `llm_chat` and `llm_session`
+- `CodexConfigLoader`: auto-imports OpenAI bearer token from `~/.codex/auth.json` when `auth_mode` is `chatgpt` and no existing OpenAI API key is configured (#15)
+- JWT expiry validation — expired codex tokens are skipped with a debug log (#15)
+- Non-JWT tokens (plain API keys) accepted without validation (#15)
+- Falls back to vault/settings/env when codex auth file is absent or token is expired (#15)
+- `Legion::LLM::Helper` module at `lib/legion/llm/helper.rb` — canonical helper following cache/transport pattern (#20)
+- Layered defaults: `llm_default_model`, `llm_default_provider`, `llm_default_intent` (LEX-overridable) (#20)
+- `llm_embed_batch` — batch embedding convenience (#20)
+- `llm_structured` — structured JSON output convenience (#20)
+- `llm_ask` — daemon-first single-shot convenience (#20)
+- `llm_connected?` / `llm_can_embed?` / `llm_routing_enabled?` — status helpers (#20)
+- `llm_cost_estimate` / `llm_cost_summary` / `llm_budget_remaining` — cost and budget helpers (#20)
+- Layered model/provider/intent defaults applied to `llm_chat` and `llm_session` (#20)
 
 ### Changed
-- `lib/legion/llm/helpers/llm.rb` is now a backward-compat shim that includes `Legion::LLM::Helper`
+- `lib/legion/llm/helpers/llm.rb` is now a backward-compat shim that includes `Legion::LLM::Helper` (#20)
 
 ## [0.5.18] - 2026-03-29
 
@@ -58,6 +64,10 @@
 ## [0.5.14] - 2026-03-27
 
 ### Added
+- `CodexConfigLoader`: auto-imports OpenAI bearer token from `~/.codex/auth.json` when `auth_mode` is `chatgpt` and no existing OpenAI API key is configured
+- JWT expiry validation — expired codex tokens are skipped with a debug log
+- Non-JWT tokens (plain API keys) accepted without validation
+- Falls back to vault/settings/env when codex auth file is absent or token is expired
 - `DaemonClient.inference` method for conversation-level routing — accepts a full `messages:` array and optional `tools:`, `model:`, `provider:`, and `timeout:` keyword args, posts to `POST /api/llm/inference`, and returns a structured `{ status: :ok, data: { content:, tool_calls:, stop_reason:, model:, input_tokens:, output_tokens: } }` hash on success
 - `http_post` now accepts an optional `timeout:` keyword argument (default `DEFAULT_TIMEOUT = 60`) so callers like `inference` can pass a longer timeout (120s) without affecting existing `chat` calls
 - `interpret_inference_response` private helper that maps the `/api/llm/inference` HTTP response — 200 returns `:ok` with structured fields, 4xx/5xx follow the same error handling as `interpret_response`
