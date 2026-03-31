@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.5.24] - 2026-03-31
+
+### Added
+- `DaemonClient.inference` accepts optional `caller:` and `conversation_id:` kwargs, forwarded in POST body
+- `/api/llm/inference` route accepts `caller` and `conversation_id` from POST body, forwards to `Legion::LLM.chat`
+
 ## [0.5.23] - 2026-03-31
 
 ### Added

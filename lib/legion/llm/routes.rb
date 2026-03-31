@@ -289,10 +289,12 @@ module Legion
           body = parse_request_body
           validate_required!(body, :messages)
 
-          messages = body[:messages]
-          raw_tools = body[:tools]
-          model    = body[:model]
-          provider = body[:provider]
+          messages        = body[:messages]
+          raw_tools       = body[:tools]
+          model           = body[:model]
+          provider        = body[:provider]
+          caller_context  = body[:caller]
+          conversation_id = body[:conversation_id]
 
           unless messages.is_a?(Array)
             halt 400, { 'Content-Type' => 'application/json' },
@@ -331,13 +333,17 @@ module Legion
             { role: ms[:role].to_s, content: ms[:content].to_s }
           end
 
-          result = Legion::LLM.chat(
+          effective_caller = caller_context || { source: 'api', path: request.path }
+          chat_opts = {
             messages: normalized_messages,
             model:    model,
             provider: provider,
             tools:    tool_declarations,
-            caller:   { source: 'api', path: request.path }
-          )
+            caller:   effective_caller
+          }
+          chat_opts[:conversation_id] = conversation_id if conversation_id
+
+          result = Legion::LLM.chat(**chat_opts)
 
           if result.is_a?(Legion::LLM::Pipeline::Response)
             raw_msg   = result.message

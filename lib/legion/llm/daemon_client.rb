@@ -105,10 +105,13 @@ module Legion
       # POSTs a conversation-level inference request to the daemon REST API.
       # Accepts a full messages array and optional tool schemas.
       # Returns a status hash with structured inference fields on success.
-      def inference(messages:, tools: [], model: nil, provider: nil, timeout: 120)
+      def inference(messages:, tools: [], model: nil, provider: nil, caller: nil, conversation_id: nil,
+                    timeout: 120)
         body = { messages: messages, tools: tools }
-        body[:model]    = model    if model
-        body[:provider] = provider if provider
+        body[:model]           = model           if model
+        body[:provider]        = provider        if provider
+        body[:caller]          = caller          if caller
+        body[:conversation_id] = conversation_id if conversation_id
 
         response = http_post('/api/llm/inference', body, timeout: timeout)
         interpret_inference_response(response)
