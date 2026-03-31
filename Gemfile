@@ -9,6 +9,7 @@ group :test do
   gem 'rspec'
   gem 'rspec_junit_formatter'
   gem 'rubocop'
+  gem 'rubocop-legion'
   gem 'simplecov'
   gem 'webmock'
 end
