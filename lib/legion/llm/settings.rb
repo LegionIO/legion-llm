@@ -150,7 +150,7 @@ module Legion
             bedrock: 'amazon.titan-embed-text-v2:0',
             openai:  'text-embedding-3-small'
           },
-          ollama_preferred:  %w[mxbai-embed-large bge-large snowflake-arctic-embed]
+          ollama_preferred:  %w[nomic-embed-text mxbai-embed-large bge-large snowflake-arctic-embed]
         }
       end
 
@@ -158,7 +158,7 @@ module Legion
         {
           bedrock:   {
             enabled:       false,
-            default_model: 'us.anthropic.claude-sonnet-4-6-v1',
+            default_model: 'us.anthropic.claude-sonnet-4-6',
             api_key:       nil,
             secret_key:    nil,
             session_token: nil,
@@ -189,7 +189,7 @@ module Legion
           },
           ollama:    {
             enabled:       false,
-            default_model: 'llama3',
+            default_model: 'qwen3.5:latest',
             base_url:      'http://localhost:11434'
           }
         }

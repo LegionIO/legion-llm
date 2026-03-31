@@ -22,6 +22,9 @@ module Legion
 
           provider ||= resolve_provider
           model    ||= resolve_model(provider)
+
+          return generate_ollama(text: text, model: model) if provider&.to_sym == :ollama
+
           response   = RubyLLM.embed(text, **build_opts(model, provider, dimensions))
           vector     = apply_dimension_enforcement(response.vectors.first, provider)
           return dimension_error(model, provider, vector) if vector.is_a?(String)
@@ -37,7 +40,10 @@ module Legion
 
           provider ||= resolve_provider
           model    ||= resolve_model(provider)
-          response   = RubyLLM.embed(texts, **build_opts(model, provider, dimensions))
+
+          return generate_ollama_batch(texts: texts, model: model) if provider&.to_sym == :ollama
+
+          response = RubyLLM.embed(texts, **build_opts(model, provider, dimensions))
           response.vectors.each_with_index.map do |vec, i|
             build_batch_entry(vec, model, provider, i)
           end
@@ -168,6 +174,37 @@ module Legion
           Legion::Settings.dig(:llm, :embedding) || {}
         rescue StandardError
           {}
+        end
+
+        def generate_ollama(text:, model:)
+          result = ollama_embed_request(model: model, input: text)
+          vector = result['embeddings']&.first
+          vector = apply_dimension_enforcement(vector, :ollama) if vector
+          return dimension_error(model, :ollama, vector) if vector.is_a?(String)
+
+          { vector: vector, model: model, provider: :ollama, dimensions: vector&.size || 0, tokens: 0 }
+        end
+
+        def generate_ollama_batch(texts:, model:)
+          result = ollama_embed_request(model: model, input: texts)
+          vectors = result['embeddings'] || []
+          vectors.each_with_index.map do |vec, i|
+            build_batch_entry(vec, model, :ollama, i)
+          end
+        end
+
+        def ollama_embed_request(model:, input:)
+          base_url = Legion::Settings.dig(:llm, :providers, :ollama, :base_url) || 'http://localhost:11434'
+          conn = Faraday.new(url: base_url) do |f|
+            f.options.timeout = 30
+            f.options.open_timeout = 5
+            f.adapter Faraday.default_adapter
+          end
+          body = { model: model, input: input }
+          response = conn.post('/api/embed', body.to_json, 'Content-Type' => 'application/json')
+          raise "Ollama embed failed: #{response.status} #{response.body}" unless response.success?
+
+          ::JSON.parse(response.body)
         end
       end
     end

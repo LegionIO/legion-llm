@@ -19,6 +19,20 @@ module Legion
         apply_codex_config(config)
       end
 
+      def read_token
+        return nil unless File.exist?(CODEX_AUTH)
+
+        config = read_json(CODEX_AUTH)
+        return nil if config.empty?
+        return nil unless config[:auth_mode] == 'chatgpt'
+
+        token = config.dig(:tokens, :access_token)
+        return nil unless token.is_a?(String) && !token.empty?
+        return nil unless token_valid?(token)
+
+        token
+      end
+
       def read_json(path)
         ::JSON.parse(File.read(path), symbolize_names: true)
       rescue StandardError => e

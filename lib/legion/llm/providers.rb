@@ -134,6 +134,64 @@ module Legion
         end
         Legion::Logging.info "Configured Ollama provider (#{config[:base_url]})"
       end
+
+      SAAS_PROVIDERS = %i[bedrock anthropic openai gemini azure].freeze
+
+      def verify_providers
+        settings[:providers].each do |provider, config|
+          next unless config[:enabled]
+          next unless SAAS_PROVIDERS.include?(provider)
+
+          model = config[:default_model]
+          next unless model
+
+          verify_single_provider(provider, model, config)
+        end
+
+        recover_with_alternative_credentials
+
+        enabled = settings[:providers].select { |_, c| c.is_a?(Hash) && c[:enabled] }
+        if enabled.empty?
+          Legion::Logging.error 'No LLM providers available — all providers failed health checks or are disabled. ' \
+                                'LLM features (chat, inference, embeddings) will not work. ' \
+                                'Check API keys, network connectivity, and provider configuration.'
+        else
+          names = enabled.map { |name, c| "#{name}/#{c[:default_model] || 'auto'}" }
+          Legion::Logging.info "LLM providers available: #{names.join(', ')}"
+        end
+      end
+
+      def recover_with_alternative_credentials
+        recover_openai_with_codex
+      end
+
+      def recover_openai_with_codex
+        openai_config = settings.dig(:providers, :openai)
+        return unless openai_config.is_a?(Hash) && !openai_config[:enabled]
+
+        token = CodexConfigLoader.read_token
+        return unless token
+
+        Legion::Logging.info 'OpenAI disabled — trying Codex auth token as fallback'
+        openai_config[:api_key] = token
+        configure_openai(openai_config)
+        openai_config[:enabled] = true
+        verify_single_provider(:openai, openai_config[:default_model], openai_config)
+      rescue StandardError => e
+        Legion::Logging.debug "Codex credential recovery failed: #{e.message}" if defined?(Legion::Logging)
+      end
+
+      def verify_single_provider(provider, model, config)
+        start_time = Time.now
+        RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
+        elapsed = ((Time.now - start_time) * 1000).round
+        Legion::Logging.info "Health check #{provider}/#{model}: OK (#{elapsed}ms)"
+      rescue RubyLLM::ModelNotFoundError => e
+        Legion::Logging.warn "Health check #{provider}/#{model}: model not in RubyLLM registry (#{e.message}) — provider stays enabled"
+      rescue StandardError => e
+        Legion::Logging.warn "Health check failed for #{provider}/#{model}: #{e.class}: #{e.message} — disabling provider"
+        config[:enabled] = false
+      end
     end
   end
 end

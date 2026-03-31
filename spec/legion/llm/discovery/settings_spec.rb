@@ -30,8 +30,8 @@ RSpec.describe 'Embedding settings defaults' do
 
     it 'includes ollama preferred models' do
       preferred = Legion::Settings[:llm][:embedding][:ollama_preferred]
-      expect(preferred).to include('mxbai-embed-large')
-      expect(preferred.size).to eq(3)
+      expect(preferred).to include('nomic-embed-text', 'mxbai-embed-large')
+      expect(preferred.size).to eq(4)
     end
   end
 end
