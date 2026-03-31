@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.5.22] - 2026-03-31
+
+### Added
+- Auto-chunking for oversized Ollama embedding inputs via `lex-knowledge` Chunker with character-split fallback
+- `average_vectors` for document-level embedding from multiple chunks
+- Per-model Ollama context limits (`OLLAMA_CONTEXT_CHARS`): mxbai-embed-large 2048, nomic-embed-text 32768
+- `lex-knowledge` added as a dependency for semantic chunking
+
+### Fixed
+- `handle_embed_failure` no longer permanently mutates `@embedding_provider` — failover is per-request only
+- `ollama_preferred` order corrected: `mxbai-embed-large` (1024 dims) first, `nomic-embed-text` (768 dims) second
+
 ## [0.5.21] - 2026-03-31
 
 ### Added
