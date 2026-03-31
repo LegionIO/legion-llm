@@ -16,6 +16,14 @@ module Legion
 
       TARGET_DIMENSION = 1024
 
+      OLLAMA_CONTEXT_CHARS = {
+        'mxbai-embed-large'      => 2048,
+        'bge-large'              => 2048,
+        'snowflake-arctic-embed' => 2048,
+        'nomic-embed-text'       => 32_768
+      }.freeze
+      OLLAMA_DEFAULT_CONTEXT_CHARS = 2048
+
       class << self
         def generate(text:, model: nil, provider: nil, dimensions: nil)
           return { vector: nil, model: model, provider: provider, error: 'LLM not started' } unless LLM.started?
@@ -97,8 +105,6 @@ module Legion
           fallback = find_fallback_provider(failed_provider)
           if fallback
             Legion::Logging.info "Embedding failover: #{failed_provider} -> #{fallback[:provider]}" if defined?(Legion::Logging)
-            LLM.instance_variable_set(:@embedding_provider, fallback[:provider])
-            LLM.instance_variable_set(:@embedding_model, fallback[:model])
             generate(text: text, model: fallback[:model], provider: fallback[:provider])
           else
             { vector: nil, model: failed_model, provider: failed_provider, error: error.message }
@@ -177,6 +183,9 @@ module Legion
         end
 
         def generate_ollama(text:, model:)
+          max_chars = ollama_context_chars(model)
+          return generate_ollama_chunked(text: text, model: model, max_chars: max_chars) if text.length > max_chars
+
           result = ollama_embed_request(model: model, input: text)
           vector = result['embeddings']&.first
           vector = apply_dimension_enforcement(vector, :ollama) if vector
@@ -185,12 +194,61 @@ module Legion
           { vector: vector, model: model, provider: :ollama, dimensions: vector&.size || 0, tokens: 0 }
         end
 
-        def generate_ollama_batch(texts:, model:)
-          result = ollama_embed_request(model: model, input: texts)
-          vectors = result['embeddings'] || []
-          vectors.each_with_index.map do |vec, i|
-            build_batch_entry(vec, model, :ollama, i)
+        def generate_ollama_chunked(text:, model:, max_chars:)
+          chunks = chunk_text(text, max_chars: max_chars)
+          vectors = chunks.filter_map do |chunk|
+            result = ollama_embed_request(model: model, input: chunk[:content])
+            result['embeddings']&.first
           end
+
+          return { vector: nil, model: model, provider: :ollama, error: 'all chunks failed embedding' } if vectors.empty?
+
+          avg = average_vectors(vectors)
+          avg = apply_dimension_enforcement(avg, :ollama)
+          return dimension_error(model, :ollama, avg) if avg.is_a?(String)
+
+          { vector: avg, model: model, provider: :ollama, dimensions: avg.size, tokens: 0, chunks: vectors.size }
+        end
+
+        def generate_ollama_batch(texts:, model:)
+          max_chars = ollama_context_chars(model)
+          texts.each_with_index.map do |text, i|
+            if text.length > max_chars
+              result = generate_ollama_chunked(text: text, model: model, max_chars: max_chars)
+              build_batch_entry(result[:vector], model, :ollama, i)
+            else
+              result = ollama_embed_request(model: model, input: text)
+              vec = result['embeddings']&.first
+              build_batch_entry(vec, model, :ollama, i)
+            end
+          end
+        end
+
+        def chunk_text(text, max_chars:)
+          if defined?(Legion::Extensions::Knowledge::Helpers::Chunker)
+            chunker = Legion::Extensions::Knowledge::Helpers::Chunker
+            max_tokens = max_chars / chunker::CHARS_PER_TOKEN
+            sections = [{ content: text, heading: nil, section_path: nil, source_file: nil }]
+            chunker.chunk(sections: sections, max_tokens: max_tokens)
+          else
+            text.chars.each_slice(max_chars).map { |s| { content: s.join } }
+          end
+        rescue StandardError
+          text.chars.each_slice(max_chars).map { |s| { content: s.join } }
+        end
+
+        def average_vectors(vectors)
+          return vectors.first if vectors.size == 1
+
+          dim = vectors.first.size
+          sum = Array.new(dim, 0.0)
+          vectors.each { |v| v.each_with_index { |val, i| sum[i] += val } }
+          sum.map { |s| s / vectors.size }
+        end
+
+        def ollama_context_chars(model)
+          base = model.to_s.split(':').first
+          OLLAMA_CONTEXT_CHARS[base] || OLLAMA_DEFAULT_CONTEXT_CHARS
         end
 
         def ollama_embed_request(model:, input:)
