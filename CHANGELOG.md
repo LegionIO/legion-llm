@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.5.21] - 2026-03-31
+
+### Added
+- Provider health checks at boot: each SaaS provider is pinged with a test request; failures disable the provider with a log warning
+- `resolve_llm_secrets` — resolves `env://` and `vault://` URIs in LLM settings before provider configuration (fixes late-loaded settings not being resolved)
+- `CodexConfigLoader.read_token` — extracts valid Codex auth token for fallback credential recovery
+- Credential recovery: when OpenAI fails health check, automatically tries `~/.codex/auth.json` token as fallback
+- Provider summary log after health checks listing all available providers
+- All-providers-down error log when no providers survive health checks
+- Embedding health check for SaaS providers during boot (Ollama skipped — model-pulled check is sufficient)
+- Direct Ollama embedding via `POST /api/embed` — bypasses RubyLLM which doesn't support Ollama embeddings
+- Pipeline executor provider fallback: on auth/forbidden errors, automatically retries with next enabled provider
+- `RubyLLM::Error` subclasses now caught in pipeline executor (previously only Faraday errors were rescued)
+
+### Changed
+- Bedrock default model corrected from `us.anthropic.claude-sonnet-4-6-v1` to `us.anthropic.claude-sonnet-4-6`
+- Ollama default model changed from `llama3` to `qwen3.5:latest`
+- `nomic-embed-text` added as first preference in `ollama_preferred` embedding models
+- `Discovery::Ollama.model_available?` now uses prefix matching (`mxbai-embed-large` matches `mxbai-embed-large:latest`)
+- Removed redundant `ping_provider` — replaced by `verify_providers` which checks all enabled SaaS providers
+- `ModelNotFoundError` during health check no longer disables the provider (RubyLLM registry gap, not auth failure)
+
 ## [0.5.20] - 2026-03-30
 
 ### Added

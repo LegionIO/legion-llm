@@ -48,7 +48,9 @@ module Legion
         require 'legion/llm/codex_config_loader'
         CodexConfigLoader.load
 
+        resolve_llm_secrets
         configure_providers
+        verify_providers
         run_discovery
         detect_embedding_capability
         set_defaults
@@ -59,7 +61,6 @@ module Legion
         Legion::Settings[:llm][:connected] = true
         Legion::Logging.info 'Legion::LLM started'
         register_routes
-        ping_provider
       end
 
       def shutdown
@@ -219,6 +220,14 @@ module Legion
                           principal_type caller].freeze
 
       private
+
+      def resolve_llm_secrets
+        return unless defined?(Legion::Settings::Resolver)
+
+        Legion::Settings::Resolver.resolve_secrets!(settings)
+      rescue StandardError => e
+        Legion::Logging.warn "LLM settings resolution failed: #{e.message}" if defined?(Legion::Logging)
+      end
 
       def pipeline_enabled?
         settings[:pipeline_enabled] == true
@@ -603,9 +612,28 @@ module Legion
           next unless available
 
           resolved_model = available.is_a?(String) ? available : model&.to_s
+          next unless verify_embedding(provider, resolved_model)
+
           return { provider: provider, model: resolved_model }
         end
         nil
+      end
+
+      def verify_embedding(provider, model)
+        return true if provider == :ollama
+        return true unless model
+
+        start_time = Time.now
+        RubyLLM.embed('health check', model: model, provider: provider)
+        elapsed = ((Time.now - start_time) * 1000).round
+        Legion::Logging.info "Embedding health check #{provider}/#{model}: OK (#{elapsed}ms)"
+        true
+      rescue RubyLLM::ModelNotFoundError => e
+        Legion::Logging.warn "Embedding health check #{provider}/#{model}: model not in RubyLLM registry (#{e.message}) — skipping"
+        false
+      rescue StandardError => e
+        Legion::Logging.warn "Embedding health check failed for #{provider}/#{model}: #{e.class}: #{e.message} — skipping"
+        false
       end
 
       def probe_embedding_provider(provider, ollama_preferred)
@@ -649,19 +677,6 @@ module Legion
                              "#{Discovery::System.available_memory_mb} MB available"
       rescue StandardError => e
         Legion::Logging.warn "Discovery failed: #{e.message}"
-      end
-
-      def ping_provider
-        model = settings[:default_model]
-        provider = settings[:default_provider]
-        return unless model && provider
-
-        start_time = Time.now
-        RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
-        elapsed = ((Time.now - start_time) * 1000).round
-        Legion::Logging.info "LLM ping #{provider}/#{model}: pong (#{elapsed}ms)"
-      rescue StandardError => e
-        Legion::Logging.warn "LLM ping failed for #{provider}/#{model}: #{e.message}"
       end
 
       def register_routes

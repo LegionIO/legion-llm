@@ -141,6 +141,42 @@ module Legion
         end
 
         def step_provider_call
+          providers_tried = []
+          begin
+            execute_provider_request
+          rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError,
+                 Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+            providers_tried << @resolved_provider
+            fallback = find_fallback_provider(exclude: providers_tried)
+            if fallback
+              if defined?(Legion::Logging)
+                Legion::Logging.warn "[pipeline] #{@resolved_provider} auth failed (#{e.class}), falling back to #{fallback[:provider]}:#{fallback[:model]}"
+              end
+              @resolved_provider = fallback[:provider]
+              @resolved_model = fallback[:model]
+              @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
+              @timeline.record(
+                category: :provider, key: 'provider:fallback',
+                direction: :internal,
+                detail: "auth failed on #{providers_tried.last}, trying #{@resolved_provider}",
+                from: 'pipeline', to: "provider:#{@resolved_provider}"
+              )
+              retry
+            end
+            raise Legion::LLM::AuthError, e.message
+          rescue RubyLLM::RateLimitError => e
+            raise Legion::LLM::RateLimitError, e.message
+          rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
+                 Faraday::ServerError => e
+            raise Legion::LLM::ProviderError, e.message
+          rescue Faraday::TooManyRequestsError => e
+            raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
+          rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
+            raise Legion::LLM::ProviderDown, e.message
+          end
+        end
+
+        def execute_provider_request
           @timestamps[:provider_start] = Time.now
           @timeline.record(
             category: :provider, key: 'provider:request_sent',
@@ -177,14 +213,6 @@ module Legion
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
-        rescue Faraday::UnauthorizedError, Faraday::ForbiddenError => e
-          raise Legion::LLM::AuthError, e.message
-        rescue Faraday::TooManyRequestsError => e
-          raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
-        rescue Faraday::ServerError => e
-          raise Legion::LLM::ProviderError, e.message
-        rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
-          raise Legion::LLM::ProviderDown, e.message
         end
 
         def record_provider_response
@@ -220,6 +248,37 @@ module Legion
         end
 
         def step_provider_call_stream(&)
+          providers_tried = []
+          begin
+            execute_provider_request_stream(&)
+          rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError,
+                 Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+            providers_tried << @resolved_provider
+            fallback = find_fallback_provider(exclude: providers_tried)
+            if fallback
+              if defined?(Legion::Logging)
+                Legion::Logging.warn "[pipeline] #{@resolved_provider} stream auth failed (#{e.class}), " \
+                                     "falling back to #{fallback[:provider]}:#{fallback[:model]}"
+              end
+              @resolved_provider = fallback[:provider]
+              @resolved_model = fallback[:model]
+              @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
+              retry
+            end
+            raise Legion::LLM::AuthError, e.message
+          rescue RubyLLM::RateLimitError => e
+            raise Legion::LLM::RateLimitError, e.message
+          rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
+                 Faraday::ServerError => e
+            raise Legion::LLM::ProviderError, e.message
+          rescue Faraday::TooManyRequestsError => e
+            raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
+          rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
+            raise Legion::LLM::ProviderDown, e.message
+          end
+        end
+
+        def execute_provider_request_stream(&)
           @timestamps[:provider_start] = Time.now
           @timeline.record(
             category: :provider, key: 'provider:request_sent',
@@ -243,14 +302,19 @@ module Legion
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
-        rescue Faraday::UnauthorizedError, Faraday::ForbiddenError => e
-          raise Legion::LLM::AuthError, e.message
-        rescue Faraday::TooManyRequestsError => e
-          raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
-        rescue Faraday::ServerError => e
-          raise Legion::LLM::ProviderError, e.message
-        rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
-          raise Legion::LLM::ProviderDown, e.message
+        end
+
+        def find_fallback_provider(exclude: [])
+          providers = Legion::LLM.settings[:providers] || {}
+          providers.each do |name, config|
+            next unless config.is_a?(Hash) && config[:enabled]
+            next if exclude.include?(name) || exclude.include?(name.to_s)
+            next if name == :ollama
+            next unless config[:default_model]
+
+            return { provider: name, model: config[:default_model] }
+          end
+          nil
         end
 
         def step_response_normalization; end

@@ -18,11 +18,11 @@ module Legion
           end
 
           def model_available?(name)
-            model_names.include?(name)
+            model_names.any? { |n| n == name || n.start_with?("#{name}:") }
           end
 
           def model_size(name)
-            models.find { |m| m['name'] == name }&.dig('size')
+            models.find { |m| m['name'] == name || m['name'].start_with?("#{name}:") }&.dig('size')
           end
 
           def refresh!

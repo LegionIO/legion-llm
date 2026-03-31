@@ -66,6 +66,7 @@ RSpec.describe '.detect_embedding_capability' do
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
         .and_return(false)
       Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+      allow(Legion::LLM).to receive(:verify_embedding).and_return(true)
     end
 
     it 'falls back to bedrock' do
@@ -102,8 +103,8 @@ RSpec.describe 'Legion::LLM::Embeddings' do
     before do
       allow(RubyLLM).to receive(:embed).and_return(mock_response)
       Legion::LLM.instance_variable_set(:@started, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
     end
 
     it 'returns exactly 1024 dimensions' do
@@ -152,13 +153,13 @@ RSpec.describe 'Legion::LLM::Embeddings' do
   describe '.generate with cached provider' do
     before do
       Legion::LLM.instance_variable_set(:@started, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
     end
 
     it 'uses cached provider when no explicit provider given' do
       expect(RubyLLM).to receive(:embed).with('test', hash_including(
-                                                        model: 'mxbai-embed-large', provider: :ollama
+                                                        model: 'text-embedding-3-small', provider: :openai
                                                       )).and_return(double(vectors: [Array.new(1024, 0.1)], input_tokens: 5))
 
       Legion::LLM::Embeddings.generate(text: 'test')

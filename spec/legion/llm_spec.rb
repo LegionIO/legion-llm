@@ -31,7 +31,8 @@ RSpec.describe Legion::LLM do
   describe '.start and .shutdown' do
     before do
       Legion::Settings[:llm][:providers][:ollama][:enabled] = true
-      allow(described_class).to receive(:ping_provider)
+      allow(described_class).to receive(:verify_providers)
+      allow(described_class).to receive(:verify_embedding).and_return(false)
       stub_request(:get, 'http://localhost:11434/api/tags')
         .to_return(status: 200, body: { 'models' => [] }.to_json)
       allow(Legion::LLM::Discovery::System).to receive(:platform).and_return(:unknown)
@@ -92,7 +93,8 @@ RSpec.describe Legion::LLM do
 
   describe 'auto_configure_defaults' do
     before do
-      allow(described_class).to receive(:ping_provider)
+      allow(described_class).to receive(:verify_providers)
+      allow(described_class).to receive(:verify_embedding).and_return(false)
       allow(described_class).to receive(:ollama_running?).and_return(false)
       allow(Legion::LLM::ClaudeConfigLoader).to receive(:load)
       # Clear any env-var-seeded defaults so auto_configure_defaults actually runs
