@@ -660,6 +660,37 @@ RSpec.describe Legion::LLM::DaemonClient do
         described_class.inference(messages: [])
       end
 
+      it 'includes caller and conversation_id when provided' do
+        response = double('Response', code: '200',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+        caller_ctx = { requested_by: { identity: 'esity', type: :human } }
+
+        expect(described_class).to receive(:http_post) do |_path, body_hash, **_kwargs|
+          expect(body_hash[:caller]).to eq(caller_ctx)
+          expect(body_hash[:conversation_id]).to eq('conv-123')
+          response
+        end
+
+        described_class.inference(messages: [], caller: caller_ctx, conversation_id: 'conv-123')
+      end
+
+      it 'omits caller and conversation_id when nil' do
+        response = double('Response', code: '200',
+                                      body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
+                                                    model: 'x', input_tokens: 1, output_tokens: 1 } }))
+        allow(response).to receive(:[]).and_return(nil)
+
+        expect(described_class).to receive(:http_post) do |_path, body_hash, **_kwargs|
+          expect(body_hash).not_to have_key(:caller)
+          expect(body_hash).not_to have_key(:conversation_id)
+          response
+        end
+
+        described_class.inference(messages: [])
+      end
+
       it 'passes a custom timeout when provided' do
         response = double('Response', code: '200',
                                       body: ::JSON.dump({ data: { content: 'ok', tool_calls: [], stop_reason: 'end_turn',
