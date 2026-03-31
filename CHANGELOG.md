@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.5.23] - 2026-03-31
+
+### Added
+- `Hooks::Reciprocity` — after_chat hook that records a `:given` social exchange event via `Social::Social::Client#record_exchange` when a caller with identity receives an LLM response; silently no-ops when social extension or identity is absent
+- Partner context enrichment in `Pipeline::Steps::GaiaAdvisory` (step 7) — when the caller identity is registered as a partner in `Legion::Gaia::BondRegistry`, the advisory data is enriched with a `:partner_context` hash containing standing, compatibility, recent_sentiment, and interaction_pattern; sourced from Apollo Local `partner`-tagged entries with full graceful degradation when Apollo is unavailable
+
 ## [0.5.22] - 2026-03-31
 
 ### Added
