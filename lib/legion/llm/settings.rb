@@ -150,7 +150,7 @@ module Legion
             bedrock: 'amazon.titan-embed-text-v2:0',
             openai:  'text-embedding-3-small'
           },
-          ollama_preferred:  %w[nomic-embed-text mxbai-embed-large bge-large snowflake-arctic-embed]
+          ollama_preferred:  %w[mxbai-embed-large nomic-embed-text bge-large snowflake-arctic-embed]
         }
       end
 

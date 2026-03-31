@@ -31,6 +31,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'legion-logging', '>= 1.2.8'
   spec.add_dependency 'legion-settings', '>= 1.3.12'
   spec.add_dependency 'lex-bedrock'
+  spec.add_dependency 'lex-knowledge'
   spec.add_dependency 'lex-claude'
   spec.add_dependency 'lex-gemini'
   spec.add_dependency 'lex-openai'
