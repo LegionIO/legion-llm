@@ -21,6 +21,9 @@ module Legion
 
             enrich_advisory_with_partner_context(advisory)
 
+            calibration_weights = fetch_calibration_weights
+            advisory[:calibration_weights] = calibration_weights if calibration_weights
+
             @enrichments['gaia:advisory'] = {
               content:   advisory_summary(advisory),
               data:      advisory,
@@ -46,6 +49,8 @@ module Legion
               direction: :inbound, detail: advisory_summary(advisory),
               from: 'gaia', to: 'pipeline'
             )
+
+            record_advisory_meta_to_gaia(advisory)
           rescue StandardError => e
             @warnings << "GAIA advisory error: #{e.message}"
           end
@@ -159,6 +164,49 @@ module Legion
             else
               :infrequent
             end
+          end
+
+          def fetch_calibration_weights
+            return nil unless apollo_local_available?
+
+            result = ::Legion::Apollo::Local.query(
+              text: 'bond calibration weights',
+              tags: %w[bond calibration weights]
+            )
+            return nil unless result[:success] && result[:results]&.any?
+
+            raw = ::JSON.parse(result[:results].first[:content])
+            raw['weights']
+          rescue StandardError
+            nil
+          end
+
+          def record_advisory_meta_to_gaia(advisory)
+            return unless defined?(::Legion::Gaia) && ::Legion::Gaia.respond_to?(:record_advisory_meta)
+            return unless advisory[:partner_context]
+
+            advisory_id = SecureRandom.uuid
+            advisory_types = classify_advisory_types(advisory)
+
+            ::Legion::Gaia.record_advisory_meta(
+              advisory_id:    advisory_id,
+              advisory_types: advisory_types
+            )
+          rescue StandardError
+            nil
+          end
+
+          def classify_advisory_types(advisory)
+            types = []
+            pc = advisory[:partner_context]
+            return ['partner_hint'] unless pc
+
+            types << 'partner_hint' if pc
+            types << 'context_injection' if advisory[:context_window]
+            types << 'tone_adjustment' if pc[:recent_sentiment] && pc[:recent_sentiment] != :neutral
+            types << 'verbosity_adjustment' if pc[:interaction_pattern] && pc[:interaction_pattern] != :unknown
+            types << 'format_adjustment' if pc[:compatibility]
+            types.empty? ? ['partner_hint'] : types
           end
         end
       end
