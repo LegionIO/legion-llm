@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'concurrent'
+
 module Legion
   module LLM
     module Pipeline
@@ -39,6 +41,10 @@ module Legion
         POST_PROVIDER_STEPS = %i[
           response_normalization debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
+
+        ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
+
+        ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
         def initialize(request)
           @request      = request
@@ -515,12 +521,52 @@ module Legion
         end
 
         def execute_post_provider_steps
+          if async_post_enabled?
+            execute_post_provider_steps_mixed
+          else
+            POST_PROVIDER_STEPS.each do |step|
+              next if Profile.skip?(@profile, step)
+
+              execute_step(step) { send(:"step_#{step}") }
+            end
+          end
+        end
+
+        def execute_post_provider_steps_mixed
           POST_PROVIDER_STEPS.each do |step|
             next if Profile.skip?(@profile, step)
+            next if ASYNC_SAFE_STEPS.include?(step)
 
             execute_step(step) { send(:"step_#{step}") }
           end
+
+          async_steps = POST_PROVIDER_STEPS.select { |s| ASYNC_SAFE_STEPS.include?(s) }
+          return if async_steps.empty?
+
+          # Snapshot timeline and warnings before firing the async thread so that
+          # build_response (called on the main thread immediately after) reads a
+          # consistent, immutable view rather than racing with async writes.
+          @_response_timeline_snapshot  = @timeline.events.dup.freeze
+          @_response_warnings_snapshot  = @warnings.dup.freeze
+          @_response_participants_snapshot = @timeline.participants.dup.freeze
+
+          profile = @profile
+          ASYNC_THREAD_POOL.post do
+            async_steps.each do |step|
+              next if Profile.skip?(profile, step)
+
+              send(:"step_#{step}")
+            end
+          rescue StandardError => e
+            Legion::Logging.warn("[pipeline] async post-step error: #{e.message}") if defined?(Legion::Logging)
+          end
         end
+        private :execute_post_provider_steps_mixed
+
+        def async_post_enabled?
+          Legion::LLM.settings[:pipeline_async_post_steps] == true
+        end
+        private :async_post_enabled?
 
         def step_provider_call_stream(&)
           providers_tried = []
@@ -713,6 +759,12 @@ module Legion
 
           @timestamps[:returned] = Time.now
 
+          # Use pre-built snapshots when async post-steps are running concurrently
+          # to avoid reading partially-mutated timeline/warnings state.
+          timeline_events   = @_response_timeline_snapshot || @timeline.events
+          timeline_parts    = @_response_participants_snapshot || @timeline.participants
+          warnings_snapshot = @_response_warnings_snapshot || @warnings
+
           Response.build(
             request_id:      @request.id,
             conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
@@ -723,9 +775,9 @@ module Legion
             timestamps:      @timestamps,
             enrichments:     @enrichments,
             audit:           @audit,
-            timeline:        @timeline.events,
-            participants:    @timeline.participants,
-            warnings:        @warnings,
+            timeline:        timeline_events,
+            participants:    timeline_parts,
+            warnings:        warnings_snapshot,
             tracing:         @tracing,
             caller:          @request.caller,
             classification:  @request.classification,

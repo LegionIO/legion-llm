@@ -8,6 +8,7 @@ RSpec.describe Legion::LLM::Embeddings do
     Legion::LLM.instance_variable_set(:@started, true)
     Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
     Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+    Legion::Settings[:llm][:providers][:openai][:enabled] = true
     Legion::Settings[:llm][:embedding] ||= {}
     Legion::Settings[:llm][:embedding].delete(:prefix_injection)
   end

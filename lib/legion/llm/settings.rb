@@ -6,29 +6,30 @@ module Legion
       def self.default
         model_override = ENV.fetch('ANTHROPIC_MODEL', nil)
         {
-          enabled:          true,
-          connected:        false,
-          pipeline_enabled: true,
-          default_model:    model_override,
-          default_provider: nil,
-          providers:        providers,
-          routing:          routing_defaults,
-          budget:           budget_defaults,
-          confidence:       confidence_defaults,
-          discovery:        discovery_defaults,
-          gateway:          gateway_defaults,
-          daemon:           daemon_defaults,
-          prompt_caching:   prompt_caching_defaults,
-          arbitrage:        arbitrage_defaults,
-          batch:            batch_defaults,
-          scheduling:       scheduling_defaults,
-          rag:              rag_defaults,
-          embedding:        embedding_defaults,
-          conversation:     conversation_defaults,
-          telemetry:        telemetry_defaults,
-          context_curation: context_curation_defaults,
-          debate:           debate_defaults,
-          provider_layer:   provider_layer_defaults
+          enabled:                   true,
+          connected:                 false,
+          pipeline_enabled:          true,
+          pipeline_async_post_steps: true,
+          default_model:             model_override,
+          default_provider:          nil,
+          providers:                 providers,
+          routing:                   routing_defaults,
+          budget:                    budget_defaults,
+          confidence:                confidence_defaults,
+          discovery:                 discovery_defaults,
+          gateway:                   gateway_defaults,
+          daemon:                    daemon_defaults,
+          prompt_caching:            prompt_caching_defaults,
+          arbitrage:                 arbitrage_defaults,
+          batch:                     batch_defaults,
+          scheduling:                scheduling_defaults,
+          rag:                       rag_defaults,
+          embedding:                 embedding_defaults,
+          conversation:              conversation_defaults,
+          telemetry:                 telemetry_defaults,
+          context_curation:          context_curation_defaults,
+          debate:                    debate_defaults,
+          provider_layer:            provider_layer_defaults
         }
       end
 
@@ -165,7 +166,7 @@ module Legion
         {
           dimension:         1024,
           enforce_dimension: true,
-          provider_fallback: %w[azure ollama bedrock openai],
+          provider_fallback: %w[ollama bedrock openai],
           provider_models:   {
             ollama:  'mxbai-embed-large',
             azure:   'text-embedding-3-small',

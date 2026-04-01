@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-04-01
+
+### Added
+- `ASYNC_SAFE_STEPS` constant and async dispatch for fire-and-forget post-provider pipeline steps (`post_response`, `knowledge_capture`, `response_return`) via a shared `Concurrent::FixedThreadPool` — frees Puma threads immediately after response normalization; `context_store` continues to run synchronously
+- `pipeline_async_post_steps` setting (default `true`) controls sync vs async post-step dispatch
+- Cached embed provider fallback chain at startup (`build_embedding_fallback_chain`, `provider_enabled?`) — stops re-probing on every embed failure
+- Hard gate on disabled providers in `Embeddings.generate` and `generate_batch` — providers with `enabled: false` are never tried
+
+### Changed
+- `embedding_defaults[:provider_fallback]` no longer includes `azure` (leaked via `deep_merge` array concat)
+- `find_fallback_provider` walks the cached startup chain instead of re-probing live
+
 ## [0.6.7] - 2026-04-01
 
 ### Added
