@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-04-01
+
+### Fixed
+- Skip RubyLLM-based embedding health check for Azure provider since it uses direct HTTP with SNI host injection
+
 ## [0.6.4] - 2026-04-01
 
 ### Added

@@ -661,6 +661,7 @@ module Legion
 
       def verify_embedding(provider, model)
         return true if provider == :ollama
+        return true if provider == :azure
         return true unless model
 
         start_time = Time.now
