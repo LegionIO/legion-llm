@@ -8,6 +8,8 @@ require 'legion/llm/settings'
 require 'legion/llm/providers'
 require 'legion/llm/router'
 require 'legion/llm/compressor'
+require 'legion/llm/context_curator'
+require 'legion/llm/usage'
 require 'legion/llm/quality_checker'
 require 'legion/llm/confidence_score'
 require 'legion/llm/confidence_scorer'
@@ -18,6 +20,8 @@ require 'legion/llm/cache'
 require 'legion/llm/pipeline'
 require 'legion/llm/cost_estimator'
 require 'legion/llm/fleet'
+require_relative 'llm/provider_registry'
+require_relative 'llm/native_dispatch'
 require_relative 'llm/response_cache'
 require_relative 'llm/daemon_client'
 require_relative 'llm/arbitrage'
@@ -25,6 +29,7 @@ require_relative 'llm/batch'
 require_relative 'llm/scheduling'
 require_relative 'llm/off_peak'
 require_relative 'llm/cost_tracker'
+require_relative 'llm/token_tracker'
 require_relative 'llm/tool_registry'
 require_relative 'llm/override_confidence'
 require_relative 'llm/routes'
@@ -54,6 +59,7 @@ module Legion
         run_discovery
         detect_embedding_capability
         set_defaults
+        auto_register_providers
 
         install_hooks
 
@@ -69,6 +75,7 @@ module Legion
         @can_embed = nil
         @embedding_provider = nil
         @embedding_model = nil
+        ProviderRegistry.reset!
         Legion::Logging.info 'Legion::LLM shut down'
       end
 
@@ -83,7 +90,7 @@ module Legion
       attr_reader :embedding_provider, :embedding_model
 
       def settings
-        if Legion.const_defined?('Settings')
+        if Legion.const_defined?('Settings', false)
           Legion::Settings[:llm]
         else
           Legion::LLM::Settings.default
@@ -220,6 +227,39 @@ module Legion
                           principal_type caller].freeze
 
       private
+
+      def auto_register_providers
+        try_register_native_provider(:claude, 'Legion::Extensions::Claude', 'Legion::Extensions::Claude::Runners::Messages') do |klass|
+          ProviderRegistry.register(:claude,    klass)
+          ProviderRegistry.register(:anthropic, klass)
+        end
+        try_register_native_provider(:bedrock, 'Legion::Extensions::Bedrock', 'Legion::Extensions::Bedrock::Runners::Converse') do |klass|
+          ProviderRegistry.register(:bedrock, klass)
+        end
+        try_register_native_provider(:openai, 'Legion::Extensions::Openai', 'Legion::Extensions::Openai::Runners::Chat') do |klass|
+          ProviderRegistry.register(:openai, klass)
+        end
+        try_register_native_provider(:gemini, 'Legion::Extensions::Gemini', 'Legion::Extensions::Gemini::Runners::Generate') do |klass|
+          ProviderRegistry.register(:gemini, klass)
+        end
+
+        registered = ProviderRegistry.available
+        if registered.any?
+          Legion::Logging.info "Native provider registry: #{registered.join(', ')}"
+        else
+          Legion::Logging.debug 'No native lex-* providers registered (ruby_llm mode)'
+        end
+      rescue StandardError => e
+        Legion::Logging.warn "auto_register_providers failed: #{e.message}" if defined?(Legion::Logging)
+      end
+
+      def try_register_native_provider(name, ext_const, runner_const)
+        return unless Object.const_defined?(ext_const, false) && Object.const_defined?(runner_const, false)
+
+        klass = Object.const_get(runner_const)
+        yield klass
+        Legion::Logging.debug "Registered native provider: #{name}" if defined?(Legion::Logging)
+      end
 
       def resolve_llm_secrets
         return unless defined?(Legion::Settings::Resolver)
@@ -477,7 +517,7 @@ module Legion
           response: response_text, context: context
         )
 
-        Legion::Logging.warn "Response guard failed: #{guard_result.inspect}" if !guard_result[:passed] && Legion.const_defined?('Logging')
+        Legion::Logging.warn "Response guard failed: #{guard_result.inspect}" if !guard_result[:passed] && Legion.const_defined?('Logging', false)
 
         result.merge(_guard_result: guard_result)
       rescue StandardError => e
@@ -533,7 +573,7 @@ module Legion
       end
 
       def enterprise_privacy?
-        if Legion.const_defined?('Settings') && Legion::Settings.respond_to?(:enterprise_privacy?)
+        if Legion.const_defined?('Settings', false) && Legion::Settings.respond_to?(:enterprise_privacy?)
           Legion::Settings.enterprise_privacy?
         else
           ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'

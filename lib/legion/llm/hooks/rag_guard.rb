@@ -36,16 +36,16 @@ module Legion
           end
 
           def logging_available?
-            Legion.const_defined?('Logging')
+            Legion.const_defined?('Logging', false)
           end
 
           def settings_threshold
-            val = Legion::Settings.dig(:llm, :rag_guard, :threshold) if Legion.const_defined?('Settings')
+            val = Legion::Settings.dig(:llm, :rag_guard, :threshold) if Legion.const_defined?('Settings', false)
             val || 0.7
           end
 
           def settings_evaluators
-            val = Legion::Settings.dig(:llm, :rag_guard, :evaluators) if Legion.const_defined?('Settings')
+            val = Legion::Settings.dig(:llm, :rag_guard, :evaluators) if Legion.const_defined?('Settings', false)
             val || %i[faithfulness rag_relevancy]
           end
 

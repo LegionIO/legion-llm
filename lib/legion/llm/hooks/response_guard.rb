@@ -24,7 +24,7 @@ module Legion
 
             { passed: passed, guards: guard_results }
           rescue StandardError => e
-            Legion::Logging.warn "ResponseGuard error: #{e.message}" if Legion.const_defined?('Logging')
+            Legion::Logging.warn "ResponseGuard error: #{e.message}" if Legion.const_defined?('Logging', false)
             { passed: true, guards: {} }
           end
 

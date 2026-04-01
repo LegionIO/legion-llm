@@ -15,6 +15,12 @@ module Legion
           post_response
         ].freeze
 
+        QUICK_REPLY_SKIP = %i[
+          idempotency conversation_uuid context_load classification
+          gaia_advisory rag_context mcp_discovery confidence_scoring
+          tool_calls context_store post_response knowledge_capture
+        ].freeze
+
         module_function
 
         def derive(caller_hash)
@@ -24,6 +30,7 @@ module Legion
           type = requested_by[:type]&.to_sym
           identity = requested_by[:identity].to_s
 
+          return :quick_reply if type == :quick_reply
           return :external unless type == :system
 
           identity.start_with?('gaia:') ? :gaia : :system
@@ -31,8 +38,9 @@ module Legion
 
         def skip?(profile, step)
           case profile
-          when :gaia   then GAIA_SKIP.include?(step)
-          when :system then SYSTEM_SKIP.include?(step)
+          when :gaia        then GAIA_SKIP.include?(step)
+          when :system      then SYSTEM_SKIP.include?(step)
+          when :quick_reply then QUICK_REPLY_SKIP.include?(step)
           else false
           end
         end

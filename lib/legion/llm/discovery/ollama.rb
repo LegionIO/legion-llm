@@ -70,7 +70,7 @@ module Legion
           end
 
           def ollama_base_url
-            return 'http://localhost:11434' unless Legion.const_defined?('Settings')
+            return 'http://localhost:11434' unless Legion.const_defined?('Settings', false)
 
             Legion::Settings[:llm].dig(:providers, :ollama, :base_url) || 'http://localhost:11434'
           rescue StandardError => e
@@ -79,7 +79,7 @@ module Legion
           end
 
           def discovery_settings
-            return {} unless Legion.const_defined?('Settings')
+            return {} unless Legion.const_defined?('Settings', false)
 
             Legion::Settings[:llm][:discovery] || {}
           rescue StandardError => e

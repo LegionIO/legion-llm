@@ -39,5 +39,7 @@ module Legion
         super(msg)
       end
     end
+
+    class TokenBudgetExceeded < LLMError; end
   end
 end

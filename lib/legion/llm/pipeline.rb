@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative '../llm/usage'
 require_relative 'pipeline/request'
 require_relative 'pipeline/response'
 require_relative 'pipeline/profile'

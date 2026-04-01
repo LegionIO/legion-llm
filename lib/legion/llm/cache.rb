@@ -63,7 +63,7 @@ module Legion
       end
 
       private_class_method def self.llm_settings
-        if Legion.const_defined?('Settings')
+        if Legion.const_defined?('Settings', false)
           Legion::Settings[:llm]
         else
           Legion::LLM::Settings.default
