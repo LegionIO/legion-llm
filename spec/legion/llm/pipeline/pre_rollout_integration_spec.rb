@@ -72,7 +72,7 @@ RSpec.describe 'Pipeline pre-rollout integration' do
       expect(result.message).to be_a(Hash)
       expect(result.message[:content]).to eq('pipeline response')
       expect(result.routing).to include(provider: :test)
-      expect(result.tokens).to be_a(Hash)
+      expect(result.tokens).to be_a(Hash).or be_a(Legion::LLM::Usage)
       expect(result.timestamps).to be_a(Hash)
       expect(result.timeline).to be_an(Array)
       expect(result.warnings).to be_an(Array)

@@ -13,6 +13,7 @@ module Legion
           default_provider: nil,
           providers:        providers,
           routing:          routing_defaults,
+          budget:           budget_defaults,
           confidence:       confidence_defaults,
           discovery:        discovery_defaults,
           gateway:          gateway_defaults,
@@ -22,7 +23,8 @@ module Legion
           batch:            batch_defaults,
           scheduling:       scheduling_defaults,
           rag:              rag_defaults,
-          embedding:        embedding_defaults
+          embedding:        embedding_defaults,
+          conversation:     conversation_defaults
         }
       end
 
@@ -46,9 +48,14 @@ module Legion
 
       def self.prompt_caching_defaults
         {
-          enabled:        true,
-          min_tokens:     1024,
-          response_cache: {
+          enabled:             false,
+          min_tokens:          1024,
+          scope:               'ephemeral',
+          cache_system_prompt: true,
+          cache_tools:         true,
+          cache_conversation:  true,
+          sort_tools:          true,
+          response_cache:      {
             enabled:     true,
             ttl_seconds: 300
           }
@@ -80,10 +87,20 @@ module Legion
           },
           escalation:     {
             enabled:           false,
+            pipeline_enabled:  true,
             max_attempts:      3,
             quality_threshold: 50
           },
-          rules:          []
+          rules:          [],
+          tier_mappings:  []
+        }
+      end
+
+      def self.budget_defaults
+        {
+          session_max_tokens:  nil,
+          session_warn_tokens: nil,
+          daily_max_tokens:    nil
         }
       end
 
@@ -151,6 +168,15 @@ module Legion
             openai:  'text-embedding-3-small'
           },
           ollama_preferred:  %w[mxbai-embed-large nomic-embed-text bge-large snowflake-arctic-embed]
+        }
+      end
+
+      def self.conversation_defaults
+        {
+          summarize_threshold: 50_000,
+          target_tokens:       20_000,
+          preserve_recent:     10,
+          auto_compact:        true
         }
       end
 

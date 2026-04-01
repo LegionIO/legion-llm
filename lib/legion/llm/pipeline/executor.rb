@@ -12,24 +12,27 @@ module Legion
         include Steps::RagContext
 
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
-                    :audit, :warnings, :discovered_tools, :confidence_score
+                    :audit, :warnings, :discovered_tools, :confidence_score,
+                    :escalation_chain
 
         include Steps::McpDiscovery
         include Steps::ToolCalls
         include Steps::KnowledgeCapture
         include Steps::ConfidenceScoring
+        include Steps::TokenBudget
+        include Steps::PromptCache
 
         STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory rag_context mcp_discovery
-          routing request_normalization provider_call response_normalization
+          rbac classification billing gaia_advisory tier_assignment rag_context mcp_discovery
+          routing request_normalization token_budget provider_call response_normalization
           confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         PRE_PROVIDER_STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory rag_context mcp_discovery
-          routing request_normalization
+          rbac classification billing gaia_advisory tier_assignment rag_context mcp_discovery
+          routing request_normalization token_budget
         ].freeze
 
         POST_PROVIDER_STEPS = %i[
@@ -45,12 +48,15 @@ module Legion
           @audit        = {}
           @warnings     = []
           @timestamps   = { received: Time.now }
-          @raw_response = nil
-          @exchange_id  = nil
-          @discovered_tools  = []
+          @raw_response     = nil
+          @exchange_id      = nil
+          @discovered_tools = []
           @resolved_provider = nil
           @resolved_model    = nil
           @confidence_score  = nil
+          @escalation_chain  = nil
+          @escalation_history = []
+          @proactive_tier_assignment = nil
         end
 
         def call
@@ -97,12 +103,74 @@ module Legion
           history = ConversationStore.messages(conv_id)
           return if history.empty?
 
+          history = maybe_compact_history(conv_id, history)
+
           @enrichments[:conversation_history] = history
           @timeline.record(
             category: :internal, key: 'context:loaded',
             direction: :internal, detail: "loaded #{history.size} prior messages",
             from: 'conversation_store', to: 'pipeline'
           )
+        end
+
+        def maybe_compact_history(conv_id, history)
+          conv_settings = Legion::LLM.settings[:conversation] || {}
+          return history unless conv_settings[:auto_compact]
+
+          threshold       = conv_settings[:summarize_threshold] || 50_000
+          target_tokens   = conv_settings[:target_tokens]       || 20_000
+          preserve_recent = conv_settings[:preserve_recent]     || 10
+
+          estimated = Compressor.estimate_tokens(history)
+          return history unless estimated >= threshold
+
+          compact = Compressor.auto_compact(
+            history,
+            target_tokens:   target_tokens,
+            preserve_recent: preserve_recent
+          )
+
+          ConversationStore.replace(conv_id, compact)
+
+          @timeline.record(
+            category: :internal, key: 'context:compacted',
+            direction: :internal,
+            detail:    "compacted #{history.size} messages (#{estimated} est. tokens) -> #{compact.size}",
+            from:      'compressor', to: 'pipeline'
+          )
+
+          compact
+        end
+
+        def step_tier_assignment
+          gaia_hint      = @enrichments['gaia:routing_hint']
+          classification = @enrichments['classification:scan']
+          assignment = Steps::TierAssigner.assign(
+            caller:          @request.caller,
+            classification:  classification,
+            priority:        @request.priority,
+            gaia_hint:       gaia_hint,
+            existing_tier:   @request.extra[:tier],
+            existing_intent: @request.extra[:intent]
+          )
+          return unless assignment
+
+          @proactive_tier_assignment = assignment
+          @audit[:'routing:tier_assignment'] = {
+            outcome:     :success,
+            detail:      "proactive tier=#{assignment[:tier]} source=#{assignment[:source]}",
+            data:        assignment,
+            duration_ms: 0,
+            timestamp:   Time.now
+          }
+          @timeline.record(
+            category:  :audit, key: 'routing:tier_assignment',
+            direction: :internal,
+            detail:    "tier=#{assignment[:tier]} assigned by #{assignment[:source]}",
+            from:      'tier_assigner', to: 'pipeline'
+          )
+        rescue StandardError => e
+          @warnings << "tier assignment error: #{e.message}"
         end
 
         def step_routing
@@ -112,8 +180,25 @@ module Legion
           intent   = @request.extra[:intent]
           tier     = @request.extra[:tier]
 
+          # Consume proactive tier assignment when no explicit tier/intent provided by caller
+          if @proactive_tier_assignment && !tier && !intent
+            tier   = @proactive_tier_assignment[:tier]
+            intent = @proactive_tier_assignment[:intent]
+          end
+
           if (intent || tier) && defined?(Router) && Router.routing_enabled?
-            resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
+            resolution = if pipeline_escalation_enabled?
+                           @escalation_chain = Router.resolve_chain(
+                             intent:          intent,
+                             tier:            tier,
+                             model:           model,
+                             provider:        provider,
+                             max_escalations: pipeline_escalation_max_attempts
+                           )
+                           @escalation_chain.primary
+                         else
+                           Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
+                         end
             if resolution
               provider = resolution.provider
               model    = resolution.model
@@ -141,6 +226,14 @@ module Legion
         end
 
         def step_provider_call
+          if pipeline_escalation_enabled?
+            run_provider_call_with_escalation
+          else
+            run_provider_call_single
+          end
+        end
+
+        def run_provider_call_single
           providers_tried = []
           begin
             execute_provider_request
@@ -176,6 +269,89 @@ module Legion
           end
         end
 
+        def run_provider_call_with_escalation
+          chain = @escalation_chain || build_default_escalation_chain
+          threshold = pipeline_escalation_quality_threshold
+          quality_check = @request.extra[:quality_check]
+          succeeded = false
+
+          chain.each do |resolution|
+            start_time = Time.now
+            begin
+              @resolved_provider = resolution.provider
+              @resolved_model    = resolution.model
+              execute_provider_request
+
+              duration_ms = ((Time.now - start_time) * 1000).round
+              result = QualityChecker.check(@raw_response, quality_threshold: threshold,
+                                                           quality_check:     quality_check)
+
+              @timeline.record(
+                category: :provider, key: 'escalation:attempt',
+                direction: :internal,
+                detail: "attempt #{@escalation_history.size + 1}: #{resolution.provider}:#{resolution.model} => #{result.passed ? :success : :quality_failure}",
+                from: 'pipeline', to: "provider:#{resolution.provider}"
+              )
+
+              if result.passed
+                @escalation_history << { model: resolution.model, provider: resolution.provider,
+                                         tier: resolution.tier, outcome: :success,
+                                         failures: [], duration_ms: duration_ms }
+                succeeded = true
+                break
+              else
+                @escalation_history << { model: resolution.model, provider: resolution.provider,
+                                         tier: resolution.tier, outcome: :quality_failure,
+                                         failures: result.failures, duration_ms: duration_ms }
+              end
+            rescue Legion::LLM::AuthError, Legion::LLM::RateLimitError, Legion::LLM::PrivacyModeError
+              raise
+            rescue StandardError => e
+              duration_ms = ((Time.now - start_time) * 1000).round
+              Legion::Logging.warn("[pipeline] escalation attempt failed #{resolution.provider}:#{resolution.model}: #{e.message}") if defined?(Legion::Logging)
+              @escalation_history << { model: resolution.model, provider: resolution.provider,
+                                       tier: resolution.tier, outcome: :error,
+                                       failures: [e.class.name], duration_ms: duration_ms }
+              @timeline.record(
+                category: :provider, key: 'escalation:attempt',
+                direction: :internal,
+                detail: "attempt #{@escalation_history.size}: #{resolution.provider}:#{resolution.model} => error: #{e.message}",
+                from: 'pipeline', to: "provider:#{resolution.provider}"
+              )
+            end
+          end
+
+          raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed" unless succeeded
+        end
+
+        def build_default_escalation_chain
+          Router.resolve_chain(max_escalations: pipeline_escalation_max_attempts)
+        end
+
+        def pipeline_escalation_enabled?
+          routing = Legion::LLM.settings[:routing]
+          return false unless routing.is_a?(Hash)
+
+          esc = routing[:escalation] || {}
+          esc[:enabled] == true && esc[:pipeline_enabled] == true
+        end
+
+        def pipeline_escalation_max_attempts
+          routing = Legion::LLM.settings[:routing]
+          return 3 unless routing.is_a?(Hash)
+
+          esc = routing[:escalation] || {}
+          esc.fetch(:max_attempts, 3)
+        end
+
+        def pipeline_escalation_quality_threshold
+          routing = Legion::LLM.settings[:routing]
+          return 50 unless routing.is_a?(Hash)
+
+          esc = routing[:escalation] || {}
+          esc.fetch(:quality_threshold, 50)
+        end
+
         def execute_provider_request
           @timestamps[:provider_start] = Time.now
           @timeline.record(
@@ -202,9 +378,13 @@ module Legion
             system:      @request.system,
             enrichments: @enrichments
           )
-          session.with_instructions(injected_system) if injected_system
 
-          messages = @request.messages
+          if injected_system
+            system_blocks = apply_cache_control([{ type: :text, content: injected_system }])
+            session.with_instructions(system_blocks.last[:content])
+          end
+
+          messages = apply_conversation_breakpoint(@request.messages)
           prior    = messages.size > 1 ? messages[0..-2] : []
           prior.each { |m| session.add_message(m) }
 

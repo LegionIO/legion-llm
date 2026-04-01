@@ -26,7 +26,16 @@ module Legion
 
             input  = @raw_response.input_tokens.to_i
             output = @raw_response.output_tokens.to_i
-            { input: input, output: output, total: input + output }
+
+            cache_read  = @raw_response.respond_to?(:cache_read_tokens) ? @raw_response.cache_read_tokens.to_i : 0
+            cache_write = @raw_response.respond_to?(:cache_write_tokens) ? @raw_response.cache_write_tokens.to_i : 0
+
+            Usage.new(
+              input_tokens:       input,
+              output_tokens:      output,
+              cache_read_tokens:  cache_read,
+              cache_write_tokens: cache_write
+            )
           end
 
           def current_response
