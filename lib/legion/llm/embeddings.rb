@@ -17,12 +17,12 @@ module Legion
       TARGET_DIMENSION = 1024
 
       OLLAMA_CONTEXT_CHARS = {
-        'mxbai-embed-large'      => 2048,
-        'bge-large'              => 2048,
-        'snowflake-arctic-embed' => 2048,
-        'nomic-embed-text'       => 32_768
+        'mxbai-embed-large'      => 1400,
+        'bge-large'              => 1400,
+        'snowflake-arctic-embed' => 1400,
+        'nomic-embed-text'       => 24_000
       }.freeze
-      OLLAMA_DEFAULT_CONTEXT_CHARS = 2048
+      OLLAMA_DEFAULT_CONTEXT_CHARS = 1400
 
       PREFIX_REGISTRY = {
         'nomic-embed-text'  => { document: 'search_document: ', query: 'search_query: ' },
@@ -219,6 +219,12 @@ module Legion
           return dimension_error(model, :ollama, vector) if vector.is_a?(String)
 
           { vector: vector, model: model, provider: :ollama, dimensions: vector&.size || 0, tokens: 0 }
+        rescue RuntimeError => e
+          raise unless e.message.include?('input length exceeds')
+
+          reduced = (max_chars * 0.6).to_i
+          Legion::Logging.info("Ollama context exceeded, retrying with chunking at #{reduced} chars") if defined?(Legion::Logging)
+          generate_ollama_chunked(text: text, model: model, max_chars: reduced)
         end
 
         def generate_ollama_chunked(text:, model:, max_chars:)

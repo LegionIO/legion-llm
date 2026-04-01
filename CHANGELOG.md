@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-03-31
+
+### Fixed
+- Reduce `OLLAMA_CONTEXT_CHARS` from 2048 to 1400 for 512-token models (mxbai-embed-large, bge-large, snowflake-arctic-embed) to account for real tokenization ratios (~3 chars/token)
+- `generate_ollama` now catches context-length rejections and retries with chunking at 60% char limit instead of failing over to a potentially broken provider
+
 ## [0.6.1] - 2026-03-31
 
 ### Added
