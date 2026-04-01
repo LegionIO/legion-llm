@@ -24,7 +24,8 @@ module Legion
           scheduling:       scheduling_defaults,
           rag:              rag_defaults,
           embedding:        embedding_defaults,
-          conversation:     conversation_defaults
+          conversation:     conversation_defaults,
+          telemetry:        telemetry_defaults
         }
       end
 
@@ -168,6 +169,12 @@ module Legion
             openai:  'text-embedding-3-small'
           },
           ollama_preferred:  %w[mxbai-embed-large nomic-embed-text bge-large snowflake-arctic-embed]
+        }
+      end
+
+      def self.telemetry_defaults
+        {
+          pipeline_spans: true
         }
       end
 

@@ -76,11 +76,18 @@ module Legion
         private
 
         def execute_steps
+          executed = 0
+          skipped  = 0
           STEPS.each do |step|
-            next if Profile.skip?(@profile, step)
+            if Profile.skip?(@profile, step)
+              skipped += 1
+              next
+            end
 
-            send(:"step_#{step}")
+            execute_step(step) { send(:"step_#{step}") }
+            executed += 1
           end
+          annotate_top_level_span(steps_executed: executed, steps_skipped: skipped)
         end
 
         def step_tracing_init
@@ -415,7 +422,7 @@ module Legion
           PRE_PROVIDER_STEPS.each do |step|
             next if Profile.skip?(@profile, step)
 
-            send(:"step_#{step}")
+            execute_step(step) { send(:"step_#{step}") }
           end
         end
 
@@ -423,7 +430,7 @@ module Legion
           POST_PROVIDER_STEPS.each do |step|
             next if Profile.skip?(@profile, step)
 
-            send(:"step_#{step}")
+            execute_step(step) { send(:"step_#{step}") }
           end
         end
 
@@ -482,6 +489,72 @@ module Legion
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
+        end
+
+        def execute_step(name, &block)
+          return block.call unless pipeline_spans_enabled?
+
+          block_called = false
+          begin
+            Legion::Telemetry.with_span("pipeline.#{name}", kind: :internal) do |span|
+              block_called = true
+              result = block.call
+              annotate_span(span, name)
+              result
+            end
+          rescue StandardError
+            raise if block_called
+
+            block.call
+          end
+        end
+
+        def telemetry_enabled?
+          !!(defined?(Legion::Telemetry) &&
+             Legion::Telemetry.respond_to?(:enabled?) &&
+             Legion::Telemetry.enabled?)
+        end
+
+        def pipeline_spans_enabled?
+          return false unless telemetry_enabled?
+
+          settings = Legion::LLM.settings[:telemetry]
+          return true unless settings.is_a?(Hash)
+
+          settings.fetch(:pipeline_spans, true)
+        end
+
+        def annotate_span(span, step_name)
+          return unless span.respond_to?(:set_attribute)
+
+          attrs = Steps::SpanAnnotator.attributes_for(step_name, audit: @audit, enrichments: @enrichments)
+          attrs.each { |key, val| span.set_attribute(key, val) unless val.nil? }
+        rescue StandardError
+          nil
+        end
+
+        def annotate_top_level_span(steps_executed:, steps_skipped:)
+          return unless telemetry_enabled?
+          return unless Legion::Telemetry.respond_to?(:current_span)
+
+          span = Legion::Telemetry.current_span
+          return unless span.respond_to?(:set_attribute)
+
+          span.set_attribute('legion.pipeline.steps_executed', steps_executed)
+          span.set_attribute('legion.pipeline.steps_skipped', steps_skipped)
+
+          cost_entry = @audit[:'billing:budget_check'] || @audit[:'provider:response']
+          if cost_entry.is_a?(Hash) && (cost = cost_entry.dig(:data, :estimated_cost_usd) || cost_entry[:estimated_cost_usd])
+            span.set_attribute('gen_ai.usage.cost_usd', cost)
+          end
+
+          routing_entry = @audit[:'routing:provider_selection']
+          if routing_entry.is_a?(Hash) && (data = routing_entry[:data])
+            span.set_attribute('routing.strategy', data[:strategy].to_s) if data[:strategy]
+            span.set_attribute('routing.tier', data[:tier].to_s) if data[:tier]
+          end
+        rescue StandardError
+          nil
         end
 
         def find_fallback_provider(exclude: [])
