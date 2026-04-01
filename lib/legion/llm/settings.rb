@@ -45,8 +45,8 @@ module Legion
 
       def self.daemon_defaults
         {
-          url:     nil,
-          enabled: false
+          url:     'http://127.0.0.1:4567',
+          enabled: true
         }
       end
 

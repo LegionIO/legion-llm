@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-03-31
+
+### Changed
+- Daemon defaults to `url: http://127.0.0.1:4567` and `enabled: true` so `legion chat` works out of the box
+
 ## [0.6.2] - 2026-03-31
 
 ### Fixed
