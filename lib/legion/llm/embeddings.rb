@@ -34,8 +34,10 @@ module Legion
           return { vector: nil, model: model, provider: provider, error: 'LLM not started' } unless LLM.started?
 
           provider ||= resolve_provider
-          model    ||= resolve_model(provider)
-          text       = apply_prefix(text, model: model, task: task)
+          return { vector: nil, model: model, provider: provider, error: "provider #{provider} is disabled" } if provider_disabled?(provider)
+
+          model ||= resolve_model(provider)
+          text    = apply_prefix(text, model: model, task: task)
 
           return generate_ollama(text: text, model: model) if provider&.to_sym == :ollama
           return generate_azure(text: text, model: model, dimensions: dimensions) if provider&.to_sym == :azure
@@ -54,8 +56,10 @@ module Legion
           return texts.map { |_| { vector: nil, error: 'LLM not started' } } unless LLM.started?
 
           provider ||= resolve_provider
-          model    ||= resolve_model(provider)
-          texts      = texts.map { |t| apply_prefix(t, model: model, task: task) }
+          return texts.map { |_| { vector: nil, provider: provider, error: "provider #{provider} is disabled" } } if provider_disabled?(provider)
+
+          model  ||= resolve_model(provider)
+          texts    = texts.map { |t| apply_prefix(t, model: model, task: task) }
 
           return generate_ollama_batch(texts: texts, model: model) if provider&.to_sym == :ollama
           return generate_azure_batch(texts: texts, model: model, dimensions: dimensions) if provider&.to_sym == :azure
@@ -74,6 +78,15 @@ module Legion
         end
 
         private
+
+        def provider_disabled?(provider)
+          return false unless provider
+
+          config = Legion::Settings.dig(:llm, :providers, provider.to_sym)
+          config.is_a?(Hash) && config[:enabled] == false
+        rescue StandardError
+          false
+        end
 
         def build_opts(model, provider, dimensions)
           target_dim = enforce_dimension? ? TARGET_DIMENSION : dimensions

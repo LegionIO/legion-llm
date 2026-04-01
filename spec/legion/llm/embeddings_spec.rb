@@ -105,6 +105,7 @@ RSpec.describe 'Legion::LLM::Embeddings' do
       Legion::LLM.instance_variable_set(:@started, true)
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:providers][:openai][:enabled] = true
     end
 
     it 'returns exactly 1024 dimensions' do
@@ -155,6 +156,7 @@ RSpec.describe 'Legion::LLM::Embeddings' do
       Legion::LLM.instance_variable_set(:@started, true)
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:providers][:openai][:enabled] = true
     end
 
     it 'uses cached provider when no explicit provider given' do
