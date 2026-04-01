@@ -25,7 +25,10 @@ module Legion
           rag:              rag_defaults,
           embedding:        embedding_defaults,
           conversation:     conversation_defaults,
-          telemetry:        telemetry_defaults
+          telemetry:        telemetry_defaults,
+          context_curation: context_curation_defaults,
+          debate:           debate_defaults,
+          provider_layer:   provider_layer_defaults
         }
       end
 
@@ -178,12 +181,49 @@ module Legion
         }
       end
 
+      def self.context_curation_defaults
+        {
+          enabled:               true,
+          mode:                  'heuristic',
+          llm_assisted:          false,
+          llm_model:             nil,
+          tool_result_max_chars: 2000,
+          thinking_eviction:     true,
+          exchange_folding:      true,
+          superseded_eviction:   true,
+          dedup_enabled:         true,
+          dedup_threshold:       0.85,
+          target_context_tokens: 40_000
+        }
+      end
+
       def self.conversation_defaults
         {
           summarize_threshold: 50_000,
           target_tokens:       20_000,
           preserve_recent:     10,
           auto_compact:        true
+        }
+      end
+
+      def self.provider_layer_defaults
+        {
+          mode:                 'ruby_llm',
+          native_providers:     %w[claude bedrock],
+          fallback_to_ruby_llm: true
+        }
+      end
+
+      def self.debate_defaults
+        {
+          enabled:                  false,
+          gaia_auto_trigger:        false,
+          default_rounds:           1,
+          max_rounds:               3,
+          advocate_model:           nil,
+          challenger_model:         nil,
+          judge_model:              nil,
+          model_selection_strategy: 'rotate'
         }
       end
 

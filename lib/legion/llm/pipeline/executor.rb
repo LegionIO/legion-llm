@@ -21,12 +21,13 @@ module Legion
         include Steps::ConfidenceScoring
         include Steps::TokenBudget
         include Steps::PromptCache
+        include Steps::Debate
 
         STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
           rbac classification billing gaia_advisory tier_assignment rag_context mcp_discovery
           routing request_normalization token_budget provider_call response_normalization
-          confidence_scoring tool_calls context_store post_response knowledge_capture response_return
+          debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         PRE_PROVIDER_STEPS = %i[
@@ -36,7 +37,7 @@ module Legion
         ].freeze
 
         POST_PROVIDER_STEPS = %i[
-          response_normalization confidence_scoring tool_calls context_store post_response knowledge_capture response_return
+          response_normalization debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         def initialize(request)
@@ -110,7 +111,19 @@ module Legion
           history = ConversationStore.messages(conv_id)
           return if history.empty?
 
-          history = maybe_compact_history(conv_id, history)
+          curator = ContextCurator.new(conversation_id: conv_id)
+          curated = curator.curated_messages
+
+          history = if curated && !curated.empty?
+                      @timeline.record(
+                        category: :internal, key: 'context:curated',
+                        direction: :internal, detail: "curated #{curated.size} of #{history.size} messages",
+                        from: 'context_curator', to: 'pipeline'
+                      )
+                      curated
+                    else
+                      maybe_compact_history(conv_id, history)
+                    end
 
           @enrichments[:conversation_history] = history
           @timeline.record(
@@ -368,6 +381,17 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
+          if use_native_dispatch?(@resolved_provider)
+            execute_provider_request_native
+          else
+            execute_provider_request_ruby_llm
+          end
+
+          @timestamps[:provider_end] = Time.now
+          record_provider_response
+        end
+
+        def execute_provider_request_ruby_llm
           opts = {
             model:    @resolved_model,
             provider: @resolved_provider
@@ -397,9 +421,51 @@ module Legion
 
           message_content = messages.last&.dig(:content)
           @raw_response = message_content ? session.ask(message_content) : session
+        end
 
-          @timestamps[:provider_end] = Time.now
-          record_provider_response
+        def execute_provider_request_native
+          injected_system = EnrichmentInjector.inject(
+            system:      @request.system,
+            enrichments: @enrichments
+          )
+
+          messages = apply_conversation_breakpoint(@request.messages)
+
+          opts = { system: injected_system }.compact
+
+          begin
+            result = NativeDispatch.dispatch_chat(
+              provider: @resolved_provider,
+              model:    @resolved_model,
+              messages: messages,
+              **opts
+            )
+            @raw_response = NativeResponseAdapter.new(result)
+          rescue Legion::LLM::ProviderError => e
+            layer_settings = Legion::LLM.settings[:provider_layer] || {}
+            raise unless layer_settings.fetch(:fallback_to_ruby_llm, true)
+
+            if defined?(Legion::Logging)
+              Legion::Logging.warn "[pipeline] native dispatch failed for #{@resolved_provider}: #{e.message}, falling back to RubyLLM"
+            end
+            execute_provider_request_ruby_llm
+          end
+        end
+
+        def use_native_dispatch?(provider)
+          return false unless defined?(NativeDispatch)
+
+          layer_settings = Legion::LLM.settings[:provider_layer] || {}
+          mode = layer_settings.fetch(:mode, 'ruby_llm').to_s
+
+          case mode
+          when 'native'
+            true
+          when 'auto'
+            NativeDispatch.available?(provider)
+          else
+            false
+          end
         end
 
         def record_provider_response
@@ -582,6 +648,7 @@ module Legion
                                      content: msg[:content])
           end
 
+          assistant_response = nil
           if @raw_response.respond_to?(:content) && @raw_response.content
             ConversationStore.append(conv_id,
                                      role:          :assistant,
@@ -590,13 +657,24 @@ module Legion
                                      model:         @resolved_model,
                                      input_tokens:  @raw_response.respond_to?(:input_tokens) ? @raw_response.input_tokens : nil,
                                      output_tokens: @raw_response.respond_to?(:output_tokens) ? @raw_response.output_tokens : nil)
+            assistant_response = @raw_response.content
           end
+
+          trigger_async_curation(conv_id, @request.messages, assistant_response)
 
           @timeline.record(
             category: :internal, key: 'context:stored',
             direction: :internal, detail: "stored to #{conv_id}",
             from: 'pipeline', to: 'conversation_store'
           )
+        end
+
+        def trigger_async_curation(conv_id, turn_messages, assistant_response)
+          ContextCurator.new(conversation_id: conv_id)
+                        .curate_turn(turn_messages:      turn_messages,
+                                     assistant_response: assistant_response)
+        rescue StandardError => e
+          @warnings << "context_curation trigger failed: #{e.message}"
         end
 
         def step_response_return; end
