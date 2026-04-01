@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-04-01
+
+### Added
+- `McpToolAdapter` — wraps MCP server tool classes as RubyLLM::Tool instances for LLM session injection
+- Pipeline `McpDiscovery` step discovers both server-side (Legion::MCP::Server) and client-side (MCP::Client::Pool) tools
+- Tool name sanitization: dots replaced with underscores for Bedrock compatibility (`[a-zA-Z0-9_-]+`)
+
+### Fixed
+- Skip RubyLLM-based embedding health check for Azure provider since it uses direct HTTP with SNI host injection
+
 ## [0.6.5] - 2026-04-01
 
 ### Fixed

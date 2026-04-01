@@ -7,17 +7,54 @@ module Legion
         module McpDiscovery
           def step_mcp_discovery
             @discovered_tools ||= []
+            start_time = Time.now
 
-            unless defined?(::Legion::MCP::Client::Pool)
-              @warnings << 'MCP Client unavailable for tool discovery'
-              record_mcp_timeline(0)
-              return
+            discover_server_tools
+            discover_client_tools
+
+            total = @discovered_tools.size
+            if total.positive?
+              sources = @discovered_tools.filter_map { |t| t.dig(:source, :server) || t.dig(:source, :type) }.uniq
+              @enrichments['mcp:tool_discovery'] = {
+                content:   "#{total} tools from #{sources.length} sources",
+                data:      { tool_count: total, sources: sources },
+                timestamp: Time.now
+              }
             end
 
-            start_time = Time.now
-            mcp_tools = ::Legion::MCP::Client::Pool.all_tools
+            record_mcp_timeline(total, start_time)
+          rescue StandardError => e
+            @warnings << "MCP discovery error: #{e.message}"
+            record_mcp_timeline(0)
+          end
 
-            mcp_tools.each do |tool|
+          private
+
+          def discover_server_tools
+            return unless defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
+
+            server = ::Legion::MCP.server
+            return unless server.respond_to?(:tool_registry)
+
+            server.tool_registry.each do |tool_class|
+              name = tool_class.respond_to?(:tool_name) ? tool_class.tool_name : tool_class.name
+              desc = tool_class.respond_to?(:description) ? tool_class.description : ''
+              schema = tool_class.respond_to?(:input_schema) ? tool_class.input_schema : {}
+              @discovered_tools << {
+                name:        name,
+                description: desc,
+                parameters:  schema,
+                source:      { type: :server, server: 'legion' }
+              }
+            end
+          rescue StandardError => e
+            @warnings << "Server tool discovery error: #{e.message}"
+          end
+
+          def discover_client_tools
+            return unless defined?(::Legion::MCP::Client::Pool)
+
+            ::Legion::MCP::Client::Pool.all_tools.each do |tool|
               @discovered_tools << {
                 name:        tool[:name],
                 description: tool[:description],
@@ -25,23 +62,9 @@ module Legion
                 source:      tool[:source]
               }
             end
-
-            if mcp_tools.any?
-              servers = mcp_tools.map { |t| t.dig(:source, :server) }.uniq
-              @enrichments['mcp:tool_discovery'] = {
-                content:   "#{mcp_tools.length} tools from #{servers.length} servers",
-                data:      { tool_count: mcp_tools.length, servers: servers },
-                timestamp: Time.now
-              }
-            end
-
-            record_mcp_timeline(mcp_tools.length, start_time)
           rescue StandardError => e
-            @warnings << "MCP discovery error: #{e.message}"
-            record_mcp_timeline(0)
+            @warnings << "Client tool discovery error: #{e.message}"
           end
-
-          private
 
           def record_mcp_timeline(count, start_time = nil)
             duration = start_time ? ((Time.now - start_time) * 1000).to_i : 0

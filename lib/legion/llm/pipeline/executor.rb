@@ -76,6 +76,22 @@ module Legion
 
         private
 
+        def inject_discovered_tools(session)
+          return unless defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
+
+          server = ::Legion::MCP.server
+          return unless server.respond_to?(:tool_registry)
+
+          server.tool_registry.each do |mcp_tool_class|
+            adapter = McpToolAdapter.new(mcp_tool_class)
+            session.with_tool(adapter)
+          rescue StandardError => e
+            @warnings << "Failed to inject tool: #{e.message}"
+          end
+        rescue StandardError => e
+          @warnings << "Tool injection error: #{e.message}"
+        end
+
         def execute_steps
           executed = 0
           skipped  = 0
@@ -403,7 +419,13 @@ module Legion
             session.with_tool(tool) if tool.is_a?(Class)
           end
 
-          ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
+          if defined?(ToolRegistry)
+            ToolRegistry.tools.each do |t|
+              Legion::Logging.fatal("Injecting ToolRegistry tool: #{t.class} #{t.respond_to?(:tool_name) ? t.tool_name : t}") if defined?(Legion::Logging)
+              session.with_tool(t)
+            end
+          end
+          inject_discovered_tools(session)
 
           injected_system = EnrichmentInjector.inject(
             system:      @request.system,
@@ -545,6 +567,7 @@ module Legion
 
           (@request.tools || []).each { |tool| session.with_tool(tool) if tool.is_a?(Class) }
           ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
+          inject_discovered_tools(session)
 
           messages = @request.messages
           prior    = messages.size > 1 ? messages[0..-2] : []

@@ -316,18 +316,27 @@ module Legion
           raise 'Azure OpenAI embedding not configured (llm.providers.azure.api_base required)' unless api_base
 
           host = URI.parse(api_base).host
-          target = ip || host
+          target_ip = ip
           path = "/openai/deployments/#{model}/embeddings?api-version=2024-02-01"
+          Legion::Logging.info "Azure embed connecting to #{host}:443 (ip_override=#{target_ip.inspect})" if defined?(Legion::Logging)
 
           require 'net/http'
-          http = Net::HTTP.new(target, 443)
+          require 'openssl'
+          http = Net::HTTP.new(host, 443)
           http.use_ssl = true
-          http.open_timeout = 5
+          http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+          http.open_timeout = 10
           http.read_timeout = 30
+
+          # When an IP override is set, resolve the FQDN to the private endpoint IP
+          # while keeping the FQDN as SNI for TLS handshake
+          if target_ip
+            addr = Addrinfo.tcp(target_ip, 443)
+            http.ipaddr = addr.ip_address
+          end
 
           req = Net::HTTP::Post.new(path)
           req['Content-Type'] = 'application/json'
-          req['Host'] = host
           req['api-key'] = api_key
           body = { input: input }
           body[:dimensions] = dimensions || TARGET_DIMENSION

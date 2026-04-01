@@ -11,6 +11,7 @@ require_relative 'pipeline/gaia_caller'
 require_relative 'pipeline/tool_dispatcher'
 require_relative 'pipeline/enrichment_injector'
 require_relative 'pipeline/steps'
+require_relative 'pipeline/mcp_tool_adapter'
 require_relative 'pipeline/executor'
 
 module Legion
