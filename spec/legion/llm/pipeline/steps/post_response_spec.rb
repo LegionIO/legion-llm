@@ -57,5 +57,37 @@ RSpec.describe Legion::LLM::Pipeline::Steps::PostResponse do
       expect { step.step_post_response }.not_to raise_error
       expect(step.warnings).to include(match(/post_response error/))
     end
+
+    context 'when Legion::Gaia::AuditObserver is defined' do
+      let(:fake_observer) { instance_double('FakeObserver') }
+
+      before do
+        stub_const('Legion::Gaia::AuditObserver', Class.new do
+          def self.instance
+            @instance ||= new
+          end
+
+          def process_event(_event); end
+        end)
+      end
+
+      it 'calls AuditObserver.instance.process_event with the audit event' do
+        audit_event = { caller: { requested_by: { identity: 'user:matt' } }, routing: { provider: :anthropic, model: 'claude-sonnet-4-6' },
+timestamp: Time.now }
+        allow(Legion::LLM::Pipeline::AuditPublisher).to receive(:publish).and_return(audit_event)
+        observer = Legion::Gaia::AuditObserver.instance
+        expect(observer).to receive(:process_event).with(audit_event)
+        step = klass.new(request)
+        step.step_post_response
+      end
+    end
+
+    context 'when Legion::Gaia::AuditObserver is not defined' do
+      it 'skips AuditObserver gracefully' do
+        allow(Legion::LLM::Pipeline::AuditPublisher).to receive(:publish).and_return({ timestamp: Time.now })
+        step = klass.new(request)
+        expect { step.step_post_response }.not_to raise_error
+      end
+    end
   end
 end

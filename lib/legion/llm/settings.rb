@@ -52,7 +52,7 @@ module Legion
 
       def self.prompt_caching_defaults
         {
-          enabled:             false,
+          enabled:             true,
           min_tokens:          1024,
           scope:               'ephemeral',
           cache_system_prompt: true,
@@ -110,7 +110,7 @@ module Legion
 
       def self.gateway_defaults
         {
-          enabled:            false,
+          enabled:            true,
           endpoint:           nil,
           api_key:            nil,
           timeout_seconds:    30,

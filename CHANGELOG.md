@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-04-01
+
+### Added
+- `PostResponse` pipeline step now calls `Legion::Gaia::AuditObserver.instance.process_event(audit_event)` after publishing the audit event, enabling GAIA partner awareness from LLM pipeline completions (guarded with `defined?` since legion-gaia is optional)
+
+### Changed
+- `gateway_defaults`: `enabled` changed from `false` to `true` — gateway is now on by default
+- `prompt_caching_defaults`: `enabled` changed from `false` to `true` — prompt caching is now on by default
+
 ## [0.6.6] - 2026-04-01
 
 ### Added

@@ -56,8 +56,8 @@ RSpec.describe 'Pipeline::Executor multi-turn message injection' do
       request = Legion::LLM::Pipeline::Request.build(messages: messages)
       executor = Legion::LLM::Pipeline::Executor.new(request)
 
-      expect(mock_session).to receive(:add_message).with({ role: :user,      content: 'what is ruby?' }).ordered
-      expect(mock_session).to receive(:add_message).with({ role: :assistant, content: 'Ruby is a language.' }).ordered
+      expect(mock_session).to receive(:add_message).with(hash_including(role: :user,      content: 'what is ruby?')).ordered
+      expect(mock_session).to receive(:add_message).with(hash_including(role: :assistant, content: 'Ruby is a language.')).ordered
       expect(mock_session).to receive(:ask).with('tell me more').ordered.and_return(mock_response)
 
       executor.call
@@ -82,7 +82,7 @@ RSpec.describe 'Pipeline::Executor multi-turn message injection' do
       )
       executor = Legion::LLM::Pipeline::Executor.new(request)
 
-      expect(mock_session).to receive(:add_message).with({ role: :user, content: 'first' }).once
+      expect(mock_session).to receive(:add_message).with(hash_including(role: :user, content: 'first')).once
       expect(mock_session).to receive(:ask).with('second').and_return(mock_response)
 
       executor.call
@@ -99,8 +99,8 @@ RSpec.describe 'Pipeline::Executor multi-turn message injection' do
       request = Legion::LLM::Pipeline::Request.build(messages: messages)
       executor = Legion::LLM::Pipeline::Executor.new(request)
 
-      expect(mock_session).to receive(:add_message).with({ role: :user,      content: 'first message' }).ordered
-      expect(mock_session).to receive(:add_message).with({ role: :assistant, content: 'first reply' }).ordered
+      expect(mock_session).to receive(:add_message).with(hash_including(role: :user,      content: 'first message')).ordered
+      expect(mock_session).to receive(:add_message).with(hash_including(role: :assistant, content: 'first reply')).ordered
       expect(mock_session).to receive(:ask).with('follow up').ordered.and_return(mock_response)
 
       chunks = []

@@ -8,7 +8,9 @@ module Legion
           def step_post_response
             response = current_response
 
-            AuditPublisher.publish(request: @request, response: response)
+            audit_event = AuditPublisher.publish(request: @request, response: response)
+
+            Legion::Gaia::AuditObserver.instance.process_event(audit_event) if defined?(Legion::Gaia::AuditObserver) && audit_event
 
             @timeline.record(
               category: :audit, key: 'audit:publish',
