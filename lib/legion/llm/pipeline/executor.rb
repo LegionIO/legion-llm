@@ -40,6 +40,8 @@ module Legion
           response_normalization debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
+        ASYNC_SAFE_STEPS = %i[context_store post_response knowledge_capture response_return].freeze
+
         def initialize(request)
           @request      = request
           @profile      = Profile.derive(request.caller)
@@ -515,12 +517,44 @@ module Legion
         end
 
         def execute_post_provider_steps
+          if async_post_enabled?
+            execute_post_provider_steps_mixed
+          else
+            POST_PROVIDER_STEPS.each do |step|
+              next if Profile.skip?(@profile, step)
+
+              execute_step(step) { send(:"step_#{step}") }
+            end
+          end
+        end
+
+        def execute_post_provider_steps_mixed
           POST_PROVIDER_STEPS.each do |step|
             next if Profile.skip?(@profile, step)
+            next if ASYNC_SAFE_STEPS.include?(step)
 
             execute_step(step) { send(:"step_#{step}") }
           end
+
+          async_steps = POST_PROVIDER_STEPS.select { |s| ASYNC_SAFE_STEPS.include?(s) }
+          return if async_steps.empty?
+
+          Thread.new do
+            async_steps.each do |step|
+              next if Profile.skip?(@profile, step)
+
+              execute_step(step) { send(:"step_#{step}") }
+            end
+          rescue StandardError => e
+            Legion::Logging.warn("[pipeline] async post-step error: #{e.message}") if defined?(Legion::Logging)
+          end
         end
+        private :execute_post_provider_steps_mixed
+
+        def async_post_enabled?
+          Legion::LLM.settings[:pipeline_async_post_steps] == true
+        end
+        private :async_post_enabled?
 
         def step_provider_call_stream(&)
           providers_tried = []
