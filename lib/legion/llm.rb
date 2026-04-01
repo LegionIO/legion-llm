@@ -75,6 +75,7 @@ module Legion
         @can_embed = nil
         @embedding_provider = nil
         @embedding_model = nil
+        @embedding_fallback_chain = nil
         ProviderRegistry.reset!
         Legion::Logging.info 'Legion::LLM shut down'
       end
@@ -87,7 +88,7 @@ module Legion
         @can_embed == true
       end
 
-      attr_reader :embedding_provider, :embedding_model
+      attr_reader :embedding_provider, :embedding_model, :embedding_fallback_chain
 
       def settings
         if Legion.const_defined?('Settings', false)
@@ -630,13 +631,16 @@ module Legion
           @can_embed = true
           @embedding_provider = found[:provider]
           @embedding_model = found[:model]
+          @embedding_fallback_chain = build_embedding_fallback_chain(embedding_settings)
           Legion::Logging.info "Embedding available: #{@embedding_provider}:#{@embedding_model}"
         else
           @can_embed = false
+          @embedding_fallback_chain = []
           Legion::Logging.info 'No embedding provider available'
         end
       rescue StandardError => e
         @can_embed = false
+        @embedding_fallback_chain = []
         Legion::Logging.warn "Embedding detection failed: #{e.message}" if defined?(Legion::Logging)
       end
 
@@ -703,6 +707,28 @@ module Legion
         true
       rescue StandardError
         nil
+      end
+
+      def build_embedding_fallback_chain(embedding_settings)
+        fallback = embedding_settings[:provider_fallback] || %w[ollama bedrock openai]
+        provider_models = embedding_settings[:provider_models] || {}
+        ollama_preferred = embedding_settings[:ollama_preferred] || %w[mxbai-embed-large bge-large snowflake-arctic-embed]
+
+        fallback.filter_map do |provider_name|
+          provider = provider_name.to_sym
+          next unless provider_enabled?(provider)
+
+          available = probe_embedding_provider(provider, ollama_preferred)
+          next unless available
+
+          model = available.is_a?(String) ? available : (provider_models[provider_name] || provider_models[provider])&.to_s
+          { provider: provider, model: model }
+        end
+      end
+
+      def provider_enabled?(provider)
+        config = settings.dig(:providers, provider)
+        config.is_a?(Hash) && config[:enabled] != false
       end
 
       def run_discovery

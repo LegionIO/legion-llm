@@ -113,7 +113,6 @@ module Legion
         def handle_embed_failure(error, text:, failed_provider:, failed_model:)
           fallback = find_fallback_provider(failed_provider)
           if fallback
-            Legion::Logging.info "Embedding failover: #{failed_provider} -> #{fallback[:provider]}" if defined?(Legion::Logging)
             generate(text: text, model: fallback[:model], provider: fallback[:provider])
           else
             { vector: nil, model: failed_model, provider: failed_provider, error: error.message }
@@ -121,35 +120,21 @@ module Legion
         end
 
         def find_fallback_provider(failed_provider)
-          chain = embedding_settings[:provider_fallback] || %w[ollama bedrock openai]
-          models = embedding_settings[:provider_models] || {}
-          started = false
+          chain = LLM.embedding_fallback_chain
+          return nil unless chain.is_a?(Array) && chain.any?
 
-          chain.each do |name|
-            sym = name.to_sym
-            if sym == failed_provider
+          started = false
+          chain.each do |entry|
+            if entry[:provider] == failed_provider&.to_sym
               started = true
               next
             end
             next unless started
 
-            available = probe_fallback_provider(sym)
-            next unless available
-
-            model = available.is_a?(String) ? available : (models[name] || models[sym])&.to_s
-            return { provider: sym, model: model }
+            Legion::Logging.info "Embedding failover: #{failed_provider} -> #{entry[:provider]}" if defined?(Legion::Logging)
+            return entry
           end
           nil
-        end
-
-        def probe_fallback_provider(sym)
-          case sym
-          when :ollama
-            LLM.send(:detect_ollama_embedding,
-                     embedding_settings[:ollama_preferred] || %w[mxbai-embed-large])
-          else
-            LLM.send(:detect_cloud_embedding, sym)
-          end
         end
 
         def resolve_provider
