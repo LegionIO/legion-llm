@@ -88,6 +88,39 @@ module Legion
           { messages: kept, removed: removed, original_count: messages.size }
         end
 
+        def auto_compact(messages, target_tokens:, preserve_recent: 10)
+          return messages if messages.size <= preserve_recent
+
+          recent = messages.last(preserve_recent)
+          older  = messages[0..-(preserve_recent + 1)]
+
+          summarized = summarize_messages(older, max_tokens: target_tokens / 2)
+
+          compaction_msg = {
+            role:     'system',
+            content:  "[Conversation compacted: #{older.size} turns summarized]",
+            metadata: {
+              compacted_at:   Time.now.utc.iso8601,
+              original_count: messages.size,
+              preserved:      recent.size
+            }
+          }
+
+          summary_msg = {
+            role:    'system',
+            content: summarized[:summary]
+          }
+
+          [compaction_msg, summary_msg, *recent].flatten
+        end
+
+        def estimate_tokens(messages)
+          return 0 if messages.nil? || messages.empty?
+
+          total_chars = messages.sum { |m| m[:content].to_s.length }
+          total_chars / 4
+        end
+
         def stopwords_for_level(level)
           return [] if level <= NONE
 

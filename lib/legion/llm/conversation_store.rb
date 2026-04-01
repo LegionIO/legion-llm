@@ -31,6 +31,14 @@ module Legion
           persist_conversation(conversation_id, metadata)
         end
 
+        def replace(conversation_id, messages)
+          ensure_conversation(conversation_id)
+          conversations[conversation_id][:messages] = messages.each_with_index.map do |msg, i|
+            msg.merge(seq: i + 1, created_at: msg[:created_at] || Time.now)
+          end
+          touch(conversation_id)
+        end
+
         def conversation_exists?(conversation_id)
           in_memory?(conversation_id) || db_conversation_exists?(conversation_id)
         end
