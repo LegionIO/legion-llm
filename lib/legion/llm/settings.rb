@@ -9,7 +9,7 @@ module Legion
           enabled:                   true,
           connected:                 false,
           pipeline_enabled:          true,
-          pipeline_async_post_steps: false,
+          pipeline_async_post_steps: true,
           default_model:             model_override,
           default_provider:          nil,
           providers:                 providers,

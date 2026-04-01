@@ -5,6 +5,7 @@ require 'spec_helper'
 RSpec.describe 'Pipeline streaming end-to-end' do
   before do
     Legion::Settings[:llm][:pipeline_enabled] = true
+    Legion::Settings[:llm][:pipeline_async_post_steps] = false
     Legion::Settings[:llm][:default_provider] = :anthropic
     Legion::Settings[:llm][:default_model] = 'claude-opus-4-6'
     Legion::LLM::ConversationStore.reset!

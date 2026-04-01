@@ -10,8 +10,8 @@ RSpec.describe Legion::LLM::Settings do
       expect(defaults).to have_key(:pipeline_async_post_steps)
     end
 
-    it 'sets pipeline_async_post_steps to false by default' do
-      expect(defaults[:pipeline_async_post_steps]).to be(false)
+    it 'sets pipeline_async_post_steps to true by default' do
+      expect(defaults[:pipeline_async_post_steps]).to be(true)
     end
   end
 
