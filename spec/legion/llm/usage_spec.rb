@@ -86,7 +86,7 @@ RSpec.describe Legion::LLM::Usage do
   end
 
   describe 'freezing behavior' do
-    it 'is frozen after construction (Data.define produces frozen instances)' do
+    it 'is frozen after construction (::Data.define produces frozen instances)' do
       usage = described_class.new(input_tokens: 10, output_tokens: 20)
       expect(usage).to be_frozen
     end
