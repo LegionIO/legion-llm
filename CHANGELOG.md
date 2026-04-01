@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-31
+
+### Added
+- Advisory step reads calibration_weights from Apollo Local, includes in advisory enrichment
+- Advisory meta recording: classifies advisory types and calls `Legion::Gaia.record_advisory_meta`
+- Advisory type classification based on partner context (tone, verbosity, format, context, hint)
+
 ## [0.6.0] - 2026-03-31
 
 ### Added
