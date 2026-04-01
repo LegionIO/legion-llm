@@ -165,9 +165,10 @@ module Legion
         {
           dimension:         1024,
           enforce_dimension: true,
-          provider_fallback: %w[ollama bedrock openai],
+          provider_fallback: %w[azure ollama bedrock openai],
           provider_models:   {
             ollama:  'mxbai-embed-large',
+            azure:   'text-embedding-3-small',
             bedrock: 'amazon.titan-embed-text-v2:0',
             openai:  'text-embedding-3-small'
           },

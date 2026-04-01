@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-04-01
+
+### Added
+- Direct Azure OpenAI embedding provider with SNI host header injection, bypasses ruby_llm and DNS — connects to private endpoint IP with correct Host header
+- Azure embedding supports single and batch requests, dimension enforcement, and settings-driven IP override (`llm.embedding.azure.ip`)
+- Default embedding fallback chain: azure -> ollama -> bedrock -> openai
+
 ## [0.6.3] - 2026-03-31
 
 ### Changed

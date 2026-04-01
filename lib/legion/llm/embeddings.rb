@@ -38,6 +38,7 @@ module Legion
           text       = apply_prefix(text, model: model, task: task)
 
           return generate_ollama(text: text, model: model) if provider&.to_sym == :ollama
+          return generate_azure(text: text, model: model, dimensions: dimensions) if provider&.to_sym == :azure
 
           response   = RubyLLM.embed(text, **build_opts(model, provider, dimensions))
           vector     = apply_dimension_enforcement(response.vectors.first, provider)
@@ -57,6 +58,7 @@ module Legion
           texts      = texts.map { |t| apply_prefix(t, model: model, task: task) }
 
           return generate_ollama_batch(texts: texts, model: model) if provider&.to_sym == :ollama
+          return generate_azure_batch(texts: texts, model: model, dimensions: dimensions) if provider&.to_sym == :azure
 
           response = RubyLLM.embed(texts, **build_opts(model, provider, dimensions))
           response.vectors.each_with_index.map do |vec, i|
@@ -283,6 +285,71 @@ module Legion
           base = model.to_s.split(':').first
           OLLAMA_CONTEXT_CHARS[base] || OLLAMA_DEFAULT_CONTEXT_CHARS
         end
+
+        # ── Azure OpenAI (direct HTTP with SNI, bypasses ruby_llm) ──
+
+        def generate_azure(text:, model:, dimensions: nil)
+          result = azure_embed_request(model: model, input: text, dimensions: dimensions)
+          vector = result.dig('data', 0, 'embedding')
+          vector = apply_dimension_enforcement(vector, :azure) if vector
+          return dimension_error(model, :azure, vector) if vector.is_a?(String)
+
+          tokens = result.dig('usage', 'total_tokens') || 0
+          { vector: vector, model: model, provider: :azure, dimensions: vector&.size || 0, tokens: tokens }
+        end
+
+        def generate_azure_batch(texts:, model:, dimensions: nil)
+          result = azure_embed_request(model: model, input: texts, dimensions: dimensions)
+          (result['data'] || []).each_with_index.map do |entry, i|
+            build_batch_entry(entry['embedding'], model, :azure, i)
+          end
+        rescue StandardError => e
+          Legion::Logging.warn("Azure batch embedding failed: #{e.message}") if defined?(Legion::Logging)
+          texts.map { |_| { vector: nil, model: model, provider: :azure, error: e.message } }
+        end
+
+        def azure_embed_request(model:, input:, dimensions: nil)
+          settings = azure_embedding_settings
+          api_base = settings[:api_base]
+          api_key  = settings[:api_key]
+          ip       = settings[:ip]
+          raise 'Azure OpenAI embedding not configured (llm.providers.azure.api_base required)' unless api_base
+
+          host = URI.parse(api_base).host
+          target = ip || host
+          path = "/openai/deployments/#{model}/embeddings?api-version=2024-02-01"
+
+          require 'net/http'
+          http = Net::HTTP.new(target, 443)
+          http.use_ssl = true
+          http.open_timeout = 5
+          http.read_timeout = 30
+
+          req = Net::HTTP::Post.new(path)
+          req['Content-Type'] = 'application/json'
+          req['Host'] = host
+          req['api-key'] = api_key
+          body = { input: input }
+          body[:dimensions] = dimensions || TARGET_DIMENSION
+          req.body = ::JSON.dump(body)
+
+          response = http.request(req)
+          raise "Azure embed failed: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+
+          ::JSON.parse(response.body)
+        end
+
+        def azure_embedding_settings
+          base = Legion::Settings.dig(:llm, :providers, :azure) || {}
+          embed = Legion::Settings.dig(:llm, :embedding, :azure) || {}
+          {
+            api_base: embed[:api_base] || base[:api_base],
+            api_key:  embed[:api_key] || base[:api_key] || base[:auth_token],
+            ip:       embed[:ip]
+          }
+        end
+
+        # ── Ollama (direct HTTP, bypasses ruby_llm) ──
 
         def ollama_embed_request(model:, input:)
           base_url = Legion::Settings.dig(:llm, :providers, :ollama, :base_url) || 'http://localhost:11434'
