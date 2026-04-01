@@ -73,7 +73,7 @@ module Legion
         def tier_available?(tier)
           sym = tier.to_sym
           return false if sym == :cloud && privacy_mode?
-          return Legion.const_defined?('Transport') if sym == :fleet
+          return Legion.const_defined?('Transport', false) if sym == :fleet
 
           true
         end
@@ -204,7 +204,7 @@ module Legion
         end
 
         def privacy_mode?
-          if Legion.const_defined?('Settings') && Legion::Settings.respond_to?(:enterprise_privacy?)
+          if Legion.const_defined?('Settings', false) && Legion::Settings.respond_to?(:enterprise_privacy?)
             Legion::Settings.enterprise_privacy?
           else
             ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'

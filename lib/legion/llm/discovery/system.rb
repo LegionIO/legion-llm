@@ -130,7 +130,7 @@ module Legion
           end
 
           def discovery_settings
-            return {} unless Legion.const_defined?('Settings')
+            return {} unless Legion.const_defined?('Settings', false)
 
             Legion::Settings[:llm][:discovery] || {}
           rescue StandardError => e

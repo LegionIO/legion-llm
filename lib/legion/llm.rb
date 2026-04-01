@@ -90,7 +90,7 @@ module Legion
       attr_reader :embedding_provider, :embedding_model
 
       def settings
-        if Legion.const_defined?('Settings')
+        if Legion.const_defined?('Settings', false)
           Legion::Settings[:llm]
         else
           Legion::LLM::Settings.default
@@ -254,7 +254,7 @@ module Legion
       end
 
       def try_register_native_provider(name, ext_const, runner_const)
-        return unless Object.const_defined?(ext_const) && Object.const_defined?(runner_const)
+        return unless Object.const_defined?(ext_const, false) && Object.const_defined?(runner_const, false)
 
         klass = Object.const_get(runner_const)
         yield klass
@@ -517,7 +517,7 @@ module Legion
           response: response_text, context: context
         )
 
-        Legion::Logging.warn "Response guard failed: #{guard_result.inspect}" if !guard_result[:passed] && Legion.const_defined?('Logging')
+        Legion::Logging.warn "Response guard failed: #{guard_result.inspect}" if !guard_result[:passed] && Legion.const_defined?('Logging', false)
 
         result.merge(_guard_result: guard_result)
       rescue StandardError => e
@@ -573,7 +573,7 @@ module Legion
       end
 
       def enterprise_privacy?
-        if Legion.const_defined?('Settings') && Legion::Settings.respond_to?(:enterprise_privacy?)
+        if Legion.const_defined?('Settings', false) && Legion::Settings.respond_to?(:enterprise_privacy?)
           Legion::Settings.enterprise_privacy?
         else
           ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'

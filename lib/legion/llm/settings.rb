@@ -272,9 +272,9 @@ module Legion
 end
 
 begin
-  Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default) if Legion.const_defined?('Settings')
+  Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default) if Legion.const_defined?('Settings', false)
 rescue StandardError => e
-  if Legion.const_defined?('Logging') && Legion::Logging.respond_to?(:fatal)
+  if Legion.const_defined?('Logging', false) && Legion::Logging.respond_to?(:fatal)
     Legion::Logging.fatal(e.message)
     Legion::Logging.fatal(e.backtrace)
   else
