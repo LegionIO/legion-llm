@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'concurrent'
+
 module Legion
   module LLM
     module Pipeline
@@ -40,7 +42,9 @@ module Legion
           response_normalization debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
-        ASYNC_SAFE_STEPS = %i[context_store post_response knowledge_capture response_return].freeze
+        ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
+
+        ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
         def initialize(request)
           @request      = request
@@ -539,11 +543,15 @@ module Legion
           async_steps = POST_PROVIDER_STEPS.select { |s| ASYNC_SAFE_STEPS.include?(s) }
           return if async_steps.empty?
 
-          Thread.new do
+          profile = @profile
+          ASYNC_THREAD_POOL.post do
             async_steps.each do |step|
-              next if Profile.skip?(@profile, step)
+              next if Profile.skip?(profile, step)
 
-              execute_step(step) { send(:"step_#{step}") }
+              # Async-safe steps are executed without the execute_step wrapper to
+              # avoid mutating executor state (e.g., @timeline, @warnings)
+              # concurrently with response construction.
+              send(:"step_#{step}")
             end
           rescue StandardError => e
             Legion::Logging.warn("[pipeline] async post-step error: #{e.message}") if defined?(Legion::Logging)

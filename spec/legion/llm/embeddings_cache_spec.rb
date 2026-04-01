@@ -79,6 +79,9 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
 
     before do
       allow(Legion::LLM).to receive(:embedding_fallback_chain).and_return(chain)
+      Legion::Settings[:llm][:providers][:ollama]   = { enabled: true }
+      Legion::Settings[:llm][:providers][:bedrock]  = { enabled: true }
+      Legion::Settings[:llm][:providers][:openai]   = { enabled: true }
     end
 
     it 'returns the entry after the failed provider' do
@@ -117,6 +120,18 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
       expect(Legion::LLM).not_to receive(:send).with(:detect_ollama_embedding, anything)
       expect(Legion::LLM).not_to receive(:send).with(:detect_cloud_embedding, anything)
       Legion::LLM::Embeddings.send(:find_fallback_provider, :ollama)
+    end
+
+    context 'when a chain entry is currently disabled' do
+      before do
+        Legion::Settings[:llm][:providers][:bedrock] = { enabled: false }
+        Legion::Settings[:llm][:providers][:openai]  = { enabled: true }
+      end
+
+      it 'skips disabled chain entries and returns the next enabled one' do
+        result = Legion::LLM::Embeddings.send(:find_fallback_provider, :ollama)
+        expect(result).to eq({ provider: :openai, model: 'text-embedding-3-small' })
+      end
     end
   end
 

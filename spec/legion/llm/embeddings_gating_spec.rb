@@ -54,6 +54,15 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       expect(results.map { |r| r[:error] }).to all(match(/disabled/))
     end
 
+    it 'each result includes :model, :dimensions, and :index for consistent shape' do
+      results = Legion::LLM::Embeddings.generate_batch(texts: %w[foo bar], provider: :openai)
+      results.each_with_index do |result, i|
+        expect(result).to include(:model, :provider, :dimensions)
+        expect(result[:dimensions]).to eq(0)
+        expect(result[:index]).to eq(i)
+      end
+    end
+
     it 'does not call RubyLLM.embed' do
       expect(RubyLLM).not_to receive(:embed)
       Legion::LLM::Embeddings.generate_batch(texts: %w[foo], provider: :openai)

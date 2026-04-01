@@ -56,7 +56,8 @@ module Legion
           return texts.map { |_| { vector: nil, error: 'LLM not started' } } unless LLM.started?
 
           provider ||= resolve_provider
-          return texts.map { |_| { vector: nil, provider: provider, error: "provider #{provider} is disabled" } } if provider_disabled?(provider)
+          disabled_result = disabled_batch_result(texts, provider, model)
+          return disabled_result if disabled_result
 
           model  ||= resolve_model(provider)
           texts    = texts.map { |t| apply_prefix(t, model: model, task: task) }
@@ -78,6 +79,15 @@ module Legion
         end
 
         private
+
+        def disabled_batch_result(texts, provider, model)
+          return nil unless provider_disabled?(provider)
+
+          model ||= resolve_model(provider)
+          texts.each_with_index.map do |_, i|
+            { vector: nil, model: model, provider: provider, dimensions: 0, index: i, error: "provider #{provider} is disabled" }
+          end
+        end
 
         def provider_disabled?(provider)
           return false unless provider
@@ -143,6 +153,8 @@ module Legion
               next
             end
             next unless started
+            # Skip providers that are explicitly disabled in the fallback chain
+            next if provider_disabled?(entry[:provider])
 
             Legion::Logging.info "Embedding failover: #{failed_provider} -> #{entry[:provider]}" if defined?(Legion::Logging)
             return entry

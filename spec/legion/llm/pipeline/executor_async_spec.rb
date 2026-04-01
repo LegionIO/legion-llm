@@ -6,8 +6,8 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
   describe 'ASYNC_SAFE_STEPS' do
     subject(:async_safe) { described_class::ASYNC_SAFE_STEPS }
 
-    it 'includes context_store' do
-      expect(async_safe).to include(:context_store)
+    it 'does not include context_store' do
+      expect(async_safe).not_to include(:context_store)
     end
 
     it 'includes post_response' do
