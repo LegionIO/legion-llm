@@ -6,10 +6,11 @@ module Legion
       def self.default
         model_override = ENV.fetch('ANTHROPIC_MODEL', nil)
         {
-          enabled:          true,
-          connected:        false,
-          pipeline_enabled: true,
-          default_model:    model_override,
+          enabled:                   true,
+          connected:                 false,
+          pipeline_enabled:          true,
+          pipeline_async_post_steps: false,
+          default_model:             model_override,
           default_provider: nil,
           providers:        providers,
           routing:          routing_defaults,
@@ -165,7 +166,7 @@ module Legion
         {
           dimension:         1024,
           enforce_dimension: true,
-          provider_fallback: %w[azure ollama bedrock openai],
+          provider_fallback: %w[ollama bedrock openai],
           provider_models:   {
             ollama:  'mxbai-embed-large',
             azure:   'text-embedding-3-small',

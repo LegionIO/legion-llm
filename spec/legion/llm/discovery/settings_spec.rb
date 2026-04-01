@@ -25,7 +25,7 @@ RSpec.describe 'Embedding settings defaults' do
     it 'includes embedding defaults' do
       expect(Legion::Settings[:llm][:embedding]).to be_a(Hash)
       expect(Legion::Settings[:llm][:embedding][:dimension]).to eq(1024)
-      expect(Legion::Settings[:llm][:embedding][:provider_fallback]).to eq(%w[azure ollama bedrock openai])
+      expect(Legion::Settings[:llm][:embedding][:provider_fallback]).to eq(%w[ollama bedrock openai])
     end
 
     it 'includes ollama preferred models' do
