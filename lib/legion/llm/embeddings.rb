@@ -24,12 +24,18 @@ module Legion
       }.freeze
       OLLAMA_DEFAULT_CONTEXT_CHARS = 2048
 
+      PREFIX_REGISTRY = {
+        'nomic-embed-text'  => { document: 'search_document: ', query: 'search_query: ' },
+        'mxbai-embed-large' => { query: 'Represent this sentence for searching relevant passages: ' }
+      }.freeze
+
       class << self
-        def generate(text:, model: nil, provider: nil, dimensions: nil)
+        def generate(text:, model: nil, provider: nil, dimensions: nil, task: :document)
           return { vector: nil, model: model, provider: provider, error: 'LLM not started' } unless LLM.started?
 
           provider ||= resolve_provider
           model    ||= resolve_model(provider)
+          text       = apply_prefix(text, model: model, task: task)
 
           return generate_ollama(text: text, model: model) if provider&.to_sym == :ollama
 
@@ -43,11 +49,12 @@ module Legion
           handle_embed_failure(e, text: text, failed_provider: provider, failed_model: model)
         end
 
-        def generate_batch(texts:, model: nil, provider: nil, dimensions: nil)
+        def generate_batch(texts:, model: nil, provider: nil, dimensions: nil, task: :document)
           return texts.map { |_| { vector: nil, error: 'LLM not started' } } unless LLM.started?
 
           provider ||= resolve_provider
           model    ||= resolve_model(provider)
+          texts      = texts.map { |t| apply_prefix(t, model: model, task: task) }
 
           return generate_ollama_batch(texts: texts, model: model) if provider&.to_sym == :ollama
 
@@ -174,6 +181,26 @@ module Legion
           return provider_default if provider_default
 
           'text-embedding-3-small'
+        end
+
+        def apply_prefix(text, model:, task:)
+          return text unless prefix_injection_enabled?
+
+          base_model = model.to_s.split(':').first
+          prefixes   = PREFIX_REGISTRY[base_model]
+          return text unless prefixes
+
+          prefix = prefixes[task.to_sym]
+          return text unless prefix
+
+          "#{prefix}#{text}"
+        end
+
+        def prefix_injection_enabled?
+          value = (Legion::Settings.dig(:llm, :embedding) || {})[:prefix_injection]
+          value.nil? || value
+        rescue StandardError
+          true
         end
 
         def embedding_settings

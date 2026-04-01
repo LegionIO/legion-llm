@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-31
+
+### Added
+- `:quick_reply` pipeline profile for latency-sensitive conversational turns — skips 12 non-essential steps (idempotency, conversation_uuid, context_load, classification, gaia_advisory, rag_context, mcp_discovery, confidence_scoring, tool_calls, context_store, post_response, knowledge_capture), retaining only the 8 steps required for a valid provider round-trip (closes #27)
+- `Legion::LLM::Usage` standard struct (`lib/legion/llm/usage.rb`): immutable `::Data.define` value object with `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `total_tokens` fields; `total_tokens` auto-calculated as `input + output` when not explicitly provided; all fields default to 0 (closes #35)
+- Pipeline `extract_tokens` now returns a `Usage` struct instead of a plain hash when the provider response exposes token counts; populates `cache_read_tokens` and `cache_write_tokens` from response when available
+- Asymmetric embedding prefix injection by task type: `generate` and `generate_batch` accept a `task:` keyword (`:document` or `:query`, default `:document`). `PREFIX_REGISTRY` maps model names to task-specific prefixes (`nomic-embed-text` gets `search_document:` / `search_query:`, `mxbai-embed-large` gets a query prefix). Prefix injection is controlled by `Legion::Settings.dig(:llm, :embedding, :prefix_injection)` (default `true`). Unknown models are passed through unchanged (closes #24).
+
 ## [0.5.24] - 2026-03-31
 
 ### Added
