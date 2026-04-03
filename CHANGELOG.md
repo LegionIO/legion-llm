@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.14] - 2026-04-02
+
+### Fixed
+- Preserved fleet reply success and error state exactly as produced by the handler instead of forcing successful delivery metadata onto failures
+- Preserved full fleet chat request fidelity by replaying prior messages locally and forwarding provider/model context through fleet chat, embed, and structured execution paths (closes #48)
+
 ## [0.6.13] - 2026-04-02
 
 ### Fixed

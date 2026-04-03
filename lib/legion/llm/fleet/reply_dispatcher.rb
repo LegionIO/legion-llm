@@ -34,7 +34,7 @@ module Legion
           future = @pending.delete(cid)
           return unless future
 
-          future.fulfill(payload.merge(success: true))
+          future.fulfill(payload)
         rescue StandardError => e
           handle_exception(e, level: :warn)
         end
