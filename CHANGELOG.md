@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Removed a redundant RuboCop block-length suppression in Sinatra route tool wiring after the `0.6.9` release cut
+
 ## [0.6.9] - 2026-04-02
 
 ### Added

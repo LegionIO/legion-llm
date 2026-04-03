@@ -158,7 +158,6 @@ module Legion
               define_method(:name) { tname }
               tool_ref = tname
 
-              # rubocop:disable Metrics/BlockLength
               define_method(:execute) do |**kwargs|
                 case tool_ref
                 when 'sh'
@@ -204,7 +203,6 @@ module Legion
                 Legion::Logging.log_exception(e, payload_summary: "client tool #{tool_ref} failed", component_type: :api)
                 "Tool error: #{e.message}"
               end
-              # rubocop:enable Metrics/BlockLength
             end
             klass.params(tschema) if tschema.is_a?(Hash) && tschema[:properties]
             klass
