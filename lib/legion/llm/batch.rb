@@ -137,11 +137,18 @@ module Legion
         end
 
         def submit_single(entry, provider:, model:)
+          msgs = entry[:messages]
+          prompt = if msgs.is_a?(Array)
+                     last_user = msgs.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
+                     (last_user || {}).fetch(:content, nil) || (last_user || {}).fetch('content', nil) || ''
+                   else
+                     msgs.to_s
+                   end
           response = Legion::LLM.chat_direct(
             **entry[:opts],
             provider: provider,
             model:    model,
-            message:  entry[:messages],
+            message:  prompt,
             urgency:  :immediate
           )
 

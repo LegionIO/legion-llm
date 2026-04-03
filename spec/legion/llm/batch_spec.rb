@@ -177,7 +177,7 @@ RSpec.describe Legion::LLM::Batch do
         results = described_class.flush
 
         expect(RubyLLM).to have_received(:chat).with(hash_including(model: 'gpt-4o', provider: :openai))
-        expect(session).to have_received(:ask).with([{ role: 'user', content: 'batched hello' }])
+        expect(session).to have_received(:ask).with('batched hello')
         expect(results.first[:status]).to eq(:completed)
         expect(results.first[:result][:response]).to eq(response)
       end

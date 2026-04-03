@@ -339,7 +339,7 @@ module Legion
             text.chars.each_slice(max_chars).map { |s| { content: s.join } }
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.embeddings.chunk_text', model: model)
+          handle_exception(e, level: :debug, operation: 'llm.embeddings.chunk_text')
           text.chars.each_slice(max_chars).map { |s| { content: s.join } }
         end
 

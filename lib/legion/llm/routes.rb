@@ -477,11 +477,13 @@ module Legion
 
           streaming = body[:stream] == true && request.preferred_type.to_s.include?('text/event-stream')
           normalized_caller = caller_context.respond_to?(:transform_keys) ? caller_context.transform_keys(&:to_sym) : {}
-          effective_caller = {
+          safe_caller_fields = normalized_caller.slice(:context, :session_id, :trace_id)
+          server_caller_fields = {
             source:       'api',
             path:         request.path,
             requested_by: { identity: caller_identity, type: :user, credential: :api }
-          }.merge(normalized_caller)
+          }
+          effective_caller = server_caller_fields.merge(safe_caller_fields)
           caller_summary = [effective_caller[:source], effective_caller[:path]].compact.join(':')
           log.info(
             "[llm][api] inference.accepted request_id=#{request_id} " \
