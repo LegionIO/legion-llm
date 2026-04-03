@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module ProviderRegistry
+      extend Legion::Logging::Helper
+
       @registry = {}
       @mutex = Mutex.new
 
@@ -10,6 +14,7 @@ module Legion
 
       def register(name, extension_module)
         @mutex.synchronize { @registry[name.to_sym] = extension_module }
+        log.info("[llm][providers] native_registered provider=#{name}")
       end
 
       def for(name)
@@ -25,7 +30,9 @@ module Legion
       end
 
       def reset!
+        count = @mutex.synchronize { @registry.size }
         @mutex.synchronize { @registry.clear }
+        log.info("[llm][providers] native_registry_reset count=#{count}")
       end
     end
   end

@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module ShadowEval
+      extend Legion::Logging::Helper
       MAX_HISTORY = 100
 
       class << self
@@ -19,7 +21,9 @@ module Legion
 
         def evaluate(primary_response:, messages: nil, shadow_model: nil)
           shadow_model ||= Legion::Settings.dig(:llm, :shadow, :model) || 'gpt-4o-mini'
-          log_debug("ShadowEval triggered primary_model=#{primary_response[:model]} shadow_model=#{shadow_model}")
+          log.info(
+            "[llm][shadow] evaluate primary_model=#{primary_response[:model]} shadow_model=#{shadow_model}"
+          )
 
           shadow_response = Legion::LLM.send(:chat_single,
                                              model: shadow_model, provider: nil,
@@ -28,10 +32,15 @@ module Legion
 
           comparison = compare(primary_response, shadow_response, shadow_model)
           record(comparison)
+          log.info(
+            "[llm][shadow] recorded primary_model=#{comparison[:primary_model]} " \
+            "shadow_model=#{comparison[:shadow_model]} cost_savings=#{comparison[:cost_savings]}"
+          )
           Legion::Events.emit('llm.shadow_eval', comparison) if defined?(Legion::Events)
           comparison
         rescue StandardError => e
-          Legion::Logging.warn("ShadowEval failed shadow_model=#{shadow_model}: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn, operation: 'llm.shadow_eval.evaluate', shadow_model: shadow_model)
+          log.error("[llm][shadow] evaluate_failed shadow_model=#{shadow_model} error=#{e.message}")
           { error: e.message, shadow_model: shadow_model }
         end
 
@@ -114,10 +123,6 @@ module Legion
             total_shadow_cost:  0.0,
             models_evaluated:   []
           }
-        end
-
-        def log_debug(msg)
-          Legion::Logging.debug(msg) if defined?(Legion::Logging)
         end
       end
     end

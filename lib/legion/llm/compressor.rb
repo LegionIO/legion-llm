@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Compressor
+      extend Legion::Logging::Helper
       NONE       = 0
       LIGHT      = 1
       MODERATE   = 2
@@ -35,7 +37,7 @@ module Legion
           result = segments.map { |seg| seg[:protected] ? seg[:text] : compress_prose(seg[:text], level) }.join
 
           result = collapse_whitespace(result) if level >= AGGRESSIVE
-          Legion::Logging.debug("Compressor applied level=#{level} original=#{original_length} compressed=#{result.length}") if defined?(Legion::Logging)
+          log.debug("Compressor applied level=#{level} original=#{original_length} compressed=#{result.length}")
           result
         end
 
@@ -47,10 +49,14 @@ module Legion
 
           summary = llm_summarize(text, max_tokens)
           if summary
-            log_debug("summarize_messages: #{messages.size} messages -> #{summary.length} chars")
+            log.info("[llm][compressor] summarized messages=#{messages.size} summary_chars=#{summary.length}")
             { summary: summary, original_count: messages.size, compressed: true }
           else
             fallback = compress(text, level: AGGRESSIVE)
+            log.info(
+              "[llm][compressor] fallback_compress messages=#{messages.size} " \
+              "input_chars=#{text.length} summary_chars=#{fallback.length}"
+            )
             { summary: fallback, original_count: messages.size, compressed: true, method: :stopword }
           end
         end
@@ -172,7 +178,8 @@ module Legion
           response = session.ask("#{SUMMARIZE_PROMPT}\n\n#{text[0, max_tokens * 8]}")
           response.content
         rescue StandardError => e
-          log_debug("llm_summarize failed: #{e.message}")
+          handle_exception(e, level: :debug, operation: 'llm.compressor.llm_summarize')
+          log.debug("[llm][compressor] summarize_failed error=#{e.message}")
           nil
         end
 
@@ -188,10 +195,6 @@ module Legion
           intersection = (words_a & words_b).size.to_f
           union = (words_a | words_b).size.to_f
           union.zero? ? 0.0 : intersection / union
-        end
-
-        def log_debug(msg)
-          Legion::Logging.debug("Compressor: #{msg}") if defined?(Legion::Logging)
         end
       end
     end

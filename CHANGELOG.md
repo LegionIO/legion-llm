@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- Additional helper-based `info`/`error` logging across non-Sinatra runtime paths including native dispatch, prompt caching, GAIA caller helpers, billing and metering pipeline steps, provider and tool registries, compressor, reflection, shadow evaluation, and escalation tracking
+
+### Changed
+- Uplifted remaining non-Sinatra `lib/**/*.rb` runtime modules to `Legion::Logging::Helper`, replacing lingering wrapper-style `log_debug` calls with direct `log.debug/info/warn/error`
+- Added catch-all `handle_exception` coverage for remaining non-Sinatra rescue paths, including RBAC pipeline failure handling
+
 ## [0.6.8] - 2026-04-01
 
 ### Added

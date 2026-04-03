@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module Billing
+          include Legion::Logging::Helper
+
           def step_billing
             return unless @request.billing
 
@@ -13,11 +17,20 @@ module Legion
             estimated_cost = cap ? estimate_request_cost : nil
 
             if cap && estimated_cost > cap
+              log.error(
+                "[llm][billing] cap_exceeded request_id=#{@request.id} " \
+                "budget_id=#{billing[:budget_id]} estimated_cost=#{estimated_cost.round(6)} cap=#{cap}"
+              )
               raise Legion::LLM::PipelineError.new(
                 "budget_exceeded: estimated cost #{estimated_cost.round(6)} exceeds cap #{cap}",
                 step: :billing
               )
             end
+
+            log.info(
+              "[llm][billing] checked request_id=#{@request.id} budget_id=#{billing[:budget_id]} " \
+              "estimated_cost=#{estimated_cost || 0} cap=#{cap || 'none'}"
+            )
 
             @enrichments['billing:budget_check'] = {
               budget_id:          billing[:budget_id],
