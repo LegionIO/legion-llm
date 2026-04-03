@@ -3,9 +3,11 @@
 require 'base64'
 require 'json'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module CodexConfigLoader
+      extend Legion::Logging::Helper
       CODEX_AUTH = File.expand_path('~/.codex/auth.json')
 
       module_function
@@ -36,7 +38,7 @@ module Legion
       def read_json(path)
         ::JSON.parse(File.read(path), symbolize_names: true)
       rescue StandardError => e
-        Legion::Logging.debug("CodexConfigLoader could not read #{path}: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :debug)
         {}
       end
 
@@ -47,7 +49,7 @@ module Legion
         return unless token.is_a?(String) && !token.empty?
 
         unless token_valid?(token)
-          Legion::Logging.debug 'CodexConfigLoader: access token is expired, skipping' if defined?(Legion::Logging)
+          log.debug 'CodexConfigLoader: access token is expired, skipping'
           return
         end
 
@@ -57,7 +59,7 @@ module Legion
         return unless resolved_existing.nil? || (resolved_existing.respond_to?(:empty?) && resolved_existing.empty?)
 
         providers[:openai][:api_key] = token
-        Legion::Logging.debug 'Imported OpenAI API key from Codex auth config' if defined?(Legion::Logging)
+        log.debug 'Imported OpenAI API key from Codex auth config'
       end
 
       def resolve_env_api_key(value)
@@ -99,7 +101,8 @@ module Legion
 
         exp > Time.now.to_i
       rescue StandardError => e
-        Legion::Logging.debug("CodexConfigLoader: failed to parse access token for exp validation: #{e.class}: #{e.message}") if defined?(Legion::Logging)
+        log.debug("CodexConfigLoader.token_valid? failed to parse access token: #{e.message}")
+        handle_exception(e, level: :debug)
         true
       end
     end

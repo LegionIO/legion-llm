@@ -1,9 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Pipeline
       module ToolDispatcher
+        extend Legion::Logging::Helper
         module_function
 
         def dispatch(tool_call:, source:, exchange_id: nil)
@@ -37,6 +39,7 @@ module Legion
             duration_ms: ((Time.now - start_time) * 1000).to_i
           )
         rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.tool_dispatcher.dispatch_tool_call', tool_name: tool_name)
           { status: :error, error: e.message, source: source, exchange_id: exchange_id }
         end
 
@@ -120,7 +123,7 @@ module Legion
           end
         rescue StandardError => e
           Legion::LLM::OverrideConfidence.record_failure(tool_name) if tool_name
-          Legion::Logging.debug("Shadow execution failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug, operation: 'llm.pipeline.tool_dispatcher.shadow_execution', tool_name: tool_name)
         end
       end
     end

@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module ConfidenceScoring
+          include Legion::Logging::Helper
+
           def step_confidence_scoring
             return unless @raw_response
 
@@ -25,6 +29,7 @@ module Legion
             )
           rescue StandardError => e
             @warnings << "confidence_scoring error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.confidence_scoring')
             @confidence_score = nil
           end
         end

@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module SpanAnnotator
+          extend Legion::Logging::Helper
+
           module_function
 
           STEP_ATTRIBUTE_BUILDERS = {
@@ -85,7 +89,8 @@ module Legion
             return {} unless builder
 
             builder.call(audit || {}, enrichments || {})
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.span_annotator.attributes_for', step: step_name)
             {}
           end
         end

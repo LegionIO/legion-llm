@@ -2,9 +2,11 @@
 
 require 'securerandom'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module ConversationStore
+      extend Legion::Logging::Helper
       MAX_CONVERSATIONS = 256
       METADATA_ROLE = :__metadata__
 
@@ -319,7 +321,8 @@ module Legion
           db_append_message(conversation_id, msg)
         rescue StandardError => e
           spool_message(conversation_id, msg)
-          Legion::Logging.warn("ConversationStore persist failed, spooled: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn, operation: 'llm.conversation_store.persist_message', conversation_id: conversation_id)
+          log.warn("ConversationStore persist failed, spooled conversation_id=#{conversation_id}")
         end
 
         def persist_conversation(conversation_id, metadata)
@@ -327,7 +330,7 @@ module Legion
 
           db_create_conversation(conversation_id, metadata)
         rescue StandardError => e
-          Legion::Logging.warn("ConversationStore conversation persist failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
         end
 
         def load_from_db(conversation_id)
@@ -335,7 +338,7 @@ module Legion
 
           db_load_messages(conversation_id)
         rescue StandardError => e
-          Legion::Logging.debug("ConversationStore#load_from_db failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           []
         end
 
@@ -344,7 +347,7 @@ module Legion
 
           db_conversation_record?(conversation_id)
         rescue StandardError => e
-          Legion::Logging.debug("ConversationStore#db_conversation_exists? failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           false
         end
 
@@ -354,7 +357,7 @@ module Legion
             Legion::Data.connection.respond_to?(:table_exists?) &&
             Legion::Data.connection.table_exists?(:conversations)
         rescue StandardError => e
-          Legion::Logging.debug("ConversationStore#db_available? failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           false
         end
 
@@ -396,7 +399,8 @@ module Legion
           @db_chain_columns_exist ||=
             Legion::Data.connection.schema(:conversation_messages)
                         .any? { |col, _| col == :parent_id }
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.conversation_store.db_chain_columns_exist')
           false
         end
 

@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module StructuredOutput
+      extend Legion::Logging::Helper
       SCHEMA_CAPABLE_MODELS = %w[gpt-4o gpt-4o-mini gpt-4-turbo claude-3-5-sonnet claude-4-sonnet claude-4-opus].freeze
 
       class << self
@@ -26,7 +28,7 @@ module Legion
                                                 json_schema: { name: 'response', schema: schema } },
                              **opts.except(:attempt))
           else
-            Legion::Logging.debug("StructuredOutput using prompt-based fallback for model=#{model}") if defined?(Legion::Logging)
+            log.debug("StructuredOutput using prompt-based fallback for model=#{model}")
             instruction = "You MUST respond with valid JSON matching this schema:\n" \
                           "```json\n#{Legion::JSON.dump(schema)}\n```\n" \
                           'Respond with ONLY the JSON object, no other text.'
@@ -39,7 +41,7 @@ module Legion
 
         def handle_parse_error(error, messages, schema, model, result, **opts)
           attempt = opts[:attempt] || 0
-          Legion::Logging.warn("StructuredOutput JSON parse failure attempt=#{attempt} model=#{model}: #{error.message}") if defined?(Legion::Logging)
+          log.warn("StructuredOutput JSON parse failure attempt=#{attempt} model=#{model}: #{error.message}")
           if retry_enabled? && attempt < max_retries
             retry_with_instruction(messages, schema, model, attempt: attempt + 1, **opts)
           else
@@ -57,7 +59,7 @@ module Legion
           parsed = Legion::JSON.load(result[:content])
           { data: parsed, raw: result[:content], model: result[:model], valid: true, retried: true }
         rescue StandardError => e
-          Legion::Logging.warn("StructuredOutput retry failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           { data: nil, error: e.message, valid: false }
         end
 

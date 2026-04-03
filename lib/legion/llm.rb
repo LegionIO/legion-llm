@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 require 'ruby_llm'
 require 'legion/llm/version'
 require 'legion/llm/errors'
@@ -37,15 +39,19 @@ require_relative 'llm/routes'
 module Legion
   module LLM
     class EscalationExhausted < StandardError; end
+
     class DaemonDeniedError < StandardError; end
+
     class DaemonRateLimitedError < StandardError; end
+
     class PrivacyModeError < StandardError; end
 
     class << self
       include Legion::LLM::Providers
+      include Legion::Logging::Helper
 
       def start
-        Legion::Logging.debug 'Legion::LLM is running start'
+        log.debug 'Legion::LLM is running start'
 
         require 'legion/llm/claude_config_loader'
         ClaudeConfigLoader.load
@@ -65,7 +71,7 @@ module Legion
 
         @started = true
         Legion::Settings[:llm][:connected] = true
-        Legion::Logging.info 'Legion::LLM started'
+        log.info 'Legion::LLM started'
         register_routes
       end
 
@@ -77,7 +83,7 @@ module Legion
         @embedding_model = nil
         @embedding_fallback_chain = nil
         ProviderRegistry.reset!
-        Legion::Logging.info 'Legion::LLM shut down'
+        log.info 'Legion::LLM shut down'
       end
 
       def started?
@@ -101,38 +107,108 @@ module Legion
       # Create a new chat session — delegates to lex-llm-gateway when available
       # for automatic metering and fleet dispatch
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
-               max_escalations: nil, quality_check: nil, message: nil, **, &)
-        if defined?(Legion::Telemetry::OpenInference)
-          Legion::Telemetry::OpenInference.llm_span(
-            model: (model || settings[:default_model]).to_s, provider: provider&.to_s, input: message
-          ) do |_span|
-            _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier, escalate: escalate, max_escalations: max_escalations,
-                           quality_check: quality_check, message: message, **, &)
-          end
-        else
-          _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier,
-                         escalate: escalate, max_escalations: max_escalations,
-                         quality_check: quality_check, message: message, **, &)
-        end
+               max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
+        started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        log_inference_request(
+          request_type:       :chat,
+          requested_model:    model,
+          requested_provider: provider,
+          intent:             intent,
+          tier:               tier,
+          message:            message,
+          kwargs:             kwargs
+        )
+
+        result = if defined?(Legion::Telemetry::OpenInference)
+                   Legion::Telemetry::OpenInference.llm_span(
+                     model: (model || settings[:default_model]).to_s, provider: provider&.to_s, input: message
+                   ) do |_span|
+                     _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier, escalate: escalate,
+                                    max_escalations: max_escalations, quality_check: quality_check, message: message, **kwargs, &)
+                   end
+                 else
+                   _dispatch_chat(model: model, provider: provider, intent: intent, tier: tier,
+                                  escalate: escalate, max_escalations: max_escalations,
+                                  quality_check: quality_check, message: message, **kwargs, &)
+                 end
+
+        log_inference_response(
+          request_type:       :chat,
+          requested_model:    model,
+          requested_provider: provider,
+          result:             result,
+          duration_ms:        elapsed_ms_since(started_at)
+        )
+        result
+      rescue StandardError => e
+        log_inference_error(
+          request_type:       :chat,
+          requested_model:    model,
+          requested_provider: provider,
+          error:              e,
+          duration_ms:        elapsed_ms_since(started_at)
+        )
+        raise
       end
 
       # Send a single message — daemon-first, falls through to direct on unavailability.
       def ask(message:, model: nil, provider: nil, intent: nil, tier: nil,
               context: {}, identity: nil, &)
+        started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        log_inference_request(
+          request_type:       :ask,
+          requested_model:    model,
+          requested_provider: provider,
+          intent:             intent,
+          tier:               tier,
+          message:            message,
+          kwargs:             { context: context, identity: identity }
+        )
+
         if DaemonClient.available?
           result = daemon_ask(message: message, model: model, provider: provider,
                               context: context, tier: tier, identity: identity)
-          return result if result
+          if result
+            log_inference_response(
+              request_type:       :ask,
+              requested_model:    model,
+              requested_provider: provider,
+              result:             result,
+              duration_ms:        elapsed_ms_since(started_at)
+            )
+            return result
+          end
         end
 
-        ask_direct(message: message, model: model, provider: provider,
-                   intent: intent, tier: tier, &)
+        result = ask_direct(message: message, model: model, provider: provider,
+                            intent: intent, tier: tier, &)
+        log_inference_response(
+          request_type:       :ask,
+          requested_model:    model,
+          requested_provider: provider,
+          result:             result,
+          duration_ms:        elapsed_ms_since(started_at)
+        )
+        result
+      rescue StandardError => e
+        log_inference_error(
+          request_type:       :ask,
+          requested_model:    model,
+          requested_provider: provider,
+          error:              e,
+          duration_ms:        elapsed_ms_since(started_at)
+        )
+        raise
       end
 
       # Direct chat bypassing gateway — used by gateway runners to avoid recursion
       def chat_direct(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
                       max_escalations: nil, quality_check: nil, message: nil, **kwargs)
-        cache_opt   = kwargs.delete(:cache) { true }
+        log.debug(
+          "[llm] chat_direct.enter model=#{model} provider=#{provider} intent=#{intent} " \
+          "tier=#{tier} escalate=#{escalate} message_present=#{!message.nil?} kwargs=#{kwargs.keys.sort}"
+        )
+        cache_opt = kwargs.delete(:cache) { true }
         temperature = kwargs.delete(:temperature)
 
         escalate = escalation_enabled? if escalate.nil?
@@ -141,7 +217,7 @@ module Legion
         if cache_key
           cached = Cache.get(cache_key)
           if cached
-            Legion::Logging.debug 'Legion::LLM cache hit'
+            log.debug 'Legion::LLM cache hit'
             cached_response = cached.dup
             cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
             return cached_response
@@ -152,9 +228,10 @@ module Legion
         deferred = try_defer(intent: intent, urgency: urgency, model: model, provider: provider, message: message, **kwargs)
         return deferred if deferred
 
-        if defined?(Legion::Logging)
-          Legion::Logging.debug "[LLM] chat_direct escalate=#{escalate} message_present=#{!message.nil?} model=#{model} provider=#{provider}"
-        end
+        log.debug(
+          "[llm] chat_direct.dispatch model=#{model} provider=#{provider} " \
+          "escalate=#{escalate} message_present=#{!message.nil?}"
+        )
         result = if escalate && message
                    chat_with_escalation(
                      model: model, provider: provider, intent: intent, tier: tier,
@@ -165,7 +242,7 @@ module Legion
                    chat_single(model: model, provider: provider, intent: intent, tier: tier,
                                temperature: temperature, message: message, **kwargs)
                  end
-        Legion::Logging.debug "[LLM] chat_direct result_class=#{result.class} result_nil=#{result.nil?}" if defined?(Legion::Logging)
+        log.debug("[llm] chat_direct.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
           ttl = settings.dig(:prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
@@ -229,9 +306,161 @@ module Legion
 
       private
 
+      def log_inference_request(request_type:, requested_model:, requested_provider:, intent:, tier:, message:, kwargs:)
+        input = inference_input_payload(message: message, messages: kwargs[:messages])
+        parts = [
+          '[llm] inference.request',
+          "type=#{request_type}",
+          "input_length=#{inference_text_length(input)}",
+          "input=#{input.inspect}"
+        ]
+        parts << "requested_provider=#{requested_provider}" if requested_provider
+        parts << "requested_model=#{requested_model}" if requested_model
+        parts << "intent=#{intent}" if intent
+        parts << "tier=#{tier}" if tier
+        parts << "caller=#{caller_descriptor(kwargs[:caller])}" if kwargs[:caller]
+        parts << "conversation_id=#{kwargs[:conversation_id]}" if kwargs[:conversation_id]
+        parts << "request_id=#{kwargs[:request_id]}" if kwargs[:request_id]
+        parts << "tools=#{Array(kwargs[:tools]).size}" if kwargs.key?(:tools)
+        parts << 'stream=true' if kwargs[:stream]
+        log.info(parts.join(' '))
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.log_inference_request')
+      end
+
+      def log_inference_response(request_type:, requested_model:, requested_provider:, result:, duration_ms:)
+        details = inference_response_details(result, requested_model: requested_model, requested_provider: requested_provider)
+        parts = [
+          '[llm] inference.response',
+          "type=#{request_type}",
+          'status=ok',
+          "duration_ms=#{duration_ms}",
+          "result_class=#{result.class}",
+          "output_length=#{inference_text_length(details[:output])}",
+          "output=#{details[:output].inspect}"
+        ]
+        parts << "provider=#{details[:provider]}" if details[:provider]
+        parts << "model=#{details[:model]}" if details[:model]
+        parts << "input_tokens=#{details[:input_tokens]}" unless details[:input_tokens].nil?
+        parts << "output_tokens=#{details[:output_tokens]}" unless details[:output_tokens].nil?
+        parts << "stop_reason=#{details[:stop_reason]}" if details[:stop_reason]
+        parts << "tool_calls=#{details[:tool_calls]}" unless details[:tool_calls].nil?
+        log.info(parts.join(' '))
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.log_inference_response')
+      end
+
+      def log_inference_error(request_type:, requested_model:, requested_provider:, error:, duration_ms:)
+        parts = [
+          '[llm] inference.response',
+          "type=#{request_type}",
+          'status=error',
+          "duration_ms=#{duration_ms}",
+          "error_class=#{error.class}",
+          "error=#{error.message.inspect}"
+        ]
+        parts << "requested_provider=#{requested_provider}" if requested_provider
+        parts << "requested_model=#{requested_model}" if requested_model
+        log.error(parts.join(' '))
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.log_inference_error')
+      end
+
+      def elapsed_ms_since(started_at)
+        ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round
+      end
+
+      def inference_input_payload(message:, messages:)
+        return messages unless messages.nil?
+
+        message
+      end
+
+      def inference_text_length(payload)
+        case payload
+        when Array
+          payload.sum { |item| inference_text_length(item) }
+        when Hash
+          return payload[:content].to_s.length if payload.key?(:content)
+          return payload['content'].to_s.length if payload.key?('content')
+
+          payload.values.sum { |item| inference_text_length(item) }
+        when nil
+          0
+        else
+          payload.to_s.length
+        end
+      end
+
+      def inference_response_details(result, requested_model:, requested_provider:)
+        return pipeline_response_details(result, requested_model: requested_model, requested_provider: requested_provider) if result.is_a?(Legion::LLM::Pipeline::Response)
+        return hash_response_details(result, requested_model: requested_model, requested_provider: requested_provider) if result.is_a?(Hash)
+
+        object_response_details(result, requested_model: requested_model, requested_provider: requested_provider)
+      end
+
+      def pipeline_response_details(result, requested_model:, requested_provider:)
+        message = result.message
+        {
+          output:        message.is_a?(Hash) ? (message[:content] || message['content']) : message.to_s,
+          provider:      result.routing[:provider] || result.routing['provider'] || requested_provider,
+          model:         result.routing[:model] || result.routing['model'] || requested_model,
+          input_tokens:  result.tokens[:input] || result.tokens['input'],
+          output_tokens: result.tokens[:output] || result.tokens['output'],
+          stop_reason:   result.stop[:reason] || result.stop['reason'],
+          tool_calls:    Array(result.tools).size
+        }
+      end
+
+      def hash_response_details(result, requested_model:, requested_provider:)
+        meta = result[:meta] || result['meta'] || {}
+        {
+          output:        result[:response] || result['response'] || result[:content] || result['content'] || result.dig(:message, :content) || result.to_s,
+          provider:      result[:provider] || result['provider'] || meta[:provider] || meta['provider'] || requested_provider,
+          model:         result[:model] || result['model'] || meta[:model] || meta['model'] || requested_model,
+          input_tokens:  result[:input_tokens] || result['input_tokens'] || meta[:tokens_in] || meta['tokens_in'],
+          output_tokens: result[:output_tokens] || result['output_tokens'] || meta[:tokens_out] || meta['tokens_out'],
+          stop_reason:   result[:stop_reason] || result['stop_reason'] || result.dig(:stop, :reason) || result.dig('stop', 'reason'),
+          tool_calls:    Array(result[:tool_calls] || result['tool_calls'] || result[:tools] || result['tools']).size
+        }
+      end
+
+      def object_response_details(result, requested_model:, requested_provider:)
+        tool_calls = safe_inference_value(result, :tool_calls)
+        {
+          output:        safe_inference_value(result, :content) || result.to_s,
+          provider:      requested_provider,
+          model:         safe_inference_value(result, :model_id)&.to_s || requested_model,
+          input_tokens:  safe_inference_value(result, :input_tokens),
+          output_tokens: safe_inference_value(result, :output_tokens),
+          stop_reason:   safe_inference_value(result, :stop_reason),
+          tool_calls:    tool_calls.nil? ? nil : Array(tool_calls).size
+        }
+      end
+
+      def safe_inference_value(object, method_name)
+        return nil unless object.methods.include?(method_name) || object.private_methods.include?(method_name)
+
+        object.public_send(method_name)
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.safe_inference_value', method_name: method_name)
+        nil
+      end
+
+      def caller_descriptor(caller_context)
+        return caller_context unless caller_context.is_a?(Hash)
+
+        source = caller_context[:source] || caller_context['source']
+        path = caller_context[:path] || caller_context['path']
+        return "#{source}:#{path}" if source && path
+        return source.to_s if source
+
+        caller_context.inspect
+      end
+
       def auto_register_providers
         try_register_native_provider(:claude, 'Legion::Extensions::Claude', 'Legion::Extensions::Claude::Runners::Messages') do |klass|
-          ProviderRegistry.register(:claude,    klass)
+          ProviderRegistry.register(:claude, klass)
           ProviderRegistry.register(:anthropic, klass)
         end
         try_register_native_provider(:bedrock, 'Legion::Extensions::Bedrock', 'Legion::Extensions::Bedrock::Runners::Converse') do |klass|
@@ -246,12 +475,12 @@ module Legion
 
         registered = ProviderRegistry.available
         if registered.any?
-          Legion::Logging.info "Native provider registry: #{registered.join(', ')}"
+          log.info "Native provider registry: #{registered.join(', ')}"
         else
-          Legion::Logging.debug 'No native lex-* providers registered (ruby_llm mode)'
+          log.debug 'No native lex-* providers registered (ruby_llm mode)'
         end
       rescue StandardError => e
-        Legion::Logging.warn "auto_register_providers failed: #{e.message}" if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'llm.auto_register_providers')
       end
 
       def try_register_native_provider(name, ext_const, runner_const)
@@ -259,7 +488,7 @@ module Legion
 
         klass = Object.const_get(runner_const)
         yield klass
-        Legion::Logging.debug "Registered native provider: #{name}" if defined?(Legion::Logging)
+        log.debug "Registered native provider: #{name}"
       end
 
       def resolve_llm_secrets
@@ -267,13 +496,13 @@ module Legion
 
         Legion::Settings::Resolver.resolve_secrets!(settings)
       rescue StandardError => e
-        Legion::Logging.warn "LLM settings resolution failed: #{e.message}" if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'llm.resolve_llm_secrets')
       end
 
       def pipeline_enabled?
         settings[:pipeline_enabled] == true
       rescue StandardError => e
-        Legion::Logging.debug("LLM#pipeline_enabled? failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :debug, operation: 'llm.pipeline_enabled')
         false
       end
 
@@ -284,6 +513,11 @@ module Legion
       end
 
       def _dispatch_chat(model:, provider:, intent:, tier:, escalate:, max_escalations:, quality_check:, message:, **kwargs, &)
+        log.debug(
+          "[llm] dispatch_chat.enter model=#{model} provider=#{provider} intent=#{intent} " \
+          "tier=#{tier} escalate=#{escalate} max_escalations=#{max_escalations} " \
+          "quality_check=#{quality_check} message_present=#{!message.nil?} kwargs=#{kwargs.keys.sort}"
+        )
         if pipeline_enabled? && (message || kwargs[:messages])
           return chat_via_pipeline(model: model, provider: provider, intent: intent, tier: tier,
                                    message: message, escalate: escalate, max_escalations: max_escalations,
@@ -313,11 +547,12 @@ module Legion
         end
 
         result = apply_response_guards(result, kwargs) if response_guards_enabled? && result.is_a?(Hash)
-
+        log.debug("[llm] dispatch_chat.exit result_class=#{result.class} result_nil=#{result.nil?}")
         result
       end
 
-      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
+      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil)
+        # rubocop:disable Lint/UnusedMethodArgument
         result = DaemonClient.chat(
           message: message, model: model, provider: provider,
           context: context, tier_preference: tier || :auto
@@ -342,18 +577,19 @@ module Legion
         response = block ? session.ask(message, &block) : session.ask(message)
 
         {
-          status:   :done,
+          status: :done,
           response: response.content,
-          meta:     {
-            tier:       :direct,
-            model:      session.model.to_s,
-            tokens_in:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
+          meta: {
+            tier: :direct,
+            model: session.model.to_s,
+            tokens_in: response.respond_to?(:input_tokens) ? response.input_tokens : nil,
             tokens_out: response.respond_to?(:output_tokens) ? response.output_tokens : nil
           }
         }
       end
 
-      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &block) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &block)
+        # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
         explicit_tools = kwargs.delete(:tools)
         tools = explicit_tools || ToolRegistry.tools
         tools = nil if tools.empty?
@@ -362,7 +598,7 @@ module Legion
           resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
           if resolution
             resolution = Router::GatewayInterceptor.intercept(resolution, context: kwargs.fetch(:context, {}))
-            model    = resolution.model
+            model = resolution.model
             provider = resolution.provider
             assert_cloud_allowed! if resolution.tier.to_sym == :cloud
           end
@@ -370,27 +606,25 @@ module Legion
           assert_cloud_allowed! if tier.to_sym == :cloud
         end
 
-        model    ||= settings[:default_model]
+        model ||= settings[:default_model]
         provider ||= settings[:default_provider]
 
         opts = {}
-        opts[:model]    = model    if model
+        opts[:model] = model if model
         opts[:provider] = provider if provider
         opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
         opts.delete(:temperature) if opts[:temperature].nil?
 
         inject_anthropic_cache_control!(opts, provider)
 
-        if defined?(Legion::Logging)
-          Legion::Logging.debug "[LLM] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
-        end
+        log.debug "[LLM] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
         session = RubyLLM.chat(**opts)
         tools&.each { |tool| session.with_tool(tool) }
         return session unless message
 
-        Legion::Logging.debug '[LLM] chat_single calling session.ask' if defined?(Legion::Logging)
+        log.debug '[LLM] chat_single calling session.ask'
         response = block ? session.ask(message, &block) : session.ask(message)
-        Legion::Logging.debug "[LLM] chat_single response_class=#{response.class} response_nil=#{response.nil?}" if defined?(Legion::Logging)
+        log.debug "[LLM] chat_single response_class=#{response.class} response_nil=#{response.nil?}"
 
         if response && !block && ShadowEval.enabled?
           msgs = session.respond_to?(:messages) ? session.messages : nil
@@ -415,10 +649,10 @@ module Legion
           ShadowEval.evaluate(
             primary_response: { content: response.respond_to?(:content) ? response.content : response.to_s,
                                 model: primary_model, usage: {} },
-            messages:         messages
+            messages: messages
           )
         rescue StandardError => e
-          Legion::Logging.debug("shadow evaluation failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug, operation: 'llm.shadow_eval')
         end
       end
 
@@ -454,7 +688,14 @@ module Legion
             end
           rescue StandardError => e
             duration_ms = ((Time.now - start_time) * 1000).round
-            Legion::Logging.warn("Escalation attempt failed model=#{resolution.model}: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(
+              e,
+              level: :warn,
+              operation: 'llm.escalation_attempt',
+              model: resolution.model,
+              provider: resolution.provider,
+              tier: resolution.tier
+            )
             report_health(:error, resolution, duration_ms)
             history << build_attempt(resolution, :error, [e.class.name], duration_ms)
           end
@@ -489,21 +730,21 @@ module Legion
 
       def publish_escalation_event(history, final_outcome)
         payload = {
-          outcome:   final_outcome,
-          attempts:  history.size,
-          history:   history,
+          outcome: final_outcome,
+          attempts: history.size,
+          history: history,
           timestamp: Time.now.utc.iso8601
         }
 
         Legion::Events.emit('llm.escalation', **payload) if defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
 
-        Legion::Logging.info("Escalation event: #{final_outcome}, #{history.size} attempts") if defined?(Legion::Logging)
+        log.info("Escalation event: #{final_outcome}, #{history.size} attempts")
 
         if defined?(Legion::Transport) && Legion::Transport.respond_to?(:connected?) && Legion::Transport.connected?
           Transport::Messages::EscalationEvent.new(payload).publish
         end
       rescue StandardError => e
-        Legion::Logging.warn("publish_escalation_event failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'llm.publish_escalation_event', outcome: final_outcome)
         nil
       end
 
@@ -518,11 +759,11 @@ module Legion
           response: response_text, context: context
         )
 
-        Legion::Logging.warn "Response guard failed: #{guard_result.inspect}" if !guard_result[:passed] && Legion.const_defined?('Logging', false)
+        log.warn "Response guard failed: #{guard_result.inspect}" if !guard_result[:passed]
 
         result.merge(_guard_result: guard_result)
       rescue StandardError => e
-        Legion::Logging.warn("apply_response_guards failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'llm.apply_response_guards')
         result
       end
 
@@ -533,9 +774,9 @@ module Legion
       def build_cache_key(model, provider, message, temperature)
         messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         Cache.key(
-          model:       model || settings[:default_model],
-          provider:    provider || settings[:default_provider],
-          messages:    messages_arr,
+          model: model || settings[:default_model],
+          provider: provider || settings[:default_provider],
+          messages: messages_arr,
           temperature: temperature
         )
       end
@@ -552,7 +793,7 @@ module Legion
         return unless instructions.is_a?(String) && instructions.length > min_tokens
 
         opts[:instructions] = {
-          content:       instructions,
+          content: instructions,
           cache_control: { type: 'ephemeral' }
         }
       end
@@ -586,7 +827,7 @@ module Legion
 
         raise PrivacyModeError,
               'Cloud LLM tier is disabled: enterprise_data_privacy is enabled. ' \
-              'Only Tier 0 (cache) and Tier 1 (local Ollama) are permitted.'
+                'Only Tier 0 (cache) and Tier 1 (local Ollama) are permitted.'
       end
 
       def effective_tier_is_cloud?(tier, provider)
@@ -607,11 +848,11 @@ module Legion
 
         Hooks::BudgetGuard.install if Hooks::BudgetGuard.enforcing?
       rescue StandardError => e
-        Legion::Logging.debug("LLM hook installation failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :debug, operation: 'llm.install_hooks')
       end
 
       def set_defaults
-        default_model    = settings[:default_model]
+        default_model = settings[:default_model]
         default_provider = settings[:default_provider]
 
         RubyLLM.configure do |c|
@@ -632,16 +873,16 @@ module Legion
           @embedding_provider = found[:provider]
           @embedding_model = found[:model]
           @embedding_fallback_chain = build_embedding_fallback_chain(embedding_settings)
-          Legion::Logging.info "Embedding available: #{@embedding_provider}:#{@embedding_model}"
+          log.info "Embedding available: #{@embedding_provider}:#{@embedding_model}"
         else
           @can_embed = false
           @embedding_fallback_chain = []
-          Legion::Logging.info 'No embedding provider available'
+          log.info 'No embedding provider available'
         end
       rescue StandardError => e
         @can_embed = false
         @embedding_fallback_chain = []
-        Legion::Logging.warn "Embedding detection failed: #{e.message}" if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'llm.detect_embedding_capability')
       end
 
       def find_embedding_provider(embedding_settings)
@@ -666,25 +907,26 @@ module Legion
       def verify_embedding(provider, model)
         return true if provider == :ollama
         return true if provider == :azure
+        return false unless provider_supports_embeddings?(provider)
         return true unless model
 
         start_time = Time.now
         RubyLLM.embed('health check', model: model, provider: provider)
         elapsed = ((Time.now - start_time) * 1000).round
-        Legion::Logging.info "Embedding health check #{provider}/#{model}: OK (#{elapsed}ms)"
+        log.info "Embedding health check #{provider}/#{model}: OK (#{elapsed}ms)"
         true
       rescue RubyLLM::ModelNotFoundError => e
-        Legion::Logging.warn "Embedding health check #{provider}/#{model}: model not in RubyLLM registry (#{e.message}) — skipping"
+        handle_exception(e, level: :warn, operation: 'llm.verify_embedding', provider: provider, model: model)
         false
       rescue StandardError => e
-        Legion::Logging.warn "Embedding health check failed for #{provider}/#{model}: #{e.class}: #{e.message} — skipping"
+        handle_exception(e, level: :warn, operation: 'llm.verify_embedding', provider: provider, model: model)
         false
       end
 
       def probe_embedding_provider(provider, ollama_preferred)
         case provider
         when :ollama then detect_ollama_embedding(ollama_preferred)
-        else              detect_cloud_embedding(provider)
+        else detect_cloud_embedding(provider)
         end
       end
 
@@ -696,16 +938,19 @@ module Legion
           return model if Legion::LLM::Discovery::Ollama.model_available?(model)
         end
         nil
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.detect_ollama_embedding')
         nil
       end
 
       def detect_cloud_embedding(provider)
         provider_config = settings.dig(:providers, provider)
         return nil unless provider_config.is_a?(Hash) && provider_config[:enabled]
+        return nil unless provider_supports_embeddings?(provider)
 
         true
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.detect_cloud_embedding', provider: provider)
         nil
       end
 
@@ -717,6 +962,7 @@ module Legion
         fallback.filter_map do |provider_name|
           provider = provider_name.to_sym
           next unless provider_enabled?(provider)
+          next unless provider_supports_embeddings?(provider)
 
           available = probe_embedding_provider(provider, ollama_preferred)
           next unless available
@@ -724,6 +970,24 @@ module Legion
           model = available.is_a?(String) ? available : (provider_models[provider_name] || provider_models[provider])&.to_s
           { provider: provider, model: model }
         end
+      end
+
+      def provider_supports_embeddings?(provider)
+        provider = provider&.to_sym
+        return false unless provider
+        return true if %i[ollama azure].include?(provider)
+        return false if %i[anthropic bedrock].include?(provider)
+
+        klass = RubyLLM::Provider.resolve(provider)
+        return false unless klass
+
+        klass.instance_method(:render_embedding_payload)
+        true
+      rescue NameError, NoMethodError
+        false
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.provider_supports_embeddings', provider: provider)
+        false
       end
 
       def provider_enabled?(provider)
@@ -739,20 +1003,20 @@ module Legion
 
         names = Discovery::Ollama.model_names
         count = names.size
-        Legion::Logging.info "Ollama: #{count} model#{'s' unless count == 1} available (#{names.join(', ')})"
-        Legion::Logging.info "System: #{Discovery::System.total_memory_mb} MB total, " \
-                             "#{Discovery::System.available_memory_mb} MB available"
+        log.info "Ollama: #{count} model#{'s' unless count == 1} available (#{names.join(', ')})"
+        log.info "System: #{Discovery::System.total_memory_mb} MB total, " \
+                   "#{Discovery::System.available_memory_mb} MB available"
       rescue StandardError => e
-        Legion::Logging.warn "Discovery failed: #{e.message}"
+        handle_exception(e, level: :warn, operation: 'llm.run_discovery')
       end
 
       def register_routes
         return unless defined?(Legion::API) && Legion::API.respond_to?(:register_library_routes)
 
         Legion::API.register_library_routes('llm', Legion::LLM::Routes)
-        Legion::Logging.debug 'Legion::LLM routes registered with API'
+        log.debug 'Legion::LLM routes registered with API'
       rescue StandardError => e
-        Legion::Logging.warn "Legion::LLM route registration failed: #{e.message}" if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'llm.register_routes')
       end
 
       def auto_configure_defaults
@@ -762,9 +1026,9 @@ module Legion
           model = config[:default_model]
           next unless model
 
-          settings[:default_model]    = model
+          settings[:default_model] = model
           settings[:default_provider] = provider
-          Legion::Logging.info "Auto-configured default: #{model} via #{provider}"
+          log.info "Auto-configured default: #{model} via #{provider}"
           break
         end
       end

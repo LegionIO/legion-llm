@@ -1,9 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Fleet
       module Handler
+        extend Legion::Logging::Helper
         module_function
 
         def handle_fleet_request(payload)
@@ -26,7 +28,7 @@ module Legion
 
           !Legion::Crypt.validate_jwt(token).nil?
         rescue StandardError => e
-          Legion::Logging.debug("Fleet::Handler#valid_token? failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           false
         end
 
@@ -35,7 +37,8 @@ module Legion
 
           settings = begin
             Legion::Settings[:llm]
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.fleet.handler.require_auth')
             nil
           end
           return false unless settings.is_a?(Hash)
@@ -91,7 +94,7 @@ module Legion
           )
           channel.close
         rescue StandardError => e
-          Legion::Logging.warn("Fleet::Handler: publish_reply failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
         end
 
         def extract_token(response, field)

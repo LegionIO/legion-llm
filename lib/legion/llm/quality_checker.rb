@@ -2,9 +2,11 @@
 
 require 'json'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module QualityChecker
+      extend Legion::Logging::Helper
       QualityResult = Struct.new(:passed, :failures)
 
       REPETITION_MIN_LENGTH = 20
@@ -71,7 +73,7 @@ module Legion
           ::JSON.parse(content)
           true
         rescue ::JSON::ParserError => e
-          Legion::Logging.debug("QualityChecker JSON validation failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           false
         end
       end

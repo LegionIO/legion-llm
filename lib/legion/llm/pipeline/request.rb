@@ -51,6 +51,7 @@ module Legion
         end
 
         def self.from_chat_args(**kwargs)
+          request_id = kwargs[:request_id] || kwargs[:id]
           messages = []
           if kwargs[:messages]
             messages = kwargs[:messages]
@@ -67,10 +68,12 @@ module Legion
           extra = kwargs.except(
             :message, :messages, :model, :provider, :system,
             :tools, :stream, :caller, :classification, :billing,
-            :agent, :test, :tracing, :priority, :conversation_id
+            :agent, :test, :tracing, :priority, :conversation_id,
+            :request_id, :id
           )
 
           build(
+            id:              request_id,
             messages:        messages,
             system:          kwargs[:system],
             routing:         routing,

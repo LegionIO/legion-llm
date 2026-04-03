@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module OverrideConfidence
+      extend Legion::Logging::Helper
       OVERRIDE_THRESHOLD = 0.8
       SHADOW_THRESHOLD = 0.5
       SUCCESS_DELTA = 0.05
@@ -80,7 +82,7 @@ module Legion
           end
         end
       rescue StandardError => e
-        Legion::Logging.debug("OverrideConfidence#hydrate_from_l2 failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :debug)
       end
 
       def hydrate_from_apollo
@@ -113,7 +115,7 @@ module Legion
           end
         end
       rescue StandardError => e
-        Legion::Logging.debug("OverrideConfidence#hydrate_from_apollo failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :debug)
       end
 
       def reset!
@@ -131,7 +133,7 @@ module Legion
 
           Legion::Cache.set("override:#{tool}", Legion::JSON.dump(entry), ttl: 3600)
         rescue StandardError => e
-          Legion::Logging.debug("OverrideConfidence#sync_to_l1 failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           nil
         end
 
@@ -143,7 +145,7 @@ module Legion
 
           Legion::Data::Local.upsert(:override_confidence, entry, conflict_keys: [:tool])
         rescue StandardError => e
-          Legion::Logging.debug("OverrideConfidence#sync_to_l2 failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           nil
         end
 
@@ -155,7 +157,7 @@ module Legion
 
           Legion::JSON.load(raw)
         rescue StandardError => e
-          Legion::Logging.debug("OverrideConfidence#lookup_l1 failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           nil
         end
 
@@ -165,7 +167,7 @@ module Legion
           rows = Legion::Data::Local.query('SELECT * FROM override_confidence WHERE tool = ?', tool)
           rows&.first
         rescue StandardError => e
-          Legion::Logging.debug("OverrideConfidence#lookup_l2 failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           nil
         end
       end

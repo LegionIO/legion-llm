@@ -1,9 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Pipeline
       module AuditPublisher
+        extend Legion::Logging::Helper
         EXCHANGE    = 'llm.audit'
         ROUTING_KEY = 'llm.audit.complete'
 
@@ -38,16 +40,16 @@ module Legion
               require 'legion/llm/transport/exchanges/audit'
               require 'legion/llm/transport/messages/audit_event'
               Legion::LLM::Transport::Messages::AuditEvent.new(**event).publish
-            elsif defined?(Legion::Logging)
-              Legion::Logging.debug('audit publish skipped: transport unavailable')
+            else
+              log.debug('audit publish skipped: transport unavailable')
             end
           rescue StandardError => e
-            Legion::Logging.warn("audit publish failed: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :warn)
           end
 
           event
         rescue StandardError => e
-          Legion::Logging.warn("audit build_event failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           nil
         end
       end

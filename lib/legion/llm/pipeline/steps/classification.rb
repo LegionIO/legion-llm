@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module Classification
+          include Legion::Logging::Helper
+
           LEVELS = %i[public internal restricted confidential].freeze
 
           PII_PATTERNS = {
@@ -100,7 +104,8 @@ module Legion
             return nil unless level
 
             { level: level.to_sym }
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.classification.default')
             nil
           end
         end

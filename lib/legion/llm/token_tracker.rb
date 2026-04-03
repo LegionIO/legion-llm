@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module TokenTracker
+      extend Legion::Logging::Helper
       MUTEX = Mutex.new
 
       class << self
@@ -19,7 +21,7 @@ module Legion
           }
 
           MUTEX.synchronize { store << entry }
-          Legion::Logging.debug "[LLM::TokenTracker] recorded #{input_tokens}+#{output_tokens} tokens (total: #{total_tokens})"
+          log.debug "[LLM::TokenTracker] recorded #{input_tokens}+#{output_tokens} tokens (total: #{total_tokens})"
           entry
         end
 
@@ -99,7 +101,7 @@ module Legion
 
           Legion::Settings.dig(:llm, :budget, :session_max_tokens)
         rescue StandardError => e
-          Legion::Logging.debug("[LLM::TokenTracker] session_max_tokens unavailable: #{e.message}")
+          handle_exception(e, level: :debug)
           nil
         end
 
@@ -108,7 +110,7 @@ module Legion
 
           Legion::Settings.dig(:llm, :budget, :session_warn_tokens)
         rescue StandardError => e
-          Legion::Logging.debug("[LLM::TokenTracker] session_warn_tokens unavailable: #{e.message}")
+          handle_exception(e, level: :debug)
           nil
         end
       end

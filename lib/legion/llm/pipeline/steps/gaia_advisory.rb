@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Pipeline
       module Steps
         module GaiaAdvisory
+          include Legion::Logging::Helper
           def step_gaia_advisory
             unless defined?(::Legion::Gaia) && ::Legion::Gaia.started?
               @warnings << 'GAIA unavailable for pre-request shaping'
@@ -53,6 +55,7 @@ module Legion
             record_advisory_meta_to_gaia(advisory)
           rescue StandardError => e
             @warnings << "GAIA advisory error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.gaia_advisory')
           end
 
           # Exposed as a public method so specs can stub it on instances.
@@ -74,7 +77,7 @@ module Legion
               interaction_pattern: extract_interaction_pattern(results)
             }
           rescue StandardError => e
-            Legion::Logging.debug "[GaiaAdvisory] build_partner_context error: #{e.message}" if defined?(Legion::Logging)
+            handle_exception(e, level: :debug)
             nil
           end
 
@@ -98,12 +101,13 @@ module Legion
             partner_ctx = build_partner_context(identity)
             advisory[:partner_context] = partner_ctx if partner_ctx
           rescue StandardError => e
-            Legion::Logging.debug "[GaiaAdvisory] partner context error: #{e.message}" if defined?(Legion::Logging)
+            handle_exception(e, level: :debug)
           end
 
           def apollo_local_available?
             defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.gaia_advisory.apollo_local_available')
             false
           end
 
@@ -177,7 +181,8 @@ module Legion
 
             raw = ::JSON.parse(result[:results].first[:content])
             raw['weights']
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.gaia_advisory.fetch_partner_weights')
             nil
           end
 
@@ -192,7 +197,8 @@ module Legion
               advisory_id:    advisory_id,
               advisory_types: advisory_types
             )
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.gaia_advisory.record_meta')
             nil
           end
 

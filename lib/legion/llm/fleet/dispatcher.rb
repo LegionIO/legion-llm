@@ -1,10 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Fleet
       module Dispatcher
         DEFAULT_TIMEOUT = 30
+        extend Legion::Logging::Helper
 
         module_function
 
@@ -33,7 +36,8 @@ module Legion
 
           settings = begin
             Legion::Settings[:llm]
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.fleet_enabled')
             nil
           end
           return true unless settings.is_a?(Hash)
@@ -51,7 +55,8 @@ module Legion
 
           settings = begin
             Legion::Settings[:llm]
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.resolve_timeout')
             nil
           end
           return DEFAULT_TIMEOUT unless settings.is_a?(Hash)

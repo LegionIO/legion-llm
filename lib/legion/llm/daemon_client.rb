@@ -5,9 +5,11 @@ require 'uri'
 require 'json'
 require 'securerandom'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module DaemonClient
+      extend Legion::Logging::Helper
       HEALTH_CACHE_TTL = 30
       DEFAULT_TIMEOUT  = 60
 
@@ -49,6 +51,7 @@ module Legion
         response = http_post('/api/llm/chat', body)
         interpret_response(response)
       rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.daemon_client.chat', request_id: request_id)
         mark_unhealthy
         { status: :unavailable, error: e.message }
       end
@@ -76,17 +79,17 @@ module Legion
         healthy = response.code == '200'
         @healthy           = healthy
         @health_checked_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-        Legion::Logging.info("Daemon health check result=#{healthy ? 'healthy' : 'unhealthy'} url=#{daemon_url}") if defined?(Legion::Logging)
+        log.info("Daemon health check result=#{healthy ? 'healthy' : 'unhealthy'} url=#{daemon_url}")
         healthy
       rescue StandardError => e
-        Legion::Logging.warn("Daemon health check failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
         mark_unhealthy
         false
       end
 
       # Marks the daemon as unhealthy and records the timestamp.
       def mark_unhealthy
-        Legion::Logging.warn("Daemon marked unhealthy url=#{daemon_url}") if defined?(Legion::Logging)
+        log.warn("Daemon marked unhealthy url=#{daemon_url}")
         @healthy           = false
         @health_checked_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
       end
@@ -116,6 +119,7 @@ module Legion
         response = http_post('/api/llm/inference', body, timeout: timeout)
         interpret_inference_response(response)
       rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.daemon_client.inference', conversation_id: conversation_id)
         mark_unhealthy
         { status: :unavailable, error: e.message }
       end
@@ -150,11 +154,11 @@ module Legion
           data = parsed.fetch(:data, {})
           { status: :accepted, request_id: data[:request_id], poll_key: data[:poll_key] }
         when 403
-          Legion::Logging.warn("Daemon returned 403 Denied url=#{daemon_url}") if defined?(Legion::Logging)
+          log.warn("Daemon returned 403 Denied url=#{daemon_url}")
           { status: :denied, error: parsed.fetch(:error, parsed) }
         when 429
           retry_after = extract_retry_after(response, parsed)
-          Legion::Logging.warn("Daemon returned 429 RateLimited url=#{daemon_url} retry_after=#{retry_after}") if defined?(Legion::Logging)
+          log.warn("Daemon returned 429 RateLimited url=#{daemon_url} retry_after=#{retry_after}")
           { status: :rate_limited, retry_after: retry_after }
         when 503
           { status: :unavailable }
@@ -176,7 +180,7 @@ module Legion
 
         daemon[:url]
       rescue StandardError => e
-        Legion::Logging.warn("DaemonClient fetch_daemon_url failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
         nil
       end
 
@@ -185,7 +189,7 @@ module Legion
 
         ::JSON.parse(body, symbolize_names: true)
       rescue ::JSON::ParserError => e
-        Legion::Logging.debug("DaemonClient JSON parse failed for response body: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :debug)
         {}
       end
 
@@ -211,6 +215,7 @@ module Legion
           return {
             status: :ok,
             data:   {
+              request_id:     data[:request_id],
               content:       data[:content],
               tool_calls:    data[:tool_calls] || [],
               stop_reason:   data[:stop_reason],
@@ -223,11 +228,11 @@ module Legion
 
         case code
         when 403
-          Legion::Logging.warn("Daemon returned 403 Denied url=#{daemon_url}") if defined?(Legion::Logging)
+          log.warn("Daemon returned 403 Denied url=#{daemon_url}")
           { status: :denied, error: parsed.fetch(:error, parsed) }
         when 429
           retry_after = extract_retry_after(response, parsed)
-          Legion::Logging.warn("Daemon returned 429 RateLimited url=#{daemon_url} retry_after=#{retry_after}") if defined?(Legion::Logging)
+          log.warn("Daemon returned 429 RateLimited url=#{daemon_url} retry_after=#{retry_after}")
           { status: :rate_limited, retry_after: retry_after }
         when 503
           { status: :unavailable }

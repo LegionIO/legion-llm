@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module PostResponse
+          include Legion::Logging::Helper
+
           def step_post_response
             response = current_response
 
@@ -19,6 +23,7 @@ module Legion
             )
           rescue StandardError => e
             @warnings << "post_response error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.post_response')
           end
 
           private
@@ -55,6 +60,7 @@ module Legion
               message:         msg,
               routing:         { provider: @resolved_provider, model: @resolved_model },
               tokens:          extract_tokens,
+              tools:           response_tool_calls,
               enrichments:     @enrichments,
               audit:           @audit,
               timeline:        @timeline.events,

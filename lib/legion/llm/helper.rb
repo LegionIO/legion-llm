@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Helper
+      include Legion::Logging::Helper
+
       # --- Layered Defaults ---
       # Override in your LEX to set extension-specific defaults.
       # Resolution chain: per-call kwarg -> LEX override -> Settings -> nil (auto-detect)
@@ -11,7 +15,8 @@ module Legion
         return nil unless defined?(Legion::Settings)
 
         Legion::Settings.dig(:llm, :default_model)
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.helper.default_model')
         nil
       end
 
@@ -19,7 +24,8 @@ module Legion
         return nil unless defined?(Legion::Settings)
 
         Legion::Settings.dig(:llm, :default_provider)
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.helper.default_provider')
         nil
       end
 
@@ -27,7 +33,8 @@ module Legion
         return nil unless defined?(Legion::Settings)
 
         Legion::Settings.dig(:llm, :routing, :default_intent)
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.helper.default_intent')
         nil
       end
 
@@ -90,19 +97,22 @@ module Legion
 
       def llm_connected?
         defined?(Legion::LLM) && Legion::LLM.started?
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.helper.connected')
         false
       end
 
       def llm_can_embed?
         llm_connected? && Legion::LLM.can_embed?
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.helper.can_embed')
         false
       end
 
       def llm_routing_enabled?
         llm_connected? && Legion::LLM::Router.routing_enabled?
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.helper.routing_enabled')
         false
       end
 
@@ -112,19 +122,22 @@ module Legion
         model ||= llm_default_model
         Legion::LLM::CostEstimator.estimate(model_id: model, input_tokens: input_tokens,
                                             output_tokens: output_tokens)
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.helper.cost_estimate', model: model)
         0.0
       end
 
       def llm_cost_summary(since: nil)
         Legion::LLM::CostTracker.summary(since: since)
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.helper.cost_summary')
         { total_cost_usd: 0.0, total_requests: 0, total_input_tokens: 0, total_output_tokens: 0, by_model: {} }
       end
 
       def llm_budget_remaining
         Legion::LLM::Hooks::BudgetGuard.remaining
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.helper.budget_remaining')
         Float::INFINITY
       end
     end

@@ -8,9 +8,11 @@ require 'legion/llm/hooks/budget_guard'
 require 'legion/llm/hooks/reflection'
 require 'legion/llm/hooks/reciprocity'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Hooks
+      extend Legion::Logging::Helper
       @before_chat = []
       @after_chat = []
 
@@ -30,7 +32,7 @@ module Legion
           end
           nil
         rescue StandardError => e
-          Legion::Logging.warn("LLM before_chat hook failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           nil
         end
 
@@ -41,7 +43,7 @@ module Legion
           end
           nil
         rescue StandardError => e
-          Legion::Logging.warn("LLM after_chat hook failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           nil
         end
 

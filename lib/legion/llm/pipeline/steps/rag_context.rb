@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module RagContext
+          include Legion::Logging::Helper
+
           def step_rag_context
             return unless rag_enabled?
             return unless substantive_query?
@@ -20,6 +24,7 @@ module Legion
             record_rag_timeline(result, strategy, start_time)
           rescue StandardError => e
             @warnings << "RAG context error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_context')
           end
 
           private
@@ -110,7 +115,8 @@ module Legion
             return true if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
 
             defined?(::Legion::Apollo) && ::Legion::Apollo.started?
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.rag_context.apollo_available')
             false
           end
 
@@ -131,7 +137,8 @@ module Legion
                 else
                   []
                 end
-              rescue StandardError
+              rescue StandardError => e
+                handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.rag_context.apollo_retrieve')
                 []
               end
             else
