@@ -138,13 +138,15 @@ module Legion
 
         def submit_single(entry, provider:, model:)
           response = Legion::LLM.chat_direct(
-            messages: entry[:messages],
+            **entry[:opts],
+            provider: provider,
             model:    model,
-            **entry[:opts]
+            message:  entry[:messages],
+            urgency:  :immediate
           )
 
           {
-            status:   :completed,
+            status:   response.is_a?(Hash) && response[:deferred] ? :deferred : :completed,
             model:    model,
             provider: provider,
             id:       entry[:id],

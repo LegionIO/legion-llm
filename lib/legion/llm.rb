@@ -203,7 +203,7 @@ module Legion
 
       # Direct chat bypassing gateway — used by gateway runners to avoid recursion
       def chat_direct(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
-                      max_escalations: nil, quality_check: nil, message: nil, **kwargs)
+                      max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
         log.debug(
           "[llm] chat_direct.enter model=#{model} provider=#{provider} intent=#{intent} " \
           "tier=#{tier} escalate=#{escalate} message_present=#{!message.nil?} kwargs=#{kwargs.keys.sort}"
@@ -240,7 +240,7 @@ module Legion
                    )
                  else
                    chat_single(model: model, provider: provider, intent: intent, tier: tier,
-                               temperature: temperature, message: message, **kwargs)
+                               temperature: temperature, message: message, **kwargs, &)
                  end
         log.debug("[llm] chat_direct.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
@@ -583,19 +583,61 @@ module Legion
         # Returns nil for :unavailable/:error — caller falls through to direct
       end
 
-      def ask_direct(message:, model: nil, provider: nil, intent: nil, tier: nil, &block)
+      def ask_direct(message:, model: nil, provider: nil, intent: nil, tier: nil, &)
         assert_cloud_allowed! if effective_tier_is_cloud?(tier, provider)
-        session = chat_direct(model: model, provider: provider, intent: intent, tier: tier)
-        response = block ? session.ask(message, &block) : session.ask(message)
+        result = chat_direct(
+          model:    model,
+          provider: provider,
+          intent:   intent,
+          tier:     tier,
+          message:  message,
+          &
+        )
+        return result if result.is_a?(Hash) && result[:deferred]
+        return normalize_ask_direct_hash(result, fallback_model: model || settings[:default_model]) if result.is_a?(Hash)
+
+        response, resolved_model = resolve_ask_direct_response(result, message, model, &)
 
         {
           status:   :done,
           response: response.content,
           meta:     {
             tier:       :direct,
-            model:      session.model.to_s,
+            model:      resolved_model,
             tokens_in:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
             tokens_out: response.respond_to?(:output_tokens) ? response.output_tokens : nil
+          }
+        }
+      end
+
+      def direct_chat_session?(result)
+        result.respond_to?(:ask) && result.respond_to?(:model) && !result.respond_to?(:content)
+      end
+
+      def resolve_ask_direct_response(result, message, requested_model, &)
+        if direct_chat_session?(result)
+          response = block_given? ? result.ask(message, &) : result.ask(message)
+          return [response, result.model.to_s]
+        end
+
+        resolved_model = if result.respond_to?(:model_id) && result.model_id
+                           result.model_id.to_s
+                         else
+                           (requested_model || settings[:default_model]).to_s
+                         end
+        [result, resolved_model]
+      end
+
+      def normalize_ask_direct_hash(result, fallback_model:)
+        meta = result[:meta].is_a?(Hash) ? result[:meta] : {}
+        {
+          status:   result[:status] || :done,
+          response: result[:response] || result[:content],
+          meta:     {
+            tier:       meta[:tier] || :direct,
+            model:      (meta[:model] || fallback_model).to_s,
+            tokens_in:  meta[:tokens_in],
+            tokens_out: meta[:tokens_out]
           }
         }
       end

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.12] - 2026-04-02
+
+### Fixed
+- Fixed `Batch.flush` direct execution so grouped work preserves provider/model routing, executes the queued request, and bypasses scheduling deferral when draining the queue
+- Fixed deferred `ask_direct` execution so direct asks enqueue the original message and return the deferred result cleanly instead of crashing on a deferred hash (closes #44)
+
 ## [0.6.11] - 2026-04-02
 
 ### Fixed
