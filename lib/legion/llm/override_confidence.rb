@@ -5,6 +5,7 @@ module Legion
   module LLM
     module OverrideConfidence
       extend Legion::Logging::Helper
+
       OVERRIDE_THRESHOLD = 0.8
       SHADOW_THRESHOLD = 0.5
       SUCCESS_DELTA = 0.05

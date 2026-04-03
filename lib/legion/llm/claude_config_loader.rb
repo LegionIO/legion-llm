@@ -5,6 +5,7 @@ module Legion
   module LLM
     module ClaudeConfigLoader
       extend Legion::Logging::Helper
+
       CLAUDE_SETTINGS = File.expand_path('~/.claude/settings.json')
       CLAUDE_CONFIG   = File.expand_path('~/.claude.json')
 

@@ -393,7 +393,9 @@ module Legion
       end
 
       def inference_response_details(result, requested_model:, requested_provider:)
-        return pipeline_response_details(result, requested_model: requested_model, requested_provider: requested_provider) if result.is_a?(Legion::LLM::Pipeline::Response)
+        if result.is_a?(Legion::LLM::Pipeline::Response)
+          return pipeline_response_details(result, requested_model: requested_model, requested_provider: requested_provider)
+        end
         return hash_response_details(result, requested_model: requested_model, requested_provider: requested_provider) if result.is_a?(Hash)
 
         object_response_details(result, requested_model: requested_model, requested_provider: requested_provider)
@@ -401,12 +403,13 @@ module Legion
 
       def pipeline_response_details(result, requested_model:, requested_provider:)
         message = result.message
+        tokens = result.tokens
         {
           output:        message.is_a?(Hash) ? (message[:content] || message['content']) : message.to_s,
           provider:      result.routing[:provider] || result.routing['provider'] || requested_provider,
           model:         result.routing[:model] || result.routing['model'] || requested_model,
-          input_tokens:  result.tokens[:input] || result.tokens['input'],
-          output_tokens: result.tokens[:output] || result.tokens['output'],
+          input_tokens:  inference_token_value(tokens, :input),
+          output_tokens: inference_token_value(tokens, :output),
           stop_reason:   result.stop[:reason] || result.stop['reason'],
           tool_calls:    Array(result.tools).size
         }
@@ -444,6 +447,16 @@ module Legion
         object.public_send(method_name)
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.safe_inference_value', method_name: method_name)
+        nil
+      end
+
+      def inference_token_value(tokens, key)
+        return nil if tokens.nil?
+        return tokens[key] || tokens[key.to_s] if tokens.is_a?(Hash)
+
+        method_name = { input: :input_tokens, output: :output_tokens, total: :total_tokens }[key]
+        return tokens.public_send(method_name) if method_name && tokens.respond_to?(method_name)
+
         nil
       end
 
@@ -551,8 +564,7 @@ module Legion
         result
       end
 
-      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil)
-        # rubocop:disable Lint/UnusedMethodArgument
+      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
         result = DaemonClient.chat(
           message: message, model: model, provider: provider,
           context: context, tier_preference: tier || :auto
@@ -577,19 +589,18 @@ module Legion
         response = block ? session.ask(message, &block) : session.ask(message)
 
         {
-          status: :done,
+          status:   :done,
           response: response.content,
-          meta: {
-            tier: :direct,
-            model: session.model.to_s,
-            tokens_in: response.respond_to?(:input_tokens) ? response.input_tokens : nil,
+          meta:     {
+            tier:       :direct,
+            model:      session.model.to_s,
+            tokens_in:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
             tokens_out: response.respond_to?(:output_tokens) ? response.output_tokens : nil
           }
         }
       end
 
       def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &block)
-        # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
         explicit_tools = kwargs.delete(:tools)
         tools = explicit_tools || ToolRegistry.tools
         tools = nil if tools.empty?
@@ -626,7 +637,7 @@ module Legion
         response = block ? session.ask(message, &block) : session.ask(message)
         log.debug "[LLM] chat_single response_class=#{response.class} response_nil=#{response.nil?}"
 
-        if response && !block && ShadowEval.enabled?
+        if response && !block && defined?(Legion::LLM::ShadowEval) && Legion::LLM::ShadowEval.enabled?
           msgs = session.respond_to?(:messages) ? session.messages : nil
           maybe_shadow_evaluate(response, msgs, opts[:model])
         end
@@ -649,7 +660,7 @@ module Legion
           ShadowEval.evaluate(
             primary_response: { content: response.respond_to?(:content) ? response.content : response.to_s,
                                 model: primary_model, usage: {} },
-            messages: messages
+            messages:         messages
           )
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.shadow_eval')
@@ -690,11 +701,11 @@ module Legion
             duration_ms = ((Time.now - start_time) * 1000).round
             handle_exception(
               e,
-              level: :warn,
+              level:     :warn,
               operation: 'llm.escalation_attempt',
-              model: resolution.model,
-              provider: resolution.provider,
-              tier: resolution.tier
+              model:     resolution.model,
+              provider:  resolution.provider,
+              tier:      resolution.tier
             )
             report_health(:error, resolution, duration_ms)
             history << build_attempt(resolution, :error, [e.class.name], duration_ms)
@@ -730,9 +741,9 @@ module Legion
 
       def publish_escalation_event(history, final_outcome)
         payload = {
-          outcome: final_outcome,
-          attempts: history.size,
-          history: history,
+          outcome:   final_outcome,
+          attempts:  history.size,
+          history:   history,
           timestamp: Time.now.utc.iso8601
         }
 
@@ -759,7 +770,7 @@ module Legion
           response: response_text, context: context
         )
 
-        log.warn "Response guard failed: #{guard_result.inspect}" if !guard_result[:passed]
+        log.warn "Response guard failed: #{guard_result.inspect}" unless guard_result[:passed]
 
         result.merge(_guard_result: guard_result)
       rescue StandardError => e
@@ -774,9 +785,9 @@ module Legion
       def build_cache_key(model, provider, message, temperature)
         messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         Cache.key(
-          model: model || settings[:default_model],
-          provider: provider || settings[:default_provider],
-          messages: messages_arr,
+          model:       model || settings[:default_model],
+          provider:    provider || settings[:default_provider],
+          messages:    messages_arr,
           temperature: temperature
         )
       end
@@ -793,7 +804,7 @@ module Legion
         return unless instructions.is_a?(String) && instructions.length > min_tokens
 
         opts[:instructions] = {
-          content: instructions,
+          content:       instructions,
           cache_control: { type: 'ephemeral' }
         }
       end
@@ -827,7 +838,7 @@ module Legion
 
         raise PrivacyModeError,
               'Cloud LLM tier is disabled: enterprise_data_privacy is enabled. ' \
-                'Only Tier 0 (cache) and Tier 1 (local Ollama) are permitted.'
+              'Only Tier 0 (cache) and Tier 1 (local Ollama) are permitted.'
       end
 
       def effective_tier_is_cloud?(tier, provider)
@@ -915,9 +926,6 @@ module Legion
         elapsed = ((Time.now - start_time) * 1000).round
         log.info "Embedding health check #{provider}/#{model}: OK (#{elapsed}ms)"
         true
-      rescue RubyLLM::ModelNotFoundError => e
-        handle_exception(e, level: :warn, operation: 'llm.verify_embedding', provider: provider, model: model)
-        false
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.verify_embedding', provider: provider, model: model)
         false
@@ -983,7 +991,7 @@ module Legion
 
         klass.instance_method(:render_embedding_payload)
         true
-      rescue NameError, NoMethodError
+      rescue NameError
         false
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.provider_supports_embeddings', provider: provider)
@@ -1005,7 +1013,7 @@ module Legion
         count = names.size
         log.info "Ollama: #{count} model#{'s' unless count == 1} available (#{names.join(', ')})"
         log.info "System: #{Discovery::System.total_memory_mb} MB total, " \
-                   "#{Discovery::System.available_memory_mb} MB available"
+                 "#{Discovery::System.available_memory_mb} MB available"
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.run_discovery')
       end

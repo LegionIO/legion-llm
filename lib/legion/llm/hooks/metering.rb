@@ -6,6 +6,7 @@ module Legion
     module Hooks
       module Metering
         extend Legion::Logging::Helper
+
         module_function
 
         def install

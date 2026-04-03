@@ -6,6 +6,7 @@ module Legion
     module Discovery
       module System
         extend Legion::Logging::Helper
+
         class << self
           def total_memory_mb
             ensure_total_fresh

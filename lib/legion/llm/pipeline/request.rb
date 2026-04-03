@@ -15,7 +15,7 @@ module Legion
       ) do
         def self.build(**kwargs)
           new(
-            id:               kwargs.fetch(:id) { "req_#{SecureRandom.hex(12)}" },
+            id:               kwargs[:id] || "req_#{SecureRandom.hex(12)}",
             conversation_id:  kwargs[:conversation_id],
             idempotency_key:  kwargs[:idempotency_key],
             schema_version:   kwargs.fetch(:schema_version, '1.0.0'),
@@ -72,8 +72,7 @@ module Legion
             :request_id, :id
           )
 
-          build(
-            id:              request_id,
+          build_args = {
             messages:        messages,
             system:          kwargs[:system],
             routing:         routing,
@@ -88,7 +87,9 @@ module Legion
             priority:        kwargs.fetch(:priority, :normal),
             conversation_id: kwargs[:conversation_id],
             extra:           extra
-          )
+          }
+          build_args[:id] = request_id if request_id
+          build(**build_args)
         end
       end
     end

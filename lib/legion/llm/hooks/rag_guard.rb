@@ -6,6 +6,7 @@ module Legion
     module Hooks
       module RagGuard
         extend Legion::Logging::Helper
+
         class << self
           def check_rag_faithfulness(response:, context:, threshold: nil, evaluators: nil, **)
             return { faithful: true, reason: :eval_unavailable } unless eval_available?

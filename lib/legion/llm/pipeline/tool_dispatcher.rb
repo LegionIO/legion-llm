@@ -6,6 +6,7 @@ module Legion
     module Pipeline
       module ToolDispatcher
         extend Legion::Logging::Helper
+
         module_function
 
         def dispatch(tool_call:, source:, exchange_id: nil)

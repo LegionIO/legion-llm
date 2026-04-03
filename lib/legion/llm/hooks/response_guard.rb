@@ -6,6 +6,7 @@ module Legion
     module Hooks
       module ResponseGuard
         extend Legion::Logging::Helper
+
         GUARD_REGISTRY = {
           rag: RagGuard
         }.freeze

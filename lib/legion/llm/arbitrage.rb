@@ -5,6 +5,7 @@ module Legion
   module LLM
     module Arbitrage
       extend Legion::Logging::Helper
+
       # Default cost table: per-1M-token input/output prices in USD.
       # Overridable via settings: llm.arbitrage.cost_table
       DEFAULT_COST_TABLE = {

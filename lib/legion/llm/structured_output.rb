@@ -5,6 +5,7 @@ module Legion
   module LLM
     module StructuredOutput
       extend Legion::Logging::Helper
+
       SCHEMA_CAPABLE_MODELS = %w[gpt-4o gpt-4o-mini gpt-4-turbo claude-3-5-sonnet claude-4-sonnet claude-4-opus].freeze
 
       class << self

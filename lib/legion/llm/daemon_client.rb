@@ -10,6 +10,7 @@ module Legion
   module LLM
     module DaemonClient
       extend Legion::Logging::Helper
+
       HEALTH_CACHE_TTL = 30
       DEFAULT_TIMEOUT  = 60
 
@@ -215,7 +216,7 @@ module Legion
           return {
             status: :ok,
             data:   {
-              request_id:     data[:request_id],
+              request_id:    data[:request_id],
               content:       data[:content],
               tool_calls:    data[:tool_calls] || [],
               stop_reason:   data[:stop_reason],

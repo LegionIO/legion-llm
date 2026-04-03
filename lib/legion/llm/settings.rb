@@ -5,6 +5,7 @@ module Legion
   module LLM
     module Settings
       extend Legion::Logging::Helper
+
       def self.default
         model_override = ENV.fetch('ANTHROPIC_MODEL', nil)
         {

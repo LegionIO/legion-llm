@@ -8,6 +8,7 @@ module Legion
   module LLM
     module CodexConfigLoader
       extend Legion::Logging::Helper
+
       CODEX_AUTH = File.expand_path('~/.codex/auth.json')
 
       module_function

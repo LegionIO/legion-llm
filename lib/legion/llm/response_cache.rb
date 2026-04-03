@@ -8,6 +8,7 @@ module Legion
   module LLM
     module ResponseCache
       extend Legion::Logging::Helper
+
       DEFAULT_TTL      = 300
       SPOOL_THRESHOLD  = 8 * 1024 * 1024 # 8 MB
       SPOOL_DIR        = File.expand_path('~/.legionio/data/spool/llm_responses').freeze

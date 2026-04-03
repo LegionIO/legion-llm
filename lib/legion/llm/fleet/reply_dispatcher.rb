@@ -8,6 +8,7 @@ module Legion
     module Fleet
       module ReplyDispatcher
         extend Legion::Logging::Helper
+
         @pending = Concurrent::Map.new
         @mutex = Mutex.new
         @consumer = nil

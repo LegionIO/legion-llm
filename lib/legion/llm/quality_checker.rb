@@ -7,6 +7,7 @@ module Legion
   module LLM
     module QualityChecker
       extend Legion::Logging::Helper
+
       QualityResult = Struct.new(:passed, :failures)
 
       REPETITION_MIN_LENGTH = 20

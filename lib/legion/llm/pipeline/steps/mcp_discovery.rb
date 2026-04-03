@@ -85,6 +85,23 @@ module Legion
               duration_ms: duration
             )
           end
+
+          def mcp_server
+            return ::Legion::MCP.server if defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
+
+            require 'legion/mcp'
+            return unless defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
+
+            ::Legion::MCP.server
+          rescue LoadError => e
+            @warnings << "MCP unavailable: #{e.message}"
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.mcp_discovery.mcp_server.require')
+            nil
+          rescue StandardError => e
+            @warnings << "MCP server load error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.mcp_discovery.mcp_server')
+            nil
+          end
         end
       end
     end

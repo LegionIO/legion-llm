@@ -5,6 +5,7 @@ module Legion
   module LLM
     class ContextCurator
       include Legion::Logging::Helper
+
       CURATED_KEY = :__curated__
 
       def initialize(conversation_id:)

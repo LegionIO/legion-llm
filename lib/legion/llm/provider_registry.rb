@@ -15,6 +15,7 @@ module Legion
       def register(name, extension_module)
         @mutex.synchronize { @registry[name.to_sym] = extension_module }
         log.info("[llm][providers] native_registered provider=#{name}")
+        extension_module
       end
 
       def for(name)

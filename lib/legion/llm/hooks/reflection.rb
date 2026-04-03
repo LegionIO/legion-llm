@@ -15,6 +15,7 @@ module Legion
       # Only triggers on substantive responses (>200 chars) to avoid noise.
       module Reflection
         extend Legion::Logging::Helper
+
         MIN_RESPONSE_LENGTH = 200
         MAX_EXTRACT_LENGTH  = 500
         COOLDOWN_SECONDS    = 300 # 5 minutes between extractions
@@ -234,7 +235,6 @@ module Legion
           defined?(Legion::Extensions::Apollo::Runners::Ingest)
         end
         private_class_method :apollo_direct?
-
       end
     end
   end

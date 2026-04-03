@@ -5,6 +5,7 @@ module Legion
   module LLM
     module EscalationTracker
       extend Legion::Logging::Helper
+
       MAX_HISTORY = 200
 
       class << self

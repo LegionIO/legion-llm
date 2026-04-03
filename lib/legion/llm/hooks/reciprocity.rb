@@ -12,6 +12,7 @@ module Legion
       # surfaces to the caller.
       module Reciprocity
         extend Legion::Logging::Helper
+
         module_function
 
         def install

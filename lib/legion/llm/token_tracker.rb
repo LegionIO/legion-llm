@@ -5,6 +5,7 @@ module Legion
   module LLM
     module TokenTracker
       extend Legion::Logging::Helper
+
       MUTEX = Mutex.new
 
       class << self

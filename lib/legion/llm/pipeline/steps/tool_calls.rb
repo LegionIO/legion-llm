@@ -11,6 +11,7 @@ module Legion
 
           MAX_TOOL_LOOPS = 10
 
+          # rubocop:disable Metrics/MethodLength, Metrics/BlockLength
           def step_tool_calls
             return unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
 
@@ -56,9 +57,9 @@ module Legion
                 duration_ms: result[:duration_ms],
                 data: {
                   tool_call_id: tool_call_id,
-                  arguments: tc[:arguments] || tc['arguments'] || {},
-                  source: describe_tool_source(source),
-                  status: result[:status]
+                  arguments:    tc[:arguments] || tc['arguments'] || {},
+                  source:       describe_tool_source(source),
+                  status:       result[:status]
                 }
               )
 
@@ -69,8 +70,8 @@ module Legion
                 from: "tool:#{tc[:name] || tc['name']}", to: 'pipeline',
                 data: {
                   tool_call_id: tool_call_id,
-                  status: result[:status],
-                  result: result[:result]
+                  status:       result[:status],
+                  result:       result[:result]
                 }
               )
 
@@ -85,6 +86,7 @@ module Legion
             @warnings << "Tool call handling error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.tool_calls')
           end
+          # rubocop:enable Metrics/MethodLength, Metrics/BlockLength
 
           private
 

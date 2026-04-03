@@ -5,6 +5,7 @@ module Legion
   module LLM
     module Compressor
       extend Legion::Logging::Helper
+
       NONE       = 0
       LIGHT      = 1
       MODERATE   = 2

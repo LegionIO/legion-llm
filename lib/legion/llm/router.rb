@@ -13,6 +13,7 @@ module Legion
   module LLM
     module Router
       extend Legion::Logging::Helper
+
       class << self
         # Resolve an LLM routing intent to a tier/provider/model decision.
         #

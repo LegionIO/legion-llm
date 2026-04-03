@@ -6,6 +6,7 @@ module Legion
     module Router
       class HealthTracker
         include Legion::Logging::Helper
+
         OPEN_PENALTY         = -50
         LATENCY_THRESHOLD_MS = 5000
         LATENCY_PENALTY_STEP = -10

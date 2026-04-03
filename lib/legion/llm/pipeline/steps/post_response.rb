@@ -60,7 +60,7 @@ module Legion
               message:         msg,
               routing:         { provider: @resolved_provider, model: @resolved_model },
               tokens:          extract_tokens,
-              tools:           response_tool_calls,
+              tools:           current_response_tool_calls,
               enrichments:     @enrichments,
               audit:           @audit,
               timeline:        @timeline.events,
@@ -68,6 +68,24 @@ module Legion
               caller:          @request.caller,
               classification:  @request.classification
             )
+          end
+
+          def current_response_tool_calls
+            return response_tool_calls if respond_to?(:response_tool_calls, true)
+
+            []
+          end
+
+          def response_tool_calls
+            return [] unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls
+
+            Array(@raw_response.tool_calls).map do |tool_call|
+              {
+                id:        tool_call[:id] || tool_call['id'],
+                name:      tool_call[:name] || tool_call['name'],
+                arguments: tool_call[:arguments] || tool_call['arguments'] || {}
+              }
+            end
           end
         end
       end

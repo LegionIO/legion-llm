@@ -9,6 +9,7 @@ module Legion
     module Discovery
       module Ollama
         extend Legion::Logging::Helper
+
         class << self
           def models
             ensure_fresh

@@ -6,6 +6,7 @@ module Legion
     module Hooks
       module BudgetGuard
         extend Legion::Logging::Helper
+
         module_function
 
         def install

@@ -5,6 +5,7 @@ module Legion
   module LLM
     module Scheduling
       extend Legion::Logging::Helper
+
       # Default peak hours in UTC: 14:00-22:00 (9 AM - 5 PM CT)
       DEFAULT_PEAK_RANGE = (14..22)
 

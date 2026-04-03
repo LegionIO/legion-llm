@@ -202,7 +202,7 @@ module Legion
 
           compact = Compressor.auto_compact(
             history,
-            target_tokens: target_tokens,
+            target_tokens:   target_tokens,
             preserve_recent: preserve_recent
           )
 
@@ -222,22 +222,22 @@ module Legion
           gaia_hint = @enrichments['gaia:routing_hint']
           classification = @enrichments['classification:scan']
           assignment = Steps::TierAssigner.assign(
-            caller: @request.caller,
-            classification: classification,
-            priority: @request.priority,
-            gaia_hint: gaia_hint,
-            existing_tier: @request.extra[:tier],
+            caller:          @request.caller,
+            classification:  classification,
+            priority:        @request.priority,
+            gaia_hint:       gaia_hint,
+            existing_tier:   @request.extra[:tier],
             existing_intent: @request.extra[:intent]
           )
           return unless assignment
 
           @proactive_tier_assignment = assignment
           @audit[:'routing:tier_assignment'] = {
-            outcome: :success,
-            detail: "proactive tier=#{assignment[:tier]} source=#{assignment[:source]}",
-            data: assignment,
+            outcome:     :success,
+            detail:      "proactive tier=#{assignment[:tier]} source=#{assignment[:source]}",
+            data:        assignment,
             duration_ms: 0,
-            timestamp: Time.now
+            timestamp:   Time.now
           }
           @timeline.record(
             category: :audit, key: 'routing:tier_assignment',
@@ -266,10 +266,10 @@ module Legion
           if (intent || tier) && defined?(Router) && Router.routing_enabled?
             resolution = if pipeline_escalation_enabled?
                            @escalation_chain = Router.resolve_chain(
-                             intent: intent,
-                             tier: tier,
-                             model: model,
-                             provider: provider,
+                             intent:          intent,
+                             tier:            tier,
+                             model:           model,
+                             provider:        provider,
                              max_escalations: pipeline_escalation_max_attempts
                            )
                            @escalation_chain.primary
@@ -315,15 +315,15 @@ module Legion
           begin
             execute_provider_request
           rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError,
-            Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+                 Faraday::UnauthorizedError, Faraday::ForbiddenError => e
             providers_tried << @resolved_provider
             fallback = find_fallback_provider(exclude: providers_tried)
             handle_exception(
               e,
-              level: :warn,
-              operation: 'llm.pipeline.provider_call.auth',
-              provider: @resolved_provider,
-              model: @resolved_model,
+              level:             :warn,
+              operation:         'llm.pipeline.provider_call.auth',
+              provider:          @resolved_provider,
+              model:             @resolved_model,
               fallback_provider: fallback&.dig(:provider)
             )
             if fallback
@@ -345,7 +345,7 @@ module Legion
                               provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::RateLimitError, e.message
           rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
-            Faraday::ServerError => e
+                 Faraday::ServerError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_error',
                               provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::ProviderError, e.message
@@ -366,6 +366,7 @@ module Legion
           quality_check = @request.extra[:quality_check]
           succeeded = false
 
+          # rubocop:disable Metrics/BlockLength
           chain.each do |resolution|
             start_time = Time.now
             begin
@@ -375,7 +376,7 @@ module Legion
 
               duration_ms = ((Time.now - start_time) * 1000).round
               result = QualityChecker.check(@raw_response, quality_threshold: threshold,
-                                            quality_check: quality_check)
+                                                           quality_check:     quality_check)
 
               @timeline.record(
                 category: :provider, key: 'escalation:attempt',
@@ -412,6 +413,7 @@ module Legion
               )
             end
           end
+          # rubocop:enable Metrics/BlockLength
 
           raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed" unless succeeded
         end
@@ -465,7 +467,7 @@ module Legion
 
         def execute_provider_request_ruby_llm
           opts = {
-            model: @resolved_model,
+            model:    @resolved_model,
             provider: @resolved_provider
           }.compact
 
@@ -483,7 +485,7 @@ module Legion
           inject_discovered_tools(session)
 
           injected_system = EnrichmentInjector.inject(
-            system: @request.system,
+            system:      @request.system,
             enrichments: @enrichments
           )
 
@@ -502,7 +504,7 @@ module Legion
 
         def execute_provider_request_native
           injected_system = EnrichmentInjector.inject(
-            system: @request.system,
+            system:      @request.system,
             enrichments: @enrichments
           )
 
@@ -513,7 +515,7 @@ module Legion
           begin
             result = NativeDispatch.dispatch_chat(
               provider: @resolved_provider,
-              model: @resolved_model,
+              model:    @resolved_model,
               messages: messages,
               **opts
             )
@@ -524,10 +526,10 @@ module Legion
 
             handle_exception(
               e,
-              level: :warn,
+              level:     :warn,
               operation: 'llm.pipeline.native_dispatch',
-              provider: @resolved_provider,
-              fallback: 'ruby_llm'
+              provider:  @resolved_provider,
+              fallback:  'ruby_llm'
             )
             execute_provider_request_ruby_llm
           end
@@ -628,15 +630,15 @@ module Legion
           begin
             execute_provider_request_stream(&)
           rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError,
-            Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+                 Faraday::UnauthorizedError, Faraday::ForbiddenError => e
             providers_tried << @resolved_provider
             fallback = find_fallback_provider(exclude: providers_tried)
             handle_exception(
               e,
-              level: :warn,
-              operation: 'llm.pipeline.provider_call_stream.auth',
-              provider: @resolved_provider,
-              model: @resolved_model,
+              level:             :warn,
+              operation:         'llm.pipeline.provider_call_stream.auth',
+              provider:          @resolved_provider,
+              model:             @resolved_model,
               fallback_provider: fallback&.dig(:provider)
             )
             if fallback
@@ -653,7 +655,7 @@ module Legion
                               provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::RateLimitError, e.message
           rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
-            Faraday::ServerError => e
+                 Faraday::ServerError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_error',
                               provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::ProviderError, e.message
@@ -785,18 +787,18 @@ module Legion
 
           @request.messages.each do |msg|
             ConversationStore.append(conv_id,
-                                     role: msg[:role]&.to_sym || :user,
+                                     role:    msg[:role]&.to_sym || :user,
                                      content: msg[:content])
           end
 
           assistant_response = nil
           if @raw_response.respond_to?(:content) && @raw_response.content
             ConversationStore.append(conv_id,
-                                     role: :assistant,
-                                     content: @raw_response.content,
-                                     provider: @resolved_provider,
-                                     model: @resolved_model,
-                                     input_tokens: @raw_response.respond_to?(:input_tokens) ? @raw_response.input_tokens : nil,
+                                     role:          :assistant,
+                                     content:       @raw_response.content,
+                                     provider:      @resolved_provider,
+                                     model:         @resolved_model,
+                                     input_tokens:  @raw_response.respond_to?(:input_tokens) ? @raw_response.input_tokens : nil,
                                      output_tokens: @raw_response.respond_to?(:output_tokens) ? @raw_response.output_tokens : nil)
             assistant_response = @raw_response.content
           end
@@ -812,7 +814,7 @@ module Legion
 
         def trigger_async_curation(conv_id, turn_messages, assistant_response)
           ContextCurator.new(conversation_id: conv_id)
-                        .curate_turn(turn_messages: turn_messages,
+                        .curate_turn(turn_messages:      turn_messages,
                                      assistant_response: assistant_response)
         rescue StandardError => e
           @warnings << "context_curation trigger failed: #{e.message}"
@@ -839,25 +841,25 @@ module Legion
           warnings_snapshot = @_response_warnings_snapshot || @warnings
 
           Response.build(
-            request_id: @request.id,
+            request_id:      @request.id,
             conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
-            message: msg,
-            routing: { provider: @resolved_provider, model: @resolved_model },
-            tokens: extract_tokens,
-            stop: { reason: :end_turn },
-            tools: response_tool_calls,
-            timestamps: @timestamps,
-            enrichments: @enrichments,
-            audit: @audit,
-            timeline: timeline_events,
-            participants: timeline_parts,
-            warnings: warnings_snapshot,
-            tracing: @tracing,
-            caller: @request.caller,
-            classification: @request.classification,
-            billing: @request.billing,
-            test: @request.test,
-            quality: @confidence_score&.to_h
+            message:         msg,
+            routing:         { provider: @resolved_provider, model: @resolved_model },
+            tokens:          extract_tokens,
+            stop:            { reason: :end_turn },
+            tools:           response_tool_calls,
+            timestamps:      @timestamps,
+            enrichments:     @enrichments,
+            audit:           @audit,
+            timeline:        timeline_events,
+            participants:    timeline_parts,
+            warnings:        warnings_snapshot,
+            tracing:         @tracing,
+            caller:          @request.caller,
+            classification:  @request.classification,
+            billing:         @request.billing,
+            test:            @request.test,
+            quality:         @confidence_score&.to_h
           )
         end
 

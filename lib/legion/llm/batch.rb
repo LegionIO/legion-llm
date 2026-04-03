@@ -7,6 +7,7 @@ module Legion
   module LLM
     module Batch
       extend Legion::Logging::Helper
+
       @mutex = Mutex.new
       @flush_timer = nil
 

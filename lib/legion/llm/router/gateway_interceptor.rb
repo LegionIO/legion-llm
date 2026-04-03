@@ -6,6 +6,7 @@ module Legion
     module Router
       module GatewayInterceptor
         extend Legion::Logging::Helper
+
         module_function
 
         def intercept(resolution, context: {})

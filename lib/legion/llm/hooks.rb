@@ -13,6 +13,7 @@ module Legion
   module LLM
     module Hooks
       extend Legion::Logging::Helper
+
       @before_chat = []
       @after_chat = []
 

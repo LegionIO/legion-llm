@@ -6,6 +6,7 @@ module Legion
     module Fleet
       module Handler
         extend Legion::Logging::Helper
+
         module_function
 
         def handle_fleet_request(payload)

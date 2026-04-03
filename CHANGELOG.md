@@ -8,6 +8,9 @@
 ### Changed
 - Uplifted remaining non-Sinatra `lib/**/*.rb` runtime modules to `Legion::Logging::Helper`, replacing lingering wrapper-style `log_debug` calls with direct `log.debug/info/warn/error`
 - Added catch-all `handle_exception` coverage for remaining non-Sinatra rescue paths, including RBAC pipeline failure handling
+- Fixed pipeline request ID generation for `Request.from_chat_args` callers so response objects consistently retain a non-nil `request_id`
+- Restored shared post-response tool-call serialization used by `PostResponse` and `KnowledgeCapture`, keeping audit publishing and local knowledge capture working in isolated step execution
+- Guarded non-pipeline shadow-evaluation checks when `ShadowEval` is not loaded and cleared the remaining RuboCop regressions in `lib/` and route helpers
 
 ## [0.6.8] - 2026-04-01
 

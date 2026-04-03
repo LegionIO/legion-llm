@@ -8,6 +8,7 @@ module Legion
       module Steps
         module TierAssigner
           module_function
+
           extend Legion::Logging::Helper
 
           DEFAULT_MAPPINGS = [

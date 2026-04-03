@@ -188,6 +188,48 @@ confidence: 0.9 }],
         expect(response).to be_a(Legion::LLM::Pipeline::Response)
       end
     end
+
+    describe 'MCP tool injection' do
+      it 'injects always-loaded tools and only requested deferred tools' do
+        always_tool = Class.new do
+          define_singleton_method(:tool_name) { 'legion.query.knowledge' }
+          define_singleton_method(:description) { 'Always loaded tool' }
+          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+        end
+        requested_tool = Class.new do
+          define_singleton_method(:tool_name) { 'legion.test.extra' }
+          define_singleton_method(:description) { 'Requested deferred tool' }
+          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+        end
+        skipped_tool = Class.new do
+          define_singleton_method(:tool_name) { 'legion.test.skipped' }
+          define_singleton_method(:description) { 'Skipped deferred tool' }
+          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+        end
+
+        mcp_server = double('mcp_server', tool_registry: [always_tool, requested_tool, skipped_tool])
+        stub_const('Legion::MCP', Module.new)
+        allow(Legion::MCP).to receive(:server).and_return(mcp_server)
+
+        req = Legion::LLM::Pipeline::Request.build(
+          messages: [{ role: :user, content: 'test' }],
+          metadata: { requested_tools: ['legion.test.extra'] }
+        )
+        executor = described_class.new(req)
+        session = double('RubyLLM::Chat')
+        allow(session).to receive(:with_tool)
+
+        executor.send(:inject_discovered_tools, session)
+
+        expect(session).to have_received(:with_tool).twice
+        names = []
+        expect(session).to have_received(:with_tool).at_least(:once) do |tool|
+          names << tool.name
+        end
+        expect(names).to include('legion_query_knowledge', 'legion_test_extra')
+        expect(names).not_to include('legion_test_skipped')
+      end
+    end
   end
 
   describe 'step_context_load' do

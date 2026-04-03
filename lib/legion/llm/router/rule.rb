@@ -9,6 +9,7 @@ module Legion
     module Router
       class Rule
         include Legion::Logging::Helper
+
         attr_reader :name, :conditions, :target, :priority, :constraint, :fallback, :cost_multiplier, :schedule, :note
 
         def self.from_hash(hash)

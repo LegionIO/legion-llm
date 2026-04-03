@@ -5,6 +5,7 @@ module Legion
   module LLM
     module CostTracker
       extend Legion::Logging::Helper
+
       # Default per-1M-token pricing in USD (input / output).
       # Overridable via Legion::Settings[:llm][:pricing].
       DEFAULT_PRICING = {

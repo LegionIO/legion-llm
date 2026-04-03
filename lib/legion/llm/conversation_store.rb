@@ -7,6 +7,7 @@ module Legion
   module LLM
     module ConversationStore
       extend Legion::Logging::Helper
+
       MAX_CONVERSATIONS = 256
       METADATA_ROLE = :__metadata__
 

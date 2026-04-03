@@ -5,6 +5,7 @@ module Legion
   module LLM
     module ShadowEval
       extend Legion::Logging::Helper
+
       MAX_HISTORY = 100
 
       class << self

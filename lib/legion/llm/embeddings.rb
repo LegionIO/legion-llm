@@ -6,8 +6,8 @@ module Legion
     class EmbeddingUnavailableError < LLMError; end
 
     module Embeddings
-
       extend Legion::Logging::Helper
+
       PROVIDER_EMBEDDING_MODELS = {
         bedrock:   'amazon.titan-embed-text-v2:0',
         anthropic: nil,

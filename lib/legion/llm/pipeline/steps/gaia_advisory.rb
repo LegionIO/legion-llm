@@ -7,6 +7,7 @@ module Legion
       module Steps
         module GaiaAdvisory
           include Legion::Logging::Helper
+
           def step_gaia_advisory
             unless defined?(::Legion::Gaia) && ::Legion::Gaia.started?
               @warnings << 'GAIA unavailable for pre-request shaping'

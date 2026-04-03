@@ -58,5 +58,15 @@ RSpec.describe Legion::LLM::Pipeline::Request do
       expect(req.routing[:provider]).to eq(:anthropic)
       expect(req.extra[:intent]).to eq({ privacy: :strict })
     end
+
+    it 'uses request_id as the pipeline request id' do
+      req = described_class.from_chat_args(
+        message:    'hello',
+        request_id: 'req_api_123'
+      )
+
+      expect(req.id).to eq('req_api_123')
+      expect(req.extra).not_to have_key(:request_id)
+    end
   end
 end

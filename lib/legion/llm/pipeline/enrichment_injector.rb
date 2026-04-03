@@ -7,6 +7,7 @@ module Legion
     module Pipeline
       module EnrichmentInjector
         module_function
+
         extend Legion::Logging::Helper
 
         def inject(system:, enrichments:)

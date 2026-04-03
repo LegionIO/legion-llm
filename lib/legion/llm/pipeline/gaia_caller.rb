@@ -7,6 +7,7 @@ module Legion
     module Pipeline
       module GaiaCaller
         module_function
+
         extend Legion::Logging::Helper
 
         def chat(message:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil, caller: nil, **kwargs)

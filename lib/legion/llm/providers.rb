@@ -155,8 +155,8 @@ module Legion
         enabled = settings[:providers].select { |_, c| c.is_a?(Hash) && c[:enabled] }
         if enabled.empty?
           log.error 'No LLM providers available — all providers failed health checks or are disabled. ' \
-                      'LLM features (chat, inference, embeddings) will not work. ' \
-                      'Check API keys, network connectivity, and provider configuration.'
+                    'LLM features (chat, inference, embeddings) will not work. ' \
+                    'Check API keys, network connectivity, and provider configuration.'
         else
           names = enabled.map { |name, c| "#{name}/#{c[:default_model] || 'auto'}" }
           log.info "LLM providers available: #{names.join(', ')}"
@@ -183,7 +183,7 @@ module Legion
         handle_exception(e, level: :debug, operation: 'llm.providers.recover_openai_with_codex')
       end
 
-      def verify_single_provider(provider, model, config)
+      def verify_single_provider(provider, model, _config)
         start_time = Time.now
         RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
         elapsed = ((Time.now - start_time) * 1000).round

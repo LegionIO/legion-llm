@@ -7,6 +7,7 @@ module Legion
   module LLM
     module Cache
       extend Legion::Logging::Helper
+
       DEFAULT_TTL = 300
 
       module_function

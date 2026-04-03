@@ -6,6 +6,7 @@ module Legion
     module Pipeline
       module AuditPublisher
         extend Legion::Logging::Helper
+
         EXCHANGE    = 'llm.audit'
         ROUTING_KEY = 'llm.audit.complete'
 

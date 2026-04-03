@@ -7,6 +7,7 @@ module Legion
       module Steps
         module TokenBudget
           include Legion::Logging::Helper
+
           def step_token_budget
             max_input = @request.extra&.dig(:max_input_tokens)
             check_input_cap(max_input) if max_input&.positive?

@@ -8,6 +8,7 @@ module Legion
       module Steps
         module Metering
           module_function
+
           extend Legion::Logging::Helper
 
           def build_event(**opts)
