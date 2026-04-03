@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.11] - 2026-04-02
+
+### Fixed
+- Made response-cache spool overflow writes configurable via `llm.prompt_caching.response_cache.spool_dir` and updated the response-cache specs to use a hermetic temp directory instead of `~/.legionio`
+- Updated README public API examples to match `Legion::LLM.ask(message: ...)` and to distinguish session creation from pipeline-backed `Legion::LLM.chat(message:/messages:)` calls (closes #46)
+
 ## [0.6.10] - 2026-04-02
 
 ### Changed

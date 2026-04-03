@@ -65,7 +65,8 @@ module Legion
           sort_tools:          true,
           response_cache:      {
             enabled:     true,
-            ttl_seconds: 300
+            ttl_seconds: 300,
+            spool_dir:   '~/.legionio/data/spool/llm_responses'
           }
         }
       end

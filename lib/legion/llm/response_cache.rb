@@ -123,11 +123,21 @@ module Legion
         Legion::Cache.set(key, value, ttl)
       end
 
+      private_class_method def self.spool_dir
+        configured = if defined?(Legion::Settings) && Legion::Settings.respond_to?(:dig)
+                       Legion::Settings.dig(:llm, :prompt_caching, :response_cache, :spool_dir)
+                     end
+        configured = configured.to_s.strip
+        return SPOOL_DIR if configured.empty?
+
+        File.expand_path(configured)
+      end
+
       private_class_method def self.write_response(request_id, response_text, ttl)
         if response_text.bytesize > SPOOL_THRESHOLD
           log.warn("ResponseCache spool overflow request_id=#{request_id} bytes=#{response_text.bytesize}")
-          FileUtils.mkdir_p(SPOOL_DIR)
-          path = File.join(SPOOL_DIR, "#{request_id}.txt")
+          FileUtils.mkdir_p(spool_dir)
+          path = File.join(spool_dir, "#{request_id}.txt")
           File.write(path, response_text)
           cache_set(response_key(request_id), "spool:#{path}", ttl)
         else
