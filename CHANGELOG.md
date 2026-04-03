@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-04-02
+
 ### Added
 - Additional helper-based `info`/`error` logging across non-Sinatra runtime paths including native dispatch, prompt caching, GAIA caller helpers, billing and metering pipeline steps, provider and tool registries, compressor, reflection, shadow evaluation, and escalation tracking
 
