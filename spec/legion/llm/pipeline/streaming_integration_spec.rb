@@ -96,6 +96,49 @@ tool_calls: nil)
     expect(result.caller).to eq(caller_val)
   end
 
+  it 'keeps streaming prompt construction aligned with non-streaming execution' do
+    Legion::Settings[:llm][:prompt_caching][:enabled] = true
+    Legion::Settings[:llm][:prompt_caching][:cache_conversation] = true
+
+    apollo_runner = double('Knowledge')
+    allow(apollo_runner).to receive(:retrieve_relevant).and_return(
+      success: true,
+      entries: [{ content: 'streaming parity context', content_type: 'fact', confidence: 0.9 }],
+      count:   1
+    )
+    stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+
+    mock_session = double('session')
+    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    allow(mock_session).to receive(:with_tool).and_return(mock_session)
+    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
+    allow(mock_session).to receive(:add_message)
+
+    mock_response = double('response', content: 'aligned', input_tokens: 9, output_tokens: 4, cache_read_tokens: 0, cache_write_tokens: 0,
+tool_calls: nil)
+    allow(mock_response).to receive(:respond_to?).and_return(true)
+    allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
+    allow(mock_session).to receive(:ask).and_return(mock_response)
+
+    expect(mock_session).to receive(:with_instructions).with(
+      a_string_including('Base streaming system', 'streaming parity context')
+    ).and_return(mock_session)
+
+    Legion::LLM.chat(
+      message:          [
+        { role: :user, content: 'first turn' },
+        { role: :assistant, content: 'second turn' },
+        { role: :user, content: 'final turn' }
+      ],
+      system:           'Base streaming system',
+      context_strategy: :rag
+    ) { |_chunk| nil }
+
+    expect(mock_session).to have_received(:add_message).with(
+      hash_including(role: :assistant, cache_control: { type: 'ephemeral' })
+    )
+  end
+
   context 'when pipeline_enabled: false' do
     before { Legion::Settings[:llm][:pipeline_enabled] = false }
 

@@ -50,6 +50,61 @@ RSpec.describe Legion::LLM::Pipeline::Executor, '#call_stream' do
     expect(timeline_keys).to include('tracing:init')
   end
 
+  it 'applies enriched system instructions before streaming the provider call' do
+    req = Legion::LLM::Pipeline::Request.build(
+      messages: [{ role: :user, content: 'hello' }],
+      system:   'Base system prompt',
+      routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+      stream:   true
+    )
+    executor = described_class.new(req)
+    executor.enrichments['gaia:system_prompt'] = { content: 'Injected streaming guidance' }
+
+    mock_session = double('session')
+    mock_response = double('response', content: 'done', input_tokens: 5, output_tokens: 3)
+    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    allow(mock_session).to receive(:with_tool).and_return(mock_session)
+    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
+    allow(mock_session).to receive(:add_message)
+    allow(mock_session).to receive(:ask).and_return(mock_response)
+
+    expect(mock_session).to receive(:with_instructions).with(
+      a_string_including('Base system prompt', 'Injected streaming guidance')
+    ).and_return(mock_session)
+
+    executor.call_stream { |_chunk| nil }
+  end
+
+  it 'applies conversation breakpoints before streaming the provider call' do
+    Legion::Settings[:llm][:prompt_caching][:enabled] = true
+    Legion::Settings[:llm][:prompt_caching][:cache_conversation] = true
+
+    req = Legion::LLM::Pipeline::Request.build(
+      messages: [
+        { role: :user, content: 'first message' },
+        { role: :assistant, content: 'prior answer' },
+        { role: :user, content: 'latest request' }
+      ],
+      routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+      stream:   true
+    )
+
+    executor = described_class.new(req)
+    mock_session = double('session')
+    mock_response = double('response', content: 'done', input_tokens: 5, output_tokens: 3)
+    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    allow(mock_session).to receive(:with_tool).and_return(mock_session)
+    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
+    allow(mock_session).to receive(:add_message)
+    allow(mock_session).to receive(:ask).and_return(mock_response)
+
+    executor.call_stream { |_chunk| nil }
+
+    expect(mock_session).to have_received(:add_message).with(
+      hash_including(role: :assistant, cache_control: { type: 'ephemeral' })
+    )
+  end
+
   it 'falls back to blocking call when no block given' do
     executor = described_class.new(request)
     allow(executor).to receive(:step_provider_call)

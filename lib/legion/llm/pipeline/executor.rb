@@ -466,39 +466,7 @@ module Legion
         end
 
         def execute_provider_request_ruby_llm
-          opts = {
-            model:    @resolved_model,
-            provider: @resolved_provider
-          }.compact
-
-          session = RubyLLM.chat(**opts)
-
-          (@request.tools || []).each do |tool|
-            session.with_tool(tool) if tool.is_a?(Class)
-          end
-
-          if defined?(ToolRegistry)
-            ToolRegistry.tools.each do |t|
-              session.with_tool(t)
-            end
-          end
-          inject_discovered_tools(session)
-
-          injected_system = EnrichmentInjector.inject(
-            system:      @request.system,
-            enrichments: @enrichments
-          )
-
-          if injected_system
-            system_blocks = apply_cache_control([{ type: :text, content: injected_system }])
-            session.with_instructions(system_blocks.last[:content])
-          end
-
-          messages = apply_conversation_breakpoint(@request.messages)
-          prior = messages.size > 1 ? messages[0..-2] : []
-          prior.each { |m| session.add_message(m) }
-
-          message_content = messages.last&.dig(:content)
+          session, message_content = build_ruby_llm_session
           @raw_response = message_content ? session.ask(message_content) : session
         end
 
@@ -679,22 +647,55 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
-          opts = { model: @resolved_model, provider: @resolved_provider }.compact
-          session = RubyLLM.chat(**opts)
-
-          (@request.tools || []).each { |tool| session.with_tool(tool) if tool.is_a?(Class) }
-          ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
-          inject_discovered_tools(session)
-
-          messages = @request.messages
-          prior = messages.size > 1 ? messages[0..-2] : []
-          prior.each { |m| session.add_message(m) }
-
-          message_content = messages.last&.dig(:content)
-          @raw_response = session.ask(message_content, &)
+          session, message_content = build_ruby_llm_session
+          @raw_response = message_content ? session.ask(message_content, &) : session
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
+        end
+
+        def build_ruby_llm_session
+          session = RubyLLM.chat(**ruby_llm_chat_options)
+
+          inject_ruby_llm_tools(session)
+          apply_ruby_llm_instructions(session)
+
+          messages = apply_conversation_breakpoint(@request.messages)
+          add_ruby_llm_prior_messages(session, messages)
+
+          [session, messages.last&.dig(:content)]
+        end
+
+        def ruby_llm_chat_options
+          {
+            model:    @resolved_model,
+            provider: @resolved_provider
+          }.compact
+        end
+
+        def inject_ruby_llm_tools(session)
+          (@request.tools || []).each do |tool|
+            session.with_tool(tool) if tool.is_a?(Class)
+          end
+
+          ToolRegistry.tools.each { |tool| session.with_tool(tool) } if defined?(ToolRegistry)
+          inject_discovered_tools(session)
+        end
+
+        def apply_ruby_llm_instructions(session)
+          injected_system = EnrichmentInjector.inject(
+            system:      @request.system,
+            enrichments: @enrichments
+          )
+          return unless injected_system
+
+          system_blocks = apply_cache_control([{ type: :text, content: injected_system }])
+          session.with_instructions(system_blocks.last[:content])
+        end
+
+        def add_ruby_llm_prior_messages(session, messages)
+          prior = messages.size > 1 ? messages[0..-2] : []
+          prior.each { |message| session.add_message(message) }
         end
 
         def execute_step(name, &block)

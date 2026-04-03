@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-04-02
+
 ### Changed
 - Removed a redundant RuboCop block-length suppression in Sinatra route tool wiring after the `0.6.9` release cut
+
+### Fixed
+- Aligned streaming RubyLLM execution with the standard provider path so streamed requests now apply enriched system instructions and conversation breakpoints before provider execution, matching non-streaming prompt construction (closes #47)
 
 ## [0.6.9] - 2026-04-02
 
