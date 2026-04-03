@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module EscalationTracker
+      extend Legion::Logging::Helper
+
       MAX_HISTORY = 200
 
       class << self
@@ -17,7 +20,10 @@ module Legion
           }
           history << entry
           history.shift while history.size > MAX_HISTORY
-          log_debug("escalation: #{from_model} -> #{to_model} reason=#{reason}")
+          log.info(
+            "[llm][escalation] recorded from_model=#{from_model} to_model=#{to_model} " \
+            "reason=#{reason} tier_from=#{tier_from || 'none'} tier_to=#{tier_to || 'none'}"
+          )
           entry
         end
 
@@ -27,6 +33,7 @@ module Legion
 
         def clear
           @history = []
+          log.debug('[llm][escalation] history_cleared')
         end
 
         def summary
@@ -62,10 +69,6 @@ module Legion
             by_source_model:   {},
             recent:            []
           }
-        end
-
-        def log_debug(msg)
-          Legion::Logging.debug("[EscalationTracker] #{msg}") if defined?(Legion::Logging)
         end
       end
     end

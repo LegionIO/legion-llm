@@ -1,11 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module PromptCache
           extend self
+          extend Legion::Logging::Helper
 
           # Adds cache_control to the last system block when prompt caching is enabled
           # and the combined content exceeds the configured min_tokens threshold.
@@ -22,6 +25,7 @@ module Legion
             return system_blocks if total_chars < min_chars
 
             scope = prompt_caching_settings.fetch(:scope, 'ephemeral')
+            log.info("[llm][prompt_cache] cache_control scope=#{scope} total_chars=#{total_chars}")
             system_blocks[0..-2] + [system_blocks.last.merge(cache_control: { type: scope })]
           end
 
@@ -34,6 +38,7 @@ module Legion
             return tools unless caching_enabled? && sort_tools?
             return tools if tools.nil? || tools.empty?
 
+            log.debug("[llm][prompt_cache] sort_tools count=#{tools.size}")
             tools.sort_by { |t| t[:name].to_s }
           end
 
@@ -55,6 +60,7 @@ module Legion
 
             updated_prior = prior.dup
             updated_prior[last_stable_idx] = prior[last_stable_idx].merge(cache_control: { type: scope })
+            log.info("[llm][prompt_cache] conversation_breakpoint scope=#{scope} index=#{last_stable_idx}")
             updated_prior + [current]
           end
 

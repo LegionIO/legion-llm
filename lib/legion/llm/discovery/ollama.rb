@@ -3,10 +3,13 @@
 require 'faraday'
 require 'json'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Discovery
       module Ollama
+        extend Legion::Logging::Helper
+
         class << self
           def models
             ensure_fresh
@@ -30,13 +33,13 @@ module Legion
             if response.success?
               parsed = ::JSON.parse(response.body)
               @models = parsed['models'] || []
-              Legion::Logging.debug("Discovery::Ollama model list refreshed count=#{@models.size}") if defined?(Legion::Logging)
+              log.debug("Discovery::Ollama model list refreshed count=#{@models.size}")
             else
-              Legion::Logging.warn("Discovery::Ollama HTTP failure status=#{response.status}") if defined?(Legion::Logging)
+              log.warn("Discovery::Ollama HTTP failure status=#{response.status}")
               @models ||= []
             end
           rescue StandardError => e
-            Legion::Logging.warn("Discovery::Ollama HTTP failure: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :warn)
             @models ||= []
           ensure
             @last_refreshed_at = Time.now
@@ -74,7 +77,7 @@ module Legion
 
             Legion::Settings[:llm].dig(:providers, :ollama, :base_url) || 'http://localhost:11434'
           rescue StandardError => e
-            Legion::Logging.debug("Discovery::Ollama base_url lookup failed, using default: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :debug)
             'http://localhost:11434'
           end
 
@@ -83,7 +86,7 @@ module Legion
 
             Legion::Settings[:llm][:discovery] || {}
           rescue StandardError => e
-            Legion::Logging.debug("Discovery::Ollama discovery_settings unavailable: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :debug)
             {}
           end
         end

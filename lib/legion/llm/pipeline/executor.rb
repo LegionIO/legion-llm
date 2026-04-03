@@ -6,6 +6,7 @@ module Legion
   module LLM
     module Pipeline
       class Executor
+        include Legion::Logging::Helper
         include Steps::Rbac
         include Steps::Classification
         include Steps::Billing
@@ -44,24 +45,45 @@ module Legion
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
+        ALWAYS_LOADED_MCP_TOOLS = %w[
+          legion_do
+          legion_get_status
+          legion_run_task
+          legion_describe_runner
+          legion_list_extensions
+          legion_get_extension
+          legion_list_tasks
+          legion_get_task
+          legion_get_task_logs
+          legion_query_knowledge
+          legion_knowledge_health
+          legion_knowledge_context
+          legion_list_workers
+          legion_show_worker
+          legion_mesh_status
+          legion_list_peers
+          legion_tools
+          legion_search_sessions
+        ].freeze
+
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
         def initialize(request)
-          @request      = request
-          @profile      = Profile.derive(request.caller)
-          @timeline     = Timeline.new
-          @tracing      = nil
-          @enrichments  = {}
-          @audit        = {}
-          @warnings     = []
-          @timestamps   = { received: Time.now }
-          @raw_response     = nil
-          @exchange_id      = nil
+          @request = request
+          @profile = Profile.derive(request.caller)
+          @timeline = Timeline.new
+          @tracing = nil
+          @enrichments = {}
+          @audit = {}
+          @warnings = []
+          @timestamps = { received: Time.now }
+          @raw_response = nil
+          @exchange_id = nil
           @discovered_tools = []
           @resolved_provider = nil
-          @resolved_model    = nil
-          @confidence_score  = nil
-          @escalation_chain  = nil
+          @resolved_model = nil
+          @confidence_score = nil
+          @escalation_chain = nil
           @escalation_history = []
           @proactive_tier_assignment = nil
         end
@@ -83,24 +105,36 @@ module Legion
         private
 
         def inject_discovered_tools(session)
-          return unless defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
-
-          server = ::Legion::MCP.server
+          server = mcp_server
           return unless server.respond_to?(:tool_registry)
+
+          requested = requested_deferred_tool_names
+          injected_names = []
 
           server.tool_registry.each do |mcp_tool_class|
             adapter = McpToolAdapter.new(mcp_tool_class)
+            next unless ALWAYS_LOADED_MCP_TOOLS.include?(adapter.name) || requested.include?(adapter.name)
+
             session.with_tool(adapter)
+            injected_names << adapter.name
           rescue StandardError => e
             @warnings << "Failed to inject tool: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_tool')
           end
+
+          log.info(
+            "[llm][mcp] inject request_id=#{@request.id} " \
+            "always_loaded=#{ALWAYS_LOADED_MCP_TOOLS.size} requested_deferred=#{requested.size} " \
+            "injected=#{injected_names.size} names=#{injected_names.first(25).join(',')}"
+          )
         rescue StandardError => e
           @warnings << "Tool injection error: #{e.message}"
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_tools')
         end
 
         def execute_steps
           executed = 0
-          skipped  = 0
+          skipped = 0
           STEPS.each do |step|
             if Profile.skip?(@profile, step)
               skipped += 1
@@ -159,9 +193,9 @@ module Legion
           conv_settings = Legion::LLM.settings[:conversation] || {}
           return history unless conv_settings[:auto_compact]
 
-          threshold       = conv_settings[:summarize_threshold] || 50_000
-          target_tokens   = conv_settings[:target_tokens]       || 20_000
-          preserve_recent = conv_settings[:preserve_recent]     || 10
+          threshold = conv_settings[:summarize_threshold] || 50_000
+          target_tokens = conv_settings[:target_tokens] || 20_000
+          preserve_recent = conv_settings[:preserve_recent] || 10
 
           estimated = Compressor.estimate_tokens(history)
           return history unless estimated >= threshold
@@ -177,15 +211,15 @@ module Legion
           @timeline.record(
             category: :internal, key: 'context:compacted',
             direction: :internal,
-            detail:    "compacted #{history.size} messages (#{estimated} est. tokens) -> #{compact.size}",
-            from:      'compressor', to: 'pipeline'
+            detail: "compacted #{history.size} messages (#{estimated} est. tokens) -> #{compact.size}",
+            from: 'compressor', to: 'pipeline'
           )
 
           compact
         end
 
         def step_tier_assignment
-          gaia_hint      = @enrichments['gaia:routing_hint']
+          gaia_hint = @enrichments['gaia:routing_hint']
           classification = @enrichments['classification:scan']
           assignment = Steps::TierAssigner.assign(
             caller:          @request.caller,
@@ -206,25 +240,26 @@ module Legion
             timestamp:   Time.now
           }
           @timeline.record(
-            category:  :audit, key: 'routing:tier_assignment',
+            category: :audit, key: 'routing:tier_assignment',
             direction: :internal,
-            detail:    "tier=#{assignment[:tier]} assigned by #{assignment[:source]}",
-            from:      'tier_assigner', to: 'pipeline'
+            detail: "tier=#{assignment[:tier]} assigned by #{assignment[:source]}",
+            from: 'tier_assigner', to: 'pipeline'
           )
         rescue StandardError => e
           @warnings << "tier assignment error: #{e.message}"
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.step_tier_assignment')
         end
 
         def step_routing
           @timestamps[:routing_start] = Time.now
           provider = @request.routing[:provider]
-          model    = @request.routing[:model]
-          intent   = @request.extra[:intent]
-          tier     = @request.extra[:tier]
+          model = @request.routing[:model]
+          intent = @request.extra[:intent]
+          tier = @request.extra[:tier]
 
           # Consume proactive tier assignment when no explicit tier/intent provided by caller
           if @proactive_tier_assignment && !tier && !intent
-            tier   = @proactive_tier_assignment[:tier]
+            tier = @proactive_tier_assignment[:tier]
             intent = @proactive_tier_assignment[:intent]
           end
 
@@ -243,7 +278,7 @@ module Legion
                          end
             if resolution
               provider = resolution.provider
-              model    = resolution.model
+              model = resolution.model
               @audit[:'routing:provider_selection'] = {
                 outcome: :success,
                 detail: "selected #{provider}:#{model} via #{resolution.rule}",
@@ -254,7 +289,7 @@ module Legion
           end
 
           @resolved_provider = provider || Legion::LLM.settings[:default_provider]
-          @resolved_model    = model || Legion::LLM.settings[:default_model]
+          @resolved_model = model || Legion::LLM.settings[:default_model]
 
           @timeline.record(
             category: :audit, key: 'routing:provider_selection',
@@ -283,10 +318,16 @@ module Legion
                  Faraday::UnauthorizedError, Faraday::ForbiddenError => e
             providers_tried << @resolved_provider
             fallback = find_fallback_provider(exclude: providers_tried)
+            handle_exception(
+              e,
+              level:             :warn,
+              operation:         'llm.pipeline.provider_call.auth',
+              provider:          @resolved_provider,
+              model:             @resolved_model,
+              fallback_provider: fallback&.dig(:provider)
+            )
             if fallback
-              if defined?(Legion::Logging)
-                Legion::Logging.warn "[pipeline] #{@resolved_provider} auth failed (#{e.class}), falling back to #{fallback[:provider]}:#{fallback[:model]}"
-              end
+              log.warn "[pipeline] #{@resolved_provider} auth failed (#{e.class}), falling back to #{fallback[:provider]}:#{fallback[:model]}"
               @resolved_provider = fallback[:provider]
               @resolved_model = fallback[:model]
               @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
@@ -300,13 +341,21 @@ module Legion
             end
             raise Legion::LLM::AuthError, e.message
           rescue RubyLLM::RateLimitError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.rate_limit',
+                              provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::RateLimitError, e.message
           rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
                  Faraday::ServerError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_error',
+                              provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::ProviderError, e.message
           rescue Faraday::TooManyRequestsError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.http_rate_limit',
+                              provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
           rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_down',
+                              provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::ProviderDown, e.message
           end
         end
@@ -317,11 +366,12 @@ module Legion
           quality_check = @request.extra[:quality_check]
           succeeded = false
 
+          # rubocop:disable Metrics/BlockLength
           chain.each do |resolution|
             start_time = Time.now
             begin
               @resolved_provider = resolution.provider
-              @resolved_model    = resolution.model
+              @resolved_model = resolution.model
               execute_provider_request
 
               duration_ms = ((Time.now - start_time) * 1000).round
@@ -350,7 +400,8 @@ module Legion
               raise
             rescue StandardError => e
               duration_ms = ((Time.now - start_time) * 1000).round
-              Legion::Logging.warn("[pipeline] escalation attempt failed #{resolution.provider}:#{resolution.model}: #{e.message}") if defined?(Legion::Logging)
+              handle_exception(e, level: :warn, operation: 'llm.pipeline.escalation_attempt',
+                                  provider: resolution.provider, model: resolution.model, duration_ms: duration_ms)
               @escalation_history << { model: resolution.model, provider: resolution.provider,
                                        tier: resolution.tier, outcome: :error,
                                        failures: [e.class.name], duration_ms: duration_ms }
@@ -362,6 +413,7 @@ module Legion
               )
             end
           end
+          # rubocop:enable Metrics/BlockLength
 
           raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed" unless succeeded
         end
@@ -414,40 +466,7 @@ module Legion
         end
 
         def execute_provider_request_ruby_llm
-          opts = {
-            model:    @resolved_model,
-            provider: @resolved_provider
-          }.compact
-
-          session = RubyLLM.chat(**opts)
-
-          (@request.tools || []).each do |tool|
-            session.with_tool(tool) if tool.is_a?(Class)
-          end
-
-          if defined?(ToolRegistry)
-            ToolRegistry.tools.each do |t|
-              Legion::Logging.fatal("Injecting ToolRegistry tool: #{t.class} #{t.respond_to?(:tool_name) ? t.tool_name : t}") if defined?(Legion::Logging)
-              session.with_tool(t)
-            end
-          end
-          inject_discovered_tools(session)
-
-          injected_system = EnrichmentInjector.inject(
-            system:      @request.system,
-            enrichments: @enrichments
-          )
-
-          if injected_system
-            system_blocks = apply_cache_control([{ type: :text, content: injected_system }])
-            session.with_instructions(system_blocks.last[:content])
-          end
-
-          messages = apply_conversation_breakpoint(@request.messages)
-          prior    = messages.size > 1 ? messages[0..-2] : []
-          prior.each { |m| session.add_message(m) }
-
-          message_content = messages.last&.dig(:content)
+          session, message_content = build_ruby_llm_session
           @raw_response = message_content ? session.ask(message_content) : session
         end
 
@@ -473,9 +492,13 @@ module Legion
             layer_settings = Legion::LLM.settings[:provider_layer] || {}
             raise unless layer_settings.fetch(:fallback_to_ruby_llm, true)
 
-            if defined?(Legion::Logging)
-              Legion::Logging.warn "[pipeline] native dispatch failed for #{@resolved_provider}: #{e.message}, falling back to RubyLLM"
-            end
+            handle_exception(
+              e,
+              level:     :warn,
+              operation: 'llm.pipeline.native_dispatch',
+              provider:  @resolved_provider,
+              fallback:  'ruby_llm'
+            )
             execute_provider_request_ruby_llm
           end
         end
@@ -546,8 +569,8 @@ module Legion
           # Snapshot timeline and warnings before firing the async thread so that
           # build_response (called on the main thread immediately after) reads a
           # consistent, immutable view rather than racing with async writes.
-          @_response_timeline_snapshot  = @timeline.events.dup.freeze
-          @_response_warnings_snapshot  = @warnings.dup.freeze
+          @_response_timeline_snapshot = @timeline.events.dup.freeze
+          @_response_warnings_snapshot = @warnings.dup.freeze
           @_response_participants_snapshot = @timeline.participants.dup.freeze
 
           profile = @profile
@@ -558,14 +581,16 @@ module Legion
               send(:"step_#{step}")
             end
           rescue StandardError => e
-            Legion::Logging.warn("[pipeline] async post-step error: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.async_post_steps', steps: async_steps)
           end
         end
+
         private :execute_post_provider_steps_mixed
 
         def async_post_enabled?
           Legion::LLM.settings[:pipeline_async_post_steps] == true
         end
+
         private :async_post_enabled?
 
         def step_provider_call_stream(&)
@@ -576,11 +601,17 @@ module Legion
                  Faraday::UnauthorizedError, Faraday::ForbiddenError => e
             providers_tried << @resolved_provider
             fallback = find_fallback_provider(exclude: providers_tried)
+            handle_exception(
+              e,
+              level:             :warn,
+              operation:         'llm.pipeline.provider_call_stream.auth',
+              provider:          @resolved_provider,
+              model:             @resolved_model,
+              fallback_provider: fallback&.dig(:provider)
+            )
             if fallback
-              if defined?(Legion::Logging)
-                Legion::Logging.warn "[pipeline] #{@resolved_provider} stream auth failed (#{e.class}), " \
-                                     "falling back to #{fallback[:provider]}:#{fallback[:model]}"
-              end
+              log.warn "[pipeline] #{@resolved_provider} stream auth failed (#{e.class}), " \
+                       "falling back to #{fallback[:provider]}:#{fallback[:model]}"
               @resolved_provider = fallback[:provider]
               @resolved_model = fallback[:model]
               @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
@@ -588,13 +619,21 @@ module Legion
             end
             raise Legion::LLM::AuthError, e.message
           rescue RubyLLM::RateLimitError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.rate_limit',
+                              provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::RateLimitError, e.message
           rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
                  Faraday::ServerError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_error',
+                              provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::ProviderError, e.message
           rescue Faraday::TooManyRequestsError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.http_rate_limit',
+                              provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
           rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_down',
+                              provider: @resolved_provider, model: @resolved_model)
             raise Legion::LLM::ProviderDown, e.message
           end
         end
@@ -608,22 +647,55 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
-          opts = { model: @resolved_model, provider: @resolved_provider }.compact
-          session = RubyLLM.chat(**opts)
-
-          (@request.tools || []).each { |tool| session.with_tool(tool) if tool.is_a?(Class) }
-          ToolRegistry.tools.each { |t| session.with_tool(t) } if defined?(ToolRegistry)
-          inject_discovered_tools(session)
-
-          messages = @request.messages
-          prior    = messages.size > 1 ? messages[0..-2] : []
-          prior.each { |m| session.add_message(m) }
-
-          message_content = messages.last&.dig(:content)
-          @raw_response = session.ask(message_content, &)
+          session, message_content = build_ruby_llm_session
+          @raw_response = message_content ? session.ask(message_content, &) : session
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
+        end
+
+        def build_ruby_llm_session
+          session = RubyLLM.chat(**ruby_llm_chat_options)
+
+          inject_ruby_llm_tools(session)
+          apply_ruby_llm_instructions(session)
+
+          messages = apply_conversation_breakpoint(@request.messages)
+          add_ruby_llm_prior_messages(session, messages)
+
+          [session, messages.last&.dig(:content)]
+        end
+
+        def ruby_llm_chat_options
+          {
+            model:    @resolved_model,
+            provider: @resolved_provider
+          }.compact
+        end
+
+        def inject_ruby_llm_tools(session)
+          (@request.tools || []).each do |tool|
+            session.with_tool(tool) if tool.is_a?(Class)
+          end
+
+          ToolRegistry.tools.each { |tool| session.with_tool(tool) } if defined?(ToolRegistry)
+          inject_discovered_tools(session)
+        end
+
+        def apply_ruby_llm_instructions(session)
+          injected_system = EnrichmentInjector.inject(
+            system:      @request.system,
+            enrichments: @enrichments
+          )
+          return unless injected_system
+
+          system_blocks = apply_cache_control([{ type: :text, content: injected_system }])
+          session.with_instructions(system_blocks.last[:content])
+        end
+
+        def add_ruby_llm_prior_messages(session, messages)
+          prior = messages.size > 1 ? messages[0..-2] : []
+          prior.each { |message| session.add_message(message) }
         end
 
         def execute_step(name, &block)
@@ -637,7 +709,8 @@ module Legion
               annotate_span(span, name)
               result
             end
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.with_step_span', step: name, block_called: block_called)
             raise if block_called
 
             block.call
@@ -646,8 +719,8 @@ module Legion
 
         def telemetry_enabled?
           !!(defined?(Legion::Telemetry) &&
-             Legion::Telemetry.respond_to?(:enabled?) &&
-             Legion::Telemetry.enabled?)
+            Legion::Telemetry.respond_to?(:enabled?) &&
+            Legion::Telemetry.enabled?)
         end
 
         def pipeline_spans_enabled?
@@ -664,7 +737,8 @@ module Legion
 
           attrs = Steps::SpanAnnotator.attributes_for(step_name, audit: @audit, enrichments: @enrichments)
           attrs.each { |key, val| span.set_attribute(key, val) unless val.nil? }
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.pipeline.annotate_span', step: step_name)
           nil
         end
 
@@ -688,7 +762,8 @@ module Legion
             span.set_attribute('routing.strategy', data[:strategy].to_s) if data[:strategy]
             span.set_attribute('routing.tier', data[:tier].to_s) if data[:tier]
           end
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.pipeline.annotate_top_level_span')
           nil
         end
 
@@ -744,6 +819,7 @@ module Legion
                                      assistant_response: assistant_response)
         rescue StandardError => e
           @warnings << "context_curation trigger failed: #{e.message}"
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.trigger_async_curation', conversation_id: conv_id)
         end
 
         def step_response_return; end
@@ -761,8 +837,8 @@ module Legion
 
           # Use pre-built snapshots when async post-steps are running concurrently
           # to avoid reading partially-mutated timeline/warnings state.
-          timeline_events   = @_response_timeline_snapshot || @timeline.events
-          timeline_parts    = @_response_participants_snapshot || @timeline.participants
+          timeline_events = @_response_timeline_snapshot || @timeline.events
+          timeline_parts = @_response_participants_snapshot || @timeline.participants
           warnings_snapshot = @_response_warnings_snapshot || @warnings
 
           Response.build(
@@ -772,6 +848,7 @@ module Legion
             routing:         { provider: @resolved_provider, model: @resolved_model },
             tokens:          extract_tokens,
             stop:            { reason: :end_turn },
+            tools:           response_tool_calls,
             timestamps:      @timestamps,
             enrichments:     @enrichments,
             audit:           @audit,
@@ -785,6 +862,41 @@ module Legion
             test:            @request.test,
             quality:         @confidence_score&.to_h
           )
+        end
+
+        def mcp_server
+          return ::Legion::MCP.server if defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
+
+          require 'legion/mcp'
+          return unless defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
+
+          ::Legion::MCP.server
+        rescue LoadError => e
+          @warnings << "MCP unavailable: #{e.message}"
+          handle_exception(e, level: :debug, operation: 'llm.pipeline.mcp_server.require')
+          nil
+        rescue StandardError => e
+          @warnings << "MCP server load error: #{e.message}"
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.mcp_server')
+          nil
+        end
+
+        def requested_deferred_tool_names
+          metadata = @request.metadata || {}
+          requested = metadata[:requested_tools] || metadata['requested_tools'] || []
+          Array(requested).map { |name| name.to_s.tr('.', '_') }.reject(&:empty?)
+        end
+
+        def response_tool_calls
+          return [] unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls
+
+          Array(@raw_response.tool_calls).map do |tool_call|
+            {
+              id:        tool_call[:id] || tool_call['id'],
+              name:      tool_call[:name] || tool_call['name'],
+              arguments: tool_call[:arguments] || tool_call['arguments'] || {}
+            }
+          end
         end
       end
     end

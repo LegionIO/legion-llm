@@ -1,30 +1,45 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module Rbac
+          include Legion::Logging::Helper
+
           def step_rbac
             start_time = Time.now
 
             unless defined?(::Legion::Rbac)
               @warnings << 'RBAC unavailable, permitting request without enforcement'
+              log.info("[llm][rbac] unavailable request_id=#{@request.id} action=permit_without_enforcement")
               record_rbac_audit(:success, 'permitted (rbac unavailable)', start_time)
               record_rbac_timeline('permitted (rbac unavailable)')
               return
             end
 
             principal = build_rbac_principal
+            caller_id = extract_rbac_caller_id
+            log.info("[llm][rbac] authorize request_id=#{@request.id} caller=#{caller_id}")
             ::Legion::Rbac.authorize!(principal: principal, action: :use, resource: 'llm/pipeline')
 
-            caller_id = extract_rbac_caller_id
+            log.info("[llm][rbac] permitted request_id=#{@request.id} caller=#{caller_id}")
             record_rbac_audit(:success, "permitted caller=#{caller_id}", start_time)
             record_rbac_timeline("permitted caller=#{caller_id}")
           rescue ::Legion::Rbac::AccessDenied => e
+            log.warn("[llm][rbac] denied request_id=#{@request.id} error=#{e.message}")
             record_rbac_audit(:failure, e.message, start_time)
             record_rbac_timeline("denied: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rbac.denied', request_id: @request.id)
             raise Legion::LLM::PipelineError.new("403 Forbidden: #{e.message}", step: :rbac)
+          rescue StandardError => e
+            log.error("[llm][rbac] failed request_id=#{@request.id} error=#{e.message}")
+            record_rbac_audit(:failure, "error: #{e.message}", start_time)
+            record_rbac_timeline("error: #{e.message}")
+            handle_exception(e, level: :error, operation: 'llm.pipeline.steps.rbac', request_id: @request.id)
+            raise Legion::LLM::PipelineError.new("rbac error: #{e.message}", step: :rbac)
           end
 
           private

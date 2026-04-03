@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module KnowledgeCapture
+          include Legion::Logging::Helper
+
           def step_knowledge_capture
             response = current_response
 
@@ -24,13 +28,15 @@ module Legion
             ingest_to_local(response: response) if local_capture_enabled?
           rescue StandardError => e
             @warnings << "knowledge_capture error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture')
           end
 
           private
 
           def local_capture_enabled?
             defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.knowledge_capture.local_capture_enabled')
             false
           end
 
@@ -51,6 +57,7 @@ module Legion
             )
           rescue StandardError => e
             @warnings << "local_knowledge_capture error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture.ingest_local')
           end
         end
       end

@@ -1,10 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     class EmbeddingUnavailableError < LLMError; end
 
     module Embeddings
+      extend Legion::Logging::Helper
+
       PROVIDER_EMBEDDING_MODELS = {
         bedrock:   'amazon.titan-embed-text-v2:0',
         anthropic: nil,
@@ -37,6 +40,7 @@ module Legion
           return { vector: nil, model: model, provider: provider, error: "provider #{provider} is disabled" } if provider_disabled?(provider)
 
           model ||= resolve_model(provider)
+          text    = coerce_text_input(text)
           text    = apply_prefix(text, model: model, task: task)
 
           return generate_ollama(text: text, model: model) if provider&.to_sym == :ollama
@@ -48,7 +52,7 @@ module Legion
 
           { vector: vector, model: model, provider: provider, dimensions: vector&.size || 0, tokens: response.input_tokens }
         rescue StandardError => e
-          Legion::Logging.warn "Embedding failed (#{provider}/#{model}): #{e.message}" if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           handle_embed_failure(e, text: text, failed_provider: provider, failed_model: model)
         end
 
@@ -60,7 +64,7 @@ module Legion
           return disabled_result if disabled_result
 
           model  ||= resolve_model(provider)
-          texts    = texts.map { |t| apply_prefix(t, model: model, task: task) }
+          texts    = texts.map { |t| apply_prefix(coerce_text_input(t), model: model, task: task) }
 
           return generate_ollama_batch(texts: texts, model: model) if provider&.to_sym == :ollama
           return generate_azure_batch(texts: texts, model: model, dimensions: dimensions) if provider&.to_sym == :azure
@@ -70,7 +74,7 @@ module Legion
             build_batch_entry(vec, model, provider, i)
           end
         rescue StandardError => e
-          Legion::Logging.warn("Batch embedding failed (#{provider}/#{model}): #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           texts.map { |_| { vector: nil, model: model, provider: provider, error: e.message } }
         end
 
@@ -94,7 +98,17 @@ module Legion
 
           config = Legion::Settings.dig(:llm, :providers, provider.to_sym)
           config.is_a?(Hash) && config[:enabled] == false
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.embeddings.provider_disabled', provider: provider)
+          false
+        end
+
+        def provider_supports_embeddings?(provider)
+          return true unless LLM.respond_to?(:provider_supports_embeddings?, true)
+
+          LLM.send(:provider_supports_embeddings?, provider)
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.embeddings.provider_supports_embeddings', provider: provider)
           false
         end
 
@@ -155,8 +169,9 @@ module Legion
             next unless started
             # Skip providers that are explicitly disabled in the fallback chain
             next if provider_disabled?(entry[:provider])
+            next unless provider_supports_embeddings?(entry[:provider])
 
-            Legion::Logging.info "Embedding failover: #{failed_provider} -> #{entry[:provider]}" if defined?(Legion::Logging)
+            log.info "Embedding failover: #{failed_provider} -> #{entry[:provider]}"
             return entry
           end
           nil
@@ -169,7 +184,8 @@ module Legion
           return configured&.to_sym if configured
 
           Legion::Settings.dig(:llm, :default_provider)&.to_sym
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.embeddings.resolve_provider')
           nil
         end
 
@@ -180,7 +196,8 @@ module Legion
           return configured if configured
 
           resolve_model_from_settings(provider)
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.embeddings.resolve_model', provider: provider)
           'text-embedding-3-small'
         end
 
@@ -208,16 +225,59 @@ module Legion
           "#{prefix}#{text}"
         end
 
+        def coerce_text_input(value)
+          case value
+          when String
+            value
+          when Array
+            parts = value.filter_map { |entry| extract_text_fragment(entry) }
+            joined = parts.map(&:to_s).map(&:strip).reject(&:empty?).join("\n")
+            joined.empty? ? value.to_s : joined
+          when Hash
+            extract_text_fragment(value).to_s
+          when nil
+            ''
+          else
+            value.to_s
+          end
+        end
+
+        def extract_text_fragment(value)
+          case value
+          when String
+            value
+          when Array
+            value.filter_map { |entry| extract_text_fragment(entry) }.join("\n")
+          when Hash
+            text = value[:text] || value['text']
+            return text.to_s if text.is_a?(String)
+
+            content = value[:content] || value['content']
+            return extract_text_fragment(content) unless content.nil?
+
+            %i[query prompt message input value summary].each do |key|
+              candidate = value[key] || value[key.to_s]
+              return extract_text_fragment(candidate) unless candidate.nil?
+            end
+
+            value.values.filter_map { |entry| extract_text_fragment(entry) }.join("\n")
+          else
+            value.to_s
+          end
+        end
+
         def prefix_injection_enabled?
           value = (Legion::Settings.dig(:llm, :embedding) || {})[:prefix_injection]
           value.nil? || value
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.embeddings.prefix_injection_enabled')
           true
         end
 
         def embedding_settings
           Legion::Settings.dig(:llm, :embedding) || {}
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.embeddings.embedding_settings')
           {}
         end
 
@@ -226,7 +286,7 @@ module Legion
           return generate_ollama_chunked(text: text, model: model, max_chars: max_chars) if text.length > max_chars
 
           result = ollama_embed_request(model: model, input: text)
-          vector = result['embeddings']&.first
+          vector = extract_ollama_vectors(result).first
           vector = apply_dimension_enforcement(vector, :ollama) if vector
           return dimension_error(model, :ollama, vector) if vector.is_a?(String)
 
@@ -235,7 +295,7 @@ module Legion
           raise unless e.message.include?('input length exceeds')
 
           reduced = (max_chars * 0.6).to_i
-          Legion::Logging.info("Ollama context exceeded, retrying with chunking at #{reduced} chars") if defined?(Legion::Logging)
+          log.info("Ollama context exceeded, retrying with chunking at #{reduced} chars")
           generate_ollama_chunked(text: text, model: model, max_chars: reduced)
         end
 
@@ -243,7 +303,7 @@ module Legion
           chunks = chunk_text(text, max_chars: max_chars)
           vectors = chunks.filter_map do |chunk|
             result = ollama_embed_request(model: model, input: chunk[:content])
-            result['embeddings']&.first
+            extract_ollama_vectors(result).first
           end
 
           return { vector: nil, model: model, provider: :ollama, error: 'all chunks failed embedding' } if vectors.empty?
@@ -263,7 +323,7 @@ module Legion
               build_batch_entry(result[:vector], model, :ollama, i)
             else
               result = ollama_embed_request(model: model, input: text)
-              vec = result['embeddings']&.first
+              vec = extract_ollama_vectors(result).first
               build_batch_entry(vec, model, :ollama, i)
             end
           end
@@ -278,7 +338,8 @@ module Legion
           else
             text.chars.each_slice(max_chars).map { |s| { content: s.join } }
           end
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.embeddings.chunk_text')
           text.chars.each_slice(max_chars).map { |s| { content: s.join } }
         end
 
@@ -314,7 +375,7 @@ module Legion
             build_batch_entry(entry['embedding'], model, :azure, i)
           end
         rescue StandardError => e
-          Legion::Logging.warn("Azure batch embedding failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           texts.map { |_| { vector: nil, model: model, provider: :azure, error: e.message } }
         end
 
@@ -328,7 +389,7 @@ module Legion
           host = URI.parse(api_base).host
           target_ip = ip
           path = "/openai/deployments/#{model}/embeddings?api-version=2024-02-01"
-          Legion::Logging.info "Azure embed connecting to #{host}:443 (ip_override=#{target_ip.inspect})" if defined?(Legion::Logging)
+          log.info "Azure embed connecting to #{host}:443 (ip_override=#{target_ip.inspect})"
 
           require 'net/http'
           require 'openssl'
@@ -379,9 +440,38 @@ module Legion
           end
           body = { model: model, input: input }
           response = conn.post('/api/embed', body.to_json, 'Content-Type' => 'application/json')
-          raise "Ollama embed failed: #{response.status} #{response.body}" unless response.success?
+          return ::JSON.parse(response.body) if response.success?
 
-          ::JSON.parse(response.body)
+          if ollama_legacy_retry?(response, input)
+            log.info 'Ollama embed retrying with legacy /api/embeddings compatibility path'
+            legacy_body = { model: model, prompt: input }
+            legacy_response = conn.post('/api/embeddings', legacy_body.to_json, 'Content-Type' => 'application/json')
+            raise "Ollama embed failed: #{legacy_response.status} #{legacy_response.body}" unless legacy_response.success?
+
+            return ::JSON.parse(legacy_response.body)
+          end
+
+          raise "Ollama embed failed: #{response.status} #{response.body}"
+        end
+
+        def ollama_legacy_retry?(response, input)
+          return false unless input.is_a?(String)
+          return true if response.status == 404
+
+          body = response.body.to_s.downcase
+          response.status == 400 && body.include?('invalid input type')
+        end
+
+        def extract_ollama_vectors(result)
+          embeddings = result['embeddings']
+          return [] if embeddings == []
+          return embeddings if embeddings.is_a?(Array) && embeddings.first.is_a?(Array)
+          return [embeddings] if embeddings.is_a?(Array)
+
+          embedding = result['embedding']
+          return [embedding] if embedding.is_a?(Array)
+
+          []
         end
       end
     end

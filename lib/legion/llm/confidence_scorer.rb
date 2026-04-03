@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     # Computes a ConfidenceScore for an LLM response using available signals.
@@ -13,6 +15,8 @@ module Legion
     # Legion::Settings is available, otherwise the DEFAULT_BANDS constants are used.
     # Per-call overrides can be passed as options[:confidence_bands].
     module ConfidenceScorer
+      extend Legion::Logging::Helper
+
       # Default band boundaries. Keys are the *lower* boundary of that band name:
       #   score <  :low       -> :very_low
       #   score <  :medium    -> :low
@@ -119,7 +123,8 @@ module Legion
           # avg_lp is in (-inf, 0]; e^0 = 1.0 (perfect), e^(-5) ≈ 0.007 (very uncertain).
           # We clamp at -5 so very negative values still map to > 0.
           Math.exp([avg_lp, -5.0].max)
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.confidence_scorer.extract_logprobs')
           nil
         end
 
@@ -131,7 +136,8 @@ module Legion
           lp = raw_response.logprobs if klass.method_defined?(:logprobs)
           lp ||= raw_response.metadata&.dig(:logprobs) if klass.method_defined?(:metadata)
           lp
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.confidence_scorer.probe_logprobs')
           nil
         end
 

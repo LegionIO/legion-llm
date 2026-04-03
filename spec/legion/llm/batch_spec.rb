@@ -150,6 +150,38 @@ RSpec.describe Legion::LLM::Batch do
         expect(described_class.queue_size).to eq(1)
       end
     end
+
+    context 'with the real chat_direct path' do
+      let(:session) { double('session') }
+      let(:response) { double('response', content: 'batched response') }
+
+      before do
+        allow(Legion::LLM).to receive(:chat_direct).and_call_original
+        Legion::Settings[:llm][:scheduling] = {
+          enabled:         true,
+          peak_hours_utc:  '0-23',
+          defer_intents:   %w[batch background],
+          max_defer_hours: 8
+        }
+        allow(RubyLLM).to receive(:chat).and_return(session)
+        allow(session).to receive(:ask).and_return(response)
+      end
+
+      it 'executes the queued request and preserves provider and model' do
+        described_class.enqueue(
+          messages: [{ role: 'user', content: 'batched hello' }],
+          model:    'gpt-4o',
+          provider: :openai
+        )
+
+        results = described_class.flush
+
+        expect(RubyLLM).to have_received(:chat).with(hash_including(model: 'gpt-4o', provider: :openai))
+        expect(session).to have_received(:ask).with('batched hello')
+        expect(results.first[:status]).to eq(:completed)
+        expect(results.first[:result][:response]).to eq(response)
+      end
+    end
   end
 
   describe '.queue_size' do

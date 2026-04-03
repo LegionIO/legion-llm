@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Hooks
@@ -10,6 +11,8 @@ module Legion
       # path and silently swallows all errors so a social-layer problem never
       # surfaces to the caller.
       module Reciprocity
+        extend Legion::Logging::Helper
+
         module_function
 
         def install
@@ -28,7 +31,7 @@ module Legion
 
           runner.record_exchange(agent_id: identity, action: :communication, direction: :given)
         rescue StandardError => e
-          Legion::Logging.debug "[LLM::Reciprocity] hook error: #{e.message}" if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
         end
 
         def social_runner
@@ -36,7 +39,7 @@ module Legion
 
           Legion::Extensions::Agentic::Social::Social::Client.new
         rescue StandardError => e
-          Legion::Logging.debug "[LLM::Reciprocity] social_runner error: #{e.message}" if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           nil
         end
       end

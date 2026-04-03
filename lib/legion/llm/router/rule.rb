@@ -3,10 +3,13 @@
 require 'time'
 require_relative 'resolution'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Router
       class Rule
+        include Legion::Logging::Helper
+
         attr_reader :name, :conditions, :target, :priority, :constraint, :fallback, :cost_multiplier, :schedule, :note
 
         def self.from_hash(hash)
@@ -40,12 +43,12 @@ module Legion
         def matches_intent?(intent)
           @conditions.all? do |key, value|
             unless intent.key?(key)
-              Legion::Logging.debug("Rule '#{@name}' rejected: missing intent key=#{key}") if defined?(Legion::Logging)
+              log.debug("Rule '#{@name}' rejected: missing intent key=#{key}")
               return false
             end
 
             unless intent[key].to_s == value.to_s
-              Legion::Logging.debug("Rule '#{@name}' rejected: intent #{key}=#{intent[key]} != #{value}") if defined?(Legion::Logging)
+              log.debug("Rule '#{@name}' rejected: intent #{key}=#{intent[key]} != #{value}")
               return false
             end
 
@@ -75,19 +78,19 @@ module Legion
 
         def schedule_rejection(sched, now)
           if sched['valid_from'] && now < Time.parse(sched['valid_from'])
-            Legion::Logging.debug("Rule '#{@name}' rejected: before valid_from=#{sched['valid_from']}") if defined?(Legion::Logging)
+            log.debug("Rule '#{@name}' rejected: before valid_from=#{sched['valid_from']}")
             return :valid_from
           end
           if sched['valid_until'] && now > Time.parse(sched['valid_until'])
-            Legion::Logging.debug("Rule '#{@name}' rejected: after valid_until=#{sched['valid_until']}") if defined?(Legion::Logging)
+            log.debug("Rule '#{@name}' rejected: after valid_until=#{sched['valid_until']}")
             return :valid_until
           end
           if sched['hours'] && !within_hours?(sched['hours'], now)
-            Legion::Logging.debug("Rule '#{@name}' rejected: outside schedule hours=#{sched['hours']}") if defined?(Legion::Logging)
+            log.debug("Rule '#{@name}' rejected: outside schedule hours=#{sched['hours']}")
             return :hours
           end
           if sched['days'] && !on_allowed_day?(sched['days'], now)
-            Legion::Logging.debug("Rule '#{@name}' rejected: outside schedule days=#{sched['days']}") if defined?(Legion::Logging)
+            log.debug("Rule '#{@name}' rejected: outside schedule days=#{sched['days']}")
             return :days
           end
 

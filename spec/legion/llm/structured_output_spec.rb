@@ -38,6 +38,25 @@ RSpec.describe Legion::LLM::StructuredOutput do
       expect(result[:data]).to eq({ name: 'Alice' })
     end
 
+    it 'passes provider through to chat_single' do
+      json_string = '{"name":"Alice"}'
+      allow(Legion::LLM).to receive(:send).with(
+        :chat_single,
+        hash_including(model: 'claude-sonnet-4-6', provider: :anthropic)
+      ).and_return({ content: json_string, model: 'claude-sonnet-4-6' })
+      allow(Legion::JSON).to receive(:load).with(json_string).and_return({ name: 'Alice' })
+      allow(Legion::JSON).to receive(:dump).and_return('{}')
+
+      result = described_class.generate(
+        messages: messages,
+        schema:   schema,
+        model:    'claude-sonnet-4-6',
+        provider: :anthropic
+      )
+
+      expect(result[:valid]).to be true
+    end
+
     it 'retries on parse failure' do
       bad_result = { content: 'not json', model: 'gpt-4o' }
       good_result = { content: '{"name":"Bob"}', model: 'gpt-4o' }

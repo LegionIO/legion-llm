@@ -1,12 +1,17 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module GaiaCaller
         module_function
 
+        extend Legion::Logging::Helper
+
         def chat(message:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil, caller: nil, **kwargs)
+          log.info("[llm][gaia] chat phase=#{phase} model=#{kwargs[:model] || 'default'}")
           request = Request.build(
             messages: [{ role: :user, content: message }],
             system:   kwargs[:system],
@@ -18,6 +23,7 @@ module Legion
         end
 
         def structured(message:, schema:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil, caller: nil, **kwargs)
+          log.info("[llm][gaia] structured phase=#{phase} model=#{kwargs[:model] || 'default'}")
           request = Request.build(
             messages:        [{ role: :user, content: message }],
             system:          kwargs[:system],
@@ -30,6 +36,7 @@ module Legion
         end
 
         def embed(text:, **)
+          log.info("[llm][gaia] embed text_chars=#{text.to_s.length}")
           LLM.embed(text, **)
         end
 

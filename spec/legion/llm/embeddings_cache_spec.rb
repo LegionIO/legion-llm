@@ -86,7 +86,7 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
 
     it 'returns the entry after the failed provider' do
       result = Legion::LLM::Embeddings.send(:find_fallback_provider, :ollama)
-      expect(result).to eq({ provider: :bedrock, model: 'amazon.titan-embed-text-v2:0' })
+      expect(result).to eq({ provider: :openai, model: 'text-embedding-3-small' })
     end
 
     it 'skips the failed provider and returns the next one in the chain' do
@@ -157,17 +157,17 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
       expect(chain).to eq([])
     end
 
-    it 'uses model from provider_models when provider returns true (not a model string)' do
-      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+    it 'uses model from provider_models when a supported cloud provider is enabled' do
+      Legion::Settings[:llm][:providers][:openai][:enabled] = true
       allow(Legion::LLM).to receive(:verify_embedding).and_return(true)
 
       chain = Legion::LLM.send(:build_embedding_fallback_chain, {
-                                 provider_fallback: %w[bedrock],
-                                 provider_models:   { 'bedrock' => 'amazon.titan-embed-text-v2:0' }
+                                 provider_fallback: %w[openai],
+                                 provider_models:   { 'openai' => 'text-embedding-3-small' }
                                })
-      entry = chain.find { |e| e[:provider] == :bedrock }
+      entry = chain.find { |e| e[:provider] == :openai }
       expect(entry).not_to be_nil
-      expect(entry[:model]).to eq('amazon.titan-embed-text-v2:0')
+      expect(entry[:model]).to eq('text-embedding-3-small')
     end
   end
 end

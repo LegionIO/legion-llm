@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+## [0.6.14] - 2026-04-02
+
+### Fixed
+- Preserved fleet reply success and error state exactly as produced by the handler instead of forcing successful delivery metadata onto failures
+- Preserved full fleet chat request fidelity by replaying prior messages locally and forwarding provider/model context through fleet chat, embed, and structured execution paths (closes #48)
+
+## [0.6.13] - 2026-04-02
+
+### Fixed
+- Honored `llm.daemon.enabled` in `DaemonClient` so daemon-first behavior is fully disabled when operators turn the daemon off
+- Honored nested `llm.routing.health.*` settings when building the router health tracker so custom health windows and circuit-breaker thresholds take effect (closes #45)
+
+## [0.6.12] - 2026-04-02
+
+### Fixed
+- Fixed `Batch.flush` direct execution so grouped work preserves provider/model routing, executes the queued request, and bypasses scheduling deferral when draining the queue
+- Fixed deferred `ask_direct` execution so direct asks enqueue the original message and return the deferred result cleanly instead of crashing on a deferred hash (closes #44)
+
+## [0.6.11] - 2026-04-02
+
+### Fixed
+- Made response-cache spool overflow writes configurable via `llm.prompt_caching.response_cache.spool_dir` and updated the response-cache specs to use a hermetic temp directory instead of `~/.legionio`
+- Updated README public API examples to match `Legion::LLM.ask(message: ...)` and to distinguish session creation from pipeline-backed `Legion::LLM.chat(message:/messages:)` calls (closes #46)
+
+## [0.6.10] - 2026-04-02
+
+### Changed
+- Removed a redundant RuboCop block-length suppression in Sinatra route tool wiring after the `0.6.9` release cut
+
+### Fixed
+- Aligned streaming RubyLLM execution with the standard provider path so streamed requests now apply enriched system instructions and conversation breakpoints before provider execution, matching non-streaming prompt construction (closes #47)
+
+## [0.6.9] - 2026-04-02
+
+### Added
+- Additional helper-based `info`/`error` logging across non-Sinatra runtime paths including native dispatch, prompt caching, GAIA caller helpers, billing and metering pipeline steps, provider and tool registries, compressor, reflection, shadow evaluation, and escalation tracking
+
+### Changed
+- Uplifted remaining non-Sinatra `lib/**/*.rb` runtime modules to `Legion::Logging::Helper`, replacing lingering wrapper-style `log_debug` calls with direct `log.debug/info/warn/error`
+- Added catch-all `handle_exception` coverage for remaining non-Sinatra rescue paths, including RBAC pipeline failure handling
+- Fixed pipeline request ID generation for `Request.from_chat_args` callers so response objects consistently retain a non-nil `request_id`
+- Restored shared post-response tool-call serialization used by `PostResponse` and `KnowledgeCapture`, keeping audit publishing and local knowledge capture working in isolated step execution
+- Guarded non-pipeline shadow-evaluation checks when `ShadowEval` is not loaded and cleared the remaining RuboCop regressions in `lib/` and route helpers
+
 ## [0.6.8] - 2026-04-01
 
 ### Added

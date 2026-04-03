@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module CostTracker
+      extend Legion::Logging::Helper
+
       # Default per-1M-token pricing in USD (input / output).
       # Overridable via Legion::Settings[:llm][:pricing].
       DEFAULT_PRICING = {
@@ -36,7 +39,7 @@ module Legion
           }
 
           records << entry
-          Legion::Logging.debug "[LLM::CostTracker] #{model}: #{input_tokens}+#{output_tokens} tokens = $#{cost.round(6)}"
+          log.debug "[LLM::CostTracker] #{model}: #{input_tokens}+#{output_tokens} tokens = $#{cost.round(6)}"
           entry
         end
 
@@ -87,7 +90,7 @@ module Legion
           pricing = Legion::Settings.dig(:llm, :pricing)
           pricing.is_a?(Hash) ? pricing : {}
         rescue StandardError => e
-          Legion::Logging.warn("CostTracker settings unavailable: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           {}
         end
       end

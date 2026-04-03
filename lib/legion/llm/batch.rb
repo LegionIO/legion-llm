@@ -2,9 +2,12 @@
 
 require 'securerandom'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Batch
+      extend Legion::Logging::Helper
+
       @mutex = Mutex.new
       @flush_timer = nil
 
@@ -30,7 +33,7 @@ module Legion
 
           @mutex.synchronize { queue << entry }
           ensure_flush_timer
-          Legion::Logging.debug "Legion::LLM::Batch enqueued #{request_id} (queue size: #{queue_size})" if defined?(Legion::Logging)
+          log.debug "Legion::LLM::Batch enqueued #{request_id} (queue size: #{queue_size})"
           request_id
         end
 
@@ -49,7 +52,7 @@ module Legion
 
           return [] if to_flush.empty?
 
-          Legion::Logging.debug "Legion::LLM::Batch flushing #{to_flush.size} request(s)" if defined?(Legion::Logging)
+          log.debug "Legion::LLM::Batch flushing #{to_flush.size} request(s)"
 
           groups = to_flush.group_by { |e| [e[:provider], e[:model]] }
           results = []
@@ -117,7 +120,7 @@ module Legion
           @flush_timer = Concurrent::TimerTask.new(execution_interval: interval) do
             flush(max_wait: 0)
           rescue StandardError => e
-            Legion::Logging.warn("Batch auto-flush failed: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :warn)
           end
           @flush_timer.execute
         end
@@ -129,19 +132,28 @@ module Legion
           b = llm[:batch] || llm['batch'] || {}
           b.is_a?(Hash) ? b.transform_keys(&:to_sym) : {}
         rescue StandardError => e
-          Legion::Logging.warn("Batch settings unavailable: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           {}
         end
 
         def submit_single(entry, provider:, model:)
+          msgs = entry[:messages]
+          prompt = if msgs.is_a?(Array)
+                     last_user = msgs.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
+                     (last_user || {}).fetch(:content, nil) || (last_user || {}).fetch('content', nil) || ''
+                   else
+                     msgs.to_s
+                   end
           response = Legion::LLM.chat_direct(
-            messages: entry[:messages],
+            **entry[:opts],
+            provider: provider,
             model:    model,
-            **entry[:opts]
+            message:  prompt,
+            urgency:  :immediate
           )
 
           {
-            status:   :completed,
+            status:   response.is_a?(Hash) && response[:deferred] ? :deferred : :completed,
             model:    model,
             provider: provider,
             id:       entry[:id],
@@ -149,7 +161,7 @@ module Legion
             meta:     { batched: true, queued_at: entry[:queued_at], completed_at: Time.now.utc }
           }
         rescue StandardError => e
-          Legion::Logging.warn("Batch submit_single failed for #{entry[:id]}: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           {
             status:   :failed,
             model:    model,

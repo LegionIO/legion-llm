@@ -378,6 +378,36 @@ RSpec.describe 'Legion::LLM.ask' do
     end
   end
 
+  describe 'direct path with scheduling deferral' do
+    before do
+      allow(Legion::LLM::DaemonClient).to receive(:available?).and_return(false)
+      Legion::LLM::Batch.reset!
+      Legion::Settings[:llm][:batch] = { enabled: true, window_seconds: 300, max_batch_size: 100 }
+      Legion::Settings[:llm][:scheduling] = {
+        enabled:         true,
+        peak_hours_utc:  '0-23',
+        defer_intents:   %w[batch background],
+        max_defer_hours: 8
+      }
+    end
+
+    after do
+      Legion::LLM::Batch.reset!
+    end
+
+    it 'returns a deferred result instead of raising on a deferred hash' do
+      result = nil
+
+      expect do
+        result = Legion::LLM.ask(message: 'hello', intent: :batch)
+      end.not_to raise_error
+
+      expect(result[:deferred]).to be true
+      expect(result[:batch_id]).to be_a(String)
+      expect(Legion::LLM::Batch.queue_size).to eq(1)
+    end
+  end
+
   # ─────────────────────────────────────────────
   # daemon forwards model/provider/tier/context
   # ─────────────────────────────────────────────

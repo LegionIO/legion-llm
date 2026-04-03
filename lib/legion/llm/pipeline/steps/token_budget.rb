@@ -1,10 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Pipeline
       module Steps
         module TokenBudget
+          include Legion::Logging::Helper
+
           def step_token_budget
             max_input = @request.extra&.dig(:max_input_tokens)
             check_input_cap(max_input) if max_input&.positive?
@@ -13,7 +16,7 @@ module Legion
             raise
           rescue StandardError => e
             @warnings << { type: :token_budget_check_failed, message: e.message }
-            Legion::Logging.debug "[pipeline] token_budget step failed: #{e.message}"
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.token_budget')
           end
 
           private

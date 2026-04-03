@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Hooks
@@ -13,6 +14,8 @@ module Legion
       #
       # Only triggers on substantive responses (>200 chars) to avoid noise.
       module Reflection
+        extend Legion::Logging::Helper
+
         MIN_RESPONSE_LENGTH = 200
         MAX_EXTRACT_LENGTH  = 500
         COOLDOWN_SECONDS    = 300 # 5 minutes between extractions
@@ -36,7 +39,8 @@ module Legion
           Thread.new do
             extract(response, messages, model)
           rescue StandardError => e
-            log_debug("extract_async failed: #{e.message}")
+            handle_exception(e, level: :debug, operation: 'llm.hooks.reflection.extract_async', model: model)
+            log.debug("[llm][reflection] extract_async_failed model=#{model} error=#{e.message}")
           end
         end
 
@@ -56,7 +60,7 @@ module Legion
           entries.each { |entry| publish_entry(entry, model) }
           @mutex.synchronize { @extractions.concat(entries) }
 
-          log_debug("extracted #{entries.size} knowledge entries")
+          log.info("[llm][reflection] extracted model=#{model} count=#{entries.size}")
         end
 
         def analyze_for_knowledge(content, messages)
@@ -165,6 +169,7 @@ module Legion
                                   metadata:         { context: entry[:context], source: 'reflection_hook' }
                                 })
             )
+            log.info("[llm][reflection] published via=transport model=#{model} type=#{entry[:type]}")
           elsif apollo_direct?
             Legion::Extensions::Apollo::Runners::Ingest.ingest(
               content:          entry[:content],
@@ -173,9 +178,11 @@ module Legion
               confidence:       entry[:confidence],
               source_agent:     "llm:#{model}"
             )
+            log.info("[llm][reflection] published via=direct model=#{model} type=#{entry[:type]}")
           end
         rescue StandardError => e
-          log_debug("publish_entry failed: #{e.message}")
+          handle_exception(e, level: :debug, operation: 'llm.hooks.reflection.publish_entry', model: model)
+          log.error("[llm][reflection] publish_failed model=#{model} type=#{entry[:type]} error=#{e.message}")
         end
 
         def should_extract?(response)
@@ -219,7 +226,7 @@ module Legion
             Legion::Transport.respond_to?(:connected?) &&
             Legion::Transport.connected?
         rescue StandardError => e
-          Legion::Logging.debug("Reflection#apollo_transport? failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug, operation: 'llm.hooks.reflection.apollo_transport')
           false
         end
         private_class_method :apollo_transport?
@@ -228,11 +235,6 @@ module Legion
           defined?(Legion::Extensions::Apollo::Runners::Ingest)
         end
         private_class_method :apollo_direct?
-
-        def log_debug(msg)
-          Legion::Logging.debug("[LLM::Reflection] #{msg}") if defined?(Legion::Logging)
-        end
-        private_class_method :log_debug
       end
     end
   end

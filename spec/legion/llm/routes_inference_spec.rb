@@ -1,6 +1,12 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+begin
+  require 'sinatra/base'
+  require 'legion/llm/routes'
+rescue LoadError
+  nil
+end
 
 # Verifies that the inference endpoint fix routes through the 18-step pipeline.
 # Because rack-test is not a dependency, these specs exercise the pipeline
@@ -136,6 +142,128 @@ RSpec.describe 'Inference endpoint pipeline routing' do
     it 'carries content from pipeline response' do
       result = Legion::LLM.chat(message: 'hello from chat endpoint')
       expect(result.message[:content]).to eq('pipeline response')
+    end
+  end
+end
+
+if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
+  RSpec.describe 'LLM inference API route' do
+    let(:test_app) do
+      Class.new(Sinatra::Base) do
+        set :show_exceptions, false
+        set :raise_errors, false
+        set :host_authorization, permitted: :any
+
+        register Legion::LLM::Routes
+      end
+    end
+
+    def app
+      test_app
+    end
+
+    def post_json(path, payload, headers = {})
+      Rack::MockRequest.new(app).post(
+        path,
+        {
+          'CONTENT_TYPE' => 'application/json',
+          input: Legion::JSON.dump(payload)
+        }.merge(headers)
+      )
+    end
+
+    def make_pipeline_response(content: 'ok', tools: [], timeline: [], stop_reason: :end_turn)
+      double(
+        'pipeline_response',
+        message:         { role: :assistant, content: content },
+        routing:         { provider: 'anthropic', model: 'claude-test' },
+        tokens:          Legion::LLM::Usage.new(input_tokens: 7, output_tokens: 3),
+        tools:           tools,
+        enrichments:     {},
+        stop:            { reason: stop_reason },
+        timeline:        timeline,
+        conversation_id: 'conv_test'
+      )
+    end
+
+    before do
+      Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+      allow(Legion::LLM).to receive(:started?).and_return(true)
+    end
+
+    it 'passes requested deferred tools through request metadata' do
+      captured = nil
+      response = make_pipeline_response
+      executor = instance_double('Legion::LLM::Pipeline::Executor', call: response)
+
+      allow(Legion::LLM::Pipeline::Request).to receive(:build) do |**kwargs|
+        captured = kwargs
+        :req
+      end
+      allow(Legion::LLM::Pipeline::Executor).to receive(:new).with(:req).and_return(executor)
+
+      response = post_json('/api/llm/inference', {
+                             messages:        [{ role: 'user', content: 'hello' }],
+                             requested_tools: ['legion.test.extra']
+                           })
+
+      expect(response.status).to eq(200)
+      expect(captured[:metadata]).to eq(requested_tools: ['legion.test.extra'])
+    end
+
+    it 'returns sync tool_calls from the pipeline response' do
+      tool_call = { id: 'tc_1', name: 'legion_tools', arguments: { query: 'status' } }
+      response = make_pipeline_response(content: 'tool response', tools: [tool_call], stop_reason: :tool_use)
+      executor = instance_double('Legion::LLM::Pipeline::Executor', call: response)
+
+      allow(Legion::LLM::Pipeline::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Pipeline::Executor).to receive(:new).with(:req).and_return(executor)
+
+      response = post_json('/api/llm/inference', { messages: [{ role: 'user', content: 'use legion tools' }] })
+
+      expect(response.status).to eq(200)
+      body = Legion::JSON.load(response.body)
+      expect(body[:data][:tool_calls]).to eq([tool_call])
+      expect(body[:data][:stop_reason]).to eq('tool_use')
+    end
+
+    it 'streams text and tool events for daemon consumers' do
+      tool_call = { id: 'tc_1', name: 'legion_tools', arguments: { query: 'status' } }
+      timeline = [
+        {
+          key:    'tool:execute:legion_tools',
+          detail: 'ok via mcp',
+          data:   { tool_call_id: 'tc_1', arguments: { query: 'status' }, source: 'mcp:legion', status: 'ok' }
+        },
+        {
+          key:    'tool:result:legion_tools',
+          detail: 'done',
+          data:   { tool_call_id: 'tc_1', status: 'ok', result: { ok: true } }
+        }
+      ]
+      response = make_pipeline_response(content: 'Hello from pipeline', tools: [tool_call], timeline: timeline)
+      executor = instance_double('Legion::LLM::Pipeline::Executor')
+
+      allow(Legion::LLM::Pipeline::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Pipeline::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:call_stream) do |&block|
+        block&.call('Hello ')
+        block&.call('from pipeline')
+        response
+      end
+
+      response = post_json(
+        '/api/llm/inference',
+        { messages: [{ role: 'user', content: 'stream me' }], stream: true },
+        'HTTP_ACCEPT' => 'text/event-stream'
+      )
+
+      expect(response.status).to eq(200)
+      expect(response.content_type).to include('text/event-stream')
+      expect(response.body).to include('event: text-delta')
+      expect(response.body).to include('event: tool-call')
+      expect(response.body).to include('event: tool-result')
+      expect(response.body).to include('event: done')
     end
   end
 end

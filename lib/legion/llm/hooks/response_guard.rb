@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Hooks
       module ResponseGuard
+        extend Legion::Logging::Helper
+
         GUARD_REGISTRY = {
           rag: RagGuard
         }.freeze
@@ -24,7 +27,7 @@ module Legion
 
             { passed: passed, guards: guard_results }
           rescue StandardError => e
-            Legion::Logging.warn "ResponseGuard error: #{e.message}" if Legion.const_defined?('Logging', false)
+            handle_exception(e, level: :warn)
             { passed: true, guards: {} }
           end
 

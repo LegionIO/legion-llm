@@ -15,7 +15,7 @@ module Legion
       ) do
         def self.build(**kwargs)
           new(
-            id:               kwargs.fetch(:id) { "req_#{SecureRandom.hex(12)}" },
+            id:               kwargs[:id] || "req_#{SecureRandom.hex(12)}",
             conversation_id:  kwargs[:conversation_id],
             idempotency_key:  kwargs[:idempotency_key],
             schema_version:   kwargs.fetch(:schema_version, '1.0.0'),
@@ -51,6 +51,7 @@ module Legion
         end
 
         def self.from_chat_args(**kwargs)
+          request_id = kwargs[:request_id] || kwargs[:id]
           messages = []
           if kwargs[:messages]
             messages = kwargs[:messages]
@@ -67,10 +68,11 @@ module Legion
           extra = kwargs.except(
             :message, :messages, :model, :provider, :system,
             :tools, :stream, :caller, :classification, :billing,
-            :agent, :test, :tracing, :priority, :conversation_id
+            :agent, :test, :tracing, :priority, :conversation_id,
+            :request_id, :id
           )
 
-          build(
+          build_args = {
             messages:        messages,
             system:          kwargs[:system],
             routing:         routing,
@@ -85,7 +87,9 @@ module Legion
             priority:        kwargs.fetch(:priority, :normal),
             conversation_id: kwargs[:conversation_id],
             extra:           extra
-          )
+          }
+          build_args[:id] = request_id if request_id
+          build(**build_args)
         end
       end
     end

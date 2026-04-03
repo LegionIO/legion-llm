@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Settings
+      extend Legion::Logging::Helper
+
       def self.default
         model_override = ENV.fetch('ANTHROPIC_MODEL', nil)
         {
@@ -62,7 +65,8 @@ module Legion
           sort_tools:          true,
           response_cache:      {
             enabled:     true,
-            ttl_seconds: 300
+            ttl_seconds: 300,
+            spool_dir:   '~/.legionio/data/spool/llm_responses'
           }
         }
       end
@@ -276,9 +280,8 @@ end
 begin
   Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default) if Legion.const_defined?('Settings', false)
 rescue StandardError => e
-  if Legion.const_defined?('Logging', false) && Legion::Logging.respond_to?(:fatal)
-    Legion::Logging.fatal(e.message)
-    Legion::Logging.fatal(e.backtrace)
+  if Legion::LLM::Settings.respond_to?(:handle_exception)
+    Legion::LLM::Settings.handle_exception(e, level: :fatal, operation: 'llm.settings.merge_defaults')
   else
     puts e.message
     puts e.backtrace

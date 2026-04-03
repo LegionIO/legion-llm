@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Arbitrage
+      extend Legion::Logging::Helper
+
       # Default cost table: per-1M-token input/output prices in USD.
       # Overridable via settings: llm.arbitrage.cost_table
       DEFAULT_COST_TABLE = {
@@ -57,7 +60,7 @@ module Legion
           return nil if scored.empty?
 
           selected = scored.min_by { |_model, cost| cost }&.first
-          Legion::Logging.debug("Arbitrage selected model=#{selected} capability=#{capability}") if defined?(Legion::Logging)
+          log.debug("Arbitrage selected model=#{selected} capability=#{capability}")
           selected
         end
 
@@ -83,7 +86,7 @@ module Legion
           arb = llm[:arbitrage] || llm['arbitrage'] || {}
           arb.is_a?(Hash) ? arb.transform_keys(&:to_sym) : {}
         rescue StandardError => e
-          Legion::Logging.warn("Arbitrage settings unavailable: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           {}
         end
 

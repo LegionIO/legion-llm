@@ -1,11 +1,15 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module Metering
           module_function
+
+          extend Legion::Logging::Helper
 
           def build_event(**opts)
             identity_fields(opts).merge(token_fields(opts)).merge(timing_and_context(opts))
@@ -14,11 +18,14 @@ module Legion
           def publish_or_spool(event)
             if transport_connected?
               publish_event(event)
+              log.info("[llm][metering] published provider=#{event[:provider]} model=#{event[:model_id]}")
               :published
             elsif spool_available?
               spool_event(event)
+              log.info("[llm][metering] spooled provider=#{event[:provider]} model=#{event[:model_id]}")
               :spooled
             else
+              log.warn("[llm][metering] dropped provider=#{event[:provider]} model=#{event[:model_id]}")
               :dropped
             end
           end
@@ -27,7 +34,9 @@ module Legion
             return 0 unless spool_available? && transport_connected?
 
             spool = Legion::Data::Spool.for(Legion::LLM)
-            spool.flush(:metering) { |event| publish_event(event) }
+            flushed = spool.flush(:metering) { |event| publish_event(event) }
+            log.info("[llm][metering] spool_flushed count=#{flushed}")
+            flushed
           end
 
           def identity_fields(opts)

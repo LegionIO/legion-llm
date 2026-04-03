@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module ClaudeConfigLoader
+      extend Legion::Logging::Helper
+
       CLAUDE_SETTINGS = File.expand_path('~/.claude/settings.json')
       CLAUDE_CONFIG   = File.expand_path('~/.claude.json')
 
@@ -21,7 +24,7 @@ module Legion
         require 'json'
         ::JSON.parse(File.read(path), symbolize_names: true)
       rescue StandardError => e
-        Legion::Logging.debug("ClaudeConfigLoader could not read #{path}: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :debug)
         {}
       end
 
@@ -36,13 +39,13 @@ module Legion
 
         if config[:anthropicApiKey] && providers.dig(:anthropic, :api_key).nil?
           providers[:anthropic][:api_key] = config[:anthropicApiKey]
-          Legion::Logging.debug 'Imported Anthropic API key from Claude CLI config'
+          log.debug 'Imported Anthropic API key from Claude CLI config'
         end
 
         return unless config[:openaiApiKey] && providers.dig(:openai, :api_key).nil?
 
         providers[:openai][:api_key] = config[:openaiApiKey]
-        Legion::Logging.debug 'Imported OpenAI API key from Claude CLI config'
+        log.debug 'Imported OpenAI API key from Claude CLI config'
       end
 
       def apply_model_preference(config)
@@ -53,7 +56,7 @@ module Legion
         return if llm[:default_model]
 
         llm[:default_model] = model
-        Legion::Logging.debug "Imported model preference from Claude CLI config: #{model}"
+        log.debug "Imported model preference from Claude CLI config: #{model}"
       end
     end
   end

@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Hooks
       module RagGuard
+        extend Legion::Logging::Helper
+
         class << self
           def check_rag_faithfulness(response:, context:, threshold: nil, evaluators: nil, **)
             return { faithful: true, reason: :eval_unavailable } unless eval_available?
@@ -25,7 +28,7 @@ module Legion
 
             { faithful: faithful, scores: scores, flagged_evaluators: flagged, details: details }
           rescue StandardError => e
-            Legion::Logging.warn "RagGuard evaluation error: #{e.message}" if logging_available?
+            handle_exception(e, level: :warn)
             { faithful: true, reason: :eval_error }
           end
 
@@ -33,10 +36,6 @@ module Legion
 
           def eval_available?
             defined?(Legion::Extensions::Eval::Client)
-          end
-
-          def logging_available?
-            Legion.const_defined?('Logging', false)
           end
 
           def settings_threshold
@@ -57,7 +56,7 @@ module Legion
             )
             result.dig(:summary, :avg_score) || 0.0
           rescue StandardError => e
-            Legion::Logging.debug("RagGuard evaluator #{evaluator_name} failed: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :debug)
             0.0
           end
 

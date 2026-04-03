@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 require 'fileutils'
+require 'tmpdir'
 
 # Stub Legion::Cache with an in-memory hash if not already loaded
 unless defined?(Legion::Cache)
@@ -41,17 +42,16 @@ require 'legion/llm/response_cache'
 
 RSpec.describe Legion::LLM::ResponseCache do
   let(:request_id) { 'test-req-001' }
-  let(:spool_dir) { File.expand_path('~/.legionio/data/spool/llm_responses') }
+  let(:spool_dir) { Dir.mktmpdir('llm-response-cache') }
 
   before(:each) do
     Legion::Cache.reset!
+    Legion::Settings[:llm][:prompt_caching][:response_cache][:spool_dir] = spool_dir
   end
 
   after(:each) do
     described_class.cleanup(request_id)
-    # Clean up any spool files created during tests
-    large_spool = File.join(spool_dir, "#{request_id}.txt")
-    FileUtils.rm_f(large_spool)
+    FileUtils.remove_entry(spool_dir) if File.directory?(spool_dir)
   end
 
   # ──────────────────────────────────────────────

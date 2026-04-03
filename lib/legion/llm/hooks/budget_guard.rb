@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Hooks
       module BudgetGuard
+        extend Legion::Logging::Helper
+
         module_function
 
         def install
@@ -19,13 +22,13 @@ module Legion
           spent = CostTracker.summary[:total_cost_usd]
           return nil if spent < limit
 
-          Legion::Logging.warn("[LLM::BudgetGuard] blocked: spent=$#{spent.round(4)} >= limit=$#{limit}") if defined?(Legion::Logging)
+          log.warn("[LLM::BudgetGuard] blocked: spent=$#{spent.round(4)} >= limit=$#{limit}")
           {
             action:   :block,
             response: budget_exceeded_response(model, spent, limit)
           }
         rescue StandardError => e
-          Legion::Logging.debug("[LLM::BudgetGuard] check failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           nil
         end
 
@@ -73,7 +76,7 @@ module Legion
           settings = Legion::Settings.dig(:llm, :budget, :session_usd)
           settings.to_f
         rescue StandardError => e
-          Legion::Logging.debug("BudgetGuard#budget_setting failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           0.0
         end
       end

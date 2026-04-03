@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Hooks
       module Metering
+        extend Legion::Logging::Helper
+
         module_function
 
         def install
@@ -21,7 +24,7 @@ module Legion
 
           publish_metering(payload)
         rescue StandardError => e
-          Legion::Logging.debug("[LLM::Metering] record failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
         end
 
         def extract_metering_data(response, model)
@@ -78,7 +81,7 @@ module Legion
             Legion::Transport.respond_to?(:connected?) &&
             Legion::Transport.connected?
         rescue StandardError => e
-          Legion::Logging.debug("Metering#transport_metering? failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           false
         end
 

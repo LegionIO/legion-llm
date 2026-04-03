@@ -2,7 +2,7 @@
 
 LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension.
 
-**Version**: 0.5.15
+**Version**: 0.6.14
 
 ## Installation
 
@@ -111,11 +111,13 @@ Legion::LLM.settings     # -> Hash (current LLM settings)
 
 ```ruby
 # Synchronous response
-response = Legion::LLM.ask("What is the capital of France?")
-puts response[:content]
+result = Legion::LLM.ask(message: "What is the capital of France?")
+puts(result[:response] || result[:content])
 
-# The daemon path returns cached (HTTP 200), synchronous (HTTP 201), or async (HTTP 202) responses
-# HTTP 403 raises DaemonDeniedError; HTTP 429 raises DaemonRateLimitedError
+# Daemon immediate/created responses return the daemon body hash.
+# Direct fallback and async poll completion return:
+#   { status: :done, response: "...", meta: { ... } }
+# HTTP 403 raises DaemonDeniedError; HTTP 429 raises DaemonRateLimitedError.
 ```
 
 Configure daemon routing under `llm.daemon`:
@@ -131,23 +133,37 @@ Configure daemon routing under `llm.daemon`:
 }
 ```
 
+Large async responses that overflow the cache spool to disk under
+`llm.prompt_caching.response_cache.spool_dir` (default:
+`~/.legionio/data/spool/llm_responses`).
+
 ### Chat
 
-Returns a `RubyLLM::Chat` instance for multi-turn conversation:
+`Legion::LLM.chat` has two public modes:
+
+- Call it without `message:` or `messages:` to create a `RubyLLM::Chat` session for multi-turn conversation.
+- Call it with `message:` or `messages:` to execute immediately. When the pipeline is enabled, these request-shaped calls run through the pipeline and return a pipeline response object.
 
 ```ruby
-# Use configured defaults
-chat = Legion::LLM.chat
-response = chat.ask("What is the capital of France?")
-puts response.content
-
-# Override model/provider per call
-chat = Legion::LLM.chat(model: 'gpt-4o', provider: :openai)
-
-# Multi-turn conversation
+# Session creation for multi-turn conversation
 chat = Legion::LLM.chat
 chat.ask("Remember: my name is Matt")
 chat.ask("What's my name?")  # -> "Matt"
+
+# Immediate execution through the request path
+result = Legion::LLM.chat(message: "What is the capital of France?")
+
+# Explicit multi-message request
+result = Legion::LLM.chat(
+  messages: [
+    { role: :user, content: "Summarize the meeting notes" },
+    { role: :assistant, content: "Notes received." },
+    { role: :user, content: "Now produce the summary" }
+  ]
+)
+
+# Session creation with overrides still returns RubyLLM::Chat
+chat = Legion::LLM.chat(model: 'gpt-4o', provider: :openai)
 ```
 
 ### Embeddings
@@ -282,14 +298,14 @@ response = session.ask("Review this PR: #{diff}")
 
 ### Unified Pipeline
 
-All `chat()` calls flow through an 18-step request/response pipeline (enabled by default since v0.4.8). The pipeline handles RBAC, classification, RAG context retrieval, MCP tool discovery, metering, billing, audit, and GAIA advisory in a consistent sequence. Steps are skipped based on the caller profile (`:external`, `:gaia`, `:system`).
+`Legion::LLM.chat` calls that include `message:` or `messages:` flow through a multi-step request/response pipeline when `pipeline_enabled` is `true` (the default). Session-construction calls such as `Legion::LLM.chat(model: ..., provider: ...)` return a raw `RubyLLM::Chat` and do not enter the pipeline. The pipeline handles RBAC, classification, RAG context retrieval, MCP tool discovery, metering, billing, audit, and GAIA advisory in a consistent sequence. Steps are skipped based on the caller profile (`:external`, `:gaia`, `:system`).
 
 ```ruby
-# Pipeline is enabled by default — no configuration needed
+# Request-shaped calls enter the pipeline by default
 result = Legion::LLM.chat(message: "hello")
 
-# Disable pipeline for a specific call (not recommended — use caller: profile instead)
-# Set pipeline_enabled: false in settings to disable globally
+# Session creation does not
+session = Legion::LLM.chat(model: "gpt-4o")
 ```
 
 The pipeline accepts a `caller:` hash describing the request origin:

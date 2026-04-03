@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     # Wraps a native dispatch result hash so it exposes the same interface
@@ -22,6 +24,7 @@ module Legion
 
     module NativeDispatch
       extend self
+      extend Legion::Logging::Helper
 
       # Dispatch a chat request to a registered lex-* extension.
       #
@@ -32,6 +35,7 @@ module Legion
       # @raise [Legion::LLM::ProviderError] if provider is not registered
       def dispatch_chat(provider:, model:, messages:, **)
         ext = fetch_extension!(provider)
+        log.info("[llm][native] dispatch_chat provider=#{provider} model=#{model} messages=#{messages.size}")
         raw = ext.chat(model: model, messages: messages, **)
         normalize_response(raw)
       end
@@ -45,6 +49,7 @@ module Legion
       # @raise [Legion::LLM::ProviderError] if provider is not registered
       def dispatch_embed(provider:, model:, text:, **)
         ext = fetch_extension!(provider)
+        log.info("[llm][native] dispatch_embed provider=#{provider} model=#{model} text_chars=#{text.to_s.length}")
         raw = ext.embed(model: model, text: text, **)
         normalize_response(raw)
       end
@@ -59,6 +64,7 @@ module Legion
       # @raise [Legion::LLM::ProviderError] if provider is not registered
       def dispatch_stream(provider:, model:, messages:, **, &)
         ext = fetch_extension!(provider)
+        log.info("[llm][native] dispatch_stream provider=#{provider} model=#{model} messages=#{messages.size}")
         raw = ext.stream(model: model, messages: messages, **, &)
         normalize_response(raw)
       end
@@ -72,6 +78,7 @@ module Legion
       # @raise [Legion::LLM::ProviderError] if provider is not registered
       def dispatch_count_tokens(provider:, model:, messages:, **)
         ext = fetch_extension!(provider)
+        log.debug("[llm][native] dispatch_count_tokens provider=#{provider} model=#{model} messages=#{messages.size}")
         raw = ext.count_tokens(model: model, messages: messages, **)
         normalize_response(raw)
       end
@@ -90,6 +97,7 @@ module Legion
         ext = ProviderRegistry.for(provider)
         return ext if ext
 
+        log.error("[llm][native] provider_not_registered provider=#{provider}")
         raise Legion::LLM::ProviderError,
               "Native provider not registered: #{provider}. " \
               'Ensure the lex-* extension is loaded before dispatching.'
@@ -103,7 +111,10 @@ module Legion
       #
       # Normalizes to: { result:, usage: Usage }
       def normalize_response(raw)
-        return { result: raw, usage: Usage.new } unless raw.is_a?(Hash)
+        unless raw.is_a?(Hash)
+          log.debug("[llm][native] normalize_scalar_response class=#{raw.class}")
+          return { result: raw, usage: Usage.new }
+        end
 
         result    = raw[:result] || raw[:content] || raw[:response]
         raw_usage = raw[:usage] || {}
@@ -121,6 +132,7 @@ module Legion
                   Usage.new
                 end
 
+        log.debug("[llm][native] normalized_response usage_class=#{usage.class}")
         { result: result, usage: usage }
       end
     end

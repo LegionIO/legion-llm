@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module McpDiscovery
+          include Legion::Logging::Helper
+
           def step_mcp_discovery
             @discovered_tools ||= []
             start_time = Time.now
@@ -25,15 +29,14 @@ module Legion
             record_mcp_timeline(total, start_time)
           rescue StandardError => e
             @warnings << "MCP discovery error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.mcp_discovery')
             record_mcp_timeline(0)
           end
 
           private
 
           def discover_server_tools
-            return unless defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
-
-            server = ::Legion::MCP.server
+            server = mcp_server
             return unless server.respond_to?(:tool_registry)
 
             server.tool_registry.each do |tool_class|
@@ -47,8 +50,14 @@ module Legion
                 source:      { type: :server, server: 'legion' }
               }
             end
+
+            log.info(
+              "[llm][mcp] discover request_id=#{@request.id} " \
+              "server_tools=#{server.tool_registry.size}"
+            )
           rescue StandardError => e
             @warnings << "Server tool discovery error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.mcp_discovery.server')
           end
 
           def discover_client_tools
@@ -64,6 +73,7 @@ module Legion
             end
           rescue StandardError => e
             @warnings << "Client tool discovery error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.mcp_discovery.client')
           end
 
           def record_mcp_timeline(count, start_time = nil)
@@ -74,6 +84,23 @@ module Legion
               from: 'mcp_client', to: 'pipeline',
               duration_ms: duration
             )
+          end
+
+          def mcp_server
+            return ::Legion::MCP.server if defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
+
+            require 'legion/mcp'
+            return unless defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
+
+            ::Legion::MCP.server
+          rescue LoadError => e
+            @warnings << "MCP unavailable: #{e.message}"
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.mcp_discovery.mcp_server.require')
+            nil
+          rescue StandardError => e
+            @warnings << "MCP server load error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.mcp_discovery.mcp_server')
+            nil
           end
         end
       end

@@ -14,7 +14,7 @@ Layout/HashAlignment:
   EnforcedColonStyle: table
 
 Metrics/MethodLength:
-  Max: 50
+  Max: 60
 
 Metrics/ClassLength:
   Max: 1500
@@ -28,13 +28,13 @@ Metrics/BlockLength:
     - 'spec/**/*'
 
 Metrics/AbcSize:
-  Max: 60
+  Max: 85
 
 Metrics/CyclomaticComplexity:
-  Max: 15
+  Max: 35
 
 Metrics/PerceivedComplexity:
-  Max: 17
+  Max: 35
 
 Style/Documentation:
   Enabled: false

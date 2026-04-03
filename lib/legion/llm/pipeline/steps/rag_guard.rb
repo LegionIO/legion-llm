@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module RagGuard
+          include Legion::Logging::Helper
+
           def check_rag_faithfulness
             context = @enrichments.dig('rag:context_retrieval', :data, :entries)
             return unless context&.any?
@@ -29,6 +33,7 @@ module Legion
             )
           rescue StandardError => e
             @warnings << "RagGuard error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_guard')
           end
         end
       end

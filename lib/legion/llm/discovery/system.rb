@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Discovery
       module System
+        extend Legion::Logging::Helper
+
         class << self
           def total_memory_mb
             ensure_total_fresh
@@ -95,7 +98,7 @@ module Legion
             raw = `sysctl -n hw.memsize`.strip.to_i
             @total_memory_mb = raw / 1024 / 1024
           rescue StandardError => e
-            Legion::Logging.warn("Discovery::System sysctl command failed: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :warn)
             @total_memory_mb = nil
           end
 
@@ -106,7 +109,7 @@ module Legion
             inactive = vm_output[/Pages inactive:\s+(\d+)/, 1].to_i
             @available_memory_mb = (free + inactive) * page_size / 1024 / 1024
           rescue StandardError => e
-            Legion::Logging.warn("Discovery::System vm_stat command failed: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :warn)
             @available_memory_mb = nil
           end
 
@@ -115,7 +118,7 @@ module Legion
             total_kb = meminfo[/MemTotal:\s+(\d+)/, 1].to_i
             @total_memory_mb = total_kb / 1024
           rescue StandardError => e
-            Legion::Logging.warn("Discovery::System /proc/meminfo read failed: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :warn)
             @total_memory_mb = nil
           end
 
@@ -125,7 +128,7 @@ module Legion
             inactive_kb = meminfo[/Inactive:\s+(\d+)/, 1].to_i
             @available_memory_mb = (free_kb + inactive_kb) / 1024
           rescue StandardError => e
-            Legion::Logging.warn("Discovery::System /proc/meminfo available read failed: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :warn)
             @available_memory_mb = nil
           end
 
@@ -134,7 +137,7 @@ module Legion
 
             Legion::Settings[:llm][:discovery] || {}
           rescue StandardError => e
-            Legion::Logging.debug("Discovery::System discovery_settings unavailable: #{e.message}") if defined?(Legion::Logging)
+            handle_exception(e, level: :debug)
             {}
           end
         end

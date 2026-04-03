@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Router
       module GatewayInterceptor
+        extend Legion::Logging::Helper
+
         module_function
 
         def intercept(resolution, context: {})
@@ -14,7 +17,7 @@ module Legion
           risk_tier = context[:risk_tier]&.to_sym
 
           unless model_allowed?(model, risk_tier)
-            Legion::Logging.warn "[llm] gateway policy blocked model=#{model} risk_tier=#{risk_tier}"
+            log.warn "[llm] gateway policy blocked model=#{model} risk_tier=#{risk_tier}"
             return nil
           end
 
@@ -57,7 +60,7 @@ module Legion
 
           (llm[:gateway] || {}).transform_keys(&:to_sym)
         rescue StandardError => e
-          Legion::Logging.warn("GatewayInterceptor settings unavailable: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           {}
         end
       end

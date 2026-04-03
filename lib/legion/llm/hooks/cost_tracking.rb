@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Hooks
       module CostTracking
+        extend Legion::Logging::Helper
+
         module_function
 
         def install
@@ -24,7 +27,7 @@ module Legion
             provider:      extract_provider(response)
           )
         rescue StandardError => e
-          Legion::Logging.debug("[LLM::CostTracking] track failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
         end
 
         def extract_usage(response)

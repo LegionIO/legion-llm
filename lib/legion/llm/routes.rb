@@ -8,12 +8,28 @@
 # its registration with defined?(Legion::LLM::Routes) so double-registration is avoided.
 
 require 'securerandom'
+require 'open3'
+require 'time'
+require 'legion/logging/helper'
+
+begin
+  require 'legion/cli/chat/tools/search_traces'
+  if defined?(Legion::LLM::ToolRegistry) && defined?(Legion::CLI::Chat::Tools::SearchTraces)
+    Legion::LLM::ToolRegistry.register(Legion::CLI::Chat::Tools::SearchTraces)
+  end
+rescue LoadError => e
+  if defined?(Legion::Logging) && Legion::Logging.respond_to?(:log_exception)
+    Legion::Logging.log_exception(e, payload_summary: 'SearchTraces not available for API', component_type: :api)
+  end
+end
 
 module Legion
   module LLM
     module Routes
       def self.registered(app) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/AbcSize,Metrics/MethodLength
         app.helpers do # rubocop:disable Metrics/BlockLength
+          include Legion::Logging::Helper
+
           # Minimal fallback implementations of shared API helpers.
           # These are used when Legion::LLM::Routes is mounted on a bare Sinatra app.
           # When mounted via Legion::API (the normal path), Legion::API::Helpers and
@@ -25,7 +41,8 @@ module Legion
 
               begin
                 parsed = Legion::JSON.load(raw)
-              rescue StandardError
+              rescue StandardError => e
+                handle_exception(e, level: :debug, operation: 'llm.routes.parse_request_body')
                 halt 400, { 'Content-Type' => 'application/json' },
                      Legion::JSON.dump({ error: { code: 'invalid_json', message: 'request body is not valid JSON' } })
               end
@@ -133,6 +150,128 @@ module Legion
                                                 message: 'each message must be an object with non-empty role and content' } })
             end
           end
+
+          # rubocop:disable Metrics/BlockLength
+          define_method(:build_client_tool_class) do |tname, tdesc, tschema|
+            klass = Class.new(RubyLLM::Tool) do
+              description tdesc
+              define_method(:name) { tname }
+              tool_ref = tname
+
+              define_method(:execute) do |**kwargs|
+                case tool_ref
+                when 'sh'
+                  cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s
+                  output, status = ::Open3.capture2e(cmd, chdir: Dir.pwd)
+                  "exit=#{status.exitstatus}\n#{output}"
+                when 'file_read'
+                  path = kwargs[:path] || kwargs[:file_path] || kwargs.values.first.to_s
+                  ::File.exist?(path) ? ::File.read(path, encoding: 'utf-8') : "File not found: #{path}"
+                when 'file_write'
+                  path = kwargs[:path] || kwargs[:file_path]
+                  content = kwargs[:content] || kwargs[:contents]
+                  ::File.write(path, content)
+                  "Written #{content.to_s.bytesize} bytes to #{path}"
+                when 'file_edit'
+                  path = kwargs[:path] || kwargs[:file_path]
+                  old_text = kwargs[:old_text] || kwargs[:search]
+                  new_text = kwargs[:new_text] || kwargs[:replace]
+                  content = ::File.read(path, encoding: 'utf-8')
+                  content.sub!(old_text, new_text)
+                  ::File.write(path, content)
+                  "Edited #{path}"
+                when 'list_directory'
+                  path = kwargs[:path] || kwargs[:dir] || Dir.pwd
+                  Dir.entries(path).reject { |e| e.start_with?('.') }.sort.join("\n")
+                when 'grep'
+                  pattern = kwargs[:pattern] || kwargs[:query] || kwargs.values.first.to_s
+                  path = kwargs[:path] || Dir.pwd
+                  output, = ::Open3.capture2e('grep', '-rn', '--include=*.rb', pattern, path)
+                  output.lines.first(50).join
+                when 'glob'
+                  pattern = kwargs[:pattern] || kwargs.values.first.to_s
+                  Dir.glob(pattern).first(100).join("\n")
+                when 'web_fetch'
+                  url = kwargs[:url] || kwargs.values.first.to_s
+                  require 'net/http'
+                  uri = URI(url)
+                  Net::HTTP.get(uri)
+                else
+                  "Tool #{tool_ref} is not executable server-side. Use a legion_ prefixed tool instead."
+                end
+              rescue StandardError => e
+                if defined?(Legion::Logging) && Legion::Logging.respond_to?(:log_exception)
+                  Legion::Logging.log_exception(e, payload_summary: "client tool #{tool_ref} failed", component_type: :api)
+                end
+                "Tool error: #{e.message}"
+              end
+            end
+            klass.params(tschema) if tschema.is_a?(Hash) && tschema[:properties]
+            klass
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: "llm.routes.build_client_tool_class.#{tname}")
+            nil
+          end
+          # rubocop:enable Metrics/BlockLength
+
+          define_method(:extract_tool_calls) do |pipeline_response|
+            tools_data = pipeline_response.tools
+            return [] unless tools_data.is_a?(Array) && !tools_data.empty?
+
+            tools_data.map do |tc|
+              {
+                id:        tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id']),
+                name:      tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'] || tc.to_s),
+                arguments: tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
+              }
+            end
+          end
+
+          define_method(:emit_sse_event) do |stream, event_name, payload|
+            stream << "event: #{event_name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
+          end
+
+          define_method(:emit_timeline_tool_events) do |stream, pipeline_response|
+            timeline = Array(pipeline_response.timeline)
+            timeline.each do |event|
+              key = event[:key].to_s
+              detail = event[:detail]
+              data = event[:data].is_a?(Hash) ? event[:data] : {}
+              name = key.split(':', 3).last
+              next if name.to_s.empty?
+
+              if key.start_with?('tool:result:')
+                event_name = data[:status].to_s == 'error' ? 'tool-error' : 'tool-result'
+                emit_sse_event(stream, event_name, {
+                                 toolCallId: data[:tool_call_id],
+                                 toolName:   name,
+                                 result:     data[:result] || detail,
+                                 status:     data[:status],
+                                 timestamp:  Time.now.utc.iso8601
+                               })
+              elsif key.start_with?('tool:execute:')
+                emit_sse_event(stream, 'tool-progress', {
+                                 toolCallId: data[:tool_call_id],
+                                 toolName:   name,
+                                 type:       'execution_complete',
+                                 args:       data[:arguments] || {},
+                                 source:     data[:source],
+                                 status:     detail,
+                                 timestamp:  Time.now.utc.iso8601
+                               })
+              end
+            end
+          end
+
+          define_method(:token_value) do |tokens, key|
+            return nil if tokens.nil?
+            return tokens[key] || tokens[key.to_s] if tokens.is_a?(Hash)
+
+            method_name = { input: :input_tokens, output: :output_tokens, total: :total_tokens }[key]
+            return tokens.public_send(method_name) if method_name && tokens.respond_to?(method_name)
+
+            nil
+          end
         end
 
         register_chat(app)
@@ -143,7 +282,7 @@ module Legion
         register_inference(app)
 
         app.post '/api/llm/chat' do # rubocop:disable Metrics/BlockLength
-          Legion::Logging.debug "API: POST /api/llm/chat params=#{params.keys}" if defined?(Legion::Logging)
+          log.debug "API: POST /api/llm/chat params=#{params.keys}"
           require_llm!
 
           body = parse_request_body
@@ -158,6 +297,7 @@ module Legion
               context: {}
             )
             if tier_result[:tier]&.zero?
+              log.info "API: LLM tier-0 response request_id=#{body[:request_id] || 'generated'} latency_ms=#{tier_result[:latency_ms]}"
               halt json_response({
                                    response:           tier_result[:response],
                                    tier:               0,
@@ -181,7 +321,7 @@ module Legion
             )
 
             unless ingress_result[:success]
-              Legion::Logging.error "[api/llm/chat] ingress failed: #{ingress_result}" if defined?(Legion::Logging)
+              log.error "[api/llm/chat] ingress failed: #{ingress_result}"
               err = ingress_result[:error] || ingress_result[:status]
               err_code    = err.respond_to?(:dig) ? (err[:code] || 'gateway_error') : err.to_s
               err_message = err.respond_to?(:dig) ? (err[:message] || err.to_s) : err.to_s
@@ -191,7 +331,7 @@ module Legion
             result = ingress_result[:result]
 
             if result.nil?
-              Legion::Logging.warn "[api/llm/chat] runner returned nil (status=#{ingress_result[:status]})" if defined?(Legion::Logging)
+              log.warn "[api/llm/chat] runner returned nil (status=#{ingress_result[:status]})"
               halt json_error('empty_result', 'Gateway runner returned no result', status_code: 502)
             end
 
@@ -236,11 +376,11 @@ module Legion
                 }
               )
             rescue StandardError => e
-              Legion::Logging.error "API POST /api/llm/chat async: #{e.class} — #{e.message}" if defined?(Legion::Logging)
+              handle_exception(e, level: :error, operation: 'llm.routes.chat_async', request_id: request_id)
               rc.fail_request(request_id, code: 'llm_error', message: e.message)
             end
 
-            Legion::Logging.info "API: LLM chat request #{request_id} queued async" if defined?(Legion::Logging)
+            log.info "API: LLM chat request #{request_id} queued async"
             json_response({ request_id: request_id, poll_key: "llm:#{request_id}:status" },
                           status_code: 202)
           else
@@ -252,21 +392,21 @@ module Legion
               routing  = result.routing || {}
               resolved_model = routing[:model] || routing['model']
               tokens = result.tokens || {}
-              Legion::Logging.info "API: LLM chat request #{request_id} completed sync model=#{resolved_model}" if defined?(Legion::Logging)
+              log.info "API: LLM chat request #{request_id} completed sync model=#{resolved_model}"
               json_response(
                 {
                   response: content,
                   meta:     {
                     model:      resolved_model.to_s,
-                    tokens_in:  tokens[:input],
-                    tokens_out: tokens[:output]
+                    tokens_in:  token_value(tokens, :input),
+                    tokens_out: token_value(tokens, :output)
                   }
                 },
                 status_code: 201
               )
             else
               response = result
-              Legion::Logging.info "API: LLM chat request #{request_id} completed sync" if defined?(Legion::Logging)
+              log.info "API: LLM chat request #{request_id} completed sync"
               json_response(
                 {
                   response: response.respond_to?(:content) ? response.content : response.to_s,
@@ -291,10 +431,12 @@ module Legion
 
           messages        = body[:messages]
           raw_tools       = body[:tools]
+          requested_tools = body[:requested_tools] || []
           model           = body[:model]
           provider        = body[:provider]
           caller_context  = body[:caller]
           conversation_id = body[:conversation_id]
+          request_id      = body[:request_id] || SecureRandom.uuid
 
           unless messages.is_a?(Array)
             halt 400, { 'Content-Type' => 'application/json' },
@@ -309,78 +451,167 @@ module Legion
           end
 
           tools = raw_tools || []
+          validate_tools!(tools) unless tools.empty?
 
-          tool_declarations = []
-          unless tools.empty?
-            validate_tools!(tools)
+          caller_identity = env['legion.tenant_id'] || 'api:inference'
+          last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
+          prompt    = (last_user || {})[:content] || (last_user || {})['content'] || ''
 
-            tool_declarations = tools.map do |t|
-              ts = t.respond_to?(:transform_keys) ? t.transform_keys(&:to_sym) : t
-              tname   = ts[:name].to_s
-              tdesc   = ts[:description].to_s
-              tparams = ts[:parameters] || {}
-              Class.new do
-                define_singleton_method(:tool_name)   { tname }
-                define_singleton_method(:description) { tdesc }
-                define_singleton_method(:parameters)  { tparams }
-                define_method(:call) { |**_| raise NotImplementedError, "#{tname} executes client-side only" }
-              end
+          if defined?(Legion::Gaia) && Legion::Gaia.respond_to?(:started?) && Legion::Gaia.started? && prompt.to_s.length.positive?
+            begin
+              frame = Legion::Gaia::InputFrame.new(
+                content:      prompt,
+                channel_id:   :api,
+                content_type: :text,
+                auth_context: { identity: caller_identity },
+                metadata:     { source_type: :human_direct, salience: 0.9 }
+              )
+              Legion::Gaia.ingest(frame)
+            rescue StandardError => e
+              handle_exception(e, level: :warn, operation: 'llm.routes.gaia_ingest', request_id: request_id)
             end
           end
 
-          normalized_messages = messages.map do |m|
-            ms = m.respond_to?(:transform_keys) ? m.transform_keys(&:to_sym) : m
-            { role: ms[:role].to_s, content: ms[:content].to_s }
+          tool_declarations = tools.filter_map do |tool|
+            ts = tool.respond_to?(:transform_keys) ? tool.transform_keys(&:to_sym) : tool
+            build_client_tool_class(ts[:name].to_s, ts[:description].to_s, ts[:parameters] || ts[:input_schema])
           end
 
-          effective_caller = caller_context || { source: 'api', path: request.path }
-          chat_opts = {
-            messages: normalized_messages,
-            model:    model,
-            provider: provider,
-            tools:    tool_declarations,
-            caller:   effective_caller
+          streaming = body[:stream] == true && request.preferred_type.to_s.include?('text/event-stream')
+          normalized_caller = caller_context.respond_to?(:transform_keys) ? caller_context.transform_keys(&:to_sym) : {}
+          safe_caller_fields = normalized_caller.slice(:context, :session_id, :trace_id)
+          server_caller_fields = {
+            source:       'api',
+            path:         request.path,
+            requested_by: { identity: caller_identity, type: :user, credential: :api }
           }
-          chat_opts[:conversation_id] = conversation_id if conversation_id
+          effective_caller = server_caller_fields.merge(safe_caller_fields)
+          caller_summary = [effective_caller[:source], effective_caller[:path]].compact.join(':')
+          log.info(
+            "[llm][api] inference.accepted request_id=#{request_id} " \
+            "conversation_id=#{conversation_id || 'none'} caller=#{caller_summary} " \
+            "messages=#{messages.size} client_tools=#{tools.size} requested_tools=#{Array(requested_tools).size} " \
+            "requested_provider=#{provider || 'auto'} requested_model=#{model || 'auto'} stream=#{streaming}"
+          )
 
-          result = Legion::LLM.chat(**chat_opts)
+          require 'legion/llm/pipeline/request' unless defined?(Legion::LLM::Pipeline::Request)
+          require 'legion/llm/pipeline/executor' unless defined?(Legion::LLM::Pipeline::Executor)
 
-          if result.is_a?(Legion::LLM::Pipeline::Response)
-            raw_msg   = result.message
-            content   = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s
-            routing   = result.routing || {}
-            resolved_model = routing[:model] || routing['model']
-            tokens = result.tokens || {}
-            json_response({
-                            content:       content,
-                            tool_calls:    nil,
-                            stop_reason:   result.stop&.dig(:reason)&.to_s,
-                            model:         resolved_model.to_s,
-                            input_tokens:  tokens[:input],
-                            output_tokens: tokens[:output]
-                          }, status_code: 200)
+          pipeline_request = Legion::LLM::Pipeline::Request.build(
+            id:              request_id,
+            messages:        messages,
+            system:          body[:system],
+            routing:         { provider: provider, model: model },
+            tools:           tool_declarations,
+            caller:          effective_caller,
+            conversation_id: conversation_id,
+            metadata:        { requested_tools: requested_tools },
+            stream:          streaming,
+            cache:           { strategy: :default, cacheable: true }
+          )
+
+          executor = Legion::LLM::Pipeline::Executor.new(pipeline_request)
+
+          if streaming
+            content_type 'text/event-stream'
+            headers 'Cache-Control'     => 'no-cache',
+                    'Connection'        => 'keep-alive',
+                    'X-Accel-Buffering' => 'no'
+
+            # rubocop:disable Metrics/BlockLength
+            stream do |out|
+              full_text = +''
+              pipeline_response = executor.call_stream do |chunk|
+                text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
+                next if text.empty?
+
+                full_text << text
+                emit_sse_event(out, 'text-delta', { delta: text })
+              end
+
+              extract_tool_calls(pipeline_response).each do |tool_call|
+                emit_sse_event(out, 'tool-call', {
+                                 toolCallId: tool_call[:id],
+                                 toolName:   tool_call[:name],
+                                 args:       tool_call[:arguments],
+                                 timestamp:  Time.now.utc.iso8601
+                               })
+              end
+
+              emit_timeline_tool_events(out, pipeline_response)
+
+              enrichments = pipeline_response.enrichments
+              emit_sse_event(out, 'enrichment', enrichments) if enrichments.is_a?(Hash) && !enrichments.empty?
+
+              routing = pipeline_response.routing || {}
+              tokens = pipeline_response.tokens || {}
+              emit_sse_event(out, 'done', {
+                               request_id:      request_id,
+                               content:         full_text,
+                               model:           (routing[:model] || routing['model']).to_s,
+                               input_tokens:    token_value(tokens, :input),
+                               output_tokens:   token_value(tokens, :output),
+                               tool_calls:      extract_tool_calls(pipeline_response),
+                               conversation_id: pipeline_response.conversation_id
+                             })
+
+              log.info(
+                "[llm][api] inference.completed request_id=#{request_id} " \
+                "conversation_id=#{pipeline_response.conversation_id || conversation_id || 'none'} " \
+                "provider=#{routing[:provider] || routing['provider'] || 'unknown'} " \
+                "model=#{routing[:model] || routing['model'] || 'unknown'} " \
+                "tool_calls=#{extract_tool_calls(pipeline_response).size} " \
+                "tool_executions=#{Array(pipeline_response.timeline).count { |event| event[:key].to_s.start_with?('tool:execute:') }} " \
+                "stop_reason=#{pipeline_response.stop&.dig(:reason) || 'unknown'} stream=true"
+              )
+            rescue StandardError => e
+              handle_exception(e, level: :error, operation: 'llm.routes.inference_stream', request_id: request_id)
+              emit_sse_event(out, 'error', { code: 'stream_error', message: e.message })
+            end
+            # rubocop:enable Metrics/BlockLength
           else
-            response = result
-            tc_list = if response.respond_to?(:tool_calls) && response.tool_calls
-                        Array(response.tool_calls).map do |tc|
-                          {
-                            id:        tc.respond_to?(:id) ? tc.id : nil,
-                            name:      tc.respond_to?(:name) ? tc.name : tc.to_s,
-                            arguments: tc.respond_to?(:arguments) ? tc.arguments : {}
-                          }
-                        end
-                      end
+            pipeline_response = executor.call
+            raw_msg = pipeline_response.message
+            content = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s
+            routing = pipeline_response.routing || {}
+            tokens = pipeline_response.tokens || {}
+            tool_calls = extract_tool_calls(pipeline_response)
+
+            log.info(
+              "[llm][api] inference.completed request_id=#{request_id} " \
+              "conversation_id=#{pipeline_response.conversation_id || conversation_id || 'none'} " \
+              "provider=#{routing[:provider] || routing['provider'] || 'unknown'} " \
+              "model=#{routing[:model] || routing['model'] || 'unknown'} " \
+              "tool_calls=#{tool_calls.size} " \
+              "tool_executions=#{Array(pipeline_response.timeline).count { |event| event[:key].to_s.start_with?('tool:execute:') }} " \
+              "stop_reason=#{pipeline_response.stop&.dig(:reason) || 'unknown'} stream=false"
+            )
+
             json_response({
-                            content:       response.respond_to?(:content) ? response.content : response.to_s,
-                            tool_calls:    tc_list,
-                            stop_reason:   response.respond_to?(:stop_reason) ? response.stop_reason : nil,
-                            model:         response.respond_to?(:model_id) ? response.model_id.to_s : model.to_s,
-                            input_tokens:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
-                            output_tokens: response.respond_to?(:output_tokens) ? response.output_tokens : nil
+                            request_id:      request_id,
+                            content:         content,
+                            tool_calls:      tool_calls,
+                            stop_reason:     pipeline_response.stop&.dig(:reason)&.to_s,
+                            model:           (routing[:model] || routing['model']).to_s,
+                            input_tokens:    token_value(tokens, :input),
+                            output_tokens:   token_value(tokens, :output),
+                            conversation_id: pipeline_response.conversation_id
                           }, status_code: 200)
           end
+        rescue Legion::LLM::AuthError => e
+          handle_exception(e, level: :error, operation: 'llm.routes.inference_auth', request_id: request_id)
+          json_error('auth_error', e.message, status_code: 401)
+        rescue Legion::LLM::RateLimitError => e
+          handle_exception(e, level: :error, operation: 'llm.routes.inference_rate_limit', request_id: request_id)
+          json_error('rate_limit', e.message, status_code: 429)
+        rescue Legion::LLM::TokenBudgetExceeded => e
+          handle_exception(e, level: :error, operation: 'llm.routes.inference_budget', request_id: request_id)
+          json_error('token_budget_exceeded', e.message, status_code: 413)
+        rescue Legion::LLM::ProviderDown, Legion::LLM::ProviderError => e
+          handle_exception(e, level: :error, operation: 'llm.routes.inference_provider', request_id: request_id)
+          json_error('provider_error', e.message, status_code: 502)
         rescue StandardError => e
-          Legion::Logging.error "[api/llm/inference] #{e.class}: #{e.message}" if defined?(Legion::Logging)
+          handle_exception(e, level: :error, operation: 'llm.routes.inference', request_id: request_id)
           json_error('inference_error', e.message, status_code: 500)
         end
       end

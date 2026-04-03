@@ -8,9 +8,12 @@ require_relative 'router/gateway_interceptor'
 require_relative 'discovery/ollama'
 require_relative 'discovery/system'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Router
+      extend Legion::Logging::Helper
+
       class << self
         # Resolve an LLM routing intent to a tier/provider/model decision.
         #
@@ -31,11 +34,9 @@ module Legion
           resolution = best&.to_resolution
 
           if resolution
-            if defined?(Legion::Logging)
-              Legion::Logging.info("Routed to tier=#{resolution.tier} provider=#{resolution.provider} model=#{resolution.model} via rule='#{resolution.rule}'")
-            end
-          elsif defined?(Legion::Logging)
-            Legion::Logging.debug('Router: no rules matched, resolution is nil')
+            log.info("Routed to tier=#{resolution.tier} provider=#{resolution.provider} model=#{resolution.model} via rule='#{resolution.rule}'")
+          else
+            log.debug('Router: no rules matched, resolution is nil')
           end
 
           resolution || arbitrage_fallback(intent)
@@ -88,7 +89,7 @@ module Legion
           return nil unless model
 
           provider = Arbitrage.cost_table[model] ? infer_provider(model) : nil
-          Legion::Logging.debug("Router: arbitrage fallback selected model=#{model}") if defined?(Legion::Logging)
+          log.debug("Router: arbitrage fallback selected model=#{model}")
           Resolution.new(tier: :cloud, provider: provider || :bedrock, model: model, rule: 'arbitrage_fallback')
         end
 
@@ -131,7 +132,7 @@ module Legion
         end
 
         def select_candidates(rules, intent)
-          Legion::Logging.debug("Router: selecting candidates from #{rules.size} rules") if defined?(Legion::Logging)
+          log.debug("Router: selecting candidates from #{rules.size} rules")
 
           # 1. Collect constraints from constraint rules that match the intent
           constraints = rules
@@ -153,7 +154,7 @@ module Legion
           # 5. Filter by tier availability
           final = discovered.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
 
-          Legion::Logging.debug("Router: #{final.size} candidates after filtering (started with #{rules.size})") if defined?(Legion::Logging)
+          log.debug("Router: #{final.size} candidates after filtering (started with #{rules.size})")
 
           final
         end
@@ -199,7 +200,7 @@ module Legion
 
           (llm[:discovery] || {}).transform_keys(&:to_sym)
         rescue StandardError => e
-          Legion::Logging.warn("Router discovery_settings unavailable: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
           {}
         end
 
@@ -233,10 +234,11 @@ module Legion
 
         def build_health_tracker
           settings = routing_settings
-          cb       = (settings[:circuit_breaker] || {}).transform_keys(&:to_sym)
+          health   = (settings[:health] || {}).transform_keys(&:to_sym)
+          cb       = (health[:circuit_breaker] || {}).transform_keys(&:to_sym)
 
           HealthTracker.new(
-            window_seconds:    settings.fetch(:window_seconds, 300),
+            window_seconds:    health.fetch(:window_seconds, 300),
             failure_threshold: cb.fetch(:failure_threshold, 3),
             cooldown_seconds:  cb.fetch(:cooldown_seconds, 60)
           )

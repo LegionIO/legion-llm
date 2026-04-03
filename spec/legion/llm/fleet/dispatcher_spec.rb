@@ -43,3 +43,24 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
     end
   end
 end
+
+RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
+  before do
+    described_class.reset!
+    allow(described_class).to receive(:ensure_consumer)
+  end
+
+  it 'preserves handler-side failure payloads without forcing success' do
+    future = described_class.register('corr-123')
+
+    described_class.handle_delivery(
+      { correlation_id: 'corr-123', success: false, error: 'invalid_token' }
+    )
+
+    expect(future.value!).to eq(
+      correlation_id: 'corr-123',
+      success:        false,
+      error:          'invalid_token'
+    )
+  end
+end

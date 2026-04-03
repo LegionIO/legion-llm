@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     class ContextCurator
+      include Legion::Logging::Helper
+
       CURATED_KEY = :__curated__
 
       def initialize(conversation_id:)
@@ -19,7 +22,7 @@ module Legion
           store_curated(@conversation_id, curated)
           @curated_cache = nil
         rescue StandardError => e
-          Legion::Logging.warn("ContextCurator: async curation failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
         end
       end
 
@@ -123,7 +126,7 @@ module Legion
           distill_tool_result(msg, assistant_response)
         end
       rescue StandardError => e
-        Legion::Logging.warn("ContextCurator: LLM distillation failed, using heuristic: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
         distill_tool_result(msg, assistant_response)
       end
 
@@ -141,7 +144,8 @@ module Legion
 
       def curation_settings
         Legion::Settings.dig(:llm, :context_curation) || {}
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.context_curator.curation_settings')
         {}
       end
 
@@ -174,7 +178,7 @@ module Legion
           )
         end
       rescue StandardError => e
-        Legion::Logging.warn("ContextCurator: store_curated failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
       end
 
       def load_curated(conversation_id)
@@ -187,7 +191,7 @@ module Legion
         regular = raw.reject { |m| m[:role] == CURATED_KEY }
         apply_curation_pipeline(regular)
       rescue StandardError => e
-        Legion::Logging.warn("ContextCurator: load_curated failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
         nil
       end
 
@@ -201,7 +205,7 @@ module Legion
         result = evict_superseded(result)
         dedup_similar(result)
       rescue StandardError => e
-        Legion::Logging.warn("ContextCurator: apply_curation_pipeline failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
         messages
       end
 
@@ -279,7 +283,7 @@ module Legion
         response = Legion::LLM.chat_direct(model: model, message: prompt)
         response.respond_to?(:content) ? response.content : nil
       rescue StandardError => e
-        Legion::Logging.warn("ContextCurator: llm_summarize_tool_result failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
         nil
       end
 
@@ -300,7 +304,8 @@ module Legion
           return config[:default_model] if config.is_a?(Hash) && config[:enabled] && config[:default_model]
         end
         nil
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.context_curator.detect_small_model')
         nil
       end
     end

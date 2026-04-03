@@ -61,19 +61,34 @@ RSpec.describe '.detect_embedding_capability' do
     end
   end
 
-  context 'when Ollama has no models but bedrock is configured' do
+  context 'when Ollama has no models, bedrock is configured, and openai is enabled' do
     before do
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
         .and_return(false)
       Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
-      allow(Legion::LLM).to receive(:verify_embedding).and_return(true)
+      Legion::Settings[:llm][:providers][:openai][:enabled] = true
+      allow(Legion::LLM).to receive(:verify_embedding).with(:openai, 'text-embedding-3-small').and_return(true)
     end
 
-    it 'falls back to bedrock' do
+    it 'skips unsupported bedrock and falls back to openai' do
       Legion::LLM.send(:detect_embedding_capability)
       expect(Legion::LLM.can_embed?).to be true
-      expect(Legion::LLM.embedding_provider).to eq(:bedrock)
-      expect(Legion::LLM.embedding_model).to eq('amazon.titan-embed-text-v2:0')
+      expect(Legion::LLM.embedding_provider).to eq(:openai)
+      expect(Legion::LLM.embedding_model).to eq('text-embedding-3-small')
+    end
+  end
+
+  context 'when only bedrock is configured' do
+    before do
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+        .and_return(false)
+      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+    end
+
+    it 'leaves embeddings unavailable' do
+      Legion::LLM.send(:detect_embedding_capability)
+      expect(Legion::LLM.can_embed?).to be false
+      expect(Legion::LLM.embedding_provider).to be_nil
     end
   end
 
@@ -167,6 +182,27 @@ RSpec.describe 'Legion::LLM::Embeddings' do
       Legion::LLM::Embeddings.generate(text: 'test')
     end
   end
+
+  describe '.generate with Ollama legacy compatibility' do
+    before do
+      Legion::LLM.instance_variable_set(:@started, true)
+      Legion::Settings[:llm][:providers][:ollama][:enabled] = true
+      Legion::Settings[:llm][:providers][:ollama][:base_url] = 'http://localhost:11434'
+    end
+
+    it 'retries against /api/embeddings when /api/embed rejects the input type' do
+      stub_request(:post, 'http://localhost:11434/api/embed')
+        .to_return(status: 400, body: { error: 'invalid input type' }.to_json)
+      stub_request(:post, 'http://localhost:11434/api/embeddings')
+        .to_return(status: 200, body: { embedding: Array.new(1024, 0.1) }.to_json)
+
+      result = Legion::LLM::Embeddings.generate(text: 'compat test', provider: :ollama, model: 'mxbai-embed-large')
+
+      expect(result[:provider]).to eq(:ollama)
+      expect(result[:vector].size).to eq(1024)
+      expect(a_request(:post, 'http://localhost:11434/api/embeddings')).to have_been_made.once
+    end
+  end
 end
 
 RSpec.describe Legion::LLM::Embeddings do
@@ -207,6 +243,20 @@ RSpec.describe Legion::LLM::Embeddings do
       result = described_class.generate(text: 'text', model: 'custom-model', provider: :bedrock)
       expect(result[:model]).to eq('custom-model')
       expect(result[:provider]).to eq(:bedrock)
+    end
+
+    it 'flattens structured text blocks before embedding' do
+      mock_response = double(vectors: [Array.new(1024, 0.1)], input_tokens: 1)
+      allow(RubyLLM).to receive(:embed).with(
+        'what tools are available to you?',
+        hash_including(model: 'text-embedding-3-small', provider: :openai)
+      ).and_return(mock_response)
+
+      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+
+      result = described_class.generate(text: [{ type: 'text', text: 'what tools are available to you?' }])
+      expect(result[:provider]).to eq(:openai)
     end
 
     it 'resolves provider from llm settings when not specified' do

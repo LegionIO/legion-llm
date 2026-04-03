@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module EnrichmentInjector
         module_function
+
+        extend Legion::Logging::Helper
 
         def inject(system:, enrichments:)
           parts = []
@@ -23,6 +27,7 @@ module Legion
           return system if parts.empty?
 
           parts << system if system
+          log.info("[llm][pipeline] enrichments_injected parts=#{parts.size} system_present=#{!system.nil?}")
           parts.join("\n\n")
         end
       end

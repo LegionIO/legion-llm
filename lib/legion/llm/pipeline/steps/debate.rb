@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Pipeline
       module Steps
         module Debate
+          include Legion::Logging::Helper
+
           CHALLENGER_PROMPT = <<~PROMPT
             You are a critical analyst reviewing the following response. Your job is to identify
             weaknesses, logical flaws, unsupported assumptions, missing context, or alternative
@@ -81,6 +85,7 @@ module Legion
             )
           rescue StandardError => e
             @warnings << "debate step error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.debate')
           end
 
           def debate_enabled?(request)
@@ -270,6 +275,7 @@ module Legion
             response = Legion::LLM.chat_direct(**opts)
             extract_content(response)
           rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.debate.role')
             "[debate role error: #{e.message}]"
           end
 

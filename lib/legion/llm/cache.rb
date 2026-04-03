@@ -2,9 +2,12 @@
 
 require 'digest'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Cache
+      extend Legion::Logging::Helper
+
       DEFAULT_TTL = 300
 
       module_function
@@ -28,13 +31,13 @@ module Legion
 
         raw = Legion::Cache.get(cache_key)
         if raw.nil?
-          Legion::Logging.debug("LLM cache miss key=#{cache_key}") if defined?(Legion::Logging)
+          log.debug("LLM cache miss key=#{cache_key}")
           return nil
         end
 
         ::JSON.parse(raw, symbolize_names: true)
       rescue StandardError => e
-        Legion::Logging.warn("LLM cache get error key=#{cache_key}: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
         nil
       end
 
@@ -43,10 +46,10 @@ module Legion
         return false unless available?
 
         Legion::Cache.set(cache_key, ::JSON.dump(response), ttl)
-        Legion::Logging.debug("LLM cache write key=#{cache_key} ttl=#{ttl}") if defined?(Legion::Logging)
+        log.debug("LLM cache write key=#{cache_key} ttl=#{ttl}")
         true
       rescue StandardError => e
-        Legion::Logging.warn("LLM cache set error key=#{cache_key}: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
         false
       end
 
@@ -69,7 +72,7 @@ module Legion
           Legion::LLM::Settings.default
         end
       rescue StandardError => e
-        Legion::Logging.warn("LLM cache settings unavailable: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn)
         {}
       end
     end

@@ -3,6 +3,8 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
+  let(:logger) { instance_double('Logger', info: nil) }
+
   let(:klass) do
     Class.new do
       include Legion::LLM::Pipeline::Steps::ToolCalls
@@ -22,8 +24,12 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
   end
 
   describe '#step_tool_calls' do
+    before do
+      allow_any_instance_of(klass).to receive(:log).and_return(logger)
+    end
+
     it 'dispatches MCP tool calls via ToolDispatcher' do
-      request = Legion::LLM::Pipeline::Request.build(messages: [])
+      request = Legion::LLM::Pipeline::Request.build(id: 'req_tool_1', conversation_id: 'conv_tool_1', messages: [])
       step = klass.new(request)
       step.discovered_tools = [
         { name: 'list_files', source: { type: :mcp, server: 'filesystem' } }
@@ -46,6 +52,15 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
 
       keys = step.timeline.events.map { |e| e[:key] }
       expect(keys).to include(match(/tool:execute/))
+      expect(logger).to have_received(:info).with(
+        include('[llm][tools] detected', 'request_id=req_tool_1', 'count=1')
+      )
+      expect(logger).to have_received(:info).with(
+        include('[llm][tools] dispatch', 'request_id=req_tool_1', 'name=list_files', 'source=mcp:filesystem')
+      )
+      expect(logger).to have_received(:info).with(
+        include('[llm][tools] result', 'request_id=req_tool_1', 'name=list_files', 'status=success')
+      )
     end
 
     it 'skips when no tool calls in response' do

@@ -2,10 +2,13 @@
 
 require 'concurrent'
 
+require 'legion/logging/helper'
 module Legion
   module LLM
     module Fleet
       module ReplyDispatcher
+        extend Legion::Logging::Helper
+
         @pending = Concurrent::Map.new
         @mutex = Mutex.new
         @consumer = nil
@@ -31,9 +34,9 @@ module Legion
           future = @pending.delete(cid)
           return unless future
 
-          future.fulfill(payload.merge(success: true))
+          future.fulfill(payload)
         rescue StandardError => e
-          Legion::Logging.warn("Fleet::ReplyDispatcher: handle_delivery failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
         end
 
         def agent_queue_name
@@ -64,14 +67,14 @@ module Legion
             end
           end
         rescue StandardError => e
-          Legion::Logging.warn("Fleet::ReplyDispatcher: consumer setup failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
         end
 
         def cancel_consumer
           @consumer&.cancel
           @consumer = nil
         rescue StandardError => e
-          Legion::Logging.warn("Fleet::ReplyDispatcher: cancel failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :warn)
         end
 
         def transport_available?
@@ -90,7 +93,7 @@ module Legion
             ::JSON.parse(raw, symbolize_names: true)
           end
         rescue StandardError => e
-          Legion::Logging.debug("ReplyDispatcher#parse_payload failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug)
           {}
         end
       end
