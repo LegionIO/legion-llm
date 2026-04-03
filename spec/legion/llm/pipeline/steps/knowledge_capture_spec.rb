@@ -56,8 +56,9 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
         allow(Legion::Extensions::Apollo::Helpers::Writeback).to receive(:evaluate_and_route)
       end
 
-      it 'calls evaluate_and_route' do
+      it 'dispatches evaluate_and_route async' do
         executor.call
+        sleep 0.2
         expect(Legion::Extensions::Apollo::Helpers::Writeback).to have_received(:evaluate_and_route)
       end
     end
@@ -69,9 +70,8 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
           .and_raise(RuntimeError, 'boom')
       end
 
-      it 'adds a warning instead of failing' do
-        executor.call
-        expect(executor.warnings).to include(match(/knowledge_capture error/))
+      it 'does not fail the pipeline (async error handling)' do
+        expect { executor.call }.not_to raise_error
       end
     end
   end
@@ -111,6 +111,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
       step.raw_response = double(content: 'response text', input_tokens: 10, output_tokens: 20)
 
       step.step_knowledge_capture
+      sleep 0.2
       expect(apollo_local).to have_received(:ingest).with(
         hash_including(content: 'response text', tags: array_including('llm_response'))
       )
@@ -129,7 +130,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
       expect(step.warnings.none? { |w| w.include?('local_knowledge') }).to be true
     end
 
-    it 'adds a warning when local ingest raises' do
+    it 'does not fail when local ingest raises (async error handling)' do
       apollo_local = Module.new do
         def self.started? = true
         def self.ingest(**_) = raise(StandardError, 'db locked')
@@ -138,8 +139,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
 
       step = klass.new(local_request)
       step.raw_response = double(content: 'answer', input_tokens: 5, output_tokens: 10)
-      step.step_knowledge_capture
-      expect(step.warnings.any? { |w| w.include?('local_knowledge_capture') }).to be true
+      expect { step.step_knowledge_capture }.not_to raise_error
     end
   end
 end

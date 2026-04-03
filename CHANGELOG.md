@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.6.15] - 2026-04-03
+
+### Changed
+- Knowledge capture step (writeback + local ingest) now runs async in a background thread instead of blocking the pipeline response
+
 ## [0.6.14] - 2026-04-02
 
 ### Fixed

@@ -11,21 +11,29 @@ module Legion
 
           def step_knowledge_capture
             response = current_response
+            request = @request
+            enrichments = @enrichments
+            local_enabled = local_capture_enabled?
 
-            if defined?(Legion::Extensions::Apollo::Helpers::Writeback)
-              Legion::Extensions::Apollo::Helpers::Writeback.evaluate_and_route(
-                request:     @request,
-                response:    response,
-                enrichments: @enrichments
-              )
-              @timeline.record(
-                category: :knowledge, key: 'knowledge:capture',
-                direction: :outbound, detail: 'evaluated writeback to apollo',
-                from: 'pipeline', to: 'apollo'
-              )
+            Thread.new do
+              if defined?(Legion::Extensions::Apollo::Helpers::Writeback)
+                Legion::Extensions::Apollo::Helpers::Writeback.evaluate_and_route(
+                  request:     request,
+                  response:    response,
+                  enrichments: enrichments
+                )
+              end
+
+              ingest_to_local(response: response) if local_enabled
+            rescue StandardError => e
+              handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture.async')
             end
 
-            ingest_to_local(response: response) if local_capture_enabled?
+            @timeline.record(
+              category: :knowledge, key: 'knowledge:capture',
+              direction: :outbound, detail: 'knowledge capture dispatched async',
+              from: 'pipeline', to: 'apollo'
+            )
           rescue StandardError => e
             @warnings << "knowledge_capture error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture')
