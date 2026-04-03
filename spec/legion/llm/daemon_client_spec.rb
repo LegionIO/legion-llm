@@ -88,6 +88,16 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
     end
 
+    context 'when daemon is disabled in settings' do
+      before do
+        allow(Legion::LLM).to receive(:settings).and_return({ daemon: { enabled: false, url: 'http://daemon:4000' } })
+      end
+
+      it 'returns nil even when a url is configured' do
+        expect(described_class.daemon_url).to be_nil
+      end
+    end
+
     context 'when daemon key is missing from settings' do
       before do
         allow(Legion::LLM).to receive(:settings).and_return({})
@@ -116,6 +126,17 @@ RSpec.describe Legion::LLM::DaemonClient do
     context 'when daemon_url is nil' do
       before do
         allow(Legion::LLM).to receive(:settings).and_return({})
+      end
+
+      it 'returns false without calling check_health' do
+        expect(described_class).not_to receive(:check_health)
+        expect(described_class.available?).to be false
+      end
+    end
+
+    context 'when daemon is disabled' do
+      before do
+        allow(Legion::LLM).to receive(:settings).and_return({ daemon: { enabled: false, url: 'http://localhost:4000' } })
       end
 
       it 'returns false without calling check_health' do

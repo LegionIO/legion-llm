@@ -176,10 +176,11 @@ module Legion
         settings = Legion::LLM.settings
         return nil unless settings.is_a?(Hash)
 
-        daemon = settings[:daemon]
+        daemon = settings[:daemon] || settings['daemon']
         return nil unless daemon.is_a?(Hash)
+        return nil if daemon[:enabled] == false || daemon['enabled'] == false
 
-        daemon[:url]
+        daemon[:url] || daemon['url']
       rescue StandardError => e
         handle_exception(e, level: :warn)
         nil

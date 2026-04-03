@@ -299,6 +299,29 @@ RSpec.describe Legion::LLM::Router do
     end
   end
 
+  describe '.health_tracker with custom health settings' do
+    it 'honors routing.health settings when building the tracker' do
+      configure_routing(
+        extra: {
+          health: {
+            window_seconds:  42,
+            circuit_breaker: {
+              failure_threshold: 2,
+              cooldown_seconds:  15
+            }
+          }
+        }
+      )
+      described_class.reset!
+
+      tracker = described_class.health_tracker
+
+      expect(tracker.instance_variable_get(:@window_seconds)).to eq(42)
+      expect(tracker.instance_variable_get(:@failure_threshold)).to eq(2)
+      expect(tracker.instance_variable_get(:@cooldown_seconds)).to eq(15)
+    end
+  end
+
   # ─── 11. routing_enabled? true when configured ────────────────────────────────
 
   describe '.routing_enabled?' do

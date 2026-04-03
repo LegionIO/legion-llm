@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.13] - 2026-04-02
+
+### Fixed
+- Honored `llm.daemon.enabled` in `DaemonClient` so daemon-first behavior is fully disabled when operators turn the daemon off
+- Honored nested `llm.routing.health.*` settings when building the router health tracker so custom health windows and circuit-breaker thresholds take effect (closes #45)
+
 ## [0.6.12] - 2026-04-02
 
 ### Fixed

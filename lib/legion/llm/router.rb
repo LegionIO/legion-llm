@@ -234,10 +234,11 @@ module Legion
 
         def build_health_tracker
           settings = routing_settings
-          cb       = (settings[:circuit_breaker] || {}).transform_keys(&:to_sym)
+          health   = (settings[:health] || {}).transform_keys(&:to_sym)
+          cb       = (health[:circuit_breaker] || {}).transform_keys(&:to_sym)
 
           HealthTracker.new(
-            window_seconds:    settings.fetch(:window_seconds, 300),
+            window_seconds:    health.fetch(:window_seconds, 300),
             failure_threshold: cb.fetch(:failure_threshold, 3),
             cooldown_seconds:  cb.fetch(:cooldown_seconds, 60)
           )
