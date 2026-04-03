@@ -17,3 +17,4 @@ legionio.key
 legion.log
 .DS_Store
 .worktrees/
+.claude/
