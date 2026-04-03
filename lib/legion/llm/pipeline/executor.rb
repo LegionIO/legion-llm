@@ -675,7 +675,7 @@ module Legion
 
         def inject_ruby_llm_tools(session)
           (@request.tools || []).each do |tool|
-            session.with_tool(tool) if tool.is_a?(Class)
+            session.with_tool(tool)
           end
 
           ToolRegistry.tools.each { |tool| session.with_tool(tool) } if defined?(ToolRegistry)

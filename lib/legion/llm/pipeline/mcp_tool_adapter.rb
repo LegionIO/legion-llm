@@ -35,13 +35,7 @@ module Legion
         def execute(**args)
           log.info("[llm][tools] adapter.execute name=#{@tool_name} arguments=#{summarize_payload(args)}")
           result = @mcp_tool_class.call(**args)
-          content = if result.is_a?(Hash) && result[:content]
-                      result[:content].map { |c| c[:text] || c['text'] }.compact.join("\n")
-                    elsif result.is_a?(String)
-                      result
-                    else
-                      result.to_s
-                    end
+          content = extract_content(result)
           log.info("[llm][tools] adapter.result name=#{@tool_name} output=#{summarize_payload(content)}")
           content
         rescue StandardError => e
@@ -50,6 +44,21 @@ module Legion
         end
 
         private
+
+        def extract_content(result)
+          # MCP::Tool::Response — has .content array of {type: 'text', text: '...'}
+          if result.respond_to?(:content) && result.content.is_a?(Array)
+            result.content.filter_map { |c| c[:text] || c['text'] || c.to_s }.join("\n")
+          elsif result.is_a?(Hash) && result[:content].is_a?(Array)
+            result[:content].filter_map { |c| c[:text] || c['text'] }.join("\n")
+          elsif result.is_a?(Hash)
+            Legion::JSON.dump(result)
+          elsif result.is_a?(String)
+            result
+          else
+            result.to_s
+          end
+        end
 
         def summarize_payload(payload)
           payload.to_s[0, 200].inspect

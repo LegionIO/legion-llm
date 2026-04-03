@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.6.16] - 2026-04-03
+
+### Fixed
+- MCP tool adapter now correctly deserializes `MCP::Tool::Response` objects instead of returning raw `#<Response:0x...>` strings
+- Removed `is_a?(Class)` guard in executor `inject_ruby_llm_tools` that silently dropped MCP adapter instances
+- Added `cached_mcp_tools` to inference route with lazy caching (only persists when tools are available)
+
 ## [0.6.15] - 2026-04-03
 
 ### Changed
