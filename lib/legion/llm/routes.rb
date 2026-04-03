@@ -200,14 +200,16 @@ module Legion
                   "Tool #{tool_ref} is not executable server-side. Use a legion_ prefixed tool instead."
                 end
               rescue StandardError => e
-                Legion::Logging.log_exception(e, payload_summary: "client tool #{tool_ref} failed", component_type: :api)
+                if defined?(Legion::Logging) && Legion::Logging.respond_to?(:log_exception)
+                  Legion::Logging.log_exception(e, payload_summary: "client tool #{tool_ref} failed", component_type: :api)
+                end
                 "Tool error: #{e.message}"
               end
             end
             klass.params(tschema) if tschema.is_a?(Hash) && tschema[:properties]
             klass
           rescue StandardError => e
-            Legion::Logging.log_exception(e, payload_summary: "build_client_tool_class failed for #{tname}", component_type: :api)
+            handle_exception(e, level: :warn, operation: "llm.routes.build_client_tool_class.#{tname}")
             nil
           end
           # rubocop:enable Metrics/BlockLength
