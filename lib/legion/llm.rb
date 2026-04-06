@@ -688,9 +688,15 @@ module Legion
       end
 
       def adapted_registry_tools
-        return [] unless defined?(::Legion::Tools::Registry)
+        tool_classes = if defined?(::Legion::Tools::Registry)
+                         ::Legion::Tools::Registry.tools
+                       elsif defined?(::Legion::LLM::ToolRegistry)
+                         ::Legion::LLM::ToolRegistry.tools
+                       else
+                         return []
+                       end
 
-        ::Legion::Tools::Registry.tools.map do |tool_class|
+        tool_classes.map do |tool_class|
           Pipeline::ToolAdapter.new(tool_class)
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.adapted_registry_tools', tool_class: tool_class.to_s)

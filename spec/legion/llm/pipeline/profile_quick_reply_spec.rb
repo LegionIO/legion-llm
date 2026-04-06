@@ -7,7 +7,7 @@ RSpec.describe Legion::LLM::Pipeline::Profile do
     let(:skipped_steps) do
       %i[
         idempotency conversation_uuid context_load classification
-        gaia_advisory rag_context mcp_discovery confidence_scoring
+        gaia_advisory rag_context tool_discovery confidence_scoring
         tool_calls context_store post_response knowledge_capture
       ]
     end
