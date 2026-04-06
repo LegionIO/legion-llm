@@ -66,12 +66,15 @@ module Legion
           payload.to_s[0, 200].inspect
         end
 
-        # Bedrock constraints: [a-zA-Z0-9_-]+ and max 64 chars
+        # Bedrock constraints: [a-zA-Z0-9_-]+ and max 64 chars.
+        # Falls back to a stable name derived from the class object_id if sanitization yields
+        # an empty string (e.g. all chars stripped), ensuring the result always satisfies the
+        # at-least-one-character requirement.
         def sanitize_tool_name(raw)
           name = raw.tr('.', '_')
           name = name.gsub(/[^a-zA-Z0-9_-]/, '') # strip ?, !, etc.
           name = name[0, MAX_TOOL_NAME_LENGTH] if name.length > MAX_TOOL_NAME_LENGTH
-          name
+          name.empty? ? "tool_#{@tool_class.object_id}" : name
         end
       end
 

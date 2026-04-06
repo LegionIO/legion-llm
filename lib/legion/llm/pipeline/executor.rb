@@ -99,9 +99,10 @@ module Legion
           end
 
           # Requested deferred tools — inject only if explicitly requested
+          deferred = ::Legion::Tools::Registry.respond_to?(:deferred_tools) ? ::Legion::Tools::Registry.deferred_tools : []
           requested = requested_deferred_tool_names
           if requested.any?
-            ::Legion::Tools::Registry.deferred_tools.each do |tool_class|
+            deferred.each do |tool_class|
               adapter = ToolAdapter.new(tool_class)
               next unless requested.include?(adapter.name)
 
@@ -116,7 +117,7 @@ module Legion
           log.info(
             "[llm][tools] inject request_id=#{@request.id} " \
             "always=#{::Legion::Tools::Registry.tools.size} " \
-            "deferred_available=#{::Legion::Tools::Registry.deferred_tools.size} " \
+            "deferred_available=#{deferred.size} " \
             "requested_deferred=#{requested.size} " \
             "injected=#{injected_names.size} names=#{injected_names.first(25).join(',')}"
           )
