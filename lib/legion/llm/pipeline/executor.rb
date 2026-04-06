@@ -86,24 +86,38 @@ module Legion
         def inject_registry_tools(session)
           return unless defined?(::Legion::Tools::Registry)
 
-          requested = requested_deferred_tool_names
-          always_loaded = always_loaded_tool_names
           injected_names = []
 
+          # Always-loaded tools — inject all unconditionally
           ::Legion::Tools::Registry.tools.each do |tool_class|
             adapter = ToolAdapter.new(tool_class)
-            next unless always_loaded.include?(adapter.name) || requested.include?(adapter.name)
-
             session.with_tool(adapter)
             injected_names << adapter.name
           rescue StandardError => e
-            @warnings << "Failed to inject tool: #{e.message}"
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_tool')
+            @warnings << "Failed to inject always tool: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_always_tool')
+          end
+
+          # Requested deferred tools — inject only if explicitly requested
+          requested = requested_deferred_tool_names
+          if requested.any?
+            ::Legion::Tools::Registry.deferred_tools.each do |tool_class|
+              adapter = ToolAdapter.new(tool_class)
+              next unless requested.include?(adapter.name)
+
+              session.with_tool(adapter)
+              injected_names << adapter.name
+            rescue StandardError => e
+              @warnings << "Failed to inject deferred tool: #{e.message}"
+              handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_deferred_tool')
+            end
           end
 
           log.info(
             "[llm][tools] inject request_id=#{@request.id} " \
-            "always_loaded=#{always_loaded.size} requested_deferred=#{requested.size} " \
+            "always=#{::Legion::Tools::Registry.tools.size} " \
+            "deferred_available=#{::Legion::Tools::Registry.deferred_tools.size} " \
+            "requested_deferred=#{requested.size} " \
             "injected=#{injected_names.size} names=#{injected_names.first(25).join(',')}"
           )
         rescue StandardError => e
@@ -113,14 +127,6 @@ module Legion
 
         # Backwards compatibility alias
         alias inject_discovered_tools inject_registry_tools
-
-        def always_loaded_tool_names
-          return [] unless defined?(::Legion::Tools::Registry)
-
-          ::Legion::Tools::Registry.always_loaded_names.map { |name| name.to_s.tr('.', '_') }
-        rescue StandardError
-          []
-        end
 
         def execute_steps
           executed = 0
