@@ -140,7 +140,7 @@ module Legion
         def always_loaded_tool_names
           return ALWAYS_LOADED_MCP_TOOLS unless defined?(::Legion::Tools::Registry)
 
-          names = ::Legion::Tools::Registry.always_loaded_names
+          names = ::Legion::Tools::Registry.always_loaded_names.map { |name| name.to_s.tr('.', '_') }
           names.any? ? names : ALWAYS_LOADED_MCP_TOOLS
         rescue StandardError
           ALWAYS_LOADED_MCP_TOOLS
