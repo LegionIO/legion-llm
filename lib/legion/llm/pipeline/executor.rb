@@ -45,29 +45,6 @@ module Legion
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
-        ALWAYS_LOADED_MCP_TOOLS = %w[
-          legion_do
-          legion_get_status
-          legion_run_task
-          legion_describe_runner
-          legion_list_extensions
-          legion_get_extension
-          legion_list_tasks
-          legion_get_task
-          legion_get_task_logs
-          legion_query_knowledge
-          legion_knowledge_health
-          legion_knowledge_context
-          legion_list_workers
-          legion_show_worker
-          legion_mesh_status
-          legion_list_peers
-          legion_tools
-          legion_search_sessions
-        ].freeze
-
-        private_constant :ALWAYS_LOADED_MCP_TOOLS
-
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
         def initialize(request)
@@ -138,12 +115,11 @@ module Legion
         alias inject_discovered_tools inject_registry_tools
 
         def always_loaded_tool_names
-          return ALWAYS_LOADED_MCP_TOOLS unless defined?(::Legion::Tools::Registry)
+          return [] unless defined?(::Legion::Tools::Registry)
 
-          names = ::Legion::Tools::Registry.always_loaded_names.map { |name| name.to_s.tr('.', '_') }
-          names.any? ? names : ALWAYS_LOADED_MCP_TOOLS
+          ::Legion::Tools::Registry.always_loaded_names.map { |name| name.to_s.tr('.', '_') }
         rescue StandardError
-          ALWAYS_LOADED_MCP_TOOLS
+          []
         end
 
         def execute_steps

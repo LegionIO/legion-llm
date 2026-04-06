@@ -12,17 +12,6 @@ require 'open3'
 require 'time'
 require 'legion/logging/helper'
 
-begin
-  require 'legion/cli/chat/tools/search_traces'
-  if defined?(Legion::LLM::ToolRegistry) && defined?(Legion::CLI::Chat::Tools::SearchTraces)
-    Legion::LLM::ToolRegistry.register(Legion::CLI::Chat::Tools::SearchTraces)
-  end
-rescue LoadError => e
-  if defined?(Legion::Logging) && Legion::Logging.respond_to?(:log_exception)
-    Legion::Logging.log_exception(e, payload_summary: 'SearchTraces not available for API', component_type: :api)
-  end
-end
-
 module Legion
   module LLM
     module Routes

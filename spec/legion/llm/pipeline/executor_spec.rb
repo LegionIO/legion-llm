@@ -209,7 +209,7 @@ confidence: 0.9 }],
 
         registry_mod = Module.new do
           define_singleton_method(:tools) { [always_tool, requested_tool, skipped_tool] }
-          define_singleton_method(:always_loaded_names) { [] }
+          define_singleton_method(:always_loaded_names) { ['legion.query.knowledge'] }
         end
         stub_const('Legion::Tools::Registry', registry_mod)
 
