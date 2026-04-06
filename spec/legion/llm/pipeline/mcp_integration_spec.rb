@@ -33,7 +33,7 @@ RSpec.describe 'MCP Client end-to-end pipeline integration' do
 
       expect(executor.discovered_tools.size).to eq(1)
       expect(executor.discovered_tools.first[:name]).to eq('list_files')
-      expect(executor.enrichments).to have_key('mcp:tool_discovery')
+      expect(executor.enrichments).to have_key('tool:discovery')
     end
   end
 

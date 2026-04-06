@@ -644,7 +644,7 @@ module Legion
 
       def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &block)
         explicit_tools = kwargs.delete(:tools)
-        tools = explicit_tools || ToolRegistry.tools
+        tools = explicit_tools || adapted_registry_tools
         tools = nil if tools.empty?
 
         if (intent || tier) && Router.routing_enabled?
@@ -685,6 +685,20 @@ module Legion
         end
 
         response
+      end
+
+      def adapted_registry_tools
+        return [] unless defined?(::Legion::Tools::Registry)
+
+        ::Legion::Tools::Registry.tools.map do |tool_class|
+          Pipeline::ToolAdapter.new(tool_class)
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.adapted_registry_tools', tool_class: tool_class.to_s)
+          nil
+        end.compact
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.adapted_registry_tools')
+        []
       end
 
       def try_defer(intent:, urgency:, model:, provider:, message:, **)

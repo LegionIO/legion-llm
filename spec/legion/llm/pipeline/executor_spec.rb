@@ -189,7 +189,7 @@ confidence: 0.9 }],
       end
     end
 
-    describe 'MCP tool injection' do
+    describe 'tool registry injection' do
       it 'injects always-loaded tools and only requested deferred tools' do
         always_tool = Class.new do
           define_singleton_method(:tool_name) { 'legion.query.knowledge' }
@@ -207,9 +207,11 @@ confidence: 0.9 }],
           define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
         end
 
-        mcp_server = double('mcp_server', tool_registry: [always_tool, requested_tool, skipped_tool])
-        stub_const('Legion::MCP', Module.new)
-        allow(Legion::MCP).to receive(:server).and_return(mcp_server)
+        registry_mod = Module.new do
+          define_singleton_method(:tools) { [always_tool, requested_tool, skipped_tool] }
+          define_singleton_method(:always_loaded_names) { [] }
+        end
+        stub_const('Legion::Tools::Registry', registry_mod)
 
         req = Legion::LLM::Pipeline::Request.build(
           messages: [{ role: :user, content: 'test' }],
@@ -219,7 +221,7 @@ confidence: 0.9 }],
         session = double('RubyLLM::Chat')
         allow(session).to receive(:with_tool)
 
-        executor.send(:inject_discovered_tools, session)
+        executor.send(:inject_registry_tools, session)
 
         expect(session).to have_received(:with_tool).twice
         names = []

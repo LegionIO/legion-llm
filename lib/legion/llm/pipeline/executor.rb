@@ -18,7 +18,7 @@ module Legion
                     :audit, :warnings, :discovered_tools, :confidence_score,
                     :escalation_chain
 
-        include Steps::McpDiscovery
+        include Steps::ToolDiscovery
         include Steps::ToolCalls
         include Steps::KnowledgeCapture
         include Steps::ConfidenceScoring
@@ -28,14 +28,14 @@ module Legion
 
         STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory tier_assignment rag_context mcp_discovery
+          rbac classification billing gaia_advisory tier_assignment rag_context tool_discovery
           routing request_normalization token_budget provider_call response_normalization
           debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         PRE_PROVIDER_STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory tier_assignment rag_context mcp_discovery
+          rbac classification billing gaia_advisory tier_assignment rag_context tool_discovery
           routing request_normalization token_budget
         ].freeze
 
@@ -65,6 +65,8 @@ module Legion
           legion_tools
           legion_search_sessions
         ].freeze
+
+        private_constant :ALWAYS_LOADED_MCP_TOOLS
 
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
@@ -104,16 +106,16 @@ module Legion
 
         private
 
-        def inject_discovered_tools(session)
-          server = mcp_server
-          return unless server.respond_to?(:tool_registry)
+        def inject_registry_tools(session)
+          return unless defined?(::Legion::Tools::Registry)
 
           requested = requested_deferred_tool_names
+          always_loaded = always_loaded_tool_names
           injected_names = []
 
-          server.tool_registry.each do |mcp_tool_class|
-            adapter = McpToolAdapter.new(mcp_tool_class)
-            next unless ALWAYS_LOADED_MCP_TOOLS.include?(adapter.name) || requested.include?(adapter.name)
+          ::Legion::Tools::Registry.tools.each do |tool_class|
+            adapter = ToolAdapter.new(tool_class)
+            next unless always_loaded.include?(adapter.name) || requested.include?(adapter.name)
 
             session.with_tool(adapter)
             injected_names << adapter.name
@@ -123,13 +125,25 @@ module Legion
           end
 
           log.info(
-            "[llm][mcp] inject request_id=#{@request.id} " \
-            "always_loaded=#{ALWAYS_LOADED_MCP_TOOLS.size} requested_deferred=#{requested.size} " \
+            "[llm][tools] inject request_id=#{@request.id} " \
+            "always_loaded=#{always_loaded.size} requested_deferred=#{requested.size} " \
             "injected=#{injected_names.size} names=#{injected_names.first(25).join(',')}"
           )
         rescue StandardError => e
           @warnings << "Tool injection error: #{e.message}"
           handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_tools')
+        end
+
+        # Backwards compatibility alias
+        alias inject_discovered_tools inject_registry_tools
+
+        def always_loaded_tool_names
+          return ALWAYS_LOADED_MCP_TOOLS unless defined?(::Legion::Tools::Registry)
+
+          names = ::Legion::Tools::Registry.always_loaded_names
+          names.any? ? names : ALWAYS_LOADED_MCP_TOOLS
+        rescue StandardError
+          ALWAYS_LOADED_MCP_TOOLS
         end
 
         def execute_steps
@@ -678,8 +692,7 @@ module Legion
             session.with_tool(tool)
           end
 
-          ToolRegistry.tools.each { |tool| session.with_tool(tool) } if defined?(ToolRegistry)
-          inject_discovered_tools(session)
+          inject_registry_tools(session)
         end
 
         def apply_ruby_llm_instructions(session)
@@ -862,23 +875,6 @@ module Legion
             test:            @request.test,
             quality:         @confidence_score&.to_h
           )
-        end
-
-        def mcp_server
-          return ::Legion::MCP.server if defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
-
-          require 'legion/mcp'
-          return unless defined?(::Legion::MCP) && ::Legion::MCP.respond_to?(:server)
-
-          ::Legion::MCP.server
-        rescue LoadError => e
-          @warnings << "MCP unavailable: #{e.message}"
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.mcp_server.require')
-          nil
-        rescue StandardError => e
-          @warnings << "MCP server load error: #{e.message}"
-          handle_exception(e, level: :warn, operation: 'llm.pipeline.mcp_server')
-          nil
         end
 
         def requested_deferred_tool_names
