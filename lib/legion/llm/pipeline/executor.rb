@@ -45,29 +45,6 @@ module Legion
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
-        ALWAYS_LOADED_MCP_TOOLS = %w[
-          legion_do
-          legion_get_status
-          legion_run_task
-          legion_describe_runner
-          legion_list_extensions
-          legion_get_extension
-          legion_list_tasks
-          legion_get_task
-          legion_get_task_logs
-          legion_query_knowledge
-          legion_knowledge_health
-          legion_knowledge_context
-          legion_list_workers
-          legion_show_worker
-          legion_mesh_status
-          legion_list_peers
-          legion_tools
-          legion_search_sessions
-        ].freeze
-
-        private_constant :ALWAYS_LOADED_MCP_TOOLS
-
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
         def initialize(request)
@@ -109,24 +86,39 @@ module Legion
         def inject_registry_tools(session)
           return unless defined?(::Legion::Tools::Registry)
 
-          requested = requested_deferred_tool_names
-          always_loaded = always_loaded_tool_names
           injected_names = []
 
+          # Always-loaded tools — inject all unconditionally
           ::Legion::Tools::Registry.tools.each do |tool_class|
             adapter = ToolAdapter.new(tool_class)
-            next unless always_loaded.include?(adapter.name) || requested.include?(adapter.name)
-
             session.with_tool(adapter)
             injected_names << adapter.name
           rescue StandardError => e
-            @warnings << "Failed to inject tool: #{e.message}"
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_tool')
+            @warnings << "Failed to inject always tool: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_always_tool')
+          end
+
+          # Requested deferred tools — inject only if explicitly requested
+          deferred = ::Legion::Tools::Registry.respond_to?(:deferred_tools) ? ::Legion::Tools::Registry.deferred_tools : []
+          requested = requested_deferred_tool_names
+          if requested.any?
+            deferred.each do |tool_class|
+              adapter = ToolAdapter.new(tool_class)
+              next unless requested.include?(adapter.name)
+
+              session.with_tool(adapter)
+              injected_names << adapter.name
+            rescue StandardError => e
+              @warnings << "Failed to inject deferred tool: #{e.message}"
+              handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_deferred_tool')
+            end
           end
 
           log.info(
             "[llm][tools] inject request_id=#{@request.id} " \
-            "always_loaded=#{always_loaded.size} requested_deferred=#{requested.size} " \
+            "always=#{::Legion::Tools::Registry.tools.size} " \
+            "deferred_available=#{deferred.size} " \
+            "requested_deferred=#{requested.size} " \
             "injected=#{injected_names.size} names=#{injected_names.first(25).join(',')}"
           )
         rescue StandardError => e
@@ -136,15 +128,6 @@ module Legion
 
         # Backwards compatibility alias
         alias inject_discovered_tools inject_registry_tools
-
-        def always_loaded_tool_names
-          return ALWAYS_LOADED_MCP_TOOLS unless defined?(::Legion::Tools::Registry)
-
-          names = ::Legion::Tools::Registry.always_loaded_names.map { |name| name.to_s.tr('.', '_') }
-          names.any? ? names : ALWAYS_LOADED_MCP_TOOLS
-        rescue StandardError
-          ALWAYS_LOADED_MCP_TOOLS
-        end
 
         def execute_steps
           executed = 0

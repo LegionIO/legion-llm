@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- fix Process namespace collision by using ::Process::CLOCK_MONOTONIC prefix inside Legion namespace
+
 ### Added
 - `Legion::LLM::Pipeline::ToolAdapter` - wraps Tools::Base for RubyLLM sessions
 

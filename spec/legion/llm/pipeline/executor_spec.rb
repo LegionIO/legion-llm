@@ -208,8 +208,8 @@ confidence: 0.9 }],
         end
 
         registry_mod = Module.new do
-          define_singleton_method(:tools) { [always_tool, requested_tool, skipped_tool] }
-          define_singleton_method(:always_loaded_names) { [] }
+          define_singleton_method(:tools) { [always_tool] }
+          define_singleton_method(:deferred_tools) { [requested_tool, skipped_tool] }
         end
         stub_const('Legion::Tools::Registry', registry_mod)
 
