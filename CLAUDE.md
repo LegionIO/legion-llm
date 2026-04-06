@@ -8,7 +8,7 @@
 Core LegionIO gem providing LLM capabilities to all extensions. Wraps ruby_llm to provide a consistent interface for chat, embeddings, tool use, and agents across multiple providers (Bedrock, Anthropic, OpenAI, Gemini, Ollama). Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
 
 **GitHub**: https://github.com/LegionIO/legion-llm
-**Version**: 0.5.15
+**Version**: 0.6.17
 **License**: Apache-2.0
 
 ## Architecture
@@ -61,8 +61,12 @@ Legion::LLM (lib/legion/llm.rb)
 │   ├── Timeline     # Ordered event recording with participant tracking
 │   ├── Executor     # 18-step pipeline skeleton with profile-aware execution
 │   ├── Steps/
-│   │   └── Metering # Metering event builder (absorbed from lex-llm-gateway)
+│   │   ├── Metering       # Metering event builder (absorbed from lex-llm-gateway)
+│   │   └── ToolDiscovery  # Step 9 — formerly McpDiscovery; renamed to ToolDiscovery (McpDiscovery kept as backwards alias)
 │   └── Executor#call_stream # Streaming variant: pre-provider steps, yield chunks, post-provider steps
+│
+│   Note: Legion::LLM::ToolRegistry was removed. Tool registration now lives in Legion::Tools::Registry (LegionIO gem).
+│         McpToolAdapter renamed to ToolAdapter; McpToolAdapter kept as a backwards-compatible alias.
 ├── CostEstimator    # Model cost estimation with fuzzy pricing (absorbed from lex-llm-gateway)
 ├── Fleet            # Fleet RPC dispatch (absorbed from lex-llm-gateway)
 │   ├── Dispatcher   # Fleet dispatch with timeout and availability checks
