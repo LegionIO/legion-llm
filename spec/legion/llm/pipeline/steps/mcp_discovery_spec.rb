@@ -41,7 +41,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::McpDiscovery do
 
       expect(step.discovered_tools.size).to eq(1)
       expect(step.discovered_tools.first[:name]).to eq('list_files')
-      expect(step.enrichments).to have_key('mcp:tool_discovery')
+      expect(step.enrichments).to have_key('tool:discovery')
     end
 
     it 'skips when MCP Client not available' do
@@ -62,7 +62,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::McpDiscovery do
       step.step_mcp_discovery
 
       keys = step.timeline.events.map { |e| e[:key] }
-      expect(keys).to include('mcp:tool_discovery')
+      expect(keys).to include('tool:discovery')
     end
   end
 end

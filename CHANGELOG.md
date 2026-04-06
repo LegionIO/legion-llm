@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+- `Legion::LLM::Pipeline::ToolAdapter` - wraps Tools::Base for RubyLLM sessions
+
+### Changed
+- Renamed `McpToolAdapter` to `ToolAdapter` (backwards compat alias kept)
+- Pipeline step `McpDiscovery` renamed to `ToolDiscovery`
+- Executor reads from `Legion::Tools::Registry`
+- `chat_single` wraps registry tools with ToolAdapter
+- Routes: executor handles all tool injection, routes only pass client tools
+
+### Removed
+- MCP server dependency for tool injection in routes
+
 ## [0.6.16] - 2026-04-03
 
 ### Fixed

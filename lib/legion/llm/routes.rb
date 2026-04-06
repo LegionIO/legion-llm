@@ -214,34 +214,6 @@ module Legion
           end
           # rubocop:enable Metrics/BlockLength
 
-          define_method(:cached_mcp_tools) do
-            @@llm_cached_mcp_tools ||= begin # rubocop:disable Style/ClassVars
-              all = []
-              if defined?(Legion::MCP) && Legion::MCP.respond_to?(:server)
-                Legion::MCP.server
-                if defined?(Legion::MCP::Server) && Legion::MCP::Server.respond_to?(:tool_registry)
-                  require 'legion/llm/pipeline/mcp_tool_adapter' unless defined?(Legion::LLM::Pipeline::McpToolAdapter)
-                  Legion::MCP::Server.tool_registry.each do |tc|
-                    all << Legion::LLM::Pipeline::McpToolAdapter.new(tc)
-                  rescue StandardError
-                    nil
-                  end
-                end
-              end
-              always_names = %w[legion_do legion_get_status legion_run_task legion_describe_runner
-                                legion_list_extensions legion_get_extension legion_list_tasks
-                                legion_get_task legion_get_task_logs legion_query_knowledge
-                                legion_knowledge_health legion_knowledge_context legion_list_workers
-                                legion_show_worker legion_mesh_status legion_list_peers
-                                legion_tools legion_search_sessions]
-              {
-                always:   all.select { |t| always_names.include?(t.name) }.freeze,
-                deferred: all.reject { |t| always_names.include?(t.name) }.freeze,
-                all:      all.freeze
-              }.freeze
-            end
-          end
-
           define_method(:extract_tool_calls) do |pipeline_response|
             tools_data = pipeline_response.tools
             return [] unless tools_data.is_a?(Array) && !tools_data.empty?
@@ -505,16 +477,7 @@ module Legion
             build_client_tool_class(ts[:name].to_s, ts[:description].to_s, ts[:parameters] || ts[:input_schema])
           end
 
-          # Inject daemon MCP tools alongside client tools
-          all_tools = tool_declarations.dup
-          begin
-            mcp_tools = cached_mcp_tools
-            mcp_to_inject = Array(requested_tools).empty? ? mcp_tools[:always] : mcp_tools[:all]
-            all_tools.concat(mcp_to_inject) if mcp_to_inject&.any?
-            log.unknown "[llm][api] inference tools client=#{tool_declarations.size} mcp=#{mcp_to_inject&.size || 0} total=#{all_tools.size}"
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.routes.mcp_tool_injection', request_id: request_id)
-          end
+          log.unknown "[llm][api] inference tools client=#{tool_declarations.size}"
 
           streaming = body[:stream] == true && request.preferred_type.to_s.include?('text/event-stream')
           normalized_caller = caller_context.respond_to?(:transform_keys) ? caller_context.transform_keys(&:to_sym) : {}
@@ -541,7 +504,7 @@ module Legion
             messages:        messages,
             system:          body[:system],
             routing:         { provider: provider, model: model },
-            tools:           all_tools,
+            tools:           tool_declarations,
             caller:          effective_caller,
             conversation_id: conversation_id,
             metadata:        { requested_tools: requested_tools },
