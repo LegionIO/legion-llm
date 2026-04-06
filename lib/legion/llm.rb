@@ -107,7 +107,7 @@ module Legion
       # for automatic metering and fleet dispatch
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
                max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
-        started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
         log_inference_request(
           request_type:       :chat,
           requested_model:    model,
@@ -153,7 +153,7 @@ module Legion
       # Send a single message — daemon-first, falls through to direct on unavailability.
       def ask(message:, model: nil, provider: nil, intent: nil, tier: nil,
               context: {}, identity: nil, &)
-        started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
         log_inference_request(
           request_type:       :ask,
           requested_model:    model,
@@ -366,7 +366,7 @@ module Legion
       end
 
       def elapsed_ms_since(started_at)
-        ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round
+        ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - started_at) * 1000).round
       end
 
       def inference_input_payload(message:, messages:)
