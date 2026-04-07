@@ -45,6 +45,8 @@ module Legion
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
+        MAX_RUBY_LLM_TOOL_ROUNDS = 25
+
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
         def initialize(request)
@@ -132,15 +134,22 @@ module Legion
         def execute_steps
           executed = 0
           skipped = 0
+          pipeline_start = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+          step_timings = []
           STEPS.each do |step|
             if Profile.skip?(@profile, step)
               skipped += 1
               next
             end
 
+            t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
             execute_step(step) { send(:"step_#{step}") }
+            elapsed_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
+            step_timings << "#{step}=#{elapsed_ms}ms"
             executed += 1
           end
+          total_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - pipeline_start) * 1000).round
+          log.warn("[pipeline][timing] profile=#{@profile} total=#{total_ms}ms executed=#{executed} skipped=#{skipped} #{step_timings.join(' ')}")
           annotate_top_level_span(steps_executed: executed, steps_skipped: skipped)
         end
 
@@ -464,6 +473,7 @@ module Legion
 
         def execute_provider_request_ruby_llm
           session, message_content = build_ruby_llm_session
+          install_tool_loop_guard(session)
           @raw_response = message_content ? session.ask(message_content) : session
         end
 
@@ -645,6 +655,7 @@ module Legion
           )
 
           session, message_content = build_ruby_llm_session
+          install_tool_loop_guard(session)
           @raw_response = message_content ? session.ask(message_content, &) : session
 
           @timestamps[:provider_end] = Time.now
@@ -676,6 +687,19 @@ module Legion
           end
 
           inject_registry_tools(session)
+        end
+
+        def install_tool_loop_guard(session)
+          return unless session.respond_to?(:on)
+
+          tool_round = 0
+          session.on(:tool_call) do |_tool_call|
+            tool_round += 1
+            if tool_round > MAX_RUBY_LLM_TOOL_ROUNDS
+              log.warn("[pipeline] tool loop cap hit: #{tool_round} rounds, halting")
+              raise Legion::LLM::PipelineError, "tool loop exceeded #{MAX_RUBY_LLM_TOOL_ROUNDS} rounds"
+            end
+          end
         end
 
         def apply_ruby_llm_instructions(session)
