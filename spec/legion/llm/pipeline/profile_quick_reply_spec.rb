@@ -46,7 +46,7 @@ RSpec.describe Legion::LLM::Pipeline::Profile do
     end
   end
 
-  describe '.derive default behavior unchanged' do
+  describe '.derive non-quick_reply type routing' do
     it 'returns :human for user callers' do
       caller = { requested_by: { identity: 'user:matt', type: :user, credential: :session } }
       expect(described_class.derive(caller)).to eq(:human)

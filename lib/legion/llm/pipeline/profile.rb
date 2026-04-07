@@ -51,6 +51,7 @@ module Legion
           when :gaia        then GAIA_SKIP.include?(step)
           when :system      then SYSTEM_SKIP.include?(step)
           when :quick_reply then QUICK_REPLY_SKIP.include?(step)
+          when :human       then HUMAN_SKIP.include?(step)
           when :service     then SERVICE_SKIP.include?(step)
           else false
           end
