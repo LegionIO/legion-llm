@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.6.23] - 2026-04-07
+
+### Fixed
+- `build_response_routing` now always sets `routing[:escalated]` (defaults to `false`) instead of conditionally omitting the key
+- Schema spec annotations updated: Thinking, Cache, Config(Generation) corrected to reflect `from_chat_args` first-class field mapping; ErrorResponse annotation updated with complete error hierarchy including `EscalationExhausted`, `PrivacyModeError`, `TokenBudgetExceeded`, `DaemonDeniedError`, `DaemonRateLimitedError`
+
 ## [0.6.22] - 2026-04-07
 
 ### Fixed

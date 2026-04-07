@@ -950,7 +950,7 @@ module Legion
             routing[:tier]     = routing_audit[:data][:tier]
           end
 
-          routing[:escalated] = @escalation_history.size > 1 if @escalation_history.any?
+          routing[:escalated] = @escalation_history.size > 1
           routing[:escalation_chain] = @escalation_history if @escalation_history.any?
 
           if @timestamps[:provider_start] && @timestamps[:provider_end]

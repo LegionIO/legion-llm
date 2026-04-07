@@ -6,7 +6,7 @@
 **Version**: 1.0.0 (schema_version field on all payloads)
 **Last verified**: 2026-04-07
 
-The outer envelope is implemented: all 30 `Request` fields and 34 `Response` fields exist as `Data.define` members. However, many inner types (Message, ContentBlock, ToolCall, Chunk, Conversation, Feedback, ErrorResponse) are **not yet implemented as dedicated structs** — they are plain hashes or strings in the current code. Several Response fields are **always nil or empty** in the pipeline today.
+The outer envelope is implemented: all 32 `Request` fields and 34 `Response` fields exist as `Data.define` members. However, many inner types (Message, ContentBlock, ToolCall, Chunk, Conversation, Feedback, ErrorResponse) are **not yet implemented as dedicated structs** — they are plain hashes or strings in the current code. Several Response fields are **always nil or empty** in the pipeline today.
 
 This document serves as both the **canonical reference** for what is implemented and the **target specification** for what inner types should look like. Sections are annotated with implementation status.
 
@@ -16,12 +16,12 @@ For the AMQP wire protocol (exchange topology, queue configuration, message enve
 
 | Section | Status | Notes |
 |---------|--------|-------|
-| **Request (envelope)** | Implemented | All 30 fields exist on `Data.define`. `from_chat_args` drops some into `extra`. |
+| **Request (envelope)** | Implemented | All 32 fields exist on `Data.define`. `from_chat_args` maps all to first-class fields. |
 | **Response (envelope)** | Partial | All 34 fields exist. 10 fields always nil/empty (see below). |
 | **Message** | Not implemented | Plain `{ role:, content: }` hashes. No struct, no id/seq/status/version. |
 | **ContentBlock** | Not implemented | Content is always String. Only `:text` block used (system prompt caching). |
 | **Tool** | Partial | `ToolAdapter` has name/description/parameters. No `source` on object, no `version`. |
-| **ToolCall** | Implemented | `id`, `name`, `arguments` + `exchange_id`, `source`, `status`, `duration_ms`, `result` merged from Timeline. |
+| **ToolCall** | Partial | `id`, `name`, `arguments` + `exchange_id`, `source`, `status`, `duration_ms`, `result` merged from Timeline. `error` field never populated. Timeline lookup by tool name, not call ID (breaks duplicate tool calls). |
 | **ToolChoice** | Stub | Field exists on Request, defaults to `{ mode: :auto }`, never forwarded to provider. |
 | **Enrichment** | Implemented | RAG/GAIA enrichments work. Value shapes vary between steps. |
 | **Prediction** | Partial | Request-side works. Response-side actuals never filled in. |
@@ -41,12 +41,12 @@ For the AMQP wire protocol (exchange topology, queue configuration, message enve
 | **Retry** | Not implemented | Response `retry` field always nil. |
 | **Safety** | Not implemented | Response `safety` field always nil. |
 | **Rate Limit** | Not implemented | Response `rate_limit` field always nil. |
-| **Thinking** | Partial | Request thinking config works. Response thinking content captured. |
+| **Thinking** | Partial | Request thinking config mapped to first-class field. Response thinking **never populated** by executor (always nil). |
 | **Context Window** | Not implemented | `tokens.context_window`, `utilization`, `headroom` never populated. |
 | **Validation** | Not implemented | Response `validation` field always nil. |
 | **Provider Features** | Not implemented | Response `features` field always nil. |
 | **Model Deprecation** | Not implemented | Response `deprecation` field always nil. |
-| **Cache** | Not implemented | Response `cache` always `{}`. |
+| **Cache** | Partial | Request cache mapped to first-class field. Response `cache` always `{}`. |
 | **Chunk (Streaming)** | Not implemented | Raw RubyLLM chunks passed through; no spec-compliant Chunk struct. |
 | **ErrorResponse** | Not implemented | No struct; only exception classes (`LLMError` hierarchy). |
 | **Conversation** | Partial | `ConversationStore` exists but no `Conversation` struct. Limited fields. |
@@ -62,7 +62,6 @@ For the AMQP wire protocol (exchange topology, queue configuration, message enve
 These Response fields exist on the `Data.define` but are **never populated** by the executor today:
 
 - `agent` — always nil
-- `cost` — always `{}`
 - `cache` — always `{}`
 - `safety` — always nil
 - `rate_limit` — always nil
@@ -303,7 +302,7 @@ Used by RBAC (can this caller use tools from this source?) and audit (which syst
 
 ## ToolCall
 
-> **Implementation status: PARTIAL** — Tool calls are plain hashes with only `id`, `name`, `arguments`. The `exchange_id`, `source`, `status`, `duration_ms`, `result`, and `error` fields exist only in Timeline records, not on the tool call hash returned to callers.
+> **Implementation status: PARTIAL** — Tool calls are hashes with `id`, `name`, `arguments` and optionally `exchange_id`, `source`, `status`, `duration_ms`, `result` merged from matching Timeline events. The `error` field is never populated. Timeline lookup uses tool name (not call ID), so duplicate invocations of the same tool in one response will only have execution data for the last invocation.
 
 A tool invocation made by the assistant, with execution results.
 
@@ -1479,7 +1478,7 @@ end
 
 ## Thinking & Reasoning
 
-> **Implementation status: PARTIAL** — Request-side thinking configuration is passed through. Response-side thinking content is captured from the provider response. However, `from_chat_args` drops the `thinking` field into `extra` instead of the first-class field.
+> **Implementation status: PARTIAL** — Request-side thinking configuration is mapped to the first-class `thinking` field by `from_chat_args`. Response-side `thinking` field exists on the Response struct but is **never populated** by the executor — it is always nil.
 
 Controls for extended thinking, chain-of-thought, and reasoning behavior. Separate from generation parameters (temperature, top_p) because reasoning is about *how deeply* the model thinks, not *how randomly* it samples.
 
@@ -1692,7 +1691,7 @@ end
 
 ## Cache
 
-> **Implementation status: NOT IMPLEMENTED** — Response `cache` field is always `{}`. Request-side `cache` field exists but `from_chat_args` drops it into `extra`.
+> **Implementation status: PARTIAL** — Request-side `cache` field is mapped to the first-class field by `from_chat_args` (defaults to `{ strategy: :default, cacheable: true }`). Response-side `cache` field is always `{}`.
 
 Symmetric caching controls on request and response. Replaces a flat strategy symbol with structured metadata.
 
@@ -1761,7 +1760,7 @@ Response: cache: { hit: true, key: "sha256:abc123", tier: :local, age: 45, expir
 
 ## Request
 
-> **Implementation status: IMPLEMENTED (envelope)** — All 30 fields exist as `Data.define` members with `.build` and `.from_chat_args` constructors. Note: `from_chat_args` drops `generation`, `thinking`, `response_format`, `context_strategy`, `cache`, and `fork` into the `extra` hash instead of mapping to their first-class fields. Convenience accessors (`.model`, `.provider`) described in the spec are not defined.
+> **Implementation status: IMPLEMENTED (envelope)** — All 32 fields exist as `Data.define` members with `.build` and `.from_chat_args` constructors. All fields including `generation`, `thinking`, `response_format`, `context_strategy`, `cache`, `fork`, `tokens`, `stop`, `modality`, `hooks`, `idempotency_key`, `ttl`, `metadata`, `enrichments`, and `predictions` are mapped to first-class struct members. Convenience accessors (`.model`, `.provider`) described in the spec are not defined.
 
 What goes into the Legion::LLM pipeline.
 
@@ -1927,7 +1926,7 @@ For queue ordering when requests go through RMQ:
 
 ## Response
 
-> **Implementation status: PARTIAL (envelope)** — All 34 fields exist as `Data.define` members. 10 fields are always nil/empty (see status matrix above). `routing` only populates `provider`/`model`. `stop.reason` is hardcoded to `:end_turn`. `quality` returns `{ score:, band:, source: }` not `{ score:, acceptable:, checker: }`. `cost` always `{}`. Convenience accessors (`.model`, `.provider`) are not defined.
+> **Implementation status: PARTIAL (envelope)** — All 34 fields exist as `Data.define` members. 9 fields are always nil/empty (see status matrix above). `routing` populates `provider`, `model`, `strategy`, `tier`, `escalated`, `escalation_chain`, `latency_ms`. `stop.reason` extracted from provider response (falls back to `:end_turn`). `quality` returns `{ score:, band:, source:, signals: }` from `ConfidenceScorer` (not `{ score:, acceptable:, checker: }` as the Response struct below shows). `cost` populated via `CostEstimator.estimate` with `estimated_usd`, `provider`, `model`. Convenience accessors (`.model`, `.provider`) are not defined.
 
 What comes back from the Legion::LLM pipeline.
 
@@ -1977,7 +1976,7 @@ Response
 
   # Stop (symmetric with request)
   stop:              Hash
-    reason:          Symbol       # :end_turn, :tool_calls, :max_tokens, :safety, :stop_sequence
+    reason:          Symbol       # :end_turn, :tool_use, :max_tokens, :safety, :stop_sequence
     sequence:        String?      # which stop sequence was hit (nil if none)
 
   # Tools (symmetric with request)
@@ -2151,7 +2150,7 @@ Chunk
 
 ## ErrorResponse
 
-> **Implementation status: NOT IMPLEMENTED** — No `ErrorResponse` struct exists. Errors are raised as exceptions from the `Legion::LLM` error hierarchy (`LLMError`, `AuthError`, `RateLimitError`, `ContextOverflow`, `ProviderError`, `ProviderDown`, `PipelineError`). These are Ruby exceptions, not structured response payloads.
+> **Implementation status: NOT IMPLEMENTED** — No `ErrorResponse` struct exists. Errors are raised as exceptions from the `Legion::LLM` error hierarchy: `LLMError` (base), `AuthError`, `RateLimitError`, `ContextOverflow`, `ProviderError`, `ProviderDown`, `UnsupportedCapability`, `PipelineError`, `TokenBudgetExceeded`, `EmbeddingUnavailableError`. Additionally, `EscalationExhausted`, `DaemonDeniedError`, `DaemonRateLimitedError`, and `PrivacyModeError` inherit from `StandardError` directly (not `LLMError`). These are Ruby exceptions, not structured response payloads.
 
 Standard error format for failed requests.
 
@@ -2259,7 +2258,7 @@ Legion::LLM.chat(
 
 ## Config (Generation Parameters)
 
-> **Implementation status: PARTIAL** — Generation parameters can be passed but `from_chat_args` drops them into `extra` instead of the first-class `generation` field. Provider adapters only forward `model` and `provider` to RubyLLM, not temperature/top_p/etc.
+> **Implementation status: PARTIAL** — Generation parameters are mapped to the first-class `generation` field by `from_chat_args`. However, provider adapters only forward `model` and `provider` to RubyLLM, not temperature/top_p/etc from the `generation` hash.
 
 Sent in `request.generation`. Provider adapters map supported parameters and ignore unsupported ones.
 
