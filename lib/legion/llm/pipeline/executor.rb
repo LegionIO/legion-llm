@@ -17,6 +17,7 @@ module Legion
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
                     :audit, :warnings, :discovered_tools, :confidence_score,
                     :escalation_chain
+        attr_accessor :tool_event_handler
 
         include Steps::ToolDiscovery
         include Steps::ToolCalls
@@ -67,6 +68,7 @@ module Legion
           @escalation_chain = nil
           @escalation_history = []
           @proactive_tier_assignment = nil
+          @tool_event_handler = nil
         end
 
         def call
@@ -656,7 +658,15 @@ module Legion
 
           session, message_content = build_ruby_llm_session
           install_tool_loop_guard(session)
-          @raw_response = message_content ? session.ask(message_content, &) : session
+
+          Thread.current[:legion_tool_event_handler] = @tool_event_handler
+          begin
+            @raw_response = message_content ? session.ask(message_content, &) : session
+          ensure
+            Thread.current[:legion_tool_event_handler] = nil
+            Thread.current[:legion_current_tool_call_id] = nil
+            Thread.current[:legion_current_tool_name] = nil
+          end
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
@@ -690,16 +700,42 @@ module Legion
         end
 
         def install_tool_loop_guard(session)
-          return unless session.respond_to?(:on)
+          return unless session.respond_to?(:on_tool_call)
 
           tool_round = 0
-          session.on(:tool_call) do |_tool_call|
+          session.on_tool_call do |tool_call|
             tool_round += 1
             if tool_round > MAX_RUBY_LLM_TOOL_ROUNDS
               log.warn("[pipeline] tool loop cap hit: #{tool_round} rounds, halting")
               raise Legion::LLM::PipelineError, "tool loop exceeded #{MAX_RUBY_LLM_TOOL_ROUNDS} rounds"
             end
+
+            emit_tool_call_event(tool_call, tool_round)
           end
+        end
+
+        def emit_tool_call_event(tool_call, round)
+          tc_id   = tool_call_field(tool_call, :id)
+          tc_name = tool_call_field(tool_call, :name)
+          tc_args = tool_call_field(tool_call, :arguments)
+
+          log.info("[pipeline][tool-call] round=#{round} id=#{tc_id} tool=#{tc_name}")
+
+          Thread.current[:legion_current_tool_call_id] = tc_id
+          Thread.current[:legion_current_tool_name] = tc_name
+
+          @tool_event_handler&.call(
+            type: :tool_call, tool_call_id: tc_id, tool_name: tc_name,
+            arguments: tc_args, round: round
+          )
+        end
+
+        def tool_call_field(tool_call, field)
+          return tool_call.public_send(field) if tool_call.respond_to?(field)
+
+          tool_call[field]
+        rescue StandardError
+          nil
         end
 
         def apply_ruby_llm_instructions(session)

@@ -1,5 +1,19 @@
 # Legion LLM Changelog
 
+## [0.6.21] - 2026-04-07
+
+### Added
+- Real-time tool call SSE streaming: tool-call, tool-result, and tool-error events emitted during execution, not after completion
+- `ClientToolMethods` module extracted from inline tool class for cleaner separation
+- Rich tool execution logging: command, path, pattern, url shown per tool type instead of just key names
+- `summarize_tool_args` produces structured log details per tool type (sh, file_read, file_write, file_edit, grep, glob, web_fetch, list_directory)
+- `tool_event_handler` callback on `Pipeline::Executor` for real-time tool event forwarding via `Thread.current`
+
+### Fixed
+- `install_tool_loop_guard` now uses `session.on_tool_call` instead of `session.on(:tool_call)` — RubyLLM callback was never firing, tool_call_id was always nil
+- `list_directory` tool now expands `~` via `File.expand_path` — previously failed with `ENOENT` on tilde paths
+- SSE text-delta events logged at debug level instead of info to reduce log noise
+
 ## [0.6.20] - 2026-04-06
 
 ### Added
