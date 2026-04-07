@@ -4,9 +4,19 @@ require 'spec_helper'
 
 RSpec.describe Legion::LLM::Pipeline::Profile do
   describe '.derive' do
-    it 'returns :external for user callers' do
+    it 'returns :human for user callers' do
       caller = { requested_by: { identity: 'user:matt', type: :user, credential: :session } }
-      expect(described_class.derive(caller)).to eq(:external)
+      expect(described_class.derive(caller)).to eq(:human)
+    end
+
+    it 'returns :human for human callers' do
+      caller = { requested_by: { identity: 'user:matt', type: :human, credential: :kerberos } }
+      expect(described_class.derive(caller)).to eq(:human)
+    end
+
+    it 'returns :service for service callers' do
+      caller = { requested_by: { identity: 'svc:github-webhook', type: :service, credential: :api } }
+      expect(described_class.derive(caller)).to eq(:service)
     end
 
     it 'returns :external for mcp_client callers' do
@@ -55,6 +65,26 @@ RSpec.describe Legion::LLM::Pipeline::Profile do
       expect(described_class.skip?(:system, :rag_context)).to eq(true)
       expect(described_class.skip?(:system, :routing)).to eq(false)
       expect(described_class.skip?(:system, :provider_call)).to eq(false)
+    end
+
+    it 'returns false for human profile on all steps' do
+      expect(described_class.skip?(:human, :rbac)).to eq(false)
+      expect(described_class.skip?(:human, :rag_context)).to eq(false)
+      expect(described_class.skip?(:human, :tool_calls)).to eq(false)
+      expect(described_class.skip?(:human, :knowledge_capture)).to eq(false)
+    end
+
+    it 'skips conversational steps for service profile' do
+      expect(described_class.skip?(:service, :conversation_uuid)).to eq(true)
+      expect(described_class.skip?(:service, :context_load)).to eq(true)
+      expect(described_class.skip?(:service, :gaia_advisory)).to eq(true)
+      expect(described_class.skip?(:service, :rag_context)).to eq(true)
+      expect(described_class.skip?(:service, :tool_discovery)).to eq(true)
+      expect(described_class.skip?(:service, :tool_calls)).to eq(true)
+      expect(described_class.skip?(:service, :context_store)).to eq(true)
+      expect(described_class.skip?(:service, :knowledge_capture)).to eq(true)
+      expect(described_class.skip?(:service, :routing)).to eq(false)
+      expect(described_class.skip?(:service, :provider_call)).to eq(false)
     end
   end
 end

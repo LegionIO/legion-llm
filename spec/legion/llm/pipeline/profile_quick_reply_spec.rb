@@ -47,9 +47,9 @@ RSpec.describe Legion::LLM::Pipeline::Profile do
   end
 
   describe '.derive default behavior unchanged' do
-    it 'returns :external for user callers' do
+    it 'returns :human for user callers' do
       caller = { requested_by: { identity: 'user:matt', type: :user, credential: :session } }
-      expect(described_class.derive(caller)).to eq(:external)
+      expect(described_class.derive(caller)).to eq(:human)
     end
 
     it 'returns :gaia for gaia tick callers' do

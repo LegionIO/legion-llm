@@ -7,6 +7,10 @@
 
 ### Added
 - `Legion::LLM::Pipeline::ToolAdapter` - wraps Tools::Base for RubyLLM sessions
+- `Profile.derive` returns `:human` for `type: :human` and `type: :user` callers (Wire Format Phase 3)
+- `Profile.derive` returns `:service` for `type: :service` callers (Wire Format Phase 3)
+- `HUMAN_SKIP` constant (empty — humans get full pipeline)
+- `SERVICE_SKIP` constant — services skip conversational steps (context, tools, knowledge)
 
 ### Changed
 - Renamed `McpToolAdapter` to `ToolAdapter` (backwards compat alias kept)
