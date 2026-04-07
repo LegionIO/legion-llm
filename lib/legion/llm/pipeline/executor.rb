@@ -17,6 +17,7 @@ module Legion
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
                     :audit, :warnings, :discovered_tools, :confidence_score,
                     :escalation_chain
+        attr_accessor :tool_event_handler
 
         include Steps::ToolDiscovery
         include Steps::ToolCalls
@@ -67,6 +68,7 @@ module Legion
           @escalation_chain = nil
           @escalation_history = []
           @proactive_tier_assignment = nil
+          @tool_event_handler = nil
         end
 
         def call
@@ -164,7 +166,11 @@ module Legion
 
         def step_idempotency; end
 
-        def step_conversation_uuid; end
+        def step_conversation_uuid
+          return if @request.conversation_id
+
+          @request = @request.with(conversation_id: "conv_#{SecureRandom.hex(8)}")
+        end
 
         def step_context_load
           conv_id = @request.conversation_id
@@ -187,7 +193,7 @@ module Legion
                       maybe_compact_history(conv_id, history)
                     end
 
-          @enrichments[:conversation_history] = history
+          @enrichments['context:conversation_history'] = history
           @timeline.record(
             category: :internal, key: 'context:loaded',
             direction: :internal, detail: "loaded #{history.size} prior messages",
@@ -656,7 +662,15 @@ module Legion
 
           session, message_content = build_ruby_llm_session
           install_tool_loop_guard(session)
-          @raw_response = message_content ? session.ask(message_content, &) : session
+
+          Thread.current[:legion_tool_event_handler] = @tool_event_handler
+          begin
+            @raw_response = message_content ? session.ask(message_content, &) : session
+          ensure
+            Thread.current[:legion_tool_event_handler] = nil
+            Thread.current[:legion_current_tool_call_id] = nil
+            Thread.current[:legion_current_tool_name] = nil
+          end
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
@@ -690,16 +704,45 @@ module Legion
         end
 
         def install_tool_loop_guard(session)
-          return unless session.respond_to?(:on)
+          unless session.respond_to?(:on_tool_call)
+            log.warn('[pipeline] tool loop guard unavailable: ruby_llm session does not respond to on_tool_call')
+            return
+          end
 
           tool_round = 0
-          session.on(:tool_call) do |_tool_call|
+          session.on_tool_call do |tool_call|
             tool_round += 1
             if tool_round > MAX_RUBY_LLM_TOOL_ROUNDS
               log.warn("[pipeline] tool loop cap hit: #{tool_round} rounds, halting")
               raise Legion::LLM::PipelineError, "tool loop exceeded #{MAX_RUBY_LLM_TOOL_ROUNDS} rounds"
             end
+
+            emit_tool_call_event(tool_call, tool_round)
           end
+        end
+
+        def emit_tool_call_event(tool_call, round)
+          tc_id   = tool_call_field(tool_call, :id)
+          tc_name = tool_call_field(tool_call, :name)
+          tc_args = tool_call_field(tool_call, :arguments)
+
+          log.info("[pipeline][tool-call] round=#{round} id=#{tc_id} tool=#{tc_name}")
+
+          Thread.current[:legion_current_tool_call_id] = tc_id
+          Thread.current[:legion_current_tool_name] = tc_name
+
+          @tool_event_handler&.call(
+            type: :tool_call, tool_call_id: tc_id, tool_name: tc_name,
+            arguments: tc_args, round: round
+          )
+        end
+
+        def tool_call_field(tool_call, field)
+          return tool_call.public_send(field) if tool_call.respond_to?(field)
+
+          tool_call[field]
+        rescue StandardError
+          nil
         end
 
         def apply_ruby_llm_instructions(session)
@@ -758,7 +801,7 @@ module Legion
           attrs = Steps::SpanAnnotator.attributes_for(step_name, audit: @audit, enrichments: @enrichments)
           attrs.each { |key, val| span.set_attribute(key, val) unless val.nil? }
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.annotate_span', step: step_name)
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.annotate_span', step: step_name)
           nil
         end
 
@@ -783,7 +826,7 @@ module Legion
             span.set_attribute('routing.tier', data[:tier].to_s) if data[:tier]
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.annotate_top_level_span')
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.annotate_top_level_span')
           nil
         end
 
@@ -800,7 +843,14 @@ module Legion
           nil
         end
 
-        def step_response_normalization; end
+        def step_response_normalization
+          # Normalize enrichment keys to consistent string "source:type" format
+          normalized = {}
+          @enrichments.each do |key, value|
+            normalized[key.to_s] = value
+          end
+          @enrichments = normalized
+        end
 
         def step_context_store
           conv_id = @request.conversation_id
@@ -865,10 +915,11 @@ module Legion
             request_id:      @request.id,
             conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
             message:         msg,
-            routing:         { provider: @resolved_provider, model: @resolved_model },
+            routing:         build_response_routing,
             tokens:          extract_tokens,
-            stop:            { reason: :end_turn },
+            stop:            extract_stop_reason,
             tools:           response_tool_calls,
+            cost:            estimate_response_cost,
             timestamps:      @timestamps,
             enrichments:     @enrichments,
             audit:           @audit,
@@ -890,16 +941,102 @@ module Legion
           Array(requested).map { |name| name.to_s.tr('.', '_') }.reject(&:empty?)
         end
 
+        def build_response_routing
+          routing = { provider: @resolved_provider, model: @resolved_model }
+
+          routing_audit = @audit[:'routing:provider_selection']
+          if routing_audit.is_a?(Hash) && routing_audit[:data].is_a?(Hash)
+            routing[:strategy] = routing_audit[:data][:strategy]
+            routing[:tier]     = routing_audit[:data][:tier]
+          end
+
+          routing[:escalated] = @escalation_history.size > 1
+          routing[:escalation_chain] = @escalation_history if @escalation_history.any?
+
+          if @timestamps[:provider_start] && @timestamps[:provider_end]
+            routing[:latency_ms] = ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).round
+          end
+
+          routing
+        end
+
+        def extract_stop_reason
+          reason = if @raw_response.respond_to?(:stop_reason)
+                     @raw_response.stop_reason&.to_sym
+                   elsif @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
+                     :tool_use
+                   end
+          { reason: reason || :end_turn }
+        rescue StandardError
+          { reason: :end_turn }
+        end
+
+        def estimate_response_cost
+          tokens = extract_tokens
+          input  = tokens.respond_to?(:input_tokens) ? tokens.input_tokens : tokens[:input].to_i
+          output = tokens.respond_to?(:output_tokens) ? tokens.output_tokens : tokens[:output].to_i
+          return {} unless @resolved_model && (input + output).positive?
+
+          estimated = CostEstimator.estimate(
+            model_id:      @resolved_model,
+            input_tokens:  input,
+            output_tokens: output
+          )
+          { estimated_usd: estimated, provider: @resolved_provider, model: @resolved_model }
+        rescue StandardError
+          {}
+        end
+
         def response_tool_calls
           return [] unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls
 
+          tool_timeline = build_tool_timeline_index
+
           Array(@raw_response.tool_calls).map do |tool_call|
-            {
-              id:        tool_call[:id] || tool_call['id'],
-              name:      tool_call[:name] || tool_call['name'],
+            tc_id   = tool_call[:id] || tool_call['id']
+            tc_name = tool_call[:name] || tool_call['name']
+
+            entry = {
+              id:        tc_id,
+              name:      tc_name,
               arguments: tool_call[:arguments] || tool_call['arguments'] || {}
             }
+
+            # Merge execution data from timeline if available
+            timeline_data = tool_timeline[tc_name]
+            if timeline_data
+              entry[:exchange_id] = timeline_data[:exchange_id]
+              entry[:source]      = timeline_data[:source]
+              entry[:status]      = timeline_data[:status]
+              entry[:duration_ms] = timeline_data[:duration_ms]
+              entry[:result]      = timeline_data[:result]
+            end
+
+            entry
           end
+        end
+
+        def build_tool_timeline_index
+          index = {}
+          @timeline.events.each do |event|
+            key = event[:key]
+            data = event[:data] || {}
+
+            if key&.start_with?('tool:execute:')
+              tool_name = key.sub('tool:execute:', '')
+              index[tool_name] = {
+                exchange_id: event[:exchange_id],
+                source:      data[:source],
+                status:      data[:status],
+                duration_ms: event[:duration_ms]
+              }
+            elsif key&.start_with?('tool:result:')
+              tool_name = key.sub('tool:result:', '')
+              index[tool_name][:result] = data[:result] if index[tool_name]
+            end
+          end
+
+          index
         end
       end
     end

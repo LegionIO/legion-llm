@@ -9,7 +9,7 @@ module Legion
         module Classification
           include Legion::Logging::Helper
 
-          LEVELS = %i[public internal restricted confidential].freeze
+          LEVELS = %i[public internal confidential restricted].freeze
 
           PII_PATTERNS = {
             ssn:   /\b\d{3}-\d{2}-\d{4}\b/,
@@ -105,7 +105,7 @@ module Legion
 
             { level: level.to_sym }
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.classification.default')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.classification.default')
             nil
           end
         end

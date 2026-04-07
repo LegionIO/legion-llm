@@ -55,13 +55,21 @@ module Legion
           input  = msg.respond_to?(:input_tokens) ? msg.input_tokens.to_i : 0
           output = msg.respond_to?(:output_tokens) ? msg.output_tokens.to_i : 0
 
+          stop_reason = if msg.respond_to?(:stop_reason)
+                          msg.stop_reason&.to_sym || :end_turn
+                        elsif msg.respond_to?(:tool_calls) && msg.tool_calls&.any?
+                          :tool_use
+                        else
+                          :end_turn
+                        end
+
           build(
             request_id:      request_id,
             conversation_id: conversation_id,
             message:         { role: :assistant, content: msg.content },
             routing:         { provider: provider, model: model || (msg.respond_to?(:model_id) ? msg.model_id : nil) },
             tokens:          { input: input, output: output, total: input + output },
-            stop:            { reason: :end_turn },
+            stop:            { reason: stop_reason },
             **extra
           )
         end

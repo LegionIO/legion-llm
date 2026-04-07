@@ -67,26 +67,45 @@ module Legion
 
           extra = kwargs.except(
             :message, :messages, :model, :provider, :system,
-            :tools, :stream, :caller, :classification, :billing,
+            :tools, :tool_choice, :stream, :caller, :classification, :billing,
             :agent, :test, :tracing, :priority, :conversation_id,
-            :request_id, :id
+            :request_id, :id, :generation, :thinking, :response_format,
+            :context_strategy, :cache, :fork, :tokens, :stop,
+            :modality, :hooks, :idempotency_key, :ttl, :metadata,
+            :enrichments, :predictions
           )
 
           build_args = {
-            messages:        messages,
-            system:          kwargs[:system],
-            routing:         routing,
-            tools:           kwargs.fetch(:tools, []),
-            stream:          kwargs.fetch(:stream, false),
-            caller:          kwargs[:caller],
-            classification:  kwargs[:classification],
-            billing:         kwargs[:billing],
-            agent:           kwargs[:agent],
-            test:            kwargs[:test],
-            tracing:         kwargs[:tracing],
-            priority:        kwargs.fetch(:priority, :normal),
-            conversation_id: kwargs[:conversation_id],
-            extra:           extra
+            messages:         messages,
+            system:           kwargs[:system],
+            routing:          routing,
+            tools:            kwargs.fetch(:tools, []),
+            tool_choice:      kwargs[:tool_choice] || { mode: :auto },
+            stream:           kwargs.fetch(:stream, false),
+            generation:       kwargs[:generation] || {},
+            thinking:         kwargs[:thinking],
+            response_format:  kwargs[:response_format] || { type: :text },
+            context_strategy: kwargs.fetch(:context_strategy, :auto),
+            cache:            kwargs[:cache] || { strategy: :default, cacheable: true },
+            fork:             kwargs[:fork],
+            tokens:           kwargs[:tokens] || { max: 4096 },
+            stop:             kwargs[:stop] || { sequences: [] },
+            modality:         kwargs[:modality],
+            hooks:            kwargs[:hooks],
+            caller:           kwargs[:caller],
+            classification:   kwargs[:classification],
+            billing:          kwargs[:billing],
+            agent:            kwargs[:agent],
+            test:             kwargs[:test],
+            tracing:          kwargs[:tracing],
+            priority:         kwargs.fetch(:priority, :normal),
+            conversation_id:  kwargs[:conversation_id],
+            idempotency_key:  kwargs[:idempotency_key],
+            ttl:              kwargs[:ttl],
+            metadata:         kwargs[:metadata] || {},
+            enrichments:      kwargs[:enrichments] || {},
+            predictions:      kwargs[:predictions] || {},
+            extra:            extra
           }
           build_args[:id] = request_id if request_id
           build(**build_args)

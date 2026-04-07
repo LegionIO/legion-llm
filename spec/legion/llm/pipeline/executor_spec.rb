@@ -249,15 +249,15 @@ confidence: 0.9 }],
       executor = described_class.new(req)
       allow(executor).to receive(:step_provider_call)
       executor.call
-      expect(executor.enrichments[:conversation_history]).to be_an(Array)
-      expect(executor.enrichments[:conversation_history].size).to eq(2)
+      expect(executor.enrichments['context:conversation_history']).to be_an(Array)
+      expect(executor.enrichments['context:conversation_history'].size).to eq(2)
     end
 
-    it 'skips when no conversation_id' do
+    it 'does not load conversation history when no prior messages exist' do
       executor = described_class.new(request)
       allow(executor).to receive(:step_provider_call)
       executor.call
-      expect(executor.enrichments[:conversation_history]).to be_nil
+      expect(executor.enrichments['context:conversation_history']).to be_nil
     end
   end
 
@@ -285,11 +285,13 @@ confidence: 0.9 }],
       expect(messages.last[:content]).to eq('hi there')
     end
 
-    it 'skips when no conversation_id' do
+    it 'auto-generates conversation_id and stores messages' do
       executor = described_class.new(request)
       allow(executor).to receive(:step_provider_call)
-      expect(Legion::LLM::ConversationStore).not_to receive(:append)
       executor.call
+      # step_conversation_uuid auto-generates an id, so context_store will append
+      conv_id = executor.request.conversation_id
+      expect(conv_id).to start_with('conv_')
     end
   end
 

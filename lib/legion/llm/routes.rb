@@ -15,6 +15,93 @@ require 'legion/logging/helper'
 module Legion
   module LLM
     module Routes
+      # Mixin for dynamically-built client tool classes — keeps build_client_tool_class small.
+      module ClientToolMethods
+        private
+
+        def log_tool(level, ref, status, **details)
+          return unless defined?(Legion::Logging)
+
+          parts = ["[tool][#{ref}] #{status}"]
+          details.each { |k, v| parts << "#{k}=#{v}" }
+          Legion::Logging.send(level, parts.join(' '))
+        end
+
+        def summarize_tool_arg_keys(kwargs)
+          kwargs.keys.map(&:to_s).sort.join(',')
+        end
+
+        def summarize_tool_args(ref, kwargs)
+          case ref
+          when 'sh'
+            { args: summarize_tool_arg_keys(kwargs), command_provided: kwargs.key?(:command) || kwargs.key?(:cmd) || !kwargs.empty? }
+          when 'file_write'
+            content = kwargs[:content] || kwargs[:contents]
+            { args: summarize_tool_arg_keys(kwargs), bytes: content.to_s.bytesize }
+          when 'file_edit'
+            { args: summarize_tool_arg_keys(kwargs),
+              old_len: kwargs[:old_text].to_s.length, new_len: kwargs[:new_text].to_s.length }
+          else
+            { args: summarize_tool_arg_keys(kwargs) }
+          end
+        end
+
+        def dispatch_client_tool(ref, **kwargs)
+          case ref
+          when 'sh'
+            cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s
+            output, status = ::Open3.capture2e(cmd, chdir: Dir.pwd)
+            "exit=#{status.exitstatus}\n#{output}"
+          when 'file_read'
+            path = kwargs[:path] || kwargs[:file_path] || kwargs.values.first.to_s
+            ::File.exist?(path) ? ::File.read(path, encoding: 'utf-8') : "File not found: #{path}"
+          when 'file_write'
+            path = kwargs[:path] || kwargs[:file_path]
+            content = kwargs[:content] || kwargs[:contents]
+            ::File.write(path, content)
+            "Written #{content.to_s.bytesize} bytes to #{path}"
+          when 'file_edit'
+            path = kwargs[:path] || kwargs[:file_path]
+            old_text = kwargs[:old_text] || kwargs[:search]
+            new_text = kwargs[:new_text] || kwargs[:replace]
+            content = ::File.read(path, encoding: 'utf-8')
+            content.sub!(old_text, new_text)
+            ::File.write(path, content)
+            "Edited #{path}"
+          when 'list_directory'
+            path = ::File.expand_path(kwargs[:path] || kwargs[:dir] || Dir.pwd)
+            Dir.entries(path).reject { |e| e.start_with?('.') }.sort.join("\n")
+          when 'grep'
+            pattern = kwargs[:pattern] || kwargs[:query] || kwargs.values.first.to_s
+            path = kwargs[:path] || Dir.pwd
+            output, = ::Open3.capture2e('grep', '-rn', '--include=*.rb', pattern, path)
+            output.lines.first(50).join
+          when 'glob'
+            pattern = kwargs[:pattern] || kwargs.values.first.to_s
+            Dir.glob(pattern).first(100).join("\n")
+          when 'web_fetch'
+            url = kwargs[:url] || kwargs.values.first.to_s
+            require 'net/http'
+            uri = URI(url)
+            Net::HTTP.get(uri)
+          else
+            "Tool #{ref} is not executable server-side. Use a legion_ prefixed tool instead."
+          end
+        end
+
+        def notify_tool_event(type, ref, **data)
+          handler = Thread.current[:legion_tool_event_handler]
+          return unless handler
+
+          handler.call(
+            type:         type,
+            tool_call_id: Thread.current[:legion_current_tool_call_id],
+            tool_name:    ref,
+            **data
+          )
+        end
+      end
+
       def self.registered(app) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/AbcSize,Metrics/MethodLength
         app.helpers do # rubocop:disable Metrics/BlockLength
           include Legion::Logging::Helper
@@ -31,7 +118,7 @@ module Legion
               begin
                 parsed = Legion::JSON.load(raw)
               rescue StandardError => e
-                handle_exception(e, level: :debug, operation: 'llm.routes.parse_request_body')
+                handle_exception(e, level: :warn, operation: 'llm.routes.parse_request_body')
                 halt 400, { 'Content-Type' => 'application/json' },
                      Legion::JSON.dump({ error: { code: 'invalid_json', message: 'request body is not valid JSON' } })
               end
@@ -140,55 +227,31 @@ module Legion
             end
           end
 
-          # rubocop:disable Metrics/BlockLength
           define_method(:build_client_tool_class) do |tname, tdesc, tschema|
+            tool_ref = tname
             klass = Class.new(RubyLLM::Tool) do
+              include Legion::LLM::Routes::ClientToolMethods
+
               description tdesc
-              define_method(:name) { tname }
-              tool_ref = tname
+              define_method(:name) { tool_ref }
 
               define_method(:execute) do |**kwargs|
-                case tool_ref
-                when 'sh'
-                  cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s
-                  output, status = ::Open3.capture2e(cmd, chdir: Dir.pwd)
-                  "exit=#{status.exitstatus}\n#{output}"
-                when 'file_read'
-                  path = kwargs[:path] || kwargs[:file_path] || kwargs.values.first.to_s
-                  ::File.exist?(path) ? ::File.read(path, encoding: 'utf-8') : "File not found: #{path}"
-                when 'file_write'
-                  path = kwargs[:path] || kwargs[:file_path]
-                  content = kwargs[:content] || kwargs[:contents]
-                  ::File.write(path, content)
-                  "Written #{content.to_s.bytesize} bytes to #{path}"
-                when 'file_edit'
-                  path = kwargs[:path] || kwargs[:file_path]
-                  old_text = kwargs[:old_text] || kwargs[:search]
-                  new_text = kwargs[:new_text] || kwargs[:replace]
-                  content = ::File.read(path, encoding: 'utf-8')
-                  content.sub!(old_text, new_text)
-                  ::File.write(path, content)
-                  "Edited #{path}"
-                when 'list_directory'
-                  path = kwargs[:path] || kwargs[:dir] || Dir.pwd
-                  Dir.entries(path).reject { |e| e.start_with?('.') }.sort.join("\n")
-                when 'grep'
-                  pattern = kwargs[:pattern] || kwargs[:query] || kwargs.values.first.to_s
-                  path = kwargs[:path] || Dir.pwd
-                  output, = ::Open3.capture2e('grep', '-rn', '--include=*.rb', pattern, path)
-                  output.lines.first(50).join
-                when 'glob'
-                  pattern = kwargs[:pattern] || kwargs.values.first.to_s
-                  Dir.glob(pattern).first(100).join("\n")
-                when 'web_fetch'
-                  url = kwargs[:url] || kwargs.values.first.to_s
-                  require 'net/http'
-                  uri = URI(url)
-                  Net::HTTP.get(uri)
-                else
-                  "Tool #{tool_ref} is not executable server-side. Use a legion_ prefixed tool instead."
-                end
+                summary = summarize_tool_args(tool_ref, kwargs)
+                log_tool(:info, tool_ref, 'executing', **summary)
+                t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+                result = dispatch_client_tool(tool_ref, **kwargs)
+                ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round(1)
+                log_tool(:info, tool_ref, 'completed', duration_ms: ms, result_size: result.to_s.bytesize)
+                notify_tool_event(:tool_result, tool_ref, result: result.to_s[0, 4096])
+                result
               rescue StandardError => e
+                ms = begin
+                  ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round(1)
+                rescue StandardError
+                  nil
+                end
+                log_tool(:error, tool_ref, 'failed', duration_ms: ms, error: e.message)
+                notify_tool_event(:tool_error, tool_ref, error: e.message)
                 if defined?(Legion::Logging) && Legion::Logging.respond_to?(:log_exception)
                   Legion::Logging.log_exception(e, payload_summary: "client tool #{tool_ref} failed", component_type: :api)
                 end
@@ -201,7 +264,6 @@ module Legion
             handle_exception(e, level: :warn, operation: "llm.routes.build_client_tool_class.#{tname}")
             nil
           end
-          # rubocop:enable Metrics/BlockLength
 
           define_method(:extract_tool_calls) do |pipeline_response|
             tools_data = pipeline_response.tools
@@ -217,10 +279,12 @@ module Legion
           end
 
           define_method(:emit_sse_event) do |stream, event_name, payload|
+            level = event_name == 'text-delta' ? :debug : :info
+            log.send(level, "[sse][emit] event=#{event_name} keys=#{payload.is_a?(Hash) ? payload.keys.join(',') : 'n/a'}")
             stream << "event: #{event_name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
           end
 
-          define_method(:emit_timeline_tool_events) do |stream, pipeline_response|
+          define_method(:emit_timeline_tool_events) do |stream, pipeline_response, skip_tool_results: false|
             timeline = Array(pipeline_response.timeline)
             timeline.each do |event|
               key = event[:key].to_s
@@ -230,6 +294,9 @@ module Legion
               next if name.to_s.empty?
 
               if key.start_with?('tool:result:')
+                # Skip replay when real-time tool events already emitted these during streaming
+                next if skip_tool_results
+
                 event_name = data[:status].to_s == 'error' ? 'tool-error' : 'tool-result'
                 emit_sse_event(stream, event_name, {
                                  toolCallId: data[:tool_call_id],
@@ -520,6 +587,35 @@ module Legion
             # rubocop:disable Metrics/BlockLength
             stream do |out|
               full_text = +''
+
+              executor.tool_event_handler = lambda { |event|
+                log.info("[inference][tool-event] type=#{event[:type]} tool=#{event[:tool_name]} id=#{event[:tool_call_id]}")
+                case event[:type]
+                when :tool_call
+                  emit_sse_event(out, 'tool-call', {
+                                   toolCallId: event[:tool_call_id],
+                                   toolName:   event[:tool_name],
+                                   args:       event[:arguments],
+                                   timestamp:  Time.now.utc.iso8601
+                                 })
+                when :tool_result
+                  emit_sse_event(out, 'tool-result', {
+                                   toolCallId: event[:tool_call_id],
+                                   toolName:   event[:tool_name],
+                                   result:     event[:result],
+                                   timestamp:  Time.now.utc.iso8601
+                                 })
+                when :tool_error
+                  emit_sse_event(out, 'tool-error', {
+                                   toolCallId: event[:tool_call_id],
+                                   toolName:   event[:tool_name],
+                                   result:     event[:error],
+                                   status:     'error',
+                                   timestamp:  Time.now.utc.iso8601
+                                 })
+                end
+              }
+
               pipeline_response = executor.call_stream do |chunk|
                 text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
                 next if text.empty?
@@ -528,16 +624,7 @@ module Legion
                 emit_sse_event(out, 'text-delta', { delta: text })
               end
 
-              extract_tool_calls(pipeline_response).each do |tool_call|
-                emit_sse_event(out, 'tool-call', {
-                                 toolCallId: tool_call[:id],
-                                 toolName:   tool_call[:name],
-                                 args:       tool_call[:arguments],
-                                 timestamp:  Time.now.utc.iso8601
-                               })
-              end
-
-              emit_timeline_tool_events(out, pipeline_response)
+              emit_timeline_tool_events(out, pipeline_response, skip_tool_results: !executor.tool_event_handler.nil?)
 
               enrichments = pipeline_response.enrichments
               emit_sse_event(out, 'enrichment', enrichments) if enrichments.is_a?(Hash) && !enrichments.empty?

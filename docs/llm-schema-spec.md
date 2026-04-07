@@ -1,6 +1,75 @@
 # Legion::LLM Schema Specification
 
-## Status: Draft / Brainstorming
+## Status: Mixed — Envelope Implemented, Inner Types Aspirational
+
+**Implemented in**: `Pipeline::Request` and `Pipeline::Response` (`lib/legion/llm/pipeline/request.rb`, `response.rb`)
+**Version**: 1.0.0 (schema_version field on all payloads)
+**Last verified**: 2026-04-07
+
+The outer envelope is implemented: all 32 `Request` fields and 34 `Response` fields exist as `Data.define` members. However, many inner types (Message, ContentBlock, ToolCall, Chunk, Conversation, Feedback, ErrorResponse) are **not yet implemented as dedicated structs** — they are plain hashes or strings in the current code. Several Response fields are **always nil or empty** in the pipeline today.
+
+This document serves as both the **canonical reference** for what is implemented and the **target specification** for what inner types should look like. Sections are annotated with implementation status.
+
+For the AMQP wire protocol (exchange topology, queue configuration, message envelope, routing keys), see the Legion Wire Protocol spec in the LegionIO docs repo.
+
+### Implementation Status Matrix
+
+| Section | Status | Notes |
+|---------|--------|-------|
+| **Request (envelope)** | Implemented | All 32 fields exist on `Data.define`. `from_chat_args` maps all to first-class fields. |
+| **Response (envelope)** | Partial | All 34 fields exist. 10 fields always nil/empty (see below). |
+| **Message** | Not implemented | Plain `{ role:, content: }` hashes. No struct, no id/seq/status/version. |
+| **ContentBlock** | Not implemented | Content is always String. Only `:text` block used (system prompt caching). |
+| **Tool** | Partial | `ToolAdapter` has name/description/parameters. No `source` on object, no `version`. |
+| **ToolCall** | Partial | `id`, `name`, `arguments` + `exchange_id`, `source`, `status`, `duration_ms`, `result` merged from Timeline. `error` field never populated. Timeline lookup by tool name, not call ID (breaks duplicate tool calls). |
+| **ToolChoice** | Stub | Field exists on Request, defaults to `{ mode: :auto }`, never forwarded to provider. |
+| **Enrichment** | Implemented | RAG/GAIA enrichments work. Value shapes vary between steps. |
+| **Prediction** | Partial | Request-side works. Response-side actuals never filled in. |
+| **Tracing** | Implemented | trace_id, span_id, exchange_id all generated and propagated. |
+| **Classification** | Partial | Labels applied but routing restrictions not enforced. |
+| **Caller** | Implemented | Identity propagated, Profile derived. |
+| **Agent** | Not implemented | Response `agent` field always nil. |
+| **Billing** | Partial | Per-request cap only. No cumulative budget enforcement. |
+| **Test** | Implemented | Test mode flags propagated. |
+| **Modality** | Not implemented | Field exists, not acted upon. |
+| **Hooks** | Partial | Pre/post hooks on Request. Response hooks not fired. |
+| **Feedback** | Not implemented | No struct, class, or storage. Spec only. |
+| **Audit** | Implemented | Uses symbol keys (not string keys as spec claims). |
+| **Timeline** | Implemented | Event recording works. Participant tracking works. |
+| **Participants** | Implemented | Tracked via Timeline. |
+| **Wire Capture** | Not implemented | Response `wire` field always nil. |
+| **Retry** | Not implemented | Response `retry` field always nil. |
+| **Safety** | Not implemented | Response `safety` field always nil. |
+| **Rate Limit** | Not implemented | Response `rate_limit` field always nil. |
+| **Thinking** | Partial | Request thinking config mapped to first-class field. Response thinking **never populated** by executor (always nil). |
+| **Context Window** | Not implemented | `tokens.context_window`, `utilization`, `headroom` never populated. |
+| **Validation** | Not implemented | Response `validation` field always nil. |
+| **Provider Features** | Not implemented | Response `features` field always nil. |
+| **Model Deprecation** | Not implemented | Response `deprecation` field always nil. |
+| **Cache** | Partial | Request cache mapped to first-class field. Response `cache` always `{}`. |
+| **Chunk (Streaming)** | Not implemented | Raw RubyLLM chunks passed through; no spec-compliant Chunk struct. |
+| **ErrorResponse** | Not implemented | No struct; only exception classes (`LLMError` hierarchy). |
+| **Conversation** | Partial | `ConversationStore` exists but no `Conversation` struct. Limited fields. |
+| **Config (Generation)** | Implemented | `from_chat_args` now maps generation, thinking, response_format, etc. to first-class fields. |
+| **Quality** | Implemented | Returns `{ score:, band:, source: }` (not `{ score:, acceptable:, checker: }` as spec says). |
+| **Cost** | Implemented | Populated via `CostEstimator.estimate` with `estimated_usd`, `provider`, `model`. |
+| **Routing (response)** | Implemented | `provider`, `model`, `strategy`, `tier`, `escalated`, `escalation_chain`, `latency_ms` populated. |
+| **Stop** | Implemented | `stop.reason` extracted from provider response (`:end_turn`, `:tool_use`, etc.). |
+| **Metering** | Not implemented | Module exists but not wired into pipeline steps. |
+
+#### Response Fields Always Nil/Empty
+
+These Response fields exist on the `Data.define` but are **never populated** by the executor today:
+
+- `agent` — always nil
+- `cache` — always `{}`
+- `safety` — always nil
+- `rate_limit` — always nil
+- `features` — always nil
+- `deprecation` — always nil
+- `validation` — always nil
+- `wire` — always nil
+- `retry` — always nil
 
 ## Design Principles
 
@@ -26,6 +95,8 @@ schema_version: "1.0.0"   # semver -- major.minor.patch
 ---
 
 ## Message
+
+> **Implementation status: NOT IMPLEMENTED** — No `Message` struct exists. Messages are plain hashes with only `role` and `content` in the pipeline. `ConversationStore` persists additional fields (`id`, `seq`, `parent_id`, `agent_id`, `created_at`) in its DB rows, but these are not surfaced as a structured Message object.
 
 The atomic unit of conversation. Every exchange between user, assistant, and tools is a Message.
 
@@ -77,6 +148,8 @@ message.text  # returns text content regardless of String vs Array<ContentBlock>
 ---
 
 ## Content Blocks
+
+> **Implementation status: NOT IMPLEMENTED** — No `ContentBlock` struct exists. Content is always a plain String in the pipeline. The only place a typed block hash is constructed is for system prompt caching (`{ type: :text, content: ..., cache_control: ... }`). No image, audio, video, document, tool_use, tool_result, citation, or error block handling exists.
 
 Multimodal content. When `Message.content` is an array, each element is a ContentBlock.
 
@@ -199,6 +272,8 @@ data:            Hash?         # structured error data
 
 ## Tool
 
+> **Implementation status: PARTIAL** — `ToolAdapter` wraps `RubyLLM::Tool` with `name`, `description`, `parameters`. The `source` field exists as a parallel lookup in `find_tool_source` (not on the tool object). `version` does not exist.
+
 Tool definitions available to the LLM.
 
 ```
@@ -227,6 +302,8 @@ Used by RBAC (can this caller use tools from this source?) and audit (which syst
 
 ## ToolCall
 
+> **Implementation status: PARTIAL** — Tool calls are hashes with `id`, `name`, `arguments` and optionally `exchange_id`, `source`, `status`, `duration_ms`, `result` merged from matching Timeline events. The `error` field is never populated. Timeline lookup uses tool name (not call ID), so duplicate invocations of the same tool in one response will only have execution data for the last invocation.
+
 A tool invocation made by the assistant, with execution results.
 
 ```
@@ -251,6 +328,8 @@ Always a parsed Hash, never a JSON string. Provider adapters that receive argume
 
 ## ToolChoice
 
+> **Implementation status: STUB** — Field exists on Request, defaults to `{ mode: :auto }`. The `:specific` mode's `name` field is not handled. The `tool_choice` value is never forwarded to the underlying RubyLLM provider call.
+
 Controls how the LLM uses available tools.
 
 ```
@@ -262,6 +341,8 @@ ToolChoice
 ---
 
 ## Enrichment
+
+> **Implementation status: IMPLEMENTED** — RAG and GAIA enrichments work. Note: value shapes are inconsistent across pipeline steps — not all enrichments include `content:`, `data:`, `duration_ms:`, `timestamp:` as spec describes.
 
 Things that *shaped* the request during processing. Any system can contribute enrichments without schema changes. Enrichments modify or observe the request -- for decisions and outcomes, see [Audit](#audit).
 
@@ -318,6 +399,8 @@ Adding a new system requires zero schema changes -- just add a new key.
 ---
 
 ## Prediction
+
+> **Implementation status: PARTIAL** — Request-side predictions work (components can contribute predictions). Response-side actuals (`actual_value`, `accurate`) are never filled in — no post-execution comparison occurs.
 
 Hypothesis recorded before execution, compared to reality after execution. Enables self-improving systems. Any component in the pipeline can contribute predictions.
 
@@ -395,6 +478,8 @@ response.predictions.count { |_, v| v[:correct] }.to_f / response.predictions.si
 
 ## Tracing & Correlation
 
+> **Implementation status: IMPLEMENTED** — `trace_id`, `span_id`, `exchange_id` all generated and propagated via `Pipeline::Tracing`.
+
 OpenTelemetry-compatible distributed tracing. Groups related requests across agentic loops, forks, and multi-step tasks.
 
 ```
@@ -423,6 +508,8 @@ Tracing is present on Request, Response, ErrorResponse, and Chunk.
 ---
 
 ## Exchange (Per-Hop Tracking)
+
+> **Implementation status: IMPLEMENTED** — `conversation_id`, `request_id` (mapped to `id`), and `exchange_id` all generated via `Pipeline::Tracing` and propagated through the pipeline.
 
 Three-level ID hierarchy inspired by SIP's Call-ID / CSeq / Branch/Via model. Tracks every hop within a single request.
 
@@ -487,6 +574,8 @@ In practice, each exchange would become a child span under the request's span in
 
 ## Data Classification & Compliance
 
+> **Implementation status: PARTIAL** — Classification labels are applied to requests. However, routing restrictions (e.g., preventing PHI-tagged data from going to certain providers) are not enforced.
+
 Data governance for enterprise adoption. Controls where data can be processed, how long it's retained, and what it contains.
 
 ```
@@ -537,6 +626,8 @@ Provider registry includes each provider's processing jurisdiction. Router match
 ---
 
 ## Caller
+
+> **Implementation status: IMPLEMENTED** — Caller identity propagated through the pipeline. `Profile.derive` reads `caller[:requested_by][:type]` to determine step skipping.
 
 Auth-level identity tracking. Who authenticated to make this request, and on whose behalf. Separate from `agent` (which tracks AI entity identity).
 
@@ -602,6 +693,8 @@ RBAC checks `caller.requested_by` for permission evaluation. If `requested_for` 
 
 ## Agent Identity
 
+> **Implementation status: NOT IMPLEMENTED** — The `agent` field exists on both Request and Response but is always nil. No agent identity is attached during pipeline execution.
+
 Tracks which AI entity is executing the request. Not about auth (that's `caller`) -- about the AI agent doing the work.
 
 ```
@@ -648,6 +741,8 @@ Multiple LLM requests can share a `task_id`, enabling: "Show me everything that 
 
 ## Billing & Budget
 
+> **Implementation status: PARTIAL** — Per-request cost cap works. Cumulative budget tracking (daily/monthly limits) is not implemented. Metering module exists but is not wired into pipeline steps.
+
 Cost tracking, budget enforcement, and rate limiting.
 
 ```
@@ -689,6 +784,8 @@ Checked in the pipeline before the provider call:
 ---
 
 ## Test & Evaluation Mode
+
+> **Implementation status: IMPLEMENTED** — Test mode flags propagated through the pipeline.
 
 Controls for testing, benchmarking, replay, and experimentation.
 
@@ -742,6 +839,8 @@ Experiment results are tracked via predictions (expected: better quality with GA
 ---
 
 ## Modality
+
+> **Implementation status: NOT IMPLEMENTED** — The `modality` field exists on Request but is not acted upon by the pipeline or provider adapters.
 
 Declares input and output modality expectations. Guides routing (not all providers support all combinations) and future-proofs for multimodal evolution.
 
@@ -799,6 +898,8 @@ Provider capabilities:
 
 ## Lifecycle Hooks
 
+> **Implementation status: PARTIAL** — Pre/post hooks on Request are supported. Response-side hook firing is not implemented.
+
 Caller-declared injection points in the pipeline. Named hooks registered by extensions or configuration.
 
 ```
@@ -838,6 +939,8 @@ Hooks receive the full request/response context and can add enrichments, but can
 ---
 
 ## Feedback
+
+> **Implementation status: NOT IMPLEMENTED** — No Feedback struct, class, or storage exists. No code submits, receives, or stores feedback.
 
 User or automated quality feedback on specific messages. Lives on the Conversation, not on individual requests. Closes the learning loop.
 
@@ -883,6 +986,8 @@ Quality checkers and GAIA can also submit feedback:
 ---
 
 ## Audit
+
+> **Implementation status: IMPLEMENTED** — Audit records are populated by the pipeline. Note: uses symbol keys (`:step`, `:action`), not string keys as some examples in this spec show.
 
 Record of what *happened* during pipeline processing -- decisions, actions, outcomes. Separate from enrichments (which record what *shaped* the request). Response-only.
 
@@ -989,6 +1094,8 @@ response.audit[:"persistence:store"][:data][:method]  # => :direct
 ---
 
 ## Pipeline Timeline
+
+> **Implementation status: IMPLEMENTED** — `Pipeline::Timeline` records ordered events with participant tracking.
 
 Inspired by [Homer/SIPCAPTURE](https://github.com/sipcapture/homer) call flow diagrams. A unified, globally-sequenced timeline of **everything** that happened during a request. Reconstructs the full call flow across all systems -- enrichments, audit, tool calls, provider calls, connections -- in one ordered record.
 
@@ -1125,6 +1232,8 @@ The timeline is built during pipeline execution and returned on the response. It
 
 ## Participants
 
+> **Implementation status: IMPLEMENTED** — Tracked via `Pipeline::Timeline`.
+
 All systems that touched this request. Enables Homer-style column headers for call flow visualization. Response-only, populated by the pipeline.
 
 ```
@@ -1153,6 +1262,8 @@ Auto-populated: every unique `from` and `to` value in the timeline becomes a par
 ---
 
 ## Wire Capture
+
+> **Implementation status: NOT IMPLEMENTED** — Response `wire` field is always nil. No capture of raw provider payloads occurs.
 
 Raw request and response payloads as sent to/received from the provider. For debugging translator issues, you need both sides of the wire. Opt-in (can be expensive to store).
 
@@ -1223,6 +1334,8 @@ This lives on `response.routing.connection` since it's part of the routing outco
 
 ## Retry
 
+> **Implementation status: NOT IMPLEMENTED** — Response `retry` field is always nil. Retry logic exists in the executor (rate limit rescue) but results are not captured in the retry struct.
+
 Distinct from escalation. Retries are the same provider/model attempted again after a transient failure. Escalation is switching to a different provider/model.
 
 ```
@@ -1268,6 +1381,8 @@ response.retry = {
 ---
 
 ## Content Safety
+
+> **Implementation status: NOT IMPLEMENTED** — Response `safety` field is always nil. Provider safety results are not captured.
 
 Provider-reported content filtering results. Different from classification (which is our data governance). This is the provider saying "I evaluated this content against my safety policies."
 
@@ -1322,6 +1437,8 @@ response.safety = {
 
 ## Rate Limit State
 
+> **Implementation status: NOT IMPLEMENTED** — Response `rate_limit` field is always nil. Provider rate limit headers are not captured (rate limit errors are rescued and retried, but quota state is not stored).
+
 Provider quota state returned in response headers. Structured and always captured (not opt-in like wire). Critical for routing decisions.
 
 ```
@@ -1361,6 +1478,8 @@ end
 
 ## Thinking & Reasoning
 
+> **Implementation status: PARTIAL** — Request-side thinking configuration is mapped to the first-class `thinking` field by `from_chat_args`. Response-side `thinking` field exists on the Response struct but is **never populated** by the executor — it is always nil.
+
 Controls for extended thinking, chain-of-thought, and reasoning behavior. Separate from generation parameters (temperature, top_p) because reasoning is about *how deeply* the model thinks, not *how randomly* it samples.
 
 ### Request side
@@ -1394,6 +1513,8 @@ Thinking tokens are tracked separately from regular output tokens because they h
 ---
 
 ## Context Window Utilization
+
+> **Implementation status: NOT IMPLEMENTED** — `tokens.context_window`, `tokens.utilization`, and `tokens.headroom` are never populated on the Response. Only `input_tokens` and `output_tokens` are set.
 
 Expands response-side tokens with capacity information. Drives context strategy decisions.
 
@@ -1439,6 +1560,8 @@ end
 
 ## Structured Output Validation
 
+> **Implementation status: NOT IMPLEMENTED** — Response `validation` field is always nil. `StructuredOutput` module exists for enforcing schemas but does not populate this struct.
+
 When `response_format.type` is `:json` or `:json_schema`, reports whether the response actually validated.
 
 Response-only. Added to response alongside quality.
@@ -1479,6 +1602,8 @@ response.validation = {
 
 ## Provider Features
 
+> **Implementation status: NOT IMPLEMENTED** — Response `features` field is always nil.
+
 Post-hoc report of which provider-specific features actually activated on this request. Different from capabilities (what the provider CAN do) -- this is what it DID.
 
 Response-only. Hash-keyed by feature name.
@@ -1518,6 +1643,8 @@ end
 ---
 
 ## Model Deprecation
+
+> **Implementation status: NOT IMPLEMENTED** — Response `deprecation` field is always nil.
 
 Structured deprecation warnings from providers. Separate from the `warnings` array because automated systems need to act on these programmatically.
 
@@ -1563,6 +1690,8 @@ end
 ---
 
 ## Cache
+
+> **Implementation status: PARTIAL** — Request-side `cache` field is mapped to the first-class field by `from_chat_args` (defaults to `{ strategy: :default, cacheable: true }`). Response-side `cache` field is always `{}`.
 
 Symmetric caching controls on request and response. Replaces a flat strategy symbol with structured metadata.
 
@@ -1630,6 +1759,8 @@ Response: cache: { hit: true, key: "sha256:abc123", tier: :local, age: 45, expir
 ---
 
 ## Request
+
+> **Implementation status: IMPLEMENTED (envelope)** — All 32 fields exist as `Data.define` members with `.build` and `.from_chat_args` constructors. All fields including `generation`, `thinking`, `response_format`, `context_strategy`, `cache`, `fork`, `tokens`, `stop`, `modality`, `hooks`, `idempotency_key`, `ttl`, `metadata`, `enrichments`, and `predictions` are mapped to first-class struct members. Convenience accessors (`.model`, `.provider`) described in the spec are not defined.
 
 What goes into the Legion::LLM pipeline.
 
@@ -1795,6 +1926,8 @@ For queue ordering when requests go through RMQ:
 
 ## Response
 
+> **Implementation status: PARTIAL (envelope)** — All 34 fields exist as `Data.define` members. 9 fields are always nil/empty (see status matrix above). `routing` populates `provider`, `model`, `strategy`, `tier`, `escalated`, `escalation_chain`, `latency_ms`. `stop.reason` extracted from provider response (falls back to `:end_turn`). `quality` returns `{ score:, band:, source:, signals: }` from `ConfidenceScorer` (not `{ score:, acceptable:, checker: }` as the Response struct below shows). `cost` populated via `CostEstimator.estimate` with `estimated_usd`, `provider`, `model`. Convenience accessors (`.model`, `.provider`) are not defined.
+
 What comes back from the Legion::LLM pipeline.
 
 ```
@@ -1843,7 +1976,7 @@ Response
 
   # Stop (symmetric with request)
   stop:              Hash
-    reason:          Symbol       # :end_turn, :tool_calls, :max_tokens, :safety, :stop_sequence
+    reason:          Symbol       # :end_turn, :tool_use, :max_tokens, :safety, :stop_sequence
     sequence:        String?      # which stop sequence was hit (nil if none)
 
   # Tools (symmetric with request)
@@ -1984,6 +2117,8 @@ response.participants          # ["pipeline", "rbac", "provider:claude", ...]
 
 ## Chunk (Streaming)
 
+> **Implementation status: NOT IMPLEMENTED** — No `Chunk` struct exists. Streaming (`call_stream`) yields raw RubyLLM chunk objects directly to callers with no translation to the spec format.
+
 Incremental data during a streamed response.
 
 ```
@@ -2014,6 +2149,8 @@ Chunk
 ---
 
 ## ErrorResponse
+
+> **Implementation status: NOT IMPLEMENTED** — No `ErrorResponse` struct exists. Errors are raised as exceptions from the `Legion::LLM` error hierarchy: `LLMError` (base), `AuthError`, `RateLimitError`, `ContextOverflow`, `ProviderError`, `ProviderDown`, `UnsupportedCapability`, `PipelineError`, `TokenBudgetExceeded`, `EmbeddingUnavailableError`. Additionally, `EscalationExhausted`, `DaemonDeniedError`, `DaemonRateLimitedError`, and `PrivacyModeError` inherit from `StandardError` directly (not `LLMError`). These are Ruby exceptions, not structured response payloads.
 
 Standard error format for failed requests.
 
@@ -2058,6 +2195,8 @@ ErrorResponse
 ---
 
 ## Conversation
+
+> **Implementation status: PARTIAL** — `ConversationStore` exists as an in-memory LRU (256 slots) with optional DB persistence. No `Conversation` struct — conversations are plain hashes (`{ messages: [], metadata: {}, lru_tick: N }`). DB persistence stores `id`, `caller_identity`, `metadata` (JSON blob), `created_at`, `updated_at`. Most spec fields (`title`, `summary`, `state`, `shared`, `participants`, `tags`, `pinned`, `usage_total`, `routing_history`) exist only as arbitrary metadata blob entries, not first-class fields.
 
 The persistent conversation object stored in the ConversationStore.
 
@@ -2119,6 +2258,8 @@ Legion::LLM.chat(
 
 ## Config (Generation Parameters)
 
+> **Implementation status: PARTIAL** — Generation parameters are mapped to the first-class `generation` field by `from_chat_args`. However, provider adapters only forward `model` and `provider` to RubyLLM, not temperature/top_p/etc from the `generation` hash.
+
 Sent in `request.generation`. Provider adapters map supported parameters and ignore unsupported ones.
 
 ```
@@ -2161,6 +2302,8 @@ response_format:
 ---
 
 ## Provider Adapter Contract
+
+> **Implementation status: PARTIAL** — Provider LEXs (extensions-ai/) exist and work for chat/embed. The formal `ProviderAdapter` interface with `Translator` is not enforced — providers integrate via RubyLLM's native provider system.
 
 Every provider LEX must implement `Legion::LLM::ProviderAdapter` including a `Translator`.
 
