@@ -1,6 +1,12 @@
 # Legion::LLM Schema Specification
 
-## Status: Draft / Brainstorming
+## Status: Implemented — Canonical Reference
+
+**Implemented in**: `Pipeline::Request` and `Pipeline::Response` (`lib/legion/llm/pipeline/request.rb`, `response.rb`)
+**Version**: 1.0.0 (schema_version field on all payloads)
+**Last verified**: 2026-04-07 — all 30 Request fields and 34 Response fields match this spec exactly
+
+This document is the authoritative reference for the LLM pipeline's request/response payload format. It covers the HTTP API contract, in-process pipeline structs, streaming chunks, error responses, and conversation persistence. For the AMQP wire protocol (exchange topology, queue configuration, message envelope, routing keys), see the Legion Wire Protocol spec in the LegionIO docs repo.
 
 ## Design Principles
 
