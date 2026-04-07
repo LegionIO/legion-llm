@@ -118,7 +118,7 @@ module Legion
               begin
                 parsed = Legion::JSON.load(raw)
               rescue StandardError => e
-                handle_exception(e, level: :debug, operation: 'llm.routes.parse_request_body')
+                handle_exception(e, level: :warn, operation: 'llm.routes.parse_request_body')
                 halt 400, { 'Content-Type' => 'application/json' },
                      Legion::JSON.dump({ error: { code: 'invalid_json', message: 'request body is not valid JSON' } })
               end

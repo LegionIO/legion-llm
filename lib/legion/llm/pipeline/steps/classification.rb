@@ -105,7 +105,7 @@ module Legion
 
             { level: level.to_sym }
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.classification.default')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.classification.default')
             nil
           end
         end

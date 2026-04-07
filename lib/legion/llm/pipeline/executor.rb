@@ -801,7 +801,7 @@ module Legion
           attrs = Steps::SpanAnnotator.attributes_for(step_name, audit: @audit, enrichments: @enrichments)
           attrs.each { |key, val| span.set_attribute(key, val) unless val.nil? }
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.annotate_span', step: step_name)
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.annotate_span', step: step_name)
           nil
         end
 
@@ -826,7 +826,7 @@ module Legion
             span.set_attribute('routing.tier', data[:tier].to_s) if data[:tier]
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.annotate_top_level_span')
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.annotate_top_level_span')
           nil
         end
 
