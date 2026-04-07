@@ -1,5 +1,20 @@
 # Legion LLM Changelog
 
+## [0.6.22] - 2026-04-07
+
+### Fixed
+- Classification LEVELS ordering: swapped `[:public, :internal, :restricted, :confidential]` to correct `[:public, :internal, :confidential, :restricted]` so severity comparisons work properly
+- `Response.from_ruby_llm` now extracts actual `stop_reason` from provider response instead of hardcoding `:end_turn`
+- `Request.from_chat_args` maps 16 fields (`tool_choice`, `generation`, `thinking`, `response_format`, `context_strategy`, `cache`, `fork`, `tokens`, `stop`, `modality`, `hooks`, `idempotency_key`, `ttl`, `metadata`, `enrichments`, `predictions`) to first-class struct members instead of dumping into `extra`
+- `build_response` populates routing details (strategy, tier, escalation chain, latency), cost estimation via `CostEstimator`, and actual stop reason instead of hardcoded defaults
+- `response_tool_calls` merges execution data (exchange_id, source, status, duration_ms, result) from timeline events into tool call hashes
+- `step_conversation_uuid` now auto-generates `conv_<hex>` when no conversation_id is provided (was a no-op)
+- `step_response_normalization` now normalizes all enrichment keys to string format (was a no-op)
+- Enrichment key `[:conversation_history]` corrected to `['context:conversation_history']` for consistent `source:type` pattern
+
+### Changed
+- Schema spec (`docs/llm-schema-spec.md`) updated: ToolCall, Config(Generation), Cost, Routing(response), Stop status changed from Partial/Not-implemented to Implemented
+
 ## [0.6.21] - 2026-04-07
 
 ### Added

@@ -15,7 +15,7 @@ RSpec.describe 'Pipeline streaming end-to-end' do
     mock_session = double('session', with_tool: nil)
     allow(RubyLLM).to receive(:chat).and_return(mock_session)
     mock_response = double('response', content: 'full response', input_tokens: 10, output_tokens: 8, cache_read_tokens: 0, cache_write_tokens: 0,
-tool_calls: nil)
+tool_calls: nil, stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).with(:content).and_return(true)
     allow(mock_response).to receive(:respond_to?).with(:input_tokens).and_return(true)
     allow(mock_response).to receive(:respond_to?).with(:output_tokens).and_return(true)
@@ -23,6 +23,7 @@ tool_calls: nil)
     allow(mock_response).to receive(:respond_to?).with(:cache_write_tokens).and_return(true)
     allow(mock_response).to receive(:respond_to?).with(:model_id).and_return(false)
     allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
+    allow(mock_response).to receive(:respond_to?).with(:stop_reason).and_return(true)
     allow(mock_session).to receive(:ask).and_yield('full ').and_yield('response').and_return(mock_response)
 
     chunks = []
@@ -49,7 +50,8 @@ tool_calls: nil)
       original.call(*args, **kwargs)
     end
 
-    mock_response = double('response', content: 'done', input_tokens: 5, output_tokens: 3, cache_read_tokens: 0, cache_write_tokens: 0, tool_calls: nil)
+    mock_response = double('response', content: 'done', input_tokens: 5, output_tokens: 3, cache_read_tokens: 0, cache_write_tokens: 0, tool_calls: nil,
+stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).and_return(true)
     allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
     allow(mock_session).to receive(:ask) do |_msg, &blk|
@@ -69,7 +71,8 @@ tool_calls: nil)
     chunk2 = double('chunk2', content: 'world')
     mock_session = double('session', with_tool: nil)
     allow(RubyLLM).to receive(:chat).and_return(mock_session)
-    mock_response = double('response', content: 'Hello world', input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0, tool_calls: nil)
+    mock_response = double('response', content: 'Hello world', input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0,
+tool_calls: nil, stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).and_return(true)
     allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
     allow(mock_session).to receive(:ask).and_yield(chunk1).and_yield(chunk2).and_return(mock_response)
@@ -85,7 +88,8 @@ tool_calls: nil)
   it 'forwards caller: to response.caller in pipeline streaming mode' do
     mock_session = double('session', with_tool: nil)
     allow(RubyLLM).to receive(:chat).and_return(mock_session)
-    mock_response = double('response', content: 'ok', input_tokens: 3, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, tool_calls: nil)
+    mock_response = double('response', content: 'ok', input_tokens: 3, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, tool_calls: nil,
+stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).and_return(true)
     allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
     allow(mock_session).to receive(:ask).and_return(mock_response)
@@ -115,7 +119,7 @@ tool_calls: nil)
     allow(mock_session).to receive(:add_message)
 
     mock_response = double('response', content: 'aligned', input_tokens: 9, output_tokens: 4, cache_read_tokens: 0, cache_write_tokens: 0,
-tool_calls: nil)
+tool_calls: nil, stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).and_return(true)
     allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
     allow(mock_session).to receive(:ask).and_return(mock_response)

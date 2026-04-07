@@ -9,7 +9,7 @@ module Legion
         module Classification
           include Legion::Logging::Helper
 
-          LEVELS = %i[public internal restricted confidential].freeze
+          LEVELS = %i[public internal confidential restricted].freeze
 
           PII_PATTERNS = {
             ssn:   /\b\d{3}-\d{2}-\d{4}\b/,

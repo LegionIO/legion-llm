@@ -21,7 +21,7 @@ For the AMQP wire protocol (exchange topology, queue configuration, message enve
 | **Message** | Not implemented | Plain `{ role:, content: }` hashes. No struct, no id/seq/status/version. |
 | **ContentBlock** | Not implemented | Content is always String. Only `:text` block used (system prompt caching). |
 | **Tool** | Partial | `ToolAdapter` has name/description/parameters. No `source` on object, no `version`. |
-| **ToolCall** | Partial | Only `id`, `name`, `arguments` populated. Other fields in Timeline only. |
+| **ToolCall** | Implemented | `id`, `name`, `arguments` + `exchange_id`, `source`, `status`, `duration_ms`, `result` merged from Timeline. |
 | **ToolChoice** | Stub | Field exists on Request, defaults to `{ mode: :auto }`, never forwarded to provider. |
 | **Enrichment** | Implemented | RAG/GAIA enrichments work. Value shapes vary between steps. |
 | **Prediction** | Partial | Request-side works. Response-side actuals never filled in. |
@@ -50,11 +50,11 @@ For the AMQP wire protocol (exchange topology, queue configuration, message enve
 | **Chunk (Streaming)** | Not implemented | Raw RubyLLM chunks passed through; no spec-compliant Chunk struct. |
 | **ErrorResponse** | Not implemented | No struct; only exception classes (`LLMError` hierarchy). |
 | **Conversation** | Partial | `ConversationStore` exists but no `Conversation` struct. Limited fields. |
-| **Config (Generation)** | Partial | `from_chat_args` drops generation params into `extra` instead of first-class. |
+| **Config (Generation)** | Implemented | `from_chat_args` now maps generation, thinking, response_format, etc. to first-class fields. |
 | **Quality** | Implemented | Returns `{ score:, band:, source: }` (not `{ score:, acceptable:, checker: }` as spec says). |
-| **Cost** | Not implemented | Response `cost` always `{}`. |
-| **Routing (response)** | Partial | Only `provider`/`model` set; `strategy`, `reason`, `escalated`, etc. missing. |
-| **Stop** | Partial | `stop.reason` hardcoded to `:end_turn` regardless of actual provider reason. |
+| **Cost** | Implemented | Populated via `CostEstimator.estimate` with `estimated_usd`, `provider`, `model`. |
+| **Routing (response)** | Implemented | `provider`, `model`, `strategy`, `tier`, `escalated`, `escalation_chain`, `latency_ms` populated. |
+| **Stop** | Implemented | `stop.reason` extracted from provider response (`:end_turn`, `:tool_use`, etc.). |
 | **Metering** | Not implemented | Module exists but not wired into pipeline steps. |
 
 #### Response Fields Always Nil/Empty
