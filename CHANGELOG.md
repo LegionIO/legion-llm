@@ -1,6 +1,12 @@
 # Legion LLM Changelog
 
-## [Unreleased]
+## [0.6.20] - 2026-04-06
+
+### Added
+- Per-step pipeline timing diagnostics: `[pipeline][timing]` log line with duration per step
+- Pre-pipeline timing in inference route: `gaia_ingest`, `pre_pipeline_setup`, `executor_call` durations
+- `MAX_RUBY_LLM_TOOL_ROUNDS` (25) — caps RubyLLM's unbounded tool-use loop to prevent infinite cycling
+- `install_tool_loop_guard` applied to both streaming and non-streaming provider paths
 
 ### Fixed
 - fix Process namespace collision by using ::Process::CLOCK_MONOTONIC prefix inside Legion namespace

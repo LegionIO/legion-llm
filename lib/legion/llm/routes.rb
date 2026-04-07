@@ -446,8 +446,11 @@ module Legion
           last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
           prompt    = (last_user || {})[:content] || (last_user || {})['content'] || ''
 
+          route_t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+
           if defined?(Legion::Gaia) && Legion::Gaia.respond_to?(:started?) && Legion::Gaia.started? && prompt.to_s.length.positive?
             begin
+              gaia_t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
               frame = Legion::Gaia::InputFrame.new(
                 content:      prompt,
                 channel_id:   :api,
@@ -456,6 +459,8 @@ module Legion
                 metadata:     { source_type: :human_direct, salience: 0.9 }
               )
               Legion::Gaia.ingest(frame)
+              gaia_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - gaia_t0) * 1000).round
+              log.warn("[inference][timing] gaia_ingest=#{gaia_ms}ms request_id=#{request_id}")
             rescue StandardError => e
               handle_exception(e, level: :warn, operation: 'llm.routes.gaia_ingest', request_id: request_id)
             end
@@ -500,6 +505,9 @@ module Legion
             stream:          streaming,
             cache:           { strategy: :default, cacheable: true }
           )
+
+          setup_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - route_t0) * 1000).round
+          log.warn("[inference][timing] pre_pipeline_setup=#{setup_ms}ms request_id=#{request_id}")
 
           executor = Legion::LLM::Pipeline::Executor.new(pipeline_request)
 
@@ -561,7 +569,10 @@ module Legion
             end
             # rubocop:enable Metrics/BlockLength
           else
+            exec_t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
             pipeline_response = executor.call
+            exec_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - exec_t0) * 1000).round
+            log.warn("[inference][timing] executor_call=#{exec_ms}ms request_id=#{request_id}")
             raw_msg = pipeline_response.message
             content = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s
             routing = pipeline_response.routing || {}
