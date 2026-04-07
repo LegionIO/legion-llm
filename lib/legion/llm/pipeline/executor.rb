@@ -700,7 +700,10 @@ module Legion
         end
 
         def install_tool_loop_guard(session)
-          return unless session.respond_to?(:on_tool_call)
+          unless session.respond_to?(:on_tool_call)
+            log.warn('[pipeline] tool loop guard unavailable: ruby_llm session does not respond to on_tool_call')
+            return
+          end
 
           tool_round = 0
           session.on_tool_call do |tool_call|

@@ -27,26 +27,22 @@ module Legion
           Legion::Logging.send(level, parts.join(' '))
         end
 
+        def summarize_tool_arg_keys(kwargs)
+          kwargs.keys.map(&:to_s).sort.join(',')
+        end
+
         def summarize_tool_args(ref, kwargs)
           case ref
           when 'sh'
-            { command: (kwargs[:command] || kwargs[:cmd] || kwargs.values.first).to_s[0, 200] }
-          when 'file_read', 'list_directory'
-            { path: (kwargs[:path] || kwargs[:file_path] || kwargs[:dir] || kwargs.values.first).to_s }
+            { args: summarize_tool_arg_keys(kwargs), command_provided: kwargs.key?(:command) || kwargs.key?(:cmd) || !kwargs.empty? }
           when 'file_write'
-            { path: (kwargs[:path] || kwargs[:file_path]).to_s, bytes: kwargs[:content].to_s.bytesize }
+            content = kwargs[:content] || kwargs[:contents]
+            { args: summarize_tool_arg_keys(kwargs), bytes: content.to_s.bytesize }
           when 'file_edit'
-            { path: (kwargs[:path] || kwargs[:file_path]).to_s,
+            { args: summarize_tool_arg_keys(kwargs),
               old_len: kwargs[:old_text].to_s.length, new_len: kwargs[:new_text].to_s.length }
-          when 'grep'
-            { pattern: (kwargs[:pattern] || kwargs[:query] || kwargs.values.first).to_s,
-              path:    kwargs[:path] || Dir.pwd }
-          when 'glob'
-            { pattern: (kwargs[:pattern] || kwargs.values.first).to_s }
-          when 'web_fetch'
-            { url: (kwargs[:url] || kwargs.values.first).to_s }
           else
-            { args: kwargs.keys.join(',') }
+            { args: summarize_tool_arg_keys(kwargs) }
           end
         end
 
@@ -288,7 +284,7 @@ module Legion
             stream << "event: #{event_name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
           end
 
-          define_method(:emit_timeline_tool_events) do |stream, pipeline_response|
+          define_method(:emit_timeline_tool_events) do |stream, pipeline_response, skip_tool_results: false|
             timeline = Array(pipeline_response.timeline)
             timeline.each do |event|
               key = event[:key].to_s
@@ -298,6 +294,9 @@ module Legion
               next if name.to_s.empty?
 
               if key.start_with?('tool:result:')
+                # Skip replay when real-time tool events already emitted these during streaming
+                next if skip_tool_results
+
                 event_name = data[:status].to_s == 'error' ? 'tool-error' : 'tool-result'
                 emit_sse_event(stream, event_name, {
                                  toolCallId: data[:tool_call_id],
@@ -625,7 +624,7 @@ module Legion
                 emit_sse_event(out, 'text-delta', { delta: text })
               end
 
-              emit_timeline_tool_events(out, pipeline_response)
+              emit_timeline_tool_events(out, pipeline_response, skip_tool_results: !executor.tool_event_handler.nil?)
 
               enrichments = pipeline_response.enrichments
               emit_sse_event(out, 'enrichment', enrichments) if enrichments.is_a?(Hash) && !enrichments.empty?
