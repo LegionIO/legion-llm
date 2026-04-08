@@ -13,6 +13,7 @@ module Legion
           connected:                 false,
           pipeline_enabled:          true,
           pipeline_async_post_steps: true,
+          max_tool_rounds:           200,
           default_model:             model_override,
           default_provider:          nil,
           providers:                 providers,

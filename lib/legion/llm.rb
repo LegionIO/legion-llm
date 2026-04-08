@@ -3,6 +3,7 @@
 require 'legion/logging/helper'
 
 require 'ruby_llm'
+require 'legion/llm/patches/ruby_llm_parallel_tools'
 require 'legion/llm/version'
 require 'legion/llm/errors'
 require 'legion/llm/conversation_store'

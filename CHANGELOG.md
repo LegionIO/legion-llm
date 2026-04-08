@@ -1,5 +1,21 @@
 # Legion LLM Changelog
 
+## [0.6.24] - 2026-04-08
+
+### Added
+- `Legion::LLM::Patches::RubyLLMParallelTools`: monkey-patch that replaces RubyLLM's serial `handle_tool_calls` loop with concurrent thread execution so all tool calls in a batch run in parallel
+- `ToolResultWrapper` struct exposes `tool_call_id`, `id`, `tool_name`, `result`, and `content` so bridge scripts can match results back to UI slots without falling back to name-based matching
+- `emit_tool_result_event` in `Pipeline::Executor`: fires `tool_event_handler` with `type: :tool_result`, `duration_ms`, `started_at`, and `finished_at` after each tool completes
+- `tool_event_handler` now also fires `type: :model_fallback` events (with `from_model`, `to_model`, `error`, `reason`) on auth-failed provider fallback in both regular and streaming paths
+- `max_tool_rounds` setting (default `200`) in LLM settings; `install_tool_loop_guard` now reads it at call time so callers can override the cap per-session
+- `started_at` timestamp stored in `Thread.current[:legion_current_tool_started_at]` for accurate per-call wall-clock duration even across parallel threads
+
+### Changed
+- `MAX_RUBY_LLM_TOOL_ROUNDS` constant raised from `25` to `200` (now serves as a fallback default for the configurable `max_tool_rounds` setting)
+
+### Fixed
+- `ConversationStore#db_append_message` now serializes non-String `content` values (e.g., tool-call arrays) to JSON before writing to the database, preventing Sequel type errors when tool-use messages are persisted
+
 ## [0.6.23] - 2026-04-07
 
 ### Fixed
