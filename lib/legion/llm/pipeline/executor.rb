@@ -340,12 +340,15 @@ module Legion
             )
             if fallback
               log.warn "[pipeline] #{@resolved_provider} auth failed (#{e.class}), falling back to #{fallback[:provider]}:#{fallback[:model]}"
+              from_provider = @resolved_provider
               from_model = @resolved_model
               @resolved_provider = fallback[:provider]
               @resolved_model = fallback[:model]
               @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
               @tool_event_handler&.call(
-                type: :model_fallback, from_model: from_model, to_model: @resolved_model,
+                type: :model_fallback,
+                from_provider: from_provider, to_provider: @resolved_provider,
+                from_model: from_model, to_model: @resolved_model,
                 error: e.message, reason: 'auth_failed'
               )
               @timeline.record(
@@ -630,12 +633,15 @@ module Legion
             if fallback
               log.warn "[pipeline] #{@resolved_provider} stream auth failed (#{e.class}), " \
                        "falling back to #{fallback[:provider]}:#{fallback[:model]}"
+              from_provider = @resolved_provider
               from_model = @resolved_model
               @resolved_provider = fallback[:provider]
               @resolved_model = fallback[:model]
               @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
               @tool_event_handler&.call(
-                type: :model_fallback, from_model: from_model, to_model: @resolved_model,
+                type: :model_fallback,
+                from_provider: from_provider, to_provider: @resolved_provider,
+                from_model: from_model, to_model: @resolved_model,
                 error: e.message, reason: 'auth_failed'
               )
               retry
@@ -680,6 +686,7 @@ module Legion
             Thread.current[:legion_tool_event_handler] = nil
             Thread.current[:legion_current_tool_call_id] = nil
             Thread.current[:legion_current_tool_name] = nil
+            Thread.current[:legion_current_tool_started_at] = nil
           end
 
           @timestamps[:provider_end] = Time.now
@@ -773,9 +780,11 @@ module Legion
 
           log.info("[pipeline][tool-result] id=#{tc_id} tool=#{tc_name} duration_ms=#{duration_ms}")
 
+          result_str = (raw.is_a?(String) ? raw : raw.to_s)[0, 4096]
+
           @tool_event_handler&.call(
             type: :tool_result, tool_call_id: tc_id, tool_name: tc_name,
-            result: raw.is_a?(String) ? raw : raw.to_s,
+            result: result_str, result_size: (raw.is_a?(String) ? raw : raw.to_s).bytesize,
             started_at: started_at, finished_at: finished_at, duration_ms: duration_ms
           )
         end

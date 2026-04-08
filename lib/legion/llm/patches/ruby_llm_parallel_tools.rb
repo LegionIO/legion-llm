@@ -68,22 +68,29 @@ module Legion
             end
           end
 
-          results = threads.map(&:value) # block until all complete
+          begin
+            results = threads.map(&:value) # block until all complete
 
-          # Commit messages serially — preserves ordering, avoids @messages races.
-          halt_result = nil
-          results.each do |entry|
-            tool_call    = entry[:tool_call]
-            raw          = entry[:raw]
-            tool_payload = raw.is_a?(RubyLLM::Tool::Halt) ? raw.content : raw
-            content      = content_like?(tool_payload) ? tool_payload : tool_payload.to_s
-            message      = add_message(role: :tool, content: content, tool_call_id: tool_call.id)
-            @on[:end_message]&.call(message)
-            halt_result = raw if raw.is_a?(RubyLLM::Tool::Halt)
+            # Commit messages serially — preserves ordering, avoids @messages races.
+            halt_result = nil
+            results.each do |entry|
+              tool_call    = entry[:tool_call]
+              raw          = entry[:raw]
+              tool_payload = raw.is_a?(RubyLLM::Tool::Halt) ? raw.content : raw
+              content      = content_like?(tool_payload) ? tool_payload : tool_payload.to_s
+              message      = add_message(role: :tool, content: content, tool_call_id: tool_call.id)
+              @on[:end_message]&.call(message)
+              halt_result = raw if raw.is_a?(RubyLLM::Tool::Halt)
+            end
+
+            reset_tool_choice if forced_tool_choice?
+            halt_result || complete(&)
+          ensure
+            threads.each do |thread|
+              thread.kill if thread.alive?
+              thread.join
+            end
           end
-
-          reset_tool_choice if forced_tool_choice?
-          halt_result || complete(&)
         end
       end
     end
