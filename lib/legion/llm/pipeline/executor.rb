@@ -46,7 +46,7 @@ module Legion
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
-        MAX_RUBY_LLM_TOOL_ROUNDS = 25
+        MAX_RUBY_LLM_TOOL_ROUNDS = 200
 
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
@@ -340,9 +340,14 @@ module Legion
             )
             if fallback
               log.warn "[pipeline] #{@resolved_provider} auth failed (#{e.class}), falling back to #{fallback[:provider]}:#{fallback[:model]}"
+              from_model = @resolved_model
               @resolved_provider = fallback[:provider]
               @resolved_model = fallback[:model]
               @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
+              @tool_event_handler&.call(
+                type: :model_fallback, from_model: from_model, to_model: @resolved_model,
+                error: e.message, reason: 'auth_failed'
+              )
               @timeline.record(
                 category: :provider, key: 'provider:fallback',
                 direction: :internal,
@@ -625,9 +630,14 @@ module Legion
             if fallback
               log.warn "[pipeline] #{@resolved_provider} stream auth failed (#{e.class}), " \
                        "falling back to #{fallback[:provider]}:#{fallback[:model]}"
+              from_model = @resolved_model
               @resolved_provider = fallback[:provider]
               @resolved_model = fallback[:model]
               @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
+              @tool_event_handler&.call(
+                type: :model_fallback, from_model: from_model, to_model: @resolved_model,
+                error: e.message, reason: 'auth_failed'
+              )
               retry
             end
             raise Legion::LLM::AuthError, e.message
@@ -709,15 +719,24 @@ module Legion
             return
           end
 
+          max_rounds = Legion::LLM.settings[:max_tool_rounds] || MAX_RUBY_LLM_TOOL_ROUNDS
           tool_round = 0
           session.on_tool_call do |tool_call|
             tool_round += 1
-            if tool_round > MAX_RUBY_LLM_TOOL_ROUNDS
+            if tool_round > max_rounds
               log.warn("[pipeline] tool loop cap hit: #{tool_round} rounds, halting")
-              raise Legion::LLM::PipelineError, "tool loop exceeded #{MAX_RUBY_LLM_TOOL_ROUNDS} rounds"
+              raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds"
             end
 
             emit_tool_call_event(tool_call, tool_round)
+          end
+
+          # Wire up tool-result events so the API SSE stream can notify the
+          # frontend when each tool finishes (clears the RUNNING state in the UI).
+          return unless session.respond_to?(:on_tool_result)
+
+          session.on_tool_result do |tool_result|
+            emit_tool_result_event(tool_result)
           end
         end
 
@@ -725,15 +744,39 @@ module Legion
           tc_id   = tool_call_field(tool_call, :id)
           tc_name = tool_call_field(tool_call, :name)
           tc_args = tool_call_field(tool_call, :arguments)
+          started_at = Time.now
 
           log.info("[pipeline][tool-call] round=#{round} id=#{tc_id} tool=#{tc_name}")
 
+          # Store start time per-tool-call-id so emit_tool_result_event can calculate
+          # accurate wall-clock duration even when tools run in parallel threads.
           Thread.current[:legion_current_tool_call_id] = tc_id
           Thread.current[:legion_current_tool_name] = tc_name
+          Thread.current[:legion_current_tool_started_at] = started_at
 
           @tool_event_handler&.call(
             type: :tool_call, tool_call_id: tc_id, tool_name: tc_name,
-            arguments: tc_args, round: round
+            arguments: tc_args, round: round, started_at: started_at
+          )
+        end
+
+        def emit_tool_result_event(tool_result)
+          # tool_result may be a raw value (String/Hash) or a ToolResultWrapper
+          # from our parallel patch — extract the fields defensively.
+          tc_id      = tool_result.respond_to?(:tool_call_id) ? tool_result.tool_call_id : Thread.current[:legion_current_tool_call_id]
+          tc_name    = tool_result.respond_to?(:tool_name)    ? tool_result.tool_name    : Thread.current[:legion_current_tool_name]
+          started_at = tool_result.respond_to?(:started_at)   ? tool_result.started_at   : Thread.current[:legion_current_tool_started_at]
+          finished_at = Time.now
+          raw = tool_result.respond_to?(:result) ? tool_result.result : tool_result
+
+          duration_ms = started_at ? ((finished_at - started_at) * 1000).round : nil
+
+          log.info("[pipeline][tool-result] id=#{tc_id} tool=#{tc_name} duration_ms=#{duration_ms}")
+
+          @tool_event_handler&.call(
+            type: :tool_result, tool_call_id: tc_id, tool_name: tc_name,
+            result: raw.is_a?(String) ? raw : raw.to_s,
+            started_at: started_at, finished_at: finished_at, duration_ms: duration_ms
           )
         end
 

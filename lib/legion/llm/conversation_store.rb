@@ -373,11 +373,13 @@ module Legion
         end
 
         def db_append_message(conversation_id, msg)
+          content = msg[:content]
+          content = content.to_json unless content.is_a?(String) || content.nil?
           row = {
             conversation_id: conversation_id,
             seq:             msg[:seq],
             role:            msg[:role].to_s,
-            content:         msg[:content],
+            content:         content,
             provider:        msg[:provider]&.to_s,
             model:           msg[:model]&.to_s,
             input_tokens:    msg[:input_tokens],
