@@ -5,7 +5,7 @@ module Legion
     module Tools
       module Interceptors
         module PythonVenv
-          VENV_DIR = File.expand_path('~/.legionio/python').freeze
+          VENV_DIR = (ENV['LEGION_PYTHON_VENV'] || File.expand_path('~/.legionio/python')).freeze
           PYTHON   = "#{VENV_DIR}/bin/python3".freeze
           PIP      = "#{VENV_DIR}/bin/pip3".freeze
 

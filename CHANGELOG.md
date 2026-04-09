@@ -5,6 +5,11 @@
 ### Added
 - Broker soft consumer in Providers module — tries Identity::Broker before Settings for all provider credentials (Phase 8 Wave 2)
 
+## [0.6.29] - 2026-04-09
+
+### Changed
+- `PythonVenv::VENV_DIR` reads `LEGION_PYTHON_VENV` env var first, falls back to `~/.legionio/python`
+
 ## [0.6.28] - 2026-04-09
 
 ### Added
