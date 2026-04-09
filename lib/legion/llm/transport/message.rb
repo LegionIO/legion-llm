@@ -37,7 +37,7 @@ module Legion
         end
 
         def headers
-          super.merge(llm_headers).merge(context_headers)
+          super.merge(llm_headers).merge(context_headers).merge(tracing_headers)
         end
 
         # Subclasses override to inject OpenTelemetry span context.

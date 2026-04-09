@@ -73,7 +73,7 @@ Legion::LLM (lib/legion/llm.rb)
 │   ├── Request      # Fleet inference request message (type: 'llm.fleet.request')
 │   ├── Response     # Fleet inference response message (type: 'llm.fleet.response', default exchange publish)
 │   ├── Error        # Fleet error message (type: 'llm.fleet.error', ERROR_CODES registry)
-│   ├── Dispatcher   # Fleet dispatch with timeout, routing key building, publisher confirms
+│   ├── Dispatcher   # Fleet dispatch with timeout and routing key building
 │   ├── Handler      # Fleet request handler for GPU worker nodes
 │   └── ReplyDispatcher # Correlation-based reply routing with type-aware dispatch, fulfill_return, fulfill_nack
 ├── Metering         # Metering event emission (replaces gateway dependency)

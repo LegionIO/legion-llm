@@ -25,7 +25,8 @@ module Legion
           tc = @options[:tool_call] || {}
           src = tc[:source] || {}
           h = {}
-          h['x-legion-tool-name']          = tc[:name].to_s    if tc[:name]
+          tool_name = tc[:name] || @options[:tool_name]
+          h['x-legion-tool-name']          = tool_name.to_s    if tool_name
           h['x-legion-tool-source-type']   = src[:type].to_s   if src[:type]
           h['x-legion-tool-source-server'] = src[:server].to_s if src[:server]
           h['x-legion-tool-status']        = tc[:status].to_s  if tc[:status]

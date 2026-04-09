@@ -99,24 +99,32 @@ module Legion
         def resolve_timeout(request_type: :default, override: nil)
           return override if override
 
-          if defined?(Legion::Settings)
-            settings = begin
-              Legion::Settings[:llm]
-            rescue StandardError => e
-              handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.resolve_timeout')
-              nil
-            end
-
-            if settings.is_a?(Hash)
-              per_type = settings.dig(:routing, :fleet, :timeouts, request_type.to_sym)
-              return per_type if per_type
-
-              global = settings.dig(:routing, :fleet, :timeout_seconds)
-              return global if global
-            end
-          end
+          configured = fleet_timeout_from_settings(request_type)
+          return configured if configured
 
           TIMEOUTS[request_type.to_sym] || TIMEOUTS[:default]
+        end
+
+        def fleet_timeout_from_settings(request_type)
+          return unless defined?(Legion::Settings)
+
+          settings = begin
+            Legion::Settings[:llm]
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.resolve_timeout')
+            nil
+          end
+
+          return unless settings.is_a?(Hash)
+
+          routing = settings[:routing]
+          return unless routing.is_a?(Hash)
+
+          fleet_settings = routing.dig(:tiers, :fleet)
+          fleet_settings = routing[:fleet] unless fleet_settings.is_a?(Hash)
+          return unless fleet_settings.is_a?(Hash)
+
+          fleet_settings.dig(:timeouts, request_type.to_sym) || fleet_settings[:timeout_seconds]
         end
 
         def publish_request(**opts)

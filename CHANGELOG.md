@@ -25,7 +25,7 @@
 - `routing.tiers.fleet.timeouts` setting — per-request-type timeout configuration
 
 ### Changed
-- `Fleet::Dispatcher#publish_request` now uses `Fleet::Request` message class with `mandatory: true` pattern (falls back to gateway `InferenceRequest` when `Fleet::Request` unavailable)
+- `Fleet::Dispatcher#publish_request` now uses `Fleet::Request` message class (falls back to gateway `InferenceRequest` when `Fleet::Request` unavailable)
 - `Pipeline::Steps::Metering#publish_event` now delegates to `Legion::LLM::Metering.emit` instead of `Gateway::Transport::Messages::MeteringEvent`
 - `Pipeline::AuditPublisher#publish` now delegates to `Legion::LLM::Audit.emit_prompt` instead of raw `Transport::Messages::AuditEvent`
 - `routing.tiers.fleet.queue` default changed from `llm.inference` to `llm.request` (fleet exchange rename)
