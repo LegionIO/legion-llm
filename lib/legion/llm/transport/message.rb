@@ -50,11 +50,20 @@ module Legion
 
         def message_id_prefix = 'msg'
 
+        def option_value(*keys)
+          keys.each do |key|
+            value = @options[key]
+            return value if value
+          end
+          nil
+        end
+
         def llm_headers
           h = {}
-          h['x-legion-llm-provider']       = @options[:provider].to_s     if @options[:provider]
-          h['x-legion-llm-model']          = @options[:model].to_s        if @options[:model]
-          h['x-legion-llm-request-type']   = @options[:request_type].to_s if @options[:request_type]
+          h['x-legion-llm-provider'] = @options[:provider].to_s if @options[:provider]
+          model_val = option_value(:model, :model_id)
+          h['x-legion-llm-model']          = model_val.to_s                     if model_val
+          h['x-legion-llm-request-type']   = @options[:request_type].to_s       if @options[:request_type]
           h['x-legion-llm-schema-version'] = '1.0.0'
           h
         end

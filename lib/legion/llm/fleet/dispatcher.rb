@@ -39,16 +39,25 @@ module Legion
           end
 
           # New calling convention
-          provider = opts[:provider] || 'ollama'
-          request_type = opts[:request_type] || 'chat'
-          routing_key ||= build_routing_key(provider: provider, request_type: request_type, model: opts[:model])
+          request_opts =
+            if request.respond_to?(:to_h)
+              request.to_h.transform_keys(&:to_sym)
+            else
+              {}
+            end
+          request_opts = request_opts.merge(opts)
+
+          provider = request_opts[:provider] || 'ollama'
+          request_type = request_opts[:request_type] || 'chat'
+          model = request_opts[:model]
+          routing_key ||= build_routing_key(provider: provider, request_type: request_type, model: model)
           reply_to ||= ReplyDispatcher.agent_queue_name
           correlation_id = publish_request(
             routing_key: routing_key, reply_to: reply_to,
-            provider: provider, model: opts[:model], request_type: request_type,
-            message_context: message_context, **opts.except(:provider, :model, :request_type, :timeout)
+            provider: provider, model: model, request_type: request_type,
+            message_context: message_context, **request_opts.except(:provider, :model, :request_type, :timeout)
           )
-          timeout = resolve_timeout(request_type: request_type, override: opts[:timeout])
+          timeout = resolve_timeout(request_type: request_type, override: request_opts[:timeout] || opts[:timeout])
           wait_for_response(correlation_id, timeout: timeout, message_context: message_context)
         end
 

@@ -32,6 +32,7 @@ module Legion
             routing_key:      routing_key,
             content_type:     options[:content_type] || content_type,
             content_encoding: options[:content_encoding] || content_encoding,
+            headers:          headers,
             type:             type,
             priority:         priority,
             message_id:       message_id,
