@@ -58,6 +58,7 @@ module Legion
   end
 end
 
+require_relative 'support/transport_stub'
 require 'legion/llm'
 
 RSpec.configure do |config|

@@ -83,10 +83,15 @@ module Legion
       def self.routing_defaults
         {
           enabled:        false,
+          tier_priority:  %w[local fleet direct],
           default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
           tiers:          {
             local: { provider: 'ollama' },
-            fleet: { queue: 'llm.inference', timeout_seconds: 30 },
+            fleet: {
+              queue:           'llm.request',
+              timeout_seconds: 30,
+              timeouts:        { embed: 10, chat: 30, generate: 30, default: 30 }
+            },
             cloud: { providers: %w[bedrock anthropic] }
           },
           health:         {

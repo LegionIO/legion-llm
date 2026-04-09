@@ -1,5 +1,35 @@
 # Legion LLM Changelog
 
+## [0.6.25] - 2026-04-08
+
+### Added
+- `Legion::LLM::Transport::Message` — LLM base message class with `message_context` propagation, LLM-specific headers (`x-legion-llm-provider`, `x-legion-llm-model`, `x-legion-llm-request-type`, `x-legion-llm-schema-version`), context header promotion, and `tracing_headers` stub for future OpenTelemetry integration
+- `Legion::LLM::Fleet::Exchange` — declares `llm.request` topic exchange (source of truth for fleet routing)
+- `Legion::LLM::Fleet::Request` — fleet inference request message with priority mapping, TTL-to-expiration conversion, and `req_` prefixed message IDs
+- `Legion::LLM::Fleet::Response` — fleet inference response message with default-exchange publish override, Bunny error rescue, and `resp_` prefixed message IDs
+- `Legion::LLM::Fleet::Error` — fleet error message with `ERROR_CODES` registry (12 codes), `x-legion-fleet-error` header, default-exchange publish override, and `err_` prefixed message IDs
+- `Legion::LLM::Metering::Exchange` — declares `llm.metering` topic exchange
+- `Legion::LLM::Metering::Event` — metering event message with tier header, `metering.<type>` routing keys, and `meter_` prefixed message IDs
+- `Legion::LLM::Metering` module — `emit(event)` and `flush_spool` public API replacing gateway dependency for metering
+- `Legion::LLM::Audit::Exchange` — declares `llm.audit` topic exchange (supersedes `Transport::Exchanges::Audit`)
+- `Legion::LLM::Audit::PromptEvent` — prompt audit message (always encrypted) with classification, caller, retention, and tier headers
+- `Legion::LLM::Audit::ToolEvent` — tool call audit message (always encrypted) with tool metadata headers
+- `Legion::LLM::Audit` module — `emit_prompt(event)` and `emit_tools(event)` public API (no spool — audit data too sensitive for plaintext disk)
+- `Fleet::Dispatcher.build_routing_key` — builds `llm.request.<provider>.<type>.<model>` routing keys with `:` to `.` sanitization
+- `Fleet::Dispatcher` per-type timeout resolution (`embed: 10s`, `chat: 30s`, `generate: 30s`) from settings or `TIMEOUTS` constant
+- `Fleet::Dispatcher` backwards-compatible shim supporting both old `(model:, messages:)` and new `(request:, message_context:)` dispatch signatures
+- `Fleet::ReplyDispatcher.fulfill_return` — handles `basic.return` with `no_fleet_queue` error
+- `Fleet::ReplyDispatcher.fulfill_nack` — handles `basic.nack` with `fleet_backpressure` error
+- `Fleet::ReplyDispatcher` type-aware delivery dispatch — handles `llm.fleet.response`, `llm.fleet.error`, and legacy (no type) formats
+- `routing.tier_priority` setting — default `[local, fleet, direct]` three-tier ordering
+- `routing.tiers.fleet.timeouts` setting — per-request-type timeout configuration
+
+### Changed
+- `Fleet::Dispatcher#publish_request` now uses `Fleet::Request` message class with `mandatory: true` pattern (falls back to gateway `InferenceRequest` when `Fleet::Request` unavailable)
+- `Pipeline::Steps::Metering#publish_event` now delegates to `Legion::LLM::Metering.emit` instead of `Gateway::Transport::Messages::MeteringEvent`
+- `Pipeline::AuditPublisher#publish` now delegates to `Legion::LLM::Audit.emit_prompt` instead of raw `Transport::Messages::AuditEvent`
+- `routing.tiers.fleet.queue` default changed from `llm.inference` to `llm.request` (fleet exchange rename)
+
 ## [0.6.24] - 2026-04-08
 
 ### Added

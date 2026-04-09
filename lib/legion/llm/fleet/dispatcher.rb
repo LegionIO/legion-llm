@@ -7,18 +7,57 @@ module Legion
     module Fleet
       module Dispatcher
         DEFAULT_TIMEOUT = 30
+
+        TIMEOUTS = {
+          embed:    10,
+          chat:     30,
+          generate: 30,
+          default:  30
+        }.freeze
+
         extend Legion::Logging::Helper
 
         module_function
 
-        def dispatch(model:, messages:, **opts)
-          return error_result('fleet_unavailable') unless fleet_available?
+        # Backwards-compatible shim: supports old (model:, messages:) and new (request:, message_context:) callers
+        def dispatch(model: nil, messages: nil, request: nil, message_context: {}, routing_key: nil, reply_to: nil, **opts)
+          return error_result('fleet_unavailable', message_context: message_context) unless fleet_available?
 
-          correlation_id = "fleet_#{SecureRandom.hex(12)}"
-          publish_request(model: model, messages: messages, intent: opts[:intent],
-                          correlation_id: correlation_id, **opts.except(:intent, :timeout))
+          # Old calling convention: build minimal params from model/messages
+          if request.nil? && (model || messages)
+            provider = opts[:provider] || 'ollama'
+            request_type = opts[:request_type] || 'chat'
+            routing_key ||= build_routing_key(provider: provider, request_type: request_type, model: model)
+            reply_to ||= ReplyDispatcher.agent_queue_name
+            correlation_id = publish_request(
+              routing_key: routing_key, reply_to: reply_to,
+              provider: provider, model: model, request_type: request_type,
+              messages: messages, message_context: message_context, **opts
+            )
+            timeout = resolve_timeout(request_type: request_type, override: opts[:timeout])
+            return wait_for_response(correlation_id, timeout: timeout, message_context: message_context)
+          end
 
-          wait_for_response(correlation_id, timeout: resolve_timeout(opts[:timeout]))
+          # New calling convention
+          provider = opts[:provider] || 'ollama'
+          request_type = opts[:request_type] || 'chat'
+          routing_key ||= build_routing_key(provider: provider, request_type: request_type, model: opts[:model])
+          reply_to ||= ReplyDispatcher.agent_queue_name
+          correlation_id = publish_request(
+            routing_key: routing_key, reply_to: reply_to,
+            provider: provider, model: opts[:model], request_type: request_type,
+            message_context: message_context, **opts.except(:provider, :model, :request_type, :timeout)
+          )
+          timeout = resolve_timeout(request_type: request_type, override: opts[:timeout])
+          wait_for_response(correlation_id, timeout: timeout, message_context: message_context)
+        end
+
+        def build_routing_key(provider:, request_type:, model:)
+          "llm.request.#{provider}.#{request_type}.#{sanitize_model(model)}"
+        end
+
+        def sanitize_model(model)
+          model.to_s.gsub(':', '.')
         end
 
         def fleet_available?
@@ -48,46 +87,61 @@ module Legion
           routing.fetch(:use_fleet, true)
         end
 
-        def resolve_timeout(override)
+        def resolve_timeout(request_type: :default, override: nil)
           return override if override
 
-          return DEFAULT_TIMEOUT unless defined?(Legion::Settings)
+          if defined?(Legion::Settings)
+            settings = begin
+              Legion::Settings[:llm]
+            rescue StandardError => e
+              handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.resolve_timeout')
+              nil
+            end
 
-          settings = begin
-            Legion::Settings[:llm]
-          rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.resolve_timeout')
-            nil
+            if settings.is_a?(Hash)
+              per_type = settings.dig(:routing, :fleet, :timeouts, request_type.to_sym)
+              return per_type if per_type
+
+              global = settings.dig(:routing, :fleet, :timeout_seconds)
+              return global if global
+            end
           end
-          return DEFAULT_TIMEOUT unless settings.is_a?(Hash)
 
-          settings.dig(:routing, :fleet, :timeout_seconds) || DEFAULT_TIMEOUT
+          TIMEOUTS[request_type.to_sym] || TIMEOUTS[:default]
         end
 
-        def publish_request(**)
-          return unless defined?(Legion::Extensions::LLM::Gateway::Transport::Messages::InferenceRequest)
+        def publish_request(**opts)
+          correlation_id = "req_#{SecureRandom.uuid}"
+          opts[:fleet_correlation_id] = correlation_id
 
-          Legion::Extensions::LLM::Gateway::Transport::Messages::InferenceRequest.new(
-            reply_to: ReplyDispatcher.agent_queue_name, **
-          ).publish
+          if defined?(Legion::LLM::Fleet::Request)
+            Legion::LLM::Fleet::Request.new(**opts).publish
+          elsif defined?(Legion::Extensions::LLM::Gateway::Transport::Messages::InferenceRequest)
+            Legion::Extensions::LLM::Gateway::Transport::Messages::InferenceRequest.new(
+              reply_to: opts[:reply_to], **opts.except(:reply_to)
+            ).publish
+          end
+
+          correlation_id
         end
 
-        def wait_for_response(correlation_id, timeout:)
+        def wait_for_response(correlation_id, timeout:, message_context: {})
           future = ReplyDispatcher.register(correlation_id)
           result = future.value!(timeout)
-          result || timeout_result(correlation_id, timeout)
+          result || timeout_result(correlation_id, timeout, message_context: message_context)
         rescue Concurrent::CancelledOperationError
-          timeout_result(correlation_id, timeout)
+          timeout_result(correlation_id, timeout, message_context: message_context)
         ensure
           ReplyDispatcher.deregister(correlation_id)
         end
 
-        def timeout_result(correlation_id, timeout)
-          { success: false, error: 'fleet_timeout', correlation_id: correlation_id, timeout: timeout }
+        def timeout_result(correlation_id, timeout, message_context: {})
+          { success: false, error: 'fleet_timeout', correlation_id: correlation_id,
+            timeout: timeout, message_context: message_context }
         end
 
-        def error_result(reason)
-          { success: false, error: reason }
+        def error_result(reason, message_context: {})
+          { success: false, error: reason, message_context: message_context }
         end
       end
     end

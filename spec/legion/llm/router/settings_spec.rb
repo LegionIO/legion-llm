@@ -63,7 +63,7 @@ RSpec.describe Legion::LLM::Settings do
 
       it 'defines a fleet tier with queue and timeout' do
         expect(tiers).to have_key(:fleet)
-        expect(tiers[:fleet][:queue]).to eq('llm.inference')
+        expect(tiers[:fleet][:queue]).to eq('llm.request')
         expect(tiers[:fleet][:timeout_seconds]).to eq(30)
       end
 

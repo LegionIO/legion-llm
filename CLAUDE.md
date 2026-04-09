@@ -8,7 +8,7 @@
 Core LegionIO gem providing LLM capabilities to all extensions. Wraps ruby_llm to provide a consistent interface for chat, embeddings, tool use, and agents across multiple providers (Bedrock, Anthropic, OpenAI, Gemini, Ollama). Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
 
 **GitHub**: https://github.com/LegionIO/legion-llm
-**Version**: 0.6.18
+**Version**: 0.6.25
 **License**: Apache-2.0
 
 ## Architecture
@@ -69,9 +69,20 @@ Legion::LLM (lib/legion/llm.rb)
 │         McpToolAdapter renamed to ToolAdapter; McpToolAdapter kept as a backwards-compatible alias.
 ├── CostEstimator    # Model cost estimation with fuzzy pricing (absorbed from lex-llm-gateway)
 ├── Fleet            # Fleet RPC dispatch (absorbed from lex-llm-gateway)
-│   ├── Dispatcher   # Fleet dispatch with timeout and availability checks
+│   ├── Exchange     # Declares `llm.request` topic exchange (source of truth)
+│   ├── Request      # Fleet inference request message (type: 'llm.fleet.request')
+│   ├── Response     # Fleet inference response message (type: 'llm.fleet.response', default exchange publish)
+│   ├── Error        # Fleet error message (type: 'llm.fleet.error', ERROR_CODES registry)
+│   ├── Dispatcher   # Fleet dispatch with timeout, routing key building, publisher confirms
 │   ├── Handler      # Fleet request handler for GPU worker nodes
-│   └── ReplyDispatcher # Correlation-based reply routing for fleet RPC
+│   └── ReplyDispatcher # Correlation-based reply routing with type-aware dispatch, fulfill_return, fulfill_nack
+├── Metering         # Metering event emission (replaces gateway dependency)
+│   ├── Exchange     # Declares `llm.metering` topic exchange
+│   └── Event        # Metering event message (type: 'llm.metering.event')
+├── Audit            # Audit event emission (replaces gateway dependency)
+│   ├── Exchange     # Declares `llm.audit` topic exchange
+│   ├── PromptEvent  # Prompt audit message (type: 'llm.audit.prompt', always encrypted)
+│   └── ToolEvent    # Tool audit message (type: 'llm.audit.tool', always encrypted)
 └── Helpers::LLM     # Extension helper mixin (llm_chat, llm_embed, llm_session, compress:)
 ```
 
@@ -181,6 +192,20 @@ Legion::LLM.chat(message:, escalate: true, max_escalations: 3, quality_check:) #
 Legion::LLM::EscalationExhausted                                                # raised when all escalation attempts are exhausted
 Legion::LLM::Router.resolve_chain(intent:, tier:, max_escalations:)            # -> EscalationChain
 Legion::LLM::QualityChecker.check(response, quality_threshold: 50, json_expected: false, quality_check: nil) # -> QualityResult
+
+# Metering
+Legion::LLM::Metering.emit(event_hash)                        # -> :published | :spooled | :dropped
+Legion::LLM::Metering.flush_spool                             # -> Integer (count flushed)
+
+# Audit
+Legion::LLM::Audit.emit_prompt(event_hash)                    # -> :published | :dropped
+Legion::LLM::Audit.emit_tools(event_hash)                     # -> :published | :dropped
+
+# Fleet Dispatcher
+Legion::LLM::Fleet::Dispatcher.dispatch(model:, messages:, **) # Old signature (backwards compat)
+Legion::LLM::Fleet::Dispatcher.dispatch(request:, message_context:, routing_key:, **) # New signature
+Legion::LLM::Fleet::Dispatcher.build_routing_key(provider:, request_type:, model:)    # -> String
+Legion::LLM::Fleet::Dispatcher.fleet_available?                # -> Boolean
 ```
 
 ## Settings
@@ -347,10 +372,22 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/pipeline/steps/rag_guard.rb` | Pipeline::Steps::RagGuard: faithfulness check against retrieved RAG context |
 | `lib/legion/llm/pipeline/enrichment_injector.rb` | Pipeline::EnrichmentInjector: converts RAG/GAIA enrichments into system prompt |
 | `lib/legion/llm/cost_estimator.rb` | CostEstimator: model cost estimation with fuzzy pricing |
-| `lib/legion/llm/fleet.rb` | Fleet module: requires dispatcher, handler, reply_dispatcher |
-| `lib/legion/llm/fleet/dispatcher.rb` | Fleet::Dispatcher: fleet RPC dispatch |
+| `lib/legion/llm/transport/message.rb` | LLM base message class: message_context propagation, LLM headers, envelope key stripping |
+| `lib/legion/llm/fleet.rb` | Fleet module: requires exchange, request, response, error, dispatcher, handler, reply_dispatcher |
+| `lib/legion/llm/fleet/exchange.rb` | Fleet::Exchange: declares `llm.request` topic exchange |
+| `lib/legion/llm/fleet/request.rb` | Fleet::Request: fleet inference request with priority mapping, TTL conversion |
+| `lib/legion/llm/fleet/response.rb` | Fleet::Response: fleet response with default-exchange publish |
+| `lib/legion/llm/fleet/error.rb` | Fleet::Error: fleet error with ERROR_CODES registry, error headers |
+| `lib/legion/llm/fleet/dispatcher.rb` | Fleet::Dispatcher: fleet RPC dispatch with routing key building, per-type timeouts |
 | `lib/legion/llm/fleet/handler.rb` | Fleet::Handler: fleet request handler |
-| `lib/legion/llm/fleet/reply_dispatcher.rb` | Fleet::ReplyDispatcher: correlation-based reply routing |
+| `lib/legion/llm/fleet/reply_dispatcher.rb` | Fleet::ReplyDispatcher: type-aware reply routing, fulfill_return, fulfill_nack |
+| `lib/legion/llm/metering.rb` | Metering module: emit, flush_spool public API |
+| `lib/legion/llm/metering/exchange.rb` | Metering::Exchange: declares `llm.metering` topic exchange |
+| `lib/legion/llm/metering/event.rb` | Metering::Event: metering event message with tier header |
+| `lib/legion/llm/audit.rb` | Audit module: emit_prompt, emit_tools public API |
+| `lib/legion/llm/audit/exchange.rb` | Audit::Exchange: declares `llm.audit` topic exchange |
+| `lib/legion/llm/audit/prompt_event.rb` | Audit::PromptEvent: prompt audit with classification/caller/retention headers |
+| `lib/legion/llm/audit/tool_event.rb` | Audit::ToolEvent: tool audit with tool metadata headers |
 | `lib/legion/llm/helpers/llm.rb` | Extension helper mixin: llm_chat (with compress:, escalate:, max_escalations:, quality_check:), llm_embed, llm_session |
 | `spec/legion/llm_spec.rb` | Tests: settings, lifecycle, providers, auto-config |
 | `spec/legion/llm/integration_spec.rb` | Tests: routing integration with chat() |
@@ -390,8 +427,20 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/pipeline/executor_spec.rb` | Tests: Executor pipeline execution, profile skipping |
 | `spec/legion/llm/pipeline/integration_spec.rb` | Tests: Pipeline integration with chat() dispatch |
 | `spec/legion/llm/pipeline/steps/metering_spec.rb` | Tests: Metering event building |
-| `spec/legion/llm/fleet/dispatcher_spec.rb` | Tests: Fleet dispatch, availability, timeout |
+| `spec/legion/llm/transport/message_spec.rb` | Tests: LLM base message class |
+| `spec/legion/llm/fleet/exchange_spec.rb` | Tests: fleet exchange declaration |
+| `spec/legion/llm/fleet/request_spec.rb` | Tests: Fleet::Request message |
+| `spec/legion/llm/fleet/response_spec.rb` | Tests: Fleet::Response message |
+| `spec/legion/llm/fleet/error_spec.rb` | Tests: Fleet::Error message |
+| `spec/legion/llm/fleet/dispatcher_spec.rb` | Tests: Fleet dispatch, routing keys, per-type timeouts, ReplyDispatcher |
 | `spec/legion/llm/fleet/handler_spec.rb` | Tests: Fleet handler, auth, response building |
+| `spec/legion/llm/metering/exchange_spec.rb` | Tests: metering exchange |
+| `spec/legion/llm/metering/event_spec.rb` | Tests: Metering::Event message |
+| `spec/legion/llm/metering_spec.rb` | Tests: Metering emit/spool API |
+| `spec/legion/llm/audit/exchange_spec.rb` | Tests: audit exchange |
+| `spec/legion/llm/audit/prompt_event_spec.rb` | Tests: Audit::PromptEvent |
+| `spec/legion/llm/audit/tool_event_spec.rb` | Tests: Audit::ToolEvent |
+| `spec/legion/llm/audit_spec.rb` | Tests: Audit emit API |
 | `spec/legion/llm/pipeline/steps/rag_context_spec.rb` | Tests: RAG context strategy selection, Apollo retrieval, graceful degradation |
 | `spec/legion/llm/pipeline/steps/rag_guard_spec.rb` | Tests: RAG faithfulness checking |
 | `spec/legion/llm/pipeline/enrichment_injector_spec.rb` | Tests: enrichment injection into system prompt |

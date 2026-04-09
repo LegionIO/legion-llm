@@ -79,9 +79,7 @@ module Legion
           end
 
           def publish_event(event)
-            return unless defined?(Legion::Extensions::LLM::Gateway::Transport::Messages::MeteringEvent)
-
-            Legion::Extensions::LLM::Gateway::Transport::Messages::MeteringEvent.new(**event).publish
+            Legion::LLM::Metering.emit(event)
           end
 
           def spool_event(event)

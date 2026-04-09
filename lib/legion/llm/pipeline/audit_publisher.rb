@@ -7,9 +7,6 @@ module Legion
       module AuditPublisher
         extend Legion::Logging::Helper
 
-        EXCHANGE    = 'llm.audit'
-        ROUTING_KEY = 'llm.audit.complete'
-
         module_function
 
         def build_event(request:, response:)
@@ -29,29 +26,27 @@ module Legion
             messages:         request.messages,
             response_content: response.message[:content],
             tools_used:       response.tools,
-            timestamp:        Time.now
+            timestamp:        Time.now,
+            request_type:     request.respond_to?(:request_type) ? request.request_type : 'chat',
+            tier:             response.routing.is_a?(Hash) ? response.routing[:tier] : nil,
+            message_context:  build_message_context(request: request, response: response)
           }
         end
 
         def publish(request:, response:)
           event = build_event(request: request, response: response)
-
-          begin
-            if defined?(Legion::Transport)
-              require 'legion/llm/transport/exchanges/audit'
-              require 'legion/llm/transport/messages/audit_event'
-              Legion::LLM::Transport::Messages::AuditEvent.new(**event).publish
-            else
-              log.debug('audit publish skipped: transport unavailable')
-            end
-          rescue StandardError => e
-            handle_exception(e, level: :warn)
-          end
-
+          Legion::LLM::Audit.emit_prompt(event)
           event
         rescue StandardError => e
           handle_exception(e, level: :warn)
           nil
+        end
+
+        def build_message_context(response:, **)
+          {
+            request_id:      response.request_id,
+            conversation_id: response.conversation_id
+          }.compact
         end
       end
     end
