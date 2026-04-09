@@ -7,7 +7,7 @@ module Legion
     module Audit
       class PromptEvent < Legion::LLM::Transport::Message
         def type        = 'llm.audit.prompt'
-        def exchange    = Legion::LLM::Audit::Exchange
+        def exchange    = Legion::LLM::Transport::Exchanges::Audit
         def routing_key = "audit.prompt.#{@options[:request_type]}"
         def priority    = 0
         def encrypt?    = true

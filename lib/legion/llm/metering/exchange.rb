@@ -1,12 +1,11 @@
 # frozen_string_literal: true
 
+require_relative '../transport/exchanges/metering'
+
 module Legion
   module LLM
     module Metering
-      class Exchange < ::Legion::Transport::Exchange
-        def exchange_name = 'llm.metering'
-        def default_type  = 'topic'
-      end
+      Exchange = Legion::LLM::Transport::Exchanges::Metering
     end
   end
 end

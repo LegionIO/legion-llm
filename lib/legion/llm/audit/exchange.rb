@@ -1,12 +1,11 @@
 # frozen_string_literal: true
 
+require_relative '../transport/exchanges/audit'
+
 module Legion
   module LLM
     module Audit
-      class Exchange < ::Legion::Transport::Exchange
-        def exchange_name = 'llm.audit'
-        def default_type  = 'topic'
-      end
+      Exchange = Legion::LLM::Transport::Exchanges::Audit
     end
   end
 end

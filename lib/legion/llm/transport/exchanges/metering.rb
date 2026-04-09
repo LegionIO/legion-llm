@@ -4,9 +4,9 @@ module Legion
   module LLM
     module Transport
       module Exchanges
-        class Audit < ::Legion::Transport::Exchange
+        class Metering < ::Legion::Transport::Exchange
           def exchange_name
-            'llm.audit'
+            'llm.metering'
           end
 
           def default_type

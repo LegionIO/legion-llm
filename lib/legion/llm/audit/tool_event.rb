@@ -7,7 +7,7 @@ module Legion
     module Audit
       class ToolEvent < Legion::LLM::Transport::Message
         def type        = 'llm.audit.tool'
-        def exchange    = Legion::LLM::Audit::Exchange
+        def exchange    = Legion::LLM::Transport::Exchanges::Audit
         def routing_key = "audit.tool.#{@options[:tool_name]}"
         def priority    = 0
         def encrypt?    = true

@@ -7,7 +7,7 @@ module Legion
     module Metering
       class Event < Legion::LLM::Transport::Message
         def type        = 'llm.metering.event'
-        def exchange    = Legion::LLM::Metering::Exchange
+        def exchange    = Legion::LLM::Transport::Exchanges::Metering
         def routing_key = "metering.#{@options[:request_type]}"
         def priority    = 0
         def encrypt?    = false

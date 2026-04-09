@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.6.26] - 2026-04-09
+
+### Changed
+- Canonical exchange location is now `Legion::LLM::Transport::Exchanges::Metering` and `::Audit`
+- `Legion::LLM::Metering::Exchange` and `Legion::LLM::Audit::Exchange` are now thin aliases for backwards compatibility
+- `AuditEvent` and `EscalationEvent` inherit `Legion::LLM::Transport::Message` instead of `::Legion::Transport::Message`
+- Event classes (`Metering::Event`, `Audit::PromptEvent`, `Audit::ToolEvent`) reference `Transport::Exchanges::*`
+
 ## [0.6.25] - 2026-04-08
 
 ### Added
