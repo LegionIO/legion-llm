@@ -70,6 +70,7 @@ module Legion
         auto_register_providers
 
         install_hooks
+        load_tool_interceptors
 
         @started = true
         Legion::Settings[:llm][:connected] = true
@@ -922,6 +923,13 @@ module Legion
         Hooks::BudgetGuard.install if Hooks::BudgetGuard.enforcing?
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.install_hooks')
+      end
+
+      def load_tool_interceptors
+        require 'legion/llm/tools/interceptor'
+        Legion::LLM::Tools::Interceptor.load_defaults
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.load_tool_interceptors')
       end
 
       def set_defaults
