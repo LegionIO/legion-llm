@@ -2,6 +2,7 @@
 
 require 'ruby_llm'
 require 'legion/logging/helper'
+require 'legion/llm/tools/interceptor'
 
 module Legion
   module LLM
@@ -35,6 +36,7 @@ module Legion
         end
 
         def execute(**args)
+          args = Legion::LLM::Tools::Interceptor.intercept(@tool_name, **args)
           log.info("[llm][tools] adapter.execute name=#{@tool_name} arguments=#{summarize_payload(args)}")
           result = @tool_class.call(**args)
           content = extract_content(result)

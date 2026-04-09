@@ -5,6 +5,14 @@
 ### Added
 - Broker soft consumer in Providers module — tries Identity::Broker before Settings for all provider credentials (Phase 8 Wave 2)
 
+## [0.6.28] - 2026-04-09
+
+### Added
+- `Legion::LLM::Tools::Interceptor` — extensible tool call interception registry
+- `Legion::LLM::Tools::Interceptors::PythonVenv` — rewrites `python3`/`pip3` commands to Legion-managed venv when available
+- ToolAdapter#execute calls Interceptor.intercept before dispatching to tool class
+- Interceptors loaded automatically during `Legion::LLM.start`
+
 ## [0.6.26] - 2026-04-09
 
 ### Changed
