@@ -16,27 +16,11 @@ module Legion
           end
 
           def publish_or_spool(event)
-            if transport_connected?
-              publish_event(event)
-              log.info("[llm][metering] published provider=#{event[:provider]} model=#{event[:model_id]}")
-              :published
-            elsif spool_available?
-              spool_event(event)
-              log.info("[llm][metering] spooled provider=#{event[:provider]} model=#{event[:model_id]}")
-              :spooled
-            else
-              log.warn("[llm][metering] dropped provider=#{event[:provider]} model=#{event[:model_id]}")
-              :dropped
-            end
+            publish_event(event)
           end
 
           def flush_spool
-            return 0 unless spool_available? && transport_connected?
-
-            spool = Legion::Data::Spool.for(Legion::LLM)
-            flushed = spool.flush(:metering) { |event| publish_event(event) }
-            log.info("[llm][metering] spool_flushed count=#{flushed}")
-            flushed
+            Legion::LLM::Metering.flush_spool
           end
 
           def identity_fields(opts)
@@ -68,25 +52,8 @@ module Legion
             }
           end
 
-          def transport_connected?
-            !!(defined?(Legion::Transport) &&
-              Legion::Transport.respond_to?(:connected?) &&
-              Legion::Transport.connected?)
-          end
-
-          def spool_available?
-            !!defined?(Legion::Data::Spool)
-          end
-
           def publish_event(event)
-            return unless defined?(Legion::Extensions::LLM::Gateway::Transport::Messages::MeteringEvent)
-
-            Legion::Extensions::LLM::Gateway::Transport::Messages::MeteringEvent.new(**event).publish
-          end
-
-          def spool_event(event)
-            spool = Legion::Data::Spool.for(Legion::LLM)
-            spool.write(:metering, event)
+            Legion::LLM::Metering.emit(event)
           end
         end
       end

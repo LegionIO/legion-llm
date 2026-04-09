@@ -30,16 +30,56 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
 
   describe '.resolve_timeout' do
     it 'returns default timeout when no override' do
-      expect(described_class.resolve_timeout(nil)).to eq(30)
+      expect(described_class.resolve_timeout).to eq(30)
     end
 
     it 'returns override when provided' do
-      expect(described_class.resolve_timeout(60)).to eq(60)
+      expect(described_class.resolve_timeout(override: 60)).to eq(60)
     end
 
     it 'reads from settings' do
       Legion::Settings[:llm][:routing] = { fleet: { timeout_seconds: 45 } }
-      expect(described_class.resolve_timeout(nil)).to eq(45)
+      expect(described_class.resolve_timeout).to eq(45)
+    end
+
+    it 'reads per-type timeouts' do
+      expect(described_class.resolve_timeout(request_type: :embed)).to eq(10)
+    end
+
+    it 'reads per-type timeouts from settings' do
+      Legion::Settings[:llm][:routing] = { fleet: { timeouts: { chat: 60 } } }
+      expect(described_class.resolve_timeout(request_type: :chat)).to eq(60)
+    end
+  end
+
+  describe '.build_routing_key' do
+    it 'builds correct routing key' do
+      key = described_class.build_routing_key(provider: 'ollama', request_type: 'chat', model: 'qwen3.5:27b')
+      expect(key).to eq('llm.request.ollama.chat.qwen3.5.27b')
+    end
+  end
+
+  describe '.sanitize_model' do
+    it 'replaces colons with dots' do
+      expect(described_class.sanitize_model('qwen3.5:27b')).to eq('qwen3.5.27b')
+    end
+
+    it 'preserves other characters' do
+      expect(described_class.sanitize_model('llama3.2')).to eq('llama3.2')
+    end
+  end
+
+  describe '.error_result' do
+    it 'includes message_context' do
+      result = described_class.error_result('test', message_context: { id: 1 })
+      expect(result[:message_context]).to eq({ id: 1 })
+    end
+  end
+
+  describe '.timeout_result' do
+    it 'includes message_context' do
+      result = described_class.timeout_result('corr_1', 30, message_context: { id: 1 })
+      expect(result[:message_context]).to eq({ id: 1 })
     end
   end
 end
@@ -62,5 +102,49 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
       success:        false,
       error:          'invalid_token'
     )
+  end
+
+  it 'handles llm.fleet.error type by normalizing error payload' do
+    future = described_class.register('corr-456')
+
+    described_class.handle_delivery(
+      { error: { code: 'model_not_loaded', message: 'not available' }, message_context: { conv: 'c1' } },
+      { correlation_id: 'corr-456', type: 'llm.fleet.error' }
+    )
+
+    result = future.value!
+    expect(result[:success]).to eq(false)
+    expect(result[:error]).to eq('model_not_loaded')
+    expect(result[:message_context]).to eq({ conv: 'c1' })
+  end
+
+  it 'handles llm.fleet.response type as passthrough' do
+    future = described_class.register('corr-789')
+
+    described_class.handle_delivery(
+      { success: true, content: 'hello' },
+      { correlation_id: 'corr-789', type: 'llm.fleet.response' }
+    )
+
+    result = future.value!
+    expect(result[:success]).to eq(true)
+  end
+
+  describe '.fulfill_return' do
+    it 'fulfills with no_fleet_queue error' do
+      future = described_class.register('corr-ret')
+      described_class.fulfill_return('corr-ret')
+      result = future.value!
+      expect(result[:error]).to eq('no_fleet_queue')
+    end
+  end
+
+  describe '.fulfill_nack' do
+    it 'fulfills with fleet_backpressure error' do
+      future = described_class.register('corr-nack')
+      described_class.fulfill_nack('corr-nack')
+      result = future.value!
+      expect(result[:error]).to eq('fleet_backpressure')
+    end
   end
 end

@@ -34,9 +34,34 @@ module Legion
           future = @pending.delete(cid)
           return unless future
 
-          future.fulfill(payload)
+          # Type-aware dispatch (new protocol) with fallback to legacy (no type)
+          case properties[:type]
+          when 'llm.fleet.error'
+            future.fulfill(normalize_error(payload))
+          else
+            # 'llm.fleet.response' or legacy (no type)
+            future.fulfill(payload)
+          end
         rescue StandardError => e
           handle_exception(e, level: :warn)
+        end
+
+        def fulfill_return(correlation_id)
+          future = @pending.delete(correlation_id)
+          return unless future
+
+          future.fulfill({ success: false, error: 'no_fleet_queue' })
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.fulfill_return')
+        end
+
+        def fulfill_nack(correlation_id)
+          future = @pending.delete(correlation_id)
+          return unless future
+
+          future.fulfill({ success: false, error: 'fleet_backpressure' })
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.fulfill_nack')
         end
 
         def agent_queue_name
@@ -62,7 +87,10 @@ module Legion
             channel = Legion::Transport.connection.create_channel
             queue = channel.queue(agent_queue_name, auto_delete: true, durable: false)
             @consumer = queue.subscribe(manual_ack: false) do |_delivery, properties, body|
-              props = { correlation_id: properties.correlation_id }
+              props = {
+                correlation_id: properties.correlation_id,
+                type:           properties.type
+              }
               handle_delivery(body, props)
             end
           end
@@ -95,6 +123,16 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :debug)
           {}
+        end
+
+        def normalize_error(payload)
+          error = payload[:error] || {}
+          {
+            success:         false,
+            error:           error.is_a?(Hash) ? error[:code] || error[:message] || 'fleet_error' : error.to_s,
+            message_context: payload[:message_context] || {},
+            raw_error:       error
+          }
         end
       end
     end
