@@ -8,7 +8,7 @@
 Core LegionIO gem providing LLM capabilities to all extensions. Wraps ruby_llm to provide a consistent interface for chat, embeddings, tool use, and agents across multiple providers (Bedrock, Anthropic, OpenAI, Gemini, Ollama). Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
 
 **GitHub**: https://github.com/LegionIO/legion-llm
-**Version**: 0.6.25
+**Version**: 0.6.27
 **License**: Apache-2.0
 
 ## Architecture
@@ -504,7 +504,7 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 882 examples, 0 failures
+bundle exec rspec    # 1661 examples, 0 failures
 bundle exec rubocop  # 0 offenses
 ```
 
