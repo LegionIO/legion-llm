@@ -41,6 +41,14 @@ RSpec.describe Legion::LLM::Tools::Interceptor do
     end
   end
 
+  describe '.intercept with bad return' do
+    it 'raises ArgumentError when an interceptor returns a non-Hash' do
+      described_class.register(:bad, matcher: ->(_) { true }) { |_name, **_args| nil }
+      expect { described_class.intercept('any', command: 'foo') }
+        .to raise_error(ArgumentError, /interceptor :bad must return a Hash/)
+    end
+  end
+
   describe '.reset!' do
     it 'clears all registered interceptors' do
       described_class.register(:foo, matcher: ->(_) { true }) { |_name, **args| args }

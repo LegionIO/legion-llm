@@ -23,6 +23,12 @@ RSpec.describe Legion::LLM::Tools::Interceptors::PythonVenv do
       expect(described_class.match?('ruby')).to be false
       expect(described_class.match?('grep')).to be false
     end
+
+    it 'does not match tools that merely start with python or pip' do
+      expect(described_class.match?('pipeline')).to be false
+      expect(described_class.match?('pipedrive')).to be false
+      expect(described_class.match?('pythonista')).to be false
+    end
   end
 
   describe '.rewrite' do

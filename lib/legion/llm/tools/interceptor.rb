@@ -5,28 +5,36 @@ module Legion
     module Tools
       module Interceptor
         @registry = {}
+        @mutex = Mutex.new
 
         module_function
 
         def register(name, matcher:, &block)
-          @registry[name.to_sym] = { matcher: matcher, rewrite: block }
+          @mutex.synchronize { @registry = @registry.merge(name.to_sym => { matcher: matcher, rewrite: block }) }
         end
 
         def intercept(tool_name, **args)
-          @registry.each_value do |entry|
+          snapshot = @mutex.synchronize { @registry.dup }
+          snapshot.each do |name, entry|
             next unless entry[:matcher].call(tool_name)
 
-            args = entry[:rewrite].call(tool_name, **args)
+            rewritten_args = entry[:rewrite].call(tool_name, **args)
+            unless rewritten_args.is_a?(Hash)
+              raise ArgumentError,
+                    "interceptor #{name.inspect} must return a Hash, got #{rewritten_args.class}"
+            end
+
+            args = rewritten_args
           end
           args
         end
 
         def registered
-          @registry.keys
+          @mutex.synchronize { @registry.keys }
         end
 
         def reset!
-          @registry = {}
+          @mutex.synchronize { @registry = {} }
         end
 
         def load_defaults

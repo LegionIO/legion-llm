@@ -9,7 +9,7 @@ module Legion
           PYTHON   = "#{VENV_DIR}/bin/python3".freeze
           PIP      = "#{VENV_DIR}/bin/pip3".freeze
 
-          TOOL_PATTERN = /\A(python|pip)/i
+          TOOL_PATTERN = /\A(python3?|pip3?)\z/i
 
           module_function
 
