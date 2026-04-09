@@ -28,6 +28,9 @@ module Legion
                       else
                         config[:api_key]
                       end
+
+          has_creds ||= broker_has_credential?(provider) unless has_creds
+
           next unless has_creds
 
           config[:enabled] = true
@@ -70,6 +73,19 @@ module Legion
       def configure_bedrock(config)
         has_sigv4 = config[:api_key] && config[:secret_key]
         has_bearer = config[:bearer_token]
+
+        unless has_sigv4 || has_bearer
+          broker_creds = resolve_broker_aws_credentials
+          if broker_creds
+            has_sigv4 = true
+            config = config.merge(
+              api_key:       broker_creds.access_key_id,
+              secret_key:    broker_creds.secret_access_key,
+              session_token: (broker_creds.session_token if broker_creds.respond_to?(:session_token))
+            )
+          end
+        end
+
         return unless has_sigv4 || has_bearer
 
         require 'legion/llm/bedrock_bearer_auth' if has_bearer
@@ -90,35 +106,38 @@ module Legion
       end
 
       def configure_anthropic(config)
-        return unless config[:api_key]
+        api_key = resolve_broker_credential(:anthropic) || config[:api_key]
+        return unless api_key
 
         RubyLLM.configure do |c|
-          c.anthropic_api_key = config[:api_key]
+          c.anthropic_api_key = api_key
         end
         log.info 'Configured Anthropic provider'
       end
 
       def configure_openai(config)
-        return unless config[:api_key]
+        api_key = resolve_broker_credential(:openai) || config[:api_key]
+        return unless api_key
 
         RubyLLM.configure do |c|
-          c.openai_api_key = config[:api_key]
+          c.openai_api_key = api_key
         end
         log.info 'Configured OpenAI provider'
       end
 
       def configure_gemini(config)
-        return unless config[:api_key]
+        api_key = resolve_broker_credential(:gemini) || config[:api_key]
+        return unless api_key
 
         RubyLLM.configure do |c|
-          c.gemini_api_key = config[:api_key]
+          c.gemini_api_key = api_key
         end
         log.info 'Configured Gemini provider'
       end
 
       def configure_azure(config)
         api_base = config[:api_base]
-        api_key = config[:api_key]
+        api_key = resolve_broker_credential(:azure) || config[:api_key]
         auth_token = config[:auth_token]
         return unless api_base && (api_key || auth_token)
 
@@ -196,6 +215,41 @@ module Legion
         log.warn "LLM provider (#{provider}) not available, #{e.class}"
         handle_exception(e, level: :debug, operation: 'llm.providers.verify_single_provider', provider: provider, model: model)
         # config[:enabled] = false
+      end
+
+      def resolve_broker_credential(provider_name)
+        return nil unless defined?(Legion::Identity::Broker)
+
+        Legion::Identity::Broker.token_for(provider_name)
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: "llm.providers.broker_resolve.#{provider_name}")
+        nil
+      end
+
+      def resolve_broker_aws_credentials
+        return nil unless defined?(Legion::Identity::Broker)
+
+        renewer = Legion::Identity::Broker.renewer_for(:aws)
+        return renewer.provider.current_credentials if renewer&.provider.respond_to?(:current_credentials)
+
+        nil
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.providers.broker_resolve.aws')
+        nil
+      end
+
+      def broker_has_credential?(provider)
+        return false unless defined?(Legion::Identity::Broker)
+
+        case provider
+        when :bedrock
+          renewer = Legion::Identity::Broker.renewer_for(:aws)
+          renewer&.provider.respond_to?(:current_credentials) && !renewer.provider.current_credentials.nil?
+        else
+          !Legion::Identity::Broker.token_for(provider).nil?
+        end
+      rescue StandardError
+        false
       end
     end
   end

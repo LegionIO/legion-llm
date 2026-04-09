@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [Unreleased]
+
+### Added
+- Broker soft consumer in Providers module — tries Identity::Broker before Settings for all provider credentials (Phase 8 Wave 2)
+
 ## [0.6.26] - 2026-04-09
 
 ### Changed
