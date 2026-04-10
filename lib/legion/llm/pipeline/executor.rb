@@ -107,7 +107,7 @@ module Legion
           # Trigger-matched tools — inject tools surfaced by trigger word matching
           if @triggered_tools.any?
             @triggered_tools.each do |tool_class|
-              adapter = Legion::LLM::Tools::Adapter.new(tool_class)
+              adapter = ToolAdapter.new(tool_class)
               session.with_tool(adapter)
             rescue StandardError => e
               handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_triggered_tool')

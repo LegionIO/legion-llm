@@ -61,6 +61,8 @@ module Legion
           end
 
           def normalize_message_words(text)
+            return Set.new if text.nil? || text.empty?
+
             text.downcase.gsub(/[^a-z ]/, ' ').split.to_set
           end
 
