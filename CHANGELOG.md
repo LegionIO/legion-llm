@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.31] - 2026-04-10
+
+### Fixed
+- `ConversationStore#db_append_message` — coerce multi-part content blocks (arrays of `{type:, text:}` hashes) to plain string before Sequel insert, preventing `PG::UndefinedColumn` errors
+- `ConversationStore#next_seq` — fall back to DB max seq when in-memory message list is empty, preventing seq collisions after eviction or restart
+
 ## [0.6.30] - 2026-04-10
 
 ### Added

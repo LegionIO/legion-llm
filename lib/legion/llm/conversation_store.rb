@@ -182,6 +182,16 @@ module Legion
 
         def next_seq(conversation_id)
           msgs = conversations[conversation_id][:messages]
+          if msgs.empty? && db_available?
+            begin
+              max = Legion::Data.connection[:conversation_messages]
+                                .where(conversation_id: conversation_id)
+                                .max(:seq)
+              return (max || 0) + 1
+            rescue StandardError
+              # fall through to default
+            end
+          end
           msgs.empty? ? 1 : msgs.last[:seq] + 1
         end
 
@@ -373,13 +383,23 @@ module Legion
         end
 
         def db_append_message(conversation_id, msg)
-          content = msg[:content]
-          content = content.to_json unless content.is_a?(String) || content.nil?
+          # Coerce content to plain string — content may arrive as an array of
+          # multi-part blocks (e.g. [{type: "text", text: "..."}]) which Sequel
+          # would misinterpret as a filter expression, causing PG::UndefinedColumn.
+          raw_content = msg[:content]
+          coerced_content = if raw_content.is_a?(Array)
+                              raw_content.filter_map do |b|
+                                b.is_a?(Hash) ? (b[:text] || b['text']) : b.to_s
+                              end.join
+                            else
+                              raw_content.to_s
+                            end
+
           row = {
             conversation_id: conversation_id,
             seq:             msg[:seq],
             role:            msg[:role].to_s,
-            content:         content,
+            content:         coerced_content,
             provider:        msg[:provider]&.to_s,
             model:           msg[:model]&.to_s,
             input_tokens:    msg[:input_tokens],
