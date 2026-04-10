@@ -33,7 +33,8 @@ module Legion
           telemetry:                 telemetry_defaults,
           context_curation:          context_curation_defaults,
           debate:                    debate_defaults,
-          provider_layer:            provider_layer_defaults
+          provider_layer:            provider_layer_defaults,
+          tool_trigger:              tool_trigger_defaults
         }
       end
 
@@ -223,6 +224,13 @@ module Legion
           mode:                 'ruby_llm',
           native_providers:     %w[claude bedrock],
           fallback_to_ruby_llm: true
+        }
+      end
+
+      def self.tool_trigger_defaults
+        {
+          scan_depth: 2,
+          tool_limit: 10
         }
       end
 

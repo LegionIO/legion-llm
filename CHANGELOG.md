@@ -2,8 +2,14 @@
 
 ## [Unreleased]
 
+## [0.6.30] - 2026-04-10
+
 ### Added
-- Broker soft consumer in Providers module — tries Identity::Broker before Settings for all provider credentials (Phase 8 Wave 2)
+- `Legion::LLM::Pipeline::Steps::TriggerMatch` — pipeline step that matches recent message words against `Legion::Tools::TriggerIndex` and populates `@triggered_tools`
+- `tool_trigger` settings defaults (`scan_depth: 2`, `tool_limit: 10`) in `Legion::LLM::Settings`
+- Trigger-matched tools are injected into the RubyLLM session in `inject_registry_tools` after always-loaded tools
+- `:trigger_match` step inserted between `:rag_context` and `:tool_discovery` in `STEPS` and `PRE_PROVIDER_STEPS`
+- `:trigger_match` added to all profile skip lists that skip `:tool_discovery` (`GAIA_SKIP`, `SYSTEM_SKIP`, `QUICK_REPLY_SKIP`, `SERVICE_SKIP`)
 
 ## [0.6.29] - 2026-04-09
 

@@ -19,6 +19,7 @@ module Legion
                     :escalation_chain
         attr_accessor :tool_event_handler
 
+        include Steps::TriggerMatch
         include Steps::ToolDiscovery
         include Steps::ToolCalls
         include Steps::KnowledgeCapture
@@ -29,14 +30,14 @@ module Legion
 
         STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory tier_assignment rag_context tool_discovery
+          rbac classification billing gaia_advisory tier_assignment rag_context trigger_match tool_discovery
           routing request_normalization token_budget provider_call response_normalization
           debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         PRE_PROVIDER_STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory tier_assignment rag_context tool_discovery
+          rbac classification billing gaia_advisory tier_assignment rag_context trigger_match tool_discovery
           routing request_normalization token_budget
         ].freeze
 
@@ -62,6 +63,7 @@ module Legion
           @raw_response = nil
           @exchange_id = nil
           @discovered_tools = []
+          @triggered_tools = []
           @resolved_provider = nil
           @resolved_model = nil
           @confidence_score = nil
@@ -102,6 +104,20 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_always_tool')
           end
 
+          # Trigger-matched tools — inject tools surfaced by trigger word matching
+          if @triggered_tools.any?
+            @triggered_tools.each do |tool_class|
+              adapter = ToolAdapter.new(tool_class)
+              next if injected_names.include?(adapter.name)
+
+              session.with_tool(adapter)
+              injected_names << adapter.name
+            rescue StandardError => e
+              @warnings << "Failed to inject triggered tool: #{e.message}"
+              handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_triggered_tool')
+            end
+          end
+
           # Requested deferred tools — inject only if explicitly requested
           deferred = ::Legion::Tools::Registry.respond_to?(:deferred_tools) ? ::Legion::Tools::Registry.deferred_tools : []
           requested = requested_deferred_tool_names
@@ -121,6 +137,7 @@ module Legion
           log.info(
             "[llm][tools] inject request_id=#{@request.id} " \
             "always=#{::Legion::Tools::Registry.tools.size} " \
+            "triggered=#{@triggered_tools.size} " \
             "deferred_available=#{deferred.size} " \
             "requested_deferred=#{requested.size} " \
             "injected=#{injected_names.size} names=#{injected_names.first(25).join(',')}"
