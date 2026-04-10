@@ -6,18 +6,18 @@ module Legion
       module Profile
         GAIA_SKIP = %i[
           idempotency conversation_uuid context_load rbac classification
-          billing gaia_advisory tool_discovery context_store post_response
+          billing gaia_advisory trigger_match tool_discovery context_store post_response
         ].freeze
 
         SYSTEM_SKIP = %i[
           idempotency conversation_uuid context_load rbac classification
-          billing gaia_advisory rag_context tool_discovery context_store
+          billing gaia_advisory rag_context trigger_match tool_discovery context_store
           post_response
         ].freeze
 
         QUICK_REPLY_SKIP = %i[
           idempotency conversation_uuid context_load classification
-          gaia_advisory rag_context tool_discovery confidence_scoring
+          gaia_advisory rag_context trigger_match tool_discovery confidence_scoring
           tool_calls context_store post_response knowledge_capture
         ].freeze
 
@@ -25,7 +25,7 @@ module Legion
 
         SERVICE_SKIP = %i[
           conversation_uuid context_load gaia_advisory
-          rag_context tool_discovery confidence_scoring
+          rag_context trigger_match tool_discovery confidence_scoring
           tool_calls context_store knowledge_capture
         ].freeze
 
