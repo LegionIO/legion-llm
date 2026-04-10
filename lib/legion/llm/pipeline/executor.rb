@@ -108,8 +108,12 @@ module Legion
           if @triggered_tools.any?
             @triggered_tools.each do |tool_class|
               adapter = ToolAdapter.new(tool_class)
+              next if injected_names.include?(adapter.name)
+
               session.with_tool(adapter)
+              injected_names << adapter.name
             rescue StandardError => e
+              @warnings << "Failed to inject triggered tool: #{e.message}"
               handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_triggered_tool')
             end
           end
@@ -133,6 +137,7 @@ module Legion
           log.info(
             "[llm][tools] inject request_id=#{@request.id} " \
             "always=#{::Legion::Tools::Registry.tools.size} " \
+            "triggered=#{@triggered_tools.size} " \
             "deferred_available=#{deferred.size} " \
             "requested_deferred=#{requested.size} " \
             "injected=#{injected_names.size} names=#{injected_names.first(25).join(',')}"

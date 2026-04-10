@@ -10,6 +10,7 @@ module Legion
           include Legion::Logging::Helper
 
           def step_trigger_match
+            start_time = nil
             return unless defined?(::Legion::Tools::TriggerIndex)
             return if ::Legion::Tools::TriggerIndex.empty?
 
