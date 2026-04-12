@@ -24,6 +24,11 @@ module Legion
             parts << "Relevant context:\n#{context_text}" unless context_text.empty?
           end
 
+          # Skill injection — active skill's step output prepended to context
+          if (skill = enrichments['skill:active'])
+            parts << skill
+          end
+
           return system if parts.empty?
 
           parts << system if system

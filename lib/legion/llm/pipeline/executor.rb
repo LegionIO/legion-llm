@@ -20,6 +20,7 @@ module Legion
         attr_accessor :tool_event_handler
 
         include Steps::TriggerMatch
+        include Steps::SkillInjector
         include Steps::ToolDiscovery
         include Steps::ToolCalls
         include Steps::KnowledgeCapture
@@ -30,14 +31,14 @@ module Legion
 
         STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory tier_assignment rag_context trigger_match tool_discovery
+          rbac classification billing gaia_advisory tier_assignment rag_context trigger_match skill_injector tool_discovery
           routing request_normalization token_budget provider_call response_normalization
           debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         PRE_PROVIDER_STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory tier_assignment rag_context trigger_match tool_discovery
+          rbac classification billing gaia_advisory tier_assignment rag_context trigger_match skill_injector tool_discovery
           routing request_normalization token_budget
         ].freeze
 
