@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require 'set'
 require 'legion/logging/helper'
 
 module Legion
@@ -16,9 +15,7 @@ module Legion
             validate!(skill_class)
             MUTEX.synchronize do
               key = registry_key(skill_class)
-              if (@by_key ||= {}).key?(key)
-                log.warn("[skills][registry] duplicate: #{key} replaced")
-              end
+              log.warn("[skills][registry] duplicate: #{key} replaced") if (@by_key ||= {}).key?(key)
               @ordered ||= []
               @ordered.reject! { |k| k == key }
               @by_key[key] = skill_class

@@ -21,8 +21,8 @@ module Legion
             type ? (@trigger = type) : (@trigger || :on_demand)
           end
 
-          def namespace(ns = nil)
-            ns ? (@namespace = ns.to_s) : @namespace
+          def namespace(nsp = nil)
+            nsp ? (@namespace = nsp.to_s) : @namespace
           end
 
           def steps(*names)
@@ -50,9 +50,7 @@ module Legion
             skill_key ? (@follows_skill = skill_key.to_s) : @follows_skill
           end
 
-          def follows_skill
-            @follows_skill
-          end
+          attr_reader :follows_skill
 
           # `condition` is used instead of `when` because `when` is a Ruby reserved keyword.
           # DSL: `condition classification: { level: 'internal' }`
@@ -113,121 +111,133 @@ module Legion
           conv_id        = context[:conversation_id]
           self_key       = "#{self.class.namespace}:#{self.class.skill_name}"
 
-          Legion::Events.emit('skill.started', {
-            conversation_id: conv_id,
-            skill_name:      self.class.skill_name,
-            namespace:       self.class.namespace,
-            total_steps:     self.class.steps.length
-          }) if conv_id
+          emit_event(conv_id, 'skill.started',
+                     skill_name: self.class.skill_name, namespace: self.class.namespace,
+                     total_steps: self.class.steps.length)
 
           self.class.steps[from_step..].each_with_index do |method_name, offset|
             step_idx = from_step + offset
-
             if conv_id && Legion::LLM::ConversationStore.skill_cancelled?(conv_id)
               Legion::LLM::ConversationStore.clear_cancel_flag(conv_id)
-              return SkillRunResult.build(inject: inject_parts.join("\n\n"), gated: false,
-                                         gate: nil, resume_at: nil, complete: false)
+              return SkillRunResult.build(inject: inject_parts.join("\n\n"),
+                                          gated: false, gate: nil, resume_at: nil, complete: false)
             end
 
-            Legion::Events.emit('skill.step.started', {
-              conversation_id: conv_id, step_name: method_name, step_index: step_idx
-            }) if conv_id
-            Legion::LLM::Metering.emit(
-              request_type: 'skill.step.start', skill_name: self.class.skill_name,
-              namespace: self.class.namespace, step_name: method_name,
-              step_index: step_idx, tier: 'local'
-            )
-
-            t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-
-            begin
-              result      = public_send(method_name, context: context)
-              duration_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
-            rescue StandardError => e
-              duration_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
-              Legion::LLM::ConversationStore.clear_skill_state(conv_id) if conv_id
-              Legion::Events.emit('skill.step.failed', {
-                conversation_id: conv_id, step_name: method_name, error: e.message
-              }) if conv_id
-              Legion::LLM::Audit.emit_skill(
-                skill_name: self.class.skill_name, namespace: self.class.namespace,
-                step_name: method_name, gate: nil, status: :failed,
-                duration_ms: duration_ms, metadata: { error: e.message },
-                classification: classification
-              )
-              Legion::LLM::Metering.emit(
-                request_type: 'skill.step', skill_name: self.class.skill_name,
-                namespace: self.class.namespace, step_name: method_name,
-                step_index: step_idx, duration_ms: duration_ms, gate: nil, tier: 'local'
-              )
-              raise Legion::LLM::Skills::StepError.new(
-                "#{self.class.skill_name}##{method_name} failed: #{e.message}", cause: e
-              )
-            end
-
+            result, duration_ms = execute_step(method_name, step_idx, context, conv_id, classification)
             total_duration += duration_ms
             inject_parts << result.inject if result.inject
 
-            Legion::Events.emit('skill.step.completed', {
-              conversation_id: conv_id, step_name: method_name,
-              duration_ms: duration_ms, metadata: result.metadata
-            }) if conv_id
-            Legion::LLM::Audit.emit_skill(
-              skill_name: self.class.skill_name, namespace: self.class.namespace,
-              step_name: method_name, gate: result.gate,
-              status: :completed, duration_ms: duration_ms,
-              metadata: result.metadata, classification: classification
-            )
-            Legion::LLM::Metering.emit(
-              request_type: 'skill.step', skill_name: self.class.skill_name,
-              namespace: self.class.namespace, step_name: method_name,
-              step_index: step_idx, duration_ms: duration_ms, gate: result.gate&.to_s, tier: 'local'
-            )
+            emit_step_success(conv_id, method_name, step_idx, duration_ms, result, classification)
 
-            if result.gate
-              Legion::LLM::ConversationStore.set_skill_state(conv_id,
-                                                             skill_key: self_key, resume_at: step_idx + 1) if conv_id
-              Legion::Events.emit('skill.step.gated', {
-                conversation_id: conv_id, step_name: method_name, gate_type: result.gate
-              }) if conv_id
-              return SkillRunResult.build(
-                inject: inject_parts.join("\n\n"), gated: true,
-                gate: result.gate, resume_at: step_idx + 1, complete: false
+            next unless result.gate
+
+            if conv_id
+              Legion::LLM::ConversationStore.set_skill_state(
+                conv_id, skill_key: self_key, resume_at: step_idx + 1
               )
             end
+            emit_event(conv_id, 'skill.step.gated',
+                       step_name: method_name, gate_type: result.gate)
+            return SkillRunResult.build(
+              inject: inject_parts.join("\n\n"), gated: true,
+              gate: result.gate, resume_at: step_idx + 1, complete: false
+            )
           end
 
-          # Resolve chain class FIRST — no ghost transitions
-          chain_next     = Legion::LLM::Skills::Registry.chain_for(self_key)
-          chained_class  = chain_next ? Legion::LLM::Skills::Registry.find(chain_next) : nil
+          finalize_run(conv_id, self_key, inject_parts, total_duration, context)
+        end
+
+        private
+
+        def execute_step(method_name, step_idx, context, conv_id, classification)
+          emit_event(conv_id, 'skill.step.started',
+                     step_name: method_name, step_index: step_idx)
+          Legion::LLM::Metering.emit(
+            request_type: 'skill.step.start', skill_name: self.class.skill_name,
+            namespace: self.class.namespace, step_name: method_name,
+            step_index: step_idx, tier: 'local'
+          )
+          t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+          result      = public_send(method_name, context: context)
+          duration_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
+          [result, duration_ms]
+        rescue StandardError => e
+          duration_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
+          handle_step_error(e, method_name, step_idx, conv_id, duration_ms, classification)
+        end
+
+        def handle_step_error(err, method_name, step_idx, conv_id, duration_ms, classification)
+          Legion::LLM::ConversationStore.clear_skill_state(conv_id) if conv_id
+          emit_event(conv_id, 'skill.step.failed',
+                     step_name: method_name, error: err.message)
+          Legion::LLM::Audit.emit_skill(
+            skill_name: self.class.skill_name, namespace: self.class.namespace,
+            step_name: method_name, gate: nil, status: :failed,
+            duration_ms: duration_ms, metadata: { error: err.message },
+            classification: classification
+          )
+          Legion::LLM::Metering.emit(
+            request_type: 'skill.step', skill_name: self.class.skill_name,
+            namespace: self.class.namespace, step_name: method_name,
+            step_index: step_idx, duration_ms: duration_ms, gate: nil, tier: 'local'
+          )
+          raise Legion::LLM::Skills::StepError.new(
+            "#{self.class.skill_name}##{method_name} failed: #{err.message}", cause: err
+          )
+        end
+
+        def emit_step_success(conv_id, method_name, step_idx, duration_ms, result, classification)
+          emit_event(conv_id, 'skill.step.completed',
+                     step_name: method_name, duration_ms: duration_ms,
+                     metadata: result.metadata)
+          Legion::LLM::Audit.emit_skill(
+            skill_name: self.class.skill_name, namespace: self.class.namespace,
+            step_name: method_name, gate: result.gate,
+            status: :completed, duration_ms: duration_ms,
+            metadata: result.metadata, classification: classification
+          )
+          Legion::LLM::Metering.emit(
+            request_type: 'skill.step', skill_name: self.class.skill_name,
+            namespace: self.class.namespace, step_name: method_name,
+            step_index: step_idx, duration_ms: duration_ms,
+            gate: result.gate&.to_s, tier: 'local'
+          )
+        end
+
+        def finalize_run(conv_id, self_key, inject_parts, total_duration, context)
+          chain_next    = Legion::LLM::Skills::Registry.chain_for(self_key)
+          chained_class = chain_next ? Legion::LLM::Skills::Registry.find(chain_next) : nil
           resolved_chain = chained_class ? chain_next : nil
 
           Legion::LLM::ConversationStore.clear_skill_state(conv_id) if conv_id
-          Legion::Events.emit('skill.completed', {
-            conversation_id:   conv_id,
-            skill_name:        self.class.skill_name,
-            namespace:         self.class.namespace,
-            total_duration_ms: total_duration,
-            chained_to:        resolved_chain
-          }) if conv_id
+          emit_event(conv_id, 'skill.completed',
+                     skill_name: self.class.skill_name, namespace: self.class.namespace,
+                     total_duration_ms: total_duration, chained_to: resolved_chain)
 
-          if chained_class
-            Legion::Events.emit('skill.chained', {
-              conversation_id: conv_id, from_skill: self_key, to_skill: resolved_chain
-            }) if conv_id
-            chained_result = chained_class.new.run(from_step: 0, context: context)
-            inject_parts << chained_result.inject if chained_result.inject
-            return SkillRunResult.build(
-              inject:    inject_parts.join("\n\n"),
-              gated:     chained_result.gated,
-              gate:      chained_result.gate,
-              resume_at: chained_result.resume_at,
-              complete:  chained_result.complete
-            )
-          end
+          return run_chained(chained_class, chain_next, conv_id, self_key, inject_parts, context) if chained_class
 
-          SkillRunResult.build(inject: inject_parts.join("\n\n"), gated: false,
-                               gate: nil, resume_at: nil, complete: true)
+          SkillRunResult.build(inject: inject_parts.join("\n\n"),
+                               gated: false, gate: nil, resume_at: nil, complete: true)
+        end
+
+        def run_chained(chained_class, chain_key, conv_id, self_key, inject_parts, context)
+          emit_event(conv_id, 'skill.chained',
+                     from_skill: self_key, to_skill: chain_key)
+          chained_result = chained_class.new.run(from_step: 0, context: context)
+          inject_parts << chained_result.inject if chained_result.inject
+          SkillRunResult.build(
+            inject:    inject_parts.join("\n\n"),
+            gated:     chained_result.gated,
+            gate:      chained_result.gate,
+            resume_at: chained_result.resume_at,
+            complete:  chained_result.complete
+          )
+        end
+
+        def emit_event(conv_id, event, **payload)
+          return unless conv_id
+
+          Legion::Events.emit(event, { conversation_id: conv_id }.merge(payload))
         end
 
         protected

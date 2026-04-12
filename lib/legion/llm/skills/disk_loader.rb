@@ -74,7 +74,7 @@ module Legion
         def build_md_skill_class(name:, namespace:, description:, trigger:, trigger_words:, content:)
           raw_content = content
           klass = Class.new(Legion::LLM::Skills::Base)
-          klass.send(:define_method, :present_content) do |context: {}|
+          klass.send(:define_method, :present_content) do |context: {}| # rubocop:disable Lint/UnusedBlockArgument
             Legion::LLM::Skills::StepResult.build(inject: raw_content)
           end
           klass.skill_name(name)
