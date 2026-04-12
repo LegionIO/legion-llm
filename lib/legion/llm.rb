@@ -79,9 +79,7 @@ module Legion
         load_tool_interceptors
 
         # Skills startup — load after settings, before pipeline is used
-        if defined?(Legion::LLM::Skills) && settings.dig(:skills, :enabled) != false
-          Legion::LLM::Skills.start
-        end
+        Legion::LLM::Skills.start if defined?(Legion::LLM::Skills) && settings.dig(:skills, :enabled) != false
 
         @started = true
         Legion::Settings[:llm][:connected] = true

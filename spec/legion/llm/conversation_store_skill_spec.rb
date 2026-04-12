@@ -11,7 +11,7 @@ RSpec.describe Legion::LLM::ConversationStore, 'skill state' do
   describe '.set_skill_state / .skill_state' do
     it 'stores and retrieves skill state' do
       described_class.set_skill_state(conv_id,
-        skill_key: 'superpowers:brainstorming', resume_at: 3)
+                                      skill_key: 'superpowers:brainstorming', resume_at: 3)
       state = described_class.skill_state(conv_id)
       expect(state[:skill_key]).to eq('superpowers:brainstorming')
       expect(state[:resume_at]).to eq(3)

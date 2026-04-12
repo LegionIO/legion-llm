@@ -16,7 +16,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::SkillInjector do
       attr_accessor :request, :enrichments, :warnings
 
       def initialize(request)
-        @request    = request
+        @request = request
         @enrichments = {}
         @warnings    = []
       end
@@ -25,7 +25,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::SkillInjector do
         @log ||= Logger.new(nil)
       end
 
-      def handle_exception(e, **); end
+      def handle_exception(err, **); end
     end
   end
 
@@ -66,9 +66,11 @@ RSpec.describe Legion::LLM::Pipeline::Steps::SkillInjector do
   describe 'trigger word matching' do
     let(:skill_class) do
       klass = Class.new(Legion::LLM::Skills::Base)
-      klass.skill_name('brainstorming'); klass.namespace('superpowers')
-      klass.trigger(:on_demand); klass.trigger_words('brainstorm')
-      klass.define_method(:s) { |context: {}| Legion::LLM::Skills::StepResult.build(inject: 'injected content') }
+      klass.skill_name('brainstorming')
+      klass.namespace('superpowers')
+      klass.trigger(:on_demand)
+      klass.trigger_words('brainstorm')
+      klass.define_method(:s) { |**| Legion::LLM::Skills::StepResult.build(inject: 'injected content') }
       klass.steps(:s)
       klass
     end
@@ -91,8 +93,10 @@ RSpec.describe Legion::LLM::Pipeline::Steps::SkillInjector do
   describe 'resume active skill from ConversationStore' do
     let(:skill_class) do
       klass = Class.new(Legion::LLM::Skills::Base)
-      klass.skill_name('sk'); klass.namespace('test'); klass.trigger(:on_demand)
-      klass.define_method(:step2) { |context: {}| Legion::LLM::Skills::StepResult.build(inject: 'resumed') }
+      klass.skill_name('sk')
+      klass.namespace('test')
+      klass.trigger(:on_demand)
+      klass.define_method(:step2) { |**| Legion::LLM::Skills::StepResult.build(inject: 'resumed') }
       klass.steps(:step2)
       klass
     end
@@ -110,9 +114,11 @@ RSpec.describe Legion::LLM::Pipeline::Steps::SkillInjector do
   describe 'file change triggers' do
     let(:skill_class) do
       klass = Class.new(Legion::LLM::Skills::Base)
-      klass.skill_name('rubocop'); klass.namespace('ruby'); klass.trigger(:on_demand)
+      klass.skill_name('rubocop')
+      klass.namespace('ruby')
+      klass.trigger(:on_demand)
       klass.file_change_triggers('*.rb')
-      klass.define_method(:lint) { |context: {}| Legion::LLM::Skills::StepResult.build(inject: 'linting') }
+      klass.define_method(:lint) { |**| Legion::LLM::Skills::StepResult.build(inject: 'linting') }
       klass.steps(:lint)
       klass
     end

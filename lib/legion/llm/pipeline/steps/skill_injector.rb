@@ -45,7 +45,7 @@ module Legion
             end
 
             result = skill_class.new.run(from_step: state[:resume_at],
-                                         context: build_skill_context(conv_id))
+                                         context:   build_skill_context(conv_id))
             inject_skill_result(result)
           end
 

@@ -17,8 +17,8 @@ RSpec.describe Legion::LLM::Skills::Base do
       file_change_triggers '*.rb', 'Gemfile'
 
       # Methods MUST be defined before steps() per plan critical decision #4
-      def step_one(context: {}); StepResult.build(inject: 'one'); end
-      def step_two(context: {}); StepResult.build(inject: 'two'); end
+      def step_one(**) = StepResult.build(inject: 'one')
+      def step_two(**) = StepResult.build(inject: 'two')
 
       steps :step_one, :step_two
     end
@@ -51,7 +51,8 @@ RSpec.describe Legion::LLM::Skills::Base do
 
     it 'defaults trigger to :on_demand when not set' do
       klass = Class.new(described_class) do
-        skill_name 'x'; namespace 'y'
+        skill_name 'x'
+        namespace 'y'
         def s(context: {}); end
         steps :s
       end
@@ -63,7 +64,8 @@ RSpec.describe Legion::LLM::Skills::Base do
     it 'raises InvalidSkill at class definition time for missing step methods' do
       expect do
         Class.new(described_class) do
-          skill_name 'bad'; namespace 'test'
+          skill_name 'bad'
+          namespace 'test'
           steps :nonexistent_method
         end
       end.to raise_error(Legion::LLM::Skills::InvalidSkill, /missing step methods/)
@@ -82,7 +84,9 @@ RSpec.describe Legion::LLM::Skills::Base do
   describe 'condition DSL' do
     it 'stores when_conditions' do
       klass = Class.new(described_class) do
-        skill_name 'cond-skill'; namespace 'test'; trigger :auto
+        skill_name 'cond-skill'
+        namespace 'test'
+        trigger :auto
         condition classification: { level: 'internal' }
         def s(context: {}); end
         steps :s

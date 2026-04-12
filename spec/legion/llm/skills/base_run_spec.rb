@@ -20,15 +20,25 @@ RSpec.describe Legion::LLM::Skills::Base, '#run' do
     allow(Legion::LLM::ConversationStore).to receive(:set_skill_state)
     allow(Legion::LLM::ConversationStore).to receive(:clear_cancel_flag)
     stub_const('Legion::LLM::Skills::Registry',
-               Module.new { def self.chain_for(_); nil; end; def self.find(_); nil; end })
+               Module.new do
+                 def self.chain_for(_)
+                   nil
+                 end
+
+                 def self.find(_)
+                   nil
+                 end
+               end)
   end
 
   let(:skill_class) do
     Class.new(described_class) do
-      skill_name 'run-test'; namespace 'test'; trigger :on_demand
+      skill_name 'run-test'
+      namespace 'test'
+      trigger :on_demand
 
-      def step_a(context: {}); Legion::LLM::Skills::StepResult.build(inject: 'output_a'); end
-      def step_b(context: {}); Legion::LLM::Skills::StepResult.build(inject: 'output_b'); end
+      def step_a(**) = Legion::LLM::Skills::StepResult.build(inject: 'output_a')
+      def step_b(**) = Legion::LLM::Skills::StepResult.build(inject: 'output_b')
 
       steps :step_a, :step_b
     end
@@ -96,9 +106,11 @@ RSpec.describe Legion::LLM::Skills::Base, '#run' do
   context 'with a chain follower' do
     let(:follower_class) do
       Class.new(described_class) do
-        skill_name 'follower'; namespace 'test'; trigger :on_demand
+        skill_name 'follower'
+        namespace 'test'
+        trigger :on_demand
 
-        def follow_step(context: {}); Legion::LLM::Skills::StepResult.build(inject: 'chained'); end
+        def follow_step(**) = Legion::LLM::Skills::StepResult.build(inject: 'chained')
 
         steps :follow_step
       end

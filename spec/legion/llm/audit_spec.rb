@@ -63,7 +63,11 @@ RSpec.describe Legion::LLM::Audit do
       before do
         allow(described_class).to receive(:transport_connected?).and_return(true)
         stub_const('Legion::LLM::Audit::SkillEvent',
-                   Class.new { def initialize(**); end; def publish; end })
+                   Class.new do
+                     def initialize(**); end
+
+                     def publish; end
+                   end)
       end
 
       it 'returns :published' do
