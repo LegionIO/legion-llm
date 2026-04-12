@@ -147,6 +147,53 @@ module Legion
           @lru_counter   = 0
         end
 
+        def set_skill_state(conversation_id, skill_key:, resume_at:)
+          ensure_conversation(conversation_id)
+          conversations[conversation_id][:skill_state] = { skill_key: skill_key, resume_at: resume_at }
+          touch(conversation_id)
+        end
+
+        def skill_state(conversation_id)
+          return nil unless in_memory?(conversation_id)
+
+          touch(conversation_id)
+          conversations[conversation_id][:skill_state]
+        end
+
+        def clear_skill_state(conversation_id)
+          return unless in_memory?(conversation_id)
+
+          conversations[conversation_id].delete(:skill_state)
+          touch(conversation_id)
+        end
+
+        # Reads current state, clears :skill_state, sets :skill_cancelled flag.
+        # Returns the previous state (for use in skill.cancelled payload), or nil if none.
+        def cancel_skill!(conversation_id)
+          ensure_conversation(conversation_id)
+          state = conversations[conversation_id].delete(:skill_state)
+          if state
+            conversations[conversation_id][:skill_cancelled] = true
+            touch(conversation_id)
+          end
+          state
+        end
+
+        # :skill_cancelled is distinct from a nil :skill_state.
+        # nil skill_state also occurs after normal completion — use this flag to detect cancel.
+        def skill_cancelled?(conversation_id)
+          return false unless in_memory?(conversation_id)
+
+          conversations[conversation_id][:skill_cancelled] == true
+        end
+
+        def clear_cancel_flag(conversation_id)
+          return unless in_memory?(conversation_id)
+
+          conversations[conversation_id].delete(:skill_cancelled)
+          touch(conversation_id)
+        end
+
         # Migrate existing sequential messages to use parent links.
         # Safe to call on already-migrated data (no-op when parent links present).
         def migrate_parent_links!(conversation_id)
