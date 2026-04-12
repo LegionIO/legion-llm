@@ -20,11 +20,13 @@ module Legion
               return
             end
 
+            @skill_executed = false
+
             check_trigger_words(conv_id)
-            return if @enrichments.key?('skill:active')
+            return if @skill_executed
 
             check_file_change_triggers(conv_id)
-            return if @enrichments.key?('skill:active')
+            return if @skill_executed
 
             check_auto_skills(conv_id)
           rescue StandardError => e
@@ -112,6 +114,7 @@ module Legion
 
           def activate_skill(conv_id, skill_class)
             result = skill_class.new.run(from_step: 0, context: build_skill_context(conv_id))
+            @skill_executed = true
             inject_skill_result(result)
           end
 

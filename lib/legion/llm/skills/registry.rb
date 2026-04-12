@@ -46,7 +46,11 @@ module Legion
           end
 
           def trigger_word_index
-            MUTEX.synchronize { (@trigger_word_index || {}).dup }
+            MUTEX.synchronize do
+              (@trigger_word_index || {}).each_with_object({}) do |(word, keys), copy|
+                copy[word] = keys.dup
+              end
+            end
           end
 
           def file_trigger_skills

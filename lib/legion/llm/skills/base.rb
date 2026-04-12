@@ -152,6 +152,7 @@ module Legion
         private
 
         def execute_step(method_name, step_idx, context, conv_id, classification)
+          t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
           emit_event(conv_id, 'skill.step.started',
                      step_name: method_name, step_index: step_idx)
           Legion::LLM::Metering.emit(
@@ -159,8 +160,14 @@ module Legion
             namespace: self.class.namespace, step_name: method_name,
             step_index: step_idx, tier: 'local'
           )
-          t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-          result      = public_send(method_name, context: context)
+          result = public_send(method_name, context: context)
+          unless result.respond_to?(:inject) && result.respond_to?(:metadata) && result.respond_to?(:gate)
+            raise Legion::LLM::Skills::StepError.new(
+              "#{self.class.skill_name}##{method_name} returned #{result.class} instead of StepResult",
+              cause: nil
+            )
+          end
+
           duration_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
           [result, duration_ms]
         rescue StandardError => e
