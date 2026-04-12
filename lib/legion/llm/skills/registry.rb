@@ -12,10 +12,13 @@ module Legion
 
         class << self
           def register(skill_class)
-            validate!(skill_class)
             MUTEX.synchronize do
+              validate!(skill_class)
               key = registry_key(skill_class)
-              log.warn("[skills][registry] duplicate: #{key} replaced") if (@by_key ||= {}).key?(key)
+              if (@by_key ||= {}).key?(key)
+                log.warn("[skills][registry] duplicate: #{key} replaced")
+                remove_from_indexes(@by_key[key], key)
+              end
               @ordered ||= []
               @ordered.reject! { |k| k == key }
               @by_key[key] = skill_class
@@ -109,6 +112,13 @@ module Legion
 
             self_key = registry_key(skill_class)
             @chain_index[skill_class.follows_skill] = self_key
+          end
+
+          def remove_from_indexes(old_class, key)
+            old_class.trigger_words.each { |w| @trigger_word_index&.[](w)&.delete(key) }
+            @file_trigger_skills&.delete(old_class)
+            @chain_index&.delete_if { |_parent, child_key| child_key == key }
+            @chain_index&.delete(old_class.follows_skill) if old_class.follows_skill
           end
         end
       end

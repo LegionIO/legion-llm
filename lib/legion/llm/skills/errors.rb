@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'legion/llm/errors'
+
 module Legion
   module LLM
     module Skills

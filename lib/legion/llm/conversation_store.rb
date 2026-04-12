@@ -157,7 +157,7 @@ module Legion
           return nil unless in_memory?(conversation_id)
 
           touch(conversation_id)
-          conversations[conversation_id][:skill_state]
+          conversations[conversation_id][:skill_state]&.dup
         end
 
         def clear_skill_state(conversation_id)

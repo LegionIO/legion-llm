@@ -115,7 +115,9 @@ module Legion
                      skill_name: self.class.skill_name, namespace: self.class.namespace,
                      total_steps: self.class.steps.length)
 
-          self.class.steps[from_step..].each_with_index do |method_name, offset|
+          remaining_steps = self.class.steps[from_step..] || []
+
+          remaining_steps.each_with_index do |method_name, offset|
             step_idx = from_step + offset
             if conv_id && Legion::LLM::ConversationStore.skill_cancelled?(conv_id)
               Legion::LLM::ConversationStore.clear_cancel_flag(conv_id)

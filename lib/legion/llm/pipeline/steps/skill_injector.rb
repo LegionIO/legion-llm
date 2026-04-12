@@ -21,7 +21,11 @@ module Legion
             end
 
             check_trigger_words(conv_id)
+            return if @enrichments.key?('skill:active')
+
             check_file_change_triggers(conv_id)
+            return if @enrichments.key?('skill:active')
+
             check_auto_skills(conv_id)
           rescue StandardError => e
             @warnings << "SkillInjector error: #{e.message}"

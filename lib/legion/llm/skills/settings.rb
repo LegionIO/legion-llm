@@ -10,7 +10,7 @@ module Legion
           on_demand:         true,
           max_active_skills: 1,
           directories:       ['.legion/skills', '~/.legionio/skills'],
-          auto_discover:     { claude: true, codex: true },
+          auto_discover:     { claude: false, codex: false },
           enabled_skills:    [],
           disabled_skills:   []
         }.freeze

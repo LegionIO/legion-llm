@@ -9,8 +9,8 @@
 - `Legion::LLM::Skills::Base` — DSL base class with `skill_name`, `namespace`, `description`, `trigger_words`, `trigger`, `steps`, `follows`, `file_change_triggers`, `content` DSL
 - `Legion::LLM::Skills::Registry` — thread-safe registry with `register`, `find`, `all`, `by_trigger`, `chain_for`, `reset!`, trigger word index, file trigger index, and cycle detection
 - `Legion::LLM::Skills::StepResult` — result struct from individual skill steps (`inject:`, `gate:`, `metadata:`)
-- `Legion::LLM::Skills::SkillRunResult` — aggregated result struct from a full skill run (`complete:`, `gated:`, `inject:`, `gate:`, `metadata:`)
-- `Legion::LLM::Skills::Errors` — typed error hierarchy (`SkillError`, `StepError`, `InvalidSkill`)
+- `Legion::LLM::Skills::SkillRunResult` — aggregated result struct from a full skill run (`complete:`, `gated:`, `inject:`, `gate:`, `resume_at:`)
+- `Legion::LLM::Skills::InvalidSkill` and `Legion::LLM::Skills::StepError` — typed skill validation and execution errors
 - `Legion::LLM::Pipeline::Steps::SkillInjector` — pipeline step (step 10.5) that matches trigger words and file change patterns, activates matching skills, and injects results as `skill:active` enrichment
 - `Legion::LLM::ConversationStore` skill state methods: `set_skill_state`, `skill_state`, `clear_skill_state` for resumable multi-turn skills
 - `Legion::LLM::Audit::SkillEvent` — audit event for skill invocations
