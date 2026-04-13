@@ -18,13 +18,8 @@ module Legion
         module_function
 
         def apply
-          return unless defined?(Legion::Settings)
-
-          llm_settings = (Legion::Settings[:llm] || {}).dup
-          current = llm_settings[:skills] || {}
-          merged  = deep_merge(DEFAULTS, current)
-          llm_settings[:skills] = merged
-          Legion::Settings[:llm] = llm_settings
+          current = Legion::Settings[:llm][:skills] || {}
+          Legion::Settings[:llm][:skills] = deep_merge(DEFAULTS, current)
         end
 
         def deep_merge(base, override)

@@ -5,9 +5,7 @@ require 'legion/llm/skills/settings'
 
 RSpec.describe Legion::LLM::Skills::Settings do
   before do
-    llm = Legion::Settings[:llm] || {}
-    llm.delete(:skills)
-    Legion::Settings[:llm] = llm
+    Legion::Settings[:llm].delete(:skills)
     described_class.apply
   end
 
@@ -24,9 +22,7 @@ RSpec.describe Legion::LLM::Skills::Settings do
   end
 
   it 'preserves caller-supplied overrides' do
-    llm = Legion::Settings[:llm] || {}
-    llm[:skills] = { enabled: false, max_active_skills: 3 }
-    Legion::Settings[:llm] = llm
+    Legion::Settings[:llm][:skills] = { enabled: false, max_active_skills: 3 }
     described_class.apply
     expect(Legion::Settings[:llm][:skills][:enabled]).to be false
     expect(Legion::Settings[:llm][:skills][:max_active_skills]).to eq(3)
