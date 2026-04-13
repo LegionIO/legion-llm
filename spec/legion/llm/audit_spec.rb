@@ -14,8 +14,7 @@ RSpec.describe Legion::LLM::Audit do
     end
 
     it 'returns :published when transport connected' do
-      stub_const('Legion::Transport', Module.new)
-      allow(Legion::Transport).to receive(:connected?).and_return(true)
+      Legion::Settings[:transport][:connected] = true
       msg_instance = instance_double(Legion::LLM::Audit::PromptEvent)
       allow(Legion::LLM::Audit::PromptEvent).to receive(:new).and_return(msg_instance)
       allow(msg_instance).to receive(:publish)
@@ -24,8 +23,7 @@ RSpec.describe Legion::LLM::Audit do
     end
 
     it 'never raises' do
-      stub_const('Legion::Transport', Module.new)
-      allow(Legion::Transport).to receive(:connected?).and_return(true)
+      Legion::Settings[:transport][:connected] = true
       allow(Legion::LLM::Audit::PromptEvent).to receive(:new).and_raise(StandardError, 'boom')
 
       expect { described_class.emit_prompt(prompt_event) }.not_to raise_error
@@ -39,8 +37,7 @@ RSpec.describe Legion::LLM::Audit do
     end
 
     it 'returns :published when transport connected' do
-      stub_const('Legion::Transport', Module.new)
-      allow(Legion::Transport).to receive(:connected?).and_return(true)
+      Legion::Settings[:transport][:connected] = true
       msg_instance = instance_double(Legion::LLM::Audit::ToolEvent)
       allow(Legion::LLM::Audit::ToolEvent).to receive(:new).and_return(msg_instance)
       allow(msg_instance).to receive(:publish)
@@ -49,8 +46,7 @@ RSpec.describe Legion::LLM::Audit do
     end
 
     it 'never raises' do
-      stub_const('Legion::Transport', Module.new)
-      allow(Legion::Transport).to receive(:connected?).and_return(true)
+      Legion::Settings[:transport][:connected] = true
       allow(Legion::LLM::Audit::ToolEvent).to receive(:new).and_raise(StandardError, 'boom')
 
       expect { described_class.emit_tools(tool_event) }.not_to raise_error

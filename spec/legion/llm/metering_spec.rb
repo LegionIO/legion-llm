@@ -15,8 +15,7 @@ RSpec.describe Legion::LLM::Metering do
     end
 
     it 'returns :published when transport is connected' do
-      stub_const('Legion::Transport', Module.new)
-      allow(Legion::Transport).to receive(:connected?).and_return(true)
+      Legion::Settings[:transport][:connected] = true
       msg_instance = instance_double(Legion::LLM::Metering::Event)
       allow(Legion::LLM::Metering::Event).to receive(:new).and_return(msg_instance)
       allow(msg_instance).to receive(:publish)
@@ -35,8 +34,7 @@ RSpec.describe Legion::LLM::Metering do
     end
 
     it 'never raises' do
-      stub_const('Legion::Transport', Module.new)
-      allow(Legion::Transport).to receive(:connected?).and_return(true)
+      Legion::Settings[:transport][:connected] = true
       allow(Legion::LLM::Metering::Event).to receive(:new).and_raise(StandardError, 'boom')
 
       expect { described_class.emit(event) }.not_to raise_error
