@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-04-13
+
+### Added
+- `system_baseline` setting — configurable default system prompt injected by `EnrichmentInjector` as the universal foundation layer for all pipeline-routed LLM calls; overridable via `Legion::Settings[:llm][:system_baseline]` or set to `nil` to disable
+- `EnrichmentInjector.resolve_baseline` — reads `system_baseline` from settings and prepends it before GAIA advisory, RAG context, skills, and caller system prompt
+
 ## [0.7.2] - 2026-04-13
 
 ### Fixed
