@@ -44,7 +44,7 @@ module Legion
           return nil unless defined?(Legion::Settings)
 
           value = Legion::Settings.dig(:llm, :system_baseline)
-          value.is_a?(String) && !value.empty? ? value : nil
+          value.is_a?(String) && !value.strip.empty? ? value : nil
         rescue StandardError
           nil
         end
