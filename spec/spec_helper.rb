@@ -65,5 +65,8 @@ RSpec.configure do |config|
   config.before(:each) do
     Legion::Settings.reset!
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+    # Disable system_baseline by default so existing pipeline mocks are unaffected.
+    # Specs that test baseline behavior set it explicitly.
+    Legion::Settings[:llm][:system_baseline] = nil
   end
 end

@@ -9,9 +9,13 @@ require_relative 'skills/base'
 require_relative 'skills/disk_loader'
 require_relative 'skills/external_discovery'
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Skills
+      extend Legion::Logging::Helper
+
       module_function
 
       def start
@@ -22,7 +26,8 @@ module Legion
 
       def settings_directories
         Array(Legion::LLM.settings.dig(:skills, :directories) || [])
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.skills.settings_directories')
         []
       end
     end

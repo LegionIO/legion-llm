@@ -13,7 +13,11 @@ module Legion
         def inject(system:, enrichments:)
           parts = []
 
-          # GAIA system prompt (highest priority)
+          # Settings-driven baseline (universal foundation, overridable via config)
+          baseline = resolve_baseline
+          parts << baseline if baseline
+
+          # GAIA system prompt (highest priority enrichment)
           if (gaia = enrichments.dig('gaia:system_prompt', :content))
             parts << gaia
           end
@@ -32,8 +36,18 @@ module Legion
           return system if parts.empty?
 
           parts << system if system
-          log.info("[llm][pipeline] enrichments_injected parts=#{parts.size} system_present=#{!system.nil?}")
+          log.info("[llm][pipeline] enrichments_injected parts=#{parts.size} baseline=#{!baseline.nil?} system_present=#{!system.nil?}")
           parts.join("\n\n")
+        end
+
+        def resolve_baseline
+          return nil unless defined?(Legion::Settings)
+
+          value = Legion::Settings.dig(:llm, :system_baseline)
+          value.is_a?(String) && !value.strip.empty? ? value : nil
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.enrichment_injector.resolve_baseline')
+          nil
         end
       end
     end

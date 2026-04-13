@@ -1,9 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Skills
       module ExternalDiscovery
+        extend Legion::Logging::Helper
+
         module_function
 
         def discover
@@ -37,13 +41,15 @@ module Legion
 
         def claude_auto_discover?
           Legion::LLM.settings.dig(:skills, :auto_discover, :claude) != false
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.skills.external_discovery.claude_auto_discover')
           true
         end
 
         def codex_auto_discover?
           Legion::LLM.settings.dig(:skills, :auto_discover, :codex) != false
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.skills.external_discovery.codex_auto_discover')
           true
         end
       end

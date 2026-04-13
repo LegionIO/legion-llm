@@ -248,7 +248,8 @@ module Legion
         else
           !Legion::Identity::Broker.token_for(provider).nil?
         end
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.providers.broker_credential_available', provider: provider)
         false
       end
     end
