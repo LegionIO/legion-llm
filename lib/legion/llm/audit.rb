@@ -59,9 +59,8 @@ module Legion
       end
 
       def transport_connected?
-        !!(defined?(Legion::Transport) &&
-          Legion::Transport.respond_to?(:connected?) &&
-          Legion::Transport.connected?)
+        !!(defined?(Legion::Settings) &&
+          Legion::Settings[:transport][:connected] == true)
       end
     end
   end

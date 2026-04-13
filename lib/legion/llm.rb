@@ -823,9 +823,7 @@ module Legion
 
         log.info("Escalation event: #{final_outcome}, #{history.size} attempts")
 
-        if defined?(Legion::Transport) && Legion::Transport.respond_to?(:connected?) && Legion::Transport.connected?
-          Transport::Messages::EscalationEvent.new(payload).publish
-        end
+        Transport::Messages::EscalationEvent.new(payload).publish if defined?(Legion::Settings) && Legion::Settings[:transport][:connected] == true
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.publish_escalation_event', outcome: final_outcome)
         nil

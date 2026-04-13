@@ -77,9 +77,8 @@ module Legion
         end
 
         def transport_metering?
-          defined?(Legion::Transport) &&
-            Legion::Transport.respond_to?(:connected?) &&
-            Legion::Transport.connected?
+          defined?(Legion::Settings) &&
+            Legion::Settings[:transport][:connected] == true
         rescue StandardError => e
           handle_exception(e, level: :debug)
           false
