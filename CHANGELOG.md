@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-13
+
+### Fixed
+- `Skills::Settings.apply` called undefined `[]=` on `Legion::Settings` module, raising `NoMethodError` that killed `LLM.start` before `@started` was set — caused all `/api/llm/inference` requests to 503 and all `llm_required?` extensions to be skipped (#60)
+- Removed dead `defined?(Legion::Settings)` guard — `legion-settings` is a hard dependency
+- Spec no longer relies on test-stub-only `[]=` that masked the production bug
+
 ## [0.7.0] - 2026-04-12
 
 ### Added
