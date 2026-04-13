@@ -38,6 +38,12 @@ require_relative 'llm/token_tracker'
 require_relative 'llm/override_confidence'
 require_relative 'llm/routes'
 
+begin
+  require_relative 'llm/skills'
+rescue LoadError => e
+  Legion::Logging.debug "LLM: skills not loadable: #{e.message}" if defined?(Legion::Logging)
+end
+
 module Legion
   module LLM
     class EscalationExhausted < StandardError; end
@@ -71,6 +77,9 @@ module Legion
 
         install_hooks
         load_tool_interceptors
+
+        # Skills startup — load after settings, before pipeline is used
+        Legion::LLM::Skills.start if defined?(Legion::LLM::Skills) && settings.dig(:skills, :enabled) != false
 
         @started = true
         Legion::Settings[:llm][:connected] = true

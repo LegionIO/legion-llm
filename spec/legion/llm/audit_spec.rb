@@ -57,4 +57,36 @@ RSpec.describe Legion::LLM::Audit do
       expect(described_class.emit_tools(tool_event)).to eq(:dropped)
     end
   end
+
+  describe '.emit_skill' do
+    context 'when transport is connected' do
+      before do
+        allow(described_class).to receive(:transport_connected?).and_return(true)
+        stub_const('Legion::LLM::Audit::SkillEvent',
+                   Class.new do
+                     def initialize(**); end
+
+                     def publish; end
+                   end)
+      end
+
+      it 'returns :published' do
+        expect(described_class.emit_skill(skill_name: 'test', namespace: 'test',
+                                          step_name: 's', gate: nil, status: :completed,
+                                          duration_ms: 10, metadata: {}, classification: {}))
+          .to eq(:published)
+      end
+    end
+
+    context 'when transport is unavailable' do
+      before { allow(described_class).to receive(:transport_connected?).and_return(false) }
+
+      it 'returns :dropped' do
+        expect(described_class.emit_skill(skill_name: 'x', namespace: 'y',
+                                          step_name: 's', gate: nil, status: :completed,
+                                          duration_ms: 0, metadata: {}, classification: {}))
+          .to eq(:dropped)
+      end
+    end
+  end
 end

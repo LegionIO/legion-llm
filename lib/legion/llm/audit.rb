@@ -6,6 +6,7 @@ if defined?(Legion::Transport::Message)
   require_relative 'audit/exchange'
   require_relative 'audit/prompt_event'
   require_relative 'audit/tool_event'
+  require_relative 'audit/skill_event'
 end
 
 module Legion
@@ -40,6 +41,20 @@ module Legion
         end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.audit.emit_tools')
+        :dropped
+      end
+
+      def emit_skill(**event)
+        if transport_connected? && defined?(Legion::LLM::Audit::SkillEvent)
+          Legion::LLM::Audit::SkillEvent.new(**event).publish
+          log.info('[llm][audit] published skill audit')
+          :published
+        else
+          log.warn('[llm][audit] dropped skill audit: transport unavailable')
+          :dropped
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.audit.emit_skill')
         :dropped
       end
 
