@@ -176,8 +176,8 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TierAssigner do
       end
     end
 
-    context 'classification-driven tier assignment' do
-      it 'routes to cloud when classification contains PHI' do
+    context 'classification-driven tier assignment (PHI/PII hard gate — fail closed)' do
+      it 'constrains PHI to local tier, never cloud' do
         classification = { contains_phi: true, contains_pii: false }
         result = assigner.assign(
           caller:          nil,
@@ -187,12 +187,13 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TierAssigner do
           existing_tier:   nil,
           existing_intent: nil
         )
-        expect(result[:tier]).to eq(:cloud)
-        expect(result[:intent]).to include(capability: :reasoning)
+        expect(result[:tier]).to eq(:local)
+        expect(result[:tier]).not_to eq(:cloud)
+        expect(result[:intent]).to include(privacy: :strict)
         expect(result[:source]).to eq(:classification)
       end
 
-      it 'routes to cloud when classification contains PII' do
+      it 'constrains PII to local tier, never cloud' do
         classification = { contains_phi: false, contains_pii: true }
         result = assigner.assign(
           caller:          nil,
@@ -202,12 +203,26 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TierAssigner do
           existing_tier:   nil,
           existing_intent: nil
         )
-        expect(result[:tier]).to eq(:cloud)
+        expect(result[:tier]).to eq(:local)
+        expect(result[:tier]).not_to eq(:cloud)
         expect(result[:source]).to eq(:classification)
       end
 
-      it 'does not override when neither PHI nor PII' do
-        classification = { contains_phi: false, contains_pii: false }
+      it 'constrains restricted classification level to local tier' do
+        result = assigner.assign(
+          caller:          nil,
+          classification:  { level: :restricted },
+          priority:        :normal,
+          gaia_hint:       nil,
+          existing_tier:   nil,
+          existing_intent: nil
+        )
+        expect(result[:tier]).to eq(:local)
+        expect(result[:source]).to eq(:classification)
+      end
+
+      it 'returns nil when classification is normal (no PHI/PII/restricted)' do
+        classification = { contains_phi: false, contains_pii: false, level: :normal }
         result = assigner.assign(
           caller:          nil,
           classification:  classification,
@@ -317,7 +332,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TierAssigner do
         expect(result[:tier]).to eq(:local)
       end
 
-      it 'prefers classification over priority' do
+      it 'prefers classification over priority (PHI overrides low priority → local)' do
         classification = { contains_phi: true, contains_pii: false }
         result = assigner.assign(
           caller:          nil,
@@ -328,7 +343,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TierAssigner do
           existing_intent: nil
         )
         expect(result[:source]).to eq(:classification)
-        expect(result[:tier]).to eq(:cloud)
+        expect(result[:tier]).to eq(:local)
       end
     end
   end
