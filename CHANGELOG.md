@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-04-13
+
+### Fixed
+- `transport_connected?` checks in audit, metering, fleet dispatcher, hooks/metering, and hooks/reflection all used `Legion::Transport.connected?` which does not exist at the module level — always returned `false`, silently dropping all AMQP publishes; replaced with canonical `Legion::Settings[:transport][:connected]` check (#61)
+
 ## [0.7.1] - 2026-04-13
 
 ### Fixed
