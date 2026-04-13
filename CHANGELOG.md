@@ -8,6 +8,9 @@
 - `system_baseline` setting — configurable default system prompt injected by `EnrichmentInjector` as the universal foundation layer for all pipeline-routed LLM calls; overridable via `Legion::Settings[:llm][:system_baseline]` or set to `nil` to disable
 - `EnrichmentInjector.resolve_baseline` — reads `system_baseline` from settings and prepends it before GAIA advisory, RAG context, skills, and caller system prompt
 
+### Fixed
+- Replaced 11 bare `rescue StandardError` (swallowed exceptions) with `handle_exception` logging across `EnrichmentInjector`, `Skills`, `Skills::DiskLoader`, `Skills::ExternalDiscovery`, `ConversationStore`, `Pipeline::Executor`, and `Providers`
+
 ## [0.7.2] - 2026-04-13
 
 ### Fixed

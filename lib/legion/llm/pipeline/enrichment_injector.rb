@@ -45,7 +45,8 @@ module Legion
 
           value = Legion::Settings.dig(:llm, :system_baseline)
           value.is_a?(String) && !value.strip.empty? ? value : nil
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.enrichment_injector.resolve_baseline')
           nil
         end
       end

@@ -235,8 +235,8 @@ module Legion
                                 .where(conversation_id: conversation_id)
                                 .max(:seq)
               return (max || 0) + 1
-            rescue StandardError
-              # fall through to default
+            rescue StandardError => e
+              handle_exception(e, level: :debug, operation: 'llm.conversation_store.next_seq_db', conversation_id: conversation_id)
             end
           end
           msgs.empty? ? 1 : msgs.last[:seq] + 1

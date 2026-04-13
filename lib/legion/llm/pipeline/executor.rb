@@ -811,7 +811,8 @@ module Legion
           return tool_call.public_send(field) if tool_call.respond_to?(field)
 
           tool_call[field]
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.pipeline.tool_call_field', field: field)
           nil
         end
 
@@ -1037,7 +1038,8 @@ module Legion
                      :tool_use
                    end
           { reason: reason || :end_turn }
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.pipeline.extract_stop_reason')
           { reason: :end_turn }
         end
 
@@ -1053,7 +1055,8 @@ module Legion
             output_tokens: output
           )
           { estimated_usd: estimated, provider: @resolved_provider, model: @resolved_model }
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.pipeline.estimate_response_cost')
           {}
         end
 
