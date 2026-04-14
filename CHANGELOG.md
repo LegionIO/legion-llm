@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-04-14
+
+### Added
+- `DaemonUnavailableError < LLMError` error class for fleet fail-closed semantics
+- Metering wired as explicit pipeline executor step (`:metering` in STEPS)
+- Router `exclude:` parameter — provider-keyed hash for anti-bias model exclusion (step 4.6 in `select_candidates`)
+- `thinking:` forwarded to RubyLLM provider via `ruby_llm_chat_options`
+
+### Fixed
+- Tool injection suppression: `tools: []` (explicit empty array) now skips `inject_registry_tools` — prevents 60+ MCP tools from being injected into fleet LLM calls
+- RBAC fail-closed for fleet: callers with `agent.id` starting with `fleet:` are blocked when RBAC is unavailable (scoped, does not affect non-fleet callers)
+- `exclude:` normalized defensively — `nil` or non-Hash values treated as empty
+
 ## [0.7.5] - 2026-04-14
 
 ### Added

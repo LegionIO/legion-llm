@@ -28,11 +28,12 @@ module Legion
         include Steps::TokenBudget
         include Steps::PromptCache
         include Steps::Debate
+        include Steps::Metering
 
         STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
           rbac classification billing gaia_advisory tier_assignment rag_context trigger_match skill_injector tool_discovery
-          routing request_normalization token_budget provider_call response_normalization
+          routing request_normalization token_budget provider_call response_normalization metering
           debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
@@ -43,7 +44,7 @@ module Legion
         ].freeze
 
         POST_PROVIDER_STEPS = %i[
-          response_normalization debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
+          response_normalization metering debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
         ].freeze
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
@@ -724,16 +725,22 @@ module Legion
         end
 
         def ruby_llm_chat_options
-          {
+          opts = {
             model:    @resolved_model,
             provider: @resolved_provider
-          }.compact
+          }
+          opts[:thinking] = @request.thinking if @request.thinking
+          opts.compact
         end
 
         def inject_ruby_llm_tools(session)
           (@request.tools || []).each do |tool|
             session.with_tool(tool)
           end
+
+          # nil means caller did not specify tools — inject registry tools as normal.
+          # An explicit empty array [] means caller opted out of registry injection.
+          return if @request.tools.is_a?(Array) && @request.tools.empty?
 
           inject_registry_tools(session)
         end
@@ -921,6 +928,29 @@ module Legion
             normalized[key.to_s] = value
           end
           @enrichments = normalized
+        end
+
+        def step_metering
+          input_tokens  = @raw_response.respond_to?(:input_tokens)  ? @raw_response.input_tokens.to_i  : 0
+          output_tokens = @raw_response.respond_to?(:output_tokens) ? @raw_response.output_tokens.to_i : 0
+          tier = @audit.dig(:'routing:provider_selection', :data, :tier)
+          latency_ms = if @timestamps[:provider_start] && @timestamps[:provider_end]
+                         ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).round
+                       else
+                         0
+                       end
+          event = Steps::Metering.build_event(
+            provider:      @resolved_provider,
+            model_id:      @resolved_model,
+            tier:          tier,
+            input_tokens:  input_tokens,
+            output_tokens: output_tokens,
+            latency_ms:    latency_ms
+          )
+          Steps::Metering.publish_or_spool(event)
+        rescue StandardError => e
+          @warnings << "metering error: #{e.message}"
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.step_metering')
         end
 
         def step_context_store

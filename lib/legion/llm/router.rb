@@ -22,14 +22,14 @@ module Legion
         # @param model    [String, nil] explicit model override
         # @param provider [Symbol, nil] explicit provider override
         # @return [Resolution, nil]
-        def resolve(intent: nil, tier: nil, model: nil, provider: nil)
+        def resolve(intent: nil, tier: nil, model: nil, provider: nil, exclude: {})
           return explicit_resolution(tier, provider, model) if tier
 
           return nil unless routing_enabled? && intent
 
           merged = merge_defaults(intent)
           rules = load_rules
-          candidates = select_candidates(rules, merged)
+          candidates = select_candidates(rules, merged, exclude: exclude)
           best = pick_best(candidates)
           resolution = best&.to_resolution
 
@@ -42,12 +42,12 @@ module Legion
           resolution || arbitrage_fallback(intent)
         end
 
-        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil)
+        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil, exclude: {})
           max = max_escalations || escalation_max_attempts
           return chain_from_defaults(model, provider, max) unless routing_enabled? && (intent || tier)
           return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model)], max_attempts: max) if tier
 
-          chain_from_intent(intent, max)
+          chain_from_intent(intent, max, exclude: exclude)
         end
 
         def health_tracker
@@ -131,7 +131,7 @@ module Legion
           raw.map { |h| Rule.from_hash(h.transform_keys(&:to_sym)) }
         end
 
-        def select_candidates(rules, intent)
+        def select_candidates(rules, intent, exclude: {})
           log.debug("Router: selecting candidates from #{rules.size} rules")
 
           # 1. Collect constraints from constraint rules that match the intent
@@ -151,8 +151,12 @@ module Legion
           # 4.5 Reject Ollama rules where model is not pulled or doesn't fit
           discovered = unconstrained.reject { |r| excluded_by_discovery?(r) }
 
+          # 4.6 Reject rules matching caller-provided exclude list
+          normalized_exclude = exclude.is_a?(Hash) ? exclude : {}
+          not_excluded = normalized_exclude.empty? ? discovered : discovered.reject { |r| excluded_by_caller?(r, normalized_exclude) }
+
           # 5. Filter by tier availability
-          final = discovered.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
+          final = not_excluded.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
 
           log.debug("Router: #{final.size} candidates after filtering (started with #{rules.size})")
 
@@ -202,6 +206,21 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn)
           {}
+        end
+
+        def excluded_by_caller?(rule, exclude)
+          return false if exclude.nil? || exclude.empty?
+
+          target   = rule.target || {}
+          provider = (target[:provider] || target['provider'])&.to_sym
+          model    = target[:model]    || target['model']
+          tier     = (target[:tier]    || target['tier'])&.to_sym
+
+          return true if exclude[:provider] && provider == exclude[:provider].to_sym
+          return true if exclude[:model]    && model    == exclude[:model]
+          return true if exclude[:tier]     && tier     == exclude[:tier].to_sym
+
+          false
         end
 
         def privacy_mode?
@@ -272,10 +291,10 @@ module Legion
           EscalationChain.new(resolutions: [res], max_attempts: max)
         end
 
-        def chain_from_intent(intent, max)
+        def chain_from_intent(intent, max, exclude: {})
           merged     = intent ? merge_defaults(intent) : {}
           rules      = load_rules
-          candidates = select_candidates(rules, merged)
+          candidates = select_candidates(rules, merged, exclude: exclude)
           sorted     = candidates.sort_by { |r| -effective_priority(r) }
           resolutions = sorted.map(&:to_resolution)
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
