@@ -10,7 +10,8 @@ module Legion
       # When provider/model are passed explicitly, they take precedence over routing.
       def dispatch(message, # rubocop:disable Metrics/ParameterLists
                    intent: nil,
-                   exclude: {}, # rubocop:disable Lint/UnusedMethodArgument -- consumed by Router in WS-00E
+                   exclude: {},
+                   tier: nil,
                    provider: nil,
                    model: nil,
                    schema: nil,
@@ -29,8 +30,8 @@ module Legion
         resolved_provider = provider
         resolved_model = model
 
-        if resolved_provider.nil? && resolved_model.nil? && intent && defined?(Router) && Router.routing_enabled?
-          resolution = Router.resolve(intent: intent)
+        if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && Router.routing_enabled?
+          resolution = Router.resolve(intent: intent, tier: tier, exclude: exclude)
           resolved_provider = resolution&.provider
           resolved_model = resolution&.model
         end
@@ -41,6 +42,8 @@ module Legion
         request(message,
                 provider:        resolved_provider,
                 model:           resolved_model,
+                intent:          intent,
+                tier:            tier,
                 schema:          schema,
                 tools:           tools,
                 escalate:        escalate,
@@ -60,6 +63,8 @@ module Legion
       def request(message, # rubocop:disable Metrics/ParameterLists
                   provider:,
                   model:,
+                  intent: nil,
+                  tier: nil,
                   schema: nil,
                   tools: nil,
                   escalate: nil,
@@ -79,7 +84,8 @@ module Legion
         end
 
         pipeline_request = build_pipeline_request(
-          message, provider: provider, model: model, schema: schema, tools: tools,
+          message, provider: provider, model: model, intent: intent, tier: tier,
+                   schema: schema, tools: tools,
                    escalate: escalate, max_escalations: max_escalations,
                    thinking: thinking, temperature: temperature, max_tokens: max_tokens,
                    tracing: tracing, agent: agent, caller: caller, cache: cache,
@@ -110,44 +116,72 @@ module Legion
 
       # --- Private helpers ---
 
-      def build_pipeline_request(message, provider:, model:, schema:, tools:, # rubocop:disable Metrics/ParameterLists
+      def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:, # rubocop:disable Metrics/ParameterLists
                                  escalate:, max_escalations:, thinking:, temperature:,
                                  max_tokens:, tracing:, agent:, caller:, cache:,
                                  quality_check:, **rest)
-        messages = message.is_a?(Array) ? message : [{ role: :user, content: message.to_s }]
+        # Build base request via from_chat_args to preserve full pipeline kwargs
+        # (context_strategy, tool_choice, idempotency_key, ttl, enrichments, predictions, etc.)
+        chat_message = message.is_a?(Array) ? nil : message.to_s
+        chat_messages = message.is_a?(Array) ? message : nil
 
-        generation = {}
+        base = Pipeline::Request.from_chat_args(
+          message:         chat_message,
+          messages:        chat_messages,
+          model:           model,
+          provider:        provider,
+          intent:          intent,
+          tier:            tier,
+          tools:           tools,
+          thinking:        thinking,
+          tracing:         tracing,
+          agent:           agent,
+          caller:          caller,
+          cache:           cache,
+          escalate:        escalate,
+          max_escalations: max_escalations,
+          quality_check:   quality_check,
+          **rest
+        )
+
+        # Overlay Prompt-specific translations on top of the base request
+        generation = (base.generation || {}).dup
         generation[:temperature] = temperature if temperature
 
-        tokens = { max: max_tokens || 4096 }
+        tokens = (base.tokens || {}).dup
+        tokens[:max] = max_tokens if max_tokens
 
         response_format = if schema
                             { type: :json_schema, schema: schema }
+                          elsif base.response_format
+                            base.response_format
                           else
                             { type: :text }
                           end
 
-        extra = { quality_check: quality_check, escalate: escalate, max_escalations: max_escalations }
-        extra.merge!(rest.except(:system, :messages, :conversation_id, :priority, :metadata, :stream))
-
         Pipeline::Request.build(
-          messages:        messages,
-          system:          rest[:system],
-          routing:         { provider: provider, model: model },
-          tools:           tools || [],
-          thinking:        thinking,
-          generation:      generation,
-          tokens:          tokens,
-          response_format: response_format,
-          tracing:         tracing,
-          agent:           agent,
-          caller:          caller,
-          cache:           cache || { strategy: :default, cacheable: true },
-          conversation_id: rest[:conversation_id],
-          priority:        rest[:priority] || :normal,
-          metadata:        rest[:metadata] || {},
-          stream:          rest[:stream] || false,
-          extra:           extra
+          messages:         base.messages,
+          system:           base.system,
+          routing:          base.routing || { provider: provider, model: model },
+          tools:            base.tools || tools || [],
+          thinking:         base.thinking || thinking,
+          generation:       generation,
+          tokens:           tokens,
+          response_format:  response_format,
+          tracing:          base.tracing || tracing,
+          agent:            base.agent || agent,
+          caller:           base.caller || caller,
+          cache:            base.cache || cache || { strategy: :default, cacheable: true },
+          conversation_id:  base.conversation_id,
+          priority:         base.priority || :normal,
+          metadata:         base.metadata || {},
+          stream:           base.stream || false,
+          extra:            base.extra || {},
+          context_strategy: base.respond_to?(:context_strategy) ? base.context_strategy : nil,
+          idempotency_key:  base.respond_to?(:idempotency_key) ? base.idempotency_key : nil,
+          ttl:              base.respond_to?(:ttl) ? base.ttl : nil,
+          enrichments:      base.respond_to?(:enrichments) ? base.enrichments : nil,
+          predictions:      base.respond_to?(:predictions) ? base.predictions : nil
         )
       end
 

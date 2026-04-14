@@ -547,7 +547,7 @@ module Legion
         if pipeline_enabled? && (message || kwargs[:messages]) && !block_given?
           return Prompt.dispatch(
             message || kwargs[:messages],
-            intent: intent, provider: provider, model: model,
+            intent: intent, tier: tier, provider: provider, model: model,
             escalate: escalate, max_escalations: max_escalations,
             quality_check: quality_check, **kwargs.except(:messages)
           )

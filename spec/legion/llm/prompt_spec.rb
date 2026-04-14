@@ -49,7 +49,7 @@ RSpec.describe Legion::LLM::Prompt do
 
       it 'passes intent to the Router' do
         described_class.dispatch('Hello', intent: { capability: :reasoning })
-        expect(Legion::LLM::Router).to have_received(:resolve).with(hash_including(intent: { capability: :reasoning }))
+        expect(Legion::LLM::Router).to have_received(:resolve).with(hash_including(intent: { capability: :reasoning })).at_least(:once)
       end
     end
 
