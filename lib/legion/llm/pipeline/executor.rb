@@ -738,6 +738,8 @@ module Legion
             session.with_tool(tool)
           end
 
+          # nil means caller did not specify tools — inject registry tools as normal.
+          # An explicit empty array [] means caller opted out of registry injection.
           return if @request.tools.is_a?(Array) && @request.tools.empty?
 
           inject_registry_tools(session)

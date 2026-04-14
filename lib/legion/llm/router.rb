@@ -152,7 +152,8 @@ module Legion
           discovered = unconstrained.reject { |r| excluded_by_discovery?(r) }
 
           # 4.6 Reject rules matching caller-provided exclude list
-          not_excluded = exclude.empty? ? discovered : discovered.reject { |r| excluded_by_caller?(r, exclude) }
+          normalized_exclude = exclude.is_a?(Hash) ? exclude : {}
+          not_excluded = normalized_exclude.empty? ? discovered : discovered.reject { |r| excluded_by_caller?(r, normalized_exclude) }
 
           # 5. Filter by tier availability
           final = not_excluded.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }

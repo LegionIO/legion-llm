@@ -87,7 +87,10 @@ RSpec.describe Legion::LLM::Prompt do
       end
 
       it 'accepts exclude parameter without error' do
-        result = described_class.dispatch('Hello', exclude: { anthropic: ['claude-sonnet-4-6'] })
+        result = described_class.dispatch(
+          'Hello',
+          exclude: { provider: :anthropic, model: 'claude-sonnet-4-6' }
+        )
         expect(result).to be_a(Legion::LLM::Pipeline::Response)
       end
     end
@@ -106,7 +109,7 @@ RSpec.describe Legion::LLM::Prompt do
           temperature:     0.7,
           max_tokens:      1024,
           tracing:         { trace_id: 'abc' },
-          agent:           { id: 'fleet:dev' },
+          agent:           { id: 'test-agent' },
           caller:          { extension: 'lex-test' },
           cache:           { enabled: true },
           quality_check:   nil

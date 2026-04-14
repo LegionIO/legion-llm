@@ -10,8 +10,8 @@ module Legion
       # When provider/model are passed explicitly, they take precedence over routing.
       def dispatch(message, # rubocop:disable Metrics/ParameterLists
                    intent: nil,
-                   exclude: {}, # rubocop:disable Lint/UnusedMethodArgument -- forwarded to Router.resolve in WS-00E
                    tier: nil,
+                   exclude: {},
                    provider: nil,
                    model: nil,
                    schema: nil,
@@ -30,8 +30,8 @@ module Legion
         resolved_provider = provider
         resolved_model = model
 
-        if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && Router.routing_enabled?
-          resolution = Router.resolve(intent: intent, tier: tier)
+        if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && Router.routing_enabled? && (intent || tier)
+          resolution = Router.resolve(intent: intent, tier: tier, exclude: exclude)
           resolved_provider = resolution&.provider
           resolved_model = resolution&.model
         end

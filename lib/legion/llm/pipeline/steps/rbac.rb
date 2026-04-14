@@ -65,8 +65,12 @@ module Legion
           end
 
           def fleet_caller?
-            agent_id = @request.caller&.dig(:agent, :id)
-            agent_id.is_a?(String) && agent_id.start_with?('fleet:')
+            agent_ids = [
+              @request.agent&.dig(:id),
+              @request.caller&.dig(:agent, :id)
+            ]
+
+            agent_ids.any? { |agent_id| agent_id.is_a?(String) && agent_id.start_with?('fleet:') }
           end
 
           def extract_rbac_caller_id
