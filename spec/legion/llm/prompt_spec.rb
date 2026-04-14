@@ -114,6 +114,42 @@ RSpec.describe Legion::LLM::Prompt do
         expect(result).to be_a(Legion::LLM::Pipeline::Response)
       end
     end
+
+    context 'with real Router.resolve (no stub) — validates call-site keyword compatibility' do
+      before do
+        Legion::Settings[:llm][:routing] = {
+          enabled:        true,
+          default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
+          rules:          [
+            {
+              name:     'test-cloud-rule',
+              when:     { capability: 'moderate' },
+              then:     { tier: 'cloud', provider: 'anthropic', model: 'claude-sonnet-4-6' },
+              priority: 10
+            }
+          ]
+        }
+        Legion::LLM::Router.reset!
+      end
+
+      after { Legion::LLM::Router.reset! }
+
+      it 'does not raise ArgumentError when calling the real Router.resolve with intent' do
+        result = described_class.dispatch('Hello', intent: { capability: :moderate })
+        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+        expect(result.routing[:provider]).to eq(:anthropic)
+        expect(result.routing[:model]).to eq('claude-sonnet-4-6')
+      end
+
+      it 'does not raise ArgumentError when passing exclude to dispatch with routing enabled' do
+        # exclude: is accepted by dispatch but forwarded to Router only when Router supports it (WS-00E)
+        # This verifies dispatch does not crash when exclude is passed, even if Router ignores it
+        result = described_class.dispatch('Hello',
+                                          intent:  { capability: :moderate },
+                                          exclude: { anthropic: ['claude-sonnet-4-6'] })
+        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      end
+    end
   end
 
   describe '.request' do

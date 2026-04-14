@@ -10,7 +10,7 @@ module Legion
       # When provider/model are passed explicitly, they take precedence over routing.
       def dispatch(message, # rubocop:disable Metrics/ParameterLists
                    intent: nil,
-                   exclude: {},
+                   exclude: {}, # rubocop:disable Lint/UnusedMethodArgument -- forwarded to Router.resolve in WS-00E
                    tier: nil,
                    provider: nil,
                    model: nil,
@@ -31,7 +31,7 @@ module Legion
         resolved_model = model
 
         if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && Router.routing_enabled?
-          resolution = Router.resolve(intent: intent, tier: tier, exclude: exclude)
+          resolution = Router.resolve(intent: intent, tier: tier)
           resolved_provider = resolution&.provider
           resolved_model = resolution&.model
         end
@@ -116,7 +116,7 @@ module Legion
 
       # --- Private helpers ---
 
-      def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:, # rubocop:disable Metrics/ParameterLists
+      def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:, # rubocop:disable Metrics/ParameterLists, Metrics/MethodLength
                                  escalate:, max_escalations:, thinking:, temperature:,
                                  max_tokens:, tracing:, agent:, caller:, cache:,
                                  quality_check:, **rest)
@@ -164,24 +164,34 @@ module Legion
           system:           base.system,
           routing:          base.routing || { provider: provider, model: model },
           tools:            base.tools || tools || [],
+          tool_choice:      base.tool_choice,
           thinking:         base.thinking || thinking,
           generation:       generation,
           tokens:           tokens,
+          stop:             base.stop,
           response_format:  response_format,
-          tracing:          base.tracing || tracing,
-          agent:            base.agent || agent,
-          caller:           base.caller || caller,
-          cache:            base.cache || cache || { strategy: :default, cacheable: true },
-          conversation_id:  base.conversation_id,
-          priority:         base.priority || :normal,
-          metadata:         base.metadata || {},
           stream:           base.stream || false,
-          extra:            base.extra || {},
-          context_strategy: base.respond_to?(:context_strategy) ? base.context_strategy : nil,
-          idempotency_key:  base.respond_to?(:idempotency_key) ? base.idempotency_key : nil,
-          ttl:              base.respond_to?(:ttl) ? base.ttl : nil,
-          enrichments:      base.respond_to?(:enrichments) ? base.enrichments : nil,
-          predictions:      base.respond_to?(:predictions) ? base.predictions : nil
+          fork:             base.fork,
+          cache:            base.cache || cache || { strategy: :default, cacheable: true },
+          priority:         base.priority || :normal,
+          tracing:          base.tracing || tracing,
+          classification:   base.classification,
+          caller:           base.caller || caller,
+          agent:            base.agent || agent,
+          billing:          base.billing,
+          test:             base.test,
+          modality:         base.modality,
+          hooks:            base.hooks,
+          conversation_id:  base.conversation_id,
+          idempotency_key:  base.idempotency_key,
+          schema_version:   base.schema_version,
+          id:               base.id,
+          ttl:              base.ttl,
+          metadata:         base.metadata || {},
+          enrichments:      base.enrichments || {},
+          predictions:      base.predictions || {},
+          context_strategy: base.context_strategy,
+          extra:            base.extra || {}
         )
       end
 
