@@ -36,10 +36,11 @@ module Legion
             mapping = find_role_mapping(caller)
             return mapping if mapping
 
-            # 3. Classification-driven
-            if classification && (classification[:contains_phi] || classification[:contains_pii])
-              log.info('[llm][routing] tier_assigned source=classification tier=cloud')
-              return { tier: :cloud, intent: { capability: :reasoning }, source: :classification }
+            # 3. Classification-driven: PHI/PII/restricted -> local only (fail closed)
+            if classification && (classification[:contains_phi] || classification[:contains_pii] ||
+                                  classification[:level]&.to_sym == :restricted)
+              log.info('[llm][routing] tier_assigned source=classification tier=local (phi/pii/restricted)')
+              return { tier: :local, intent: { privacy: :strict }, source: :classification }
             end
 
             # 4. Priority-driven
