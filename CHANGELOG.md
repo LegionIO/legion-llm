@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-04-14
+
+### Added
+- `Legion::LLM::Prompt` module — clean API replacing `chat`/`ask`/`chat_direct` surface
+  - `Prompt.dispatch(message, intent:, exclude:, tier:, tools:, ...)` — auto-routed via Router
+  - `Prompt.request(message, provider:, model:, ...)` — pinned dispatch, full pipeline
+  - `Prompt.summarize`, `Prompt.extract`, `Prompt.decide` — convenience methods (default `tools: []`)
+  - Nil provider/model guard raises `LLMError` with actionable message
+  - In-process pipeline execution (no DaemonClient HTTP roundtrip)
+  - Backward compat: `Legion::LLM.chat` delegates to `Prompt.dispatch` for non-streaming calls
+- `build_pipeline_request` uses `Pipeline::Request.from_chat_args` as base, preserving all pipeline kwargs
+
+## [0.7.4] - 2026-04-14
+
+### Fixed
+- PHI/PII classification hard gate: `TierAssigner` now routes `contains_phi`/`contains_pii`/`:restricted` to `tier: :local` (fail closed). Previously routed to `:cloud`.
+
 ## [0.7.3] - 2026-04-13
 
 ### Added
