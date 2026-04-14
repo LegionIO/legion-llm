@@ -41,5 +41,7 @@ module Legion
     end
 
     class TokenBudgetExceeded < LLMError; end
+
+    class DaemonUnavailableError < LLMError; end
   end
 end
