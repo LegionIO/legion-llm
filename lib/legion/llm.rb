@@ -37,6 +37,7 @@ require_relative 'llm/cost_tracker'
 require_relative 'llm/token_tracker'
 require_relative 'llm/override_confidence'
 require_relative 'llm/routes'
+require_relative 'llm/prompt'
 
 begin
   require_relative 'llm/skills'
@@ -543,7 +544,17 @@ module Legion
           "tier=#{tier} escalate=#{escalate} max_escalations=#{max_escalations} " \
           "quality_check=#{quality_check} message_present=#{!message.nil?} kwargs=#{kwargs.keys.sort}"
         )
-        if pipeline_enabled? && (message || kwargs[:messages])
+        if pipeline_enabled? && (message || kwargs[:messages]) && !block_given?
+          return Prompt.dispatch(
+            message || kwargs[:messages],
+            intent: intent, tier: tier, provider: provider, model: model,
+            escalate: escalate, max_escalations: max_escalations,
+            quality_check: quality_check, **kwargs.except(:messages)
+          )
+        end
+
+        # Streaming with pipeline — old path (Prompt does not handle streaming yet)
+        if pipeline_enabled? && (message || kwargs[:messages]) && block_given?
           return chat_via_pipeline(model: model, provider: provider, intent: intent, tier: tier,
                                    message: message, escalate: escalate, max_escalations: max_escalations,
                                    quality_check: quality_check, **kwargs, &)
