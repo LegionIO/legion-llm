@@ -2,7 +2,7 @@
 
 **Date**: 2026-04-15
 **Repo**: legion-llm + LegionIO (cross-gem)
-**Status**: Approved for implementation — post adversarial review rounds 1 + 2 + 3
+**Status**: Approved for implementation — post adversarial review rounds 1–4
 
 ---
 
@@ -47,8 +47,9 @@ def read_sticky_state(conversation_id)
 end
 
 # Writes state. Only writes if conversation is already in memory.
-# If the conversation was evicted, sticky state is already lost — do not resurrect an
-# empty shell that would clobber DB-loaded message history on the next step_context_load.
+# Does NOT call ensure_conversation — avoids resurrecting an evicted conversation
+# as an empty shell that would clobber DB-loaded message history on the next
+# step_context_load call.
 def write_sticky_state(conversation_id, state)
   return unless in_memory?(conversation_id)
   conversations[conversation_id][:sticky_state] = state
@@ -56,34 +57,32 @@ def write_sticky_state(conversation_id, state)
 end
 ```
 
-`read_sticky_state` returns the live hash (not a dup). Callers MUST treat it as read-only and call `write_sticky_state` with a modified copy to persist changes.
+`read_sticky_state` returns the live hash (not a dup). Callers MUST treat it as read-only and build a modified copy before calling `write_sticky_state`. The single `step_sticky_persist` step (see Pipeline Changes) reads once, mutates a copy, writes once — eliminates any cross-step clobber risk.
 
 **LRU eviction**: When `evict_if_needed` evicts a conversation that has a non-empty `sticky_state`, a warning is logged. Sticky state is in-memory only — no DB persistence in this iteration. Known limitation: if a conversation is evicted (MAX_CONVERSATIONS=256 reached) and then resumed, sticky state is silently lost.
-
-**DB persistence**: Deferred to a follow-up — follows the existing `persist_message` pattern.
 
 ---
 
 ## Data Model
 
-All keys are Ruby symbols throughout (consistent with `symbolize_names: true` used elsewhere in ConversationStore).
+All keys are Ruby symbols throughout.
 
 ### `sticky_runners`
 
 ```ruby
 {
   sticky_runners: {
-    "github_issues"  => { expires_after_deferred_call: 12, tier: :executed },
+    "github_issues"   => { expires_after_deferred_call: 12, tier: :executed },
     "github_branches" => { expires_at_turn: 5, tier: :triggered }
   },
   deferred_tool_calls: 7
 }
 ```
 
-- **Key**: `"#{tool_class.extension}_#{tool_class.runner}"` — underscores throughout, matching exact output of `derive_extension_name` and `derive_runner_snake` in `Tools::Discovery`
-- **`expires_after_deferred_call`**: execution-tier only — runner expires when `deferred_tool_calls >= this value`
-- **`expires_at_turn`**: trigger-tier only — runner expires when human turn count `>= this value`
-- **`deferred_tool_calls`**: count of individual deferred tool executions (not unique runners). Incremented by the number of deferred tools that completed successfully this turn. Always-loaded tools do NOT increment this counter.
+- **Key**: `"#{tool_class.extension}_#{tool_class.runner}"` — underscores, matching `derive_extension_name` + `derive_runner_snake`
+- **`expires_after_deferred_call`**: execution-tier — runner expires when `deferred_tool_calls >= this value`
+- **`expires_at_turn`**: trigger-tier — runner expires when human turn count `>= this value`
+- **`deferred_tool_calls`**: count of individual deferred tool executions that completed successfully. Always-loaded tools do NOT increment this counter.
 - **`tier`**: `:triggered` or `:executed`
 
 ### `tool_call_history`
@@ -92,12 +91,12 @@ All keys are Ruby symbols throughout (consistent with `symbolize_names: true` us
 {
   tool_call_history: [
     {
-      tool:   "legion-github-issues-list_issues",
-      runner: "github_issues",
-      turn:   3,
-      args:   { owner: "LegionIO", repo: "legion-mcp", state: "open" },
-      result: '{"result":[{"number":42,"title":"Fix pipeline bug"},...]}',
-      error:  false
+      tool:       "legion-github-issues-list_issues",
+      runner:     "github_issues",
+      turn:       3,
+      args:       { owner: "LegionIO", repo: "legion-mcp", state: "open" },
+      result:     '{"result":[{"number":42,"title":"Fix pipeline bug"},...]}',
+      error:      false
     }
   ]
 }
@@ -105,29 +104,29 @@ All keys are Ruby symbols throughout (consistent with `symbolize_names: true` us
 
 - `turn` — human turn count (`@sticky_turn_snapshot`) at call time
 - `result` — truncated to `max_result_length` chars
-- `args` — sanitized and truncated before storage (see Arg Sanitization)
+- `args` — sanitized and truncated (see Arg Sanitization)
 - `error: true` when tool returned an error response
 
 ---
 
 ## Sticky Window Tiers
 
-Two independent clocks — trigger stickiness counts human turns (user messages), execution stickiness counts individual deferred tool executions:
+Two independent clocks — trigger stickiness counts human turns (user messages only), execution stickiness counts individual successful deferred tool executions:
 
 | Event | Clock | Window | Expiry stored as |
 |-------|-------|--------|-----------------|
 | Trigger word matched for runner | Human turns | `trigger_sticky_turns` (default: 2) | `expires_at_turn = snapshot + 2` |
-| Deferred tool from runner executed | Deferred tool call count | `execution_sticky_tool_calls` (default: 5) | `expires_after_deferred_call = deferred_tool_calls + 5` |
+| Deferred tool from runner executed successfully | Deferred tool call count | `execution_sticky_tool_calls` (default: 5) | `expires_after_deferred_call = deferred_tool_calls + 5` |
 | Re-trigger while triggered-sticky | Human turns | `max(current_expiry, snapshot + trigger_window)` | Never shortens |
 | Re-execution while sticky (any tier) | Deferred call count | `max(current_expiry, deferred_tool_calls + execution_window)`, upgrade tier to `:executed` | Always upgrades |
-| Trigger fires on currently execution-sticky runner | — | No-op — guard in persist: only apply trigger window if not already execution-sticky | Execution window preserved |
+| Trigger fires on currently execution-sticky runner | — | No-op — guard in persist: skip if already execution-sticky | Execution window preserved |
 | Trigger fires on EXPIRED execution-sticky runner | Human turns | Fresh trigger — tier `:triggered`, `expires_at_turn = snapshot + trigger_window` | Re-activates under trigger tier |
 
-Expiry comparison is strict `<` on the live side: a runner is live while `snapshot < expires_at_turn` or `deferred_tool_calls < expires_after_deferred_call`. It expires the first turn/call where that comparison becomes false.
+Live check uses strict `<`: a runner is live while `snapshot < expires_at_turn` or `deferred_tool_calls < expires_after_deferred_call`.
 
-**Why human turn count, not raw message count?** Each human turn adds at least 2 raw messages (user + assistant). Using `ConversationStore.messages.size` as the clock would make `trigger_sticky_turns=2` expire after approximately 1 human interaction, not 2. The snapshot counts only user-role messages to track actual human turns.
+**Why human turn count?** Each human turn adds at least 2 raw messages (user + assistant). Using raw `ConversationStore.messages.size` would make `trigger_sticky_turns=2` expire after ~1 human interaction. The snapshot counts only user-role messages: `messages.count { |m| (m[:role] || m['role']).to_s == 'user' }`.
 
-**Why deferred-only counter?** Always-loaded tools (`legion_do`, `legion_status`) firing repeatedly should not drain the sticky window for specialized runners.
+**Why deferred-only counter?** Always-loaded tools shouldn't drain the window for specialized runners.
 
 ---
 
@@ -135,141 +134,158 @@ Expiry comparison is strict `<` on the live side: a runner is live while `snapsh
 
 ### Repos modified
 
-- **legion-llm**: new step files, executor changes, conversation store methods, enrichment injector
-- **LegionIO**: `Tools::Base` (sticky accessor), `Tools::Discovery` (set sticky on tool class, specify Registry bucket), `Extensions::Core` (sticky_tools? default)
+- **legion-llm**: new step files, executor changes, conversation store methods, enrichment injector, profile skip lists
+- **LegionIO**: `Tools::Base` (sticky accessor), `Tools::Discovery` (set sticky, Registry bucket), `Extensions::Core` (sticky_tools? default)
 
-**Release ordering**: LegionIO changes MUST be released before or simultaneously with legion-llm changes. `step_sticky_runners` guards all `tool_class.sticky` calls with `tool_class.respond_to?(:sticky)` to handle partial deployment safely.
+**Release ordering**: LegionIO MUST be released before or simultaneously with legion-llm. `step_sticky_runners` guards `tool_class.sticky` with `tool_class.respond_to?(:sticky)` for partial deployment safety.
 
-### `@sticky_turn_snapshot` ivar
+### Key ivars (all initialized in `Executor#initialize`)
 
-Initialized to `nil` in `Executor#initialize`. Set at the start of `step_sticky_runners`:
+| Ivar | Init | Purpose |
+|------|------|---------|
+| `@sticky_turn_snapshot` | `nil` | Human turn count at pre-provider time; nil signals profile-skipped |
+| `@pending_tool_history` | `[]` | Accumulates tool call records from callbacks + step_tool_calls |
+| `@injected_tool_map` | `{}` | Sanitized tool name → tool class; built during inject_registry_tools |
+| `@freshly_triggered_keys` | `[]` | Runner keys from trigger_match only (not sticky re-injections) |
+
+### `@sticky_turn_snapshot`
+
+Set as the **first statement** in `step_sticky_runners`, before any modification to `@triggered_tools`:
 
 ```ruby
 @sticky_turn_snapshot = ConversationStore.messages(conv_id)
                           .count { |m| (m[:role] || m['role']).to_s == 'user' }
 ```
 
-Counts only user-role messages so 1 unit = 1 human turn. Both step and persist use this same snapshot.
+### `@freshly_triggered_keys`
 
-`step_sticky_runners_persist` checks `return unless @sticky_turn_snapshot` — no-op if pre-provider step was profile-skipped.
-
-### `@pending_tool_history` ivar
-
-Initialized to `[]` in `Executor#initialize`. Populated by two sources:
-
-1. **`emit_tool_call_event` / `emit_tool_result_event` callbacks** — for tools dispatched natively by RubyLLM via `session.ask` (covers both streaming and non-streaming RubyLLM paths)
-2. **`step_tool_calls`** — for tools dispatched via `ToolDispatcher` (MCP tools, extension overrides) which do NOT trigger the RubyLLM `on_tool_call`/`on_tool_result` callbacks
-
-These are mutually exclusive paths — no double-population risk.
-
-### `@injected_tool_map` ivar
-
-Initialized to `{}` in `Executor#initialize`. Built during `inject_registry_tools`:
-
-```ruby
-adapter = ToolAdapter.new(tool_class)
-@injected_tool_map[adapter.name] = tool_class  # sanitized name → tool class
-session.with_tool(adapter)
-```
-
-Used by both persist steps to look up tool classes by the sanitized name the LLM echoes back. Avoids the `Registry.find` mismatch caused by `sanitize_tool_name` (64-char truncation, dot→underscore conversion).
-
-### `@freshly_triggered_keys` ivar
-
-Initialized to `[]` in `Executor#initialize`. Set after `step_trigger_match` completes, BEFORE `step_sticky_runners` runs:
+Set as the **second statement** in `step_sticky_runners`, immediately after the snapshot — before the sticky re-injection loop:
 
 ```ruby
 @freshly_triggered_keys = @triggered_tools.map { |t| "#{t.extension}_#{t.runner}" }.uniq
 ```
 
-`step_sticky_runners_persist` uses `@freshly_triggered_keys` (not all of `@triggered_tools`) for trigger-tier window updates. This prevents re-injected sticky runners from refreshing their own trigger windows every turn and making trigger stickiness self-perpetuating.
+**Critical ordering**: this MUST be captured before the re-injection loop appends tools to `@triggered_tools`. If captured after, sticky re-injected runners would be included and their trigger windows would refresh every turn, making trigger stickiness self-perpetuating.
+
+### `@injected_tool_map`
+
+Built during `inject_registry_tools` — **in ALL THREE injection loops** (always-loaded, trigger-matched, requested-deferred):
+
+```ruby
+adapter = ToolAdapter.new(tool_class)
+@injected_tool_map[adapter.name] = tool_class  # add to ALL three loops
+session.with_tool(adapter)
+```
+
+For the native dispatch path and MCP/`step_tool_calls` tools, both persist steps supplement with a Registry fallback:
+
+```ruby
+tc = @injected_tool_map[entry[:tool_name]] ||
+     (defined?(::Legion::Tools::Registry) &&
+      ::Legion::Tools::Registry.find(entry[:tool_name]))
+```
+
+`Registry.find` searches both always + deferred buckets by tool name. Handles native dispatch (map empty) and tools-opt-out (`tools: []`) cases.
+
+For `step_tool_calls` tools (MCP/ToolDispatcher path), the `runner_key` is derived directly at append time from the `source` hash rather than from the map:
+
+```ruby
+runner_key = source[:type] == :extension ? "#{source[:lex]}_#{source[:runner]}" : nil
+@pending_tool_history << { ..., runner_key: runner_key }
+```
+
+Persist steps check `entry[:runner_key]` first, then fall back to map + Registry.
+
+### `@pending_tool_history`
+
+Two population sources (mutually exclusive paths — no double-population):
+
+1. **RubyLLM callbacks** (`emit_tool_call_event` / `emit_tool_result_event`) — for tools dispatched natively via `session.ask`. Callbacks fire for both streaming and non-streaming RubyLLM paths.
+2. **`step_tool_calls`** — for MCP and ToolDispatcher tools. Sets both args and result in one shot. Includes `runner_key` pre-computed from source.
+
+### Single persist step
+
+Both sticky runner state and tool history are mutated in a single `step_sticky_persist` step that reads state once, applies both mutations, writes once. This eliminates the read-modify-write clobber that would occur if two independent persist steps each wrote to the same `sticky_state` slot.
+
+---
+
+### Updated step arrays
+
+```ruby
+PRE_PROVIDER_STEPS = %i[
+  tracing_init idempotency conversation_uuid context_load
+  rbac classification billing gaia_advisory tier_assignment rag_context
+  trigger_match sticky_runners skill_injector tool_history_inject tool_discovery
+  routing request_normalization token_budget
+].freeze
+
+POST_PROVIDER_STEPS = %i[
+  response_normalization metering debate confidence_scoring
+  tool_calls sticky_persist
+  context_store post_response knowledge_capture response_return
+].freeze
+```
+
+`sticky_runners` goes after `trigger_match` (so `@triggered_tools` from trigger_match is captured in `@freshly_triggered_keys`) and before `skill_injector` (so skills see the full re-injected toolset). `tool_history_inject` goes after `skill_injector` and before `tool_discovery` (history is enrichment context, not tool discovery). `sticky_persist` goes after `tool_calls` (so `@pending_tool_history` is fully populated) and before `context_store`.
+
+### Profile skip lists
+
+Add to `GAIA_SKIP`, `SYSTEM_SKIP`, `SERVICE_SKIP`, `QUICK_REPLY_SKIP`:
+```ruby
+:sticky_runners, :tool_history_inject, :sticky_persist
+```
+
+`:human` and `:external` profiles do NOT skip — sticky behavior is for interactive sessions. When persist is skipped for non-human profiles, `@pending_tool_history` is discarded with the Executor instance (per-request lifecycle).
 
 ---
 
 #### 1. New: `lib/legion/llm/pipeline/steps/sticky_runners.rb`
 
-Module `Steps::StickyRunners` included in `Executor`. Three methods:
+Module `Steps::StickyRunners` included in `Executor`.
 
 **`step_sticky_runners`** (pre-provider, after `trigger_match`):
-```
-return unless sticky_enabled? && conv_id
 
-# Snapshot human turn count BEFORE this turn's messages are appended
-@sticky_turn_snapshot = ConversationStore.messages(conv_id)
-                          .count { |m| (m[:role] || m['role']).to_s == 'user' }
+```ruby
+def step_sticky_runners
+  return unless sticky_enabled? && @request.conversation_id
+  conv_id = @request.conversation_id
 
-# Capture freshly triggered keys BEFORE we add sticky re-injections to @triggered_tools
-@freshly_triggered_keys = @triggered_tools.map { |t| "#{t.extension}_#{t.runner}" }.uniq
+  # MUST be first — before any modification to @triggered_tools
+  @sticky_turn_snapshot = ConversationStore.messages(conv_id)
+                            .count { |m| (m[:role] || m['role']).to_s == 'user' }
 
-state = ConversationStore.read_sticky_state(conv_id)
-runners = state[:sticky_runners] || {}
-deferred_count = state[:deferred_tool_calls] || 0
+  # MUST be second — captures trigger_match results before sticky re-injection
+  @freshly_triggered_keys = @triggered_tools.map { |t| "#{t.extension}_#{t.runner}" }.uniq
 
-live_keys = runners.select { |_k, v|
-  (v[:tier] == :triggered && @sticky_turn_snapshot < v[:expires_at_turn]) ||
-  (v[:tier] == :executed  && deferred_count < v[:expires_after_deferred_call])
-}.keys
+  state = ConversationStore.read_sticky_state(conv_id)
+  runners = state[:sticky_runners] || {}
+  deferred_count = state[:deferred_tool_calls] || 0
 
-Registry.deferred_tools.each do |tool_class|
-  key = "#{tool_class.extension}_#{tool_class.runner}"
-  next unless live_keys.include?(key)
-  next if tool_class.respond_to?(:sticky) && tool_class.sticky == false
-  next if @triggered_tools.any? { |t| t.tool_name == tool_class.tool_name }
-  @triggered_tools << tool_class
-end
+  live_keys = runners.select do |_k, v|
+    (v[:tier] == :triggered && @sticky_turn_snapshot < v[:expires_at_turn]) ||
+    (v[:tier] == :executed  && deferred_count < v[:expires_after_deferred_call])
+  end.keys
 
-record enrichment + timeline
-```
+  Registry.deferred_tools.each do |tool_class|
+    key = "#{tool_class.extension}_#{tool_class.runner}"
+    next unless live_keys.include?(key)
+    next if tool_class.respond_to?(:sticky) && tool_class.sticky == false
+    next if @triggered_tools.any? { |t| t.tool_name == tool_class.tool_name }
+    @triggered_tools << tool_class
+  end
 
-**`step_sticky_runners_persist`** (post-provider, after `tool_calls`):
-```
-return unless @sticky_turn_snapshot   # skipped if pre-provider step was profile-skipped
-return unless sticky_enabled? && conv_id
-
-state = ConversationStore.read_sticky_state(conv_id).dup
-runners = (state[:sticky_runners] || {}).dup
-deferred_count = state[:deferred_tool_calls] || 0
-
-# Determine which deferred tools executed successfully this turn
-# Use @injected_tool_map (sanitized name → tool class) to handle name truncation
-completed_entries = @pending_tool_history.select { |e| e[:result] && !e[:error] }
-executed_runner_keys = []
-deferred_call_count  = 0
-
-completed_entries.each do |entry|
-  tc = @injected_tool_map[entry[:tool_name]]
-  next unless tc&.deferred?
-  executed_runner_keys << "#{tc.extension}_#{tc.runner}"
-  deferred_call_count += 1  # count individual calls, not unique runners
-end
-
-executed_runner_keys.uniq!
-
-# Increment deferred counter by actual tool call count
-deferred_count += deferred_call_count
-state[:deferred_tool_calls] = deferred_count
-
-# Update execution-tier stickiness for executed runners
-executed_runner_keys.each do |key|
-  existing = runners[key]
-  new_expiry = deferred_count + execution_sticky_tool_calls
-  runners[key] = {
-    tier: :executed,
-    expires_after_deferred_call: [existing&.dig(:expires_after_deferred_call) || 0, new_expiry].max
+  @enrichments['tool:sticky_runners'] = {
+    content:   "#{live_keys.size} runners re-injected via stickiness",
+    data:      { runner_keys: live_keys },
+    timestamp: Time.now
   }
+  @timeline.record(category: :enrichment, key: 'tool:sticky_runners',
+                   direction: :inbound, detail: "#{live_keys.size} sticky runners",
+                   from: 'sticky_state', to: 'pipeline')
+rescue StandardError => e
+  @warnings << "sticky_runners error: #{e.message}"
+  handle_exception(e, level: :warn, operation: 'llm.pipeline.step_sticky_runners')
 end
-
-# Update trigger-tier stickiness for FRESHLY triggered runners only
-# (not re-injected sticky runners — prevents self-perpetuating windows)
-(@freshly_triggered_keys - executed_runner_keys).each do |key|
-  next if runners[key]&.dig(:tier) == :executed  # already execution-sticky, no-op
-  existing_expiry = runners.dig(key, :expires_at_turn) || 0
-  new_expiry = @sticky_turn_snapshot + trigger_sticky_turns
-  runners[key] = { tier: :triggered, expires_at_turn: [existing_expiry, new_expiry].max }
-end
-
-state[:sticky_runners] = runners
-ConversationStore.write_sticky_state(conv_id, state)
 ```
 
 ---
@@ -278,154 +294,260 @@ ConversationStore.write_sticky_state(conv_id, state)
 
 Module `Steps::ToolHistory` included in `Executor`.
 
-**`step_tool_history_inject`** (pre-provider):
-```
-return unless sticky_enabled? && conv_id
-state = ConversationStore.read_sticky_state(conv_id)
-history = state[:tool_call_history] || []
-return if history.empty?
-@enrichments['tool:call_history'] = {
-  content:   format_history(history),
-  data:      { entry_count: history.size },
-  timestamp: Time.now
-}
-```
+**`step_tool_history_inject`** (pre-provider, after `skill_injector`):
 
-Format of `format_history` output (pre-formatted string inside the `content:` key):
-```
-Tools used in this conversation:
-- Turn 3: list_issues(owner: LegionIO, repo: legion-mcp, state: open) → 5 open issues returned
-- Turn 4: create_issue(owner: LegionIO, repo: legion-mcp, title: Add sticky tools) → issue #43 created
-```
+```ruby
+def step_tool_history_inject
+  return unless sticky_enabled? && @request.conversation_id
+  state = ConversationStore.read_sticky_state(@request.conversation_id)
+  history = state[:tool_call_history] || []
+  return if history.empty?
 
-**`step_tool_history_persist`** (post-provider, after `tool_calls`):
-```
-return unless sticky_enabled? && conv_id && @pending_tool_history.any?
-
-state = ConversationStore.read_sticky_state(conv_id).dup
-history = (state[:tool_call_history] || []).dup
-turn = @sticky_turn_snapshot || 0
-
-@pending_tool_history.each do |entry|
-  next unless entry[:result]  # skip incomplete entries (tool_call without result)
-  tc    = @injected_tool_map[entry[:tool_name]]  # sanitized name lookup
-  runner_key = tc ? "#{tc.extension}_#{tc.runner}" : "unknown"
-  history << {
-    tool:   entry[:tool_name],
-    runner: runner_key,
-    turn:   turn,
-    args:   sanitize_args(truncate_args(entry[:args] || {})),
-    result: entry[:result].to_s[0, max_result_length],
-    error:  entry[:error] || false
+  @enrichments['tool:call_history'] = {
+    content:   format_history(history),
+    data:      { entry_count: history.size },
+    timestamp: Time.now
   }
+rescue StandardError => e
+  @warnings << "tool_history_inject error: #{e.message}"
+  handle_exception(e, level: :warn, operation: 'llm.pipeline.step_tool_history_inject')
+end
+```
+
+**`format_history`** (private method in `Steps::ToolHistory`):
+
+```ruby
+def format_history(history)
+  lines = history.map { |entry| format_history_entry(entry) }
+  "Tools used in this conversation:\n#{lines.join("\n")}"
 end
 
-history = history.last(max_history_entries)
-state[:tool_call_history] = history
-ConversationStore.write_sticky_state(conv_id, state)
+def format_history_entry(entry)
+  args_str = (entry[:args] || {}).map { |k, v| "#{k}: #{v}" }.join(', ')
+  summary  = summarize_result(entry[:result], entry[:error])
+  "- Turn #{entry[:turn]}: #{entry[:tool]}(#{args_str}) → #{summary}"
+end
+
+def summarize_result(result_str, error)
+  return "error: #{result_str.to_s[0, 100]}" if error
+
+  begin
+    parsed = Legion::JSON.load(result_str.to_s)
+  rescue StandardError
+    return result_str.to_s[0, 200]
+  end
+
+  if parsed.is_a?(Array)
+    "#{parsed.size} items returned"
+  elsif parsed.is_a?(Hash)
+    if parsed[:number] && parsed[:html_url]
+      "##{parsed[:number]} at #{parsed[:html_url]}"
+    elsif parsed[:result].is_a?(Array)
+      "#{parsed[:result].size} items returned"
+    elsif parsed[:result].is_a?(Hash) && parsed[:result][:number]
+      "##{parsed[:result][:number]} at #{parsed[:result][:html_url]}"
+    else
+      result_str.to_s[0, 200]
+    end
+  else
+    result_str.to_s[0, 200]
+  end
+end
 ```
 
 ---
 
-#### 3. `lib/legion/llm/pipeline/executor.rb`
+#### 3. New: `lib/legion/llm/pipeline/steps/sticky_persist.rb`
 
-- Include `Steps::StickyRunners` and `Steps::ToolHistory`
-- Initialize in `initialize`:
-  - `@sticky_turn_snapshot = nil`
-  - `@pending_tool_history = []`
-  - `@injected_tool_map = {}`
-  - `@freshly_triggered_keys = []`
-- Update `STEPS`, `PRE_PROVIDER_STEPS`, `POST_PROVIDER_STEPS` as shown in Steps section
-- Update `inject_registry_tools` to populate `@injected_tool_map`
-- Update `emit_tool_call_event` to push partial entry to `@pending_tool_history`
-- Update `emit_tool_result_event` to find by `tool_call_id` and fill result
+Module `Steps::StickyPersist` included in `Executor`. Single step that handles both sticky runner and tool history persistence in one read-modify-write cycle.
 
-**`emit_tool_call_event` changes**:
+**`step_sticky_persist`** (post-provider, after `tool_calls`):
+
 ```ruby
-def emit_tool_call_event(tool_call, round)
-  tc_id   = tool_call_field(tool_call, :id)
-  tc_name = tool_call_field(tool_call, :name)
-  tc_args = tool_call_field(tool_call, :arguments) || {}
+def step_sticky_persist
+  return unless @sticky_turn_snapshot  # skipped if pre-provider was profile-skipped
+  return unless sticky_enabled? && @request.conversation_id
+  conv_id = @request.conversation_id
 
-  # Record in pending history — result filled by emit_tool_result_event
-  pending_index = @pending_tool_history.size
-  @pending_tool_history << {
-    tool_call_id:    tc_id,
-    pending_index:   pending_index,
-    tool_name:       tc_name,
-    args:            tc_args,
-    result:          nil,
-    error:           false
-  }
+  state        = ConversationStore.read_sticky_state(conv_id).dup
+  runners      = (state[:sticky_runners] || {}).dup
+  deferred_count = state[:deferred_tool_calls] || 0
 
-  # Store index for nil-id fallback in emit_tool_result_event
-  Thread.current[:legion_current_tool_history_index] = pending_index
+  # ── Sticky runners persist ─────────────────────────────────────────────
+  # Resolve runner key for each pending entry
+  # Use @injected_tool_map first (handles sanitized names),
+  # fall back to Registry.find for native dispatch and MCP paths
+  completed = @pending_tool_history.select { |e| e[:result] && !e[:error] }
 
-  # ... existing Thread.current tracking for timing/event handler ...
-end
-```
+  executed_runner_keys = []
+  deferred_call_count  = 0
 
-**`emit_tool_result_event` changes**:
-```ruby
-def emit_tool_result_event(tool_result)
-  tc_id  = tool_result.respond_to?(:tool_call_id) ? tool_result.tool_call_id
-           : Thread.current[:legion_current_tool_call_id]
-  raw    = tool_result.respond_to?(:result) ? tool_result.result : tool_result
-
-  # Find entry by tool_call_id; fall back to index for providers that omit IDs
-  entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id }
-  entry ||= @pending_tool_history[Thread.current[:legion_current_tool_history_index]]
-
-  if entry
-    entry[:result] = raw.is_a?(String) ? raw : raw.to_s
-    entry[:error]  = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
+  completed.each do |entry|
+    # step_tool_calls entries have runner_key pre-computed
+    if entry[:runner_key]
+      key = entry[:runner_key]
+      tc  = @injected_tool_map[entry[:tool_name]] ||
+            (defined?(::Legion::Tools::Registry) && ::Legion::Tools::Registry.find(entry[:tool_name]))
+      next unless tc&.deferred?
+      executed_runner_keys << key
+      deferred_call_count  += 1
+    else
+      # RubyLLM callback path — use map + Registry fallback
+      tc = @injected_tool_map[entry[:tool_name]] ||
+           (defined?(::Legion::Tools::Registry) && ::Legion::Tools::Registry.find(entry[:tool_name]))
+      next unless tc&.deferred?
+      executed_runner_keys << "#{tc.extension}_#{tc.runner}"
+      deferred_call_count  += 1
+    end
   end
 
-  # ... existing event emission ...
-end
-```
+  executed_runner_keys.uniq!
+  deferred_count += deferred_call_count
+  state[:deferred_tool_calls] = deferred_count
 
-**`step_tool_calls` changes** (append to `@pending_tool_history` for ToolDispatcher path):
-```ruby
-# After dispatching each tool via ToolDispatcher, append to history
-# These tools do NOT fire on_tool_call/on_tool_result callbacks
-@pending_tool_history << {
-  tool_call_id:  tool_call_id,
-  pending_index: @pending_tool_history.size,
-  tool_name:     tool_name,
-  args:          tc[:arguments] || tc['arguments'] || {},
-  result:        result_string,
-  error:         result[:status] == :error
-}
+  executed_runner_keys.each do |key|
+    existing   = runners[key]
+    new_expiry = deferred_count + execution_sticky_tool_calls
+    runners[key] = {
+      tier: :executed,
+      expires_after_deferred_call: [existing&.dig(:expires_after_deferred_call) || 0, new_expiry].max
+    }
+  end
+
+  (@freshly_triggered_keys - executed_runner_keys).each do |key|
+    next if runners[key]&.dig(:tier) == :executed
+    existing_expiry = runners.dig(key, :expires_at_turn) || 0
+    new_expiry      = @sticky_turn_snapshot + trigger_sticky_turns
+    runners[key]    = { tier: :triggered, expires_at_turn: [existing_expiry, new_expiry].max }
+  end
+
+  state[:sticky_runners] = runners
+
+  # ── Tool history persist ───────────────────────────────────────────────
+  if @pending_tool_history.any?
+    history = (state[:tool_call_history] || []).dup
+
+    @pending_tool_history.each do |entry|
+      next unless entry[:result]
+      tc = @injected_tool_map[entry[:tool_name]] ||
+           (defined?(::Legion::Tools::Registry) && ::Legion::Tools::Registry.find(entry[:tool_name]))
+      runner_key = entry[:runner_key] ||
+                   (tc ? "#{tc.extension}_#{tc.runner}" : "unknown")
+      history << {
+        tool:   entry[:tool_name],
+        runner: runner_key,
+        turn:   @sticky_turn_snapshot,
+        args:   sanitize_args(truncate_args(entry[:args] || {})),
+        result: entry[:result].to_s[0, max_result_length],
+        error:  entry[:error] || false
+      }
+    end
+
+    state[:tool_call_history] = history.last(max_history_entries)
+  end
+
+  ConversationStore.write_sticky_state(conv_id, state)
+rescue StandardError => e
+  @warnings << "sticky_persist error: #{e.message}"
+  handle_exception(e, level: :warn, operation: 'llm.pipeline.step_sticky_persist')
+end
 ```
 
 ---
 
 #### 4. `lib/legion/llm/pipeline/enrichment_injector.rb`
 
-Add `tool:call_history` AFTER skill injection (not before):
+Add `tool:call_history` BEFORE the `return system if parts.empty?` guard and AFTER skill injection:
 
 ```ruby
-# After skill:active block, before appending caller system prompt:
+parts << baseline if baseline
+# GAIA system prompt
+if (gaia = enrichments.dig('gaia:system_prompt', :content))
+  parts << gaia
+end
+# RAG context
+if (rag = enrichments.dig('rag:context_retrieval', :data, :entries))
+  context_text = rag.map { |e| "[#{e[:content_type]}] #{e[:content]}" }.join("\n")
+  parts << "Relevant context:\n#{context_text}" unless context_text.empty?
+end
+# Skill injection
+parts << enrichments['skill:active'] if enrichments['skill:active']
+# Tool call history — BEFORE the empty-parts guard so it reaches the LLM
+# even when no other enrichments are present
 if (history_block = enrichments.dig('tool:call_history', :content))
   parts << history_block
 end
+
+return system if parts.empty?
+
+parts << system if system
+parts.join("\n\n")
 ```
 
-Order: baseline → GAIA system prompt → RAG context → skill → **tool history** → caller system prompt
-
-Consistent with other enrichment structure: value stored as `{ content:, data:, timestamp: }`, accessed via `.dig(:content)`.
+Order: baseline → GAIA → RAG → skill → **tool history** → (empty guard) → caller system prompt.
 
 ---
 
-#### 5. `lib/legion/llm/conversation_store.rb`
+#### 5. `lib/legion/llm/pipeline/executor.rb`
 
-Add `read_sticky_state` and `write_sticky_state` as shown in Storage Model section.
+- Include `Steps::StickyRunners`, `Steps::ToolHistory`, `Steps::StickyPersist`
+- Initialize: `@sticky_turn_snapshot = nil`, `@pending_tool_history = []`, `@injected_tool_map = {}`, `@freshly_triggered_keys = []`
+- Update `STEPS`, `PRE_PROVIDER_STEPS`, `POST_PROVIDER_STEPS` as shown in Updated step arrays
+- Update `inject_registry_tools` — add `@injected_tool_map[adapter.name] = tool_class` in ALL THREE loops
+- Update `emit_tool_call_event` — push partial entry with `pending_index`
+- Update `emit_tool_result_event` — find by `tool_call_id`, fallback to `pending_index`, guard `entry[:result].nil?`
+- Update `step_tool_calls` — append completed entries to `@pending_tool_history` with pre-computed `runner_key`
 
-Update `evict_if_needed` to log when evicting a conversation with sticky state:
+**`emit_tool_call_event` additions**:
+```ruby
+pending_index = @pending_tool_history.size
+@pending_tool_history << {
+  tool_call_id:  tc_id,
+  pending_index: pending_index,
+  tool_name:     tc_name,
+  args:          tc_args,
+  result:        nil,
+  error:         false,
+  runner_key:    nil  # filled from map at persist time
+}
+Thread.current[:legion_current_tool_history_index] = pending_index
+```
+
+**`emit_tool_result_event` additions**:
+```ruby
+# Find entry by id (guard result.nil? to avoid re-matching on nil-id providers)
+entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id && e[:result].nil? }
+entry ||= @pending_tool_history[Thread.current[:legion_current_tool_history_index]]
+if entry
+  entry[:result] = raw.is_a?(String) ? raw : raw.to_s
+  entry[:error]  = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
+end
+```
+
+**`step_tool_calls` addition** (after each tool dispatch):
+```ruby
+runner_key = source[:type] == :extension ? "#{source[:lex]}_#{source[:runner]}" : nil
+@pending_tool_history << {
+  tool_call_id:  tool_call_id,
+  pending_index: @pending_tool_history.size,
+  tool_name:     tool_name,
+  args:          tc[:arguments] || tc['arguments'] || {},
+  result:        result_string,
+  error:         result[:status] == :error,
+  runner_key:    runner_key
+}
+```
+
+---
+
+#### 6. `lib/legion/llm/conversation_store.rb`
+
+Add `read_sticky_state` and `write_sticky_state` as shown in Storage Model.
+
+Update `evict_if_needed`:
 ```ruby
 if conversations[oldest_id]&.dig(:sticky_state)&.any?
-  log&.warn("[ConversationStore] evicting #{oldest_id} with non-empty sticky_state — sticky runner and tool history state lost")
+  log&.warn("[ConversationStore] evicting #{oldest_id} with non-empty sticky_state — sticky state lost")
 end
 conversations.delete(oldest_id)
 ```
@@ -436,8 +558,6 @@ conversations.delete(oldest_id)
 
 #### `lib/legion/tools/base.rb`
 
-Add `sticky` accessor (alongside `deferred`, `extension`, `runner`):
-
 ```ruby
 def sticky(val = nil)
   return @sticky.nil? ? true : @sticky if val.nil?
@@ -445,29 +565,22 @@ def sticky(val = nil)
 end
 ```
 
-Default: `true` when never set.
-
 #### `lib/legion/tools/discovery.rb`
 
-In `tool_attributes`, add (boolean-coerced to prevent nil promotion to true):
-
+In `tool_attributes`:
 ```ruby
 sticky: !!(ext.respond_to?(:sticky_tools?) ? ext.sticky_tools? : true)
 ```
+`nil` from `sticky_tools?` → `false` (conservative opt-out via `!!nil`).
 
-`nil` from `sticky_tools?` becomes `false` via `!!nil` (conservative opt-out).
-
-In `create_tool_class`, add:
-
+In `create_tool_class`:
 ```ruby
 sticky(attrs[:sticky])
 ```
 
-When searching for sticky tools to re-inject, use `Registry.deferred_tools` only — always-loaded tools are already always-injected and must not appear in sticky state.
+Use `Registry.deferred_tools` when searching for sticky tools to re-inject.
 
 #### `lib/legion/extensions/core.rb`
-
-Add alongside `mcp_tools?`:
 
 ```ruby
 def sticky_tools?
@@ -475,7 +588,7 @@ def sticky_tools?
 end
 ```
 
-Instance method accessible on extension modules via `extend` (same mechanism as `mcp_tools?`). Extensions that opt out define `def self.sticky_tools? false end`.
+Instance method accessible via `extend` (same mechanism as `mcp_tools?`). Opt-out: `def self.sticky_tools? false end`.
 
 ---
 
@@ -502,17 +615,6 @@ end
 
 ---
 
-## Result Summarization
-
-Lightweight summarizer for the enrichment text (injected text only — full truncated result is stored):
-
-- Array result → `"N items returned"`
-- Result contains `"number"` and `"html_url"` → `"#N at URL"`
-- `error: true` → `"error: <first 100 chars of result>"`
-- Otherwise → first 200 chars
-
----
-
 ## Settings
 
 ```json
@@ -530,66 +632,49 @@ Lightweight summarizer for the enrichment text (injected text only — full trun
 }
 ```
 
-Settings helpers shared by both new step modules:
-
 ```ruby
-def sticky_enabled?
-  Legion::Settings.dig(:llm, :tool_sticky, :enabled) != false
-end
-def trigger_sticky_turns
-  Legion::Settings.dig(:llm, :tool_sticky, :trigger_turns) || 2
-end
-def execution_sticky_tool_calls
-  Legion::Settings.dig(:llm, :tool_sticky, :execution_tool_calls) || 5
-end
-def max_history_entries
-  Legion::Settings.dig(:llm, :tool_sticky, :max_history_entries) || 50
-end
-def max_result_length
-  Legion::Settings.dig(:llm, :tool_sticky, :max_result_length) || 2000
-end
-def max_args_length
-  Legion::Settings.dig(:llm, :tool_sticky, :max_args_length) || 500
-end
+def sticky_enabled?           = Legion::Settings.dig(:llm, :tool_sticky, :enabled) != false
+def trigger_sticky_turns      = Legion::Settings.dig(:llm, :tool_sticky, :trigger_turns) || 2
+def execution_sticky_tool_calls = Legion::Settings.dig(:llm, :tool_sticky, :execution_tool_calls) || 5
+def max_history_entries       = Legion::Settings.dig(:llm, :tool_sticky, :max_history_entries) || 50
+def max_result_length         = Legion::Settings.dig(:llm, :tool_sticky, :max_result_length) || 2000
+def max_args_length           = Legion::Settings.dig(:llm, :tool_sticky, :max_args_length) || 500
 ```
 
 ---
 
 ## Lex-Level Opt-Out
 
-`Extensions::Core` defines `sticky_tools?` as an instance method accessible via `extend` (same pattern as `mcp_tools?`). Extensions that opt out define an explicit module method:
-
 ```ruby
-# Core default (instance method, accessible on extension module via extend)
+# Core default (instance method, accessible via extend)
 def sticky_tools?
   true
 end
 
-# Extension opt-out (explicit module method, overrides extend)
+# Extension opt-out
 def self.sticky_tools?
   false
 end
 ```
 
-`tool_attributes` boolean-coerces the result (`!!`) so nil returns from `sticky_tools?` are treated as opt-out (false), not opt-in.
-
-Runner-level opt-out not included — lex-level covers all realistic cases.
+`tool_attributes` boolean-coerces: `nil` from `sticky_tools?` → `false`.
 
 ---
 
 ## Spec Coverage
 
 **legion-llm**:
-- `spec/legion/llm/pipeline/steps/sticky_runners_spec.rb` — step injection, window tiers, strict `<` live check, max rule, expired execution re-trigger, deferred actual-call counter, nil snapshot guard, profile skip, `@freshly_triggered_keys` prevents window refresh for re-injected runners, `@injected_tool_map` lookup
-- `spec/legion/llm/pipeline/steps/tool_history_spec.rb` — append, truncation, arg sanitization, result summarization, enrichment structure `{content:, data:, timestamp:}`, max_history_entries trim, incomplete entry skip, `step_tool_calls` path vs callback path
-- `spec/legion/llm/pipeline/enrichment_injector_spec.rb` — history block injection after skill, `.dig('tool:call_history', :content)`
-- `spec/legion/llm/conversation_store_spec.rb` — `read_sticky_state` returns frozen {} for unknown conv, `write_sticky_state` no-ops for unknown conv, eviction warning log
-- `spec/legion/llm/pipeline/executor_spec.rb` — `@pending_tool_history` callback population, nil tool_call_id index fallback, `@injected_tool_map` population in inject_registry_tools, profile skip for all 4 new steps, `@freshly_triggered_keys` captured before sticky re-injection
+- `spec/legion/llm/pipeline/steps/sticky_runners_spec.rb` — snapshot counting user-role only, `@freshly_triggered_keys` captured before re-injection, live check strict `<`, profile skip nil-snapshot guard, re-injection dedup, Registry.deferred_tools lookup
+- `spec/legion/llm/pipeline/steps/tool_history_spec.rb` — format_history output, summarize_result heuristics (array/object/error/plain), enrichment structure `{content:,data:,timestamp:}`
+- `spec/legion/llm/pipeline/steps/sticky_persist_spec.rb` — single read-modify-write, deferred counter increments by call count, runner key from runner_key field vs map vs Registry, execution-tier advance, trigger-tier advance (freshly_triggered_keys only), error entries excluded from counter, max_history_entries trim, profile skip guard
+- `spec/legion/llm/pipeline/enrichment_injector_spec.rb` — tool history injected BEFORE empty-parts guard (history present, no other enrichments → history reaches LLM), order after skill
+- `spec/legion/llm/conversation_store_spec.rb` — `read_sticky_state` returns frozen {} for unknown conv, `write_sticky_state` no-ops for unknown conv, `write_sticky_state` persists to in-memory conv, `write_sticky_state` calls touch, `read_sticky_state`→`write_sticky_state` round-trip, eviction warning log
+- `spec/legion/llm/pipeline/executor_spec.rb` — `@injected_tool_map` populated in all three inject loops, `emit_tool_result_event` nil-id result.nil? guard, `step_tool_calls` appends with runner_key, profile skip for all three new steps
 
 **LegionIO**:
-- `spec/legion/tools/base_spec.rb` — `sticky` accessor: default true, false when set, nil call is read-only
-- `spec/legion/tools/discovery_spec.rb` — boolean coercion: nil → false, true → true, false → false; Registry.deferred_tools used for sticky lookup
-- `spec/legion/extensions/core_spec.rb` — `sticky_tools?` default true
+- `spec/legion/tools/base_spec.rb` — sticky default true, false when set, nil call is read-only
+- `spec/legion/tools/discovery_spec.rb` — boolean coerce nil→false, true→true, false→false; deferred_tools for sticky lookup
+- `spec/legion/extensions/core_spec.rb` — sticky_tools? default true
 
 ---
 
@@ -598,6 +683,6 @@ Runner-level opt-out not included — lex-level covers all realistic cases.
 - Runner-level sticky opt-out (lex-level only)
 - Compounding sticky windows (max rule only)
 - DB-backed sticky state / tool history (in-memory only; LRU eviction loses state — known limitation)
-- Concurrent same-conv_id request safety (read-modify-write race exists; same-conversation concurrent requests are rare and counter drift is non-critical in v1)
-- Encryption of tool call history (consistent with unencrypted ConversationStore messages)
-- UI changes to legion-interlink for displaying tool history
+- Concurrent same-conv_id request safety (read-modify-write race exists; non-critical in v1)
+- Encryption of tool call history
+- UI changes to legion-interlink
