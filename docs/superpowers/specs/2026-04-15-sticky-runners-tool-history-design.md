@@ -202,13 +202,13 @@ runner_key = source[:type] == :extension ? "#{lex_normalized}_#{source[:runner]}
 
 Persist steps check `entry[:runner_key]` first, then fall back to map + snapshot.
 
-### `@pending_tool_history` and `@pending_tool_history_mutex`
+### `@pending_tool_history`
 
-Both initialized in `Executor#initialize`:
-- `@pending_tool_history = []`
-- `@pending_tool_history_mutex = Mutex.new`
+Initialized as `Concurrent::Array.new` in `Executor#initialize`. `concurrent-ruby` is already a dependency and `Concurrent::Array` is already used in the codebase (e.g. `Concurrent::Map` in `Fleet::ReplyDispatcher`).
 
-The mutex is required because `ruby_llm_parallel_tools.rb` spawns a thread per tool call in a batch. `emit_tool_call_event` and `emit_tool_result_event` both access `@pending_tool_history` concurrently. All reads and writes must be wrapped in `@pending_tool_history_mutex.synchronize`.
+`Concurrent::Array` provides thread-safe `<<`, `[]`, `size`, and `dup` — no explicit mutex needed for individual operations. This replaces the `Mutex.new` + plain `Array` pattern.
+
+The find+mutate compound operation in `emit_tool_result_event` (find entry by `tool_call_id`, then set `result`/`error`) is NOT atomic on `Concurrent::Array` alone. A `Mutex` is still needed to prevent two threads from finding the same nil-result entry simultaneously. Use a dedicated `@pending_tool_history_mutex = Mutex.new` only for that compound operation.
 
 Two population sources (mutually exclusive paths — no double-population):
 
@@ -401,7 +401,7 @@ def step_sticky_persist
     ::Legion::Tools::Registry.all_tools.each_with_object({}) { |t, h| h[t.tool_name] = t } :
     {}
 
-  pending_snapshot = @pending_tool_history_mutex.synchronize { @pending_tool_history.dup }
+  pending_snapshot = @pending_tool_history.dup  # Concurrent::Array#dup is thread-safe
   completed = pending_snapshot.select { |e| e[:result] && !e[:error] }
 
   executed_runner_keys = []
@@ -506,17 +506,17 @@ Order: baseline → GAIA → RAG → skill → **tool history** → (empty guard
 #### 5. `lib/legion/llm/pipeline/executor.rb`
 
 - Include `Steps::StickyRunners`, `Steps::ToolHistory`, `Steps::StickyPersist`
-- Initialize: `@sticky_turn_snapshot = nil`, `@pending_tool_history = []`, `@pending_tool_history_mutex = Mutex.new`, `@injected_tool_map = {}`, `@freshly_triggered_keys = []`
+- Initialize: `@sticky_turn_snapshot = nil`, `@pending_tool_history = Concurrent::Array.new`, `@pending_tool_history_mutex = Mutex.new`, `@injected_tool_map = {}`, `@freshly_triggered_keys = []`
 - Update `STEPS`, `PRE_PROVIDER_STEPS`, `POST_PROVIDER_STEPS` as shown in Updated step arrays
 - Update `inject_registry_tools` — add `@injected_tool_map[adapter.name] = tool_class` in ALL THREE loops
 - Update `emit_tool_call_event` — push partial entry with `pending_index`
 - Update `emit_tool_result_event` — find by `tool_call_id`, fallback to `pending_index`, guard `entry[:result].nil?`
 - Update `step_tool_calls` — append completed entries to `@pending_tool_history` with pre-computed `runner_key`
 
-**`emit_tool_call_event` additions** (all access to `@pending_tool_history` must be synchronized):
+**`emit_tool_call_event` additions** (`Concurrent::Array#<<` is atomic, but index capture + push must be atomic together):
 ```ruby
 @pending_tool_history_mutex.synchronize do
-  pending_index = @pending_tool_history.size
+  pending_index = @pending_tool_history.size  # size + << must be atomic to get correct index
   @pending_tool_history << {
     tool_call_id:  tc_id,
     pending_index: pending_index,
@@ -530,7 +530,7 @@ Order: baseline → GAIA → RAG → skill → **tool history** → (empty guard
 end
 ```
 
-**`emit_tool_result_event` additions** (synchronized; rely on `tool_call_id` under parallel execution — Thread.current index unreliable across threads):
+**`emit_tool_result_event` additions** (mutex required for find+mutate compound operation — `Concurrent::Array` does not make compound ops atomic):
 ```ruby
 @pending_tool_history_mutex.synchronize do
   # guard result.nil? to avoid re-matching on nil-id providers with multiple calls
