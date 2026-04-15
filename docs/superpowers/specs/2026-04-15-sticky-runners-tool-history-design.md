@@ -32,15 +32,18 @@ Stored in `ConversationStore` metadata via `store_metadata` / `read_metadata` un
 ```json
 {
   "sticky_runners": {
-    "github-issues": { "expires_at_turn": 8, "tier": "executed" },
+    "github-issues": { "expires_after_tool_call": 12, "expires_at_turn": 8, "tier": "executed" },
     "github-branches": { "expires_at_turn": 5, "tier": "triggered" }
-  }
+  },
+  "total_tool_calls": 7
 }
 ```
 
 - **Key**: `"#{extension}-#{runner}"` (e.g. `"github-issues"`, `"apollo-knowledge"`)
-- **`expires_at_turn`**: turn number after which this runner is no longer injected
-- **`tier`**: `"triggered"` or `"executed"` — informational, used to determine which window to apply on reset
+- **`expires_after_tool_call`**: present only for `tier: "executed"` — the runner expires when `total_tool_calls >= expires_after_tool_call`. Counts down in tool executions, not messages, so a long back-and-forth without tool calls doesn't burn the window
+- **`expires_at_turn`**: present only for `tier: "triggered"` — the runner expires when message count exceeds this value. Trigger stickiness is about user intent in words, so message turns are the right clock
+- **`total_tool_calls`**: top-level counter incremented by 1 each time any tool is executed in this conversation. Used as the clock for execution-tier expiry
+- **`tier`**: `"triggered"` or `"executed"` — determines which clock and window to use on reset
 
 ### `tool_call_history`
 ```json
@@ -66,22 +69,25 @@ Stored in `ConversationStore` metadata via `store_metadata` / `read_metadata` un
 }
 ```
 
-- `result` is stored as a truncated string (max 2000 chars) to bound context window cost
+- `result` is stored as a truncated string (max `max_result_length` chars) to bound context window cost
 - `error: true` when the tool returned an error response
-- `turn` is `ConversationStore.messages(conv_id).size` at time of call — a monotonically increasing proxy for turn number
+- `turn` is the value of `total_tool_calls` after this call — uniquely identifies position in the tool call sequence regardless of message count
 
 ---
 
 ## Sticky Window Tiers
 
-| Event | Window | Example |
-|-------|--------|---------|
-| Trigger word matched for runner | `trigger_sticky_turns` (default: 2) | User asked "what issues exist?" |
-| Tool from runner executed | `execution_sticky_turns` (default: 5) | LLM called `list_issues` |
-| Re-trigger while sticky | Reset to `max(current_expiry, turn + trigger_window)` | Never shortens existing window |
-| Re-execution while sticky | Reset to `max(current_expiry, turn + execution_window)` | Always upgrades to execution tier |
+Two independent clocks — trigger stickiness counts message turns, execution stickiness counts tool calls:
 
-Settings path: `Legion::Settings.dig(:llm, :tool_sticky, :trigger_turns)` and `:execution_turns`.
+| Event | Clock | Window | Expiry stored as |
+|-------|-------|--------|-----------------|
+| Trigger word matched for runner | Message turns | `trigger_sticky_turns` (default: 2) | `expires_at_turn = current_message_count + 2` |
+| Tool from runner executed | Tool call count | `execution_sticky_turns` (default: 5) | `expires_after_tool_call = total_tool_calls + 5` |
+| Re-trigger while triggered-sticky | Message turns | Reset to `max(current_expiry, current_message_count + trigger_window)` | Never shortens |
+| Re-execution while sticky | Tool call count | Reset to `max(current_expiry, total_tool_calls + execution_window)`, upgrade tier to `executed` | Always upgrades |
+| Trigger fires on execution-sticky runner | — | No-op — execution window is already longer | Execution window preserved |
+
+**Why two clocks?** Trigger stickiness is about user intent in words — it should fade after a couple of exchanges if the user moves on. Execution stickiness is about work in progress — a long back-and-forth discussion shouldn't burn through the window if no other tools are being called. A conversation where the user deliberates over 10 messages before creating a second issue keeps the runner available the whole time.
 
 ---
 
@@ -94,18 +100,18 @@ Settings path: `Legion::Settings.dig(:llm, :tool_sticky, :trigger_turns)` and `:
 Module `Steps::StickyRunners` included in `Executor`. Two responsibilities:
 
 **`step_sticky_runners`** (pre-provider, added to `STEPS` between `trigger_match` and `tool_discovery`):
-- Load `sticky_runners` from `ConversationStore.read_metadata(conv_id)`
-- Calculate `current_turn = ConversationStore.messages(conv_id).size`
-- Filter to entries where `expires_at_turn > current_turn`
-- For each live sticky runner key (`"github-issues"`), find all deferred tools in `Registry` where `tool_class.extension + "-" + tool_class.runner == key`
-- Merge into `@triggered_tools` (deduplicating against already-triggered tools)
+- Load metadata from `ConversationStore.read_metadata(conv_id)` → `sticky_runners`, `total_tool_calls`
+- Calculate `current_message_count = ConversationStore.messages(conv_id).size`
+- Filter runners: keep where `tier == "triggered" && expires_at_turn > current_message_count` OR `tier == "executed" && expires_after_tool_call > total_tool_calls`
+- For each live sticky runner key, find all deferred tools in `Registry` where `"#{tool_class.extension}-#{tool_class.runner}" == key` and `tool_class.sticky != false`
+- Merge into `@triggered_tools` (deduplicating)
 - Record in `@enrichments['tool:sticky_runners']` for timeline
 
 **`persist_sticky_runners`** (called from `step_context_store` after tool calls are known):
-- Extract runner keys from `@raw_response.tool_calls` via Registry lookup
-- For each: set `expires_at_turn = current_turn + execution_sticky_turns`
-- Merge with existing `sticky_runners` using `max` rule (never shorten)
-- Also update trigger-tier runners from `@triggered_tools` using `trigger_sticky_turns`
+- Read current metadata snapshot
+- Increment `total_tool_calls` by number of tools executed this turn
+- For each executed runner: set `expires_after_tool_call = total_tool_calls + execution_sticky_turns`, tier = `"executed"` — apply `max` rule
+- For each trigger-matched runner (from `@triggered_tools` minus executed): set `expires_at_turn = current_message_count + trigger_sticky_turns`, tier = `"triggered"` — only if not already execution-sticky
 - Write back via `ConversationStore.store_metadata`
 
 #### 2. New: `lib/legion/llm/pipeline/steps/tool_history.rb`
@@ -191,13 +197,16 @@ All numeric thresholds are configurable — no magic numbers in code. All settin
     "tool_sticky": {
       "enabled": true,
       "trigger_turns": 2,
-      "execution_turns": 5,
+      "execution_tool_calls": 5,
       "max_history_entries": 50,
       "max_result_length": 2000
     }
   }
 }
 ```
+
+- `trigger_turns` — message turns before a trigger-matched runner expires
+- `execution_tool_calls` — tool call executions before an execution-sticky runner expires (not message turns)
 
 Settings path helpers (used throughout the two new step modules):
 
@@ -210,8 +219,8 @@ def trigger_sticky_turns
   Legion::Settings.dig(:llm, :tool_sticky, :trigger_turns) || 2
 end
 
-def execution_sticky_turns
-  Legion::Settings.dig(:llm, :tool_sticky, :execution_turns) || 5
+def execution_sticky_tool_calls
+  Legion::Settings.dig(:llm, :tool_sticky, :execution_tool_calls) || 5
 end
 
 def max_history_entries
