@@ -175,13 +175,15 @@ Full JSON results are too verbose for the system prompt. A lightweight summarize
 - If result contains `"number"` and `"html_url"` → `"issue #N created at URL"`
 - If result is an array → `"N items returned"`
 - If result contains `"error"` → `"error: <message>"`
-- Otherwise → first 200 chars of result string
+- Otherwise → first `max_result_length` chars of result string
 
 This is intentionally simple — no LLM involvement, pure string heuristics.
 
 ---
 
 ## Settings
+
+All numeric thresholds are configurable — no magic numbers in code. All settings are optional with the defaults shown.
 
 ```json
 {
@@ -190,13 +192,36 @@ This is intentionally simple — no LLM involvement, pure string heuristics.
       "enabled": true,
       "trigger_turns": 2,
       "execution_turns": 5,
-      "max_history_entries": 50
+      "max_history_entries": 50,
+      "max_result_length": 2000
     }
   }
 }
 ```
 
-All settings are optional with the above defaults.
+Settings path helpers (used throughout the two new step modules):
+
+```ruby
+def sticky_enabled?
+  Legion::Settings.dig(:llm, :tool_sticky, :enabled) != false
+end
+
+def trigger_sticky_turns
+  Legion::Settings.dig(:llm, :tool_sticky, :trigger_turns) || 2
+end
+
+def execution_sticky_turns
+  Legion::Settings.dig(:llm, :tool_sticky, :execution_turns) || 5
+end
+
+def max_history_entries
+  Legion::Settings.dig(:llm, :tool_sticky, :max_history_entries) || 50
+end
+
+def max_result_length
+  Legion::Settings.dig(:llm, :tool_sticky, :max_result_length) || 2000
+end
+```
 
 ---
 
@@ -206,6 +231,30 @@ All settings are optional with the above defaults.
 - `spec/legion/llm/pipeline/steps/tool_history_spec.rb` — append, truncation, summarization, enrichment format
 - `spec/legion/llm/pipeline/enrichment_injector_spec.rb` — history block injection
 - `spec/legion/llm/conversation_store_spec.rb` — `store_metadata` with extra kwargs
+
+---
+
+## Lex-Level Opt-Out
+
+`Legion::Extensions::Core` gets a new `sticky_tools?` method defaulting to `true`. Extensions that should never be sticky (e.g. sensitive operation runners where every call requires fresh explicit intent) can override it:
+
+```ruby
+# in Core
+def sticky_tools?
+  true
+end
+
+# in an extension that opts out
+def self.sticky_tools?
+  false
+end
+```
+
+During `Tools::Discovery#create_tool_class`, a `sticky` attribute is set on the tool class from `ext.respond_to?(:sticky_tools?) ? ext.sticky_tools? : true`. `Tools::Base` gets a `sticky(val = nil)` accessor alongside the existing `deferred`, `extension`, `runner` attributes.
+
+`step_sticky_runners` skips any runner where its tools have `sticky: false`.
+
+Runner-level opt-out is **not included** — lex-level covers all realistic cases.
 
 ---
 
