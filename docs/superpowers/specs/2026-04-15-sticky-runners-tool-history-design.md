@@ -2,7 +2,7 @@
 
 **Date**: 2026-04-15
 **Repo**: legion-llm + LegionIO (cross-gem)
-**Status**: Approved for implementation — post adversarial review rounds 1–4
+**Status**: Approved for implementation — post adversarial review rounds 1–5
 
 ---
 
@@ -115,7 +115,7 @@ Two independent clocks — trigger stickiness counts human turns (user messages 
 
 | Event | Clock | Window | Expiry stored as |
 |-------|-------|--------|-----------------|
-| Trigger word matched for runner | Human turns | `trigger_sticky_turns` (default: 2) | `expires_at_turn = snapshot + 2` |
+| Trigger word matched for runner | Human turns | `trigger_sticky_turns` (default: 2) | `expires_at_turn = snapshot + trigger_sticky_turns + 1` (the +1 accounts for the current user message not yet stored at snapshot time) |
 | Deferred tool from runner executed successfully | Deferred tool call count | `execution_sticky_tool_calls` (default: 5) | `expires_after_deferred_call = deferred_tool_calls + 5` |
 | Re-trigger while triggered-sticky | Human turns | `max(current_expiry, snapshot + trigger_window)` | Never shortens |
 | Re-execution while sticky (any tier) | Deferred call count | `max(current_expiry, deferred_tool_calls + execution_window)`, upgrade tier to `:executed` | Always upgrades |
@@ -177,31 +177,43 @@ adapter = ToolAdapter.new(tool_class)
 session.with_tool(adapter)
 ```
 
-For the native dispatch path and MCP/`step_tool_calls` tools, both persist steps supplement with a Registry fallback:
+In `step_sticky_persist`, rather than calling `Registry.find` N times in a loop (mutex contention), take a single snapshot at the start of the step:
 
 ```ruby
-tc = @injected_tool_map[entry[:tool_name]] ||
-     (defined?(::Legion::Tools::Registry) &&
-      ::Legion::Tools::Registry.find(entry[:tool_name]))
+tool_snapshot = defined?(::Legion::Tools::Registry) ?
+  ::Legion::Tools::Registry.all_tools.each_with_object({}) { |t, h| h[t.tool_name] = t } :
+  {}
 ```
 
-`Registry.find` searches both always + deferred buckets by tool name. Handles native dispatch (map empty) and tools-opt-out (`tools: []`) cases.
+Then resolve tool class via:
+```ruby
+tc = @injected_tool_map[entry[:tool_name]] || tool_snapshot[entry[:tool_name]]
+```
 
-For `step_tool_calls` tools (MCP/ToolDispatcher path), the `runner_key` is derived directly at append time from the `source` hash rather than from the map:
+Handles native dispatch (map empty), tools-opt-out (`tools: []`), and all Registry tools with a single mutex acquisition.
+
+For `step_tool_calls` tools (MCP/ToolDispatcher path), the `runner_key` is derived directly at append time from the `source` hash. **Normalize `source[:lex]` to match `derive_extension_name` format** (strip `lex-` prefix, replace hyphens with underscores):
 
 ```ruby
-runner_key = source[:type] == :extension ? "#{source[:lex]}_#{source[:runner]}" : nil
+lex_normalized = (source[:lex] || '').delete_prefix('lex-').tr('-', '_')
+runner_key = source[:type] == :extension ? "#{lex_normalized}_#{source[:runner]}" : nil
 @pending_tool_history << { ..., runner_key: runner_key }
 ```
 
-Persist steps check `entry[:runner_key]` first, then fall back to map + Registry.
+Persist steps check `entry[:runner_key]` first, then fall back to map + snapshot.
 
-### `@pending_tool_history`
+### `@pending_tool_history` and `@pending_tool_history_mutex`
+
+Both initialized in `Executor#initialize`:
+- `@pending_tool_history = []`
+- `@pending_tool_history_mutex = Mutex.new`
+
+The mutex is required because `ruby_llm_parallel_tools.rb` spawns a thread per tool call in a batch. `emit_tool_call_event` and `emit_tool_result_event` both access `@pending_tool_history` concurrently. All reads and writes must be wrapped in `@pending_tool_history_mutex.synchronize`.
 
 Two population sources (mutually exclusive paths — no double-population):
 
-1. **RubyLLM callbacks** (`emit_tool_call_event` / `emit_tool_result_event`) — for tools dispatched natively via `session.ask`. Callbacks fire for both streaming and non-streaming RubyLLM paths.
-2. **`step_tool_calls`** — for MCP and ToolDispatcher tools. Sets both args and result in one shot. Includes `runner_key` pre-computed from source.
+1. **RubyLLM callbacks** (`emit_tool_call_event` / `emit_tool_result_event`) — for tools dispatched natively via `session.ask`. Callbacks fire for both streaming and non-streaming RubyLLM paths, including parallel tool batches.
+2. **`step_tool_calls`** — for MCP and ToolDispatcher tools. Sets both args and result in one shot. Includes `runner_key` pre-computed from source. Runs post-provider (single thread), no mutex needed for this path.
 
 ### Single persist step
 
@@ -224,9 +236,14 @@ POST_PROVIDER_STEPS = %i[
   tool_calls sticky_persist
   context_store post_response knowledge_capture response_return
 ].freeze
+
+# STEPS must be kept in sync — used by the synchronous Executor#call path
+STEPS = (PRE_PROVIDER_STEPS + %i[provider_call] + POST_PROVIDER_STEPS).freeze
 ```
 
 `sticky_runners` goes after `trigger_match` (so `@triggered_tools` from trigger_match is captured in `@freshly_triggered_keys`) and before `skill_injector` (so skills see the full re-injected toolset). `tool_history_inject` goes after `skill_injector` and before `tool_discovery` (history is enrichment context, not tool discovery). `sticky_persist` goes after `tool_calls` (so `@pending_tool_history` is fully populated) and before `context_store`.
+
+**Important**: `STEPS` must also be updated — it is used by the synchronous `Executor#call` path (`execute_steps`). Without updating `STEPS`, all sticky behavior silently skips for non-streaming callers.
 
 ### Profile skip lists
 
@@ -323,8 +340,12 @@ def format_history(history)
 end
 
 def format_history_entry(entry)
-  args_str = (entry[:args] || {}).map { |k, v| "#{k}: #{v}" }.join(', ')
-  summary  = summarize_result(entry[:result], entry[:error])
+  # Serialize non-string values to JSON to avoid Ruby inspect output in LLM context
+  args_str = (entry[:args] || {}).map do |k, v|
+    val = v.is_a?(String) ? v : Legion::JSON.dump(v)
+    "#{k}: #{val}"
+  end.join(', ')
+  summary = summarize_result(entry[:result], entry[:error])
   "- Turn #{entry[:turn]}: #{entry[:tool]}(#{args_str}) → #{summary}"
 end
 
@@ -374,31 +395,24 @@ def step_sticky_persist
   deferred_count = state[:deferred_tool_calls] || 0
 
   # ── Sticky runners persist ─────────────────────────────────────────────
-  # Resolve runner key for each pending entry
-  # Use @injected_tool_map first (handles sanitized names),
-  # fall back to Registry.find for native dispatch and MCP paths
-  completed = @pending_tool_history.select { |e| e[:result] && !e[:error] }
+  # Snapshot Registry once (single mutex acquisition) rather than calling
+  # Registry.find N times in the loop
+  tool_snapshot = defined?(::Legion::Tools::Registry) ?
+    ::Legion::Tools::Registry.all_tools.each_with_object({}) { |t, h| h[t.tool_name] = t } :
+    {}
+
+  pending_snapshot = @pending_tool_history_mutex.synchronize { @pending_tool_history.dup }
+  completed = pending_snapshot.select { |e| e[:result] && !e[:error] }
 
   executed_runner_keys = []
   deferred_call_count  = 0
 
   completed.each do |entry|
-    # step_tool_calls entries have runner_key pre-computed
-    if entry[:runner_key]
-      key = entry[:runner_key]
-      tc  = @injected_tool_map[entry[:tool_name]] ||
-            (defined?(::Legion::Tools::Registry) && ::Legion::Tools::Registry.find(entry[:tool_name]))
-      next unless tc&.deferred?
-      executed_runner_keys << key
-      deferred_call_count  += 1
-    else
-      # RubyLLM callback path — use map + Registry fallback
-      tc = @injected_tool_map[entry[:tool_name]] ||
-           (defined?(::Legion::Tools::Registry) && ::Legion::Tools::Registry.find(entry[:tool_name]))
-      next unless tc&.deferred?
-      executed_runner_keys << "#{tc.extension}_#{tc.runner}"
-      deferred_call_count  += 1
-    end
+    tc = @injected_tool_map[entry[:tool_name]] || tool_snapshot[entry[:tool_name]]
+    next unless tc&.deferred?
+    key = entry[:runner_key] || "#{tc.extension}_#{tc.runner}"
+    executed_runner_keys << key
+    deferred_call_count  += 1
   end
 
   executed_runner_keys.uniq!
@@ -417,7 +431,9 @@ def step_sticky_persist
   (@freshly_triggered_keys - executed_runner_keys).each do |key|
     next if runners[key]&.dig(:tier) == :executed
     existing_expiry = runners.dig(key, :expires_at_turn) || 0
-    new_expiry      = @sticky_turn_snapshot + trigger_sticky_turns
+    # +1 accounts for the current user message not yet stored at snapshot time.
+    # Without it, first-turn triggers would expire one turn early.
+    new_expiry      = @sticky_turn_snapshot + trigger_sticky_turns + 1
     runners[key]    = { tier: :triggered, expires_at_turn: [existing_expiry, new_expiry].max }
   end
 
@@ -427,10 +443,9 @@ def step_sticky_persist
   if @pending_tool_history.any?
     history = (state[:tool_call_history] || []).dup
 
-    @pending_tool_history.each do |entry|
+    pending_snapshot.each do |entry|
       next unless entry[:result]
-      tc = @injected_tool_map[entry[:tool_name]] ||
-           (defined?(::Legion::Tools::Registry) && ::Legion::Tools::Registry.find(entry[:tool_name]))
+      tc = @injected_tool_map[entry[:tool_name]] || tool_snapshot[entry[:tool_name]]
       runner_key = entry[:runner_key] ||
                    (tc ? "#{tc.extension}_#{tc.runner}" : "unknown")
       history << {
@@ -491,42 +506,50 @@ Order: baseline → GAIA → RAG → skill → **tool history** → (empty guard
 #### 5. `lib/legion/llm/pipeline/executor.rb`
 
 - Include `Steps::StickyRunners`, `Steps::ToolHistory`, `Steps::StickyPersist`
-- Initialize: `@sticky_turn_snapshot = nil`, `@pending_tool_history = []`, `@injected_tool_map = {}`, `@freshly_triggered_keys = []`
+- Initialize: `@sticky_turn_snapshot = nil`, `@pending_tool_history = []`, `@pending_tool_history_mutex = Mutex.new`, `@injected_tool_map = {}`, `@freshly_triggered_keys = []`
 - Update `STEPS`, `PRE_PROVIDER_STEPS`, `POST_PROVIDER_STEPS` as shown in Updated step arrays
 - Update `inject_registry_tools` — add `@injected_tool_map[adapter.name] = tool_class` in ALL THREE loops
 - Update `emit_tool_call_event` — push partial entry with `pending_index`
 - Update `emit_tool_result_event` — find by `tool_call_id`, fallback to `pending_index`, guard `entry[:result].nil?`
 - Update `step_tool_calls` — append completed entries to `@pending_tool_history` with pre-computed `runner_key`
 
-**`emit_tool_call_event` additions**:
+**`emit_tool_call_event` additions** (all access to `@pending_tool_history` must be synchronized):
 ```ruby
-pending_index = @pending_tool_history.size
-@pending_tool_history << {
-  tool_call_id:  tc_id,
-  pending_index: pending_index,
-  tool_name:     tc_name,
-  args:          tc_args,
-  result:        nil,
-  error:         false,
-  runner_key:    nil  # filled from map at persist time
-}
-Thread.current[:legion_current_tool_history_index] = pending_index
-```
-
-**`emit_tool_result_event` additions**:
-```ruby
-# Find entry by id (guard result.nil? to avoid re-matching on nil-id providers)
-entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id && e[:result].nil? }
-entry ||= @pending_tool_history[Thread.current[:legion_current_tool_history_index]]
-if entry
-  entry[:result] = raw.is_a?(String) ? raw : raw.to_s
-  entry[:error]  = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
+@pending_tool_history_mutex.synchronize do
+  pending_index = @pending_tool_history.size
+  @pending_tool_history << {
+    tool_call_id:  tc_id,
+    pending_index: pending_index,
+    tool_name:     tc_name,
+    args:          tc_args,
+    result:        nil,
+    error:         false,
+    runner_key:    nil
+  }
+  Thread.current[:legion_current_tool_history_index] = pending_index
 end
 ```
 
-**`step_tool_calls` addition** (after each tool dispatch):
+**`emit_tool_result_event` additions** (synchronized; rely on `tool_call_id` under parallel execution — Thread.current index unreliable across threads):
 ```ruby
-runner_key = source[:type] == :extension ? "#{source[:lex]}_#{source[:runner]}" : nil
+@pending_tool_history_mutex.synchronize do
+  # guard result.nil? to avoid re-matching on nil-id providers with multiple calls
+  entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id && e[:result].nil? }
+  entry ||= @pending_tool_history[Thread.current[:legion_current_tool_history_index]]
+  if entry
+    entry[:result] = raw.is_a?(String) ? raw : raw.to_s
+    entry[:error]  = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
+  end
+end
+```
+
+**`step_tool_calls` addition** (after each tool dispatch — runs post-provider in single thread, no mutex needed):
+```ruby
+# Normalize source[:lex] to match derive_extension_name format
+lex_normalized = (source[:lex] || '').delete_prefix('lex-').tr('-', '_')
+runner_key     = source[:type] == :extension ? "#{lex_normalized}_#{source[:runner]}" : nil
+# Coerce result to string — result[:result] can be any Ruby object from runner
+result_string  = result[:result].is_a?(String) ? result[:result] : Legion::JSON.dump(result[:result] || {})
 @pending_tool_history << {
   tool_call_id:  tool_call_id,
   pending_index: @pending_tool_history.size,
@@ -686,3 +709,5 @@ end
 - Concurrent same-conv_id request safety (read-modify-write race exists; non-critical in v1)
 - Encryption of tool call history
 - UI changes to legion-interlink
+- External MCP tool executions (source type `:mcp`) do not advance sticky runner windows or increment the deferred tool call counter — no Registry entry exists to determine `runner_key` or `deferred?` status. They appear in tool history with `runner: "unknown"`.
+- Caller-provided tools passed via `@request.tools` are not tracked in `@injected_tool_map` and will not advance sticky runner windows unless they are also registered in `Registry`.
