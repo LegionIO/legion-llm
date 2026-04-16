@@ -23,6 +23,8 @@
 - `spec/legion/llm/pipeline/steps/sticky_persist_spec.rb`
 
 **legion-llm** (modify):
+- `lib/legion/llm/pipeline/steps.rb` — add `require_relative` for three new step files
+- `lib/legion/llm/pipeline/steps/sticky_helpers.rb` — shared settings helpers (new, extracted from step modules)
 - `lib/legion/llm/conversation_store.rb` — add `read_sticky_state`, `write_sticky_state`, eviction warning
 - `lib/legion/llm/pipeline/enrichment_injector.rb` — inject `tool:call_history` before empty guard
 - `lib/legion/llm/pipeline/executor.rb` — new ivars, include new modules, update step arrays, update inject loops, update emit callbacks, update step_tool_calls
@@ -38,6 +40,65 @@
 - `spec/legion/tools/base_spec.rb` — sticky accessor tests
 - `spec/legion/tools/discovery_spec.rb` — sticky attribute tests
 - `spec/legion/extensions/core_spec.rb` — sticky_tools? test
+
+---
+
+## Task 0: legion-llm — `Steps::StickyHelpers` shared settings module
+
+**Files:**
+- Create: `lib/legion/llm/pipeline/steps/sticky_helpers.rb`
+
+The six settings helper methods (`sticky_enabled?`, `trigger_sticky_turns`, `execution_sticky_tool_calls`, `max_history_entries`, `max_result_length`, `max_args_length`) are used by all three new step modules. Define them once here to avoid duplication and method-redefinition warnings.
+
+- [ ] **Step 1: Create `sticky_helpers.rb`**
+
+```ruby
+# frozen_string_literal: true
+
+module Legion
+  module LLM
+    module Pipeline
+      module Steps
+        module StickyHelpers
+          private
+
+          def sticky_enabled?
+            Legion::Settings.dig(:llm, :tool_sticky, :enabled) != false
+          end
+
+          def trigger_sticky_turns
+            Legion::Settings.dig(:llm, :tool_sticky, :trigger_turns) || 2
+          end
+
+          def execution_sticky_tool_calls
+            Legion::Settings.dig(:llm, :tool_sticky, :execution_tool_calls) || 5
+          end
+
+          def max_history_entries
+            Legion::Settings.dig(:llm, :tool_sticky, :max_history_entries) || 50
+          end
+
+          def max_result_length
+            Legion::Settings.dig(:llm, :tool_sticky, :max_result_length) || 2000
+          end
+
+          def max_args_length
+            Legion::Settings.dig(:llm, :tool_sticky, :max_args_length) || 500
+          end
+        end
+      end
+    end
+  end
+end
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+cd /Users/matt.iverson@optum.com/rubymine/legion/legion-llm
+git add lib/legion/llm/pipeline/steps/sticky_helpers.rb
+git commit -m "add Steps::StickyHelpers — shared settings helpers for sticky step modules"
+```
 
 ---
 
@@ -503,12 +564,26 @@ RSpec.describe Legion::LLM::Pipeline::Steps::StickyRunners do
       instance.triggered_tools << tool_a
       instance.step_sticky_runners
       expect(instance.freshly_triggered_keys).to eq(['github_issues'])
-      # re-injected tools should NOT appear in freshly_triggered_keys
+    end
+
+    it 'does NOT include re-injected sticky runners in @freshly_triggered_keys' do
+      tool_a = double(tool_name: 'tool-a', extension: 'github', runner: 'issues', sticky: true)
+      tool_b = double(tool_name: 'tool-b', extension: 'github', runner: 'branches', sticky: true)
+      instance.triggered_tools << tool_a
+      allow(Legion::Tools::Registry).to receive(:deferred_tools).and_return([tool_b])
+      allow(Legion::LLM::ConversationStore).to receive(:read_sticky_state).and_return({
+        sticky_runners: { 'github_branches' => { tier: :executed, expires_after_deferred_call: 10 } },
+        deferred_tool_calls: 3
+      })
+      instance.instance_variable_set(:@request, fake_request('c1'))
+      instance.step_sticky_runners
+      expect(instance.freshly_triggered_keys).to eq(['github_issues'])
+      expect(instance.freshly_triggered_keys).not_to include('github_branches')
+      expect(instance.triggered_tools).to include(tool_b)  # re-injected but NOT freshly triggered
     end
 
     it 're-injects live execution-sticky runner tools into @triggered_tools' do
-      tool_b = double(tool_name: 'tool-b', extension: 'github', runner: 'issues',
-                      respond_to?: true, sticky: true)
+      tool_b = double(tool_name: 'tool-b', extension: 'github', runner: 'issues', sticky: true)
       allow(Legion::Tools::Registry).to receive(:deferred_tools).and_return([tool_b])
       allow(Legion::LLM::ConversationStore).to receive(:read_sticky_state).and_return({
         sticky_runners: { 'github_issues' => { tier: :executed, expires_after_deferred_call: 10 } },
@@ -576,6 +651,7 @@ module Legion
       module Steps
         module StickyRunners
           include Legion::Logging::Helper
+          include Steps::StickyHelpers
 
           def step_sticky_runners
             return unless sticky_enabled? && @request.conversation_id
@@ -622,20 +698,6 @@ module Legion
           rescue StandardError => e
             @warnings << "sticky_runners error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.step_sticky_runners')
-          end
-
-          private
-
-          def sticky_enabled?
-            Legion::Settings.dig(:llm, :tool_sticky, :enabled) != false
-          end
-
-          def trigger_sticky_turns
-            Legion::Settings.dig(:llm, :tool_sticky, :trigger_turns) || 2
-          end
-
-          def execution_sticky_tool_calls
-            Legion::Settings.dig(:llm, :tool_sticky, :execution_tool_calls) || 5
           end
         end
       end
@@ -757,6 +819,11 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolHistory do
     it 'falls back gracefully on unparseable JSON' do
       expect(subject.send(:summarize_result, '{bad json', false)).to eq('{bad json'[0, 200])
     end
+
+    it 'falls back to first 200 chars when parsed[:result] is a plain String' do
+      json = Legion::JSON.dump({ result: 'Created successfully' })
+      expect(subject.send(:summarize_result, json, false)).to eq(json[0, 200])
+    end
   end
 
   describe '#format_history_entry' do
@@ -795,6 +862,7 @@ module Legion
       module Steps
         module ToolHistory
           include Legion::Logging::Helper
+          include Steps::StickyHelpers
 
           def step_tool_history_inject
             return unless sticky_enabled? && @request.conversation_id
@@ -814,10 +882,6 @@ module Legion
           end
 
           private
-
-          def sticky_enabled?
-            Legion::Settings.dig(:llm, :tool_sticky, :enabled) != false
-          end
 
           def format_history(history)
             lines = history.map { |entry| format_history_entry(entry) }
@@ -1067,6 +1131,42 @@ RSpec.describe Legion::LLM::Pipeline::Steps::StickyPersist do
         expect(entry[:args][:owner]).to eq('LegionIO')
       end
     end
+
+    it 'resolves tool class via Registry snapshot when @injected_tool_map misses (native dispatch path)' do
+      tc = deferred_tool('legion-github-issues-list_issues', 'github', 'issues')
+      # injected_tool_map is EMPTY — tool was dispatched via native path
+      allow(Legion::Tools::Registry).to receive(:all_tools).and_return([tc])
+      instance.pending_tool_history << {
+        tool_name: 'legion-github-issues-list_issues', result: '{}', error: false, runner_key: nil
+      }
+      instance.instance_variable_set(:@request, fake_request('c1'))
+      instance.step_sticky_persist
+
+      expect(Legion::LLM::ConversationStore).to have_received(:write_sticky_state) do |_, state|
+        expect(state[:sticky_runners]['github_issues']).not_to be_nil
+        expect(state[:sticky_runners]['github_issues'][:tier]).to eq(:executed)
+        expect(state[:tool_call_history].first[:runner]).to eq('github_issues')
+      end
+    end
+
+    it 're-activates expired execution-sticky runner under trigger tier when freshly triggered' do
+      allow(Legion::LLM::ConversationStore).to receive(:read_sticky_state).and_return({
+        sticky_runners: {
+          # expired: deferred_tool_calls(0) >= expires_after_deferred_call(0)
+          'github_issues' => { tier: :executed, expires_after_deferred_call: 0 }
+        },
+        deferred_tool_calls: 0
+      })
+      instance.freshly_triggered_keys = ['github_issues']
+      instance.instance_variable_set(:@request, fake_request('c1'))
+      instance.step_sticky_persist
+
+      expect(Legion::LLM::ConversationStore).to have_received(:write_sticky_state) do |_, state|
+        entry = state[:sticky_runners]['github_issues']
+        expect(entry[:tier]).to eq(:triggered)
+        expect(entry[:expires_at_turn]).to eq(3 + 2 + 1)  # snapshot + trigger_turns + 1
+      end
+    end
   end
 end
 ```
@@ -1093,6 +1193,7 @@ module Legion
       module Steps
         module StickyPersist
           include Legion::Logging::Helper
+          include Steps::StickyHelpers
 
           SENSITIVE_PARAM_NAMES = %w[
             api_key token secret password bearer_token
@@ -1145,7 +1246,13 @@ module Legion
             end
 
             (@freshly_triggered_keys - executed_runner_keys).each do |key|
-              next if runners[key]&.dig(:tier) == :executed
+              existing = runners[key]
+              # Skip only if CURRENTLY live under execution tier (not expired).
+              # An expired execution-sticky runner should be re-activated under trigger tier.
+              if existing&.dig(:tier) == :executed
+                next if deferred_count < (existing[:expires_after_deferred_call] || 0)
+                # Falls through when execution window is expired — apply trigger tier below
+              end
 
               existing_expiry = runners.dig(key, :expires_at_turn) || 0
               new_expiry      = @sticky_turn_snapshot + trigger_sticky_turns + 1
@@ -1183,30 +1290,6 @@ module Legion
           end
 
           private
-
-          def sticky_enabled?
-            Legion::Settings.dig(:llm, :tool_sticky, :enabled) != false
-          end
-
-          def trigger_sticky_turns
-            Legion::Settings.dig(:llm, :tool_sticky, :trigger_turns) || 2
-          end
-
-          def execution_sticky_tool_calls
-            Legion::Settings.dig(:llm, :tool_sticky, :execution_tool_calls) || 5
-          end
-
-          def max_history_entries
-            Legion::Settings.dig(:llm, :tool_sticky, :max_history_entries) || 50
-          end
-
-          def max_result_length
-            Legion::Settings.dig(:llm, :tool_sticky, :max_result_length) || 2000
-          end
-
-          def max_args_length
-            Legion::Settings.dig(:llm, :tool_sticky, :max_args_length) || 500
-          end
 
           def sanitize_args(args)
             args.each_with_object({}) do |(k, v), h|
@@ -1329,6 +1412,7 @@ git commit -m "inject tool:call_history enrichment before empty-parts guard in E
 ## Task 9: Executor — wire everything together
 
 **Files:**
+- Modify: `lib/legion/llm/pipeline/steps.rb`
 - Modify: `lib/legion/llm/pipeline/executor.rb`
 - Modify: `lib/legion/llm/pipeline/profile.rb`
 - Test: `spec/legion/llm/pipeline/executor_spec.rb`
@@ -1409,9 +1493,22 @@ In `initialize`, add the four new ivars:
 @freshly_triggered_keys  = []
 ```
 
+- [ ] **Step 3b: Update `steps.rb` to require the three new step files**
+
+In `lib/legion/llm/pipeline/steps.rb`, add at the end of the existing `require_relative` block:
+
+```ruby
+require_relative 'steps/sticky_helpers'
+require_relative 'steps/sticky_runners'
+require_relative 'steps/tool_history'
+require_relative 'steps/sticky_persist'
+```
+
+Without this, the `include Steps::StickyRunners` in the Executor will raise `NameError: uninitialized constant` at runtime.
+
 - [ ] **Step 4: Update step arrays**
 
-Replace the three constants (`STEPS`, `PRE_PROVIDER_STEPS`, `POST_PROVIDER_STEPS`):
+Replace the three constants (`STEPS`, `PRE_PROVIDER_STEPS`, `POST_PROVIDER_STEPS`). Note `STEPS` MUST use the derived formula — do NOT write it as a literal array:
 
 ```ruby
 PRE_PROVIDER_STEPS = %i[
@@ -1520,9 +1617,47 @@ result_string  = result[:result].is_a?(String) ? result[:result] : Legion::JSON.
 }
 ```
 
+- [ ] **Step 9a: Write failing tests for profile skip lists**
+
+Add to `spec/legion/llm/pipeline/executor_spec.rb` (or a dedicated `profile_spec.rb`):
+
+```ruby
+describe 'profile skip lists include new sticky steps' do
+  %i[gaia system service quick_reply].each do |profile_name|
+    %i[sticky_runners tool_history_inject sticky_persist].each do |step|
+      it "#{profile_name} profile skips #{step}" do
+        expect(Legion::LLM::Pipeline::Profile.skip?(profile_name, step)).to be true
+      end
+    end
+  end
+
+  %i[human external].each do |profile_name|
+    %i[sticky_runners tool_history_inject sticky_persist].each do |step|
+      it "#{profile_name} profile does NOT skip #{step}" do
+        expect(Legion::LLM::Pipeline::Profile.skip?(profile_name, step)).to be false
+      end
+    end
+  end
+end
+```
+
+- [ ] **Step 9b: Run tests to verify they fail**
+
+```bash
+cd /Users/matt.iverson@optum.com/rubymine/legion/legion-llm
+bundle exec rspec spec/legion/llm/pipeline/executor_spec.rb -e "profile skip lists" --format documentation 2>&1 | tail -20
+```
+
 - [ ] **Step 9: Update profile skip lists**
 
 In `lib/legion/llm/pipeline/profile.rb`, add `:sticky_runners, :tool_history_inject, :sticky_persist` to `GAIA_SKIP`, `SYSTEM_SKIP`, `QUICK_REPLY_SKIP`, and `SERVICE_SKIP`.
+
+- [ ] **Step 9c: Run profile skip tests to verify they pass**
+
+```bash
+cd /Users/matt.iverson@optum.com/rubymine/legion/legion-llm
+bundle exec rspec spec/legion/llm/pipeline/executor_spec.rb -e "profile skip lists" --format documentation 2>&1 | tail -20
+```
 
 - [ ] **Step 10: Run full executor test suite**
 
@@ -1611,7 +1746,64 @@ git commit -m "rubocop fixes for sticky runner implementation"
 
 ---
 
-## Task 11: Patch Homebrew Cellar for local testing
+## Task 11: Version bumps and changelogs
+
+**Files:**
+- Modify: `lib/legion/llm/version.rb`
+- Modify: `CHANGELOG.md` (legion-llm)
+- Modify: `/Users/matt.iverson@optum.com/rubymine/legion/LegionIO/lib/legion/version.rb`
+- Modify: `/Users/matt.iverson@optum.com/rubymine/legion/LegionIO/CHANGELOG.md`
+
+- [ ] **Step 1: Bump legion-llm version**
+
+In `lib/legion/llm/version.rb`, increment the patch version (e.g. `0.7.6` → `0.7.7`).
+
+- [ ] **Step 2: Add legion-llm changelog entry**
+
+Add at the top of `CHANGELOG.md` (after `## [Unreleased]`):
+
+```markdown
+## [X.Y.Z] - 2026-04-15
+
+### Added
+- Sticky runner tool injection: deferred tool runners stay injected for N human turns (trigger tier) or N deferred tool executions (execution tier) after activity, preventing the LLM from falling back to `legion_do` on follow-up messages
+- Tool call history: every tool call is appended to a per-conversation enrichment block so the LLM can reference prior results (e.g. "the issue I created was #142")
+- `Steps::StickyRunners`, `Steps::ToolHistory`, `Steps::StickyPersist` pipeline steps
+- `ConversationStore#read_sticky_state` / `#write_sticky_state` for in-memory per-conversation state
+```
+
+- [ ] **Step 3: Bump LegionIO version**
+
+In `/Users/matt.iverson@optum.com/rubymine/legion/LegionIO/lib/legion/version.rb`, increment patch version.
+
+- [ ] **Step 4: Add LegionIO changelog entry**
+
+Add at the top of `/Users/matt.iverson@optum.com/rubymine/legion/LegionIO/CHANGELOG.md`:
+
+```markdown
+## [X.Y.Z] - 2026-04-15
+
+### Added
+- `Tools::Base#sticky` accessor — tool classes can opt out of sticky runner injection
+- `Tools::Discovery` propagates `sticky_tools?` from extension to tool class `sticky` attribute
+- `Extensions::Core#sticky_tools?` — defaults `true`, extensions may override with `def self.sticky_tools? false end`
+```
+
+- [ ] **Step 5: Commit both**
+
+```bash
+cd /Users/matt.iverson@optum.com/rubymine/legion/LegionIO
+git add lib/legion/version.rb CHANGELOG.md
+git commit -m "bump version, add changelog for sticky_tools? and Tools::Base sticky accessor"
+
+cd /Users/matt.iverson@optum.com/rubymine/legion/legion-llm
+git add lib/legion/llm/version.rb CHANGELOG.md
+git commit -m "bump version, add changelog for sticky runner injection and tool call history"
+```
+
+---
+
+## Task 12: Patch Homebrew Cellar for local testing
 
 **Files:** Cellar copies of modified gems
 
@@ -1629,11 +1821,20 @@ find /opt/homebrew/Cellar/legionio -name "core.rb" -path "*/extensions*" 2>/dev/
 - [ ] **Step 2: Copy new step files to Cellar**
 
 ```bash
-CELLAR_LLM=$(find /opt/homebrew/Cellar/legionio -name "legion-llm-*.gemspec" -exec dirname {} \; | head -1)/lib/legion/llm/pipeline/steps
+# Derive path from an existing known file — more reliable than gemspec dirname
+CELLAR_CONV=$(find /opt/homebrew/Cellar/legionio -name "conversation_store.rb" -path "*/legion-llm-*" | head -1)
+CELLAR_LLM_LIB=$(dirname "$CELLAR_CONV")/..  # lib/legion/llm/
+CELLAR_STEPS="$CELLAR_LLM_LIB/pipeline/steps"
+CELLAR_PIPELINE="$CELLAR_LLM_LIB/pipeline"
 
-cp lib/legion/llm/pipeline/steps/sticky_runners.rb "$CELLAR_LLM/"
-cp lib/legion/llm/pipeline/steps/tool_history.rb   "$CELLAR_LLM/"
-cp lib/legion/llm/pipeline/steps/sticky_persist.rb "$CELLAR_LLM/"
+mkdir -p "$CELLAR_STEPS"
+
+cp lib/legion/llm/pipeline/steps/sticky_helpers.rb "$CELLAR_STEPS/"
+cp lib/legion/llm/pipeline/steps/sticky_runners.rb "$CELLAR_STEPS/"
+cp lib/legion/llm/pipeline/steps/tool_history.rb   "$CELLAR_STEPS/"
+cp lib/legion/llm/pipeline/steps/sticky_persist.rb "$CELLAR_STEPS/"
+# CRITICAL: also copy updated steps.rb that require_relatives the new files
+cp lib/legion/llm/pipeline/steps.rb                "$CELLAR_PIPELINE/"
 ```
 
 - [ ] **Step 3: Copy modified files to Cellar**
