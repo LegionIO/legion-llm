@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-04-15
+
+### Added
+- Sticky runner tool injection: deferred tool runners stay injected for N human turns (trigger tier) or N deferred tool executions (execution tier) after activity, preventing the LLM from falling back to `legion_do` on follow-up messages
+- Tool call history: every tool call is appended to a per-conversation enrichment block so the LLM can reference prior results (e.g. "the issue I created was #142")
+- `Steps::StickyRunners`, `Steps::ToolHistory`, `Steps::StickyPersist` pipeline steps
+- `ConversationStore#read_sticky_state` / `#write_sticky_state` for in-memory per-conversation state
+- `Steps::StickyHelpers` shared settings helpers
+
 ## [0.7.6] - 2026-04-14
 
 ### Added
