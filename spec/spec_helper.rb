@@ -58,6 +58,7 @@ module Legion
   end
 end
 
+require 'legion/json'
 require_relative 'support/transport_stub'
 require 'legion/llm'
 
