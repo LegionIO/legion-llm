@@ -96,4 +96,36 @@ RSpec.describe Legion::LLM::Pipeline::EnrichmentInjector do
       expect(result).to eq('Original')
     end
   end
+
+  describe 'tool:call_history enrichment' do
+    before do
+      Legion::Settings[:llm][:system_baseline] = nil
+    end
+
+    it 'injects tool history even when no other enrichments are present' do
+      result = described_class.inject(
+        system:      'You are an assistant.',
+        enrichments: { 'tool:call_history' => { content: 'Tools used: list_issues', data: {}, timestamp: Time.now } }
+      )
+      expect(result).to include('Tools used: list_issues')
+    end
+
+    it 'injects tool history after skill:active' do
+      result = described_class.inject(
+        system:      nil,
+        enrichments: {
+          'skill:active'      => 'You are a code reviewer.',
+          'tool:call_history' => { content: 'Tools used: list_issues', data: {}, timestamp: Time.now }
+        }
+      )
+      skill_pos   = result.index('You are a code reviewer.')
+      history_pos = result.index('Tools used: list_issues')
+      expect(history_pos).to be > skill_pos
+    end
+
+    it 'does not inject when tool:call_history enrichment is absent' do
+      result = described_class.inject(system: 'base', enrichments: {})
+      expect(result).to eq('base')
+    end
+  end
 end

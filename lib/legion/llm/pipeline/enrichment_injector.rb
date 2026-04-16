@@ -33,6 +33,12 @@ module Legion
             parts << skill
           end
 
+          # Tool call history — BEFORE the empty-parts guard so it reaches the LLM
+          # even when no other enrichments are present
+          if (history_block = enrichments.dig('tool:call_history', :content))
+            parts << history_block
+          end
+
           return system if parts.empty?
 
           parts << system if system
