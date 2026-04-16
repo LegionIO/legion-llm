@@ -29,23 +29,24 @@ module Legion
         include Steps::PromptCache
         include Steps::Debate
         include Steps::Metering
-
-        STEPS = %i[
-          tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory tier_assignment rag_context trigger_match skill_injector tool_discovery
-          routing request_normalization token_budget provider_call response_normalization metering
-          debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
-        ].freeze
+        include Steps::StickyRunners
+        include Steps::ToolHistory
+        include Steps::StickyPersist
 
         PRE_PROVIDER_STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
-          rbac classification billing gaia_advisory tier_assignment rag_context trigger_match skill_injector tool_discovery
+          rbac classification billing gaia_advisory tier_assignment rag_context
+          trigger_match sticky_runners skill_injector tool_history_inject tool_discovery
           routing request_normalization token_budget
         ].freeze
 
         POST_PROVIDER_STEPS = %i[
-          response_normalization metering debate confidence_scoring tool_calls context_store post_response knowledge_capture response_return
+          response_normalization metering debate confidence_scoring
+          tool_calls sticky_persist
+          context_store post_response knowledge_capture response_return
         ].freeze
+
+        STEPS = (PRE_PROVIDER_STEPS + %i[provider_call] + POST_PROVIDER_STEPS).freeze
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
@@ -73,6 +74,11 @@ module Legion
           @escalation_history = []
           @proactive_tier_assignment = nil
           @tool_event_handler = nil
+          @sticky_turn_snapshot = nil
+          @pending_tool_history = Concurrent::Array.new
+          @pending_tool_history_mutex = Mutex.new
+          @injected_tool_map = {}
+          @freshly_triggered_keys = []
         end
 
         def call
@@ -99,6 +105,7 @@ module Legion
           # Always-loaded tools — inject all unconditionally
           ::Legion::Tools::Registry.tools.each do |tool_class|
             adapter = ToolAdapter.new(tool_class)
+            @injected_tool_map[adapter.name] = tool_class
             session.with_tool(adapter)
             injected_names << adapter.name
           rescue StandardError => e
@@ -112,6 +119,7 @@ module Legion
               adapter = ToolAdapter.new(tool_class)
               next if injected_names.include?(adapter.name)
 
+              @injected_tool_map[adapter.name] = tool_class
               session.with_tool(adapter)
               injected_names << adapter.name
             rescue StandardError => e
@@ -128,6 +136,7 @@ module Legion
               adapter = ToolAdapter.new(tool_class)
               next unless requested.include?(adapter.name)
 
+              @injected_tool_map[adapter.name] = tool_class
               session.with_tool(adapter)
               injected_names << adapter.name
             rescue StandardError => e
@@ -780,6 +789,20 @@ module Legion
 
           log.info("[pipeline][tool-call] round=#{round} id=#{tc_id} tool=#{tc_name}")
 
+          @pending_tool_history_mutex.synchronize do
+            pending_index = @pending_tool_history.size
+            @pending_tool_history << {
+              tool_call_id:  tc_id,
+              pending_index: pending_index,
+              tool_name:     tc_name,
+              args:          tc_args,
+              result:        nil,
+              error:         false,
+              runner_key:    nil
+            }
+            Thread.current[:legion_current_tool_history_index] = pending_index
+          end
+
           # Store start time per-tool-call-id so emit_tool_result_event can calculate
           # accurate wall-clock duration even when tools run in parallel threads.
           Thread.current[:legion_current_tool_call_id] = tc_id
@@ -800,6 +823,15 @@ module Legion
           started_at = tool_result.respond_to?(:started_at)   ? tool_result.started_at   : Thread.current[:legion_current_tool_started_at]
           finished_at = Time.now
           raw = tool_result.respond_to?(:result) ? tool_result.result : tool_result
+
+          @pending_tool_history_mutex.synchronize do
+            entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id && e[:result].nil? }
+            entry ||= @pending_tool_history[Thread.current[:legion_current_tool_history_index]]
+            if entry
+              entry[:result] = raw.is_a?(String) ? raw : raw.to_s
+              entry[:error]  = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
+            end
+          end
 
           duration_ms = started_at ? ((finished_at - started_at) * 1000).round : nil
 

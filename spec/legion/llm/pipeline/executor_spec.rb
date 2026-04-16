@@ -534,4 +534,44 @@ confidence: 0.9 }],
       end
     end
   end
+
+  describe 'sticky tool tracking ivars' do
+    it 'initializes @sticky_turn_snapshot to nil' do
+      executor = described_class.new(request)
+      expect(executor.instance_variable_get(:@sticky_turn_snapshot)).to be_nil
+    end
+
+    it 'initializes @pending_tool_history as Concurrent::Array' do
+      executor = described_class.new(request)
+      expect(executor.instance_variable_get(:@pending_tool_history)).to be_a(Concurrent::Array)
+    end
+
+    it 'initializes @injected_tool_map as empty Hash' do
+      executor = described_class.new(request)
+      expect(executor.instance_variable_get(:@injected_tool_map)).to eq({})
+    end
+
+    it 'initializes @freshly_triggered_keys as empty Array' do
+      executor = described_class.new(request)
+      expect(executor.instance_variable_get(:@freshly_triggered_keys)).to eq([])
+    end
+  end
+
+  describe 'profile skip lists include new sticky steps' do
+    %i[gaia system service quick_reply].each do |profile_name|
+      %i[sticky_runners tool_history_inject sticky_persist].each do |step|
+        it "#{profile_name} profile skips #{step}" do
+          expect(Legion::LLM::Pipeline::Profile.skip?(profile_name, step)).to be true
+        end
+      end
+    end
+
+    %i[human external].each do |profile_name|
+      %i[sticky_runners tool_history_inject sticky_persist].each do |step|
+        it "#{profile_name} profile does NOT skip #{step}" do
+          expect(Legion::LLM::Pipeline::Profile.skip?(profile_name, step)).to be false
+        end
+      end
+    end
+  end
 end
