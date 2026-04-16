@@ -19,7 +19,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::StickyPersist do
       end
 
       def sticky_enabled?             = true
-      def handle_exception(e, **)     = @warnings << e.message
+      def handle_exception(err, **) = @warnings << err.message
       def max_history_entries         = 50
       def max_result_length           = 2000
       def max_args_length             = 500
@@ -39,9 +39,11 @@ RSpec.describe Legion::LLM::Pipeline::Steps::StickyPersist do
   end
 
   before do
-    stub_const('Legion::Tools::Registry', Module.new do
-      def self.all_tools = []
-    end) unless defined?(Legion::Tools::Registry)
+    unless defined?(Legion::Tools::Registry)
+      stub_const('Legion::Tools::Registry', Module.new do
+        def self.all_tools = []
+      end)
+    end
 
     allow(Legion::LLM::ConversationStore).to receive(:read_sticky_state).and_return({})
     allow(Legion::LLM::ConversationStore).to receive(:write_sticky_state)
@@ -191,11 +193,11 @@ RSpec.describe Legion::LLM::Pipeline::Steps::StickyPersist do
 
     it 're-activates expired execution-sticky runner under trigger tier when freshly triggered' do
       allow(Legion::LLM::ConversationStore).to receive(:read_sticky_state).and_return({
-        sticky_runners: {
-          'github_issues' => { tier: :executed, expires_after_deferred_call: 0 }
-        },
-        deferred_tool_calls: 0
-      })
+                                                                                        sticky_runners:      {
+                                                                                          'github_issues' => { tier: :executed, expires_after_deferred_call: 0 }
+                                                                                        },
+                                                                                        deferred_tool_calls: 0
+                                                                                      })
       instance.freshly_triggered_keys = ['github_issues']
       instance.instance_variable_set(:@request, fake_request('c1'))
       instance.step_sticky_persist

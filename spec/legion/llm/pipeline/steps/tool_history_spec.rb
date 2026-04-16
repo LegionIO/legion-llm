@@ -2,7 +2,6 @@
 
 require 'spec_helper'
 
-
 RSpec.describe Legion::LLM::Pipeline::Steps::ToolHistory do
   let(:klass) do
     Class.new do
@@ -16,7 +15,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolHistory do
       end
 
       def sticky_enabled? = true
-      def handle_exception(e, **) = @warnings << e.message
+      def handle_exception(err, **) = @warnings << err.message
     end
   end
 
