@@ -245,7 +245,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TriggerMatch do
   end
 
   describe '#trigger_tool_limit' do
-    it 'returns default 50 when settings missing' do
+    it 'returns default 10 when settings missing' do
       Legion::Settings[:llm][:tool_trigger] = {}
       expect(step.send(:trigger_tool_limit)).to eq(50)
     end

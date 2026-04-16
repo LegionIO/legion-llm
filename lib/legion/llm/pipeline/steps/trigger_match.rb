@@ -52,12 +52,12 @@ module Legion
           def extract_recent_text
             depth = trigger_scan_depth
             messages = @request.messages.last(depth)
-            messages.map do |msg|
-              if msg.is_a?(Hash)
-                msg[:content] || msg['content'] || msg.to_s
-              else
-                msg.to_s
-              end
+            messages.filter_map do |msg|
+              next unless msg.is_a?(Hash)
+              next unless (msg[:role] || msg['role']).to_s == 'user'
+
+              content = msg[:content] || msg['content']
+              content.is_a?(Array) ? content.map { |c| c[:text] || c['text'] }.join(' ') : content.to_s
             end.join(' ')
           end
 
@@ -90,7 +90,7 @@ module Legion
           end
 
           def trigger_tool_limit
-            Legion::Settings.dig(:llm, :tool_trigger, :tool_limit) || 10
+            Legion::Settings.dig(:llm, :tool_trigger, :tool_limit) || 50
           end
 
           def record_trigger_match_timeline(count, start_time = nil)

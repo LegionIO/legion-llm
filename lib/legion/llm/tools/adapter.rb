@@ -39,6 +39,13 @@ module Legion
           args = Interceptor.intercept(@tool_name, **args)
           log.info("[llm][tools] adapter.execute name=#{@tool_name} arguments=#{summarize_payload(args)}")
           result = @tool_class.call(**args)
+
+          if result.is_a?(Hash) && (result[:error] || result['error'])
+            error_msg = extract_content(result)
+            log.warn("[llm][tools] adapter.error name=#{@tool_name} error=#{summarize_payload(error_msg)}")
+            return "Error: #{error_msg}"
+          end
+
           content = extract_content(result)
           log.info("[llm][tools] adapter.result name=#{@tool_name} output=#{summarize_payload(content)}")
           content
