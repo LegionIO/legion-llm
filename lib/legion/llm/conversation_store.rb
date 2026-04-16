@@ -120,6 +120,25 @@ module Legion
           nil
         end
 
+        # Returns the sticky_state hash for this conversation, or {} (frozen) if
+        # the conversation is not in memory. Does NOT call ensure_conversation —
+        # avoids resurrecting an evicted conversation as an empty shell.
+        # Sticky state is in-memory only; eviction loses it.
+        def read_sticky_state(conversation_id)
+          return {}.freeze unless in_memory?(conversation_id)
+
+          conversations[conversation_id][:sticky_state] ||= {}
+        end
+
+        # Writes sticky_state to an in-memory conversation.
+        # No-ops if the conversation is not in memory (evicted = state already lost).
+        def write_sticky_state(conversation_id, state)
+          return unless in_memory?(conversation_id)
+
+          conversations[conversation_id][:sticky_state] = state
+          touch(conversation_id)
+        end
+
         def create_conversation(conversation_id, **metadata)
           conversations[conversation_id] = { messages: [], metadata: metadata, lru_tick: next_tick }
           evict_if_needed
@@ -252,7 +271,12 @@ module Legion
           return unless conversations.size > self::MAX_CONVERSATIONS
 
           oldest_id = conversations.min_by { |_, v| v[:lru_tick] }&.first
-          conversations.delete(oldest_id) if oldest_id
+          return unless oldest_id
+
+          if conversations[oldest_id]&.dig(:sticky_state)&.any?
+            log&.warn("[ConversationStore] evicting #{oldest_id} with non-empty sticky_state — sticky state lost")
+          end
+          conversations.delete(oldest_id)
         end
 
         # Return all raw messages (including sidechain and metadata) from memory or DB.

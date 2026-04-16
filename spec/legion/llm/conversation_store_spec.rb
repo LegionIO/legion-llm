@@ -53,6 +53,57 @@ RSpec.describe Legion::LLM::ConversationStore do
     end
   end
 
+  describe '.read_sticky_state' do
+    it 'returns a frozen empty hash when conversation is not in memory' do
+      result = described_class.read_sticky_state('nonexistent-conv')
+      expect(result).to eq({})
+      expect(result).to be_frozen
+    end
+
+    it 'returns {} when conversation exists but has no sticky_state' do
+      described_class.append('conv-sticky-1', role: :user, content: 'hello')
+      result = described_class.read_sticky_state('conv-sticky-1')
+      expect(result).to eq({})
+    end
+
+    it 'returns the stored sticky_state for an in-memory conversation' do
+      described_class.append('conv-sticky-2', role: :user, content: 'hello')
+      described_class.write_sticky_state('conv-sticky-2', { deferred_tool_calls: 3 })
+      result = described_class.read_sticky_state('conv-sticky-2')
+      expect(result[:deferred_tool_calls]).to eq(3)
+    end
+  end
+
+  describe '.write_sticky_state' do
+    it 'no-ops when conversation is not in memory' do
+      expect { described_class.write_sticky_state('ghost-conv', { foo: 1 }) }.not_to raise_error
+      expect(described_class.read_sticky_state('ghost-conv')).to eq({})
+    end
+
+    it 'persists state to an in-memory conversation' do
+      described_class.append('conv-sticky-3', role: :user, content: 'hi')
+      described_class.write_sticky_state('conv-sticky-3', { deferred_tool_calls: 7 })
+      expect(described_class.read_sticky_state('conv-sticky-3')[:deferred_tool_calls]).to eq(7)
+    end
+
+    it 'replaces the entire sticky_state slot (not a merge)' do
+      described_class.append('conv-sticky-4', role: :user, content: 'hi')
+      described_class.write_sticky_state('conv-sticky-4', { a: 1, b: 2 })
+      described_class.write_sticky_state('conv-sticky-4', { c: 3 })
+      result = described_class.read_sticky_state('conv-sticky-4')
+      expect(result).to eq({ c: 3 })
+      expect(result[:a]).to be_nil
+    end
+
+    it 'updates the LRU tick via touch' do
+      described_class.append('conv-sticky-5', role: :user, content: 'hi')
+      tick_before = described_class.send(:conversations)['conv-sticky-5'][:lru_tick]
+      described_class.write_sticky_state('conv-sticky-5', { x: 1 })
+      tick_after = described_class.send(:conversations)['conv-sticky-5'][:lru_tick]
+      expect(tick_after).to be > tick_before
+    end
+  end
+
   describe 'LRU eviction' do
     it 'evicts oldest conversation when capacity exceeded' do
       stub_const('Legion::LLM::ConversationStore::MAX_CONVERSATIONS', 2)
