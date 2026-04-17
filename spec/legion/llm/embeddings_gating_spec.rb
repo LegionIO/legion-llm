@@ -79,6 +79,7 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
       allow(RubyLLM).to receive(:embed).and_return(mock_response)
+      allow(Legion::LLM::Embeddings).to receive(:provider_supports_embeddings?).with(:openai).and_return(true)
     end
 
     it 'is not blocked and returns a vector' do
@@ -98,6 +99,7 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
       allow(RubyLLM).to receive(:embed).and_return(mock_response)
+      allow(Legion::LLM::Embeddings).to receive(:provider_supports_embeddings?).with(:openai).and_return(true)
     end
 
     it 'is not blocked and returns vectors' do
@@ -135,6 +137,26 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       allow(Legion::Settings).to receive(:dig).and_raise(StandardError.new('boom'))
       result = Legion::LLM::Embeddings.send(:provider_disabled?, :bedrock)
       expect(result).to be false
+    end
+  end
+
+  describe 'Legion::LLM::Embeddings.generate with an unsupported provider' do
+    before do
+      Legion::Settings[:llm][:providers][:bedrock] = { enabled: true }
+      Legion::LLM.instance_variable_set(:@embedding_provider, :bedrock)
+      allow(Legion::LLM::Embeddings).to receive(:provider_supports_embeddings?).with(:bedrock).and_return(false)
+    end
+
+    it 'returns an error hash without calling RubyLLM.embed' do
+      expect(RubyLLM).not_to receive(:embed)
+      result = Legion::LLM::Embeddings.generate(text: 'hello', provider: :bedrock)
+      expect(result[:vector]).to be_nil
+      expect(result[:error]).to match(/does not support embeddings/)
+    end
+
+    it 'includes the provider name in the error' do
+      result = Legion::LLM::Embeddings.generate(text: 'hello', provider: :bedrock)
+      expect(result[:error]).to include('bedrock')
     end
   end
 end
