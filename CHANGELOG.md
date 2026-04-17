@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-04-17
+### Fixed
+- Guard `Embeddings.generate` against providers that don't support embeddings before calling `RubyLLM.embed` — prevents noisy `NoMethodError: undefined method 'render_embedding_payload'` warns when Bedrock (or Anthropic) is the active provider
+
 ## [0.7.7] - 2026-04-15
 
 ### Added
