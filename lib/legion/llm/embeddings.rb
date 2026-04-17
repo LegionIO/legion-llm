@@ -46,7 +46,7 @@ module Legion
           return generate_ollama(text: text, model: model) if provider&.to_sym == :ollama
           return generate_azure(text: text, model: model, dimensions: dimensions) if provider&.to_sym == :azure
           return { vector: nil, model: model, provider: provider, error: "provider #{provider} does not support embeddings" } \
-            unless provider_supports_embeddings?(provider)
+            if provider && !provider_supports_embeddings?(provider)
 
           response   = RubyLLM.embed(text, **build_opts(model, provider, dimensions))
           vector     = apply_dimension_enforcement(response.vectors.first, provider)
