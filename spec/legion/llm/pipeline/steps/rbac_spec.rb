@@ -46,10 +46,10 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
         expect { step.step_rbac }.not_to raise_error
       end
 
-      it 'adds a warning about rbac being unavailable' do
+      it 'adds a warning about rbac being unavailable with fail_open' do
         step = klass.new(request)
         step.step_rbac
-        expect(step.warnings).to include(match(/rbac unavailable/i))
+        expect(step.warnings).to include(match(/rbac unavailable.*fail_open/i))
       end
 
       it 'records success outcome in audit' do
@@ -63,6 +63,73 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
         step.step_rbac
         keys = step.timeline.events.map { |e| e[:key] }
         expect(keys).to include('rbac:permission_check')
+      end
+    end
+
+    context 'when legion-rbac is not available and fail_open=true (explicit)' do
+      before do
+        hide_const('Legion::Rbac') if defined?(Legion::Rbac)
+        Legion::Settings[:rbac] = { fail_open: true }
+      end
+
+      it 'permits non-fleet callers with warning' do
+        step = klass.new(request)
+        expect { step.step_rbac }.not_to raise_error
+        expect(step.warnings).to include(match(/fail_open/i))
+      end
+    end
+
+    context 'when legion-rbac is not available and fail_open=false' do
+      before do
+        hide_const('Legion::Rbac') if defined?(Legion::Rbac)
+        Legion::Settings[:rbac] = { fail_open: false }
+      end
+
+      it 'raises PipelineError for non-fleet callers' do
+        step = klass.new(request)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /503/)
+      end
+
+      it 'includes fail_open=false in error message' do
+        step = klass.new(request)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /fail_open=false/)
+      end
+
+      it 'records failure in audit' do
+        step = klass.new(request)
+        step.step_rbac rescue Legion::LLM::PipelineError # rubocop:disable Style/RescueModifier
+        expect(step.audit[:'rbac:permission_check'][:outcome]).to eq(:failure)
+      end
+    end
+
+    context 'when legion-rbac is not available and caller is fleet (regardless of fail_open)' do
+      let(:fleet_request) do
+        Legion::LLM::Pipeline::Request.build(
+          messages: [{ role: :user, content: 'hello' }],
+          caller:   {
+            requested_by: { id: 'system', type: :system },
+            agent:        { id: 'fleet:worker-1' }
+          }
+        )
+      end
+
+      before { hide_const('Legion::Rbac') if defined?(Legion::Rbac) }
+
+      it 'raises PipelineError even when fail_open=true' do
+        Legion::Settings[:rbac] = { fail_open: true }
+        step = klass.new(fleet_request)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /503/)
+      end
+
+      it 'raises PipelineError when fail_open=false' do
+        Legion::Settings[:rbac] = { fail_open: false }
+        step = klass.new(fleet_request)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /503/)
+      end
+
+      it 'raises PipelineError when fail_open setting is not present' do
+        step = klass.new(fleet_request)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /503/)
       end
     end
 

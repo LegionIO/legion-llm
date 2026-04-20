@@ -12,7 +12,11 @@ module Legion
           def check_rag_faithfulness
             context = @enrichments.dig('rag:context_retrieval', :data, :entries)
             return unless context&.any?
-            return unless defined?(Hooks::RagGuard)
+
+            unless defined?(Hooks::RagGuard)
+              log.warn('[rag_guard] RAG context present but no Hooks::RagGuard registered — faithfulness check skipped')
+              return
+            end
 
             response_text = @raw_response.respond_to?(:content) ? @raw_response.content : @raw_response.to_s
 
@@ -25,6 +29,7 @@ module Legion
             return if result.nil? || result[:faithful]
 
             detail = result[:details] || result[:reason] || 'faithfulness check failed'
+            log.warn("[rag_guard] RAG faithfulness warning: #{detail}")
             @warnings << "RAG faithfulness warning: #{detail}"
             @timeline.record(
               category: :quality, key: 'rag:faithfulness_warning',

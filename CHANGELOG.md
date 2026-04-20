@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+## [0.7.15] - 2026-04-20
+
+### Added
+- PHI cloud provider gate: `compliance.phi_block_cloud` (default: `false`) blocks restricted-classified requests from cloud providers when enabled. Warns on permit when disabled. Cloud provider list configurable via `compliance.cloud_providers`. Fixes #72
+
+## [0.7.14] - 2026-04-20
+
+### Added
+- PII/PHI redaction mode: `compliance.redact_pii` (default: `false`) replaces detected patterns with configurable placeholder token before pipeline continues. Placeholder configurable via `compliance.redaction_placeholder` (default: `[REDACTED]`)
+- `compliance.strict_hipaa` setting (default: `false`): when enabled, scans all 12 HIPAA patterns; when disabled, scans only core 3 (SSN, email, phone) for lighter processing. Closes #73
+
+## [0.7.13] - 2026-04-20
+
+### Fixed
+- Classification step now always runs the PII/PHI scan, even on unclassified requests — defaults to `:public` baseline. Configurable via `compliance.default_level` (default: `:public`) and `compliance.classification_scan` (default: `true`). Fixes #70
+
+## [0.7.12] - 2026-04-20
+
+### Fixed
+- RBAC step now respects `rbac.fail_open` setting (default: `true`) when `Legion::Rbac` is unavailable. Fleet callers are always blocked. Non-fleet callers are permitted with a warning when `fail_open` is true, or blocked with 503 when false. Fixes #69
+
+## [0.7.11] - 2026-04-20
+
+### Fixed
+- RAG faithfulness check now logs a warning when RAG context is present but no `Hooks::RagGuard` is registered, instead of silently skipping. Fixes #71
+- RAG faithfulness failure now logs at warn level in addition to appending to pipeline warnings array
+
+## [0.7.10] - 2026-04-20
+
+### Fixed
+- `configure_anthropic` now passes `base_url` through to RubyLLM (`anthropic_api_base`) when present, enabling custom API gateways and proxies. Fixes #68
+- `configure_openai` now passes `base_url` through to RubyLLM (`openai_api_base`) when present, for consistency with Anthropic and Ollama providers
+- `configure_gemini` now passes `base_url` through to RubyLLM (`gemini_api_base`) when present, for consistency with Anthropic and Ollama providers
+
+## [0.7.9] - 2026-04-18
+### Added
+- Expanded PII/PHI classification to cover 12 HIPAA Safe Harbor identifier patterns (was 3) and 20 PHI keywords (was 11). Partial fix for #73
+
+### Fixed
+- `web_fetch` client tool now delegates to `Legion::CLI::Chat::WebFetch.fetch` instead of bare `Net::HTTP.get` — gains SSL, redirect following, HTML-to-markdown conversion, and `maxLength` truncation (LegionIO/LegionIO#153)
+- Added `web_search` client tool dispatch via `Legion::CLI::Chat::WebSearch.search` — previously fell through to generic "not executable server-side" error (LegionIO/LegionIO#154)
+
 ## [0.7.8] - 2026-04-17
 ### Fixed
 - Guard `Embeddings.generate` against providers that don't support embeddings before calling `RubyLLM.embed` — prevents noisy `NoMethodError: undefined method 'render_embedding_payload'` warns when Bedrock (or Anthropic) is the active provider

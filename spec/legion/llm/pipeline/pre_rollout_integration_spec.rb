@@ -83,7 +83,7 @@ RSpec.describe 'Pipeline pre-rollout integration' do
     it 'permits request when Legion::Rbac is not loaded' do
       result = Legion::LLM.chat(message: 'hello', caller: { source: 'test' })
 
-      expect(result.warnings).to include('RBAC unavailable, permitting request without enforcement')
+      expect(result.warnings).to include('RBAC unavailable, permitting request (fail_open enabled)')
       expect(result.audit).to have_key(:'rbac:permission_check')
       expect(result.audit[:'rbac:permission_check'][:outcome]).to eq(:success)
     end
