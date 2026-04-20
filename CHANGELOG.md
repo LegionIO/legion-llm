@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-04-18
+### Fixed
+- `web_fetch` client tool now delegates to `Legion::CLI::Chat::WebFetch.fetch` instead of bare `Net::HTTP.get` — gains SSL, redirect following, HTML-to-markdown conversion, and `maxLength` truncation (LegionIO/LegionIO#153)
+- Added `web_search` client tool dispatch via `Legion::CLI::Chat::WebSearch.search` — previously fell through to generic "not executable server-side" error (LegionIO/LegionIO#154)
+
 ## [0.7.8] - 2026-04-17
 ### Fixed
 - Guard `Embeddings.generate` against providers that don't support embeddings before calling `RubyLLM.embed` — prevents noisy `NoMethodError: undefined method 'render_embedding_payload'` warns when Bedrock (or Anthropic) is the active provider
