@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.7.15] - 2026-04-20
+
+### Added
+- PHI cloud provider gate: `compliance.phi_block_cloud` (default: `false`) blocks restricted-classified requests from cloud providers when enabled. Warns on permit when disabled. Cloud provider list configurable via `compliance.cloud_providers`. Fixes #72
+
 ## [0.7.14] - 2026-04-20
 
 ### Added

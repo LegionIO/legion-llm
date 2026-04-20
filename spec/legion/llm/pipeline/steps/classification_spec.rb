@@ -414,5 +414,122 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
         expect(step.request.messages.first[:content]).to eq('server at [REDACTED] is down')
       end
     end
+
+    context 'PHI cloud provider gate' do
+      def build_gate_step(provider: nil, messages: nil)
+        msgs = messages || [{ role: :user, content: 'patient medication list: lisinopril' }]
+        routing = { provider: provider, model: nil }
+        request = Legion::LLM::Pipeline::Request.build(
+          messages: msgs,
+          routing:  routing
+        )
+        klass.new(request)
+      end
+
+      context 'when phi_block_cloud=false (default) with restricted + cloud provider' do
+        before do
+          Legion::Settings[:llm] = { default_provider: :anthropic }
+        end
+
+        it 'permits with a warning' do
+          step = build_gate_step(provider: :anthropic)
+          step.step_classification
+          expect(step.enrichments['classification:scan'][:effective_level]).to eq(:restricted)
+          expect(step.warnings).to include(
+            a_string_matching(/PHI content routing to cloud provider anthropic/)
+          )
+        end
+      end
+
+      context 'when phi_block_cloud=true with restricted + cloud provider' do
+        before do
+          Legion::Settings[:compliance] = { phi_block_cloud: true }
+          Legion::Settings[:llm] = { default_provider: :anthropic }
+        end
+
+        it 'raises PipelineError' do
+          step = build_gate_step(provider: :anthropic)
+          expect { step.step_classification }.to raise_error(
+            Legion::LLM::PipelineError,
+            /PHI content.*cannot be sent to cloud provider anthropic/
+          )
+        end
+      end
+
+      context 'when phi_block_cloud=true with restricted + local provider (ollama)' do
+        before do
+          Legion::Settings[:compliance] = { phi_block_cloud: true }
+          Legion::Settings[:llm] = { default_provider: :ollama }
+        end
+
+        it 'permits without warning' do
+          step = build_gate_step(provider: :ollama)
+          step.step_classification
+          expect(step.enrichments['classification:scan'][:effective_level]).to eq(:restricted)
+          expect(step.warnings).not_to include(
+            a_string_matching(/PHI content routing to cloud provider/)
+          )
+        end
+      end
+
+      context 'when phi_block_cloud=true with non-restricted level + cloud provider' do
+        before do
+          Legion::Settings[:compliance] = { phi_block_cloud: true }
+          Legion::Settings[:llm] = { default_provider: :anthropic }
+        end
+
+        it 'permits because gate only fires on restricted' do
+          step = build_gate_step(
+            provider: :anthropic,
+            messages: [{ role: :user, content: 'what is 2 + 2?' }]
+          )
+          step.step_classification
+          expect(step.enrichments['classification:scan'][:effective_level]).to eq(:public)
+          expect(step.warnings).to be_empty
+        end
+      end
+
+      context 'with custom cloud_providers list' do
+        before do
+          Legion::Settings[:compliance] = {
+            phi_block_cloud: true,
+            cloud_providers: %i[anthropic openai]
+          }
+          Legion::Settings[:llm] = { default_provider: :bedrock }
+        end
+
+        it 'permits bedrock when it is not in the custom cloud list' do
+          step = build_gate_step(provider: :bedrock)
+          step.step_classification
+          expect(step.enrichments['classification:scan'][:effective_level]).to eq(:restricted)
+          expect(step.warnings).not_to include(
+            a_string_matching(/PHI content routing to cloud provider/)
+          )
+        end
+
+        it 'blocks anthropic when it is in the custom cloud list' do
+          step = build_gate_step(provider: :anthropic)
+          expect { step.step_classification }.to raise_error(
+            Legion::LLM::PipelineError,
+            /cannot be sent to cloud provider anthropic/
+          )
+        end
+      end
+
+      context 'when provider comes from default_provider setting (no explicit routing)' do
+        before do
+          Legion::Settings[:compliance] = { phi_block_cloud: true }
+          Legion::Settings[:llm] = { default_provider: :openai }
+        end
+
+        it 'blocks based on default provider when no explicit provider in routing' do
+          step = build_gate_step(provider: nil)
+          expect { step.step_classification }.to raise_error(
+            Legion::LLM::PipelineError,
+            /cannot be sent to cloud provider openai/
+          )
+        end
+      end
+    end
   end
 end

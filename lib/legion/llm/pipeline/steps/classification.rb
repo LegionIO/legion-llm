@@ -50,6 +50,7 @@ module Legion
             upgraded        = effective_level != declared_level
 
             redact_sensitive_content(scan)
+            enforce_phi_cloud_gate(effective_level)
 
             @enrichments['classification:scan'] = {
               declared_level:    declared_level,
@@ -198,6 +199,53 @@ module Legion
             Legion::Settings.dig(:compliance, :redaction_placeholder) || '[REDACTED]'
           rescue StandardError
             '[REDACTED]'
+          end
+
+          def enforce_phi_cloud_gate(effective_level)
+            return unless effective_level == :restricted
+
+            provider = resolve_current_provider
+            return unless cloud_provider?(provider)
+
+            if phi_block_cloud?
+              raise Legion::LLM::PipelineError.new(
+                "PHI content (level=restricted) cannot be sent to cloud provider #{provider}. " \
+                'Set compliance.phi_block_cloud=false to override, or use a local provider.',
+                step: :classification
+              )
+            end
+
+            log.warn(
+              "[classification] PHI content (restricted) routing to cloud provider #{provider} — " \
+              'compliance.phi_block_cloud is disabled, permitting'
+            )
+            @warnings << "PHI content routing to cloud provider #{provider} (phi_block_cloud disabled)"
+          end
+
+          def phi_block_cloud?
+            setting = Legion::Settings.dig(:compliance, :phi_block_cloud)
+            setting == true
+          rescue StandardError
+            false
+          end
+
+          def cloud_provider?(provider)
+            return false unless provider
+
+            cloud_providers = Legion::Settings.dig(:compliance, :cloud_providers) ||
+                              %i[anthropic openai gemini bedrock azure]
+            cloud_providers.map(&:to_sym).include?(provider.to_sym)
+          rescue StandardError
+            false
+          end
+
+          def resolve_current_provider
+            routing = @request.respond_to?(:routing) ? @request.routing : nil
+            provider = routing[:provider] if routing.is_a?(Hash)
+            provider ||= Legion::Settings.dig(:llm, :default_provider)
+            provider&.to_sym
+          rescue StandardError
+            nil
           end
         end
       end
