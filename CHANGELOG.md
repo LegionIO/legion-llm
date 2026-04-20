@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-04-20
+
+### Fixed
+- RAG faithfulness check now logs a warning when RAG context is present but no `Hooks::RagGuard` is registered, instead of silently skipping. Fixes #71
+- RAG faithfulness failure now logs at warn level in addition to appending to pipeline warnings array
+
 ## [0.7.10] - 2026-04-20
 
 ### Fixed

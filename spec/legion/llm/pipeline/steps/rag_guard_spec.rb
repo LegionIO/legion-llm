@@ -51,5 +51,19 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagGuard do
       step.check_rag_faithfulness
       expect(step.warnings).to be_empty
     end
+
+    it 'logs a warning when RAG context is present but Hooks::RagGuard is not defined' do
+      hide_const('Legion::LLM::Hooks::RagGuard') if defined?(Legion::LLM::Hooks::RagGuard)
+      step = klass.new
+      logger = instance_double(Legion::Logging::Logger, warn: nil, debug: nil, info: nil)
+      allow(step).to receive(:log).and_return(logger)
+
+      step.check_rag_faithfulness
+
+      expect(logger).to have_received(:warn).with(
+        a_string_matching(/RAG context present but no Hooks::RagGuard registered/)
+      )
+      expect(step.warnings).to be_empty
+    end
   end
 end
