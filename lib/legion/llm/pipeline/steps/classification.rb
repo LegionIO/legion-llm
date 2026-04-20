@@ -12,15 +12,27 @@ module Legion
           LEVELS = %i[public internal confidential restricted].freeze
 
           PII_PATTERNS = {
-            ssn:   /\b\d{3}-\d{2}-\d{4}\b/,
-            email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
-            phone: /\b(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/
+            ssn:            /\b\d{3}-\d{2}-\d{4}\b/,
+            email:          /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+            phone:          /\b(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/,
+            ip_address:     /\b(?:\d{1,3}\.){3}\d{1,3}\b/,
+            date_of_birth:  %r{\b(?:0[1-9]|1[0-2])[/-](?:0[1-9]|[12]\d|3[01])[/-](?:19|20)\d{2}\b},
+            zip_code:       /\b\d{5}(?:-\d{4})?\b/,
+            mrn:            /\b(?:MRN|mrn)[:\s#]?\s?\d{4,12}\b/,
+            account_number: /\b(?:account|acct)[:\s#]?\s?\d{6,20}\b/i,
+            license_number: /\b[A-Z]\d{3,8}\b/,
+            url:            %r{\bhttps?://[^\s<>"']+}i,
+            vin:            /\b[A-HJ-NPR-Z0-9]{17}\b/,
+            npi_number:     /\b\d{10}\b/
           }.freeze
 
           PHI_KEYWORDS = %w[
             patient diagnosis medication prescription
             dob date-of-birth mrn medical-record
-            npi clinical treatment
+            npi clinical treatment health-plan
+            beneficiary insurance-id group-number
+            lab-result radiology pathology
+            admission discharge procedure
           ].freeze
 
           def step_classification

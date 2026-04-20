@@ -96,6 +96,56 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
         expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:phone)
       end
 
+      it 'detects IP address pattern' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'server at 192.168.1.100 is down' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be true
+        expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:ip_address)
+      end
+
+      it 'detects date of birth pattern' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'DOB: 01/15/1985' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be true
+        expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:date_of_birth)
+      end
+
+      it 'detects URL pattern' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'visit https://patient-portal.example.com/records' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be true
+        expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:url)
+      end
+
+      it 'detects MRN with number pattern' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'MRN: 12345678' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be true
+        expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:mrn)
+      end
+
+      it 'detects VIN pattern' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'vehicle 1HGBH41JXMN109186 was involved' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be true
+        expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:vin)
+      end
+
       it 'sets contains_pii false when no PII found' do
         step = build_step(
           classification: { level: :internal },
@@ -115,6 +165,15 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
         step.step_classification
         expect(step.enrichments['classification:scan'][:contains_phi]).to be true
         expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:phi_keyword)
+      end
+
+      it 'detects expanded PHI keywords' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'health-plan beneficiary admission records' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_phi]).to be true
       end
 
       it 'sets contains_phi false when no PHI found' do
