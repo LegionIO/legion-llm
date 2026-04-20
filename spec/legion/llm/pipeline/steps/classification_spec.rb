@@ -29,16 +29,60 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
 
   describe '#step_classification' do
     context 'when classification is nil' do
-      it 'skips without writing to audit' do
+      it 'runs scan with :public baseline and writes audit entry' do
+        step = build_step(classification: nil)
+        step.step_classification
+        expect(step.audit).to have_key(:'classification:scan')
+        expect(step.audit[:'classification:scan'][:outcome]).to eq(:success)
+      end
+
+      it 'runs scan with :public baseline and writes enrichments' do
+        step = build_step(classification: nil)
+        step.step_classification
+        expect(step.enrichments).to have_key('classification:scan')
+        expect(step.enrichments['classification:scan'][:declared_level]).to eq(:public)
+      end
+    end
+
+    context 'when compliance.default_level is configured' do
+      before do
+        allow(Legion::Settings).to receive(:dig).and_call_original
+        allow(Legion::Settings).to receive(:dig).with(:compliance, :default_level).and_return('internal')
+        allow(Legion::Settings).to receive(:dig).with(:compliance, :classification_level).and_return(nil)
+        allow(Legion::Settings).to receive(:dig).with(:compliance, :classification_scan).and_return(nil)
+      end
+
+      it 'uses configured default level as baseline' do
+        step = build_step(classification: nil)
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:declared_level]).to eq(:internal)
+      end
+    end
+
+    context 'when compliance.classification_scan is false' do
+      before do
+        allow(Legion::Settings).to receive(:dig).and_call_original
+        allow(Legion::Settings).to receive(:dig).with(:compliance, :classification_scan).and_return(false)
+      end
+
+      it 'skips the step entirely' do
         step = build_step(classification: nil)
         step.step_classification
         expect(step.audit).not_to have_key(:'classification:scan')
-      end
-
-      it 'skips without writing to enrichments' do
-        step = build_step(classification: nil)
-        step.step_classification
         expect(step.enrichments).not_to have_key('classification:scan')
+      end
+    end
+
+    context 'when PHI is detected in an unclassified request' do
+      it 'upgrades from :public baseline to :restricted' do
+        step = build_step(
+          classification: nil,
+          messages:       [{ role: :user, content: 'patient medication list: lisinopril' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:declared_level]).to eq(:public)
+        expect(step.enrichments['classification:scan'][:effective_level]).to eq(:restricted)
+        expect(step.enrichments['classification:scan'][:upgraded]).to be true
       end
     end
 

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-04-20
+
+### Fixed
+- Classification step now always runs the PII/PHI scan, even on unclassified requests — defaults to `:public` baseline. Configurable via `compliance.default_level` (default: `:public`) and `compliance.classification_scan` (default: `true`). Fixes #70
+
 ## [0.7.12] - 2026-04-20
 
 ### Fixed
