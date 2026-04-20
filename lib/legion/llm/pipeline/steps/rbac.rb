@@ -13,18 +13,21 @@ module Legion
             start_time = Time.now
 
             unless defined?(::Legion::Rbac)
-              if fleet_caller?
-                msg = 'RBAC unavailable: fleet callers require RBAC enforcement (fail-closed)'
-                log.error("[llm][rbac] fleet_blocked request_id=#{@request.id} reason=rbac_unavailable")
+              if fleet_caller? || !fail_open_permitted?
+                msg = '503: RBAC unavailable — request denied ' \
+                      "(fleet=#{fleet_caller?}, fail_open=#{fail_open_permitted?})"
+                log.error("[llm][rbac] blocked request_id=#{@request.id} reason=rbac_unavailable " \
+                          "fleet=#{fleet_caller?} fail_open=#{fail_open_permitted?}")
                 record_rbac_audit(:failure, msg, start_time)
                 record_rbac_timeline("denied: #{msg}")
-                raise Legion::LLM::PipelineError.new("403 Forbidden: #{msg}", step: :rbac)
+                raise Legion::LLM::PipelineError.new(msg, step: :rbac)
               end
 
-              @warnings << 'RBAC unavailable, permitting request without enforcement'
-              log.info("[llm][rbac] unavailable request_id=#{@request.id} action=permit_without_enforcement")
-              record_rbac_audit(:success, 'permitted (rbac unavailable)', start_time)
-              record_rbac_timeline('permitted (rbac unavailable)')
+              log.warn('[llm][rbac] RBAC unavailable, permitting request (fail_open enabled) ' \
+                       "request_id=#{@request.id}")
+              @warnings << 'RBAC unavailable, permitting request (fail_open enabled)'
+              record_rbac_audit(:success, 'permitted (rbac unavailable, fail_open enabled)', start_time)
+              record_rbac_timeline('permitted (rbac unavailable, fail_open enabled)')
               return
             end
 
@@ -53,6 +56,11 @@ module Legion
           end
 
           private
+
+          def fail_open_permitted?
+            setting = Legion::Settings.dig(:rbac, :fail_open)
+            setting.nil? || setting
+          end
 
           def build_rbac_principal
             rb = @request.caller&.fetch(:requested_by, {}) || {}

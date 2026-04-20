@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-04-20
+
+### Fixed
+- RBAC step now respects `rbac.fail_open` setting (default: `true`) when `Legion::Rbac` is unavailable. Fleet callers are always blocked. Non-fleet callers are permitted with a warning when `fail_open` is true, or blocked with 503 when false. Fixes #69
+
 ## [0.7.11] - 2026-04-20
 
 ### Fixed
