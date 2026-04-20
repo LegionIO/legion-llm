@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.7.14] - 2026-04-20
+
+### Added
+- PII/PHI redaction mode: `compliance.redact_pii` (default: `false`) replaces detected patterns with configurable placeholder token before pipeline continues. Placeholder configurable via `compliance.redaction_placeholder` (default: `[REDACTED]`)
+- `compliance.strict_hipaa` setting (default: `false`): when enabled, scans all 12 HIPAA patterns; when disabled, scans only core 3 (SSN, email, phone) for lighter processing. Closes #73
+
 ## [0.7.13] - 2026-04-20
 
 ### Fixed

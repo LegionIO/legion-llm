@@ -109,7 +109,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
       end
     end
 
-    context 'PII detection' do
+    context 'PII detection (core patterns, strict_hipaa=false)' do
       it 'detects SSN pattern' do
         step = build_step(
           classification: { level: :internal },
@@ -138,6 +138,31 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
         step.step_classification
         expect(step.enrichments['classification:scan'][:contains_pii]).to be true
         expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:phone)
+      end
+
+      it 'does not detect extended patterns when strict_hipaa is off' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'server at 192.168.1.100 is down' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be false
+        expect(step.enrichments['classification:scan'][:detected_patterns]).not_to include(:ip_address)
+      end
+
+      it 'sets contains_pii false when no PII found' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'what is 2 + 2?' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be false
+      end
+    end
+
+    context 'PII detection (extended patterns, strict_hipaa=true)' do
+      before do
+        Legion::Settings[:compliance] = { strict_hipaa: true }
       end
 
       it 'detects IP address pattern' do
@@ -190,13 +215,14 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
         expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:vin)
       end
 
-      it 'sets contains_pii false when no PII found' do
+      it 'also detects core patterns when strict_hipaa is on' do
         step = build_step(
           classification: { level: :internal },
-          messages:       [{ role: :user, content: 'what is 2 + 2?' }]
+          messages:       [{ role: :user, content: 'my SSN is 123-45-6789' }]
         )
         step.step_classification
-        expect(step.enrichments['classification:scan'][:contains_pii]).to be false
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be true
+        expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:ssn)
       end
     end
 
@@ -268,6 +294,124 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
         )
         step.step_classification
         expect(step.warnings).to be_empty
+      end
+    end
+
+    context 'redaction (redact_pii=false by default)' do
+      it 'does not modify message content when redaction is disabled' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'my SSN is 123-45-6789' }]
+        )
+        step.step_classification
+        expect(step.request.messages.first[:content]).to eq('my SSN is 123-45-6789')
+        expect(step.enrichments).not_to have_key('classification:redaction')
+      end
+    end
+
+    context 'redaction (redact_pii=true)' do
+      before do
+        Legion::Settings[:compliance] = { redact_pii: true }
+      end
+
+      it 'replaces detected PII with [REDACTED] in message content' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'my SSN is 123-45-6789' }]
+        )
+        step.step_classification
+        expect(step.request.messages.first[:content]).to eq('my SSN is [REDACTED]')
+      end
+
+      it 'replaces multiple PII patterns' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'SSN 123-45-6789 email john@test.com call 612-555-1234' }]
+        )
+        step.step_classification
+        content = step.request.messages.first[:content]
+        expect(content).not_to include('123-45-6789')
+        expect(content).not_to include('john@test.com')
+        expect(content).not_to include('612-555-1234')
+      end
+
+      it 'replaces PHI keywords when PHI is detected' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'patient diagnosis is hypertension' }]
+        )
+        step.step_classification
+        content = step.request.messages.first[:content]
+        expect(content).not_to match(/\bpatient\b/i)
+        expect(content).not_to match(/\bdiagnosis\b/i)
+      end
+
+      it 'records redaction enrichment' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'my SSN is 123-45-6789' }]
+        )
+        step.step_classification
+        expect(step.enrichments).to have_key('classification:redaction')
+        redaction = step.enrichments['classification:redaction']
+        expect(redaction[:redacted]).to be true
+        expect(redaction[:placeholder]).to eq('[REDACTED]')
+        expect(redaction[:patterns_redacted]).to include(:ssn)
+        expect(redaction[:timestamp]).to be_a(Time)
+      end
+
+      it 'does not redact when no PII or PHI is found' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'what is 2 + 2?' }]
+        )
+        step.step_classification
+        expect(step.request.messages.first[:content]).to eq('what is 2 + 2?')
+        expect(step.enrichments).not_to have_key('classification:redaction')
+      end
+
+      it 'skips non-string content in messages' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [
+            { role: :user, content: 'my SSN is 123-45-6789' },
+            { role: :user, content: nil }
+          ]
+        )
+        step.step_classification
+        expect(step.request.messages.first[:content]).to eq('my SSN is [REDACTED]')
+        expect(step.request.messages.last[:content]).to be_nil
+      end
+    end
+
+    context 'redaction with custom placeholder' do
+      before do
+        Legion::Settings[:compliance] = { redact_pii: true, redaction_placeholder: '***' }
+      end
+
+      it 'uses the custom placeholder' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'my SSN is 123-45-6789' }]
+        )
+        step.step_classification
+        expect(step.request.messages.first[:content]).to eq('my SSN is ***')
+        expect(step.enrichments['classification:redaction'][:placeholder]).to eq('***')
+      end
+    end
+
+    context 'redaction with strict_hipaa=true' do
+      before do
+        Legion::Settings[:compliance] = { redact_pii: true, strict_hipaa: true }
+      end
+
+      it 'redacts extended patterns when strict_hipaa is on' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'server at 192.168.1.100 is down' }]
+        )
+        step.step_classification
+        expect(step.request.messages.first[:content]).to eq('server at [REDACTED] is down')
       end
     end
   end

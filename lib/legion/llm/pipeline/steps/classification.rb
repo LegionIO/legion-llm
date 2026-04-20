@@ -11,10 +11,13 @@ module Legion
 
           LEVELS = %i[public internal confidential restricted].freeze
 
-          PII_PATTERNS = {
-            ssn:            /\b\d{3}-\d{2}-\d{4}\b/,
-            email:          /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
-            phone:          /\b(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/,
+          PII_PATTERNS_CORE = {
+            ssn:   /\b\d{3}-\d{2}-\d{4}\b/,
+            email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+            phone: /\b(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/
+          }.freeze
+
+          PII_PATTERNS_EXTENDED = {
             ip_address:     /\b(?:\d{1,3}\.){3}\d{1,3}\b/,
             date_of_birth:  %r{\b(?:0[1-9]|1[0-2])[/-](?:0[1-9]|[12]\d|3[01])[/-](?:19|20)\d{2}\b},
             zip_code:       /\b\d{5}(?:-\d{4})?\b/,
@@ -25,6 +28,8 @@ module Legion
             vin:            /\b[A-HJ-NPR-Z0-9]{17}\b/,
             npi_number:     /\b\d{10}\b/
           }.freeze
+
+          PII_PATTERNS = PII_PATTERNS_CORE.merge(PII_PATTERNS_EXTENDED).freeze
 
           PHI_KEYWORDS = %w[
             patient diagnosis medication prescription
@@ -43,6 +48,8 @@ module Legion
             scan            = scan_content_for_sensitive_data
             effective_level = upgrade_if_needed(declared_level, scan)
             upgraded        = effective_level != declared_level
+
+            redact_sensitive_content(scan)
 
             @enrichments['classification:scan'] = {
               declared_level:    declared_level,
@@ -79,8 +86,9 @@ module Legion
           def scan_content_for_sensitive_data
             text     = extract_text_content
             patterns = []
+            active_patterns = strict_hipaa_mode? ? PII_PATTERNS : PII_PATTERNS_CORE
 
-            PII_PATTERNS.each do |name, regex|
+            active_patterns.each do |name, regex|
               patterns << name if text.match?(regex)
             end
 
@@ -88,9 +96,38 @@ module Legion
             patterns << :phi_keyword if phi_found
 
             {
-              contains_pii: patterns.intersect?(PII_PATTERNS.keys),
+              contains_pii: patterns.intersect?(active_patterns.keys),
               contains_phi: phi_found,
               patterns:     patterns
+            }
+          end
+
+          def redact_sensitive_content(scan)
+            return unless redaction_enabled?
+            return unless scan[:contains_pii] || scan[:contains_phi]
+
+            placeholder = redaction_placeholder
+            active_patterns = strict_hipaa_mode? ? PII_PATTERNS : PII_PATTERNS_CORE
+
+            @request.messages.each do |message|
+              next unless message[:content].is_a?(String)
+
+              active_patterns.each_value do |regex|
+                message[:content] = message[:content].gsub(regex, placeholder)
+              end
+
+              next unless scan[:contains_phi]
+
+              PHI_KEYWORDS.each do |kw|
+                message[:content] = message[:content].gsub(/\b#{Regexp.escape(kw)}\b/i, placeholder)
+              end
+            end
+
+            @enrichments['classification:redaction'] = {
+              redacted:          true,
+              patterns_redacted: scan[:patterns],
+              placeholder:       placeholder,
+              timestamp:         Time.now
             }
           end
 
@@ -141,6 +178,26 @@ module Legion
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.classification.default')
             nil
+          end
+
+          def redaction_enabled?
+            setting = Legion::Settings.dig(:compliance, :redact_pii)
+            setting == true
+          rescue StandardError
+            false
+          end
+
+          def strict_hipaa_mode?
+            setting = Legion::Settings.dig(:compliance, :strict_hipaa)
+            setting == true
+          rescue StandardError
+            false
+          end
+
+          def redaction_placeholder
+            Legion::Settings.dig(:compliance, :redaction_placeholder) || '[REDACTED]'
+          rescue StandardError
+            '[REDACTED]'
           end
         end
       end
