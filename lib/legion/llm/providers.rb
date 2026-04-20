@@ -111,8 +111,9 @@ module Legion
 
         RubyLLM.configure do |c|
           c.anthropic_api_key = api_key
+          c.anthropic_api_base = config[:base_url] if config[:base_url]
         end
-        log.info 'Configured Anthropic provider'
+        log.info "Configured Anthropic provider#{" (#{config[:base_url]})" if config[:base_url]}"
       end
 
       def configure_openai(config)
@@ -121,8 +122,9 @@ module Legion
 
         RubyLLM.configure do |c|
           c.openai_api_key = api_key
+          c.openai_api_base = config[:base_url] if config[:base_url]
         end
-        log.info 'Configured OpenAI provider'
+        log.info "Configured OpenAI provider#{" (#{config[:base_url]})" if config[:base_url]}"
       end
 
       def configure_gemini(config)
@@ -131,8 +133,9 @@ module Legion
 
         RubyLLM.configure do |c|
           c.gemini_api_key = api_key
+          c.gemini_api_base = config[:base_url] if config[:base_url]
         end
-        log.info 'Configured Gemini provider'
+        log.info "Configured Gemini provider#{" (#{config[:base_url]})" if config[:base_url]}"
       end
 
       def configure_azure(config)

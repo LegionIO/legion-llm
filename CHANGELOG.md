@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-04-20
+
+### Fixed
+- `configure_anthropic` now passes `base_url` through to RubyLLM (`anthropic_api_base`) when present, enabling custom API gateways and proxies. Fixes #68
+- `configure_openai` now passes `base_url` through to RubyLLM (`openai_api_base`) when present, for consistency with Anthropic and Ollama providers
+- `configure_gemini` now passes `base_url` through to RubyLLM (`gemini_api_base`) when present, for consistency with Anthropic and Ollama providers
+
 ## [0.7.9] - 2026-04-18
 ### Added
 - Expanded PII/PHI classification to cover 12 HIPAA Safe Harbor identifier patterns (was 3) and 20 PHI keywords (was 11). Partial fix for #73
