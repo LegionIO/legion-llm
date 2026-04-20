@@ -46,7 +46,7 @@ module Legion
           end
         end
 
-        def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize
+        def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity
           case ref
           when 'sh'
             cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s
@@ -81,16 +81,27 @@ module Legion
             Dir.glob(pattern).first(100).join("\n")
           when 'web_fetch'
             url = kwargs[:url] || kwargs.values.first.to_s
-            max_length = (kwargs[:maxLength] || kwargs[:max_length])&.to_i
-            require 'legion/cli/chat/web_fetch'
-            content = Legion::CLI::Chat::WebFetch.fetch(url)
-            max_length ? content[0, max_length] : content
+            raw_max_length = kwargs[:maxLength] || kwargs[:max_length]
+            max_length = raw_max_length.nil? ? nil : [raw_max_length.to_i, 0].max
+            begin
+              require 'legion/cli/chat/web_fetch'
+              content = Legion::CLI::Chat::WebFetch.fetch(url)
+              max_length ? content[0, max_length] : content
+            rescue LoadError => e
+              missing = e.respond_to?(:path) && e.path ? e.path : 'legion/cli/chat/web_fetch'
+              "web_fetch is unavailable: missing optional dependency #{missing}"
+            end
           when 'web_search'
             query = kwargs[:query] || kwargs.values.first.to_s
             max_results = (kwargs[:max_results] || kwargs[:maxResults] || 5).to_i
-            require 'legion/cli/chat/web_search'
-            results = Legion::CLI::Chat::WebSearch.search(query, max_results: max_results, auto_fetch: false)
-            results[:results].map { |r| "### #{r[:title]}\n#{r[:url]}\n#{r[:snippet]}" }.join("\n\n")
+            begin
+              require 'legion/cli/chat/web_search'
+              results = Legion::CLI::Chat::WebSearch.search(query, max_results: max_results, auto_fetch: false)
+              results[:results].map { |r| "### #{r[:title]}\n#{r[:url]}\n#{r[:snippet]}" }.join("\n\n")
+            rescue LoadError => e
+              missing = e.respond_to?(:path) && e.path ? e.path : 'legion/cli/chat/web_search'
+              "web_search is unavailable: missing optional dependency #{missing}"
+            end
           else
             "Tool #{ref} is not executable server-side. Use a legion_ prefixed tool instead."
           end

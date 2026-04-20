@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'spec_helper'
+
 RSpec.describe Legion::LLM::Providers, 'base_url forwarding' do
   let(:host) do
     Class.new do

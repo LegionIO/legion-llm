@@ -436,7 +436,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
           step.step_classification
           expect(step.enrichments['classification:scan'][:effective_level]).to eq(:restricted)
           expect(step.warnings).to include(
-            a_string_matching(/PHI content routing to cloud provider anthropic/)
+            a_string_matching(%r{Restricted/sensitive content routing to cloud provider anthropic})
           )
         end
       end
@@ -451,7 +451,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
           step = build_gate_step(provider: :anthropic)
           expect { step.step_classification }.to raise_error(
             Legion::LLM::PipelineError,
-            /PHI content.*cannot be sent to cloud provider anthropic/
+            %r{Restricted/sensitive content.*cannot be sent to cloud provider anthropic}
           )
         end
       end
@@ -467,7 +467,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
           step.step_classification
           expect(step.enrichments['classification:scan'][:effective_level]).to eq(:restricted)
           expect(step.warnings).not_to include(
-            a_string_matching(/PHI content routing to cloud provider/)
+            a_string_matching(%r{Restricted/sensitive content routing to cloud provider})
           )
         end
       end
@@ -503,7 +503,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
           step.step_classification
           expect(step.enrichments['classification:scan'][:effective_level]).to eq(:restricted)
           expect(step.warnings).not_to include(
-            a_string_matching(/PHI content routing to cloud provider/)
+            a_string_matching(%r{Restricted/sensitive content routing to cloud provider})
           )
         end
 

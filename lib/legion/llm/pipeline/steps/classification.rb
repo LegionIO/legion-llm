@@ -209,17 +209,17 @@ module Legion
 
             if phi_block_cloud?
               raise Legion::LLM::PipelineError.new(
-                "PHI content (level=restricted) cannot be sent to cloud provider #{provider}. " \
+                "Restricted/sensitive content (level=restricted) cannot be sent to cloud provider #{provider}. " \
                 'Set compliance.phi_block_cloud=false to override, or use a local provider.',
                 step: :classification
               )
             end
 
             log.warn(
-              "[classification] PHI content (restricted) routing to cloud provider #{provider} — " \
+              "[classification] Restricted/sensitive content (level=restricted) routing to cloud provider #{provider} — " \
               'compliance.phi_block_cloud is disabled, permitting'
             )
-            @warnings << "PHI content routing to cloud provider #{provider} (phi_block_cloud disabled)"
+            @warnings << "Restricted/sensitive content routing to cloud provider #{provider} (phi_block_cloud disabled)"
           end
 
           def phi_block_cloud?
