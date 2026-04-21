@@ -52,6 +52,8 @@ rescue LoadError => e
   Legion::Logging.debug "LLM: skills not loadable: #{e.message}" if defined?(Legion::Logging)
 end
 
+require_relative 'llm/compat'
+
 module Legion
   module LLM
     class EscalationExhausted < StandardError; end
