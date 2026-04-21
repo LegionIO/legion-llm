@@ -46,6 +46,7 @@ require_relative 'llm/tools/interceptor'
 require_relative 'llm/tools/adapter'
 require_relative 'llm/inference/prompt'
 require_relative 'llm/helper'
+require_relative 'llm/api'
 
 begin
   require_relative 'llm/skills'
@@ -942,15 +943,9 @@ module Legion
       end
 
       def install_hooks
-        metering_enabled = settings.dig(:metering, :auto) != false
-        Hooks::Metering.install if metering_enabled
-
-        cost_tracking_enabled = settings.dig(:cost_tracking, :auto) != false
-        Hooks::CostTracking.install if cost_tracking_enabled
-
-        Hooks::BudgetGuard.install if Hooks::BudgetGuard.enforcing?
+        Hooks.install_defaults
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.install_hooks')
+        handle_exception(e, level: :debug, handled: true, operation: 'llm.install_hooks')
       end
 
       def load_tool_interceptors
@@ -1117,12 +1112,9 @@ module Legion
       end
 
       def register_routes
-        return unless defined?(Legion::API) && Legion::API.respond_to?(:register_library_routes)
-
-        Legion::API.register_library_routes('llm', Legion::LLM::Routes)
-        log.debug 'Legion::LLM routes registered with API'
+        Legion::LLM::API.register_routes
       rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'llm.register_routes')
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.register_routes')
       end
 
       def auto_configure_defaults

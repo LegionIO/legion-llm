@@ -129,13 +129,12 @@ module Legion
         def publish_request(**opts)
           correlation_id = "req_#{SecureRandom.uuid}"
           opts[:fleet_correlation_id] = correlation_id
+          log.debug("[llm][fleet][dispatcher] action=publish_request correlation_id=#{correlation_id} routing_key=#{opts[:routing_key]}")
 
-          if defined?(Legion::LLM::Fleet::Request)
-            Legion::LLM::Fleet::Request.new(**opts).publish
-          elsif defined?(Legion::Extensions::LLM::Gateway::Transport::Messages::InferenceRequest)
-            Legion::Extensions::LLM::Gateway::Transport::Messages::InferenceRequest.new(
-              reply_to: opts[:reply_to], **opts.except(:reply_to)
-            ).publish
+          if defined?(Legion::LLM::Transport::Messages::FleetRequest)
+            Legion::LLM::Transport::Messages::FleetRequest.new(**opts).publish
+          else
+            log.debug('[llm][fleet][dispatcher] action=skip_publish reason=transport_not_loaded')
           end
 
           correlation_id
