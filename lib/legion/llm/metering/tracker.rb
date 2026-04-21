@@ -3,8 +3,9 @@
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module CostTracker
-      extend Legion::Logging::Helper
+    module Metering
+      module Recorder
+        extend Legion::Logging::Helper
 
       # Default per-1M-token pricing in USD (input / output).
       # Overridable via Legion::Settings[:llm][:pricing].
@@ -93,6 +94,7 @@ module Legion
           handle_exception(e, level: :warn)
           {}
         end
+      end
       end
     end
   end

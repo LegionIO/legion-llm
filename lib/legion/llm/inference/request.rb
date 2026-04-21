@@ -2,7 +2,7 @@
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       Request = ::Data.define(
         :id, :conversation_id, :idempotency_key, :schema_version,
         :system, :messages, :tools, :tool_choice,

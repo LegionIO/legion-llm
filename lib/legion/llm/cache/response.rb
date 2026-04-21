@@ -6,8 +6,9 @@ require 'json'
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module ResponseCache
-      extend Legion::Logging::Helper
+    module Cache
+      module Response
+        extend Legion::Logging::Helper
 
       DEFAULT_TTL      = 300
       SPOOL_THRESHOLD  = 8 * 1024 * 1024 # 8 MB
@@ -143,6 +144,7 @@ module Legion
         else
           cache_set(response_key(request_id), response_text, ttl)
         end
+      end
       end
     end
   end

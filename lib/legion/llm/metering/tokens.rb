@@ -3,8 +3,9 @@
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module TokenTracker
-      extend Legion::Logging::Helper
+    module Metering
+      module Tokens
+        extend Legion::Logging::Helper
 
       MUTEX = Mutex.new
 
@@ -114,6 +115,7 @@ module Legion
           handle_exception(e, level: :debug)
           nil
         end
+      end
       end
     end
   end

@@ -3,8 +3,9 @@
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module ShadowEval
-      extend Legion::Logging::Helper
+    module Quality
+      module ShadowEval
+        extend Legion::Logging::Helper
 
       MAX_HISTORY = 100
 
@@ -104,7 +105,7 @@ module Legion
         end
 
         def cost_tracker_pricing(model)
-          return CostTracker.pricing_for(model) if defined?(CostTracker)
+          return Metering::Recorder.pricing_for(model) if defined?(Legion::LLM::Metering::Recorder)
 
           { input: 5.0, output: 15.0 }
         end
@@ -125,6 +126,7 @@ module Legion
             models_evaluated:   []
           }
         end
+      end
       end
     end
   end

@@ -20,7 +20,7 @@ module Legion
           usage = extract_usage(response)
           return if usage[:input_tokens].zero? && usage[:output_tokens].zero?
 
-          CostTracker.record(
+          Metering::Recorder.record(
             model:         (extract_model(response) || model).to_s,
             input_tokens:  usage[:input_tokens],
             output_tokens: usage[:output_tokens],

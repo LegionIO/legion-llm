@@ -2,13 +2,15 @@
 
 module Legion
   module LLM
-    # Immutable value object representing a scored confidence level for an LLM response.
-    #
-    # score - Float in [0.0, 1.0]
-    # band  - Symbol: :very_low, :low, :medium, :high, :very_high
-    # source - Symbol: :heuristic, :logprobs, :caller_provided
-    # signals - Hash of contributing signals and their raw values (informational)
-    ConfidenceScore = ::Data.define(:score, :band, :source, :signals) do
+    module Quality
+      module Confidence
+        # Immutable value object representing a scored confidence level for an LLM response.
+        #
+        # score - Float in [0.0, 1.0]
+        # band  - Symbol: :very_low, :low, :medium, :high, :very_high
+        # source - Symbol: :heuristic, :logprobs, :caller_provided
+        # signals - Hash of contributing signals and their raw values (informational)
+        Score = ::Data.define(:score, :band, :source, :signals) do
       def self.build(score:, bands:, source: :heuristic, signals: {})
         clamped = score.to_f.clamp(0.0, 1.0)
         new(
@@ -21,7 +23,7 @@ module Legion
 
       # Returns true when the band is at or above the given band name.
       def at_least?(band_name)
-        Legion::LLM::ConfidenceScore::BAND_ORDER.index(band) >= Legion::LLM::ConfidenceScore::BAND_ORDER.index(band_name.to_sym)
+        Legion::LLM::Quality::Confidence::Score::BAND_ORDER.index(band) >= Legion::LLM::Quality::Confidence::Score::BAND_ORDER.index(band_name.to_sym)
       end
 
       def to_h
@@ -42,8 +44,10 @@ module Legion
       end
     end
 
-    # Band ordering from lowest to highest — defined outside the ::Data.define block
-    # so it is accessible as Legion::LLM::ConfidenceScore::BAND_ORDER.
-    ConfidenceScore::BAND_ORDER = %i[very_low low medium high very_high].freeze
+        # Band ordering from lowest to highest — defined outside the ::Data.define block
+        # so it is accessible as Legion::LLM::Quality::Confidence::Score::BAND_ORDER.
+        Score::BAND_ORDER = %i[very_low low medium high very_high].freeze
+      end
+    end
   end
 end

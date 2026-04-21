@@ -119,8 +119,8 @@ module Legion
 
           remaining_steps.each_with_index do |method_name, offset|
             step_idx = from_step + offset
-            if conv_id && Legion::LLM::ConversationStore.skill_cancelled?(conv_id)
-              Legion::LLM::ConversationStore.clear_cancel_flag(conv_id)
+            if conv_id && Legion::LLM::Inference::Conversation.skill_cancelled?(conv_id)
+              Legion::LLM::Inference::Conversation.clear_cancel_flag(conv_id)
               return SkillRunResult.build(inject: inject_parts.join("\n\n"),
                                           gated: false, gate: nil, resume_at: nil, complete: false)
             end
@@ -134,7 +134,7 @@ module Legion
             next unless result.gate
 
             if conv_id
-              Legion::LLM::ConversationStore.set_skill_state(
+              Legion::LLM::Inference::Conversation.set_skill_state(
                 conv_id, skill_key: self_key, resume_at: step_idx + 1
               )
             end
@@ -176,7 +176,7 @@ module Legion
         end
 
         def handle_step_error(err, method_name, step_idx, conv_id, duration_ms, classification)
-          Legion::LLM::ConversationStore.clear_skill_state(conv_id) if conv_id
+          Legion::LLM::Inference::Conversation.clear_skill_state(conv_id) if conv_id
           emit_event(conv_id, 'skill.step.failed',
                      step_name: method_name, error: err.message)
           Legion::LLM::Audit.emit_skill(
@@ -218,7 +218,7 @@ module Legion
           chained_class = chain_next ? Legion::LLM::Skills::Registry.find(chain_next) : nil
           resolved_chain = chained_class ? chain_next : nil
 
-          Legion::LLM::ConversationStore.clear_skill_state(conv_id) if conv_id
+          Legion::LLM::Inference::Conversation.clear_skill_state(conv_id) if conv_id
           emit_event(conv_id, 'skill.completed',
                      skill_name: self.class.skill_name, namespace: self.class.namespace,
                      total_duration_ms: total_duration, chained_to: resolved_chain)

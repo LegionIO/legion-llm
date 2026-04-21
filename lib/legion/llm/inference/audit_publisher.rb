@@ -3,7 +3,7 @@
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module AuditPublisher
         extend Legion::Logging::Helper
 

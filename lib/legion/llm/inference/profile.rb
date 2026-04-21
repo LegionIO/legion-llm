@@ -2,7 +2,7 @@
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module Profile
         GAIA_SKIP = %i[
           idempotency conversation_uuid context_load rbac classification

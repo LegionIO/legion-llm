@@ -3,8 +3,9 @@
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module OverrideConfidence
-      extend Legion::Logging::Helper
+    module Tools
+      module Confidence
+        extend Legion::Logging::Helper
 
       OVERRIDE_THRESHOLD = 0.8
       SHADOW_THRESHOLD = 0.5
@@ -171,6 +172,7 @@ module Legion
           handle_exception(e, level: :debug)
           nil
         end
+      end
       end
     end
   end

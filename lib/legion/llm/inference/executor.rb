@@ -4,7 +4,7 @@ require 'concurrent'
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       class Executor
         include Legion::Logging::Helper
         include Steps::Rbac
@@ -204,10 +204,10 @@ module Legion
           conv_id = @request.conversation_id
           return unless conv_id
 
-          history = ConversationStore.messages(conv_id)
+          history = Conversation.messages(conv_id)
           return if history.empty?
 
-          curator = ContextCurator.new(conversation_id: conv_id)
+          curator = Context::Curator.new(conversation_id: conv_id)
           curated = curator.curated_messages
 
           history = if curated && !curated.empty?
@@ -237,16 +237,16 @@ module Legion
           target_tokens = conv_settings[:target_tokens] || 20_000
           preserve_recent = conv_settings[:preserve_recent] || 10
 
-          estimated = Compressor.estimate_tokens(history)
+          estimated = Context::Compressor.estimate_tokens(history)
           return history unless estimated >= threshold
 
-          compact = Compressor.auto_compact(
+          compact = Context::Compressor.auto_compact(
             history,
             target_tokens:   target_tokens,
             preserve_recent: preserve_recent
           )
 
-          ConversationStore.replace(conv_id, compact)
+          Conversation.replace(conv_id, compact)
 
           @timeline.record(
             category: :internal, key: 'context:compacted',
@@ -423,7 +423,7 @@ module Legion
               execute_provider_request
 
               duration_ms = ((Time.now - start_time) * 1000).round
-              result = QualityChecker.check(@raw_response, quality_threshold: threshold,
+              result = Quality::Checker.check(@raw_response, quality_threshold: threshold,
                                                            quality_check:     quality_check)
 
               @timeline.record(
@@ -530,13 +530,13 @@ module Legion
           opts = { system: injected_system }.compact
 
           begin
-            result = NativeDispatch.dispatch_chat(
+            result = Call::Dispatch.dispatch_chat(
               provider: @resolved_provider,
               model:    @resolved_model,
               messages: messages,
               **opts
             )
-            @raw_response = NativeResponseAdapter.new(result)
+            @raw_response = Call::NativeResponseAdapter.new(result)
           rescue Legion::LLM::ProviderError => e
             layer_settings = Legion::LLM.settings[:provider_layer] || {}
             raise unless layer_settings.fetch(:fallback_to_ruby_llm, true)
@@ -553,7 +553,7 @@ module Legion
         end
 
         def use_native_dispatch?(provider)
-          return false unless defined?(NativeDispatch)
+          return false unless defined?(Call::Dispatch)
 
           layer_settings = Legion::LLM.settings[:provider_layer] || {}
           mode = layer_settings.fetch(:mode, 'ruby_llm').to_s
@@ -562,7 +562,7 @@ module Legion
           when 'native'
             true
           when 'auto'
-            NativeDispatch.available?(provider)
+            Call::Dispatch.available?(provider)
           else
             false
           end
@@ -990,14 +990,14 @@ module Legion
           return unless conv_id
 
           @request.messages.each do |msg|
-            ConversationStore.append(conv_id,
+            Conversation.append(conv_id,
                                      role:    msg[:role]&.to_sym || :user,
                                      content: msg[:content])
           end
 
           assistant_response = nil
           if @raw_response.respond_to?(:content) && @raw_response.content
-            ConversationStore.append(conv_id,
+            Conversation.append(conv_id,
                                      role:          :assistant,
                                      content:       @raw_response.content,
                                      provider:      @resolved_provider,
@@ -1017,7 +1017,7 @@ module Legion
         end
 
         def trigger_async_curation(conv_id, turn_messages, assistant_response)
-          ContextCurator.new(conversation_id: conv_id)
+          Context::Curator.new(conversation_id: conv_id)
                         .curate_turn(turn_messages:      turn_messages,
                                      assistant_response: assistant_response)
         rescue StandardError => e
@@ -1111,7 +1111,7 @@ module Legion
           output = tokens.respond_to?(:output_tokens) ? tokens.output_tokens : tokens[:output].to_i
           return {} unless @resolved_model && (input + output).positive?
 
-          estimated = CostEstimator.estimate(
+          estimated = Metering::Pricing.estimate(
             model_id:      @resolved_model,
             input_tokens:  input,
             output_tokens: output

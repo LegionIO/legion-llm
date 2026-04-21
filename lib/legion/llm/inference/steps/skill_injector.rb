@@ -4,7 +4,7 @@ require 'legion/logging/helper'
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module Steps
         module SkillInjector
           include Legion::Logging::Helper
@@ -15,7 +15,7 @@ module Legion
             conv_id = @request.conversation_id
             return unless conv_id
 
-            if (state = ConversationStore.skill_state(conv_id))
+            if (state = Inference::Conversation.skill_state(conv_id))
               resume_active_skill(conv_id, state)
               return
             end
@@ -46,7 +46,7 @@ module Legion
           def resume_active_skill(conv_id, state)
             skill_class = Legion::LLM::Skills::Registry.find(state[:skill_key])
             unless skill_class
-              ConversationStore.clear_skill_state(conv_id)
+              Inference::Conversation.clear_skill_state(conv_id)
               return
             end
 
@@ -147,7 +147,7 @@ module Legion
 
           def at_max_active_skills?(conv_id)
             max    = Legion::LLM.settings.dig(:skills, :max_active_skills) || 1
-            active = ConversationStore.skill_state(conv_id) ? 1 : 0
+            active = Inference::Conversation.skill_state(conv_id) ? 1 : 0
             active >= max
           end
 

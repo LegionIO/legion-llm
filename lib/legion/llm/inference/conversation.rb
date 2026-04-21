@@ -5,8 +5,9 @@ require 'securerandom'
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module ConversationStore
-      extend Legion::Logging::Helper
+    module Inference
+      module Conversation
+        extend Legion::Logging::Helper
 
       MAX_CONVERSATIONS = 256
       METADATA_ROLE = :__metadata__
@@ -542,6 +543,7 @@ module Legion
         def spool_root
           @spool_root ||= File.expand_path('~/.legionio/data/spool/llm')
         end
+      end
       end
     end
   end

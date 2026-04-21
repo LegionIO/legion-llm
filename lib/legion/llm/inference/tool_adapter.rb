@@ -5,7 +5,7 @@ require_relative '../tools/adapter'
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       ToolAdapter = Tools::Adapter
       McpToolAdapter = Tools::Adapter
     end

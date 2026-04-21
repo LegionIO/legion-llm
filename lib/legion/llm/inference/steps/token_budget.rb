@@ -3,7 +3,7 @@
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module Steps
         module TokenBudget
           include Legion::Logging::Helper
@@ -30,10 +30,10 @@ module Legion
           end
 
           def check_session_budget
-            return unless TokenTracker.session_exceeded?
+            return unless Metering::Tokens.session_exceeded?
 
-            limit = TokenTracker.summary[:session_max_tokens]
-            total = TokenTracker.total_tokens
+            limit = Metering::Tokens.summary[:session_max_tokens]
+            total = Metering::Tokens.total_tokens
             raise Legion::LLM::TokenBudgetExceeded,
                   "session token budget exceeded: #{total} >= #{limit}"
           end

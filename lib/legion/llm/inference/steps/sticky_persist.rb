@@ -4,7 +4,7 @@ require 'legion/logging/helper'
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module Steps
         module StickyPersist
           include Legion::Logging::Helper
@@ -20,7 +20,7 @@ module Legion
             return unless sticky_enabled? && @request.conversation_id
 
             conv_id        = @request.conversation_id
-            state          = ConversationStore.read_sticky_state(conv_id).dup
+            state          = Inference::Conversation.read_sticky_state(conv_id).dup
             runners        = (state[:sticky_runners] || {}).dup
             deferred_count = state[:deferred_tool_calls] || 0
 
@@ -99,7 +99,7 @@ module Legion
               state[:tool_call_history] = history.last(max_history_entries)
             end
 
-            ConversationStore.write_sticky_state(conv_id, state)
+            Inference::Conversation.write_sticky_state(conv_id, state)
           rescue StandardError => e
             @warnings << "sticky_persist error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.step_sticky_persist')

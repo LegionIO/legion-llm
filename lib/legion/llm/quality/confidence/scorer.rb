@@ -4,7 +4,7 @@ require 'legion/logging/helper'
 
 module Legion
   module LLM
-    # Computes a ConfidenceScore for an LLM response using available signals.
+    # Computes a Score for an LLM response using available signals.
     #
     # Strategy selection (in priority order):
     #   1. logprobs  — native model confidence from token log-probabilities (when available)
@@ -14,8 +14,10 @@ module Legion
     # Band boundaries are read from Legion::Settings[:llm][:confidence][:bands] when
     # Legion::Settings is available, otherwise the DEFAULT_BANDS constants are used.
     # Per-call overrides can be passed as options[:confidence_bands].
-    module ConfidenceScorer
-      extend Legion::Logging::Helper
+    module Quality
+      module Confidence
+        module Scorer
+          extend Legion::Logging::Helper
 
       # Default band boundaries. Keys are the *lower* boundary of that band name:
       #   score <  :low       -> :very_low
@@ -52,7 +54,7 @@ module Legion
       ].freeze
 
       class << self
-        # Compute a ConfidenceScore for the given raw_response.
+        # Compute a Score for the given raw_response.
         #
         # raw_response - the RubyLLM response object (must respond to #content)
         # options      - Hash:
@@ -61,12 +63,12 @@ module Legion
         #   :json_expected     - Boolean whether JSON output was expected
         #   :quality_result    - QualityResult from QualityChecker (optional, avoids re-running checks)
         #
-        # Returns a ConfidenceScore.
+        # Returns a Score.
         def score(raw_response, **options)
           bands = resolve_bands(options[:confidence_bands])
 
           if (caller_score = options[:confidence_score])
-            return ConfidenceScore.build(
+            return Score.build(
               score:   caller_score.to_f,
               bands:   bands,
               source:  :caller_provided,
@@ -75,7 +77,7 @@ module Legion
           end
 
           if (lp = extract_logprobs(raw_response))
-            return ConfidenceScore.build(
+            return Score.build(
               score:   lp,
               bands:   bands,
               source:  :logprobs,
@@ -177,14 +179,14 @@ module Legion
           end
 
           raw_score = [1.0 - penalty.clamp(0.0, 1.0), 0.0].max
-          ConfidenceScore.build(score: raw_score, bands: bands, source: :heuristic, signals: signals)
+          Score.build(score: raw_score, bands: bands, source: :heuristic, signals: signals)
         end
 
         def detect_failures(content, options)
           return [] if content.strip.empty?
 
           failures = []
-          threshold = options.fetch(:quality_threshold, QualityChecker::DEFAULT_QUALITY_THRESHOLD)
+          threshold = options.fetch(:quality_threshold, Quality::Checker::DEFAULT_QUALITY_THRESHOLD)
           failures << :too_short if content.length < threshold
           failures << :truncated if truncated?(content)
           failures << :refusal   if refusal?(content)
@@ -203,18 +205,18 @@ module Legion
 
         def refusal?(content)
           first_line = content.lines.first.to_s
-          QualityChecker::REFUSAL_PATTERNS.any? { |pat| first_line.match?(pat) }
+          Quality::Checker::REFUSAL_PATTERNS.any? { |pat| first_line.match?(pat) }
         end
 
         def repetitive?(content)
-          return false if content.length < QualityChecker::REPETITION_MIN_LENGTH * QualityChecker::REPETITION_THRESHOLD
+          return false if content.length < Quality::Checker::REPETITION_MIN_LENGTH * Quality::Checker::REPETITION_THRESHOLD
 
           seen = {}
-          step = QualityChecker::REPETITION_MIN_LENGTH
+          step = Quality::Checker::REPETITION_MIN_LENGTH
           (0..(content.length - step)).step(step) do |i|
             chunk = content[i, step]
             seen[chunk] = (seen[chunk] || 0) + 1
-            return true if seen[chunk] >= QualityChecker::REPETITION_THRESHOLD
+            return true if seen[chunk] >= Quality::Checker::REPETITION_THRESHOLD
           end
           false
         end
@@ -228,6 +230,8 @@ module Legion
 
         def count_hedges(content)
           HEDGING_PATTERNS.sum { |pat| content.scan(pat).size }
+        end
+      end
         end
       end
     end

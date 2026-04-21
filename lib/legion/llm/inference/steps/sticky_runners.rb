@@ -4,7 +4,7 @@ require 'legion/logging/helper'
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module Steps
         module StickyRunners
           include Legion::Logging::Helper
@@ -16,13 +16,13 @@ module Legion
             conv_id = @request.conversation_id
 
             # MUST be first — before any modification to @triggered_tools
-            @sticky_turn_snapshot = ConversationStore.messages(conv_id)
+            @sticky_turn_snapshot = Inference::Conversation.messages(conv_id)
                                                      .count { |m| (m[:role] || m['role']).to_s == 'user' }
 
             # MUST be second — captures trigger_match results before sticky re-injection
             @freshly_triggered_keys = @triggered_tools.map { |t| "#{t.extension}_#{t.runner}" }.uniq
 
-            state          = ConversationStore.read_sticky_state(conv_id)
+            state          = Inference::Conversation.read_sticky_state(conv_id)
             runners        = state[:sticky_runners] || {}
             deferred_count = state[:deferred_tool_calls] || 0
 

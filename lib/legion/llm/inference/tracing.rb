@@ -2,7 +2,7 @@
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module Tracing
         module_function
 

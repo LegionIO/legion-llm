@@ -2,7 +2,8 @@
 
 module Legion
   module LLM
-    module Prompt
+    module Inference
+      module Prompt
       module_function
 
       # Auto-routed: Router picks the best provider+model based on intent.
@@ -92,7 +93,7 @@ module Legion
                    quality_check: quality_check, **
         )
 
-        executor = Pipeline::Executor.new(pipeline_request)
+        executor = Inference::Executor.new(pipeline_request)
         executor.call
       end
 
@@ -125,7 +126,7 @@ module Legion
         chat_message = message.is_a?(Array) ? nil : message.to_s
         chat_messages = message.is_a?(Array) ? message : nil
 
-        base = Pipeline::Request.from_chat_args(
+        base = Inference::Request.from_chat_args(
           message:         chat_message,
           messages:        chat_messages,
           model:           model,
@@ -159,7 +160,7 @@ module Legion
                             { type: :text }
                           end
 
-        Pipeline::Request.build(
+        Inference::Request.build(
           messages:         base.messages,
           system:           base.system,
           routing:          base.routing || { provider: provider, model: model },
@@ -215,6 +216,7 @@ module Legion
 
       private_class_method :build_pipeline_request,
                            :build_summarize_prompt, :build_extract_prompt, :build_decide_prompt
+      end
     end
   end
 end

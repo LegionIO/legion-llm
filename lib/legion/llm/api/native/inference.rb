@@ -434,7 +434,7 @@ module Legion
 
           if cache_available? && env['HTTP_X_LEGION_SYNC'] != 'true'
             llm = Legion::LLM
-            rc  = Legion::LLM::ResponseCache
+            rc  = Legion::LLM::Cache::Response
             rc.init_request(request_id)
 
             Thread.new do
@@ -460,7 +460,7 @@ module Legion
           else
             result = Legion::LLM.chat(message: message, model: model, provider: provider,
                                       caller: { source: 'api', path: request.path })
-            if result.is_a?(Legion::LLM::Pipeline::Response)
+            if result.is_a?(Legion::LLM::Inference::Response)
               raw_msg  = result.message
               content  = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s
               routing  = result.routing || {}
@@ -575,10 +575,10 @@ module Legion
             "requested_provider=#{provider || 'auto'} requested_model=#{model || 'auto'} stream=#{streaming}"
           )
 
-          require 'legion/llm/inference/request' unless defined?(Legion::LLM::Pipeline::Request)
-          require 'legion/llm/inference/executor' unless defined?(Legion::LLM::Pipeline::Executor)
+          require 'legion/llm/inference/request' unless defined?(Legion::LLM::Inference::Request)
+          require 'legion/llm/inference/executor' unless defined?(Legion::LLM::Inference::Executor)
 
-          pipeline_request = Legion::LLM::Pipeline::Request.build(
+          pipeline_request = Legion::LLM::Inference::Request.build(
             id:              request_id,
             messages:        messages,
             system:          body[:system],
@@ -594,7 +594,7 @@ module Legion
           setup_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - route_t0) * 1000).round
           log.warn("[inference][timing] pre_pipeline_setup=#{setup_ms}ms request_id=#{request_id}")
 
-          executor = Legion::LLM::Pipeline::Executor.new(pipeline_request)
+          executor = Legion::LLM::Inference::Executor.new(pipeline_request)
 
           if streaming
             content_type 'text/event-stream'

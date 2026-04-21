@@ -19,8 +19,8 @@ module Legion
       module_function
 
       def emit_prompt(event)
-        if transport_connected? && defined?(Legion::LLM::Audit::PromptEvent)
-          Legion::LLM::Audit::PromptEvent.new(**event).publish
+        if transport_connected? && defined?(Legion::LLM::Transport::Messages::PromptEvent)
+          Legion::LLM::Transport::Messages::PromptEvent.new(**event).publish
           log.info('[llm][audit] published prompt audit')
           :published
         else
@@ -33,8 +33,8 @@ module Legion
       end
 
       def emit_tools(event)
-        if transport_connected? && defined?(Legion::LLM::Audit::ToolEvent)
-          Legion::LLM::Audit::ToolEvent.new(**event).publish
+        if transport_connected? && defined?(Legion::LLM::Transport::Messages::ToolEvent)
+          Legion::LLM::Transport::Messages::ToolEvent.new(**event).publish
           log.info('[llm][audit] published tool audit')
           :published
         else
@@ -47,8 +47,8 @@ module Legion
       end
 
       def emit_skill(**event)
-        if transport_connected? && defined?(Legion::LLM::Audit::SkillEvent)
-          Legion::LLM::Audit::SkillEvent.new(**event).publish
+        if transport_connected? && defined?(Legion::LLM::Transport::Messages::SkillEvent)
+          Legion::LLM::Transport::Messages::SkillEvent.new(**event).publish
           log.info('[llm][audit] published skill audit')
           :published
         else

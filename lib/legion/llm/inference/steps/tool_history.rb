@@ -4,7 +4,7 @@ require 'legion/logging/helper'
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module Steps
         module ToolHistory
           include Legion::Logging::Helper
@@ -13,7 +13,7 @@ module Legion
           def step_tool_history_inject
             return unless sticky_enabled? && @request.conversation_id
 
-            state   = ConversationStore.read_sticky_state(@request.conversation_id)
+            state   = Inference::Conversation.read_sticky_state(@request.conversation_id)
             history = state[:tool_call_history] || []
             return if history.empty?
 

@@ -63,17 +63,17 @@ module Legion
     class PrivacyModeError < StandardError; end
 
     class << self
-      include Legion::LLM::Providers
+      include Legion::LLM::Call::Providers
       include Legion::Logging::Helper
 
       def start
         log.debug 'Legion::LLM is running start'
 
         require 'legion/llm/call/claude_config_loader'
-        ClaudeConfigLoader.load
+        Call::ClaudeConfigLoader.load
 
         require 'legion/llm/call/codex_config_loader'
-        CodexConfigLoader.load
+        Call::CodexConfigLoader.load
 
         resolve_llm_secrets
         configure_providers
@@ -102,7 +102,7 @@ module Legion
         @embedding_provider = nil
         @embedding_model = nil
         @embedding_fallback_chain = nil
-        ProviderRegistry.reset!
+        Call::Registry.reset!
         log.info 'Legion::LLM shut down'
       end
 
@@ -120,7 +120,7 @@ module Legion
         if Legion.const_defined?('Settings', false)
           Legion::Settings[:llm]
         else
-          Legion::LLM::Settings.default
+          Legion::LLM::Config::Settings.default
         end
       end
 
@@ -185,7 +185,7 @@ module Legion
           kwargs:             { context: context, identity: identity }
         )
 
-        if DaemonClient.available?
+        if Call::DaemonClient.available?
           result = daemon_ask(message: message, model: model, provider: provider,
                               context: context, tier: tier, identity: identity)
           if result
@@ -285,14 +285,14 @@ module Legion
 
       # Direct embed bypassing gateway
       def embed_direct(text, **)
-        Embeddings.generate(text: text, **)
+        Call::Embeddings.generate(text: text, **)
       end
 
       # Batch embed multiple texts
       # @param texts [Array<String>] texts to embed
       # @return [Array<Hash>]
       def embed_batch(texts, **)
-        Embeddings.generate_batch(texts: texts, **)
+        Call::Embeddings.generate_batch(texts: texts, **)
       end
 
       # Generate structured JSON output
@@ -309,7 +309,7 @@ module Legion
       # Direct structured bypassing gateway
       def structured_direct(messages:, schema:, **)
         require 'legion/llm/call/structured_output'
-        StructuredOutput.generate(messages: messages, schema: schema, **)
+        Call::StructuredOutput.generate(messages: messages, schema: schema, **)
       end
 
       # Create a configured agent instance
@@ -413,7 +413,7 @@ module Legion
       end
 
       def inference_response_details(result, requested_model:, requested_provider:)
-        if result.is_a?(Legion::LLM::Pipeline::Response)
+        if result.is_a?(Legion::LLM::Inference::Response)
           return pipeline_response_details(result, requested_model: requested_model, requested_provider: requested_provider)
         end
         return hash_response_details(result, requested_model: requested_model, requested_provider: requested_provider) if result.is_a?(Hash)
@@ -493,20 +493,20 @@ module Legion
 
       def auto_register_providers
         try_register_native_provider(:claude, 'Legion::Extensions::Claude', 'Legion::Extensions::Claude::Runners::Messages') do |klass|
-          ProviderRegistry.register(:claude, klass)
-          ProviderRegistry.register(:anthropic, klass)
+          Call::Registry.register(:claude, klass)
+          Call::Registry.register(:anthropic, klass)
         end
         try_register_native_provider(:bedrock, 'Legion::Extensions::Bedrock', 'Legion::Extensions::Bedrock::Runners::Converse') do |klass|
-          ProviderRegistry.register(:bedrock, klass)
+          Call::Registry.register(:bedrock, klass)
         end
         try_register_native_provider(:openai, 'Legion::Extensions::Openai', 'Legion::Extensions::Openai::Runners::Chat') do |klass|
-          ProviderRegistry.register(:openai, klass)
+          Call::Registry.register(:openai, klass)
         end
         try_register_native_provider(:gemini, 'Legion::Extensions::Gemini', 'Legion::Extensions::Gemini::Runners::Generate') do |klass|
-          ProviderRegistry.register(:gemini, klass)
+          Call::Registry.register(:gemini, klass)
         end
 
-        registered = ProviderRegistry.available
+        registered = Call::Registry.available
         if registered.any?
           log.info "Native provider registry: #{registered.join(', ')}"
         else
@@ -540,8 +540,8 @@ module Legion
       end
 
       def chat_via_pipeline(**, &block)
-        request = Pipeline::Request.from_chat_args(**)
-        executor = Pipeline::Executor.new(request)
+        request = Inference::Request.from_chat_args(**)
+        executor = Inference::Executor.new(request)
         block ? executor.call_stream(&block) : executor.call
       end
 
@@ -595,7 +595,7 @@ module Legion
       end
 
       def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
-        result = DaemonClient.chat(
+        result = Call::DaemonClient.chat(
           message: message, model: model, provider: provider,
           context: context, tier_preference: tier || :auto
         )
@@ -604,7 +604,7 @@ module Legion
         when :immediate, :created
           result[:body]
         when :accepted
-          ResponseCache.poll(result[:request_id])
+          Cache::Response.poll(result[:request_id])
         when :denied
           raise DaemonDeniedError, result.dig(:error, :message) || 'Access denied'
         when :rate_limited
@@ -709,7 +709,7 @@ module Legion
         response = block ? session.ask(message, &block) : session.ask(message)
         log.debug "[LLM] chat_single response_class=#{response.class} response_nil=#{response.nil?}"
 
-        if response && !block && defined?(Legion::LLM::ShadowEval) && Legion::LLM::ShadowEval.enabled?
+        if response && !block && defined?(Legion::LLM::Quality::Quality::ShadowEval) && Legion::LLM::Quality::Quality::ShadowEval.enabled?
           msgs = session.respond_to?(:messages) ? session.messages : nil
           maybe_shadow_evaluate(response, msgs, opts[:model])
         end
@@ -725,7 +725,7 @@ module Legion
                        end
 
         tool_classes.map do |tool_class|
-          Pipeline::ToolAdapter.new(tool_class)
+          Inference::ToolAdapter.new(tool_class)
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.adapted_registry_tools', tool_class: tool_class.to_s)
           nil
@@ -744,10 +744,10 @@ module Legion
       end
 
       def maybe_shadow_evaluate(response, messages, primary_model)
-        return unless ShadowEval.enabled? && ShadowEval.should_sample?
+        return unless Quality::ShadowEval.enabled? && Quality::ShadowEval.should_sample?
 
         Thread.new do
-          ShadowEval.evaluate(
+          Quality::ShadowEval.evaluate(
             primary_response: { content: response.respond_to?(:content) ? response.content : response.to_s,
                                 model: primary_model, usage: {} },
             messages:         messages
@@ -775,7 +775,7 @@ module Legion
             response = chat_obj.ask(message)
 
             duration_ms = ((Time.now - start_time) * 1000).round
-            result = QualityChecker.check(response, quality_threshold: threshold, quality_check: quality_check)
+            result = Quality::Checker.check(response, quality_threshold: threshold, quality_check: quality_check)
 
             if result.passed
               report_health(:success, resolution, duration_ms)

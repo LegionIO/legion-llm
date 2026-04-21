@@ -4,7 +4,7 @@ require 'legion/logging/helper'
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module Steps
         module PromptCache
           extend self

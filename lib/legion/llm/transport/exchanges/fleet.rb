@@ -2,10 +2,12 @@
 
 module Legion
   module LLM
-    module Fleet
-      class Exchange < ::Legion::Transport::Exchange
-        def exchange_name = 'llm.request'
-        def default_type  = 'topic'
+    module Transport
+      module Exchanges
+        class Fleet < ::Legion::Transport::Exchange
+          def exchange_name = 'llm.request'
+          def default_type  = 'topic'
+        end
       end
     end
   end

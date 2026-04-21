@@ -4,7 +4,7 @@ require 'legion/logging/helper'
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       module Steps
         module ConfidenceScoring
           include Legion::Logging::Helper
@@ -19,7 +19,7 @@ module Legion
               confidence_bands:  @request.extra&.dig(:confidence_bands)
             }.compact
 
-            @confidence_score = ConfidenceScorer.score(@raw_response, **opts)
+            @confidence_score = Quality::Confidence::Scorer.score(@raw_response, **opts)
 
             @timeline.record(
               category: :internal, key: 'confidence:scored',

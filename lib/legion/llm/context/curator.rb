@@ -3,8 +3,9 @@
 require 'legion/logging/helper'
 module Legion
   module LLM
-    class ContextCurator
-      include Legion::Logging::Helper
+    module Context
+      class Curator
+        include Legion::Logging::Helper
 
       CURATED_KEY = :__curated__
 
@@ -106,7 +107,7 @@ module Legion
         return messages unless setting(:dedup_enabled, true)
 
         threshold ||= setting(:dedup_threshold, 0.85)
-        result = Compressor.deduplicate_messages(messages, threshold: threshold)
+        result = Context::Compressor.deduplicate_messages(messages, threshold: threshold)
         result[:messages]
       end
 
@@ -169,7 +170,7 @@ module Legion
         curated_messages.each do |msg|
           next unless msg[:curated]
 
-          ConversationStore.append(
+          Inference::Conversation.append(
             conversation_id,
             role:             CURATED_KEY,
             content:          msg[:content],
@@ -182,9 +183,9 @@ module Legion
       end
 
       def load_curated(conversation_id)
-        return nil unless ConversationStore.conversation_exists?(conversation_id)
+        return nil unless Inference::Conversation.conversation_exists?(conversation_id)
 
-        raw = ConversationStore.messages(conversation_id)
+        raw = Inference::Conversation.messages(conversation_id)
         curated = raw.select { |m| m[:role] == CURATED_KEY }
         return nil if curated.empty?
 
@@ -307,6 +308,7 @@ module Legion
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.context_curator.detect_small_model')
         nil
+      end
       end
     end
   end

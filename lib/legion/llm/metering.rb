@@ -21,8 +21,8 @@ module Legion
       module_function
 
       def emit(event)
-        if transport_connected? && defined?(Legion::LLM::Metering::Event)
-          Legion::LLM::Metering::Event.new(**event).publish
+        if transport_connected? && defined?(Legion::LLM::Transport::Messages::MeteringEvent)
+          Legion::LLM::Transport::Messages::MeteringEvent.new(**event).publish
           log.info("[llm][metering] published provider=#{event[:provider]} model=#{event[:model_id]}")
           :published
         elsif spool_available?

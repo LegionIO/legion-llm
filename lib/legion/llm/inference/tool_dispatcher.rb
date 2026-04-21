@@ -5,7 +5,7 @@ require_relative '../tools/dispatcher'
 
 module Legion
   module LLM
-    module Pipeline
+    module Inference
       ToolDispatcher = Tools::Dispatcher
     end
   end

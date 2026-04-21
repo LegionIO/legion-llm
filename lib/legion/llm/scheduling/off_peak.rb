@@ -5,10 +5,11 @@ require_relative '../scheduling'
 
 module Legion
   module LLM
-    # Simplified peak-hour interface delegating to Scheduling.
-    # Preserved for backward compatibility.
-    module OffPeak
-      extend Legion::Logging::Helper
+    module Scheduling
+      # Simplified peak-hour interface delegating to Scheduling.
+      # Preserved for backward compatibility.
+      module OffPeak
+        extend Legion::Logging::Helper
 
       class << self
         def peak_hour?(time = Time.now.utc)
@@ -29,6 +30,7 @@ module Legion
           log.debug("[llm][off_peak] next_off_peak time=#{time.utc.iso8601} next=#{next_window&.utc&.iso8601}")
           next_window
         end
+      end
       end
     end
   end

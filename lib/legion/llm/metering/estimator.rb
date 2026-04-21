@@ -2,7 +2,8 @@
 
 module Legion
   module LLM
-    module CostEstimator
+    module Metering
+      module Pricing
       # Prices per 1M tokens [input, output] in USD
       # Source: published API pricing as of 2026-03
       PRICING = {
@@ -45,6 +46,7 @@ module Legion
           return price if normalized.include?(key) || key.include?(normalized)
         end
         nil
+      end
       end
     end
   end

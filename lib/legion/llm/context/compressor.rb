@@ -3,8 +3,9 @@
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module Compressor
-      extend Legion::Logging::Helper
+    module Context
+      module Compressor
+        extend Legion::Logging::Helper
 
       NONE       = 0
       LIGHT      = 1
@@ -197,6 +198,7 @@ module Legion
           union = (words_a | words_b).size.to_f
           union.zero? ? 0.0 : intersection / union
         end
+      end
       end
     end
   end

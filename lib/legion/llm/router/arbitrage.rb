@@ -3,8 +3,9 @@
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module Arbitrage
-      extend Legion::Logging::Helper
+    module Router
+      module Arbitrage
+        extend Legion::Logging::Helper
 
       # Default cost table: per-1M-token input/output prices in USD.
       # Overridable via settings: llm.arbitrage.cost_table
@@ -102,13 +103,14 @@ module Legion
             cap == :reasoning && disqualified_for_reasoning.include?(model)
           end
 
-          return models unless defined?(Legion::LLM::QualityChecker) && QualityChecker.respond_to?(:model_score)
+          return models unless defined?(Legion::LLM::Quality::Checker) && Quality::Checker.respond_to?(:model_score)
 
           models.select do |model|
-            score = QualityChecker.model_score(model)
+            score = Quality::Checker.model_score(model)
             score.nil? || score >= quality_floor
           end
         end
+      end
       end
     end
   end

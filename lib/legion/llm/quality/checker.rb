@@ -5,8 +5,9 @@ require 'json'
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module QualityChecker
-      extend Legion::Logging::Helper
+    module Quality
+      module Checker
+        extend Legion::Logging::Helper
 
       QualityResult = Struct.new(:passed, :failures)
 
@@ -77,6 +78,7 @@ module Legion
           handle_exception(e, level: :debug)
           false
         end
+      end
       end
     end
   end

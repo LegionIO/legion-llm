@@ -5,8 +5,9 @@ require 'securerandom'
 require 'legion/logging/helper'
 module Legion
   module LLM
-    module Batch
-      extend Legion::Logging::Helper
+    module Scheduling
+      module Batch
+        extend Legion::Logging::Helper
 
       @mutex = Mutex.new
       @flush_timer = nil
@@ -172,6 +173,7 @@ module Legion
             meta:     { batched: true, queued_at: entry[:queued_at], failed_at: Time.now.utc }
           }
         end
+      end
       end
     end
   end

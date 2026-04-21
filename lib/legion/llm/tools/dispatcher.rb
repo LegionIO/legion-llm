@@ -68,7 +68,7 @@ module Legion
 
         def check_catalog_override(tool_name)
           return nil unless defined?(Legion::Extensions::Catalog::Registry)
-          return nil unless Legion::LLM::OverrideConfidence.should_override?(tool_name)
+          return nil unless Legion::LLM::Tools::Confidence.should_override?(tool_name)
 
           cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
           return nil unless cap
@@ -106,7 +106,7 @@ module Legion
 
         def run_shadow(tool_call, _source, mcp_result)
           tool_name = tool_call[:name]
-          return unless Legion::LLM::OverrideConfidence.should_shadow?(tool_name)
+          return unless Legion::LLM::Tools::Confidence.should_shadow?(tool_name)
           return unless defined?(Legion::Extensions::Catalog::Registry)
 
           cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
@@ -116,12 +116,12 @@ module Legion
           shadow_result = dispatch_extension(tool_call, shadow_source)
 
           if shadow_result[:status] == :success && mcp_result[:status] == :success
-            Legion::LLM::OverrideConfidence.record_success(tool_name)
+            Legion::LLM::Tools::Confidence.record_success(tool_name)
           else
-            Legion::LLM::OverrideConfidence.record_failure(tool_name)
+            Legion::LLM::Tools::Confidence.record_failure(tool_name)
           end
         rescue StandardError => e
-          Legion::LLM::OverrideConfidence.record_failure(tool_name) if tool_name
+          Legion::LLM::Tools::Confidence.record_failure(tool_name) if tool_name
           handle_exception(e, level: :debug, operation: 'llm.tools.dispatcher.shadow_execution', tool_name: tool_name)
         end
       end
