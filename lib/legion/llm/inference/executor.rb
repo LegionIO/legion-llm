@@ -569,12 +569,14 @@ module Legion
         end
 
         def record_provider_response
+          duration_ms = ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).to_i
+          log.debug("[pipeline][provider] action=response_received provider=#{@resolved_provider} model=#{@resolved_model} duration_ms=#{duration_ms}")
           @timeline.record(
             category: :provider, key: 'provider:response_received',
             exchange_id: @exchange_id, direction: :inbound,
             detail: 'response received',
             from: "provider:#{@resolved_provider}", to: 'pipeline',
-            duration_ms: ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).to_i
+            duration_ms: duration_ms
           )
         end
 
@@ -787,6 +789,12 @@ module Legion
           tc_args = tool_call_field(tool_call, :arguments)
           started_at = Time.now
 
+          typed_call = Types::ToolCall.build(
+            id: tc_id, name: tc_name, arguments: tc_args,
+            exchange_id: @exchange_id, started_at: started_at
+          )
+
+          log.debug("[pipeline][tool-call] action=emit round=#{round} id=#{tc_id} tool=#{tc_name}")
           log.info("[pipeline][tool-call] round=#{round} id=#{tc_id} tool=#{tc_name}")
 
           @pending_tool_history_mutex.synchronize do
@@ -798,13 +806,12 @@ module Legion
               args:          tc_args,
               result:        nil,
               error:         false,
-              runner_key:    nil
+              runner_key:    nil,
+              typed_call:    typed_call
             }
             Thread.current[:legion_current_tool_history_index] = pending_index
           end
 
-          # Store start time per-tool-call-id so emit_tool_result_event can calculate
-          # accurate wall-clock duration even when tools run in parallel threads.
           Thread.current[:legion_current_tool_call_id] = tc_id
           Thread.current[:legion_current_tool_name] = tc_name
           Thread.current[:legion_current_tool_started_at] = started_at
@@ -816,32 +823,39 @@ module Legion
         end
 
         def emit_tool_result_event(tool_result)
-          # tool_result may be a raw value (String/Hash) or a ToolResultWrapper
-          # from our parallel patch — extract the fields defensively.
           tc_id      = tool_result.respond_to?(:tool_call_id) ? tool_result.tool_call_id : Thread.current[:legion_current_tool_call_id]
           tc_name    = tool_result.respond_to?(:tool_name)    ? tool_result.tool_name    : Thread.current[:legion_current_tool_name]
           started_at = tool_result.respond_to?(:started_at)   ? tool_result.started_at   : Thread.current[:legion_current_tool_started_at]
           finished_at = Time.now
           raw = tool_result.respond_to?(:result) ? tool_result.result : tool_result
+          duration_ms = started_at ? ((finished_at - started_at) * 1000).round : nil
+
+          result_str = (raw.is_a?(String) ? raw : raw.to_s)
+          is_error = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
 
           @pending_tool_history_mutex.synchronize do
             entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id && e[:result].nil? }
             entry ||= @pending_tool_history[Thread.current[:legion_current_tool_history_index]]
             if entry
-              entry[:result] = raw.is_a?(String) ? raw : raw.to_s
-              entry[:error]  = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
+              entry[:result] = result_str.is_a?(String) ? result_str : result_str.to_s
+              entry[:error]  = is_error
+              if entry[:typed_call]
+                entry[:typed_call] = entry[:typed_call].with_result(
+                  result: result_str[0, 4096],
+                  status: is_error ? :error : :success,
+                  duration_ms: duration_ms,
+                  finished_at: finished_at
+                )
+              end
             end
           end
 
-          duration_ms = started_at ? ((finished_at - started_at) * 1000).round : nil
-
+          log.debug("[pipeline][tool-result] action=emit id=#{tc_id} tool=#{tc_name} status=#{is_error ? :error : :success} duration_ms=#{duration_ms}")
           log.info("[pipeline][tool-result] id=#{tc_id} tool=#{tc_name} duration_ms=#{duration_ms}")
-
-          result_str = (raw.is_a?(String) ? raw : raw.to_s)[0, 4096]
 
           @tool_event_handler&.call(
             type: :tool_result, tool_call_id: tc_id, tool_name: tc_name,
-            result: result_str, result_size: (raw.is_a?(String) ? raw : raw.to_s).bytesize,
+            result: result_str[0, 4096], result_size: result_str.bytesize,
             started_at: started_at, finished_at: finished_at, duration_ms: duration_ms
           )
         end
@@ -963,14 +977,16 @@ module Legion
         end
 
         def step_metering
-          input_tokens  = @raw_response.respond_to?(:input_tokens)  ? @raw_response.input_tokens.to_i  : 0
-          output_tokens = @raw_response.respond_to?(:output_tokens) ? @raw_response.output_tokens.to_i : 0
+          @extracted_tokens ||= extract_tokens
+          input_tokens  = @extracted_tokens.respond_to?(:input_tokens)  ? @extracted_tokens.input_tokens.to_i  : 0
+          output_tokens = @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens.to_i : 0
           tier = @audit.dig(:'routing:provider_selection', :data, :tier)
           latency_ms = if @timestamps[:provider_start] && @timestamps[:provider_end]
                          ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).round
                        else
                          0
                        end
+          log.debug("[pipeline][metering] action=build provider=#{@resolved_provider} model=#{@resolved_model} input=#{input_tokens} output=#{output_tokens}")
           event = Steps::Metering.build_event(
             provider:      @resolved_provider,
             model_id:      @resolved_model,
@@ -989,21 +1005,40 @@ module Legion
           conv_id = @request.conversation_id
           return unless conv_id
 
+          log.debug("[pipeline][context_store] action=store conversation_id=#{conv_id} message_count=#{@request.messages.size}")
+
           @request.messages.each do |msg|
+            typed_msg = Types::Message.build(
+              role:            msg[:role]&.to_sym || :user,
+              content:         msg[:content],
+              conversation_id: conv_id,
+              task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil
+            )
             Conversation.append(conv_id,
-                                     role:    msg[:role]&.to_sym || :user,
-                                     content: msg[:content])
+                                     role:    typed_msg.role,
+                                     content: typed_msg.content)
           end
 
           assistant_response = nil
           if @raw_response.respond_to?(:content) && @raw_response.content
+            tokens = @extracted_tokens || extract_tokens
+            typed_assistant = Types::Message.build(
+              role:            :assistant,
+              content:         @raw_response.content,
+              provider:        @resolved_provider,
+              model:           @resolved_model,
+              input_tokens:    tokens.respond_to?(:input_tokens) ? tokens.input_tokens : nil,
+              output_tokens:   tokens.respond_to?(:output_tokens) ? tokens.output_tokens : nil,
+              conversation_id: conv_id,
+              task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil
+            )
             Conversation.append(conv_id,
-                                     role:          :assistant,
-                                     content:       @raw_response.content,
-                                     provider:      @resolved_provider,
-                                     model:         @resolved_model,
-                                     input_tokens:  @raw_response.respond_to?(:input_tokens) ? @raw_response.input_tokens : nil,
-                                     output_tokens: @raw_response.respond_to?(:output_tokens) ? @raw_response.output_tokens : nil)
+                                     role:          typed_assistant.role,
+                                     content:       typed_assistant.content,
+                                     provider:      typed_assistant.provider,
+                                     model:         typed_assistant.model,
+                                     input_tokens:  typed_assistant.input_tokens,
+                                     output_tokens: typed_assistant.output_tokens)
             assistant_response = @raw_response.content
           end
 
@@ -1028,28 +1063,40 @@ module Legion
         def step_response_return; end
 
         def build_response
-          msg = if @raw_response.respond_to?(:content)
-                  { role: :assistant, content: @raw_response.content }
-                elsif @raw_response.is_a?(Hash) && @raw_response[:content]
-                  @raw_response
-                else
-                  { role: :assistant, content: @raw_response.to_s }
-                end
+          @extracted_tokens ||= extract_tokens
+
+          content = if @raw_response.respond_to?(:content)
+                      @raw_response.content
+                    elsif @raw_response.is_a?(Hash) && @raw_response[:content]
+                      @raw_response[:content]
+                    else
+                      @raw_response.to_s
+                    end
+
+          msg = Types::Message.build(
+            role:            :assistant,
+            content:         content,
+            provider:        @resolved_provider,
+            model:           @resolved_model,
+            input_tokens:    @extracted_tokens.respond_to?(:input_tokens) ? @extracted_tokens.input_tokens : nil,
+            output_tokens:   @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : nil,
+            conversation_id: @request.conversation_id
+          )
 
           @timestamps[:returned] = Time.now
 
-          # Use pre-built snapshots when async post-steps are running concurrently
-          # to avoid reading partially-mutated timeline/warnings state.
           timeline_events = @_response_timeline_snapshot || @timeline.events
           timeline_parts = @_response_participants_snapshot || @timeline.participants
           warnings_snapshot = @_response_warnings_snapshot || @warnings
 
+          log.debug("[pipeline][build_response] action=build request_id=#{@request.id} provider=#{@resolved_provider} model=#{@resolved_model}")
+
           Response.build(
             request_id:      @request.id,
             conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
-            message:         msg,
+            message:         msg.to_h,
             routing:         build_response_routing,
-            tokens:          extract_tokens,
+            tokens:          @extracted_tokens,
             stop:            extract_stop_reason,
             tools:           response_tool_calls,
             cost:            estimate_response_cost,
@@ -1106,9 +1153,9 @@ module Legion
         end
 
         def estimate_response_cost
-          tokens = extract_tokens
-          input  = tokens.respond_to?(:input_tokens) ? tokens.input_tokens : tokens[:input].to_i
-          output = tokens.respond_to?(:output_tokens) ? tokens.output_tokens : tokens[:output].to_i
+          @extracted_tokens ||= extract_tokens
+          input  = @extracted_tokens.respond_to?(:input_tokens) ? @extracted_tokens.input_tokens : @extracted_tokens[:input].to_i
+          output = @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : @extracted_tokens[:output].to_i
           return {} unless @resolved_model && (input + output).positive?
 
           estimated = Metering::Pricing.estimate(
@@ -1125,29 +1172,30 @@ module Legion
         def response_tool_calls
           return [] unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls
 
+          # Prefer typed ToolCall objects from pending history (already built during execution)
+          typed_from_history = @pending_tool_history
+                               .filter_map { |entry| entry[:typed_call] }
+          return typed_from_history if typed_from_history.any?
+
           tool_timeline = build_tool_timeline_index
 
           Array(@raw_response.tool_calls).map do |tool_call|
             tc_id   = tool_call[:id] || tool_call['id']
             tc_name = tool_call[:name] || tool_call['name']
+            tc_args = tool_call[:arguments] || tool_call['arguments'] || {}
 
-            entry = {
-              id:        tc_id,
-              name:      tc_name,
-              arguments: tool_call[:arguments] || tool_call['arguments'] || {}
-            }
+            timeline_data = tool_timeline[tc_name] || {}
 
-            # Merge execution data from timeline if available
-            timeline_data = tool_timeline[tc_name]
-            if timeline_data
-              entry[:exchange_id] = timeline_data[:exchange_id]
-              entry[:source]      = timeline_data[:source]
-              entry[:status]      = timeline_data[:status]
-              entry[:duration_ms] = timeline_data[:duration_ms]
-              entry[:result]      = timeline_data[:result]
-            end
-
-            entry
+            Types::ToolCall.build(
+              id:          tc_id,
+              name:        tc_name,
+              arguments:   tc_args,
+              exchange_id: timeline_data[:exchange_id],
+              source:      timeline_data[:source],
+              status:      timeline_data[:status],
+              duration_ms: timeline_data[:duration_ms],
+              result:      timeline_data[:result]
+            )
           end
         end
 

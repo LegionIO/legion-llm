@@ -46,20 +46,32 @@ module Legion
           end
 
           def current_response
-            msg = if @raw_response.respond_to?(:content)
-                    { role: :assistant, content: @raw_response.content }
-                  elsif @raw_response.is_a?(Hash) && @raw_response[:content]
-                    @raw_response
-                  else
-                    { role: :assistant, content: @raw_response.to_s }
-                  end
+            @extracted_tokens ||= extract_tokens
+
+            content = if @raw_response.respond_to?(:content)
+                        @raw_response.content
+                      elsif @raw_response.is_a?(Hash) && @raw_response[:content]
+                        @raw_response[:content]
+                      else
+                        @raw_response.to_s
+                      end
+
+            msg = Types::Message.build(
+              role:            :assistant,
+              content:         content,
+              provider:        @resolved_provider,
+              model:           @resolved_model,
+              input_tokens:    @extracted_tokens.respond_to?(:input_tokens) ? @extracted_tokens.input_tokens : nil,
+              output_tokens:   @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : nil,
+              conversation_id: @request.conversation_id
+            )
 
             Response.build(
               request_id:      @request.id,
               conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
-              message:         msg,
+              message:         msg.to_h,
               routing:         { provider: @resolved_provider, model: @resolved_model },
-              tokens:          extract_tokens,
+              tokens:          @extracted_tokens,
               tools:           current_response_tool_calls,
               enrichments:     @enrichments,
               audit:           @audit,
@@ -74,18 +86,6 @@ module Legion
             return response_tool_calls if respond_to?(:response_tool_calls, true)
 
             []
-          end
-
-          def response_tool_calls
-            return [] unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls
-
-            Array(@raw_response.tool_calls).map do |tool_call|
-              {
-                id:        tool_call[:id] || tool_call['id'],
-                name:      tool_call[:name] || tool_call['name'],
-                arguments: tool_call[:arguments] || tool_call['arguments'] || {}
-              }
-            end
           end
         end
       end

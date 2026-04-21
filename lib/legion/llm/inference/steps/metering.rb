@@ -12,6 +12,7 @@ module Legion
           extend Legion::Logging::Helper
 
           def build_event(**opts)
+            log.debug("[metering][build_event] action=build provider=#{opts[:provider]} model=#{opts[:model_id]}")
             identity_fields(opts).merge(token_fields(opts)).merge(timing_and_context(opts))
           end
 
