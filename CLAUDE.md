@@ -29,61 +29,136 @@ Legion::LLM.start
 ### Module Structure
 
 ```
-Legion::LLM (lib/legion/llm.rb)
-├── EscalationExhausted # Raised when all escalation attempts are exhausted
-├── DaemonDeniedError   # Raised when daemon returns HTTP 403
-├── DaemonRateLimitedError # Raised when daemon returns HTTP 429
-├── LLMError / AuthError / RateLimitError / ContextOverflow / ProviderError / ProviderDown / UnsupportedCapability / PipelineError # Typed error hierarchy with retryable?
-├── ConversationStore   # In-memory LRU (256 conversations) + optional DB persistence via Sequel
-├── Settings         # Default config, provider settings, routing defaults, discovery defaults
-├── Providers        # Provider configuration and Vault credential resolution (includes Azure `configure_azure`)
-├── DaemonClient     # HTTP routing to LegionIO daemon with 30s health cache
-├── ResponseCache    # Async response delivery via memcached with spool overflow
-├── Compressor       # Deterministic prompt compression (3 levels, code-block-aware)
-├── Discovery        # Runtime introspection for local model availability and system resources
+Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inference, Call, Discovery
+├── Errors                               # Typed error hierarchy (LLMError base + subtypes, retryable?)
+│   └── EscalationExhausted / DaemonDeniedError / DaemonRateLimitedError / AuthError /
+│       RateLimitError / ContextOverflow / ProviderError / ProviderDown /
+│       UnsupportedCapability / InferenceError / TokenBudgetExceeded
+├── Types                                # Immutable Data.define structs per schema spec
+│   ├── Message      # id, role, content, tool_calls, tokens, conversation_id, task_id
+│   ├── ToolCall     # id, name, arguments, source, status, duration_ms, result
+│   ├── ContentBlock # type, text, data, tool_use/result fields, cache_control
+│   └── Chunk        # Streaming delta: content_delta / thinking_delta / tool_call_delta / done
+├── Config                               # Settings and defaults
+│   └── Settings     # Default config, provider settings, routing defaults, API auth defaults
+├── Call                                 # Provider call layer (replaces bare Providers/NativeDispatch)
+│   ├── Providers        # Provider configuration, auto-detect, verify
+│   ├── Registry         # Thread-safe lex-* provider extension registry (was ProviderRegistry)
+│   ├── Dispatch         # Native provider dispatch to registered lex-* extensions (was NativeDispatch)
+│   ├── Embeddings       # generate, generate_batch, default_model, fallback chain
+│   ├── StructuredOutput # JSON schema enforcement with native response_format and prompt fallback
+│   ├── DaemonClient     # HTTP routing to LegionIO daemon with 30s health cache
+│   ├── BedrockAuth      # Monkey-patch for Bedrock Bearer Token auth (required lazily)
+│   ├── ClaudeConfigLoader # Import Claude CLI config from ~/.claude/settings.json
+│   └── CodexConfigLoader  # Import OpenAI bearer token from ~/.codex/auth.json
+├── Context                              # Prompt and conversation context management
+│   ├── Compressor   # Deterministic prompt compression (3 levels, code-block-aware)
+│   └── Curator      # Async conversation curation: strip thinking, distill tools, fold resolved exchanges
+├── Discovery                            # Runtime introspection
 │   ├── Ollama       # Queries Ollama /api/tags for pulled models (TTL-cached)
 │   └── System       # Queries OS memory: macOS (vm_stat/sysctl), Linux (/proc/meminfo)
-├── QualityChecker   # Response quality heuristics (empty, too_short, repetition, json_parse, json_expected) + pluggable callable
-├── EscalationHistory # Mixin for response objects: escalation_history, escalated?, final_resolution, escalation_chain
-├── Embeddings       # Structured embedding wrapper: generate, generate_batch, default_model
-├── ShadowEval       # Parallel shadow evaluation on cheaper models with sampling
-├── StructuredOutput # JSON schema enforcement with native response_format and prompt fallback
-├── Router           # Dynamic weighted routing engine
-│   ├── Resolution   # Value object: tier, provider, model, rule name, metadata, compress_level
-│   ├── Rule         # Routing rule: intent matching, schedule windows, constraints
-│   ├── HealthTracker # Circuit breaker, latency rolling window, pluggable signal handlers
-│   └── EscalationChain # Ordered fallback resolution chain with max_attempts cap (pads last resolution if chain is short)
-├── Pipeline         # 18-step request/response pipeline (feature-flagged)
+├── Quality                              # Response quality evaluation
+│   ├── Checker      # Quality heuristics (empty, too_short, repetition, json_parse) + pluggable (was QualityChecker)
+│   ├── ShadowEval   # Parallel shadow evaluation on cheaper models with sampling
+│   └── Confidence/
+│       ├── Score    # Immutable ConfidenceScore value object (score, band, source, signals)
+│       └── Scorer   # Computes ConfidenceScore from logprobs, heuristics, or caller-provided value
+├── Metering                             # Unified token/cost accounting and AMQP event emission
+│   ├── Usage        # Immutable Usage struct (input_tokens, output_tokens, cache tokens)
+│   ├── Pricing      # Model cost estimation with fuzzy matching (was CostEstimator)
+│   ├── Recorder     # Per-request in-memory cost accumulator (was CostTracker)
+│   └── Tokens       # Thread-safe per-session token budget accumulator (was TokenTracker)
+├── Inference                            # 18-step request/response pipeline (was Pipeline)
 │   ├── Request      # Data.define struct for unified request representation
 │   ├── Response     # Data.define struct for unified response representation
 │   ├── Profile      # Caller-derived profiles (external/gaia/system) for step skipping
 │   ├── Tracing      # Distributed trace_id, span_id, exchange_id generation
 │   ├── Timeline     # Ordered event recording with participant tracking
-│   ├── Executor     # 18-step pipeline skeleton with profile-aware execution
-│   ├── Steps/
-│   │   ├── Metering       # Metering event builder (absorbed from lex-llm-gateway)
-│   │   └── ToolDiscovery  # Step 9 — formerly McpDiscovery; renamed to ToolDiscovery (McpDiscovery kept as backwards alias)
-│   └── Executor#call_stream # Streaming variant: pre-provider steps, yield chunks, post-provider steps
-│
-│   Note: Legion::LLM::ToolRegistry was removed. Tool registration now lives in Legion::Tools::Registry (LegionIO gem).
-│         McpToolAdapter renamed to ToolAdapter; McpToolAdapter kept as a backwards-compatible alias.
-├── CostEstimator    # Model cost estimation with fuzzy pricing (absorbed from lex-llm-gateway)
-├── Fleet            # Fleet RPC dispatch (absorbed from lex-llm-gateway)
-│   ├── Exchange     # Declares `llm.request` topic exchange (source of truth)
-│   ├── Request      # Fleet inference request message (type: 'llm.fleet.request')
-│   ├── Response     # Fleet inference response message (type: 'llm.fleet.response', default exchange publish)
-│   ├── Error        # Fleet error message (type: 'llm.fleet.error', ERROR_CODES registry)
-│   ├── Dispatcher   # Fleet dispatch with timeout and routing key building
+│   ├── Executor     # 18-step skeleton with profile-aware execution and call_stream
+│   ├── Conversation # In-memory LRU (256 slots) + optional Sequel DB persistence (was ConversationStore)
+│   ├── Prompt       # Clean dispatch API: dispatch, request, summarize, extract, decide
+│   ├── ToolAdapter  # Wraps Tools::Base for RubyLLM sessions (McpToolAdapter kept as alias)
+│   ├── ToolDispatcher # Routes tool calls: MCP client / LEX runner / RubyLLM builtin
+│   ├── AuditPublisher # Publishes audit events to llm.audit exchange
+│   ├── EnrichmentInjector # Converts RAG/GAIA enrichments into system prompt
+│   └── Steps/       # All 18+ pipeline step modules
+│       ├── Metering, Billing, TokenBudget, PromptCache, Classification, Rbac
+│       ├── GaiaAdvisory, TierAssigner, TriggerMatch, ToolDiscovery, RagContext
+│       ├── SkillInjector, ToolCalls, ContextStore, ConfidenceScoring
+│       ├── PostResponse, KnowledgeCapture, RagGuard, Debate, SpanAnnotator
+│       ├── StickyRunners, ToolHistory, StickyPersist
+│       └── (all steps are profile-skippable via GAIA_SKIP / SYSTEM_SKIP / QUICK_REPLY_SKIP)
+├── Router                               # Dynamic weighted routing engine
+│   ├── Resolution   # Value object: tier, provider, model, rule name, metadata, compress_level
+│   ├── Rule         # Routing rule: intent matching, schedule windows, constraints
+│   ├── HealthTracker # Circuit breaker, latency rolling window, pluggable signal handlers
+│   ├── EscalationChain # Ordered fallback resolution chain with max_attempts cap
+│   ├── Arbitrage    # Cost-aware model selection when no rules match
+│   └── Escalation/
+│       └── History  # EscalationHistory mixin (was EscalationHistory at top level)
+├── Fleet                                # Fleet RPC dispatch over AMQP
+│   ├── Dispatcher   # Fleet RPC dispatch with routing key building, per-type timeouts
 │   ├── Handler      # Fleet request handler for GPU worker nodes
-│   └── ReplyDispatcher # Correlation-based reply routing with type-aware dispatch, fulfill_return, fulfill_nack
-├── Metering         # Metering event emission (replaces gateway dependency)
-│   ├── Exchange     # Declares `llm.metering` topic exchange
-│   └── Event        # Metering event message (type: 'llm.metering.event')
-├── Audit            # Audit event emission (replaces gateway dependency)
-│   ├── Exchange     # Declares `llm.audit` topic exchange
-│   ├── PromptEvent  # Prompt audit message (type: 'llm.audit.prompt', always encrypted)
-│   └── ToolEvent    # Tool audit message (type: 'llm.audit.tool', always encrypted)
-└── Helpers::LLM     # Extension helper mixin (llm_chat, llm_embed, llm_session, compress:)
+│   └── ReplyDispatcher # Correlation-based reply routing, fulfill_return, fulfill_nack
+├── Metering (module-level)              # emit(event), flush_spool — AMQP publish to llm.metering
+├── Audit                                # emit_prompt, emit_tools, emit_skill — AMQP publish to llm.audit
+├── Transport                            # Centralized AMQP message classes
+│   ├── Message      # LLM base message: context propagation, LLM headers, envelope stripping
+│   ├── Exchanges/
+│   │   ├── Fleet    # llm.request topic exchange
+│   │   ├── Metering # llm.metering topic exchange
+│   │   ├── Audit    # llm.audit topic exchange
+│   │   └── Escalation # llm.escalation topic exchange
+│   └── Messages/
+│       ├── FleetRequest / FleetResponse / FleetError
+│       ├── MeteringEvent
+│       ├── PromptEvent / ToolEvent / SkillEvent
+│       └── EscalationEvent
+├── API                                  # Sinatra route modules
+│   ├── Auth         # Config-driven Bearer/x-api-key auth for /v1/ routes
+│   ├── Native/
+│   │   ├── Inference  # POST /api/llm/inference
+│   │   ├── Chat       # POST /api/llm/chat
+│   │   ├── Providers  # GET /api/llm/providers, GET /api/llm/providers/:name
+│   │   └── Helpers    # Shared: parse_request_body, json_response, emit_sse_event, etc.
+│   ├── OpenAI/
+│   │   ├── ChatCompletions # POST /v1/chat/completions (streaming via data: [DONE])
+│   │   ├── Models          # GET /v1/models, GET /v1/models/:id
+│   │   └── Embeddings      # POST /v1/embeddings
+│   ├── Anthropic/
+│   │   └── Messages        # POST /v1/messages (streaming via message_start/stop events)
+│   └── Translators/
+│       ├── OpenAIRequest / OpenAIResponse
+│       └── AnthropicRequest / AnthropicResponse
+├── Scheduling                           # Deferred execution
+│   ├── Batch        # Non-urgent request batching with priority queue and auto-flush
+│   └── OffPeak      # Peak-hour deferral (delegates to Scheduling)
+├── Tools                                # Tool call layer
+│   ├── Confidence   # 4-tier degrading confidence storage (was OverrideConfidence)
+│   ├── Dispatcher   # Routes tool calls to MCP/LEX/RubyLLM
+│   ├── Interceptor  # Extensible pre-dispatch intercept registry
+│   └── Adapter      # Wraps lex-* extension tool as RubyLLM::Tool
+├── Hooks                                # before/after chat interceptor registry
+│   ├── RagGuard     # Post-generation RAG faithfulness check
+│   ├── ResponseGuard # Central post-generation safety dispatch
+│   ├── BudgetGuard  # Blocks calls when session budget is exceeded
+│   └── Reflection   # Extracts knowledge from conversations (decisions, patterns, facts)
+├── Cache                                # Application-level response caching
+│   └── Response     # Async delivery via memcached with spool overflow at 8MB (was ResponseCache)
+├── Skills                               # Daemon-side skill execution subsystem
+│   ├── Base         # DSL base class (skill_name, trigger, steps, follows)
+│   ├── Registry     # Thread-safe skill registry with trigger index and cycle detection
+│   └── Steps::SkillInjector # Pipeline step 10.5: activates matching skills
+└── Helper           # Extension helper mixin (llm_chat, llm_embed, llm_session, compress:)
+                     # lib/legion/llm/helpers/llm.rb is a backward-compat shim that includes Helper
+
+Note: Backward-compat aliases live in lib/legion/llm/compat.rb (const_missing-based, emit deprecation warnings):
+  Pipeline → Inference, ConversationStore → Inference::Conversation,
+  NativeDispatch → Call::Dispatch, ProviderRegistry → Call::Registry,
+  CostEstimator → Metering::Pricing, CostTracker → Metering::Recorder,
+  TokenTracker → Metering::Tokens, QualityChecker → Quality::Checker,
+  Compressor → Context::Compressor, ResponseCache → Cache::Response,
+  DaemonClient → Call::DaemonClient, ShadowEval → Quality::ShadowEval
 ```
 
 ### Routing Architecture
@@ -125,7 +200,7 @@ Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet of
 
 ### Gateway Integration (lex-llm-gateway)
 
-Gateway delegation removed in v0.4.1. `chat`, `embed`, and `structured` route directly — no `begin/rescue LoadError` block, no `gateway_loaded?` check. The pipeline (enabled by default since v0.4.8) handles metering and fleet dispatch natively. The `_direct` variants still exist as the canonical non-pipeline path for `chat_direct`, `embed_direct`, `structured_direct`.
+Gateway delegation was removed in v0.4.1 and all `gateway_available?` references were purged in the v0.7 restructure. `chat`, `embed`, and `structured` route directly — the Inference pipeline (enabled by default since v0.4.8) handles metering and fleet dispatch natively. The `_direct` variants still exist as the canonical non-pipeline path for `chat_direct`, `embed_direct`, `structured_direct`.
 
 ### Integration with LegionIO
 
@@ -169,9 +244,9 @@ Legion::LLM.structured(messages:, schema:)                  # Structured (gatewa
 Legion::LLM.structured_direct(messages:, schema:)           # Bypass gateway
 Legion::LLM.agent(AgentClass)                               # Agent instance
 
-# Compressor
-Legion::LLM::Compressor.compress(text, level: 1)                  # -> String (deterministic)
-Legion::LLM::Compressor.stopwords_for_level(2)                    # -> Array of words
+# Compressor (was Compressor, now Context::Compressor; Compressor still works via compat alias)
+Legion::LLM::Context::Compressor.compress(text, level: 1)         # -> String (deterministic)
+Legion::LLM::Context::Compressor.stopwords_for_level(2)           # -> Array of words
 
 # Router
 Legion::LLM::Router.resolve(intent:, tier:, model:, provider:)  # -> Resolution or nil
@@ -191,7 +266,7 @@ tracker.register_handler(:gpu_utilization) { |data| ... }         # Extend with 
 Legion::LLM.chat(message:, escalate: true, max_escalations: 3, quality_check:) # Escalating chat — raises EscalationExhausted if all attempts fail
 Legion::LLM::EscalationExhausted                                                # raised when all escalation attempts are exhausted
 Legion::LLM::Router.resolve_chain(intent:, tier:, max_escalations:)            # -> EscalationChain
-Legion::LLM::QualityChecker.check(response, quality_threshold: 50, json_expected: false, quality_check: nil) # -> QualityResult
+Legion::LLM::Quality::Checker.check(response, quality_threshold: 50, json_expected: false, quality_check: nil) # -> QualityResult
 
 # Metering
 Legion::LLM::Metering.emit(event_hash)                        # -> :published | :spooled | :dropped
@@ -335,60 +410,118 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 
 | Path | Purpose |
 |------|---------|
-| `lib/legion/llm.rb` | Entry point: start, shutdown, chat (with routing), embed, agent |
-| `lib/legion/llm/settings.rb` | Default settings including routing_defaults, auto-merge into Legion::Settings |
-| `lib/legion/llm/providers.rb` | Provider config, Vault resolution, RubyLLM configuration |
-| `lib/legion/llm/bedrock_bearer_auth.rb` | Monkey-patch for Bedrock Bearer Token auth — required lazily |
-| `lib/legion/llm/claude_config_loader.rb` | Import Claude CLI config from `~/.claude/settings.json` and `~/.claude.json` |
-| `lib/legion/llm/response_cache.rb` | Async response delivery via memcached with spool overflow at 8MB |
-| `lib/legion/llm/daemon_client.rb` | HTTP routing to LegionIO daemon with health caching (30s TTL) |
-| `lib/legion/llm/compressor.rb` | Deterministic prompt compression: 3 levels, code-block-aware, stopword removal |
-| `lib/legion/llm/router.rb` | Router module: resolve, health_tracker, select_candidates pipeline |
+| `lib/legion/llm.rb` | Thin facade: start, shutdown, delegates to Inference/Call/Discovery |
+| `lib/legion/llm/compat.rb` | Backward-compat aliases via const_missing with deprecation warnings |
+| `lib/legion/llm/errors.rb` | Typed error hierarchy: LLMError base + all subtypes, retryable? predicate |
+| `lib/legion/llm/version.rb` | Version constant |
+| `lib/legion/llm/types.rb` | Types entry point: requires all type files |
+| `lib/legion/llm/types/message.rb` | Message Data.define struct with build, from_hash, text, to_provider_hash |
+| `lib/legion/llm/types/tool_call.rb` | ToolCall Data.define struct with build, to_audit_hash |
+| `lib/legion/llm/types/content_block.rb` | ContentBlock Data.define struct with text/thinking/tool_use/tool_result factories |
+| `lib/legion/llm/types/chunk.rb` | Chunk Data.define struct with content_delta/done factories |
+| `lib/legion/llm/config.rb` | Config entry point |
+| `lib/legion/llm/config/settings.rb` | Default settings, routing/discovery/API auth defaults, auto-merge into Legion::Settings |
+| `lib/legion/llm/call.rb` | Call entry point: requires all call sub-files |
+| `lib/legion/llm/call/providers.rb` | Provider configuration, auto-detect, verify (was providers.rb) |
+| `lib/legion/llm/call/registry.rb` | Thread-safe lex-* extension registry (was ProviderRegistry) |
+| `lib/legion/llm/call/dispatch.rb` | Native provider dispatch to lex-* extensions (was NativeDispatch) |
+| `lib/legion/llm/call/embeddings.rb` | generate, generate_batch, fallback chain, dimension enforcement |
+| `lib/legion/llm/call/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
+| `lib/legion/llm/call/daemon_client.rb` | HTTP routing to LegionIO daemon with 30s health cache |
+| `lib/legion/llm/call/bedrock_auth.rb` | Monkey-patch for Bedrock Bearer Token auth — required lazily |
+| `lib/legion/llm/call/claude_config_loader.rb` | Import Claude CLI config from ~/.claude/settings.json |
+| `lib/legion/llm/call/codex_config_loader.rb` | Import OpenAI bearer token from ~/.codex/auth.json |
+| `lib/legion/llm/context.rb` | Context entry point |
+| `lib/legion/llm/context/compressor.rb` | Deterministic prompt compression: 3 levels, code-block-aware, stopword removal |
+| `lib/legion/llm/context/curator.rb` | Async heuristic conversation curation (was ContextCurator) |
+| `lib/legion/llm/discovery.rb` | Discovery entry point: run, detect_embedding_capability, can_embed? |
+| `lib/legion/llm/discovery/ollama.rb` | Ollama /api/tags discovery with TTL cache |
+| `lib/legion/llm/discovery/system.rb` | OS memory introspection (macOS + Linux) with TTL cache |
+| `lib/legion/llm/quality.rb` | Quality entry point |
+| `lib/legion/llm/quality/checker.rb` | Quality heuristics + pluggable callable (was QualityChecker) |
+| `lib/legion/llm/quality/shadow_eval.rb` | Parallel shadow evaluation on cheaper models with sampling (was ShadowEval) |
+| `lib/legion/llm/quality/confidence/score.rb` | Immutable ConfidenceScore Data.define struct (was ConfidenceScore) |
+| `lib/legion/llm/quality/confidence/scorer.rb` | Computes ConfidenceScore from logprobs/heuristics/caller (was ConfidenceScorer) |
+| `lib/legion/llm/metering.rb` | Metering module: emit, flush_spool, install_hook public API |
+| `lib/legion/llm/metering/usage.rb` | Immutable Usage Data.define struct |
+| `lib/legion/llm/metering/estimator.rb` | Model cost estimation with fuzzy pricing (was CostEstimator) |
+| `lib/legion/llm/metering/tracker.rb` | Per-request in-memory cost accumulator (was CostTracker) |
+| `lib/legion/llm/metering/tokens.rb` | Thread-safe per-session token budget accumulator (was TokenTracker) |
+| `lib/legion/llm/inference.rb` | Inference entry point: requires all pipeline components |
+| `lib/legion/llm/inference/request.rb` | Inference::Request Data.define struct with .build and .from_chat_args |
+| `lib/legion/llm/inference/response.rb` | Inference::Response Data.define struct with .build, .from_ruby_llm, #with |
+| `lib/legion/llm/inference/profile.rb` | Inference::Profile: caller-derived profiles for step skipping |
+| `lib/legion/llm/inference/tracing.rb` | Inference::Tracing: trace_id, span_id, exchange_id generation |
+| `lib/legion/llm/inference/timeline.rb` | Inference::Timeline: ordered event recording with participant tracking |
+| `lib/legion/llm/inference/executor.rb` | Inference::Executor: 18-step skeleton with profile-aware execution and call_stream |
+| `lib/legion/llm/inference/conversation.rb` | In-memory LRU (256 slots) + optional Sequel DB persistence (was ConversationStore) |
+| `lib/legion/llm/inference/prompt.rb` | Prompt dispatch API: dispatch, request, summarize, extract, decide |
+| `lib/legion/llm/inference/tool_adapter.rb` | Wraps Tools::Base for RubyLLM sessions (McpToolAdapter kept as alias) |
+| `lib/legion/llm/inference/tool_dispatcher.rb` | Routes tool calls to MCP client / LEX runner / RubyLLM builtin |
+| `lib/legion/llm/inference/audit_publisher.rb` | Publishes audit events to llm.audit exchange |
+| `lib/legion/llm/inference/enrichment_injector.rb` | Converts RAG/GAIA enrichments into system prompt |
+| `lib/legion/llm/inference/steps.rb` | Steps aggregator: requires all step modules |
+| `lib/legion/llm/inference/steps/*.rb` | All 18+ pipeline step modules (metering, billing, rbac, classification, etc.) |
+| `lib/legion/llm/router.rb` | Router: resolve, health_tracker, resolve_chain, select_candidates |
 | `lib/legion/llm/router/resolution.rb` | Value object: tier, provider, model, rule, metadata, compress_level |
 | `lib/legion/llm/router/rule.rb` | Rule class: from_hash, matches_intent?, within_schedule?, to_resolution |
 | `lib/legion/llm/router/health_tracker.rb` | HealthTracker: circuit breaker, latency window, pluggable signal handlers |
-| `lib/legion/llm/discovery/ollama.rb` | Ollama /api/tags discovery with TTL cache |
-| `lib/legion/llm/discovery/system.rb` | OS memory introspection (macOS + Linux) with TTL cache |
-| `lib/legion/llm/embeddings.rb` | Embeddings module: generate, generate_batch, default_model |
-| `lib/legion/llm/shadow_eval.rb` | Shadow evaluation: enabled?, should_sample?, evaluate, compare |
-| `lib/legion/llm/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
-| `lib/legion/llm/errors.rb` | Typed error hierarchy: LLMError base + AuthError, RateLimitError, ContextOverflow, ProviderError, ProviderDown, UnsupportedCapability, PipelineError |
-| `lib/legion/llm/conversation_store.rb` | ConversationStore: in-memory LRU (256 slots) + optional Sequel DB persistence + spool fallback |
-| `lib/legion/llm/version.rb` | Version constant |
-| `lib/legion/llm/quality_checker.rb` | QualityChecker module with QualityResult struct |
-| `lib/legion/llm/escalation_history.rb` | EscalationHistory mixin: `escalation_history`, `escalated?`, `final_resolution`, `escalation_chain` |
-| `lib/legion/llm/router/escalation_chain.rb` | EscalationChain value object |
-| `lib/legion/llm/transport/exchanges/escalation.rb` | AMQP exchange for escalation events |
-| `lib/legion/llm/transport/messages/escalation_event.rb` | AMQP message for escalation events |
-| `lib/legion/llm/pipeline.rb` | Pipeline module: requires all pipeline components |
-| `lib/legion/llm/pipeline/request.rb` | Pipeline::Request Data.define struct with .build and .from_chat_args |
-| `lib/legion/llm/pipeline/response.rb` | Pipeline::Response Data.define struct with .build, .from_ruby_llm, #with |
-| `lib/legion/llm/pipeline/profile.rb` | Pipeline::Profile: caller-derived profiles for step skipping |
-| `lib/legion/llm/pipeline/tracing.rb` | Pipeline::Tracing: trace_id, span_id, exchange_id generation |
-| `lib/legion/llm/pipeline/timeline.rb` | Pipeline::Timeline: ordered event recording |
-| `lib/legion/llm/pipeline/executor.rb` | Pipeline::Executor: 18-step skeleton with profile-aware execution |
-| `lib/legion/llm/pipeline/steps/metering.rb` | Pipeline::Steps::Metering: metering event builder |
-| `lib/legion/llm/pipeline/steps/rag_context.rb` | Pipeline::Steps::RagContext: context strategy selection and Apollo retrieval (step 8) |
-| `lib/legion/llm/pipeline/steps/rag_guard.rb` | Pipeline::Steps::RagGuard: faithfulness check against retrieved RAG context |
-| `lib/legion/llm/pipeline/enrichment_injector.rb` | Pipeline::EnrichmentInjector: converts RAG/GAIA enrichments into system prompt |
-| `lib/legion/llm/cost_estimator.rb` | CostEstimator: model cost estimation with fuzzy pricing |
-| `lib/legion/llm/transport/message.rb` | LLM base message class: message_context propagation, LLM headers, envelope key stripping |
-| `lib/legion/llm/fleet.rb` | Fleet module: requires exchange, request, response, error, dispatcher, handler, reply_dispatcher |
-| `lib/legion/llm/fleet/exchange.rb` | Fleet::Exchange: declares `llm.request` topic exchange |
-| `lib/legion/llm/fleet/request.rb` | Fleet::Request: fleet inference request with priority mapping, TTL conversion |
-| `lib/legion/llm/fleet/response.rb` | Fleet::Response: fleet response with default-exchange publish |
-| `lib/legion/llm/fleet/error.rb` | Fleet::Error: fleet error with ERROR_CODES registry, error headers |
-| `lib/legion/llm/fleet/dispatcher.rb` | Fleet::Dispatcher: fleet RPC dispatch with routing key building, per-type timeouts |
-| `lib/legion/llm/fleet/handler.rb` | Fleet::Handler: fleet request handler |
-| `lib/legion/llm/fleet/reply_dispatcher.rb` | Fleet::ReplyDispatcher: type-aware reply routing, fulfill_return, fulfill_nack |
-| `lib/legion/llm/metering.rb` | Metering module: emit, flush_spool public API |
-| `lib/legion/llm/metering/exchange.rb` | Metering::Exchange: declares `llm.metering` topic exchange |
-| `lib/legion/llm/metering/event.rb` | Metering::Event: metering event message with tier header |
-| `lib/legion/llm/audit.rb` | Audit module: emit_prompt, emit_tools public API |
-| `lib/legion/llm/audit/exchange.rb` | Audit::Exchange: declares `llm.audit` topic exchange |
-| `lib/legion/llm/audit/prompt_event.rb` | Audit::PromptEvent: prompt audit with classification/caller/retention headers |
-| `lib/legion/llm/audit/tool_event.rb` | Audit::ToolEvent: tool audit with tool metadata headers |
-| `lib/legion/llm/helpers/llm.rb` | Extension helper mixin: llm_chat (with compress:, escalate:, max_escalations:, quality_check:), llm_embed, llm_session |
+| `lib/legion/llm/router/arbitrage.rb` | Cost-aware model selection fallback when no rules match |
+| `lib/legion/llm/router/escalation/chain.rb` | EscalationChain value object with max_attempts cap |
+| `lib/legion/llm/router/escalation/history.rb` | EscalationHistory mixin: escalated?, escalation_history, final_resolution |
+| `lib/legion/llm/fleet.rb` | Fleet entry point: load_transport, requires dispatcher/handler/reply_dispatcher |
+| `lib/legion/llm/fleet/dispatcher.rb` | Fleet RPC dispatch with routing key building, per-type timeouts |
+| `lib/legion/llm/fleet/handler.rb` | Fleet request handler for GPU worker nodes |
+| `lib/legion/llm/fleet/reply_dispatcher.rb` | Correlation-based reply routing, fulfill_return, fulfill_nack |
+| `lib/legion/llm/audit.rb` | Audit module: emit_prompt, emit_tools, emit_skill public API |
+| `lib/legion/llm/transport.rb` | Transport entry point: load_all loads exchanges + messages when Transport available |
+| `lib/legion/llm/transport/message.rb` | LLM base message: context propagation, LLM headers, envelope key stripping |
+| `lib/legion/llm/transport/exchanges/fleet.rb` | Transport::Exchanges::Fleet: llm.request topic exchange |
+| `lib/legion/llm/transport/exchanges/metering.rb` | Transport::Exchanges::Metering: llm.metering topic exchange |
+| `lib/legion/llm/transport/exchanges/audit.rb` | Transport::Exchanges::Audit: llm.audit topic exchange |
+| `lib/legion/llm/transport/exchanges/escalation.rb` | Transport::Exchanges::Escalation: llm.escalation topic exchange |
+| `lib/legion/llm/transport/messages/fleet_request.rb` | Transport::Messages::FleetRequest |
+| `lib/legion/llm/transport/messages/fleet_response.rb` | Transport::Messages::FleetResponse |
+| `lib/legion/llm/transport/messages/fleet_error.rb` | Transport::Messages::FleetError with ERROR_CODES registry |
+| `lib/legion/llm/transport/messages/metering_event.rb` | Transport::Messages::MeteringEvent with tier header |
+| `lib/legion/llm/transport/messages/prompt_event.rb` | Transport::Messages::PromptEvent: prompt audit (always encrypted) |
+| `lib/legion/llm/transport/messages/tool_event.rb` | Transport::Messages::ToolEvent: tool call audit |
+| `lib/legion/llm/transport/messages/skill_event.rb` | Transport::Messages::SkillEvent: skill invocation audit |
+| `lib/legion/llm/transport/messages/escalation_event.rb` | Transport::Messages::EscalationEvent: fleet-wide escalation observability |
+| `lib/legion/llm/api.rb` | API entry point: registered, register_routes |
+| `lib/legion/llm/api/auth.rb` | Config-driven Bearer/x-api-key auth middleware for /v1/ routes |
+| `lib/legion/llm/api/native/inference.rb` | POST /api/llm/inference |
+| `lib/legion/llm/api/native/chat.rb` | POST /api/llm/chat |
+| `lib/legion/llm/api/native/providers.rb` | GET /api/llm/providers, GET /api/llm/providers/:name |
+| `lib/legion/llm/api/native/helpers.rb` | Shared: parse_request_body, json_response, emit_sse_event, token_value |
+| `lib/legion/llm/api/openai/chat_completions.rb` | POST /v1/chat/completions (streaming: data: [DONE]) |
+| `lib/legion/llm/api/openai/models.rb` | GET /v1/models, GET /v1/models/:id |
+| `lib/legion/llm/api/openai/embeddings.rb` | POST /v1/embeddings |
+| `lib/legion/llm/api/anthropic/messages.rb` | POST /v1/messages (streaming: message_start/content_block_delta/message_stop) |
+| `lib/legion/llm/api/translators/openai_request.rb` | Translates OpenAI request format to internal Inference format |
+| `lib/legion/llm/api/translators/openai_response.rb` | Translates Inference::Response to OpenAI response format |
+| `lib/legion/llm/api/translators/anthropic_request.rb` | Translates Anthropic request format (system param, input_schema) to internal |
+| `lib/legion/llm/api/translators/anthropic_response.rb` | Translates Inference::Response to Anthropic response format |
+| `lib/legion/llm/scheduling.rb` | Scheduling module: should_defer?, peak_hours?, next_off_peak, status |
+| `lib/legion/llm/scheduling/batch.rb` | Non-urgent request batching with priority queue and auto-flush |
+| `lib/legion/llm/scheduling/off_peak.rb` | Peak-hour deferral (delegates to Scheduling) |
+| `lib/legion/llm/tools/confidence.rb` | 4-tier degrading confidence storage (was OverrideConfidence) |
+| `lib/legion/llm/tools/dispatcher.rb` | Routes tool calls: MCP client / LEX runner / RubyLLM builtin |
+| `lib/legion/llm/tools/interceptor.rb` | Extensible pre-dispatch intercept registry |
+| `lib/legion/llm/tools/adapter.rb` | Wraps lex-* extension tool as RubyLLM::Tool (McpToolAdapter kept as alias) |
+| `lib/legion/llm/hooks.rb` | Hooks: before/after chat registry, run_before, run_after, install_defaults |
+| `lib/legion/llm/hooks/rag_guard.rb` | Post-generation RAG faithfulness check via lex-eval |
+| `lib/legion/llm/hooks/response_guard.rb` | Central post-generation safety dispatch |
+| `lib/legion/llm/hooks/budget_guard.rb` | Blocks calls when session USD budget is exceeded |
+| `lib/legion/llm/hooks/reflection.rb` | Extracts decisions/patterns/facts from conversations, publishes to Apollo |
+| `lib/legion/llm/hooks/reciprocity.rb` | Records social exchange events via Social::Client |
+| `lib/legion/llm/cache.rb` | Cache module: deterministic SHA256 key, guarded get/set, enabled? |
+| `lib/legion/llm/cache/response.rb` | Async response delivery via memcached with spool overflow at 8MB (was ResponseCache) |
+| `lib/legion/llm/skills.rb` | Skills entry point: start, stop |
+| `lib/legion/llm/skills/base.rb` | Skills DSL base class: skill_name, trigger, steps, follows |
+| `lib/legion/llm/skills/registry.rb` | Thread-safe skill registry with trigger word index and cycle detection |
+| `lib/legion/llm/helper.rb` | Extension helper mixin: llm_chat, llm_embed, llm_session, llm_ask, llm_structured, etc. |
+| `lib/legion/llm/helpers/llm.rb` | Backward-compat shim: includes Legion::LLM::Helper |
 | `spec/legion/llm_spec.rb` | Tests: settings, lifecycle, providers, auto-config |
 | `spec/legion/llm/integration_spec.rb` | Tests: routing integration with chat() |
 | `spec/legion/llm/router_spec.rb` | Tests: Router.resolve, priority selection, constraints, health |
@@ -397,36 +530,36 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/router/rule_schedule_spec.rb` | Tests: Rule schedule evaluation |
 | `spec/legion/llm/router/health_tracker_spec.rb` | Tests: circuit breaker, latency, signal handlers |
 | `spec/legion/llm/router/settings_spec.rb` | Tests: routing defaults in settings |
-| `spec/legion/llm/compressor_spec.rb` | Tests: compression levels, code-block protection, determinism |
+| `spec/legion/llm/context/compressor_spec.rb` | Tests: compression levels, code-block protection, determinism (was compressor_spec.rb) |
 | `spec/legion/llm/helpers/llm_spec.rb` | Tests: helper mixin with compress integration |
 | `spec/legion/llm/discovery/ollama_spec.rb` | Tests: Ollama model discovery, TTL, error handling |
 | `spec/legion/llm/discovery/system_spec.rb` | Tests: System memory introspection |
 | `spec/legion/llm/discovery/router_integration_spec.rb` | Tests: Router discovery filtering |
 | `spec/legion/llm/discovery/startup_spec.rb` | Tests: Startup discovery warmup |
 | `spec/legion/llm/discovery/settings_spec.rb` | Tests: Discovery settings defaults |
-| `spec/legion/llm/quality_checker_spec.rb` | QualityChecker tests |
-| `spec/legion/llm/escalation_history_spec.rb` | EscalationHistory tests |
+| `spec/legion/llm/quality/checker_spec.rb` | QualityChecker tests (was quality_checker_spec.rb) |
+| `spec/legion/llm/router/escalation/history_spec.rb` | EscalationHistory tests (was escalation_history_spec.rb) |
 | `spec/legion/llm/escalation_integration_spec.rb` | chat() escalation loop tests |
-| `spec/legion/llm/router/escalation_chain_spec.rb` | EscalationChain tests |
+| `spec/legion/llm/router/escalation/chain_spec.rb` | EscalationChain tests (was router/escalation_chain_spec.rb) |
 | `spec/legion/llm/router/resolve_chain_spec.rb` | Router.resolve_chain tests |
-| `spec/legion/llm/transport/escalation_spec.rb` | Transport tests |
-| `spec/legion/llm/embeddings_spec.rb` | Embeddings tests |
-| `spec/legion/llm/shadow_eval_spec.rb` | ShadowEval tests |
-| `spec/legion/llm/structured_output_spec.rb` | StructuredOutput tests |
+| `spec/legion/llm/transport/escalation_spec.rb` | Transport escalation exchange/message tests |
+| `spec/legion/llm/call/embeddings_spec.rb` | Embeddings tests (was embeddings_spec.rb) |
+| `spec/legion/llm/quality/shadow_eval_spec.rb` | ShadowEval tests (was shadow_eval_spec.rb) |
+| `spec/legion/llm/call/structured_output_spec.rb` | StructuredOutput tests (was structured_output_spec.rb) |
 | `spec/legion/llm/errors_spec.rb` | Tests: typed error hierarchy, retryable? predicate |
-| `spec/legion/llm/conversation_store_spec.rb` | Tests: LRU eviction, append, messages, DB fallback |
-| `spec/legion/llm/pipeline/executor_stream_spec.rb` | Tests: call_stream chunk yielding, pre/post steps |
-| `spec/legion/llm/pipeline/streaming_integration_spec.rb` | Tests: streaming end-to-end with ConversationStore |
+| `spec/legion/llm/inference/conversation_spec.rb` | Tests: LRU eviction, append, messages, DB fallback (was conversation_store_spec.rb) |
+| `spec/legion/llm/inference/executor_stream_spec.rb` | Tests: call_stream chunk yielding, pre/post steps |
+| `spec/legion/llm/inference/streaming_integration_spec.rb` | Tests: streaming end-to-end with Conversation |
 | `spec/legion/llm/gateway_integration_spec.rb` | Tests: gateway teardown — verifies no delegation |
-| `spec/legion/llm/cost_estimator_spec.rb` | Tests: cost estimation, fuzzy matching, pricing table |
-| `spec/legion/llm/pipeline/request_spec.rb` | Tests: Request struct builder, legacy adapter |
-| `spec/legion/llm/pipeline/response_spec.rb` | Tests: Response struct builder, RubyLLM adapter, #with |
-| `spec/legion/llm/pipeline/profile_spec.rb` | Tests: Profile derivation and step skipping |
-| `spec/legion/llm/pipeline/tracing_spec.rb` | Tests: Tracing init, exchange_id generation |
-| `spec/legion/llm/pipeline/timeline_spec.rb` | Tests: Timeline event recording, participants |
-| `spec/legion/llm/pipeline/executor_spec.rb` | Tests: Executor pipeline execution, profile skipping |
-| `spec/legion/llm/pipeline/integration_spec.rb` | Tests: Pipeline integration with chat() dispatch |
-| `spec/legion/llm/pipeline/steps/metering_spec.rb` | Tests: Metering event building |
+| `spec/legion/llm/metering/estimator_spec.rb` | Tests: cost estimation, fuzzy matching, pricing table (was cost_estimator_spec.rb) |
+| `spec/legion/llm/inference/request_spec.rb` | Tests: Request struct builder, legacy adapter |
+| `spec/legion/llm/inference/response_spec.rb` | Tests: Response struct builder, RubyLLM adapter, #with |
+| `spec/legion/llm/inference/profile_spec.rb` | Tests: Profile derivation and step skipping |
+| `spec/legion/llm/inference/tracing_spec.rb` | Tests: Tracing init, exchange_id generation |
+| `spec/legion/llm/inference/timeline_spec.rb` | Tests: Timeline event recording, participants |
+| `spec/legion/llm/inference/executor_spec.rb` | Tests: Executor pipeline execution, profile skipping |
+| `spec/legion/llm/inference/integration_spec.rb` | Tests: Inference integration with chat() dispatch |
+| `spec/legion/llm/inference/steps/metering_spec.rb` | Tests: Metering step event building |
 | `spec/legion/llm/transport/message_spec.rb` | Tests: LLM base message class |
 | `spec/legion/llm/fleet/exchange_spec.rb` | Tests: fleet exchange declaration |
 | `spec/legion/llm/fleet/request_spec.rb` | Tests: Fleet::Request message |
@@ -435,17 +568,17 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/fleet/dispatcher_spec.rb` | Tests: Fleet dispatch, routing keys, per-type timeouts, ReplyDispatcher |
 | `spec/legion/llm/fleet/handler_spec.rb` | Tests: Fleet handler, auth, response building |
 | `spec/legion/llm/metering/exchange_spec.rb` | Tests: metering exchange |
-| `spec/legion/llm/metering/event_spec.rb` | Tests: Metering::Event message |
+| `spec/legion/llm/metering/event_spec.rb` | Tests: MeteringEvent message |
 | `spec/legion/llm/metering_spec.rb` | Tests: Metering emit/spool API |
 | `spec/legion/llm/audit/exchange_spec.rb` | Tests: audit exchange |
-| `spec/legion/llm/audit/prompt_event_spec.rb` | Tests: Audit::PromptEvent |
-| `spec/legion/llm/audit/tool_event_spec.rb` | Tests: Audit::ToolEvent |
+| `spec/legion/llm/audit/prompt_event_spec.rb` | Tests: PromptEvent |
+| `spec/legion/llm/audit/tool_event_spec.rb` | Tests: ToolEvent |
 | `spec/legion/llm/audit_spec.rb` | Tests: Audit emit API |
-| `spec/legion/llm/pipeline/steps/rag_context_spec.rb` | Tests: RAG context strategy selection, Apollo retrieval, graceful degradation |
-| `spec/legion/llm/pipeline/steps/rag_guard_spec.rb` | Tests: RAG faithfulness checking |
-| `spec/legion/llm/pipeline/enrichment_injector_spec.rb` | Tests: enrichment injection into system prompt |
-| `spec/legion/llm/pipeline/rag_gas_integration_spec.rb` | Tests: RAG/GAS full cycle integration |
-| `spec/spec_helper.rb` | Stubbed Legion::Logging and Legion::Settings for testing |
+| `spec/legion/llm/inference/steps/rag_context_spec.rb` | Tests: RAG context strategy selection, Apollo retrieval, graceful degradation |
+| `spec/legion/llm/inference/steps/rag_guard_spec.rb` | Tests: RAG faithfulness checking |
+| `spec/legion/llm/inference/enrichment_injector_spec.rb` | Tests: enrichment injection into system prompt |
+| `spec/legion/llm/inference/rag_gas_integration_spec.rb` | Tests: RAG/GAS full cycle integration |
+| `spec/spec_helper.rb` | Real Legion::Logging and Legion::Settings for testing (no stubs) |
 
 ## Extension Integration
 
@@ -501,7 +634,7 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 
 ## Testing
 
-Tests run without the full LegionIO stack. `spec/spec_helper.rb` stubs `Legion::Logging` and `Legion::Settings` with in-memory implementations. Each test resets settings to defaults via `before(:each)`.
+Tests run without the full LegionIO stack. `spec/spec_helper.rb` uses real `Legion::Logging` and `Legion::Settings` (no stubs — hard dependencies are always present). Each test resets settings to defaults via `before(:each)`.
 
 ```bash
 bundle exec rspec    # 1661 examples, 0 failures

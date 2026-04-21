@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: Module hierarchy restructured — see compat.rb for full alias list
+- Dead `lex-llm-gateway` references removed
+- `hooks/metering.rb` + `hooks/cost_tracking.rb` collapsed into `Metering.install_hook`
+
+### Added
+- OpenAI-compatible API: POST /v1/chat/completions, GET /v1/models, POST /v1/embeddings
+- Anthropic-compatible API: POST /v1/messages
+- Config-driven /v1/ auth: settings[:llm][:api][:auth]
+- Backward compat aliases via compat.rb with deprecation warnings
+
 ## [0.7.15] - 2026-04-20
 
 ### Added
