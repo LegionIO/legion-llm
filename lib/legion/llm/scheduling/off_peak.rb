@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
-require_relative 'scheduling'
+require_relative '../scheduling'
 
 module Legion
   module LLM

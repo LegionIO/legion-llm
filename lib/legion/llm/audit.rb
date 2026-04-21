@@ -2,17 +2,19 @@
 
 require 'legion/logging/helper'
 
-if defined?(Legion::Transport::Message)
-  require_relative 'audit/exchange'
-  require_relative 'audit/prompt_event'
-  require_relative 'audit/tool_event'
-  require_relative 'audit/skill_event'
-end
-
 module Legion
   module LLM
     module Audit
       extend Legion::Logging::Helper
+
+      def self.load_transport
+        return unless defined?(Legion::Transport::Message)
+
+        require_relative 'transport/exchanges/audit'
+        require_relative 'transport/messages/prompt_event'
+        require_relative 'transport/messages/tool_event'
+        require_relative 'transport/messages/skill_event'
+      end
 
       module_function
 

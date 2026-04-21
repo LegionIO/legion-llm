@@ -1,16 +1,22 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
-
-if defined?(Legion::Transport::Message)
-  require_relative 'metering/exchange'
-  require_relative 'metering/event'
-end
+require_relative 'metering/estimator'
+require_relative 'metering/tracker'
+require_relative 'metering/tokens'
+require_relative 'metering/usage'
 
 module Legion
   module LLM
     module Metering
       extend Legion::Logging::Helper
+
+      def self.load_transport
+        return unless defined?(Legion::Transport::Message)
+
+        require_relative 'transport/exchanges/metering'
+        require_relative 'transport/messages/metering_event'
+      end
 
       module_function
 

@@ -575,8 +575,8 @@ module Legion
             "requested_provider=#{provider || 'auto'} requested_model=#{model || 'auto'} stream=#{streaming}"
           )
 
-          require 'legion/llm/pipeline/request' unless defined?(Legion::LLM::Pipeline::Request)
-          require 'legion/llm/pipeline/executor' unless defined?(Legion::LLM::Pipeline::Executor)
+          require 'legion/llm/inference/request' unless defined?(Legion::LLM::Pipeline::Request)
+          require 'legion/llm/inference/executor' unless defined?(Legion::LLM::Pipeline::Executor)
 
           pipeline_request = Legion::LLM::Pipeline::Request.build(
             id:              request_id,

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative '../transport/message'
+require_relative '../message'
 
 module Legion
   module LLM

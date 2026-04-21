@@ -88,7 +88,7 @@ module Legion
 
         return unless has_sigv4 || has_bearer
 
-        require 'legion/llm/bedrock_bearer_auth' if has_bearer
+        require 'legion/llm/call/bedrock_auth' if has_bearer
 
         RubyLLM.configure do |c|
           if has_bearer

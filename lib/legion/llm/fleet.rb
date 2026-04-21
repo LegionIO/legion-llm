@@ -1,14 +1,5 @@
 # frozen_string_literal: true
 
-# Message classes require Legion::Transport::Message base class at load time.
-# Only load when the transport gem is available.
-if defined?(Legion::Transport::Message)
-  require_relative 'fleet/exchange'
-  require_relative 'fleet/request'
-  require_relative 'fleet/response'
-  require_relative 'fleet/error'
-end
-
 require_relative 'fleet/dispatcher'
 require_relative 'fleet/handler'
 require_relative 'fleet/reply_dispatcher'
@@ -16,6 +7,14 @@ require_relative 'fleet/reply_dispatcher'
 module Legion
   module LLM
     module Fleet
+      def self.load_transport
+        return unless defined?(Legion::Transport::Message)
+
+        require_relative 'transport/exchanges/fleet'
+        require_relative 'transport/messages/fleet_request'
+        require_relative 'transport/messages/fleet_response'
+        require_relative 'transport/messages/fleet_error'
+      end
     end
   end
 end
