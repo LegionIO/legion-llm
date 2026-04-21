@@ -44,9 +44,9 @@ module Legion
 
         result = if defined?(Legion::Telemetry::OpenInference)
                    Legion::Telemetry::OpenInference.llm_span(
-                     model: (model || Legion::LLM.settings[:default_model]).to_s,
+                     model:    (model || Legion::LLM.settings[:default_model]).to_s,
                      provider: provider&.to_s,
-                     input: message
+                     input:    message
                    ) do |_span|
                      dispatch_chat(model: model, provider: provider, intent: intent, tier: tier, escalate: escalate,
                                    max_escalations: max_escalations, quality_check: quality_check, message: message, **kwargs, &)
@@ -731,7 +731,6 @@ module Legion
         cloud_providers = %i[anthropic bedrock openai gemini azure]
         cloud_providers.include?(resolved&.to_sym)
       end
-
     end
   end
 end

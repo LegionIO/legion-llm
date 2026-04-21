@@ -12,7 +12,7 @@ module Legion
         module Messages
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
             log.debug('[llm][api][anthropic][messages] registering POST /v1/messages')
 
             app.post '/v1/messages' do # rubocop:disable Metrics/BlockLength
@@ -34,14 +34,14 @@ module Legion
               caller_identity = env['legion.tenant_id'] || 'api:anthropic'
 
               pipeline_request = Legion::LLM::Inference::Request.build(
-                id:              request_id,
-                messages:        normalized[:messages],
-                system:          normalized[:system],
-                routing:         normalized[:routing],
-                tools:           build_tool_classes(normalized[:tools] || []),
-                caller:          { source: 'api', path: '/v1/messages', requested_by: { identity: caller_identity } },
-                stream:          streaming,
-                cache:           { strategy: :default, cacheable: true }
+                id:       request_id,
+                messages: normalized[:messages],
+                system:   normalized[:system],
+                routing:  normalized[:routing],
+                tools:    build_tool_classes(normalized[:tools] || []),
+                caller:   { source: 'api', path: '/v1/messages', requested_by: { identity: caller_identity } },
+                stream:   streaming,
+                cache:    { strategy: :default, cacheable: true }
               )
 
               executor = Legion::LLM::Inference::Executor.new(pipeline_request)
@@ -53,7 +53,7 @@ module Legion
                         'Connection'        => 'keep-alive',
                         'X-Accel-Buffering' => 'no'
 
-                stream do |out| # rubocop:disable Metrics/BlockLength
+                stream do |out|
                   full_text = +''
 
                   pipeline_response = executor.call_stream do |chunk|

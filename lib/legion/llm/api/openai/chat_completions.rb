@@ -10,7 +10,7 @@ module Legion
         module ChatCompletions
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          def self.registered(app) # rubocop:disable Metrics/MethodLength
             log.debug('[llm][api][openai][chat_completions] registering POST /v1/chat/completions')
 
             app.post '/v1/chat/completions' do # rubocop:disable Metrics/BlockLength
@@ -51,7 +51,7 @@ module Legion
                         'Connection'        => 'keep-alive',
                         'X-Accel-Buffering' => 'no'
 
-                stream do |out| # rubocop:disable Metrics/BlockLength
+                stream do |out|
                   pipeline_response = executor.call_stream do |chunk|
                     text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
                     next if text.empty?

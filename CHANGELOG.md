@@ -1,6 +1,6 @@
 # Legion LLM Changelog
 
-## [Unreleased]
+## [0.8.0] - 2026-04-21
 
 ### Changed
 - BREAKING: Module hierarchy restructured — see compat.rb for full alias list

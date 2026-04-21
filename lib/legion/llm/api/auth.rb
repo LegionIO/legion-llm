@@ -12,19 +12,19 @@ module Legion
           log.debug('[llm][api][auth] registering /v1/* before filter')
 
           app.before '/v1/*' do
-            log.debug('[llm][api][auth] before filter action=check path=' + request.path_info)
+            log.debug("[llm][api][auth] before filter action=check path=#{request.path_info}")
             next unless auth_enabled?
 
             token = extract_token(request)
             log.debug("[llm][api][auth] action=validate token_present=#{!token.nil?}")
 
             unless valid_token?(token)
-              log.warn('[llm][api][auth] action=rejected reason=invalid_token path=' + request.path_info)
+              log.warn("[llm][api][auth] action=rejected reason=invalid_token path=#{request.path_info}")
               halt 401, { 'Content-Type' => 'application/json' },
                    Legion::JSON.dump({ error: { message: 'Invalid API key', type: 'authentication_error' } })
             end
 
-            log.debug('[llm][api][auth] action=authorized path=' + request.path_info)
+            log.debug("[llm][api][auth] action=authorized path=#{request.path_info}")
           end
 
           app.helpers do
@@ -40,7 +40,7 @@ module Legion
               end
 
               key = req.env['HTTP_X_API_KEY']
-              log.debug('[llm][api][auth] token_source=x_api_key present=' + (!key.nil?).to_s)
+              log.debug("[llm][api][auth] token_source=x_api_key present=#{!key.nil?}")
               key
             end
 

@@ -55,8 +55,8 @@ module Legion
             instruction = "Your previous response was not valid JSON. Respond with ONLY a valid JSON object matching this schema:\n#{Legion::JSON.dump(schema)}"
             augmented = Array(messages) + [{ role: 'user', content: instruction }]
             result = Legion::LLM::Inference.send(:chat_single,
-                                               model: model, provider: provider, intent: nil, tier: nil,
-                                               messages: augmented, **opts.except(:attempt))
+                                                 model: model, provider: provider, intent: nil, tier: nil,
+                                                 messages: augmented, **opts.except(:attempt))
 
             parsed = Legion::JSON.load(result[:content])
             { data: parsed, raw: result[:content], model: result[:model], valid: true, retried: true }

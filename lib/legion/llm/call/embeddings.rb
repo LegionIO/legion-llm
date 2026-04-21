@@ -286,8 +286,8 @@ module Legion
           end
 
           def generate_ollama(text:, model:)
-            max_chars = ollama_context_chars(model)
-            return generate_ollama_chunked(text: text, model: model, max_chars: max_chars) if text.length > max_chars
+            ctx_max = ollama_context_chars(model)
+            return generate_ollama_chunked(text: text, model: model, max_chars: ctx_max) if text.length > ctx_max
 
             result = ollama_embed_request(model: model, input: text)
             vector = extract_ollama_vectors(result).first
@@ -298,7 +298,7 @@ module Legion
           rescue RuntimeError => e
             raise unless e.message.include?('input length exceeds')
 
-            reduced = (max_chars * 0.6).to_i
+            reduced = (ctx_max * 0.6).to_i
             log.info("Ollama context exceeded, retrying with chunking at #{reduced} chars")
             generate_ollama_chunked(text: text, model: model, max_chars: reduced)
           end

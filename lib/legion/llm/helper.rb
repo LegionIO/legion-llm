@@ -121,7 +121,7 @@ module Legion
       def llm_cost_estimate(model: nil, input_tokens: 0, output_tokens: 0)
         model ||= llm_default_model
         Legion::LLM::Metering::Pricing.estimate(model_id: model, input_tokens: input_tokens,
-                                              output_tokens: output_tokens)
+                                                output_tokens: output_tokens)
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.helper.cost_estimate', model: model)
         0.0

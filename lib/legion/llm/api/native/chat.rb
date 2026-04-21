@@ -10,7 +10,7 @@ module Legion
         module Chat
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
             log.debug('[llm][api][chat] registering POST /api/llm/chat')
 
             app.post '/api/llm/chat' do # rubocop:disable Metrics/BlockLength

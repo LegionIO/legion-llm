@@ -1,0 +1,20 @@
+okay so here are the docs,
+  /Users/matt.iverson@optum.com/rubymine/legion/legion-llm-restructure/docs/superpowers/specs/2026-04-20-llm-module-restructure-design.md
+  /Users/matt.iverson@optum.com/rubymine/legion/legion-llm-restructure/docs/superpowers/plans/2026-04-20-llm-module-restructure.md
+   /Users/matt.iverson@optum.com/rubymine/legion/legion-llm-restructure/docs/openai-api-spec-routes.md
+  /Users/matt.iverson@optum.com/rubymine/legion/legion-llm-restructure/docs/superpowers/specs/2026-04-20-llm-module-diagram.md
+
+  The goal here is to clean up Legion::LLM because the organic growth has caused it to be come not organized, messy and hard to track.
+  I have recloned this repo for this work to ensure we don't mess things up, the start of moving shit around is located locally here
+  /Users/matt.iverson@optum.com/rubymine/legion/legion-llm-restructure
+
+  the current release before moving anaything is here /Users/matt.iverson@optum.com/rubymine/legion/legion-llm
+
+  the end goal here is to
+  1) clean up dead files/classes/modules
+  2) organize this into the normal ruby structure for a gem on folder/library path naming to module names
+  3) make this thing future proof for scale and organic growth if this project goes viral
+  4) not forget or "loose" any existing functionality because we didn't move it
+  5) centralize and put all the api routes inside Legion::LLM::API instead of being scattered across multiple folders, files and between the llm repo and LegionIO repo
+
+  help me find the gaps

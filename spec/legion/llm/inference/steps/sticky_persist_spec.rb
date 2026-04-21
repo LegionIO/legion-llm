@@ -193,11 +193,12 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
 
     it 're-activates expired execution-sticky runner under trigger tier when freshly triggered' do
       allow(Legion::LLM::Inference::Conversation).to receive(:read_sticky_state).and_return({
-                                                                                        sticky_runners:      {
-                                                                                          'github_issues' => { tier: :executed, expires_after_deferred_call: 0 }
-                                                                                        },
-                                                                                        deferred_tool_calls: 0
-                                                                                      })
+                                                                                              sticky_runners:      {
+                                                                                                'github_issues' => { tier:                        :executed,
+                                                                                                                     expires_after_deferred_call: 0 }
+                                                                                              },
+                                                                                              deferred_tool_calls: 0
+                                                                                            })
       instance.freshly_triggered_keys = ['github_issues']
       instance.instance_variable_set(:@request, fake_request('c1'))
       instance.step_sticky_persist

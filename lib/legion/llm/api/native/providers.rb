@@ -9,10 +9,10 @@ module Legion
         module Providers
           extend Legion::Logging::Helper
 
-          def self.registered(app)
+          def self.registered(app) # rubocop:disable Metrics/MethodLength
             log.debug('[llm][api][providers] registering provider routes')
 
-            app.get '/api/llm/providers' do # rubocop:disable Metrics/BlockLength
+            app.get '/api/llm/providers' do
               log.debug('[llm][api][providers] action=list_providers')
               require_llm!
 
@@ -70,7 +70,7 @@ module Legion
                          { circuit_state: 'unknown' }
                        end
 
-              safe_config = config.reject { |k, _| %i[api_key secret_key bearer_token session_token].include?(k) }
+              safe_config = config.except(:api_key, :secret_key, :bearer_token, :session_token)
 
               log.debug("[llm][api][providers] action=found name=#{params[:name]}")
               json_response({

@@ -74,7 +74,6 @@ module Legion
     class PrivacyModeError < StandardError; end
 
     class << self
-
       def start
         log.debug '[llm] start.enter'
         Call::ClaudeConfigLoader.load

@@ -424,7 +424,7 @@ module Legion
 
               duration_ms = ((Time.now - start_time) * 1000).round
               result = Quality::Checker.check(@raw_response, quality_threshold: threshold,
-                                                           quality_check:     quality_check)
+                                                             quality_check:     quality_check)
 
               @timeline.record(
                 category: :provider, key: 'escalation:attempt',
@@ -841,8 +841,8 @@ module Legion
               entry[:error]  = is_error
               if entry[:typed_call]
                 entry[:typed_call] = entry[:typed_call].with_result(
-                  result: result_str[0, 4096],
-                  status: is_error ? :error : :success,
+                  result:      result_str[0, 4096],
+                  status:      is_error ? :error : :success,
                   duration_ms: duration_ms,
                   finished_at: finished_at
                 )
@@ -1015,8 +1015,8 @@ module Legion
               task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil
             )
             Conversation.append(conv_id,
-                                     role:    typed_msg.role,
-                                     content: typed_msg.content)
+                                role:    typed_msg.role,
+                                content: typed_msg.content)
           end
 
           assistant_response = nil
@@ -1033,12 +1033,12 @@ module Legion
               task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil
             )
             Conversation.append(conv_id,
-                                     role:          typed_assistant.role,
-                                     content:       typed_assistant.content,
-                                     provider:      typed_assistant.provider,
-                                     model:         typed_assistant.model,
-                                     input_tokens:  typed_assistant.input_tokens,
-                                     output_tokens: typed_assistant.output_tokens)
+                                role:          typed_assistant.role,
+                                content:       typed_assistant.content,
+                                provider:      typed_assistant.provider,
+                                model:         typed_assistant.model,
+                                input_tokens:  typed_assistant.input_tokens,
+                                output_tokens: typed_assistant.output_tokens)
             assistant_response = @raw_response.content
           end
 
@@ -1053,8 +1053,8 @@ module Legion
 
         def trigger_async_curation(conv_id, turn_messages, assistant_response)
           Context::Curator.new(conversation_id: conv_id)
-                        .curate_turn(turn_messages:      turn_messages,
-                                     assistant_response: assistant_response)
+                          .curate_turn(turn_messages:      turn_messages,
+                                       assistant_response: assistant_response)
         rescue StandardError => e
           @warnings << "context_curation trigger failed: #{e.message}"
           handle_exception(e, level: :warn, operation: 'llm.pipeline.trigger_async_curation', conversation_id: conv_id)

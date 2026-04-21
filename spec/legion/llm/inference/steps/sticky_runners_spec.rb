@@ -39,10 +39,10 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyRunners do
       end
 
       allow(Legion::LLM::Inference::Conversation).to receive(:messages).and_return([
-                                                                               { role: :user, content: 'hello' },
-                                                                               { role: :assistant, content: 'hi' },
-                                                                               { role: :user,      content: 'for issues in github' }
-                                                                             ])
+                                                                                     { role: :user, content: 'hello' },
+                                                                                     { role: :assistant, content: 'hi' },
+                                                                                     { role: :user,      content: 'for issues in github' }
+                                                                                   ])
       allow(Legion::LLM::Inference::Conversation).to receive(:read_sticky_state).and_return({})
       allow(Legion::Tools::Registry).to receive(:deferred_tools).and_return([])
     end

@@ -37,7 +37,7 @@ module Legion
             end
           end
 
-          def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength
+          def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity
             case ref
             when 'sh'
               cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s
@@ -114,7 +114,7 @@ module Legion
         module Helpers
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
             log.debug('[llm][api][helpers] registering shared helpers')
 
             app.helpers do # rubocop:disable Metrics/BlockLength
@@ -126,8 +126,8 @@ module Legion
                   raw = request.body.read
                   return {} if raw.nil? || raw.empty?
 
-                  begin
-                    parsed = Legion::JSON.load(raw)
+                  parsed = begin
+                    Legion::JSON.load(raw)
                   rescue StandardError => e
                     handle_exception(e, level: :warn, handled: true, operation: 'llm.api.parse_request_body')
                     halt 400, { 'Content-Type' => 'application/json' },
@@ -261,7 +261,7 @@ module Legion
                     log_tool(:error, tool_ref, 'failed', duration_ms: ms, error: e.message)
                     notify_tool_event(:tool_error, tool_ref, error: e.message)
                     Legion::Logging.log_exception(e, payload_summary: "client tool #{tool_ref} failed",
-                                                     component_type: :api)
+                                                     component_type:  :api)
                     "Tool error: #{e.message}"
                   end
                 end

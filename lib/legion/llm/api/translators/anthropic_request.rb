@@ -97,11 +97,12 @@ module Legion
               else
                 bs
               end
-            end.then { |parts| parts.all? { |p| p.is_a?(String) } ? parts.join : parts }
+            end
+            parts.all?(String) ? parts.join : parts
           end
 
           private_class_method :extract_messages, :extract_system, :extract_tools,
-                                :extract_routing, :normalize_content
+                               :extract_routing, :normalize_content
         end
       end
     end

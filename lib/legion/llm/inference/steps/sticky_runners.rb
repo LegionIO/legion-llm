@@ -17,7 +17,7 @@ module Legion
 
             # MUST be first — before any modification to @triggered_tools
             @sticky_turn_snapshot = Inference::Conversation.messages(conv_id)
-                                                     .count { |m| (m[:role] || m['role']).to_s == 'user' }
+                                                           .count { |m| (m[:role] || m['role']).to_s == 'user' }
 
             # MUST be second — captures trigger_match results before sticky re-injection
             @freshly_triggered_keys = @triggered_tools.map { |t| "#{t.extension}_#{t.runner}" }.uniq

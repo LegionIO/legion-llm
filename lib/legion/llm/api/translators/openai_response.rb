@@ -12,9 +12,9 @@ module Legion
           extend Legion::Logging::Helper
 
           FINISH_REASON_MAP = {
-            'stop'         => 'stop',
-            'length'       => 'length',
-            'tool_calls'   => 'tool_calls',
+            'stop'           => 'stop',
+            'length'         => 'length',
+            'tool_calls'     => 'tool_calls',
             'content_filter' => 'content_filter'
           }.freeze
 
