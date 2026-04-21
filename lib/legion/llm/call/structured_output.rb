@@ -24,20 +24,20 @@ module Legion
 
           def call_with_schema(messages, schema, model, provider: nil, **opts)
             if supports_response_format?(model)
-              Legion::LLM.send(:chat_single,
-                               model: model, provider: provider, intent: nil, tier: nil,
-                               response_format: { type:        'json_schema',
-                                                  json_schema: { name: 'response', schema: schema } },
-                               **opts.except(:attempt))
+              Legion::LLM::Inference.send(:chat_single,
+                                          model: model, provider: provider, intent: nil, tier: nil,
+                                          response_format: { type:        'json_schema',
+                                                             json_schema: { name: 'response', schema: schema } },
+                                          **opts.except(:attempt))
             else
               log.debug("StructuredOutput using prompt-based fallback for model=#{model}")
               instruction = "You MUST respond with valid JSON matching this schema:\n" \
                             "```json\n#{Legion::JSON.dump(schema)}\n```\n" \
                             'Respond with ONLY the JSON object, no other text.'
               augmented = [{ role: 'system', content: instruction }] + Array(messages)
-              Legion::LLM.send(:chat_single,
-                               model: model, provider: provider, intent: nil, tier: nil,
-                               messages: augmented, **opts.except(:attempt))
+              Legion::LLM::Inference.send(:chat_single,
+                                          model: model, provider: provider, intent: nil, tier: nil,
+                                          messages: augmented, **opts.except(:attempt))
             end
           end
 
@@ -54,9 +54,9 @@ module Legion
           def retry_with_instruction(messages, schema, model, provider: nil, **opts)
             instruction = "Your previous response was not valid JSON. Respond with ONLY a valid JSON object matching this schema:\n#{Legion::JSON.dump(schema)}"
             augmented = Array(messages) + [{ role: 'user', content: instruction }]
-            result = Legion::LLM.send(:chat_single,
-                                      model: model, provider: provider, intent: nil, tier: nil,
-                                      messages: augmented, **opts.except(:attempt))
+            result = Legion::LLM::Inference.send(:chat_single,
+                                               model: model, provider: provider, intent: nil, tier: nil,
+                                               messages: augmented, **opts.except(:attempt))
 
             parsed = Legion::JSON.load(result[:content])
             { data: parsed, raw: result[:content], model: result[:model], valid: true, retried: true }

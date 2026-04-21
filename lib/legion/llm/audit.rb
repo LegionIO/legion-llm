@@ -64,6 +64,26 @@ module Legion
         !!(defined?(Legion::Settings) &&
           Legion::Settings[:transport][:connected] == true)
       end
+
+      # Backward-compat: resolve old Legion::LLM::Audit::Exchange, ::PromptEvent, etc.
+      def self.const_missing(name)
+        case name
+        when :Exchange
+          require_relative 'transport/exchanges/audit'
+          Transport::Exchanges::Audit
+        when :PromptEvent
+          require_relative 'transport/messages/prompt_event'
+          Transport::Messages::PromptEvent
+        when :ToolEvent
+          require_relative 'transport/messages/tool_event'
+          Transport::Messages::ToolEvent
+        when :SkillEvent
+          require_relative 'transport/messages/skill_event'
+          Transport::Messages::SkillEvent
+        else
+          super
+        end
+      end
     end
   end
 end

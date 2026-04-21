@@ -112,6 +112,20 @@ module Legion
 
         response.dig(:meta, :model) || response[:model]
       end
+
+      # Backward-compat: resolve old Legion::LLM::Metering::Exchange, ::Event
+      def self.const_missing(name)
+        case name
+        when :Exchange
+          require_relative 'transport/exchanges/metering'
+          Transport::Exchanges::Metering
+        when :Event
+          require_relative 'transport/messages/metering_event'
+          Transport::Messages::MeteringEvent
+        else
+          super
+        end
+      end
     end
   end
 end

@@ -107,6 +107,7 @@ module Legion
           end
 
           def provider_supports_embeddings?(provider)
+            return Discovery.send(:provider_supports_embeddings?, provider) if defined?(Discovery)
             return true unless LLM.respond_to?(:provider_supports_embeddings?, true)
 
             LLM.send(:provider_supports_embeddings?, provider)

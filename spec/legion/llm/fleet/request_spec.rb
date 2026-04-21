@@ -2,10 +2,10 @@
 
 require 'spec_helper'
 require_relative '../../../support/transport_stub'
-require 'legion/llm/fleet/exchange'
-require 'legion/llm/fleet/request'
+require 'legion/llm/transport/exchanges/fleet'
+require 'legion/llm/transport/messages/fleet_request'
 
-RSpec.describe Legion::LLM::Fleet::Request do
+RSpec.describe Legion::LLM::Transport::Messages::FleetRequest do
   let(:base_opts) do
     {
       routing_key:          'llm.request.ollama.chat.llama3.2',

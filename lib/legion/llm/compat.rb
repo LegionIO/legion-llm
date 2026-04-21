@@ -72,6 +72,9 @@ module Legion
       when :DaemonClient
         CompatWarning.warn_once('Legion::LLM::DaemonClient', 'Legion::LLM::Call::DaemonClient')
         Call::DaemonClient
+      when :Providers
+        CompatWarning.warn_once('Legion::LLM::Providers', 'Legion::LLM::Call::Providers')
+        Call::Providers
       when :Settings
         Config::Settings
       when :Prompt
@@ -80,6 +83,27 @@ module Legion
       when :ShadowEval
         CompatWarning.warn_once('Legion::LLM::ShadowEval', 'Legion::LLM::Quality::ShadowEval')
         Quality::ShadowEval
+      when :Arbitrage
+        CompatWarning.warn_once('Legion::LLM::Arbitrage', 'Legion::LLM::Router::Arbitrage')
+        Router::Arbitrage
+      when :Batch
+        CompatWarning.warn_once('Legion::LLM::Batch', 'Legion::LLM::Scheduling::Batch')
+        Scheduling::Batch
+      when :ContextCurator
+        CompatWarning.warn_once('Legion::LLM::ContextCurator', 'Legion::LLM::Context::Curator')
+        Context::Curator
+      when :Embeddings
+        CompatWarning.warn_once('Legion::LLM::Embeddings', 'Legion::LLM::Call::Embeddings')
+        Call::Embeddings
+      when :OffPeak
+        CompatWarning.warn_once('Legion::LLM::OffPeak', 'Legion::LLM::Scheduling::OffPeak')
+        Scheduling::OffPeak
+      when :InferenceError
+        CompatWarning.warn_once('Legion::LLM::InferenceError', 'Legion::LLM::PipelineError')
+        PipelineError
+      when :Routes, :API
+        require_relative '../llm/api'
+        const_get(name)
       else
         super
       end

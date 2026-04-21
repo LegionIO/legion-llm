@@ -242,7 +242,8 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
         }
       ]
       response = make_pipeline_response(content: 'Hello from pipeline', tools: [tool_call], timeline: timeline)
-      executor = instance_double('Legion::LLM::Inference::Executor')
+      executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
+      allow(executor).to receive(:tool_event_handler=)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
@@ -261,7 +262,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.status).to eq(200)
       expect(response.content_type).to include('text/event-stream')
       expect(response.body).to include('event: text-delta')
-      expect(response.body).to include('event: tool-call')
+      expect(response.body).to include('event: tool-progress')
       expect(response.body).to include('event: tool-result')
       expect(response.body).to include('event: done')
     end

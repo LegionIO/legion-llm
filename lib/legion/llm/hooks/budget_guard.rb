@@ -19,7 +19,7 @@ module Legion
           return nil unless enforcing?
 
           limit = session_budget
-          spent = Metering::Recorder.summary[:total_cost_usd]
+          spent = Legion::LLM::Metering::Recorder.summary[:total_cost_usd]
           return nil if spent < limit
 
           log.warn("[LLM::BudgetGuard] blocked: spent=$#{spent.round(4)} >= limit=$#{limit}")
@@ -44,13 +44,13 @@ module Legion
           limit = session_budget
           return Float::INFINITY unless limit.positive?
 
-          spent = Metering::Recorder.summary[:total_cost_usd]
+          spent = Legion::LLM::Metering::Recorder.summary[:total_cost_usd]
           [(limit - spent), 0.0].max
         end
 
         def status
           limit = session_budget
-          spent = Metering::Recorder.summary[:total_cost_usd]
+          spent = Legion::LLM::Metering::Recorder.summary[:total_cost_usd]
           {
             enforcing:     limit.positive?,
             budget_usd:    limit,

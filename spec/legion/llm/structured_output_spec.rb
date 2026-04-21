@@ -29,7 +29,7 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
   describe '.generate' do
     it 'returns parsed JSON when valid' do
       json_string = '{"name":"Alice"}'
-      allow(Legion::LLM).to receive(:send).with(:chat_single, anything).and_return({ content: json_string, model: 'gpt-4o' })
+      allow(Legion::LLM::Inference).to receive(:send).with(:chat_single, anything).and_return({ content: json_string, model: 'gpt-4o' })
       allow(Legion::JSON).to receive(:load).with(json_string).and_return({ name: 'Alice' })
       allow(Legion::JSON).to receive(:dump).and_return('{}')
 
@@ -40,7 +40,7 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
 
     it 'passes provider through to chat_single' do
       json_string = '{"name":"Alice"}'
-      allow(Legion::LLM).to receive(:send).with(
+      allow(Legion::LLM::Inference).to receive(:send).with(
         :chat_single,
         hash_including(model: 'claude-sonnet-4-6', provider: :anthropic)
       ).and_return({ content: json_string, model: 'claude-sonnet-4-6' })
@@ -62,7 +62,7 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
       good_result = { content: '{"name":"Bob"}', model: 'gpt-4o' }
 
       call_count = 0
-      allow(Legion::LLM).to receive(:send).with(:chat_single, anything) do
+      allow(Legion::LLM::Inference).to receive(:send).with(:chat_single, anything) do
         call_count += 1
         call_count == 1 ? bad_result : good_result
       end
@@ -80,7 +80,7 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
 
     it 'returns error when retries exhausted' do
       bad_result = { content: 'bad', model: 'gpt-4o' }
-      allow(Legion::LLM).to receive(:send).with(:chat_single, anything).and_return(bad_result)
+      allow(Legion::LLM::Inference).to receive(:send).with(:chat_single, anything).and_return(bad_result)
       allow(Legion::JSON).to receive(:dump).and_return('{}')
       allow(Legion::JSON).to receive(:load).and_raise(JSON::ParserError, 'unexpected token')
       allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :retry_on_parse_failure).and_return(false)

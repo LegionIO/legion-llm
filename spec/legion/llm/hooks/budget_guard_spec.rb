@@ -6,6 +6,10 @@ require 'legion/llm/hooks/budget_guard'
 require 'legion/llm/metering/tracker'
 
 RSpec.describe Legion::LLM::Hooks::BudgetGuard do
+  before do
+    Legion::LLM::Metering::Recorder.clear
+  end
+
   after do
     Legion::LLM::Hooks.reset!
     Legion::LLM::Metering::Recorder.clear

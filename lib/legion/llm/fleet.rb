@@ -15,6 +15,26 @@ module Legion
         require_relative 'transport/messages/fleet_response'
         require_relative 'transport/messages/fleet_error'
       end
+
+      # Backward-compat: resolve old Legion::LLM::Fleet::Exchange, ::Request, ::Response, ::Error
+      def self.const_missing(name)
+        case name
+        when :Exchange
+          require_relative 'transport/exchanges/fleet'
+          Transport::Exchanges::Fleet
+        when :Request
+          require_relative 'transport/messages/fleet_request'
+          Transport::Messages::FleetRequest
+        when :Response
+          require_relative 'transport/messages/fleet_response'
+          Transport::Messages::FleetResponse
+        when :Error
+          require_relative 'transport/messages/fleet_error'
+          Transport::Messages::FleetError
+        else
+          super
+        end
+      end
     end
   end
 end

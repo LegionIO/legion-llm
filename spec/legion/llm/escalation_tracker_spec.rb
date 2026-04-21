@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/escalation_tracker'
+require 'legion/llm/router/escalation/tracker'
 
 RSpec.describe Legion::LLM::EscalationTracker do
   before { described_class.clear }

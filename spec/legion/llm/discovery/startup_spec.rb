@@ -10,6 +10,10 @@ RSpec.describe 'LLM startup discovery' do
     Legion::LLM::Discovery::System.reset!
     allow(RubyLLM).to receive(:configure)
     allow(RubyLLM).to receive(:chat).and_return(double(ask: 'pong'))
+    # Prevent actual embedding verification from making real network calls
+    allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
+    # Prevent auto-enabling of providers with unresolved env:// credentials
+    allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
   end
 
   context 'when Ollama provider is enabled' do
@@ -32,7 +36,7 @@ RSpec.describe 'LLM startup discovery' do
 
     it 'logs discovered models' do
       allow(Legion::Logging).to receive(:info)
-      expect(Legion::Logging).to receive(:info).with(/Ollama: 1 model/).at_least(:once)
+      expect(Legion::Logging).to receive(:info).with(/ollama model_count=1/).at_least(:once)
       Legion::LLM.start
     end
   end
@@ -40,7 +44,7 @@ RSpec.describe 'LLM startup discovery' do
   context 'when Ollama provider is disabled' do
     before do
       Legion::Settings[:llm][:providers][:ollama][:enabled] = false
-      allow(Legion::LLM).to receive(:ollama_running?).and_return(false)
+      allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
     end
 
     it 'does not refresh discovery caches' do

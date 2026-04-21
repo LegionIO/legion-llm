@@ -31,8 +31,8 @@ RSpec.describe Legion::LLM do
   describe '.start and .shutdown' do
     before do
       Legion::Settings[:llm][:providers][:ollama][:enabled] = true
-      allow(described_class).to receive(:verify_providers)
-      allow(described_class).to receive(:verify_embedding).and_return(false)
+      allow(Legion::LLM::Call::Providers).to receive(:verify_providers)
+      allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
       stub_request(:get, 'http://localhost:11434/api/tags')
         .to_return(status: 200, body: { 'models' => [] }.to_json)
       allow(Legion::LLM::Discovery::System).to receive(:platform).and_return(:unknown)
@@ -91,10 +91,10 @@ RSpec.describe Legion::LLM do
 
   describe 'auto_configure_defaults' do
     before do
-      allow(described_class).to receive(:verify_providers)
-      allow(described_class).to receive(:verify_embedding).and_return(false)
-      allow(described_class).to receive(:ollama_running?).and_return(false)
-      allow(Legion::LLM::ClaudeConfigLoader).to receive(:load)
+      allow(Legion::LLM::Call::Providers).to receive(:verify_providers)
+      allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
+      allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
+      allow(Legion::LLM::Call::ClaudeConfigLoader).to receive(:load)
       # Clear any env-var-seeded defaults so auto_configure_defaults actually runs
       Legion::Settings[:llm][:default_model]    = nil
       Legion::Settings[:llm][:default_provider] = nil
@@ -138,30 +138,20 @@ RSpec.describe Legion::LLM do
     end
   end
 
-  describe Legion::LLM::Providers do
-    let(:test_class) do
-      Class.new do
-        extend Legion::LLM::Providers
-
-        def self.settings
-          Legion::Settings[:llm]
-        end
-      end
-    end
-
+  describe Legion::LLM::Call::Providers do
     describe '#configure_bedrock' do
       it 'configures with SigV4 when api_key and secret_key are present' do
-        test_class.send(:configure_bedrock, {
-                          api_key: 'AKID', secret_key: 'SECRET', region: 'us-east-2'
-                        })
+        described_class.send(:configure_bedrock, {
+                               api_key: 'AKID', secret_key: 'SECRET', region: 'us-east-2'
+                             })
         expect(RubyLLM.config.bedrock_api_key).to eq('AKID')
         expect(RubyLLM.config.bedrock_secret_key).to eq('SECRET')
       end
 
       it 'configures with bearer token when bearer_token is present' do
-        test_class.send(:configure_bedrock, {
-                          bearer_token: 'my-bearer-token', region: 'us-east-2'
-                        })
+        described_class.send(:configure_bedrock, {
+                               bearer_token: 'my-bearer-token', region: 'us-east-2'
+                             })
         expect(RubyLLM.config.bedrock_bearer_token).to eq('my-bearer-token')
         expect(RubyLLM.config.bedrock_region).to eq('us-east-2')
       end
@@ -169,7 +159,7 @@ RSpec.describe Legion::LLM do
       it 'skips config when no credentials are provided' do
         RubyLLM.config.bedrock_api_key = nil
         RubyLLM.config.bedrock_bearer_token = nil
-        test_class.send(:configure_bedrock, { region: 'us-east-2' })
+        described_class.send(:configure_bedrock, { region: 'us-east-2' })
         expect(RubyLLM.config.bedrock_api_key).to be_nil
         expect(RubyLLM.config.bedrock_bearer_token).to be_nil
       end
@@ -177,30 +167,30 @@ RSpec.describe Legion::LLM do
 
     describe '#configure_azure' do
       it 'configures with api_key when api_base and api_key are present' do
-        test_class.send(:configure_azure, {
-                          api_base: 'https://my-resource.openai.azure.com', api_key: 'az-key-123'
-                        })
+        described_class.send(:configure_azure, {
+                               api_base: 'https://my-resource.openai.azure.com', api_key: 'az-key-123'
+                             })
         expect(RubyLLM.config.azure_api_base).to eq('https://my-resource.openai.azure.com')
         expect(RubyLLM.config.azure_api_key).to eq('az-key-123')
       end
 
       it 'configures with auth_token when api_base and auth_token are present' do
-        test_class.send(:configure_azure, {
-                          api_base: 'https://my-resource.openai.azure.com', auth_token: 'bearer-tok'
-                        })
+        described_class.send(:configure_azure, {
+                               api_base: 'https://my-resource.openai.azure.com', auth_token: 'bearer-tok'
+                             })
         expect(RubyLLM.config.azure_api_base).to eq('https://my-resource.openai.azure.com')
         expect(RubyLLM.config.azure_ai_auth_token).to eq('bearer-tok')
       end
 
       it 'skips config when api_base is missing' do
         RubyLLM.config.azure_api_base = nil
-        test_class.send(:configure_azure, { api_key: 'az-key-123' })
+        described_class.send(:configure_azure, { api_key: 'az-key-123' })
         expect(RubyLLM.config.azure_api_base).to be_nil
       end
 
       it 'skips config when both api_key and auth_token are missing' do
         RubyLLM.config.azure_api_base = nil
-        test_class.send(:configure_azure, { api_base: 'https://test.openai.azure.com' })
+        described_class.send(:configure_azure, { api_base: 'https://test.openai.azure.com' })
         expect(RubyLLM.config.azure_api_base).to be_nil
       end
     end

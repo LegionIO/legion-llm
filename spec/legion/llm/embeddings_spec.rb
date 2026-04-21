@@ -5,6 +5,9 @@ require 'legion/llm/call/embeddings'
 
 RSpec.describe 'Legion::LLM embedding capability' do
   before do
+    Legion::LLM::Discovery.instance_variable_set(:@can_embed, nil)
+    Legion::LLM::Discovery.instance_variable_set(:@embedding_provider, nil)
+    Legion::LLM::Discovery.instance_variable_set(:@embedding_model, nil)
     Legion::LLM.instance_variable_set(:@can_embed, nil)
     Legion::LLM.instance_variable_set(:@embedding_provider, nil)
     Legion::LLM.instance_variable_set(:@embedding_model, nil)
@@ -39,6 +42,9 @@ end
 
 RSpec.describe '.detect_embedding_capability' do
   before do
+    Legion::LLM::Discovery.instance_variable_set(:@can_embed, nil)
+    Legion::LLM::Discovery.instance_variable_set(:@embedding_provider, nil)
+    Legion::LLM::Discovery.instance_variable_set(:@embedding_model, nil)
     Legion::LLM.instance_variable_set(:@can_embed, nil)
     Legion::LLM.instance_variable_set(:@embedding_provider, nil)
     Legion::LLM.instance_variable_set(:@embedding_model, nil)
@@ -54,7 +60,7 @@ RSpec.describe '.detect_embedding_capability' do
     end
 
     it 'selects Ollama with that model' do
-      Legion::LLM.send(:detect_embedding_capability)
+      Legion::LLM::Discovery.detect_embedding_capability
       expect(Legion::LLM.can_embed?).to be true
       expect(Legion::LLM.embedding_provider).to eq(:ollama)
       expect(Legion::LLM.embedding_model).to eq('mxbai-embed-large')
@@ -67,11 +73,11 @@ RSpec.describe '.detect_embedding_capability' do
         .and_return(false)
       Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
       Legion::Settings[:llm][:providers][:openai][:enabled] = true
-      allow(Legion::LLM).to receive(:verify_embedding).with(:openai, 'text-embedding-3-small').and_return(true)
+      allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:openai, 'text-embedding-3-small').and_return(true)
     end
 
     it 'skips unsupported bedrock and falls back to openai' do
-      Legion::LLM.send(:detect_embedding_capability)
+      Legion::LLM::Discovery.detect_embedding_capability
       expect(Legion::LLM.can_embed?).to be true
       expect(Legion::LLM.embedding_provider).to eq(:openai)
       expect(Legion::LLM.embedding_model).to eq('text-embedding-3-small')
@@ -86,7 +92,7 @@ RSpec.describe '.detect_embedding_capability' do
     end
 
     it 'leaves embeddings unavailable' do
-      Legion::LLM.send(:detect_embedding_capability)
+      Legion::LLM::Discovery.detect_embedding_capability
       expect(Legion::LLM.can_embed?).to be false
       expect(Legion::LLM.embedding_provider).to be_nil
     end
@@ -100,7 +106,7 @@ RSpec.describe '.detect_embedding_capability' do
     end
 
     it 'sets can_embed? to false' do
-      Legion::LLM.send(:detect_embedding_capability)
+      Legion::LLM::Discovery.detect_embedding_capability
       expect(Legion::LLM.can_embed?).to be false
       expect(Legion::LLM.embedding_provider).to be_nil
     end

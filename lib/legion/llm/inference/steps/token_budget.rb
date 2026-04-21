@@ -30,10 +30,10 @@ module Legion
           end
 
           def check_session_budget
-            return unless Metering::Tokens.session_exceeded?
+            return unless Legion::LLM::Metering::Tokens.session_exceeded?
 
-            limit = Metering::Tokens.summary[:session_max_tokens]
-            total = Metering::Tokens.total_tokens
+            limit = Legion::LLM::Metering::Tokens.summary[:session_max_tokens]
+            total = Legion::LLM::Metering::Tokens.total_tokens
             raise Legion::LLM::TokenBudgetExceeded,
                   "session token budget exceeded: #{total} >= #{limit}"
           end

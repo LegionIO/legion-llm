@@ -543,10 +543,10 @@ module Legion
 
       def try_defer(intent:, urgency:, model:, provider:, message:, **)
         return nil unless Scheduling.enabled? && Scheduling.should_defer?(intent: intent || :normal, urgency: urgency)
-        return nil unless defined?(Batch) && Batch.enabled?
+        return nil unless Legion::LLM::Scheduling::Batch.enabled?
 
         log.debug "[llm][inference] try_defer deferring intent=#{intent} urgency=#{urgency}"
-        entry_id = Batch.enqueue(model: model, provider: provider, message: message, priority: urgency, **)
+        entry_id = Legion::LLM::Scheduling::Batch.enqueue(model: model, provider: provider, message: message, priority: urgency, **)
         { deferred: true, batch_id: entry_id, next_off_peak: Scheduling.next_off_peak.iso8601 }
       end
 

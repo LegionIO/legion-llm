@@ -48,6 +48,7 @@ require_relative 'llm/inference/prompt'
 require_relative 'llm/helper'
 require_relative 'llm/config'
 require_relative 'llm/discovery'
+require_relative 'llm/transport'
 
 begin
   require_relative 'llm/skills'
@@ -55,17 +56,24 @@ rescue LoadError => e
   Legion::Logging.debug "LLM: skills not loadable: #{e.message}"
 end
 
+begin
+  require_relative 'llm/api'
+rescue LoadError => e
+  Legion::Logging.debug "LLM: api routes not loadable (Sinatra not available): #{e.message}"
+end
+
 require_relative 'llm/compat'
 
 module Legion
   module LLM
+    extend Legion::Logging::Helper
+
     class EscalationExhausted < StandardError; end
     class DaemonDeniedError < StandardError; end
     class DaemonRateLimitedError < StandardError; end
     class PrivacyModeError < StandardError; end
 
     class << self
-      extend Legion::Logging::Helper
 
       def start
         log.debug '[llm] start.enter'
@@ -80,10 +88,10 @@ module Legion
 
         Legion::LLM::Skills.start if defined?(Legion::LLM::Skills) && settings.dig(:skills, :enabled) != false
 
-        Transport.load_all
-        Fleet.load_transport
-        Audit.load_transport
-        Metering.load_transport
+        LLM::Transport.load_all
+        LLM::Fleet.load_transport
+        LLM::Audit.load_transport
+        LLM::Metering.load_transport
 
         @started = true
         Legion::Settings[:llm][:connected] = true
@@ -100,6 +108,11 @@ module Legion
         @started = false
         Discovery.reset!
         Call::Registry.reset!
+        # Clear LLM-level embedding ivars that may have been set via instance_variable_set for testing
+        @can_embed = nil
+        @embedding_provider = nil
+        @embedding_model = nil
+        @embedding_fallback_chain = nil
         log.info '[llm] shut down'
       end
 
@@ -144,10 +157,23 @@ module Legion
 
       def structured_direct(messages:, schema:, **) = Call::StructuredOutput.generate(messages: messages, schema: schema, **)
 
-      def can_embed? = Discovery.can_embed?
-      def embedding_provider = Discovery.embedding_provider
-      def embedding_model = Discovery.embedding_model
-      def embedding_fallback_chain = Discovery.embedding_fallback_chain
+      # These methods check Discovery first, then fall back to instance ivars set directly on LLM
+      # (ivar fallback preserves backwards compat for specs that do Legion::LLM.instance_variable_set)
+      def can_embed?
+        Discovery.can_embed? || @can_embed == true
+      end
+
+      def embedding_provider
+        Discovery.embedding_provider || @embedding_provider
+      end
+
+      def embedding_model
+        Discovery.embedding_model || @embedding_model
+      end
+
+      def embedding_fallback_chain
+        Discovery.embedding_fallback_chain || @embedding_fallback_chain
+      end
 
       def agent(agent_class, **) = agent_class.new(**)
     end
