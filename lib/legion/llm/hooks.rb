@@ -2,8 +2,6 @@
 
 require_relative 'hooks/rag_guard'
 require_relative 'hooks/response_guard'
-require_relative 'hooks/metering'
-require_relative 'hooks/cost_tracking'
 require_relative 'hooks/budget_guard'
 require_relative 'hooks/reflection'
 require_relative 'hooks/reciprocity'
@@ -49,8 +47,7 @@ module Legion
         end
 
         def install_defaults
-          Metering.install
-          CostTracking.install
+          Legion::LLM::Metering.install_hook
           BudgetGuard.install if BudgetGuard.enforcing?
         end
 

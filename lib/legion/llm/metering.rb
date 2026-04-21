@@ -50,6 +50,33 @@ module Legion
         0
       end
 
+      def install_hook
+        Legion::LLM::Hooks.after_chat do |response:, model:, **|
+          usage = extract_usage(response)
+          next if usage[:input_tokens].zero? && usage[:output_tokens].zero?
+
+          resolved_model    = (extract_model(response) || model).to_s
+          resolved_provider = extract_provider(response)
+
+          Metering::Recorder.record(
+            model:         resolved_model,
+            input_tokens:  usage[:input_tokens],
+            output_tokens: usage[:output_tokens],
+            provider:      resolved_provider
+          )
+
+          emit(
+            provider:      resolved_provider,
+            model_id:      resolved_model,
+            input_tokens:  usage[:input_tokens],
+            output_tokens: usage[:output_tokens],
+            event_type:    'llm_completion',
+            status:        response.is_a?(Hash) && response[:error] ? 'failure' : 'success'
+          )
+          nil
+        end
+      end
+
       def transport_connected?
         !!(defined?(Legion::Settings) &&
           Legion::Settings[:transport][:connected] == true)
@@ -62,6 +89,28 @@ module Legion
       def spool_event(event)
         spool = Legion::Data::Spool.for(Legion::LLM)
         spool.write(:metering, event)
+      end
+
+      def extract_usage(response)
+        return { input_tokens: 0, output_tokens: 0 } unless response.is_a?(Hash)
+
+        usage = response[:usage] || {}
+        {
+          input_tokens:  usage[:input_tokens] || usage[:prompt_tokens] || 0,
+          output_tokens: usage[:output_tokens] || usage[:completion_tokens] || 0
+        }
+      end
+
+      def extract_provider(response)
+        return nil unless response.is_a?(Hash)
+
+        response.dig(:meta, :provider) || response[:provider]
+      end
+
+      def extract_model(response)
+        return nil unless response.is_a?(Hash)
+
+        response.dig(:meta, :model) || response[:model]
       end
     end
   end
