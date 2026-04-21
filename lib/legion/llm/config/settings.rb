@@ -36,7 +36,8 @@ module Legion
           context_curation:          context_curation_defaults,
           debate:                    debate_defaults,
           provider_layer:            provider_layer_defaults,
-          tool_trigger:              tool_trigger_defaults
+          tool_trigger:              tool_trigger_defaults,
+          api:                       api_defaults
         }
       end
 
@@ -270,6 +271,16 @@ module Legion
           challenger_model:         nil,
           judge_model:              nil,
           model_selection_strategy: 'rotate'
+        }
+      end
+
+      def self.api_defaults
+        {
+          auth: {
+            enabled:      false,
+            api_keys:     [],
+            pass_through: false
+          }
         }
       end
 

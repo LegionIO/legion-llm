@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative 'api/auth'
 require_relative 'api/native/helpers'
 require_relative 'api/native/inference'
 require_relative 'api/native/chat'
@@ -14,6 +15,7 @@ module Legion
 
       def self.registered(app)
         log.debug('[llm][api] registering all native routes')
+        Auth.registered(app)
         Native::Helpers.registered(app)
         Native::Inference.registered(app)
         Native::Chat.registered(app)
