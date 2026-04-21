@@ -2,9 +2,9 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Executor, '#call_stream' do
+RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
   let(:request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
       routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
       stream:   true
@@ -24,7 +24,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor, '#call_stream' do
     response = executor.call_stream { |chunk| chunks << chunk }
 
     expect(chunks).to eq(['hello ', 'world'])
-    expect(response).to be_a(Legion::LLM::Pipeline::Response)
+    expect(response).to be_a(Legion::LLM::Inference::Response)
   end
 
   it 'runs pre-provider steps before streaming' do
@@ -51,7 +51,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor, '#call_stream' do
   end
 
   it 'applies enriched system instructions before streaming the provider call' do
-    req = Legion::LLM::Pipeline::Request.build(
+    req = Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
       system:   'Base system prompt',
       routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
@@ -79,7 +79,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor, '#call_stream' do
     Legion::Settings[:llm][:prompt_caching][:enabled] = true
     Legion::Settings[:llm][:prompt_caching][:cache_conversation] = true
 
-    req = Legion::LLM::Pipeline::Request.build(
+    req = Legion::LLM::Inference::Request.build(
       messages: [
         { role: :user, content: 'first message' },
         { role: :assistant, content: 'prior answer' },
@@ -109,6 +109,6 @@ RSpec.describe Legion::LLM::Pipeline::Executor, '#call_stream' do
     executor = described_class.new(request)
     allow(executor).to receive(:step_provider_call)
     response = executor.call_stream
-    expect(response).to be_a(Legion::LLM::Pipeline::Response)
+    expect(response).to be_a(Legion::LLM::Inference::Response)
   end
 end

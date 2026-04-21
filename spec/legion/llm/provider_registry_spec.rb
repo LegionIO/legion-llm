@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::ProviderRegistry do
+RSpec.describe Legion::LLM::Call::Registry do
   before { described_class.reset! }
 
   let(:fake_ext_a) { Module.new }

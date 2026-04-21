@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Request do
+RSpec.describe Legion::LLM::Inference::Request do
   describe '.build' do
     it 'creates a request with defaults' do
       req = described_class.build(messages: [{ role: :user, content: 'hello' }])

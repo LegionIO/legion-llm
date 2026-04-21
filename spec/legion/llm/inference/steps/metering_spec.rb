@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::Metering do
+RSpec.describe Legion::LLM::Inference::Steps::Metering do
   describe '.build_event' do
     it 'builds a metering event with all fields' do
       event = described_class.build_event(

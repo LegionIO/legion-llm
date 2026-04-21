@@ -3,7 +3,7 @@
 require 'spec_helper'
 begin
   require 'sinatra/base'
-  require 'legion/llm/routes'
+  require 'legion/llm/api/native/inference'
 rescue LoadError
   nil
 end
@@ -42,7 +42,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
   end
 
   describe 'pipeline routing via messages: array' do
-    it 'returns a Pipeline::Response when called with messages: array and pipeline enabled' do
+    it 'returns a Inference::Response when called with messages: array and pipeline enabled' do
       messages = [{ role: :user, content: 'what is legion?' }]
       result = Legion::LLM.chat(
         messages: messages,
@@ -50,7 +50,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
         provider: :test,
         caller:   { source: 'api', path: '/api/llm/inference' }
       )
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
 
     it 'carries the response content through the pipeline' do
@@ -88,10 +88,10 @@ RSpec.describe 'Inference endpoint pipeline routing' do
         Legion::LLM.chat(messages: multi_turn_messages)
       end
 
-      it 'returns a Pipeline::Response for multi-turn conversations' do
+      it 'returns a Inference::Response for multi-turn conversations' do
         allow(mock_session).to receive(:add_message)
         result = Legion::LLM.chat(messages: multi_turn_messages)
-        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+        expect(result).to be_a(Legion::LLM::Inference::Response)
         expect(result.message[:content]).to eq('pipeline response')
       end
     end
@@ -118,12 +118,12 @@ RSpec.describe 'Inference endpoint pipeline routing' do
     context 'when pipeline is disabled' do
       before { Legion::Settings[:llm][:pipeline_enabled] = false }
 
-      it 'does not return a Pipeline::Response' do
+      it 'does not return a Inference::Response' do
         allow(mock_session).to receive(:with_instructions)
         result = Legion::LLM.chat(
           messages: [{ role: :user, content: 'no pipeline' }]
         )
-        expect(result).not_to be_a(Legion::LLM::Pipeline::Response)
+        expect(result).not_to be_a(Legion::LLM::Inference::Response)
       end
     end
   end
@@ -136,7 +136,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
         provider: :test,
         caller:   { source: 'api', path: '/api/llm/chat' }
       )
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
 
     it 'carries content from pipeline response' do
@@ -194,13 +194,13 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     it 'passes requested deferred tools through request metadata' do
       captured = nil
       response = make_pipeline_response
-      executor = instance_double('Legion::LLM::Pipeline::Executor', call: response)
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
 
-      allow(Legion::LLM::Pipeline::Request).to receive(:build) do |**kwargs|
+      allow(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
         captured = kwargs
         :req
       end
-      allow(Legion::LLM::Pipeline::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
 
       response = post_json('/api/llm/inference', {
                              messages:        [{ role: 'user', content: 'hello' }],
@@ -214,10 +214,10 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     it 'returns sync tool_calls from the pipeline response' do
       tool_call = { id: 'tc_1', name: 'legion_tools', arguments: { query: 'status' } }
       response = make_pipeline_response(content: 'tool response', tools: [tool_call], stop_reason: :tool_use)
-      executor = instance_double('Legion::LLM::Pipeline::Executor', call: response)
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
 
-      allow(Legion::LLM::Pipeline::Request).to receive(:build).and_return(:req)
-      allow(Legion::LLM::Pipeline::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
 
       response = post_json('/api/llm/inference', { messages: [{ role: 'user', content: 'use legion tools' }] })
 
@@ -242,10 +242,10 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
         }
       ]
       response = make_pipeline_response(content: 'Hello from pipeline', tools: [tool_call], timeline: timeline)
-      executor = instance_double('Legion::LLM::Pipeline::Executor')
+      executor = instance_double('Legion::LLM::Inference::Executor')
 
-      allow(Legion::LLM::Pipeline::Request).to receive(:build).and_return(:req)
-      allow(Legion::LLM::Pipeline::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
       allow(executor).to receive(:call_stream) do |&block|
         block&.call('Hello ')
         block&.call('from pipeline')

@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Executor do
+RSpec.describe Legion::LLM::Inference::Executor do
   describe 'ASYNC_SAFE_STEPS' do
     subject(:async_safe) { described_class::ASYNC_SAFE_STEPS }
 
@@ -41,7 +41,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
 
   describe '#async_post_enabled?' do
     let(:request) do
-      Legion::LLM::Pipeline::Request.build(
+      Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  {}
       )

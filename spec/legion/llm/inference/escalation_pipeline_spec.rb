@@ -2,15 +2,15 @@
 
 require 'spec_helper'
 require 'legion/llm'
-require 'legion/llm/quality_checker'
-require 'legion/llm/router/escalation_chain'
+require 'legion/llm/quality/checker'
+require 'legion/llm/router/escalation/chain'
 
 RSpec.describe 'Pipeline escalation via step_provider_call' do
   let(:good_content) { 'This is a sufficiently long and varied response that passes all quality checks easily' }
   let(:short_content) { 'ok' }
 
   let(:request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
       routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' }
     )
@@ -62,14 +62,14 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
     end
 
-    it 'uses single provider call and returns a Pipeline::Response' do
+    it 'uses single provider call and returns a Inference::Response' do
       good_response = build_mock_response(good_content)
       session = build_mock_session(good_response)
       expect(RubyLLM).to receive(:chat).once.and_return(session)
 
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(result.message[:content]).to eq(good_content)
     end
 
@@ -78,7 +78,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       session = build_mock_session(short_response)
       expect(RubyLLM).to receive(:chat).once.and_return(session)
 
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
       expect(result.message[:content]).to eq(short_content)
     end
@@ -89,14 +89,14 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = true
     end
 
-    it 'returns a Pipeline::Response on first passing attempt' do
+    it 'returns a Inference::Response on first passing attempt' do
       good_response = build_mock_response(good_content)
       session = build_mock_session(good_response)
       expect(RubyLLM).to receive(:chat).once.and_return(session)
 
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(result.message[:content]).to eq(good_content)
     end
 
@@ -114,9 +114,9 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
         end
       end
 
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(result.message[:content]).to eq(good_content)
       expect(call_count).to eq(2)
     end
@@ -139,9 +139,9 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
         session
       end
 
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(result.message[:content]).to eq(good_content)
       expect(call_count).to eq(2)
     end
@@ -158,7 +158,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
         session
       end
 
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
       expect { executor.call }.to raise_error(Legion::LLM::EscalationExhausted)
     end
 
@@ -176,7 +176,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
         session
       end
 
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
       expect { executor.call }.to raise_error(Legion::LLM::EscalationExhausted)
       expect(call_count).to eq(2)
     end
@@ -195,7 +195,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
         end
       end
 
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
 
       escalation_events = result.timeline.select { |e| e[:key] == 'escalation:attempt' }
@@ -203,7 +203,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
     end
 
     it 'uses custom quality_check from request extra when present' do
-      request_with_check = Legion::LLM::Pipeline::Request.build(
+      request_with_check = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
         extra:    { quality_check: ->(r) { r.content.include?('SELECT') } }
@@ -222,7 +222,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
         end
       end
 
-      executor = Legion::LLM::Pipeline::Executor.new(request_with_check)
+      executor = Legion::LLM::Inference::Executor.new(request_with_check)
       result = executor.call
       expect(result.message[:content]).to include('SELECT')
     end
@@ -238,9 +238,9 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       session = build_mock_session(good_response)
       expect(RubyLLM).to receive(:chat).once.and_return(session)
 
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
   end
 end

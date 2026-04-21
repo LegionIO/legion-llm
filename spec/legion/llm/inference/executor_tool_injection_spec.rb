@@ -2,9 +2,9 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Executor do
+RSpec.describe Legion::LLM::Inference::Executor do
   let(:request_with_tools) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'use a tool' }],
       tools:    [double('MyTool')],
       routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
@@ -12,7 +12,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
   end
 
   let(:request_empty_tools) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'no tools please' }],
       tools:    [],
       routing:  { provider: :anthropic, model: 'claude-opus-4-6' }

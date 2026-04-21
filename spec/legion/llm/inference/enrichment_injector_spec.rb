@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::EnrichmentInjector do
+RSpec.describe Legion::LLM::Inference::EnrichmentInjector do
   describe '.inject' do
     before do
       Legion::Settings[:llm][:system_baseline] = nil

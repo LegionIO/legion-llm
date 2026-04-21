@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 require 'legion/llm/router'
-require 'legion/llm/router/escalation_chain'
+require 'legion/llm/router/escalation/chain'
 
 RSpec.describe 'Legion::LLM::Router.resolve_chain' do
   before do

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/embeddings'
+require 'legion/llm/call/embeddings'
 
 RSpec.describe 'Legion::LLM embedding fallback chain cache' do
   before do
@@ -59,7 +59,7 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
       it 'is set to nil by shutdown' do
         Legion::LLM.instance_variable_set(:@embedding_fallback_chain,
                                           [{ provider: :ollama, model: 'mxbai-embed-large' }])
-        allow(Legion::LLM::ProviderRegistry).to receive(:reset!)
+        allow(Legion::LLM::Call::Registry).to receive(:reset!)
         Legion::LLM.instance_variable_set(:@started, true)
         # simulate shutdown resetting the chain ivar
         Legion::LLM.instance_variable_set(:@embedding_fallback_chain, nil)

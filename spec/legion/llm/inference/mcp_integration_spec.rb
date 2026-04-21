@@ -21,10 +21,10 @@ RSpec.describe 'MCP Client end-to-end pipeline integration' do
       allow(pool_mod).to receive(:all_tools).and_return(filesystem_tools)
       stub_const('Legion::MCP::Client::Pool', pool_mod)
 
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'list the files' }]
       )
-      executor = Legion::LLM::Pipeline::Executor.new(request)
+      executor = Legion::LLM::Inference::Executor.new(request)
 
       allow(executor).to receive(:step_provider_call)
       allow(executor).to receive(:step_response_normalization)
@@ -48,7 +48,7 @@ RSpec.describe 'MCP Client end-to-end pipeline integration' do
       allow(pool_mod).to receive(:connection_for).with('filesystem').and_return(conn)
       stub_const('Legion::MCP::Client::Pool', pool_mod)
 
-      result = Legion::LLM::Pipeline::ToolDispatcher.dispatch(
+      result = Legion::LLM::Inference::ToolDispatcher.dispatch(
         tool_call: { name: 'list_files', arguments: { path: '.' } },
         source:    { type: :mcp, server: 'filesystem' }
       )
@@ -69,7 +69,7 @@ RSpec.describe 'MCP Client end-to-end pipeline integration' do
       allow(runner).to receive(:list).with(path: '.').and_return(['app.rb'])
       stub_const('Legion::Extensions::Filesystem::Runners::Files', runner)
 
-      result = Legion::LLM::Pipeline::ToolDispatcher.dispatch(
+      result = Legion::LLM::Inference::ToolDispatcher.dispatch(
         tool_call: { name: 'list_files', arguments: { path: '.' } },
         source:    { type: :mcp, server: 'filesystem' }
       )

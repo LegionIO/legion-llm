@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::TierAssigner do
+RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
   subject(:assigner) { described_class }
 
   describe '.assign' do

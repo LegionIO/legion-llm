@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/daemon_client'
+require 'legion/llm/call/daemon_client'
 
 RSpec.describe Legion::LLM::DaemonClient do
   before(:each) do

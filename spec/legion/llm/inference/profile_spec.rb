@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Profile do
+RSpec.describe Legion::LLM::Inference::Profile do
   describe '.derive' do
     it 'returns :human for user callers' do
       caller = { requested_by: { identity: 'user:matt', type: :user, credential: :session } }

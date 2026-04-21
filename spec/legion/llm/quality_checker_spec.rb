@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/quality_checker'
+require 'legion/llm/quality/checker'
 
-RSpec.describe Legion::LLM::QualityChecker do
+RSpec.describe Legion::LLM::Quality::Checker do
   let(:good_response) { double('Response', content: 'The quick brown fox jumps over the lazy dog. ' * 5, role: :assistant) }
   let(:empty_response) { double('Response', content: '', role: :assistant) }
   let(:nil_response) { double('Response', content: nil, role: :assistant) }

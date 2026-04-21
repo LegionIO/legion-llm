@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/off_peak'
+require 'legion/llm/scheduling/off_peak'
 
 RSpec.describe Legion::LLM::OffPeak do
   describe '.peak_hour?' do

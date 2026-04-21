@@ -4,13 +4,13 @@ require 'spec_helper'
 
 RSpec.describe 'Pipeline OTEL child spans' do
   let(:request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
       routing:  { provider: :test, model: 'test-model' }
     )
   end
 
-  let(:executor) { Legion::LLM::Pipeline::Executor.new(request) }
+  let(:executor) { Legion::LLM::Inference::Executor.new(request) }
 
   before do
     allow(executor).to receive(:step_provider_call).and_return(nil)
@@ -171,7 +171,7 @@ RSpec.describe 'Pipeline OTEL child spans' do
       executor.instance_variable_set(:@audit, audit)
       executor.instance_variable_set(:@enrichments, {})
 
-      allow(Legion::LLM::Pipeline::Steps::SpanAnnotator).to receive(:attributes_for)
+      allow(Legion::LLM::Inference::Steps::SpanAnnotator).to receive(:attributes_for)
         .with(:rbac, audit: audit, enrichments: {})
         .and_return({ 'rbac.outcome' => 'success', 'rbac.duration_ms' => 3 })
 
@@ -182,7 +182,7 @@ RSpec.describe 'Pipeline OTEL child spans' do
 
     it 'skips nil attribute values' do
       span = double('span')
-      allow(Legion::LLM::Pipeline::Steps::SpanAnnotator).to receive(:attributes_for)
+      allow(Legion::LLM::Inference::Steps::SpanAnnotator).to receive(:attributes_for)
         .and_return({ 'foo' => nil, 'bar' => 'present' })
 
       expect(span).not_to receive(:set_attribute).with('foo', anything)
@@ -196,7 +196,7 @@ RSpec.describe 'Pipeline OTEL child spans' do
 
     it 'does not raise when SpanAnnotator raises' do
       span = double('span', set_attribute: nil)
-      allow(Legion::LLM::Pipeline::Steps::SpanAnnotator).to receive(:attributes_for)
+      allow(Legion::LLM::Inference::Steps::SpanAnnotator).to receive(:attributes_for)
         .and_raise('annotator error')
       expect { executor.send(:annotate_span, span, :rbac) }.not_to raise_error
     end
@@ -259,7 +259,7 @@ RSpec.describe 'Pipeline OTEL child spans' do
 
     it 'executes all steps without wrapping and returns a Response' do
       response = executor.call
-      expect(response).to be_a(Legion::LLM::Pipeline::Response)
+      expect(response).to be_a(Legion::LLM::Inference::Response)
     end
   end
 
@@ -275,7 +275,7 @@ RSpec.describe 'Pipeline OTEL child spans' do
 
     it 'executes all steps normally without OTEL and returns a Response' do
       response = executor.call
-      expect(response).to be_a(Legion::LLM::Pipeline::Response)
+      expect(response).to be_a(Legion::LLM::Inference::Response)
     end
   end
 end

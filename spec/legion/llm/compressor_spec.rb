@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Compressor do
+RSpec.describe Legion::LLM::Context::Compressor do
   describe '.compress' do
     context 'with level 0 (none)' do
       it 'returns text unchanged' do

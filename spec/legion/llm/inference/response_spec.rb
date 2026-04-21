@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Response do
+RSpec.describe Legion::LLM::Inference::Response do
   describe '.build' do
     it 'creates a response with defaults' do
       resp = described_class.build(

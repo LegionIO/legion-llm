@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/context_curator'
+require 'legion/llm/context/curator'
 
 RSpec.describe Legion::LLM::ContextCurator do
   let(:conversation_id) { 'test-conv-001' }
@@ -21,7 +21,7 @@ RSpec.describe Legion::LLM::ContextCurator do
       dedup_threshold:       0.85,
       target_context_tokens: 40_000
     }
-    Legion::LLM::ConversationStore.reset!
+    Legion::LLM::Inference::Conversation.reset!
   end
 
   # --- enabled: false ---
@@ -355,7 +355,7 @@ RSpec.describe Legion::LLM::ContextCurator do
   describe 'cache invalidation after async curation' do
     it 'clears @curated_cache after thread completes' do
       # Prime the cache
-      allow(Legion::LLM::ConversationStore).to receive(:conversation_exists?).and_return(false)
+      allow(Legion::LLM::Inference::Conversation).to receive(:conversation_exists?).and_return(false)
       first = curator.curated_messages
       expect(first).to be_nil # no curated messages yet
 

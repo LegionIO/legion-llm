@@ -2,9 +2,9 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Executor do
+RSpec.describe Legion::LLM::Inference::Executor do
   let(:request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
       routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
     )
@@ -18,12 +18,12 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
       )
       allow(executor).to receive(:step_response_normalization).and_return(nil)
       response = executor.call
-      expect(response).to be_a(Legion::LLM::Pipeline::Response)
+      expect(response).to be_a(Legion::LLM::Inference::Response)
       expect(response.request_id).to eq(request.id)
     end
 
     it 'derives profile from caller' do
-      gaia_request = Legion::LLM::Pipeline::Request.build(
+      gaia_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'test' }],
         caller:   { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
       )
@@ -60,12 +60,12 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
           { role: :assistant, content: 'test' }
         )
         allow(executor).to receive(:step_response_normalization).and_return(nil)
-        expect(Legion::LLM::Pipeline::AuditPublisher).to receive(:publish)
+        expect(Legion::LLM::Inference::AuditPublisher).to receive(:publish)
         executor.call
       end
 
       it 'skips audit publish for gaia profile' do
-        gaia_request = Legion::LLM::Pipeline::Request.build(
+        gaia_request = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'test' }],
           caller:   { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
         )
@@ -74,7 +74,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
           { role: :assistant, content: 'test' }
         )
         allow(executor).to receive(:step_response_normalization).and_return(nil)
-        expect(Legion::LLM::Pipeline::AuditPublisher).not_to receive(:publish)
+        expect(Legion::LLM::Inference::AuditPublisher).not_to receive(:publish)
         executor.call
       end
     end
@@ -98,7 +98,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
     end
 
     it 'skips governance steps for gaia profile' do
-      gaia_request = Legion::LLM::Pipeline::Request.build(
+      gaia_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'test' }],
         caller:   { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
       )
@@ -116,7 +116,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
 
     describe 'enrichment injection' do
       it 'injects RAG context into system prompt before provider call' do
-        rag_request = Legion::LLM::Pipeline::Request.build(
+        rag_request = Legion::LLM::Inference::Request.build(
           messages:         [{ role: :user, content: 'what is pgvector?' }],
           system:           'You are helpful.',
           context_strategy: :rag
@@ -149,7 +149,7 @@ confidence: 0.9 }],
 
     describe 'RAG context step' do
       it 'calls Apollo when context_strategy is :rag' do
-        rag_request = Legion::LLM::Pipeline::Request.build(
+        rag_request = Legion::LLM::Inference::Request.build(
           messages:         [{ role: :user, content: 'what is pgvector?' }],
           context_strategy: :rag
         )
@@ -171,7 +171,7 @@ confidence: 0.9 }],
       end
 
       it 'skips RAG for gaia profile' do
-        gaia_request = Legion::LLM::Pipeline::Request.build(
+        gaia_request = Legion::LLM::Inference::Request.build(
           messages:         [{ role: :user, content: 'test' }],
           context_strategy: :rag,
           caller:           { requested_by: { identity: 'gaia:tick', type: :system, credential: :internal } }
@@ -185,7 +185,7 @@ confidence: 0.9 }],
 
         # RAG step is skipped for GAIA profile (GAIA_SKIP includes rag_context is not listed,
         # but verify it at least doesn't crash.
-        expect(response).to be_a(Legion::LLM::Pipeline::Response)
+        expect(response).to be_a(Legion::LLM::Inference::Response)
       end
     end
 
@@ -213,7 +213,7 @@ confidence: 0.9 }],
         end
         stub_const('Legion::Tools::Registry', registry_mod)
 
-        req = Legion::LLM::Pipeline::Request.build(
+        req = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'test' }],
           metadata: { requested_tools: ['legion.test.extra'] }
         )
@@ -235,13 +235,13 @@ confidence: 0.9 }],
   end
 
   describe 'step_context_load' do
-    before { Legion::LLM::ConversationStore.reset! }
+    before { Legion::LLM::Inference::Conversation.reset! }
 
     it 'loads prior messages into enrichments when conversation_id present' do
-      Legion::LLM::ConversationStore.append('conv_123', role: :user, content: 'earlier message')
-      Legion::LLM::ConversationStore.append('conv_123', role: :assistant, content: 'earlier reply')
+      Legion::LLM::Inference::Conversation.append('conv_123', role: :user, content: 'earlier message')
+      Legion::LLM::Inference::Conversation.append('conv_123', role: :assistant, content: 'earlier reply')
 
-      req = Legion::LLM::Pipeline::Request.build(
+      req = Legion::LLM::Inference::Request.build(
         messages:        [{ role: :user, content: 'new question' }],
         conversation_id: 'conv_123',
         routing:         { provider: :anthropic, model: 'claude-opus-4-6' }
@@ -262,10 +262,10 @@ confidence: 0.9 }],
   end
 
   describe 'step_context_store' do
-    before { Legion::LLM::ConversationStore.reset! }
+    before { Legion::LLM::Inference::Conversation.reset! }
 
     it 'appends request message and response to ConversationStore' do
-      req = Legion::LLM::Pipeline::Request.build(
+      req = Legion::LLM::Inference::Request.build(
         messages:        [{ role: :user, content: 'hello' }],
         conversation_id: 'conv_store_test',
         routing:         { provider: :anthropic, model: 'claude-opus-4-6' }
@@ -278,7 +278,7 @@ confidence: 0.9 }],
 
       executor.call
 
-      messages = Legion::LLM::ConversationStore.messages('conv_store_test')
+      messages = Legion::LLM::Inference::Conversation.messages('conv_store_test')
       expect(messages.size).to eq(2)
       expect(messages.first[:role]).to eq(:user)
       expect(messages.last[:role]).to eq(:assistant)
@@ -323,11 +323,11 @@ confidence: 0.9 }],
 
   describe 'MCP integration' do
     it 'includes McpDiscovery step module' do
-      expect(described_class.ancestors).to include(Legion::LLM::Pipeline::Steps::McpDiscovery)
+      expect(described_class.ancestors).to include(Legion::LLM::Inference::Steps::McpDiscovery)
     end
 
     it 'includes ToolCalls step module' do
-      expect(described_class.ancestors).to include(Legion::LLM::Pipeline::Steps::ToolCalls)
+      expect(described_class.ancestors).to include(Legion::LLM::Inference::Steps::ToolCalls)
     end
 
     it 'exposes discovered_tools reader' do
@@ -358,7 +358,7 @@ confidence: 0.9 }],
 
       allow(executor).to receive(:step_response_normalization)
 
-      expect { executor.call }.to raise_error(Legion::LLM::PipelineError, /tool loop exceeded 2 rounds/)
+      expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
     end
 
     it 'uses MAX_RUBY_LLM_TOOL_ROUNDS as default when max_tool_rounds not in settings' do
@@ -385,7 +385,7 @@ confidence: 0.9 }],
   describe 'tool_event_handler events' do
     let(:events) { [] }
     let(:executor) do
-      req = Legion::LLM::Pipeline::Request.build(
+      req = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
       )
@@ -514,7 +514,7 @@ confidence: 0.9 }],
         executor_instance.instance_variable_set(:@resolved_provider, :anthropic)
         executor_instance.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
         executor_instance.instance_variable_set(:@warnings, [])
-        executor_instance.instance_variable_set(:@timeline, Legion::LLM::Pipeline::Timeline.new)
+        executor_instance.instance_variable_set(:@timeline, Legion::LLM::Inference::Timeline.new)
 
         # Directly invoke the event handler as it would be called
         executor_instance.tool_event_handler.call(
@@ -561,7 +561,7 @@ confidence: 0.9 }],
     %i[gaia system service quick_reply].each do |profile_name|
       %i[sticky_runners tool_history_inject sticky_persist].each do |step|
         it "#{profile_name} profile skips #{step}" do
-          expect(Legion::LLM::Pipeline::Profile.skip?(profile_name, step)).to be true
+          expect(Legion::LLM::Inference::Profile.skip?(profile_name, step)).to be true
         end
       end
     end
@@ -569,7 +569,7 @@ confidence: 0.9 }],
     %i[human external].each do |profile_name|
       %i[sticky_runners tool_history_inject sticky_persist].each do |step|
         it "#{profile_name} profile does NOT skip #{step}" do
-          expect(Legion::LLM::Pipeline::Profile.skip?(profile_name, step)).to be false
+          expect(Legion::LLM::Inference::Profile.skip?(profile_name, step)).to be false
         end
       end
     end

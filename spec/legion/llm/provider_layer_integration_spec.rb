@@ -14,7 +14,7 @@ RSpec.describe 'Provider layer mode switching' do
   end
 
   before do
-    Legion::LLM::ProviderRegistry.reset!
+    Legion::LLM::Call::Registry.reset!
     Legion::Settings[:llm][:provider_layer] = {
       mode:                 'ruby_llm',
       native_providers:     %w[claude bedrock],
@@ -29,7 +29,7 @@ RSpec.describe 'Provider layer mode switching' do
     end
 
     it 'does not use native dispatch when mode is ruby_llm' do
-      Legion::LLM::ProviderRegistry.register(:claude, fake_ext)
+      Legion::LLM::Call::Registry.register(:claude, fake_ext)
       # use_native_dispatch? is private but we can test the setting contract
       expect(Legion::LLM.settings.dig(:provider_layer, :mode)).to eq('ruby_llm')
     end
@@ -66,12 +66,12 @@ RSpec.describe 'Provider layer mode switching' do
     end
 
     it 'reports registered provider as available' do
-      Legion::LLM::ProviderRegistry.register(:claude, fake_ext)
-      expect(Legion::LLM::NativeDispatch.available?(:claude)).to be true
+      Legion::LLM::Call::Registry.register(:claude, fake_ext)
+      expect(Legion::LLM::Call::Dispatch.available?(:claude)).to be true
     end
 
     it 'reports unregistered provider as unavailable' do
-      expect(Legion::LLM::NativeDispatch.available?(:bedrock)).to be false
+      expect(Legion::LLM::Call::Dispatch.available?(:bedrock)).to be false
     end
   end
 
@@ -89,8 +89,8 @@ RSpec.describe 'Provider layer mode switching' do
     end
 
     it 'allows native dispatch when provider is registered' do
-      Legion::LLM::ProviderRegistry.register(:claude, fake_ext)
-      result = Legion::LLM::NativeDispatch.dispatch_chat(
+      Legion::LLM::Call::Registry.register(:claude, fake_ext)
+      result = Legion::LLM::Call::Dispatch.dispatch_chat(
         provider: :claude,
         model:    'claude-sonnet-4-6',
         messages: [{ role: 'user', content: 'hi' }]
@@ -100,7 +100,7 @@ RSpec.describe 'Provider layer mode switching' do
 
     it 'raises ProviderError when provider is not registered and fallback disabled' do
       expect do
-        Legion::LLM::NativeDispatch.dispatch_chat(
+        Legion::LLM::Call::Dispatch.dispatch_chat(
           provider: :unregistered,
           model:    'some-model',
           messages: []
@@ -127,20 +127,20 @@ RSpec.describe 'Provider layer mode switching' do
 
   describe 'ProviderRegistry interaction' do
     it 'starts empty before any registration' do
-      expect(Legion::LLM::ProviderRegistry.available).to be_empty
+      expect(Legion::LLM::Call::Registry.available).to be_empty
     end
 
     it 'registers and retrieves multiple providers' do
       ext_b = Module.new
-      Legion::LLM::ProviderRegistry.register(:claude, fake_ext)
-      Legion::LLM::ProviderRegistry.register(:bedrock, ext_b)
-      expect(Legion::LLM::ProviderRegistry.available).to contain_exactly(:claude, :bedrock)
+      Legion::LLM::Call::Registry.register(:claude, fake_ext)
+      Legion::LLM::Call::Registry.register(:bedrock, ext_b)
+      expect(Legion::LLM::Call::Registry.available).to contain_exactly(:claude, :bedrock)
     end
 
     it 'resets registry cleanly' do
-      Legion::LLM::ProviderRegistry.register(:claude, fake_ext)
-      Legion::LLM::ProviderRegistry.reset!
-      expect(Legion::LLM::ProviderRegistry.available).to be_empty
+      Legion::LLM::Call::Registry.register(:claude, fake_ext)
+      Legion::LLM::Call::Registry.reset!
+      expect(Legion::LLM::Call::Registry.available).to be_empty
     end
   end
 end

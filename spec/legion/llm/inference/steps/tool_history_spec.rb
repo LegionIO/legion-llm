@@ -2,10 +2,10 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::ToolHistory do
+RSpec.describe Legion::LLM::Inference::Steps::ToolHistory do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::ToolHistory
+      include Legion::LLM::Inference::Steps::ToolHistory
 
       attr_accessor :request, :enrichments, :warnings
 
@@ -27,7 +27,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolHistory do
 
   describe '#step_tool_history_inject' do
     it 'does nothing when history is empty' do
-      allow(Legion::LLM::ConversationStore).to receive(:read_sticky_state).and_return({})
+      allow(Legion::LLM::Inference::Conversation).to receive(:read_sticky_state).and_return({})
       instance.instance_variable_set(:@request, fake_request('c1'))
       instance.step_tool_history_inject
       expect(instance.enrichments['tool:call_history']).to be_nil
@@ -36,7 +36,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolHistory do
     it 'sets enrichment with content/data/timestamp structure' do
       history = [{ tool: 'legion-github-issues-list_issues', runner: 'github_issues',
                    turn: 3, args: { owner: 'LegionIO' }, result: '{"result":[]}', error: false }]
-      allow(Legion::LLM::ConversationStore).to receive(:read_sticky_state)
+      allow(Legion::LLM::Inference::Conversation).to receive(:read_sticky_state)
         .and_return({ tool_call_history: history })
       instance.instance_variable_set(:@request, fake_request('c1'))
       instance.step_tool_history_inject

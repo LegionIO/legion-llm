@@ -38,9 +38,9 @@ unless defined?(Legion::Cache)
   end
 end
 
-require 'legion/llm/response_cache'
+require 'legion/llm/cache/response'
 
-RSpec.describe Legion::LLM::ResponseCache do
+RSpec.describe Legion::LLM::Cache::Response do
   let(:request_id) { 'test-req-001' }
   let(:spool_dir) { Dir.mktmpdir('llm-response-cache') }
 

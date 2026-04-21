@@ -2,24 +2,24 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::GaiaAdvisory do
+RSpec.describe Legion::LLM::Inference::Steps::GaiaAdvisory do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::GaiaAdvisory
+      include Legion::LLM::Inference::Steps::GaiaAdvisory
 
       attr_accessor :request, :enrichments, :timeline, :warnings
 
       def initialize(request)
         @request     = request
         @enrichments = {}
-        @timeline    = Legion::LLM::Pipeline::Timeline.new
+        @timeline    = Legion::LLM::Inference::Timeline.new
         @warnings    = []
       end
     end
   end
 
   def build_step(identity: 'agent:alpha', extra_caller: {})
-    request = Legion::LLM::Pipeline::Request.build(
+    request = Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
       caller:   { requested_by: { identity: identity, type: :agent }.merge(extra_caller) }
     )
@@ -117,7 +117,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::GaiaAdvisory do
 
   describe '#build_partner_context' do
     let(:instance) do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         caller:   { requested_by: { identity: 'agent:alpha', type: :agent } }
       )

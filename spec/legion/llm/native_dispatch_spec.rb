@@ -2,8 +2,8 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::NativeDispatch do
-  before { Legion::LLM::ProviderRegistry.reset! }
+RSpec.describe Legion::LLM::Call::Dispatch do
+  before { Legion::LLM::Call::Registry.reset! }
 
   let(:fake_ext) do
     Module.new do
@@ -29,7 +29,7 @@ RSpec.describe Legion::LLM::NativeDispatch do
 
   describe '.dispatch_chat' do
     context 'when provider is registered' do
-      before { Legion::LLM::ProviderRegistry.register(:claude, fake_ext) }
+      before { Legion::LLM::Call::Registry.register(:claude, fake_ext) }
 
       it 'returns a normalized hash with :result and :usage keys' do
         result = described_class.dispatch_chat(
@@ -85,7 +85,7 @@ RSpec.describe Legion::LLM::NativeDispatch do
   end
 
   describe '.dispatch_embed' do
-    before { Legion::LLM::ProviderRegistry.register(:bedrock, fake_ext) }
+    before { Legion::LLM::Call::Registry.register(:bedrock, fake_ext) }
 
     it 'returns normalized hash' do
       result = described_class.dispatch_embed(provider: :bedrock, model: 'titan', text: 'hello')
@@ -101,7 +101,7 @@ RSpec.describe Legion::LLM::NativeDispatch do
   end
 
   describe '.dispatch_stream' do
-    before { Legion::LLM::ProviderRegistry.register(:claude, fake_ext) }
+    before { Legion::LLM::Call::Registry.register(:claude, fake_ext) }
 
     it 'returns normalized hash' do
       result = described_class.dispatch_stream(
@@ -121,7 +121,7 @@ RSpec.describe Legion::LLM::NativeDispatch do
   end
 
   describe '.dispatch_count_tokens' do
-    before { Legion::LLM::ProviderRegistry.register(:claude, fake_ext) }
+    before { Legion::LLM::Call::Registry.register(:claude, fake_ext) }
 
     it 'returns normalized hash' do
       result = described_class.dispatch_count_tokens(
@@ -142,7 +142,7 @@ RSpec.describe Legion::LLM::NativeDispatch do
 
   describe '.available?' do
     it 'returns true when provider is registered' do
-      Legion::LLM::ProviderRegistry.register(:bedrock, fake_ext)
+      Legion::LLM::Call::Registry.register(:bedrock, fake_ext)
       expect(described_class.available?(:bedrock)).to be true
     end
 
@@ -153,7 +153,7 @@ RSpec.describe Legion::LLM::NativeDispatch do
 
   describe 'normalize_response' do
     it 'wraps a non-Hash raw response' do
-      Legion::LLM::ProviderRegistry.register(:openai, Module.new do
+      Legion::LLM::Call::Registry.register(:openai, Module.new do
         module_function
 
         def chat(**)
@@ -173,14 +173,14 @@ RSpec.describe Legion::LLM::NativeDispatch do
         end
         module_function :chat
       end
-      Legion::LLM::ProviderRegistry.register(:passthru, ext)
+      Legion::LLM::Call::Registry.register(:passthru, ext)
       result = described_class.dispatch_chat(provider: :passthru, model: nil, messages: [])
       expect(result[:usage].input_tokens).to eq(99)
     end
   end
 end
 
-RSpec.describe Legion::LLM::NativeResponseAdapter do
+RSpec.describe Legion::LLM::Call::NativeResponseAdapter do
   let(:usage_hash) { { input_tokens: 20, output_tokens: 10, cache_read_tokens: 5, cache_write_tokens: 2 } }
   let(:result_hash) { { result: 'some content', usage: Legion::LLM::Usage.new(**usage_hash) } }
 

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/batch'
+require 'legion/llm/scheduling/batch'
 
 RSpec.describe Legion::LLM::Batch do
   before do

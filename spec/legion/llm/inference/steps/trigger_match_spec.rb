@@ -2,17 +2,17 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::TriggerMatch do
+RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::TriggerMatch
+      include Legion::LLM::Inference::Steps::TriggerMatch
 
       attr_accessor :request, :enrichments, :timeline, :warnings, :triggered_tools
 
       def initialize(request)
         @request = request
         @enrichments = {}
-        @timeline = Legion::LLM::Pipeline::Timeline.new
+        @timeline = Legion::LLM::Inference::Timeline.new
         @warnings = []
         @triggered_tools = []
       end
@@ -21,7 +21,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TriggerMatch do
 
   let(:messages) { [{ role: :user, content: 'show me github pull requests' }] }
   let(:request) do
-    Legion::LLM::Pipeline::Request.build(messages: messages)
+    Legion::LLM::Inference::Request.build(messages: messages)
   end
   let(:step) { klass.new(request) }
 
@@ -215,7 +215,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TriggerMatch do
 
       it 'respects scan_depth setting' do
         Legion::Settings[:llm][:tool_trigger] = { scan_depth: 1, tool_limit: 10 }
-        step2 = klass.new(Legion::LLM::Pipeline::Request.build(messages: messages))
+        step2 = klass.new(Legion::LLM::Inference::Request.build(messages: messages))
         text = step2.send(:extract_recent_text)
         expect(text).to include('recent query')
         expect(text).not_to include('sys')

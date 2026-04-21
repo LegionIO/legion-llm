@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Executor do
+RSpec.describe Legion::LLM::Inference::Executor do
   describe 'metering step registration' do
     it 'includes :metering in STEPS' do
       expect(described_class::STEPS).to include(:metering)
@@ -19,7 +19,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
 
   describe '#step_metering' do
     let(:request) do
-      Legion::LLM::Pipeline::Request.build(
+      Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
       )
@@ -42,16 +42,16 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
     end
 
     it 'calls Steps::Metering.build_event' do
-      allow(Legion::LLM::Pipeline::Steps::Metering).to receive(:build_event).and_call_original
-      allow(Legion::LLM::Pipeline::Steps::Metering).to receive(:publish_or_spool).and_return(:dropped)
+      allow(Legion::LLM::Inference::Steps::Metering).to receive(:build_event).and_call_original
+      allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool).and_return(:dropped)
       executor.send(:step_metering)
-      expect(Legion::LLM::Pipeline::Steps::Metering).to have_received(:build_event)
+      expect(Legion::LLM::Inference::Steps::Metering).to have_received(:build_event)
     end
 
     it 'calls Steps::Metering.publish_or_spool with the built event' do
-      allow(Legion::LLM::Pipeline::Steps::Metering).to receive(:publish_or_spool).and_return(:dropped)
+      allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool).and_return(:dropped)
       expect { executor.send(:step_metering) }.not_to raise_error
-      expect(Legion::LLM::Pipeline::Steps::Metering).to have_received(:publish_or_spool)
+      expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool)
     end
 
     it 'tolerates a nil raw_response without raising' do

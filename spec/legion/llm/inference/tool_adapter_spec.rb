@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::ToolAdapter do
+RSpec.describe Legion::LLM::Inference::ToolAdapter do
   let(:simple_tool) do
     Class.new do
       define_singleton_method(:tool_name) { 'legion.query.knowledge' }
@@ -97,13 +97,13 @@ RSpec.describe Legion::LLM::Pipeline::ToolAdapter do
 
   describe 'McpToolAdapter alias' do
     it 'is identical to ToolAdapter' do
-      expect(Legion::LLM::Pipeline::McpToolAdapter).to equal(Legion::LLM::Pipeline::ToolAdapter)
+      expect(Legion::LLM::Inference::McpToolAdapter).to equal(Legion::LLM::Inference::ToolAdapter)
     end
   end
 
   describe 'mcp_tool_adapter require shim' do
     it 'can be required by its legacy path without LoadError' do
-      expect { require 'legion/llm/pipeline/mcp_tool_adapter' }.not_to raise_error
+      expect { require 'legion/llm/inference/mcp_tool_adapter' }.not_to raise_error
     end
   end
 end

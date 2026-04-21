@@ -2,17 +2,17 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::Billing do
+RSpec.describe Legion::LLM::Inference::Steps::Billing do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::Billing
+      include Legion::LLM::Inference::Steps::Billing
 
       attr_accessor :request, :enrichments, :timeline, :warnings, :audit
 
       def initialize(request)
         @request     = request
         @enrichments = {}
-        @timeline    = Legion::LLM::Pipeline::Timeline.new
+        @timeline    = Legion::LLM::Inference::Timeline.new
         @warnings    = []
         @audit       = {}
       end
@@ -20,7 +20,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Billing do
   end
 
   def build_step(billing: nil, messages: [{ role: :user, content: 'hello' }], model: nil)
-    request = Legion::LLM::Pipeline::Request.build(
+    request = Legion::LLM::Inference::Request.build(
       messages: messages,
       billing:  billing,
       routing:  { provider: nil, model: model }
@@ -80,7 +80,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Billing do
           billing:  { spending_cap: 0.0 },
           messages: [{ role: :user, content: 'a' * 100_000 }]
         )
-        expect { step.step_billing }.to raise_error(Legion::LLM::PipelineError, /budget_exceeded/)
+        expect { step.step_billing }.to raise_error(Legion::LLM::InferenceError, /budget_exceeded/)
       end
 
       it 'includes estimated_cost_usd in enrichments' do

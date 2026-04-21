@@ -2,10 +2,10 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::RagGuard do
+RSpec.describe Legion::LLM::Inference::Steps::RagGuard do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::RagGuard
+      include Legion::LLM::Inference::Steps::RagGuard
 
       attr_accessor :enrichments, :warnings, :timeline, :raw_response
 
@@ -16,7 +16,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagGuard do
           }
         }
         @warnings = []
-        @timeline = Legion::LLM::Pipeline::Timeline.new
+        @timeline = Legion::LLM::Inference::Timeline.new
         @raw_response = Struct.new(:content).new('pgvector uses cosine distance for similarity')
       end
     end

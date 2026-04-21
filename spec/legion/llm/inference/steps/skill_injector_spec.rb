@@ -6,12 +6,12 @@ require 'legion/llm/skills/skill_run_result'
 require 'legion/llm/skills/errors'
 require 'legion/llm/skills/base'
 require 'legion/llm/skills/registry'
-require 'legion/llm/pipeline/steps/skill_injector'
+require 'legion/llm/inference/steps/skill_injector'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::SkillInjector do
+RSpec.describe Legion::LLM::Inference::Steps::SkillInjector do
   let(:executor_class) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::SkillInjector
+      include Legion::LLM::Inference::Steps::SkillInjector
 
       attr_accessor :request, :enrichments, :warnings
 
@@ -42,11 +42,11 @@ RSpec.describe Legion::LLM::Pipeline::Steps::SkillInjector do
 
   before do
     Legion::LLM::Skills::Registry.reset!
-    allow(Legion::LLM::ConversationStore).to receive(:skill_state).and_return(nil)
-    allow(Legion::LLM::ConversationStore).to receive(:skill_cancelled?).and_return(false)
-    allow(Legion::LLM::ConversationStore).to receive(:clear_skill_state)
-    allow(Legion::LLM::ConversationStore).to receive(:set_skill_state)
-    allow(Legion::LLM::ConversationStore).to receive(:clear_cancel_flag)
+    allow(Legion::LLM::Inference::Conversation).to receive(:skill_state).and_return(nil)
+    allow(Legion::LLM::Inference::Conversation).to receive(:skill_cancelled?).and_return(false)
+    allow(Legion::LLM::Inference::Conversation).to receive(:clear_skill_state)
+    allow(Legion::LLM::Inference::Conversation).to receive(:set_skill_state)
+    allow(Legion::LLM::Inference::Conversation).to receive(:clear_cancel_flag)
     allow(Legion::Events).to receive(:emit) if defined?(Legion::Events)
     allow(Legion::LLM::Metering).to receive(:emit) if defined?(Legion::LLM::Metering)
     allow(Legion::LLM::Audit).to receive(:emit_skill) if defined?(Legion::LLM::Audit)
@@ -103,7 +103,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::SkillInjector do
 
     it 'resumes an active skill from the stored resume_at index' do
       Legion::LLM::Skills::Registry.register(skill_class)
-      allow(Legion::LLM::ConversationStore).to receive(:skill_state).and_return(
+      allow(Legion::LLM::Inference::Conversation).to receive(:skill_state).and_return(
         { skill_key: 'test:sk', resume_at: 0 }
       )
       executor.step_skill_injector

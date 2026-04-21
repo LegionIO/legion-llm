@@ -22,7 +22,7 @@ RSpec.describe 'Legion::LLM gateway teardown' do
   end
 
   it 'embed routes directly without gateway check' do
-    require 'legion/llm/embeddings'
+    require 'legion/llm/call/embeddings'
     allow(Legion::LLM::Embeddings).to receive(:generate).and_return({ vector: [0.1] })
     result = Legion::LLM.embed('test text', model: 'text-embedding-3-small')
     expect(result).to eq({ vector: [0.1] })

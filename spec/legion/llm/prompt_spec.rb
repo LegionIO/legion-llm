@@ -44,7 +44,7 @@ RSpec.describe Legion::LLM::Prompt do
 
       it 'uses the resolved provider and model' do
         result = described_class.dispatch('Hello')
-        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+        expect(result).to be_a(Legion::LLM::Inference::Response)
       end
 
       it 'passes intent to the Router' do
@@ -61,7 +61,7 @@ RSpec.describe Legion::LLM::Prompt do
 
       it 'falls back to default_provider and default_model' do
         result = described_class.dispatch('Hello')
-        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+        expect(result).to be_a(Legion::LLM::Inference::Response)
         expect(result.routing[:provider]).to eq(:anthropic)
         expect(result.routing[:model]).to eq('claude-sonnet-4-6')
       end
@@ -91,7 +91,7 @@ RSpec.describe Legion::LLM::Prompt do
           'Hello',
           exclude: { provider: :anthropic, model: 'claude-sonnet-4-6' }
         )
-        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+        expect(result).to be_a(Legion::LLM::Inference::Response)
       end
     end
 
@@ -114,7 +114,7 @@ RSpec.describe Legion::LLM::Prompt do
           cache:           { enabled: true },
           quality_check:   nil
         )
-        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+        expect(result).to be_a(Legion::LLM::Inference::Response)
       end
     end
 
@@ -139,7 +139,7 @@ RSpec.describe Legion::LLM::Prompt do
 
       it 'does not raise ArgumentError when calling the real Router.resolve with intent' do
         result = described_class.dispatch('Hello', intent: { capability: :moderate })
-        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+        expect(result).to be_a(Legion::LLM::Inference::Response)
         expect(result.routing[:provider]).to eq(:anthropic)
         expect(result.routing[:model]).to eq('claude-sonnet-4-6')
       end
@@ -150,16 +150,16 @@ RSpec.describe Legion::LLM::Prompt do
         result = described_class.dispatch('Hello',
                                           intent:  { capability: :moderate },
                                           exclude: { anthropic: ['claude-sonnet-4-6'] })
-        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+        expect(result).to be_a(Legion::LLM::Inference::Response)
       end
     end
   end
 
   describe '.request' do
     context 'with valid provider and model' do
-      it 'runs the pipeline in-process and returns a Pipeline::Response' do
+      it 'runs the pipeline in-process and returns a Inference::Response' do
         result = described_class.request('Hello', provider: :anthropic, model: 'claude-sonnet-4-6')
-        expect(result).to be_a(Legion::LLM::Pipeline::Response)
+        expect(result).to be_a(Legion::LLM::Inference::Response)
       end
 
       it 'includes the provider in the response routing' do
@@ -190,14 +190,14 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     context 'with schema parameter' do
-      it 'translates schema to response_format on the Pipeline::Request' do
-        executor = instance_double(Legion::LLM::Pipeline::Executor, call: nil)
-        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |request|
+      it 'translates schema to response_format on the Inference::Request' do
+        executor = instance_double(Legion::LLM::Inference::Executor, call: nil)
+        allow(Legion::LLM::Inference::Executor).to receive(:new) do |request|
           expect(request.response_format).to eq({ type: :json_schema, schema: { type: :object } })
           executor
         end
         allow(executor).to receive(:call).and_return(
-          Legion::LLM::Pipeline::Response.build(
+          Legion::LLM::Inference::Response.build(
             request_id: 'req_test', conversation_id: 'conv_test',
             message: { role: :assistant, content: '{}' },
             routing: { provider: :anthropic, model: 'claude-sonnet-4-6' }
@@ -210,13 +210,13 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'with temperature parameter' do
       it 'translates temperature into generation hash' do
-        executor = instance_double(Legion::LLM::Pipeline::Executor, call: nil)
-        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |request|
+        executor = instance_double(Legion::LLM::Inference::Executor, call: nil)
+        allow(Legion::LLM::Inference::Executor).to receive(:new) do |request|
           expect(request.generation[:temperature]).to eq(0.7)
           executor
         end
         allow(executor).to receive(:call).and_return(
-          Legion::LLM::Pipeline::Response.build(
+          Legion::LLM::Inference::Response.build(
             request_id: 'req_test', conversation_id: 'conv_test',
             message: { role: :assistant, content: 'hi' },
             routing: { provider: :anthropic, model: 'claude-sonnet-4-6' }
@@ -228,13 +228,13 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'with max_tokens parameter' do
       it 'translates max_tokens into tokens hash' do
-        executor = instance_double(Legion::LLM::Pipeline::Executor, call: nil)
-        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |request|
+        executor = instance_double(Legion::LLM::Inference::Executor, call: nil)
+        allow(Legion::LLM::Inference::Executor).to receive(:new) do |request|
           expect(request.tokens[:max]).to eq(2048)
           executor
         end
         allow(executor).to receive(:call).and_return(
-          Legion::LLM::Pipeline::Response.build(
+          Legion::LLM::Inference::Response.build(
             request_id: 'req_test', conversation_id: 'conv_test',
             message: { role: :assistant, content: 'hi' },
             routing: { provider: :anthropic, model: 'claude-sonnet-4-6' }
@@ -271,9 +271,9 @@ RSpec.describe Legion::LLM::Prompt do
       expect(described_class).to have_received(:dispatch).with(anything, hash_including(tools: [tool]))
     end
 
-    it 'returns a Pipeline::Response' do
+    it 'returns a Inference::Response' do
       result = described_class.summarize('Some long text to summarize')
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
   end
 
@@ -294,9 +294,9 @@ RSpec.describe Legion::LLM::Prompt do
       expect(described_class).to have_received(:dispatch).with(anything, hash_including(tools: []))
     end
 
-    it 'returns a Pipeline::Response' do
+    it 'returns a Inference::Response' do
       result = described_class.extract('Some text', schema: schema)
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
   end
 
@@ -315,9 +315,9 @@ RSpec.describe Legion::LLM::Prompt do
       expect(described_class).to have_received(:dispatch).with(anything, hash_including(tools: []))
     end
 
-    it 'returns a Pipeline::Response' do
+    it 'returns a Inference::Response' do
       result = described_class.decide('Which approach?', options: options)
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
   end
 end

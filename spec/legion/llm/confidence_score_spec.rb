@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/confidence_score'
+require 'legion/llm/quality/confidence/score'
 
-RSpec.describe Legion::LLM::ConfidenceScore do
+RSpec.describe Legion::LLM::Quality::Confidence::Score do
   let(:default_bands) do
     { low: 0.3, medium: 0.5, high: 0.7, very_high: 0.9 }
   end

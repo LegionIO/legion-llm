@@ -2,11 +2,11 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
+RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::KnowledgeCapture
-      include Legion::LLM::Pipeline::Steps::PostResponse
+      include Legion::LLM::Inference::Steps::KnowledgeCapture
+      include Legion::LLM::Inference::Steps::PostResponse
 
       attr_accessor :request, :enrichments, :timeline, :warnings,
                     :raw_response, :resolved_provider, :resolved_model
@@ -14,7 +14,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
       def initialize(request)
         @request           = request
         @enrichments       = {}
-        @timeline          = Legion::LLM::Pipeline::Timeline.new
+        @timeline          = Legion::LLM::Inference::Timeline.new
         @warnings          = []
         @raw_response      = nil
         @resolved_provider = :test
@@ -24,14 +24,14 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
   end
 
   let(:request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'How does X work?' }],
       routing:  { provider: :anthropic, model: 'test-model' }
     )
   end
 
   let(:executor) do
-    ex = Legion::LLM::Pipeline::Executor.new(request)
+    ex = Legion::LLM::Inference::Executor.new(request)
     allow(ex).to receive(:step_provider_call).and_return(
       { role: :assistant, content: 'X works by doing Y' }
     )
@@ -78,7 +78,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::KnowledgeCapture do
 
   describe '#step_knowledge_capture local ingest' do
     let(:local_request) do
-      Legion::LLM::Pipeline::Request.build(
+      Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'test' }]
       )
     end

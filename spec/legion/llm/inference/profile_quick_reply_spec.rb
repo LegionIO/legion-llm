@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Profile do
+RSpec.describe Legion::LLM::Inference::Profile do
   describe ':quick_reply profile' do
     let(:skipped_steps) do
       %i[

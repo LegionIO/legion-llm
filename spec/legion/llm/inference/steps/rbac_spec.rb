@@ -2,17 +2,17 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
+RSpec.describe Legion::LLM::Inference::Steps::Rbac do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::Rbac
+      include Legion::LLM::Inference::Steps::Rbac
 
       attr_accessor :request, :audit, :timeline, :warnings
 
       def initialize(request)
         @request  = request
         @audit    = {}
-        @timeline = Legion::LLM::Pipeline::Timeline.new
+        @timeline = Legion::LLM::Inference::Timeline.new
         @warnings = []
       end
     end
@@ -31,7 +31,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
   end
 
   let(:request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
       caller:   caller_hash
     )
@@ -87,24 +87,24 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
 
       it 'raises PipelineError for non-fleet callers' do
         step = klass.new(request)
-        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /503/)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError, /503/)
       end
 
       it 'includes fail_open=false in error message' do
         step = klass.new(request)
-        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /fail_open=false/)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError, /fail_open=false/)
       end
 
       it 'records failure in audit' do
         step = klass.new(request)
-        step.step_rbac rescue Legion::LLM::PipelineError # rubocop:disable Style/RescueModifier
+        step.step_rbac rescue Legion::LLM::InferenceError # rubocop:disable Style/RescueModifier
         expect(step.audit[:'rbac:permission_check'][:outcome]).to eq(:failure)
       end
     end
 
     context 'when legion-rbac is not available and caller is fleet (regardless of fail_open)' do
       let(:fleet_request) do
-        Legion::LLM::Pipeline::Request.build(
+        Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'hello' }],
           caller:   {
             requested_by: { id: 'system', type: :system },
@@ -118,18 +118,18 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
       it 'raises PipelineError even when fail_open=true' do
         Legion::Settings[:rbac] = { fail_open: true }
         step = klass.new(fleet_request)
-        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /503/)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError, /503/)
       end
 
       it 'raises PipelineError when fail_open=false' do
         Legion::Settings[:rbac] = { fail_open: false }
         step = klass.new(fleet_request)
-        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /503/)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError, /503/)
       end
 
       it 'raises PipelineError when fail_open setting is not present' do
         step = klass.new(fleet_request)
-        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /503/)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError, /503/)
       end
     end
 
@@ -212,23 +212,23 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
 
       it 'raises PipelineError' do
         step = klass.new(request)
-        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError)
       end
 
       it 'includes 403 in the error message' do
         step = klass.new(request)
-        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /403/)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError, /403/)
       end
 
       it 'records failure outcome in audit' do
         step = klass.new(request)
-        step.step_rbac rescue Legion::LLM::PipelineError # rubocop:disable Style/RescueModifier
+        step.step_rbac rescue Legion::LLM::InferenceError # rubocop:disable Style/RescueModifier
         expect(step.audit[:'rbac:permission_check'][:outcome]).to eq(:failure)
       end
 
       it 'records timeline event on denial' do
         step = klass.new(request)
-        step.step_rbac rescue Legion::LLM::PipelineError # rubocop:disable Style/RescueModifier
+        step.step_rbac rescue Legion::LLM::InferenceError # rubocop:disable Style/RescueModifier
         keys = step.timeline.events.map { |e| e[:key] }
         expect(keys).to include('rbac:permission_check')
       end
@@ -236,7 +236,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
 
     context 'with nil caller' do
       let(:request) do
-        Legion::LLM::Pipeline::Request.build(
+        Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'hello' }],
           caller:   nil
         )
@@ -268,11 +268,11 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
 
     context 'profile skip behavior' do
       it 'is in the GAIA skip list' do
-        expect(Legion::LLM::Pipeline::Profile::GAIA_SKIP).to include(:rbac)
+        expect(Legion::LLM::Inference::Profile::GAIA_SKIP).to include(:rbac)
       end
 
       it 'is in the SYSTEM skip list' do
-        expect(Legion::LLM::Pipeline::Profile::SYSTEM_SKIP).to include(:rbac)
+        expect(Legion::LLM::Inference::Profile::SYSTEM_SKIP).to include(:rbac)
       end
     end
   end

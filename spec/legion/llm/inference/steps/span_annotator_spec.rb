@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::SpanAnnotator do
+RSpec.describe Legion::LLM::Inference::Steps::SpanAnnotator do
   describe '.attributes_for' do
     context 'rbac step' do
       it 'returns outcome and duration from audit' do

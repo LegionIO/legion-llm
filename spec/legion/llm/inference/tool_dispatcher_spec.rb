@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::ToolDispatcher do
+RSpec.describe Legion::LLM::Inference::ToolDispatcher do
   describe '.dispatch' do
     it 'routes MCP tools to MCP client' do
       tool_call = { name: 'list_files', arguments: { path: '.' } }
@@ -66,8 +66,8 @@ RSpec.describe Legion::LLM::Pipeline::ToolDispatcher do
         stub_const('Legion::Extensions::Catalog::Registry', catalog_mod)
 
         # Override confidence is high
-        Legion::LLM::OverrideConfidence.reset!
-        Legion::LLM::OverrideConfidence.record(
+        Legion::LLM::Tools::Confidence.reset!
+        Legion::LLM::Tools::Confidence.record(
           tool: 'close_pr', lex: 'lex-github:PullRequest:close', confidence: 0.85
         )
 
@@ -85,8 +85,8 @@ RSpec.describe Legion::LLM::Pipeline::ToolDispatcher do
 
         allow(Legion::Settings).to receive(:dig).with(:mcp, :overrides).and_return(nil)
 
-        Legion::LLM::OverrideConfidence.reset!
-        Legion::LLM::OverrideConfidence.record(
+        Legion::LLM::Tools::Confidence.reset!
+        Legion::LLM::Tools::Confidence.record(
           tool: 'list_files', lex: 'lex-fs:Dir:list', confidence: 0.3
         )
 

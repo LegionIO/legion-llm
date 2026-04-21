@@ -8,7 +8,7 @@ RSpec.describe 'Pipeline streaming end-to-end' do
     Legion::Settings[:llm][:pipeline_async_post_steps] = false
     Legion::Settings[:llm][:default_provider] = :anthropic
     Legion::Settings[:llm][:default_model] = 'claude-opus-4-6'
-    Legion::LLM::ConversationStore.reset!
+    Legion::LLM::Inference::Conversation.reset!
   end
 
   it 'streams chunks and persists conversation when conversation_id is set' do
@@ -33,9 +33,9 @@ tool_calls: nil, stop_reason: nil)
     ) { |chunk| chunks << chunk }
 
     expect(chunks).to eq(['full ', 'response'])
-    expect(result).to be_a(Legion::LLM::Pipeline::Response)
+    expect(result).to be_a(Legion::LLM::Inference::Response)
 
-    stored = Legion::LLM::ConversationStore.messages('conv_stream_test')
+    stored = Legion::LLM::Inference::Conversation.messages('conv_stream_test')
     expect(stored.size).to eq(2)
     expect(stored.last[:content]).to eq('full response')
   end
@@ -45,7 +45,7 @@ tool_calls: nil, stop_reason: nil)
     allow(RubyLLM).to receive(:chat).and_return(mock_session)
 
     store_called_during_stream = false
-    allow(Legion::LLM::ConversationStore).to receive(:append).and_wrap_original do |original, *args, **kwargs|
+    allow(Legion::LLM::Inference::Conversation).to receive(:append).and_wrap_original do |original, *args, **kwargs|
       store_called_during_stream = true if Thread.current[:streaming]
       original.call(*args, **kwargs)
     end
@@ -81,7 +81,7 @@ tool_calls: nil, stop_reason: nil)
     result = Legion::LLM.chat(message: 'test') { |chunk| chunks << chunk }
 
     expect(chunks.map(&:content)).to eq(['Hello ', 'world'])
-    expect(result).to be_a(Legion::LLM::Pipeline::Response)
+    expect(result).to be_a(Legion::LLM::Inference::Response)
     expect(result.message[:content]).to eq('Hello world')
   end
 

@@ -2,10 +2,10 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::TokenBudget do
+RSpec.describe Legion::LLM::Inference::Steps::TokenBudget do
   let(:executor_class) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::TokenBudget
+      include Legion::LLM::Inference::Steps::TokenBudget
 
       attr_accessor :warnings
 
@@ -17,7 +17,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TokenBudget do
   end
 
   def build_executor(messages: [{ role: :user, content: 'hello world' }], system: nil, extra: {})
-    request = Legion::LLM::Pipeline::Request.build(
+    request = Legion::LLM::Inference::Request.build(
       messages: messages,
       system:   system,
       extra:    extra
@@ -26,7 +26,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TokenBudget do
   end
 
   before(:each) do
-    Legion::LLM::TokenTracker.reset!
+    Legion::LLM::Metering::Tokens.reset!
     Legion::Settings[:llm][:budget] = Legion::LLM::Settings.budget_defaults
   end
 
@@ -65,13 +65,13 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TokenBudget do
       end
 
       it 'passes when session is under the limit' do
-        Legion::LLM::TokenTracker.record(input_tokens: 100, output_tokens: 100)
+        Legion::LLM::Metering::Tokens.record(input_tokens: 100, output_tokens: 100)
         ex = build_executor
         expect { ex.step_token_budget }.not_to raise_error
       end
 
       it 'raises TokenBudgetExceeded when session has exceeded the limit' do
-        Legion::LLM::TokenTracker.record(input_tokens: 300, output_tokens: 250)
+        Legion::LLM::Metering::Tokens.record(input_tokens: 300, output_tokens: 250)
         ex = build_executor
         expect { ex.step_token_budget }.to raise_error(Legion::LLM::TokenBudgetExceeded, /session token budget exceeded/)
       end
@@ -79,7 +79,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::TokenBudget do
 
     context 'when an unexpected error occurs in the step' do
       it 'appends a warning instead of propagating the error' do
-        allow(Legion::LLM::TokenTracker).to receive(:session_exceeded?).and_raise(RuntimeError, 'unexpected')
+        allow(Legion::LLM::Metering::Tokens).to receive(:session_exceeded?).and_raise(RuntimeError, 'unexpected')
         ex = build_executor
         expect { ex.step_token_budget }.not_to raise_error
         expect(ex.warnings).not_to be_empty

@@ -48,7 +48,7 @@ RSpec.describe 'Legion::LLM error hierarchy' do
     end
   end
 
-  describe Legion::LLM::PipelineError do
+  describe Legion::LLM::InferenceError do
     it 'wraps a step name' do
       err = described_class.new('boom', step: :routing)
       expect(err.step).to eq(:routing)

@@ -2,12 +2,12 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
+RSpec.describe Legion::LLM::Inference::Steps::ToolCalls do
   let(:logger) { instance_double('Logger', info: nil) }
 
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::ToolCalls
+      include Legion::LLM::Inference::Steps::ToolCalls
 
       attr_accessor :request, :enrichments, :timeline, :warnings,
                     :discovered_tools, :raw_response, :exchange_id
@@ -15,7 +15,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
       def initialize(request)
         @request = request
         @enrichments = {}
-        @timeline = Legion::LLM::Pipeline::Timeline.new
+        @timeline = Legion::LLM::Inference::Timeline.new
         @warnings = []
         @discovered_tools = []
         @exchange_id = 'exch_001'
@@ -29,7 +29,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
     end
 
     it 'dispatches MCP tool calls via ToolDispatcher' do
-      request = Legion::LLM::Pipeline::Request.build(id: 'req_tool_1', conversation_id: 'conv_tool_1', messages: [])
+      request = Legion::LLM::Inference::Request.build(id: 'req_tool_1', conversation_id: 'conv_tool_1', messages: [])
       step = klass.new(request)
       step.discovered_tools = [
         { name: 'list_files', source: { type: :mcp, server: 'filesystem' } }
@@ -46,7 +46,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
         source: { type: :mcp, server: 'filesystem' },
         duration_ms: 45
       }
-      allow(Legion::LLM::Pipeline::ToolDispatcher).to receive(:dispatch).and_return(dispatch_result)
+      allow(Legion::LLM::Inference::ToolDispatcher).to receive(:dispatch).and_return(dispatch_result)
 
       step.step_tool_calls
 
@@ -64,7 +64,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::ToolCalls do
     end
 
     it 'skips when no tool calls in response' do
-      request = Legion::LLM::Pipeline::Request.build(messages: [])
+      request = Legion::LLM::Inference::Request.build(messages: [])
       step = klass.new(request)
       step.raw_response = double(content: 'just text')
       allow(step.raw_response).to receive(:respond_to?).with(:tool_calls).and_return(false)

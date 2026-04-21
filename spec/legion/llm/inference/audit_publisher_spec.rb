@@ -2,15 +2,15 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::AuditPublisher do
+RSpec.describe Legion::LLM::Inference::AuditPublisher do
   describe '.build_event' do
     it 'builds event with required fields from request and response' do
-      response = Legion::LLM::Pipeline::Response.build(
+      response = Legion::LLM::Inference::Response.build(
         request_id: 'req_abc', conversation_id: 'conv_xyz',
         message: { role: :assistant, content: 'hi' },
         caller: { requested_by: { identity: 'user:matt', type: :user } }
       )
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }]
       )
 
@@ -25,13 +25,13 @@ RSpec.describe Legion::LLM::Pipeline::AuditPublisher do
     end
 
     it 'includes enrichments and timeline in event' do
-      response = Legion::LLM::Pipeline::Response.build(
+      response = Legion::LLM::Inference::Response.build(
         request_id: 'req_abc', conversation_id: 'conv_xyz',
         message: { role: :assistant, content: 'hi' },
         enrichments: { 'gaia:advisory' => { data: { valence: [0.5] } } },
         timeline: [{ seq: 1, key: 'test' }]
       )
-      request = Legion::LLM::Pipeline::Request.build(messages: [])
+      request = Legion::LLM::Inference::Request.build(messages: [])
 
       event = described_class.build_event(request: request, response: response)
       expect(event[:enrichments]).to have_key('gaia:advisory')
@@ -39,11 +39,11 @@ RSpec.describe Legion::LLM::Pipeline::AuditPublisher do
     end
 
     it 'includes response_content and messages' do
-      response = Legion::LLM::Pipeline::Response.build(
+      response = Legion::LLM::Inference::Response.build(
         request_id: 'r', conversation_id: 'c',
         message: { role: :assistant, content: 'answer' }
       )
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'question' }]
       )
 
@@ -55,11 +55,11 @@ RSpec.describe Legion::LLM::Pipeline::AuditPublisher do
 
   describe '.publish' do
     it 'returns event hash even when transport unavailable' do
-      response = Legion::LLM::Pipeline::Response.build(
+      response = Legion::LLM::Inference::Response.build(
         request_id: 'req_abc', conversation_id: 'conv_xyz',
         message: { role: :assistant, content: 'hi' }
       )
-      request = Legion::LLM::Pipeline::Request.build(messages: [])
+      request = Legion::LLM::Inference::Request.build(messages: [])
 
       result = described_class.publish(request: request, response: response)
       expect(result).to be_a(Hash)

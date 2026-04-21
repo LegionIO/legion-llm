@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::ConversationStore do
+RSpec.describe Legion::LLM::Inference::Conversation do
   before { described_class.reset! }
 
   describe '.append' do
@@ -106,7 +106,7 @@ RSpec.describe Legion::LLM::ConversationStore do
 
   describe 'LRU eviction' do
     it 'evicts oldest conversation when capacity exceeded' do
-      stub_const('Legion::LLM::ConversationStore::MAX_CONVERSATIONS', 2)
+      stub_const('Legion::LLM::Inference::Conversation::MAX_CONVERSATIONS', 2)
       described_class.append('conv_a', role: :user, content: 'a')
       described_class.append('conv_b', role: :user, content: 'b')
       described_class.append('conv_c', role: :user, content: 'c')
@@ -116,7 +116,7 @@ RSpec.describe Legion::LLM::ConversationStore do
     end
 
     it 'promotes accessed conversation to most-recent' do
-      stub_const('Legion::LLM::ConversationStore::MAX_CONVERSATIONS', 2)
+      stub_const('Legion::LLM::Inference::Conversation::MAX_CONVERSATIONS', 2)
       described_class.append('conv_a', role: :user, content: 'a')
       described_class.append('conv_b', role: :user, content: 'b')
       described_class.messages('conv_a') # access promotes conv_a

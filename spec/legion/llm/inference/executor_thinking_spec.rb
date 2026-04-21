@@ -2,11 +2,11 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Executor do
+RSpec.describe Legion::LLM::Inference::Executor do
   describe '#ruby_llm_chat_options' do
     context 'when @request.thinking is nil' do
       let(:request) do
-        Legion::LLM::Pipeline::Request.build(
+        Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'hello' }],
           routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
         )
@@ -25,7 +25,7 @@ RSpec.describe Legion::LLM::Pipeline::Executor do
       let(:thinking_config) { { type: :enabled, budget_tokens: 5000 } }
 
       let(:request) do
-        Legion::LLM::Pipeline::Request.build(
+        Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'reason through this' }],
           routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
           thinking: thinking_config

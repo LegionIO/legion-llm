@@ -3,12 +3,12 @@
 require 'spec_helper'
 require 'legion/llm/hooks'
 require 'legion/llm/hooks/budget_guard'
-require 'legion/llm/cost_tracker'
+require 'legion/llm/metering/tracker'
 
 RSpec.describe Legion::LLM::Hooks::BudgetGuard do
   after do
     Legion::LLM::Hooks.reset!
-    Legion::LLM::CostTracker.clear
+    Legion::LLM::Metering::Recorder.clear
   end
 
   describe '.install' do
@@ -39,7 +39,7 @@ RSpec.describe Legion::LLM::Hooks::BudgetGuard do
     context 'when budget is exceeded' do
       before do
         allow(described_class).to receive(:session_budget).and_return(0.01)
-        Legion::LLM::CostTracker.record(model: 'gpt-4o', input_tokens: 100_000, output_tokens: 50_000)
+        Legion::LLM::Metering::Recorder.record(model: 'gpt-4o', input_tokens: 100_000, output_tokens: 50_000)
       end
 
       it 'returns a block action' do
@@ -63,7 +63,7 @@ RSpec.describe Legion::LLM::Hooks::BudgetGuard do
       before { allow(described_class).to receive(:session_budget).and_return(5.0) }
 
       it 'returns remaining budget' do
-        Legion::LLM::CostTracker.record(model: 'gpt-4o', input_tokens: 1_000_000, output_tokens: 0)
+        Legion::LLM::Metering::Recorder.record(model: 'gpt-4o', input_tokens: 1_000_000, output_tokens: 0)
         remaining = described_class.remaining
         expect(remaining).to be < 5.0
         expect(remaining).to be > 0.0
@@ -84,7 +84,7 @@ RSpec.describe Legion::LLM::Hooks::BudgetGuard do
     end
 
     it 'reflects spending' do
-      Legion::LLM::CostTracker.record(model: 'gpt-4o', input_tokens: 1_000_000, output_tokens: 500_000)
+      Legion::LLM::Metering::Recorder.record(model: 'gpt-4o', input_tokens: 1_000_000, output_tokens: 500_000)
       result = described_class.status
       expect(result[:spent_usd]).to be > 0
       expect(result[:remaining_usd]).to be < 10.0

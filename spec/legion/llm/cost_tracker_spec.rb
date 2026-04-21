@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/cost_tracker'
+require 'legion/llm/metering/tracker'
 
-RSpec.describe Legion::LLM::CostTracker do
+RSpec.describe Legion::LLM::Metering::Recorder do
   before { described_class.clear }
   after  { described_class.clear }
 

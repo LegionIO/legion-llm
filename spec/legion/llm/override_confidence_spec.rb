@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::OverrideConfidence do
+RSpec.describe Legion::LLM::Tools::Confidence do
   before { described_class.reset! }
 
   describe '.record' do

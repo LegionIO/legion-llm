@@ -20,9 +20,9 @@ unless defined?(Legion::JSON)
   end
 end
 
-require 'legion/llm/structured_output'
+require 'legion/llm/call/structured_output'
 
-RSpec.describe Legion::LLM::StructuredOutput do
+RSpec.describe Legion::LLM::Call::StructuredOutput do
   let(:schema) { { type: 'object', properties: { name: { type: 'string' } } } }
   let(:messages) { [{ role: 'user', content: 'Give me a name' }] }
 

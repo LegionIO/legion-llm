@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/conversation_store'
+require 'legion/llm/inference/conversation'
 
-RSpec.describe Legion::LLM::ConversationStore, 'skill state' do
+RSpec.describe Legion::LLM::Inference::Conversation, 'skill state' do
   before { described_class.reset! }
 
   let(:conv_id) { 'conv-skill-test' }

@@ -1,21 +1,21 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/pipeline/timeline'
-require 'legion/llm/pipeline/request'
-require 'legion/llm/pipeline/steps'
+require 'legion/llm/inference/timeline'
+require 'legion/llm/inference/request'
+require 'legion/llm/inference/steps'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::Debate do
+RSpec.describe Legion::LLM::Inference::Steps::Debate do
   let(:host_class) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::Debate
+      include Legion::LLM::Inference::Steps::Debate
 
       attr_accessor :request, :timeline, :warnings, :enrichments,
                     :raw_response, :resolved_model, :resolved_provider
 
       def initialize(request, raw_response = nil)
         @request           = request
-        @timeline          = Legion::LLM::Pipeline::Timeline.new
+        @timeline          = Legion::LLM::Inference::Timeline.new
         @warnings          = []
         @enrichments       = {}
         @raw_response      = raw_response
@@ -27,20 +27,20 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Debate do
   end
 
   let(:base_request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'What is the best approach to microservices?' }]
     )
   end
 
   let(:debate_request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'What is the best approach to microservices?' }],
       extra:    { debate: true }
     )
   end
 
   let(:no_debate_request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'What is the best approach to microservices?' }],
       extra:    { debate: false }
     )
@@ -237,7 +237,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Debate do
     end
 
     it 'respects debate_rounds from request extra' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'question' }],
         extra:    { debate: true, debate_rounds: 2 }
       )
@@ -250,7 +250,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Debate do
 
     it 'caps rounds at max_rounds setting' do
       Legion::Settings[:llm][:debate][:max_rounds] = 2
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'question' }],
         extra:    { debate: true, debate_rounds: 10 }
       )
@@ -260,7 +260,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Debate do
     end
 
     it 'enforces minimum of 1 round even if 0 is requested' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'question' }],
         extra:    { debate: true, debate_rounds: 0 }
       )

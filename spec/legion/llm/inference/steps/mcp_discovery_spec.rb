@@ -2,17 +2,17 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::McpDiscovery do
+RSpec.describe Legion::LLM::Inference::Steps::McpDiscovery do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::McpDiscovery
+      include Legion::LLM::Inference::Steps::McpDiscovery
 
       attr_accessor :request, :enrichments, :timeline, :warnings, :discovered_tools
 
       def initialize(request)
         @request = request
         @enrichments = {}
-        @timeline = Legion::LLM::Pipeline::Timeline.new
+        @timeline = Legion::LLM::Inference::Timeline.new
         @warnings = []
         @discovered_tools = []
       end
@@ -20,7 +20,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::McpDiscovery do
   end
 
   let(:request) do
-    Legion::LLM::Pipeline::Request.build(
+    Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'list files' }],
       tools:    []
     )

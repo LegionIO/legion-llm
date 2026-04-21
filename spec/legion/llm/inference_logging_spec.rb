@@ -11,7 +11,7 @@ RSpec.describe Legion::LLM do
 
   describe '.chat' do
     it 'logs inference request and response details for pipeline responses' do
-      response = Legion::LLM::Pipeline::Response.build(
+      response = Legion::LLM::Inference::Response.build(
         request_id:      'req-123',
         conversation_id: 'conv-123',
         message:         { role: :assistant, content: 'pipeline response' },
@@ -49,7 +49,7 @@ RSpec.describe Legion::LLM do
           '[llm] inference.response',
           'type=chat',
           'status=ok',
-          'result_class=Legion::LLM::Pipeline::Response',
+          'result_class=Legion::LLM::Inference::Response',
           'provider=anthropic',
           'model=claude-sonnet-4-6',
           'input_tokens=11',

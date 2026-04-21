@@ -2,17 +2,17 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
+RSpec.describe Legion::LLM::Inference::Steps::RagContext do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::RagContext
+      include Legion::LLM::Inference::Steps::RagContext
 
       attr_accessor :request, :enrichments, :timeline, :warnings
 
       def initialize(request)
         @request = request
         @enrichments = {}
-        @timeline = Legion::LLM::Pipeline::Timeline.new
+        @timeline = Legion::LLM::Inference::Timeline.new
         @warnings = []
       end
     end
@@ -33,7 +33,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
   describe '#select_context_strategy' do
     it 'returns :rag when utilization is low (plenty of room)' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :auto
       )
@@ -42,7 +42,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
     end
 
     it 'returns :rag_compact when utilization is high' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :auto
       )
@@ -51,7 +51,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
     end
 
     it 'returns :none when utilization exceeds skip threshold' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :auto
       )
@@ -60,7 +60,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
     end
 
     it 'respects explicit strategy override' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'hello' }],
         context_strategy: :none
       )
@@ -72,7 +72,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
       Legion::Settings[:llm][:rag][:utilization_compact_threshold] = 0.5
       Legion::Settings[:llm][:rag][:utilization_skip_threshold] = 0.6
 
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'query' }],
         context_strategy: :auto
       )
@@ -86,7 +86,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
   describe '#trivial_query?' do
     it 'detects trivial greetings' do
-      request = Legion::LLM::Pipeline::Request.build(messages: [{ role: :user, content: 'hello' }])
+      request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'hello' }])
       step = klass.new(request)
       expect(step.send(:trivial_query?, 'hello')).to be true
       expect(step.send(:trivial_query?, 'ping')).to be true
@@ -95,14 +95,14 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
     end
 
     it 'does not flag real questions as trivial' do
-      request = Legion::LLM::Pipeline::Request.build(messages: [{ role: :user, content: 'what is pgvector?' }])
+      request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'what is pgvector?' }])
       step = klass.new(request)
       expect(step.send(:trivial_query?, 'what is pgvector?')).to be false
       expect(step.send(:trivial_query?, 'how do I configure RAG?')).to be false
     end
 
     it 'does not flag messages longer than trivial_max_chars' do
-      request = Legion::LLM::Pipeline::Request.build(messages: [{ role: :user, content: 'hello world how are you today' }])
+      request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'hello world how are you today' }])
       step = klass.new(request)
       expect(step.send(:trivial_query?, 'hello world how are you today')).to be false
     end
@@ -111,7 +111,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
       Legion::Settings[:llm][:rag][:trivial_patterns] = %w[foo bar]
       Legion::Settings[:llm][:rag][:trivial_max_chars] = 10
 
-      request = Legion::LLM::Pipeline::Request.build(messages: [{ role: :user, content: 'foo' }])
+      request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'foo' }])
       step = klass.new(request)
       expect(step.send(:trivial_query?, 'foo')).to be true
       expect(step.send(:trivial_query?, 'hello')).to be false
@@ -120,7 +120,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
 
   describe '#step_rag_context' do
     it 'skips when strategy is :none via explicit override' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :none
       )
@@ -133,7 +133,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
       apollo_runner = double('Knowledge')
       stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'hello' }],
         context_strategy: :auto
       )
@@ -152,7 +152,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
       allow(apollo_runner).to receive(:retrieve_relevant).and_return(apollo_result)
       stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :auto
       )
@@ -164,7 +164,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
     it 'skips when rag is disabled in settings' do
       Legion::Settings[:llm][:rag][:enabled] = false
 
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :auto
       )
@@ -174,7 +174,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
     end
 
     it 'populates enrichments when Apollo returns results' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :rag
       )
@@ -200,7 +200,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
       Legion::Settings[:llm][:rag][:full_limit] = 15
       Legion::Settings[:llm][:rag][:min_confidence] = 0.3
 
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :rag
       )
@@ -218,7 +218,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
     it 'uses compact_limit for rag_compact strategy' do
       Legion::Settings[:llm][:rag][:compact_limit] = 3
 
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :rag_compact
       )
@@ -234,7 +234,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
     end
 
     it 'degrades gracefully when Apollo unavailable' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :rag
       )
@@ -247,7 +247,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
     end
 
     it 'records timeline event' do
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :rag
       )
@@ -273,7 +273,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
       stub_const('Legion::Apollo', apollo)
       hide_const('Legion::Extensions::Apollo') if defined?(Legion::Extensions::Apollo)
 
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'what is pgvector?' }]
       )
       step = klass.new(request)
@@ -293,7 +293,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::RagContext do
       stub_const('Legion::Apollo', apollo)
       hide_const('Legion::Extensions::Apollo') if defined?(Legion::Extensions::Apollo)
 
-      request = Legion::LLM::Pipeline::Request.build(
+      request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],
         context_strategy: :rag
       )

@@ -34,7 +34,7 @@ RSpec.describe 'Pipeline pre-rollout integration' do
       caller = { requested_by: { identity: 'user:matt', type: :human }, source: 'cli', command: 'chat' }
       result = Legion::LLM.chat(message: 'hello', caller: caller)
 
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(result.caller).to eq(caller)
     end
 
@@ -48,7 +48,7 @@ RSpec.describe 'Pipeline pre-rollout integration' do
 
     it 'works with nil caller (anonymous)' do
       result = Legion::LLM.chat(message: 'hello')
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(result.caller).to be_nil
     end
   end
@@ -97,14 +97,14 @@ RSpec.describe 'Pipeline pre-rollout integration' do
         classification: { level: :public }
       )
 
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       # Classification should detect PII and record it
       expect(result.audit[:'classification:scan'][:outcome]).to eq(:success) if result.audit.key?(:'classification:scan')
     end
 
     it 'passes through without classification when not requested' do
       result = Legion::LLM.chat(message: 'hello', caller: { source: 'test' })
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
   end
 
@@ -115,7 +115,7 @@ RSpec.describe 'Pipeline pre-rollout integration' do
         caller:  { source: 'test' },
         billing: { department: 'engineering' }
       )
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
   end
 
@@ -128,7 +128,7 @@ RSpec.describe 'Pipeline pre-rollout integration' do
       result = Legion::LLM.chat(message: 'check this', caller: system_caller)
       timeline_keys = result.timeline.map { |e| e[:key] }
 
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(timeline_keys).not_to include('rbac:permission_check')
       expect(timeline_keys).not_to include('classification:scan')
       expect(timeline_keys).not_to include('billing:budget_check')
@@ -149,21 +149,21 @@ RSpec.describe 'Pipeline pre-rollout integration' do
       result = Legion::LLM.chat(message: 'advise', caller: gaia_caller)
       timeline_keys = result.timeline.map { |e| e[:key] }
 
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(timeline_keys).not_to include('rbac:permission_check')
       expect(timeline_keys).to include('routing:provider_selection')
     end
   end
 
   describe 'streaming with pipeline' do
-    it 'yields chunks and returns Pipeline::Response' do
+    it 'yields chunks and returns Inference::Response' do
       allow(mock_session).to receive(:ask).and_yield(double(content: 'hel')).and_yield(double(content: 'lo')).and_return(mock_response)
 
       chunks = []
       result = Legion::LLM.chat(message: 'hello') { |chunk| chunks << chunk.content }
 
       expect(chunks).to eq(%w[hel lo])
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
 
     it 'preserves caller identity through streaming path' do
@@ -180,35 +180,35 @@ RSpec.describe 'Pipeline pre-rollout integration' do
   describe 'pipeline disabled falls back cleanly' do
     before { Legion::Settings[:llm][:pipeline_enabled] = false }
 
-    it 'returns RubyLLM session (not Pipeline::Response) for session-style calls' do
+    it 'returns RubyLLM session (not Inference::Response) for session-style calls' do
       result = Legion::LLM.chat(model: 'test-model', provider: :test)
-      expect(result).not_to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).not_to be_a(Legion::LLM::Inference::Response)
     end
 
     it 'returns RubyLLM message for message-style calls via non-pipeline path' do
       allow(mock_session).to receive(:ask).and_return(mock_response)
       result = Legion::LLM.chat(message: 'hello')
       # Non-pipeline path returns the raw response
-      expect(result).not_to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).not_to be_a(Legion::LLM::Inference::Response)
     end
   end
 
   describe 'conversation context load/store round-trip' do
-    before { Legion::LLM::ConversationStore.reset! }
+    before { Legion::LLM::Inference::Conversation.reset! }
 
     it 'stores and loads conversation across pipeline calls' do
       conv_id = "test_conv_#{SecureRandom.hex(4)}"
 
       # First call stores the exchange
       result1 = Legion::LLM.chat(message: 'first message', conversation_id: conv_id)
-      expect(result1).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result1).to be_a(Legion::LLM::Inference::Response)
 
       # Second call loads prior context
       result2 = Legion::LLM.chat(message: 'follow up', conversation_id: conv_id)
-      expect(result2).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result2).to be_a(Legion::LLM::Inference::Response)
 
       # Verify messages accumulated
-      messages = Legion::LLM::ConversationStore.messages(conv_id)
+      messages = Legion::LLM::Inference::Conversation.messages(conv_id)
       expect(messages.size).to eq(4) # user1, assistant1, user2, assistant2
     end
   end

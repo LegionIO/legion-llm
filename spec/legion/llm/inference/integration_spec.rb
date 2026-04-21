@@ -11,7 +11,7 @@ RSpec.describe 'Pipeline integration with Legion::LLM.chat' do
     allow(Legion::LLM).to receive(:started?).and_return(true)
   end
 
-  it 'returns a Pipeline::Response when pipeline is enabled' do
+  it 'returns a Inference::Response when pipeline is enabled' do
     mock_session = double('RubyLLM::Chat')
     mock_response = double('RubyLLM::Message',
                            content:       'hello from pipeline',
@@ -24,7 +24,7 @@ RSpec.describe 'Pipeline integration with Legion::LLM.chat' do
     allow(mock_session).to receive(:with_tool).and_return(mock_session)
 
     result = Legion::LLM.chat(message: 'hello')
-    expect(result).to be_a(Legion::LLM::Pipeline::Response)
+    expect(result).to be_a(Legion::LLM::Inference::Response)
     expect(result.message[:content]).to eq('hello from pipeline')
     expect(result.tracing).to be_a(Hash)
     expect(result.timeline).not_to be_empty
@@ -41,7 +41,7 @@ RSpec.describe 'Pipeline integration with Legion::LLM.chat' do
       result = Legion::LLM.chat(message: 'hello') { |chunk| chunks << chunk }
 
       expect(chunks).to eq(%w[stre amed])
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
   end
 
@@ -57,6 +57,6 @@ RSpec.describe 'Pipeline integration with Legion::LLM.chat' do
     allow(mock_session).to receive(:with_instructions).and_return(mock_session)
 
     result = Legion::LLM.chat(message: 'hello')
-    expect(result).not_to be_a(Legion::LLM::Pipeline::Response)
+    expect(result).not_to be_a(Legion::LLM::Inference::Response)
   end
 end

@@ -2,17 +2,17 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
+RSpec.describe Legion::LLM::Inference::Steps::Classification do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::Classification
+      include Legion::LLM::Inference::Steps::Classification
 
       attr_accessor :request, :enrichments, :timeline, :warnings, :audit
 
       def initialize(request)
         @request     = request
         @enrichments = {}
-        @timeline    = Legion::LLM::Pipeline::Timeline.new
+        @timeline    = Legion::LLM::Inference::Timeline.new
         @warnings    = []
         @audit       = {}
       end
@@ -20,7 +20,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
   end
 
   def build_step(classification: nil, messages: [{ role: :user, content: 'hello world' }])
-    request = Legion::LLM::Pipeline::Request.build(
+    request = Legion::LLM::Inference::Request.build(
       messages:       messages,
       classification: classification
     )
@@ -419,7 +419,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
       def build_gate_step(provider: nil, messages: nil)
         msgs = messages || [{ role: :user, content: 'patient medication list: lisinopril' }]
         routing = { provider: provider, model: nil }
-        request = Legion::LLM::Pipeline::Request.build(
+        request = Legion::LLM::Inference::Request.build(
           messages: msgs,
           routing:  routing
         )
@@ -450,7 +450,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
         it 'raises PipelineError' do
           step = build_gate_step(provider: :anthropic)
           expect { step.step_classification }.to raise_error(
-            Legion::LLM::PipelineError,
+            Legion::LLM::InferenceError,
             %r{Restricted/sensitive content.*cannot be sent to cloud provider anthropic}
           )
         end
@@ -510,7 +510,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
         it 'blocks anthropic when it is in the custom cloud list' do
           step = build_gate_step(provider: :anthropic)
           expect { step.step_classification }.to raise_error(
-            Legion::LLM::PipelineError,
+            Legion::LLM::InferenceError,
             /cannot be sent to cloud provider anthropic/
           )
         end
@@ -525,7 +525,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Classification do
         it 'blocks based on default provider when no explicit provider in routing' do
           step = build_gate_step(provider: nil)
           expect { step.step_classification }.to raise_error(
-            Legion::LLM::PipelineError,
+            Legion::LLM::InferenceError,
             /cannot be sent to cloud provider openai/
           )
         end

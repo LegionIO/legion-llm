@@ -3,12 +3,12 @@
 require 'spec_helper'
 require 'legion/llm/hooks'
 require 'legion/llm/hooks/cost_tracking'
-require 'legion/llm/cost_tracker'
+require 'legion/llm/metering/tracker'
 
 RSpec.describe Legion::LLM::Hooks::CostTracking do
   after do
     Legion::LLM::Hooks.reset!
-    Legion::LLM::CostTracker.clear
+    Legion::LLM::Metering::Recorder.clear
   end
 
   describe '.install' do
@@ -27,7 +27,7 @@ RSpec.describe Legion::LLM::Hooks::CostTracking do
       }
 
       described_class.track(response, 'claude-sonnet-4-6')
-      summary = Legion::LLM::CostTracker.summary
+      summary = Legion::LLM::Metering::Recorder.summary
       expect(summary[:total_requests]).to eq(1)
       expect(summary[:total_input_tokens]).to eq(500)
       expect(summary[:total_output_tokens]).to eq(200)
@@ -37,13 +37,13 @@ RSpec.describe Legion::LLM::Hooks::CostTracking do
       response = { usage: { input_tokens: 0, output_tokens: 0 } }
 
       described_class.track(response, 'gpt-4o')
-      summary = Legion::LLM::CostTracker.summary
+      summary = Legion::LLM::Metering::Recorder.summary
       expect(summary[:total_requests]).to eq(0)
     end
 
     it 'handles non-hash responses gracefully' do
       described_class.track('raw string', 'gpt-4o')
-      summary = Legion::LLM::CostTracker.summary
+      summary = Legion::LLM::Metering::Recorder.summary
       expect(summary[:total_requests]).to eq(0)
     end
 
@@ -51,7 +51,7 @@ RSpec.describe Legion::LLM::Hooks::CostTracking do
       response = { usage: { prompt_tokens: 100, completion_tokens: 50 } }
 
       described_class.track(response, 'gpt-4o')
-      summary = Legion::LLM::CostTracker.summary
+      summary = Legion::LLM::Metering::Recorder.summary
       expect(summary[:total_input_tokens]).to eq(100)
       expect(summary[:total_output_tokens]).to eq(50)
     end
@@ -63,7 +63,7 @@ RSpec.describe Legion::LLM::Hooks::CostTracking do
       }
 
       described_class.track(response, 'gpt-4o')
-      summary = Legion::LLM::CostTracker.summary
+      summary = Legion::LLM::Metering::Recorder.summary
       expect(summary[:by_model]).to have_key('gpt-4o-mini')
     end
 
@@ -71,7 +71,7 @@ RSpec.describe Legion::LLM::Hooks::CostTracking do
       response = { usage: { input_tokens: 100, output_tokens: 50 } }
 
       described_class.track(response, 'claude-haiku-4-5')
-      summary = Legion::LLM::CostTracker.summary
+      summary = Legion::LLM::Metering::Recorder.summary
       expect(summary[:by_model]).to have_key('claude-haiku-4-5')
     end
   end

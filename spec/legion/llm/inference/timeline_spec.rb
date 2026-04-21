@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Timeline do
+RSpec.describe Legion::LLM::Inference::Timeline do
   subject(:timeline) { described_class.new }
 
   describe '#record' do

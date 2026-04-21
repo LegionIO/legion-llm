@@ -2,17 +2,17 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
+RSpec.describe Legion::LLM::Inference::Steps::Rbac do
   let(:klass) do
     Class.new do
-      include Legion::LLM::Pipeline::Steps::Rbac
+      include Legion::LLM::Inference::Steps::Rbac
 
       attr_accessor :request, :audit, :timeline, :warnings
 
       def initialize(request)
         @request  = request
         @audit    = {}
-        @timeline = Legion::LLM::Pipeline::Timeline.new
+        @timeline = Legion::LLM::Inference::Timeline.new
         @warnings = []
       end
     end
@@ -23,7 +23,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
       before { hide_const('Legion::Rbac') if defined?(Legion::Rbac) }
 
       let(:fleet_request) do
-        Legion::LLM::Pipeline::Request.build(
+        Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'run fleet task' }],
           caller:   {
             requested_by: { id: 'system', type: :system },
@@ -34,17 +34,17 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
 
       it 'raises PipelineError (fail-closed)' do
         step = klass.new(fleet_request)
-        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError)
       end
 
       it 'includes "fleet" in the error message' do
         step = klass.new(fleet_request)
-        expect { step.step_rbac }.to raise_error(Legion::LLM::PipelineError, /fleet/i)
+        expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError, /fleet/i)
       end
 
       it 'records failure in audit' do
         step = klass.new(fleet_request)
-        step.step_rbac rescue Legion::LLM::PipelineError # rubocop:disable Style/RescueModifier
+        step.step_rbac rescue Legion::LLM::InferenceError # rubocop:disable Style/RescueModifier
         expect(step.audit[:'rbac:permission_check'][:outcome]).to eq(:failure)
       end
     end
@@ -53,7 +53,7 @@ RSpec.describe Legion::LLM::Pipeline::Steps::Rbac do
       before { hide_const('Legion::Rbac') if defined?(Legion::Rbac) }
 
       let(:normal_request) do
-        Legion::LLM::Pipeline::Request.build(
+        Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'hello' }],
           caller:   {
             requested_by: { id: 'user:matt', type: :human }

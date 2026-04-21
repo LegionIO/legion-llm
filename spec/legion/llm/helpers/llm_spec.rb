@@ -294,7 +294,7 @@ RSpec.describe Legion::LLM::Helper do
 
   describe '#llm_cost_estimate' do
     it 'delegates to CostEstimator' do
-      allow(Legion::LLM::CostEstimator).to receive(:estimate)
+      allow(Legion::LLM::Metering::Pricing).to receive(:estimate)
         .with(model_id: 'gpt-4o', input_tokens: 1000, output_tokens: 500)
         .and_return(0.0125)
       expect(instance.llm_cost_estimate(model: 'gpt-4o', input_tokens: 1000, output_tokens: 500)).to eq(0.0125)
@@ -302,14 +302,14 @@ RSpec.describe Legion::LLM::Helper do
 
     it 'uses llm_default_model when model is not provided' do
       allow(instance).to receive(:llm_default_model).and_return('claude-sonnet-4-6')
-      allow(Legion::LLM::CostEstimator).to receive(:estimate)
+      allow(Legion::LLM::Metering::Pricing).to receive(:estimate)
         .with(model_id: 'claude-sonnet-4-6', input_tokens: 100, output_tokens: 50)
         .and_return(0.001)
       expect(instance.llm_cost_estimate(input_tokens: 100, output_tokens: 50)).to eq(0.001)
     end
 
     it 'returns 0.0 on error' do
-      allow(Legion::LLM::CostEstimator).to receive(:estimate).and_raise(StandardError)
+      allow(Legion::LLM::Metering::Pricing).to receive(:estimate).and_raise(StandardError)
       expect(instance.llm_cost_estimate(model: 'unknown')).to eq(0.0)
     end
   end
@@ -318,12 +318,12 @@ RSpec.describe Legion::LLM::Helper do
     it 'delegates to CostTracker' do
       summary = { total_cost_usd: 1.5, total_requests: 10, total_input_tokens: 5000,
                   total_output_tokens: 2000, by_model: {} }
-      allow(Legion::LLM::CostTracker).to receive(:summary).with(since: nil).and_return(summary)
+      allow(Legion::LLM::Metering::Recorder).to receive(:summary).with(since: nil).and_return(summary)
       expect(instance.llm_cost_summary).to eq(summary)
     end
 
     it 'returns empty summary on error' do
-      allow(Legion::LLM::CostTracker).to receive(:summary).and_raise(StandardError)
+      allow(Legion::LLM::Metering::Recorder).to receive(:summary).and_raise(StandardError)
       result = instance.llm_cost_summary
       expect(result[:total_cost_usd]).to eq(0.0)
       expect(result[:total_requests]).to eq(0)

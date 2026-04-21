@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/quality_checker'
-require 'legion/llm/confidence_score'
-require 'legion/llm/confidence_scorer'
+require 'legion/llm/quality/checker'
+require 'legion/llm/quality/confidence/score'
+require 'legion/llm/quality/confidence/scorer'
 
-RSpec.describe Legion::LLM::ConfidenceScorer do
+RSpec.describe Legion::LLM::Quality::Confidence::Scorer do
   def make_response(content)
     double('RawResponse', content: content)
   end
@@ -17,7 +17,7 @@ RSpec.describe Legion::LLM::ConfidenceScorer do
     context 'caller-provided score' do
       it 'returns a ConfidenceScore with source :caller_provided' do
         result = described_class.score(good_response, confidence_score: 0.9)
-        expect(result).to be_a(Legion::LLM::ConfidenceScore)
+        expect(result).to be_a(Legion::LLM::Quality::Confidence::Score)
         expect(result.source).to eq(:caller_provided)
         expect(result.score).to eq(0.9)
       end
@@ -162,7 +162,7 @@ RSpec.describe Legion::LLM::ConfidenceScorer do
       end
 
       it 'uses a pre-computed quality_result to avoid redundant checks' do
-        quality_result = Legion::LLM::QualityChecker::QualityResult.new(passed: false, failures: [:refusal])
+        quality_result = Legion::LLM::Quality::Checker::QualityResult.new(passed: false, failures: [:refusal])
         result = described_class.score(good_response, quality_result: quality_result, quality_threshold: 1)
         expect(result.signals[:refusal]).to be true
       end

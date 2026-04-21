@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Steps::PromptCache do
+RSpec.describe Legion::LLM::Inference::Steps::PromptCache do
   subject(:mod) { described_class }
 
   before do
@@ -215,18 +215,18 @@ RSpec.describe Legion::LLM::Pipeline::Steps::PromptCache do
       )
 
       executor_class = Class.new do
-        include Legion::LLM::Pipeline::Steps::PostResponse
+        include Legion::LLM::Inference::Steps::PostResponse
 
         def initialize(raw_response, provider, model)
           @raw_response      = raw_response
           @resolved_provider = provider
           @resolved_model    = model
-          @request           = Legion::LLM::Pipeline::Request.build(
+          @request           = Legion::LLM::Inference::Request.build(
             messages: [{ role: :user, content: 'hi' }]
           )
           @enrichments = {}
           @audit       = {}
-          @timeline    = Legion::LLM::Pipeline::Timeline.new
+          @timeline    = Legion::LLM::Inference::Timeline.new
           @tracing     = nil
           @warnings    = []
         end

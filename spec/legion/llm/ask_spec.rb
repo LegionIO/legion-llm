@@ -34,8 +34,8 @@ unless defined?(Legion::Cache)
   end
 end
 
-require 'legion/llm/response_cache'
-require 'legion/llm/daemon_client'
+require 'legion/llm/cache/response'
+require 'legion/llm/call/daemon_client'
 
 RSpec.describe 'Legion::LLM.ask' do
   # Build a mock response object with the interface of RubyLLM::Message
@@ -128,7 +128,7 @@ RSpec.describe 'Legion::LLM.ask' do
 
     context 'when poll resolves to :done' do
       before do
-        Legion::LLM::ResponseCache.complete(
+        Legion::LLM::Cache::Response.complete(
           request_id,
           response: 'async result',
           meta:     { model: 'claude-sonnet-4-6', tier: :fleet },
@@ -137,7 +137,7 @@ RSpec.describe 'Legion::LLM.ask' do
       end
 
       after do
-        Legion::LLM::ResponseCache.cleanup(request_id)
+        Legion::LLM::Cache::Response.cleanup(request_id)
       end
 
       it 'returns the polled result' do
@@ -150,7 +150,7 @@ RSpec.describe 'Legion::LLM.ask' do
     context 'when poll times out' do
       it 'returns a timeout status hash' do
         # No completion written — poll will time out quickly
-        result = Legion::LLM::ResponseCache.poll(request_id, timeout: 0.05, interval: 0.01)
+        result = Legion::LLM::Cache::Response.poll(request_id, timeout: 0.05, interval: 0.01)
         expect(result[:status]).to eq(:timeout)
       end
     end

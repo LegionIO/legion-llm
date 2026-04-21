@@ -2,20 +2,20 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
+RSpec.describe Legion::LLM::Inference::GaiaCaller do
   describe '.chat' do
     it 'builds request with gaia caller profile' do
       executor = double('Executor')
       allow(executor).to receive(:call).and_return(
-        Legion::LLM::Pipeline::Response.build(
+        Legion::LLM::Inference::Response.build(
           request_id: 'req_1', conversation_id: 'conv_1',
           message: { role: :assistant, content: 'summarized' }
         )
       )
-      allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+      allow(Legion::LLM::Inference::Executor).to receive(:new) do |req|
         expect(req.caller[:requested_by][:type]).to eq(:system)
         expect(req.caller[:requested_by][:credential]).to eq(:internal)
-        expect(Legion::LLM::Pipeline::Profile.derive(req.caller)).to eq(:gaia)
+        expect(Legion::LLM::Inference::Profile.derive(req.caller)).to eq(:gaia)
         executor
       end
 
@@ -26,19 +26,19 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
         tick_span_id:  'span_123'
       )
 
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(result.message[:content]).to eq('summarized')
     end
 
     it 'includes tracing linkage to tick cycle' do
       executor = double('Executor')
       allow(executor).to receive(:call).and_return(
-        Legion::LLM::Pipeline::Response.build(
+        Legion::LLM::Inference::Response.build(
           request_id: 'r', conversation_id: 'c',
           message: { role: :assistant, content: 'x' }
         )
       )
-      allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+      allow(Legion::LLM::Inference::Executor).to receive(:new) do |req|
         expect(req.tracing[:parent_span_id]).to eq('span_123')
         expect(req.tracing[:correlation_id]).to start_with('gaia:tick:')
         executor
@@ -53,12 +53,12 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
     it 'works without tick tracing args' do
       executor = double('Executor')
       allow(executor).to receive(:call).and_return(
-        Legion::LLM::Pipeline::Response.build(
+        Legion::LLM::Inference::Response.build(
           request_id: 'r', conversation_id: 'c',
           message: { role: :assistant, content: 'ok' }
         )
       )
-      allow(Legion::LLM::Pipeline::Executor).to receive(:new).and_return(executor)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(executor)
 
       expect { described_class.chat(message: 'hello') }.not_to raise_error
     end
@@ -68,12 +68,12 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
     it 'builds request with response_format json_schema' do
       executor = double('Executor')
       allow(executor).to receive(:call).and_return(
-        Legion::LLM::Pipeline::Response.build(
+        Legion::LLM::Inference::Response.build(
           request_id: 'r', conversation_id: 'c',
           message: { role: :assistant, content: '{"result": true}' }
         )
       )
-      allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+      allow(Legion::LLM::Inference::Executor).to receive(:new) do |req|
         expect(req.response_format[:type]).to eq(:json_schema)
         executor
       end
@@ -89,7 +89,7 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
     let(:executor_double) do
       double('Executor').tap do |e|
         allow(e).to receive(:call).and_return(
-          Legion::LLM::Pipeline::Response.build(
+          Legion::LLM::Inference::Response.build(
             request_id: 'r', conversation_id: 'c',
             message: { role: :assistant, content: 'ok' }
           )
@@ -98,9 +98,9 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
     end
 
     describe '.chat with caller:' do
-      it 'forwards explicit caller: to Pipeline::Request' do
+      it 'forwards explicit caller: to Inference::Request' do
         captured_request = nil
-        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+        allow(Legion::LLM::Inference::Executor).to receive(:new) do |req|
           captured_request = req
           executor_double
         end
@@ -111,8 +111,8 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
       end
 
       it 'derives :system profile from explicit caller with system type' do
-        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
-          expect(Legion::LLM::Pipeline::Profile.derive(req.caller)).to eq(:system)
+        allow(Legion::LLM::Inference::Executor).to receive(:new) do |req|
+          expect(Legion::LLM::Inference::Profile.derive(req.caller)).to eq(:system)
           executor_double
         end
 
@@ -120,8 +120,8 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
       end
 
       it 'falls back to gaia_caller when caller: is nil' do
-        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
-          expect(Legion::LLM::Pipeline::Profile.derive(req.caller)).to eq(:gaia)
+        allow(Legion::LLM::Inference::Executor).to receive(:new) do |req|
+          expect(Legion::LLM::Inference::Profile.derive(req.caller)).to eq(:gaia)
           expect(req.caller[:requested_by][:identity]).to start_with('gaia:tick:')
           executor_double
         end
@@ -131,9 +131,9 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
     end
 
     describe '.structured with caller:' do
-      it 'forwards explicit caller: to Pipeline::Request' do
+      it 'forwards explicit caller: to Inference::Request' do
         captured_request = nil
-        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
+        allow(Legion::LLM::Inference::Executor).to receive(:new) do |req|
           captured_request = req
           executor_double
         end
@@ -144,8 +144,8 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
       end
 
       it 'derives :system profile from explicit caller with system type' do
-        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
-          expect(Legion::LLM::Pipeline::Profile.derive(req.caller)).to eq(:system)
+        allow(Legion::LLM::Inference::Executor).to receive(:new) do |req|
+          expect(Legion::LLM::Inference::Profile.derive(req.caller)).to eq(:system)
           executor_double
         end
 
@@ -153,8 +153,8 @@ RSpec.describe Legion::LLM::Pipeline::GaiaCaller do
       end
 
       it 'falls back to gaia_caller when caller: is nil' do
-        allow(Legion::LLM::Pipeline::Executor).to receive(:new) do |req|
-          expect(Legion::LLM::Pipeline::Profile.derive(req.caller)).to eq(:gaia)
+        allow(Legion::LLM::Inference::Executor).to receive(:new) do |req|
+          expect(Legion::LLM::Inference::Profile.derive(req.caller)).to eq(:gaia)
           expect(req.caller[:requested_by][:identity]).to start_with('gaia:tick:')
           executor_double
         end

@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Pipeline::Tracing do
+RSpec.describe Legion::LLM::Inference::Tracing do
   describe '.init' do
     it 'generates tracing hash with trace_id and span_id' do
       result = described_class.init
