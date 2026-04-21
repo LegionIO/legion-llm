@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-require_relative 'transport/message'
-
 module Legion
   module LLM
     module Transport
       def self.load_all
-        return unless defined?(Legion::Transport::Message)
+        return unless defined?(::Legion::Transport::Message)
+
+        require_relative 'transport/message'
 
         require_relative 'transport/exchanges/audit'
         require_relative 'transport/exchanges/escalation'
