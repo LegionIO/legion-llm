@@ -16,7 +16,7 @@ module Legion
             { pattern: 'gaia:dream:*', tier: :local, intent: { cost: :minimize } },
             { pattern: 'system:guardrails', tier: :local, intent: { cost: :minimize, capability: :basic } },
             { pattern: 'system:reflection', tier: :local, intent: { cost: :minimize, capability: :moderate } },
-            { pattern: 'user:*', tier: :cloud, intent: { capability: :reasoning } }
+            { pattern: 'user:*', tier: :frontier, intent: { capability: :reasoning } }
           ].freeze
 
           def assign(caller:, classification:, priority:, gaia_hint:, existing_tier:, existing_intent: nil) # rubocop:disable Lint/UnusedMethodArgument
@@ -46,8 +46,8 @@ module Legion
             # 4. Priority-driven
             case priority&.to_sym
             when :critical, :high
-              log.info("[llm][routing] tier_assigned source=priority tier=cloud priority=#{priority}")
-              { tier: :cloud, intent: { capability: :reasoning }, source: :priority }
+              log.info("[llm][routing] tier_assigned source=priority tier=frontier priority=#{priority}")
+              { tier: :frontier, intent: { capability: :reasoning }, source: :priority }
             when :low, :background
               log.info("[llm][routing] tier_assigned source=priority tier=local priority=#{priority}")
               { tier: :local, intent: { cost: :minimize }, source: :priority }
