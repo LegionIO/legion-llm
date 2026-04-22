@@ -14,6 +14,10 @@ module Legion
     module Router
       extend Legion::Logging::Helper
 
+      PROVIDER_TIER = { bedrock: :cloud, anthropic: :cloud, openai: :cloud,
+                        gemini: :cloud, azure: :cloud, ollama: :local }.freeze
+      PROVIDER_ORDER = %i[bedrock anthropic openai gemini azure ollama].freeze
+
       class << self
         # Resolve an LLM routing intent to a tier/provider/model decision.
         #
@@ -44,8 +48,8 @@ module Legion
 
         def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil, exclude: {})
           max = max_escalations || escalation_max_attempts
-          return chain_from_defaults(model, provider, max) unless routing_enabled? && (intent || tier)
           return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model)], max_attempts: max) if tier
+          return chain_from_defaults(model, provider, max) unless routing_enabled? && intent
 
           chain_from_intent(intent, max, exclude: exclude)
         end
@@ -285,10 +289,39 @@ module Legion
         end
 
         def chain_from_defaults(model, provider, max)
-          fallback_model    = model || default_settings_model
-          fallback_provider = (provider || default_settings_provider)&.to_sym
-          res = Resolution.new(tier: :cloud, provider: fallback_provider || :bedrock, model: fallback_model || 'claude-sonnet-4-6')
-          EscalationChain.new(resolutions: [res], max_attempts: max)
+          if provider || model
+            p = (provider || default_settings_provider)&.to_sym
+            res = Resolution.new(tier:     PROVIDER_TIER.fetch(p, :cloud),
+                                 provider: p || :bedrock,
+                                 model:    model || default_settings_model || 'claude-sonnet-4-6')
+            return EscalationChain.new(resolutions: [res], max_attempts: max)
+          end
+
+          resolutions = enabled_provider_chain
+          if resolutions.empty?
+            p = default_settings_provider&.to_sym || :bedrock
+            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :cloud),
+                                          provider: p,
+                                          model:    default_settings_model || 'claude-sonnet-4-6')]
+          end
+          EscalationChain.new(resolutions: resolutions, max_attempts: max)
+        end
+
+        def enabled_provider_chain
+          providers = Legion::Settings[:llm][:providers]
+          return [] unless providers.is_a?(Hash)
+
+          PROVIDER_ORDER.filter_map do |pname|
+            config = providers[pname]
+            next unless config.is_a?(Hash) && config[:enabled]
+
+            tier  = PROVIDER_TIER.fetch(pname, :cloud)
+            model = config[:default_model]
+            next if model.nil? || model.to_s.empty?
+            next unless tier_available?(tier)
+
+            Resolution.new(tier: tier, provider: pname, model: model, rule: 'auto_chain')
+          end
         end
 
         def chain_from_intent(intent, max, exclude: {})
@@ -299,6 +332,13 @@ module Legion
           resolutions = sorted.map(&:to_resolution)
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
           resolutions = resolutions.uniq { |r| [r.provider, r.model] }
+          resolutions = enabled_provider_chain if resolutions.empty?
+          if resolutions.empty?
+            p = default_settings_provider&.to_sym || :bedrock
+            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :cloud),
+                                          provider: p,
+                                          model:    default_settings_model || 'claude-sonnet-4-6')]
+          end
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end
 

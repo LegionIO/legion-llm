@@ -578,6 +578,7 @@ module Legion
         chain.each do |resolution|
           start_time = Time.now
           begin
+            assert_cloud_allowed! if resolution&.tier&.to_sym == :cloud
             opts = { model: resolution.model, provider: resolution.provider }
             opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
             chat_obj = RubyLLM.chat(**opts)
@@ -598,18 +599,21 @@ module Legion
               history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
               log.debug "[llm][inference] chat_with_escalation quality_failure attempt=#{history.size} failures=#{result.failures}"
             end
+          rescue Legion::LLM::PrivacyModeError
+            raise
           rescue StandardError => e
             duration_ms = ((Time.now - start_time) * 1000).round
             handle_exception(
               e,
               level:     :warn,
+              handled:   true,
               operation: 'llm.inference.escalation_attempt',
-              model:     resolution.model,
-              provider:  resolution.provider,
-              tier:      resolution.tier
+              model:     resolution&.model,
+              provider:  resolution&.provider,
+              tier:      resolution&.tier
             )
-            report_health(:error, resolution, duration_ms)
-            history << build_attempt(resolution, :error, [e.class.name], duration_ms)
+            report_health(:error, resolution, duration_ms) if resolution
+            history << build_attempt(resolution, :error, [e.class.name], duration_ms) if resolution
           end
         end
 

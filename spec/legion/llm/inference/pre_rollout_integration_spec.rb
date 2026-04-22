@@ -214,6 +214,10 @@ RSpec.describe 'Pipeline pre-rollout integration' do
   end
 
   describe 'error handling' do
+    before do
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+    end
+
     it 'raises typed AuthError for 401' do
       allow(RubyLLM).to receive(:chat).and_raise(Faraday::UnauthorizedError.new(nil, { status: 401 }))
       expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::AuthError)

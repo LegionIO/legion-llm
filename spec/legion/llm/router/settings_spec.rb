@@ -18,8 +18,8 @@ RSpec.describe Legion::LLM::Settings do
   describe '.routing_defaults' do
     subject(:routing) { described_class.routing_defaults }
 
-    it 'defaults routing to disabled' do
-      expect(routing[:enabled]).to be false
+    it 'defaults routing to enabled' do
+      expect(routing[:enabled]).to be true
     end
 
     # ─── 3. Includes default_intent with privacy/capability/cost ──────────────
@@ -127,9 +127,9 @@ RSpec.describe Legion::LLM::Settings do
     it 'includes escalation settings in routing defaults' do
       routing = Legion::LLM::Settings.routing_defaults
       expect(routing[:escalation]).to be_a(Hash)
-      expect(routing[:escalation][:enabled]).to be false
+      expect(routing[:escalation][:enabled]).to be true
       expect(routing[:escalation][:max_attempts]).to eq(3)
-      expect(routing[:escalation][:quality_threshold]).to eq(50)
+      expect(routing[:escalation][:quality_threshold]).to eq(0)
     end
   end
 

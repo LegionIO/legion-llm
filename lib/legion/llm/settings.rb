@@ -121,7 +121,7 @@ module Legion
 
       def self.routing_defaults
         {
-          enabled:        false,
+          enabled:        true,
           tier_priority:  %w[local fleet direct],
           default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
           tiers:          {
@@ -140,10 +140,10 @@ module Legion
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },
           escalation:     {
-            enabled:           false,
+            enabled:           true,
             pipeline_enabled:  true,
             max_attempts:      3,
-            quality_threshold: 50
+            quality_threshold: 0
           },
           rules:          [],
           tier_mappings:  []

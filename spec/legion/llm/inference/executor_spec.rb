@@ -296,6 +296,10 @@ confidence: 0.9 }],
   end
 
   describe 'error classification in provider call' do
+    before do
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+    end
+
     it 'wraps RubyLLM 429 as RateLimitError' do
       executor = described_class.new(request)
       allow(RubyLLM).to receive(:chat).and_raise(

@@ -195,10 +195,11 @@ RSpec.describe Legion::LLM::Cache do
   # ──────────────────────────────────────────────
   describe 'skip conditions in Legion::LLM.chat_direct' do
     let(:mock_response) { double('RubyLLM::Chat') }
+    let(:response_double) { double('response', content: 'hello', input_tokens: 1, output_tokens: 1) }
 
     before do
       allow(RubyLLM).to receive(:chat).and_return(mock_response)
-      allow(mock_response).to receive(:ask).and_return({})
+      allow(mock_response).to receive(:ask).and_return(response_double)
     end
 
     it 'skips cache when cache: false is passed' do
