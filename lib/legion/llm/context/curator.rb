@@ -222,7 +222,7 @@ module Legion
             last_line  = lines.last.to_s.chomp
             "Read file (#{line_count} lines). First: #{first_line[0, 80]}... Last: #{last_line[0, 80]}"
           when /search|grep|glob/
-            file_count = content.scan(%r{[^\s/]+/\S+}).uniq.length
+            file_count = content.lines.count { |l| l.include?('/') }
             "Search returned #{line_count} matches across #{file_count} files"
           when /bash|run_command|execute/
             exit_match = content.match(/exit(?:\s+code)?:?\s*(\d+)/i)
@@ -244,7 +244,7 @@ module Legion
           first_line = content[0, 200]
           return :read_file   if first_line.match?(/\AFile:|\ARead:|\A#\s+\S+\.rb|\A\d+\t/)
           return :bash        if first_line.match?(/exit code|STDOUT|STDERR/i)
-          return :search      if first_line.match?(/\d+ match(?:es)? (?:across|in)/i)
+          return :search      if first_line.include?(' match') && first_line.match?(/\d++ match/)
 
           nil
         end
