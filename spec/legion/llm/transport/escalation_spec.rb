@@ -7,21 +7,18 @@ unless defined?(Legion::Transport::Exchange)
   module Legion
     module Transport
       class Exchange
-        def self.exchange_name(name = nil)
-          @exchange_name = name if name
-          @exchange_name
+        def exchange_name
+          self.class.name.split('::').last.downcase
         end
 
-        def self.exchange_type(type = nil)
-          @exchange_type = type if type
-          @exchange_type
+        def default_type
+          'topic'
         end
       end
 
       class Message
-        def self.routing_key(key = nil)
-          @routing_key = key if key
-          @routing_key
+        def routing_key
+          nil
         end
       end
     end
@@ -44,17 +41,21 @@ require 'legion/llm/transport/exchanges/escalation'
 require 'legion/llm/transport/messages/escalation_event'
 
 RSpec.describe Legion::LLM::Transport::Exchanges::Escalation do
-  it 'defines the exchange name' do
-    expect(described_class.exchange_name).to eq('llm.escalation')
+  subject(:exchange) { described_class.allocate }
+
+  it 'returns the correct exchange name' do
+    expect(exchange.exchange_name).to eq('llm.escalation')
   end
 
-  it 'uses topic exchange type' do
-    expect(described_class.exchange_type).to eq(:topic)
+  it 'uses topic as default type' do
+    expect(exchange.default_type).to eq('topic')
   end
 end
 
 RSpec.describe Legion::LLM::Transport::Messages::EscalationEvent do
-  it 'defines the routing key' do
-    expect(described_class.routing_key).to eq('llm.escalation.completed')
+  subject(:event) { described_class.allocate }
+
+  it 'returns the correct routing key' do
+    expect(event.routing_key).to eq('llm.escalation.completed')
   end
 end

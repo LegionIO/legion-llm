@@ -75,8 +75,6 @@ module Legion
       when :Providers
         CompatWarning.warn_once('Legion::LLM::Providers', 'Legion::LLM::Call::Providers')
         Call::Providers
-      when :Settings
-        Config::Settings
       when :Prompt
         CompatWarning.warn_once('Legion::LLM::Prompt', 'Legion::LLM::Inference::Prompt')
         Inference::Prompt

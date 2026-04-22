@@ -1,12 +1,24 @@
 # Legion LLM Changelog
 
-## [0.8.1] - 2026-04-22
+## [0.8.4] - 2026-04-22
 
 ### Fixed
 - `Inference::Executor` now normalizes content-blocks arrays (`[{type: "text", text: "..."}]`) to a plain string before passing to `session.ask`. Previously the raw array was forwarded to RubyLLM, which serialized it as `{ type: 'text', text: [{...}] }` — an invalid Anthropic API payload causing HTTP 400 on every request when the Interlink sends structured content blocks.
 
 ### Added
 - Audit encryption is now configurable: set `llm.compliance.encrypt_audit: false` in settings to emit plaintext payloads to the `llm.audit` exchange (useful for local development). Defaults to `true` (encrypted). Applies to `PromptEvent`, `ToolEvent`, and `SkillEvent`.
+
+## [0.8.3] - 2026-04-22
+
+### Fixed
+- `EscalationEvent#routing_key` was called as a class-level DSL on load, raising `NoMethodError` and preventing `LLM::Transport.load_all` from completing. Converted to instance method to match all other message classes.
+- Spec stub for `Legion::Transport::Message` also used the class-level DSL pattern, masking this bug. Updated to instance method.
+
+## [0.8.2] - 2026-04-22
+
+### Fixed
+- `Escalation` exchange used class-level `exchange_name`/`exchange_type` DSL which doesn't exist on `Legion::Transport::Exchange`, raising `NoMethodError` at require time. Converted to instance methods `exchange_name` / `default_type`.
+- `Legion::Settings[:llm][:connected]` writes were hitting an ephemeral overlay-merged hash copy; switched to `Legion::Settings.loader.settings[:llm][:connected]` to persist through restarts.
 
 ## [0.8.0] - 2026-04-21
 

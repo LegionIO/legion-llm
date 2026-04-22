@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
+require_relative 'config/settings'
+
 module Legion
   module LLM
-    VERSION = '0.8.4'
+    Settings = Config::Settings
   end
 end
