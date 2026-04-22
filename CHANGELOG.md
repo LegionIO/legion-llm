@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.8.5] - 2026-04-22
+
+### Fixed
+- All compliance settings now have explicit defaults defined in `Config::Settings.compliance_defaults` (merged under `llm.compliance`): `classification_scan`, `encrypt_audit`, `phi_block_cloud`, `cloud_providers`, `redact_pii`, `redaction_placeholder`, `strict_hipaa`, `default_level`. Previously these keys were read via `dig` with no guaranteed defaults.
+- `Steps::Classification` now reads compliance settings via `Legion::LLM.settings.dig(:compliance, ...)` (consistent with all other llm settings) instead of bare `Legion::Settings.dig(:compliance, ...)` which targeted the wrong path.
+- Removed dead `defined?(Legion::Settings)` guards in `Steps::Classification` — `legion-settings` is a hard dependency and is always present.
+
 ## [0.8.4] - 2026-04-22
 
 ### Fixed

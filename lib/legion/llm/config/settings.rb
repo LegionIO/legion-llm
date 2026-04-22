@@ -37,7 +37,8 @@ module Legion
             debate:                    debate_defaults,
             provider_layer:            provider_layer_defaults,
             tool_trigger:              tool_trigger_defaults,
-            api:                       api_defaults
+            api:                       api_defaults,
+            compliance:                compliance_defaults
           }
         end
 
@@ -281,6 +282,19 @@ module Legion
               api_keys:     [],
               pass_through: false
             }
+          }
+        end
+
+        def self.compliance_defaults
+          {
+            classification_scan:  true,
+            encrypt_audit:        true,
+            phi_block_cloud:      false,
+            cloud_providers:      %w[bedrock anthropic openai gemini azure],
+            redact_pii:           false,
+            redaction_placeholder: '[REDACTED]',
+            strict_hipaa:         false,
+            default_level:        :public
           }
         end
 
