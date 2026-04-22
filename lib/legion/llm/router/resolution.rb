@@ -27,6 +27,18 @@ module Legion
           @tier == :cloud
         end
 
+        def frontier?
+          @tier == :frontier
+        end
+
+        def openai_compat?
+          @tier == :openai_compat
+        end
+
+        def external?
+          %i[cloud frontier openai_compat].include?(@tier)
+        end
+
         def to_h
           {
             tier:           @tier,
