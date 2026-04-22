@@ -17,9 +17,8 @@ unless defined?(Legion::Transport::Exchange)
       end
 
       class Message
-        def self.routing_key(key = nil)
-          @routing_key = key if key
-          @routing_key
+        def routing_key
+          nil
         end
       end
     end
@@ -54,7 +53,9 @@ RSpec.describe Legion::LLM::Transport::Exchanges::Escalation do
 end
 
 RSpec.describe Legion::LLM::Transport::Messages::EscalationEvent do
-  it 'defines the routing key' do
-    expect(described_class.routing_key).to eq('llm.escalation.completed')
+  subject(:event) { described_class.allocate }
+
+  it 'returns the correct routing key' do
+    expect(event.routing_key).to eq('llm.escalation.completed')
   end
 end
