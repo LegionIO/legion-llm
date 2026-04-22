@@ -3,7 +3,7 @@
 require 'spec_helper'
 require 'legion/llm/context/curator'
 
-RSpec.describe Legion::LLM::ContextCurator do
+RSpec.describe Legion::LLM::Context::Curator do
   let(:conversation_id) { 'test-conv-001' }
   subject(:curator) { described_class.new(conversation_id: conversation_id) }
 

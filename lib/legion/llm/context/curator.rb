@@ -51,8 +51,8 @@ module Legion
 
           content = msg[:content].to_s
           stripped = content
-                     .gsub(%r{<thinking>.*?</thinking>}m, '')
-                     .gsub(/^#+\s*[Tt]hinking.*?\n(?:(?!^#+\s).)*\n/m, '')
+                     .gsub(%r{<thinking>[^<]*(?:<(?!/thinking>)[^<]*)*</thinking>}m, '')
+                     .gsub(/^#+\s*[Tt]hinking[^\n]*\n(?:[^#\n][^\n]*\n)*/m, '')
                      .strip
 
           return msg if stripped == content || stripped.empty?
@@ -222,7 +222,7 @@ module Legion
             last_line  = lines.last.to_s.chomp
             "Read file (#{line_count} lines). First: #{first_line[0, 80]}... Last: #{last_line[0, 80]}"
           when /search|grep|glob/
-            file_count = content.scan(%r{[^\s/]+/[^\s]+}).uniq.length
+            file_count = content.scan(%r{[^\s/]+/\S+}).uniq.length
             "Search returned #{line_count} matches across #{file_count} files"
           when /bash|run_command|execute/
             exit_match = content.match(/exit(?:\s+code)?:?\s*(\d+)/i)
@@ -241,9 +241,10 @@ module Legion
         end
 
         def infer_tool_name(content)
-          return :read_file   if content.match?(/\A(?:File:|Read:|#\s+\S+\.rb|\d+\t)/)
-          return :bash        if content.match?(/exit code|STDOUT|STDERR/i)
-          return :search      if content.match?(/\d+ match(?:es)? (?:across|in)/i)
+          first_line = content[0, 200]
+          return :read_file   if first_line.match?(/\AFile:|\ARead:|\A#\s+\S+\.rb|\A\d+\t/)
+          return :bash        if first_line.match?(/exit code|STDOUT|STDERR/i)
+          return :search      if first_line.match?(/\d+ match(?:es)? (?:across|in)/i)
 
           nil
         end
@@ -268,8 +269,9 @@ module Legion
 
         # Extract a file path from content heuristically.
         def extract_file_path(content)
-          match = content.match(%r{(?:reading|read|loaded?|opened?|file:)\s+[`'"]?(/[^\s`'"]+)[`'"]?}i) ||
-                  content.match(%r{^(/(?:[\w.-]+/)*[\w.-]+\.\w+)})
+          prefix = content[0, 500]
+          match = prefix.match(%r{(?:reading|read|loaded?|opened?|file:)\s+[`'"]?(/\S+)[`'"]?}i) ||
+                  prefix.match(%r{^(/[\w./-]+\.\w+)})
           match ? match[1] : nil
         end
 

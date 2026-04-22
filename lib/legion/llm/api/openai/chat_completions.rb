@@ -112,6 +112,7 @@ module Legion
             return [] if tools.nil? || !tools.is_a?(Array) || tools.empty?
 
             tools.filter_map do |tool|
+              t = nil
               t = tool.respond_to?(:transform_keys) ? tool.transform_keys(&:to_sym) : tool
               next unless t[:name].to_s.length.positive?
 
@@ -124,7 +125,8 @@ module Legion
               klass.params(t[:parameters]) if t[:parameters].is_a?(Hash) && t[:parameters][:properties]
               klass
             rescue StandardError => e
-              handle_exception(e, level: :warn, handled: true, operation: "llm.api.openai.build_tool.#{t[:name]}")
+              tool_name = t.is_a?(Hash) ? t[:name] : nil
+              handle_exception(e, level: :warn, handled: true, operation: "llm.api.openai.build_tool.#{tool_name || 'unknown'}")
               nil
             end
           end

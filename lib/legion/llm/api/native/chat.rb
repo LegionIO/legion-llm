@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'securerandom'
+require 'concurrent'
 require 'legion/logging/helper'
 
 module Legion
@@ -9,6 +10,11 @@ module Legion
       module Native
         module Chat
           extend Legion::Logging::Helper
+
+          ASYNC_POOL = Concurrent::FixedThreadPool.new(
+            [4, (Concurrent.processor_count / 2)].max,
+            fallback_policy: :caller_runs
+          )
 
           def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
             log.debug('[llm][api][chat] registering POST /api/llm/chat')
@@ -51,7 +57,7 @@ module Legion
                 rc  = Legion::LLM::Cache::Response
                 rc.init_request(request_id)
 
-                Thread.new do
+                Chat::ASYNC_POOL.post do
                   session  = llm.chat_direct(model: model, provider: provider)
                   response = session.ask(message)
                   rc.complete(

@@ -3,7 +3,7 @@
 require 'spec_helper'
 require 'legion/llm/scheduling/off_peak'
 
-RSpec.describe Legion::LLM::OffPeak do
+RSpec.describe Legion::LLM::Scheduling::OffPeak do
   describe '.peak_hour?' do
     context 'with default peak range (14-22 UTC)' do
       it 'returns true during peak hours (16:00 UTC)' do

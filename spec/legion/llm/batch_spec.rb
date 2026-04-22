@@ -3,7 +3,7 @@
 require 'spec_helper'
 require 'legion/llm/scheduling/batch'
 
-RSpec.describe Legion::LLM::Batch do
+RSpec.describe Legion::LLM::Scheduling::Batch do
   before do
     described_class.reset!
     Legion::Settings[:llm][:batch] = { enabled: true, window_seconds: 0, max_batch_size: 100 }
