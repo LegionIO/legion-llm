@@ -7,7 +7,9 @@ module Legion
       class Curator
         include Legion::Logging::Helper
 
-        CURATED_KEY = :__curated__
+        CURATED_KEY    = :__curated__
+        THINKING_OPEN  = '<thinking>'
+        THINKING_CLOSE = '</thinking>'
 
         def initialize(conversation_id:)
           @conversation_id = conversation_id
@@ -50,10 +52,8 @@ module Legion
           return msg unless setting(:thinking_eviction, true)
 
           content = msg[:content].to_s
-          stripped = content
-                     .gsub(%r{<thinking>[^<]*(?:<(?!/thinking>)[^<]*)*</thinking>}m, '')
-                     .gsub(/^#+\s*[Tt]hinking[^\n]*\n(?:[^#\n][^\n]*\n)*/m, '')
-                     .strip
+          stripped = strip_thinking_tags(content)
+          stripped = stripped.gsub(/^#+\s*[Tt]hinking[^\n]*\n(?:[^#\n][^\n]*\n)*/m, '').strip
 
           return msg if stripped == content || stripped.empty?
 
@@ -153,6 +153,21 @@ module Legion
         def setting(key, default)
           val = curation_settings[key]
           val.nil? ? default : val
+        end
+
+        def strip_thinking_tags(text)
+          result = +''
+          pos = 0
+          while pos < text.length
+            open_idx = text.index(THINKING_OPEN, pos)
+            break unless open_idx
+
+            result << text[pos...open_idx]
+            close_idx = text.index(THINKING_CLOSE, open_idx + THINKING_OPEN.length)
+            pos = close_idx ? close_idx + THINKING_CLOSE.length : text.length
+          end
+          result << text[pos..] if pos < text.length
+          result
         end
 
         def curate_message(msg, assistant_response)
