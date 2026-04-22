@@ -27,6 +27,10 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
     klass.new(request)
   end
 
+  before do
+    Legion::Settings[:llm][:compliance] = Legion::Settings[:llm][:compliance].merge(classification_scan: true)
+  end
+
   describe '#step_classification' do
     context 'when classification is nil' do
       it 'runs scan with :public baseline and writes audit entry' do

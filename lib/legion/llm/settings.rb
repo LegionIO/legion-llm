@@ -272,8 +272,8 @@ module Legion
 
       def self.tool_trigger_defaults
         {
-          scan_depth: 2,
-          tool_limit: 10
+          scan_depth: 10,
+          tool_limit: 50
         }
       end
 
@@ -315,8 +315,8 @@ module Legion
 
       def self.compliance_defaults
         {
-          classification_scan:   true,
-          encrypt_audit:         true,
+          classification_scan:   false,
+          encrypt_audit:         false,
           phi_block_cloud:       false,
           cloud_providers:       %w[bedrock anthropic openai gemini azure],
           redact_pii:            false,

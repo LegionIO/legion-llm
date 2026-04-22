@@ -86,7 +86,7 @@ module Legion
           end
 
           def trigger_scan_depth
-            Legion::Settings.dig(:llm, :tool_trigger, :scan_depth) || 2
+            Legion::Settings.dig(:llm, :tool_trigger, :scan_depth) || 10
           end
 
           def trigger_tool_limit

@@ -26,7 +26,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
   let(:step) { klass.new(request) }
 
   before do
-    Legion::Settings[:llm][:tool_trigger] = { scan_depth: 2, tool_limit: 10 }
+    Legion::Settings[:llm][:tool_trigger] = { scan_depth: 10, tool_limit: 50 }
     # Remove TriggerIndex constant between examples to avoid bleed-through
     hide_const('Legion::Tools::TriggerIndex') if defined?(Legion::Tools::TriggerIndex)
   end
@@ -233,9 +233,9 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
   end
 
   describe '#trigger_scan_depth' do
-    it 'returns default 2 when settings missing' do
+    it 'returns default 10 when settings missing' do
       Legion::Settings[:llm][:tool_trigger] = {}
-      expect(step.send(:trigger_scan_depth)).to eq(2)
+      expect(step.send(:trigger_scan_depth)).to eq(10)
     end
 
     it 'reads from settings' do
@@ -245,7 +245,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
   end
 
   describe '#trigger_tool_limit' do
-    it 'returns default 10 when settings missing' do
+    it 'returns default 50 when settings missing' do
       Legion::Settings[:llm][:tool_trigger] = {}
       expect(step.send(:trigger_tool_limit)).to eq(50)
     end

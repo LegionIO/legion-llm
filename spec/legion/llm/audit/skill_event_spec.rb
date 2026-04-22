@@ -22,7 +22,12 @@ RSpec.describe Legion::LLM::Transport::Messages::SkillEvent do
   end
 
   describe '#encrypt?' do
-    it 'is always true' do
+    it 'returns false by default' do
+      expect(event.encrypt?).to be false
+    end
+
+    it 'returns true when encrypt_audit is enabled' do
+      Legion::Settings[:llm][:compliance] = Legion::Settings[:llm][:compliance].merge(encrypt_audit: true)
       expect(event.encrypt?).to be true
     end
   end

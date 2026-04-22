@@ -39,7 +39,12 @@ RSpec.describe Legion::LLM::Transport::Messages::ToolEvent do
   end
 
   describe '#encrypt?' do
-    it 'returns true always' do
+    it 'returns false by default' do
+      expect(build.encrypt?).to eq(false)
+    end
+
+    it 'returns true when encrypt_audit is enabled' do
+      Legion::Settings[:llm][:compliance] = Legion::Settings[:llm][:compliance].merge(encrypt_audit: true)
       expect(build.encrypt?).to eq(true)
     end
   end
