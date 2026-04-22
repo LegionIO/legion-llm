@@ -72,13 +72,17 @@ module Legion
         end
 
         # Check whether a tier can be used right now.
-        # :local — always available
-        # :fleet — available when Legion::Transport is loaded
-        # :cloud — always available
+        # :local         — always available
+        # :fleet         — available when Legion::Transport is loaded
+        # :cloud         — external tier; blocked when enterprise privacy is enabled
+        # :frontier      — external tier; blocked when enterprise privacy is enabled
+        # :openai_compat — external tier; blocked when enterprise privacy is enabled;
+        #                  also requires at least one gateway configured
         def tier_available?(tier)
           sym = tier.to_sym
-          return false if sym == :cloud && privacy_mode?
+          return false if external_tier?(sym) && privacy_mode?
           return Legion.const_defined?('Transport', false) if sym == :fleet
+          return openai_compat_available? if sym == :openai_compat
 
           true
         end
@@ -173,7 +177,14 @@ module Legion
           tier = (rule.target[:tier] || rule.target['tier'])&.to_sym
 
           constraints.any? do |c|
-            c.to_s == 'never_cloud' && tier == :cloud
+            case c.to_s
+            when 'never_external'
+              external_tier?(tier)
+            when 'never_cloud'
+              %i[cloud frontier].include?(tier)
+            else
+              false
+            end
           end
         end
 
@@ -235,6 +246,23 @@ module Legion
           end
         end
 
+        def external_tier?(tier)
+          %i[cloud frontier openai_compat].include?(tier)
+        end
+
+        def openai_compat_available?
+          !openai_compat_gateways.empty?
+        end
+
+        def openai_compat_gateways
+          tiers = routing_settings[:tiers] || {}
+          oc = (tiers[:openai_compat] || {}).transform_keys(&:to_sym)
+          gateways = oc[:gateways]
+          return [] unless gateways.is_a?(Array)
+
+          gateways.map { |g| g.is_a?(Hash) ? g.transform_keys(&:to_sym) : nil }.compact
+        end
+
         def pick_best(candidates)
           return nil if candidates.empty?
 
@@ -268,11 +296,18 @@ module Legion
         end
 
         def default_provider_for_tier(tier)
-          if tier.to_sym == :cloud
+          case tier.to_sym
+          when :local, :fleet
+            :ollama
+          when :openai_compat
+            :openai
+          when :cloud
             default = routing_settings[:default_provider]
             default ? default.to_sym : :bedrock
+          when :frontier
+            :anthropic
           else
-            :ollama
+            :bedrock
           end
         end
 
@@ -281,10 +316,16 @@ module Legion
           when :local
             ollama = Legion::Settings[:llm].dig(:providers, :ollama) || {}
             ollama[:default_model] || 'llama3'
-          when :fleet then 'llama4:70b'
+          when :fleet
+            'llama4:70b'
+          when :openai_compat
+            'gpt-4o'
           when :cloud
+            Legion::Settings[:llm][:default_model] || 'us.anthropic.claude-sonnet-4-6'
+          when :frontier
             Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6'
-          else 'llama3'
+          else
+            'llama3'
           end
         end
 

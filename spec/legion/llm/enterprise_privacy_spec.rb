@@ -54,6 +54,14 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
       expect(Legion::LLM::Router.tier_available?(:cloud)).to be false
     end
 
+    it 'returns false for :frontier when enterprise privacy is enabled' do
+      expect(Legion::LLM::Router.tier_available?(:frontier)).to be false
+    end
+
+    it 'returns false for :openai_compat when enterprise privacy is enabled' do
+      expect(Legion::LLM::Router.tier_available?(:openai_compat)).to be false
+    end
+
     it 'returns true for :local when enterprise privacy is enabled' do
       expect(Legion::LLM::Router.tier_available?(:local)).to be true
     end
