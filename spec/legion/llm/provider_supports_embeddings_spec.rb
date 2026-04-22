@@ -3,7 +3,11 @@
 require 'spec_helper'
 
 RSpec.describe 'Legion::LLM.provider_supports_embeddings?' do
-  subject(:supports?) { Legion::LLM.provider_supports_embeddings?(provider) }
+  # `provider_supports_embeddings?` is a private singleton method on Legion::LLM
+  # (declared after the `private` directive inside `class << self`). We call it
+  # via `.send` to bypass visibility — standard Ruby pattern for testing private
+  # methods without changing the public surface.
+  subject(:supports?) { Legion::LLM.send(:provider_supports_embeddings?, provider) }
 
   context 'with nil' do
     let(:provider) { nil }
