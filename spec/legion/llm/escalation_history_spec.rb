@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/escalation_history'
+require 'legion/llm/router/escalation/history'
 require 'legion/llm/router/resolution'
 
 RSpec.describe Legion::LLM::EscalationHistory do

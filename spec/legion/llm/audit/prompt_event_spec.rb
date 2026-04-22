@@ -2,10 +2,10 @@
 
 require 'spec_helper'
 require_relative '../../../support/transport_stub'
-require 'legion/llm/audit/exchange'
-require 'legion/llm/audit/prompt_event'
+require 'legion/llm/transport/exchanges/audit'
+require 'legion/llm/transport/messages/prompt_event'
 
-RSpec.describe Legion::LLM::Audit::PromptEvent do
+RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
   let(:base_opts) do
     {
       request_type:    'chat',

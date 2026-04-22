@@ -7,11 +7,12 @@ RSpec.describe Legion::LLM do
 
   before do
     allow(described_class).to receive(:log).and_return(logger)
+    allow(Legion::LLM::Inference).to receive(:log).and_return(logger)
   end
 
   describe '.chat' do
     it 'logs inference request and response details for pipeline responses' do
-      response = Legion::LLM::Pipeline::Response.build(
+      response = Legion::LLM::Inference::Response.build(
         request_id:      'req-123',
         conversation_id: 'conv-123',
         message:         { role: :assistant, content: 'pipeline response' },
@@ -21,7 +22,7 @@ RSpec.describe Legion::LLM do
         tools:           [{ name: 'search' }]
       )
 
-      allow(described_class).to receive(:_dispatch_chat).and_return(response)
+      allow(Legion::LLM::Inference).to receive(:dispatch_chat).and_return(response)
 
       described_class.chat(
         messages: [{ role: :user, content: 'hello' }],
@@ -33,7 +34,7 @@ RSpec.describe Legion::LLM do
 
       expect(logger).to have_received(:info).with(
         include(
-          '[llm] inference.request',
+          '[llm][inference] request',
           'type=chat',
           'requested_provider=anthropic',
           'requested_model=claude-sonnet-4-6',
@@ -46,10 +47,10 @@ RSpec.describe Legion::LLM do
 
       expect(logger).to have_received(:info).with(
         include(
-          '[llm] inference.response',
+          '[llm][inference] response',
           'type=chat',
           'status=ok',
-          'result_class=Legion::LLM::Pipeline::Response',
+          'result_class=Legion::LLM::Inference::Response',
           'provider=anthropic',
           'model=claude-sonnet-4-6',
           'input_tokens=11',
@@ -66,7 +67,7 @@ RSpec.describe Legion::LLM do
   describe '.ask' do
     it 'logs inference request and response details for direct responses' do
       allow(Legion::LLM::DaemonClient).to receive(:available?).and_return(false)
-      allow(described_class).to receive(:ask_direct).and_return(
+      allow(Legion::LLM::Inference).to receive(:ask_direct).and_return(
         {
           status:   :done,
           response: 'direct response',
@@ -83,7 +84,7 @@ RSpec.describe Legion::LLM do
 
       expect(logger).to have_received(:info).with(
         include(
-          '[llm] inference.request',
+          '[llm][inference] request',
           'type=ask',
           'requested_provider=openai',
           'requested_model=gpt-4o',
@@ -94,7 +95,7 @@ RSpec.describe Legion::LLM do
 
       expect(logger).to have_received(:info).with(
         include(
-          '[llm] inference.response',
+          '[llm][inference] response',
           'type=ask',
           'status=ok',
           'result_class=Hash',

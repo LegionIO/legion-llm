@@ -29,6 +29,17 @@ unless defined?(Legion::Transport::Exchange)
   $LOADED_FEATURES << 'legion/transport'
 end
 
+unless defined?(Legion::LLM::Transport::Message)
+  module Legion
+    module LLM
+      module Transport
+        class Message < ::Legion::Transport::Message
+        end
+      end
+    end
+  end
+end
+
 require 'legion/llm/transport/exchanges/escalation'
 require 'legion/llm/transport/messages/escalation_event'
 

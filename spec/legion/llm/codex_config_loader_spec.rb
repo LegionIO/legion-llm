@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/codex_config_loader'
+require 'legion/llm/call/codex_config_loader'
 
 RSpec.describe Legion::LLM::CodexConfigLoader do
   let(:auth_path) { described_class::CODEX_AUTH }

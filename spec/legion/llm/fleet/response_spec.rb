@@ -2,9 +2,9 @@
 
 require 'spec_helper'
 require_relative '../../../support/transport_stub'
-require 'legion/llm/fleet/response'
+require 'legion/llm/transport/messages/fleet_response'
 
-RSpec.describe Legion::LLM::Fleet::Response do
+RSpec.describe Legion::LLM::Transport::Messages::FleetResponse do
   let(:base_opts) do
     {
       reply_to:             'llm.fleet.reply.abc123',

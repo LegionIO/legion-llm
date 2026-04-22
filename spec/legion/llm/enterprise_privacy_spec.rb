@@ -44,7 +44,7 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
         )
       )
       expect do
-        Legion::LLM.send(:ask_direct, message: 'hello')
+        Legion::LLM::Inference.send(:ask_direct, message: 'hello')
       end.to raise_error(Legion::LLM::PrivacyModeError)
     end
   end

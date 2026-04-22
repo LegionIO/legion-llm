@@ -2,9 +2,9 @@
 
 require 'spec_helper'
 require_relative '../../../support/transport_stub'
-require 'legion/llm/metering/exchange'
+require 'legion/llm/transport/exchanges/metering'
 
-RSpec.describe Legion::LLM::Metering::Exchange do
+RSpec.describe Legion::LLM::Transport::Exchanges::Metering do
   subject(:exchange) { described_class.new }
 
   it 'returns llm.metering as the exchange name' do

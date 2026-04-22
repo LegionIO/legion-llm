@@ -2,9 +2,9 @@
 
 require 'spec_helper'
 require 'legion/llm'
-require 'legion/llm/quality_checker'
-require 'legion/llm/escalation_history'
-require 'legion/llm/router/escalation_chain'
+require 'legion/llm/quality/checker'
+require 'legion/llm/router/escalation/history'
+require 'legion/llm/router/escalation/chain'
 
 RSpec.describe 'Legion::LLM.chat escalation' do
   let(:good_content) { 'This is a sufficiently long and varied response that passes all quality checks easily' }

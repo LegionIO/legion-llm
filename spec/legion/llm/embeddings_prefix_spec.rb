@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/embeddings'
+require 'legion/llm/call/embeddings'
 
 RSpec.describe Legion::LLM::Embeddings do
   before do

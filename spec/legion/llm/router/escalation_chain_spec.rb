@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 require 'legion/llm/router/resolution'
-require 'legion/llm/router/escalation_chain'
+require 'legion/llm/router/escalation/chain'
 
 RSpec.describe Legion::LLM::Router::EscalationChain do
   let(:res_local) { Legion::LLM::Router::Resolution.new(tier: :local, provider: :ollama, model: 'llama3', rule: 'local-rule') }

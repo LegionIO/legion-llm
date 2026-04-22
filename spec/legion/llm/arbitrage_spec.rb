@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/arbitrage'
+require 'legion/llm/router/arbitrage'
 
-RSpec.describe Legion::LLM::Arbitrage do
+RSpec.describe Legion::LLM::Router::Arbitrage do
   before do
     Legion::Settings[:llm][:arbitrage] = {}
   end

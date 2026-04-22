@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::ConversationStore do
+RSpec.describe Legion::LLM::Inference::Conversation do
   before { described_class.reset! }
 
   # ──────────────────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ RSpec.describe Legion::LLM::ConversationStore do
       described_class.append('c', role: :user, content: 'hello')
       described_class.store_metadata('c', title: 'My Session')
       chain = described_class.build_chain('c')
-      expect(chain.map { |m| m[:role] }).not_to include(Legion::LLM::ConversationStore::METADATA_ROLE)
+      expect(chain.map { |m| m[:role] }).not_to include(Legion::LLM::Inference::Conversation::METADATA_ROLE)
     end
   end
 
@@ -223,7 +223,7 @@ RSpec.describe Legion::LLM::ConversationStore do
       described_class.append('c', role: :user, content: 'hello')
       described_class.store_metadata('c', title: 'Session 1')
       msgs = described_class.messages('c')
-      expect(msgs.map { |m| m[:role] }).not_to include(Legion::LLM::ConversationStore::METADATA_ROLE)
+      expect(msgs.map { |m| m[:role] }).not_to include(Legion::LLM::Inference::Conversation::METADATA_ROLE)
     end
 
     it 'returns most recent metadata when multiple entries exist' do

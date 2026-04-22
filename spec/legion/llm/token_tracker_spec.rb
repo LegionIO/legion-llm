@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::TokenTracker do
+RSpec.describe Legion::LLM::Metering::Tokens do
   before(:each) { described_class.reset! }
 
   describe '.record' do

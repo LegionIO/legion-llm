@@ -35,9 +35,9 @@ RSpec.describe 'Legion::LLM backward compatibility via Prompt' do
       Legion::LLM.chat(message: 'Hello from .chat')
     end
 
-    it 'returns a Pipeline::Response' do
+    it 'returns a Inference::Response' do
       result = Legion::LLM.chat(message: 'Hello from .chat')
-      expect(result).to be_a(Legion::LLM::Pipeline::Response)
+      expect(result).to be_a(Legion::LLM::Inference::Response)
     end
   end
 end

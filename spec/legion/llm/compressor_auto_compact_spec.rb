@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Compressor do
+RSpec.describe Legion::LLM::Context::Compressor do
   describe '.estimate_tokens' do
     it 'returns 0 for nil messages' do
       expect(described_class.estimate_tokens(nil)).to eq(0)
@@ -110,7 +110,7 @@ RSpec.describe Legion::LLM::Compressor do
   end
 
   describe 'pipeline integration: auto-compact wiring' do
-    before { Legion::LLM::ConversationStore.reset! }
+    before { Legion::LLM::Inference::Conversation.reset! }
 
     let(:conv_id) { 'conv_autocompact_test' }
 
@@ -119,7 +119,7 @@ RSpec.describe Legion::LLM::Compressor do
       msg_count = 20
       chars_per_msg = (token_count * 4) / msg_count
       msg_count.times.map do |i|
-        Legion::LLM::ConversationStore.append(
+        Legion::LLM::Inference::Conversation.append(
           conv_id,
           role:    i.even? ? :user : :assistant,
           content: 'x' * chars_per_msg
@@ -137,16 +137,16 @@ RSpec.describe Legion::LLM::Compressor do
         preserve_recent:     10
       }
 
-      req = Legion::LLM::Pipeline::Request.build(
+      req = Legion::LLM::Inference::Request.build(
         messages:        [{ role: :user, content: 'hello' }],
         conversation_id: conv_id
       )
-      executor = Legion::LLM::Pipeline::Executor.new(req)
+      executor = Legion::LLM::Inference::Executor.new(req)
       allow(executor).to receive(:step_provider_call)
       executor.call
 
       # 20 original + 1 new user message appended by step_context_store
-      history = Legion::LLM::ConversationStore.messages(conv_id)
+      history = Legion::LLM::Inference::Conversation.messages(conv_id)
       expect(history.size).to eq(21)
       expect(history.none? { |m| m[:content].to_s.include?('Conversation compacted') }).to be true
     end
@@ -161,16 +161,16 @@ RSpec.describe Legion::LLM::Compressor do
         preserve_recent:     5
       }
 
-      req = Legion::LLM::Pipeline::Request.build(
+      req = Legion::LLM::Inference::Request.build(
         messages:        [{ role: :user, content: 'hello' }],
         conversation_id: conv_id
       )
-      executor = Legion::LLM::Pipeline::Executor.new(req)
+      executor = Legion::LLM::Inference::Executor.new(req)
       allow(executor).to receive(:step_provider_call)
       executor.call
 
       # The history was compacted before enriching; verify the store was updated
-      history = Legion::LLM::ConversationStore.messages(conv_id)
+      history = Legion::LLM::Inference::Conversation.messages(conv_id)
       expect(history.any? { |m| m[:content].to_s.include?('Conversation compacted') }).to be true
     end
 
@@ -184,16 +184,16 @@ RSpec.describe Legion::LLM::Compressor do
         preserve_recent:     5
       }
 
-      req = Legion::LLM::Pipeline::Request.build(
+      req = Legion::LLM::Inference::Request.build(
         messages:        [{ role: :user, content: 'hello' }],
         conversation_id: conv_id
       )
-      executor = Legion::LLM::Pipeline::Executor.new(req)
+      executor = Legion::LLM::Inference::Executor.new(req)
       allow(executor).to receive(:step_provider_call)
       executor.call
 
       # No compaction: 20 original + 1 new user message
-      history = Legion::LLM::ConversationStore.messages(conv_id)
+      history = Legion::LLM::Inference::Conversation.messages(conv_id)
       expect(history.none? { |m| m[:content].to_s.include?('Conversation compacted') }).to be true
     end
   end

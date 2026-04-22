@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/usage'
+require 'legion/llm/metering/usage'
 
 RSpec.describe Legion::LLM::Usage do
   describe 'defaults' do

@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::CostEstimator do
+RSpec.describe Legion::LLM::Metering::Pricing do
   describe '.estimate' do
     it 'calculates cost for Claude Opus 4.6' do
       cost = described_class.estimate(model_id: 'claude-opus-4-6', input_tokens: 1000, output_tokens: 500)

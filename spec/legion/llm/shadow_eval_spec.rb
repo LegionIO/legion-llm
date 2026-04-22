@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/shadow_eval'
+require 'legion/llm/quality/shadow_eval'
 
-RSpec.describe Legion::LLM::ShadowEval do
+RSpec.describe Legion::LLM::Quality::ShadowEval do
   before { described_class.clear_history }
 
   describe '.enabled?' do

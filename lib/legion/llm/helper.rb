@@ -48,8 +48,8 @@ module Legion
         effective_intent = intent || (use_default_intent ? llm_default_intent : nil)
 
         if compress.positive?
-          message = Legion::LLM::Compressor.compress(message, level: compress)
-          instructions = Legion::LLM::Compressor.compress(instructions, level: compress) if instructions
+          message = Legion::LLM::Context::Compressor.compress(message, level: compress)
+          instructions = Legion::LLM::Context::Compressor.compress(instructions, level: compress) if instructions
         end
 
         if escalate
@@ -120,15 +120,15 @@ module Legion
 
       def llm_cost_estimate(model: nil, input_tokens: 0, output_tokens: 0)
         model ||= llm_default_model
-        Legion::LLM::CostEstimator.estimate(model_id: model, input_tokens: input_tokens,
-                                            output_tokens: output_tokens)
+        Legion::LLM::Metering::Pricing.estimate(model_id: model, input_tokens: input_tokens,
+                                                output_tokens: output_tokens)
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.helper.cost_estimate', model: model)
         0.0
       end
 
       def llm_cost_summary(since: nil)
-        Legion::LLM::CostTracker.summary(since: since)
+        Legion::LLM::Metering::Recorder.summary(since: since)
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.helper.cost_summary')
         { total_cost_usd: 0.0, total_requests: 0, total_input_tokens: 0, total_output_tokens: 0, by_model: {} }

@@ -1,12 +1,10 @@
 # frozen_string_literal: true
 
-require 'legion/llm/hooks/rag_guard'
-require 'legion/llm/hooks/response_guard'
-require 'legion/llm/hooks/metering'
-require 'legion/llm/hooks/cost_tracking'
-require 'legion/llm/hooks/budget_guard'
-require 'legion/llm/hooks/reflection'
-require 'legion/llm/hooks/reciprocity'
+require_relative 'hooks/rag_guard'
+require_relative 'hooks/response_guard'
+require_relative 'hooks/budget_guard'
+require_relative 'hooks/reflection'
+require_relative 'hooks/reciprocity'
 
 require 'legion/logging/helper'
 module Legion
@@ -46,6 +44,11 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn)
           nil
+        end
+
+        def install_defaults
+          Legion::LLM::Metering.install_hook
+          BudgetGuard.install if BudgetGuard.enforcing?
         end
 
         def reset!

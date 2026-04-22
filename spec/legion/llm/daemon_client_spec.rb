@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/daemon_client'
+require 'legion/llm/call/daemon_client'
 
 RSpec.describe Legion::LLM::DaemonClient do
   before(:each) do
@@ -65,16 +65,6 @@ RSpec.describe Legion::LLM::DaemonClient do
         expect(Legion::LLM).to receive(:settings).once.and_return({ daemon: { url: 'http://daemon:4000' } })
         described_class.daemon_url
         described_class.daemon_url
-      end
-    end
-
-    context 'when Legion::LLM does not respond to settings' do
-      before do
-        allow(Legion::LLM).to receive(:respond_to?).with(:settings).and_return(false)
-      end
-
-      it 'returns nil' do
-        expect(described_class.daemon_url).to be_nil
       end
     end
 

@@ -2,10 +2,10 @@
 
 require 'spec_helper'
 require_relative '../../../support/transport_stub'
-require 'legion/llm/audit/exchange'
-require 'legion/llm/audit/tool_event'
+require 'legion/llm/transport/exchanges/audit'
+require 'legion/llm/transport/messages/tool_event'
 
-RSpec.describe Legion::LLM::Audit::ToolEvent do
+RSpec.describe Legion::LLM::Transport::Messages::ToolEvent do
   let(:base_opts) do
     {
       tool_name:       'list_files',

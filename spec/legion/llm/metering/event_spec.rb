@@ -2,10 +2,10 @@
 
 require 'spec_helper'
 require_relative '../../../support/transport_stub'
-require 'legion/llm/metering/exchange'
-require 'legion/llm/metering/event'
+require 'legion/llm/transport/exchanges/metering'
+require 'legion/llm/transport/messages/metering_event'
 
-RSpec.describe Legion::LLM::Metering::Event do
+RSpec.describe Legion::LLM::Transport::Messages::MeteringEvent do
   let(:base_opts) do
     {
       request_type:    'chat',

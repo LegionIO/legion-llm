@@ -2,10 +2,10 @@
 
 require 'spec_helper'
 require_relative '../../../support/transport_stub'
-require 'legion/llm/audit/exchange'
-require 'legion/llm/audit/skill_event'
+require 'legion/llm/transport/exchanges/audit'
+require 'legion/llm/transport/messages/skill_event'
 
-RSpec.describe Legion::LLM::Audit::SkillEvent do
+RSpec.describe Legion::LLM::Transport::Messages::SkillEvent do
   let(:event) do
     described_class.new(
       skill_name: 'brainstorming', namespace: 'superpowers',

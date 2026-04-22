@@ -2,23 +2,25 @@
 
 require 'legion/logging/helper'
 
-if defined?(Legion::Transport::Message)
-  require_relative 'audit/exchange'
-  require_relative 'audit/prompt_event'
-  require_relative 'audit/tool_event'
-  require_relative 'audit/skill_event'
-end
-
 module Legion
   module LLM
     module Audit
       extend Legion::Logging::Helper
 
+      def self.load_transport
+        return unless defined?(Legion::Transport::Message)
+
+        require_relative 'transport/exchanges/audit'
+        require_relative 'transport/messages/prompt_event'
+        require_relative 'transport/messages/tool_event'
+        require_relative 'transport/messages/skill_event'
+      end
+
       module_function
 
       def emit_prompt(event)
-        if transport_connected? && defined?(Legion::LLM::Audit::PromptEvent)
-          Legion::LLM::Audit::PromptEvent.new(**event).publish
+        if transport_connected? && defined?(Legion::LLM::Transport::Messages::PromptEvent)
+          Legion::LLM::Transport::Messages::PromptEvent.new(**event).publish
           log.info('[llm][audit] published prompt audit')
           :published
         else
@@ -31,8 +33,8 @@ module Legion
       end
 
       def emit_tools(event)
-        if transport_connected? && defined?(Legion::LLM::Audit::ToolEvent)
-          Legion::LLM::Audit::ToolEvent.new(**event).publish
+        if transport_connected? && defined?(Legion::LLM::Transport::Messages::ToolEvent)
+          Legion::LLM::Transport::Messages::ToolEvent.new(**event).publish
           log.info('[llm][audit] published tool audit')
           :published
         else
@@ -45,8 +47,8 @@ module Legion
       end
 
       def emit_skill(**event)
-        if transport_connected? && defined?(Legion::LLM::Audit::SkillEvent)
-          Legion::LLM::Audit::SkillEvent.new(**event).publish
+        if transport_connected? && defined?(Legion::LLM::Transport::Messages::SkillEvent)
+          Legion::LLM::Transport::Messages::SkillEvent.new(**event).publish
           log.info('[llm][audit] published skill audit')
           :published
         else
@@ -61,6 +63,26 @@ module Legion
       def transport_connected?
         !!(defined?(Legion::Settings) &&
           Legion::Settings[:transport][:connected] == true)
+      end
+
+      # Backward-compat: resolve old Legion::LLM::Audit::Exchange, ::PromptEvent, etc.
+      def self.const_missing(name)
+        case name
+        when :Exchange
+          require_relative 'transport/exchanges/audit'
+          Transport::Exchanges::Audit
+        when :PromptEvent
+          require_relative 'transport/messages/prompt_event'
+          Transport::Messages::PromptEvent
+        when :ToolEvent
+          require_relative 'transport/messages/tool_event'
+          Transport::Messages::ToolEvent
+        when :SkillEvent
+          require_relative 'transport/messages/skill_event'
+          Transport::Messages::SkillEvent
+        else
+          super
+        end
       end
     end
   end

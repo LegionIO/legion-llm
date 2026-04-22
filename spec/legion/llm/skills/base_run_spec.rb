@@ -15,10 +15,10 @@ RSpec.describe Legion::LLM::Skills::Base, '#run' do
     allow(Legion::Events).to receive(:emit)
     allow(Legion::LLM::Metering).to receive(:emit)
     allow(Legion::LLM::Audit).to receive(:emit_skill)
-    allow(Legion::LLM::ConversationStore).to receive(:skill_cancelled?).and_return(false)
-    allow(Legion::LLM::ConversationStore).to receive(:clear_skill_state)
-    allow(Legion::LLM::ConversationStore).to receive(:set_skill_state)
-    allow(Legion::LLM::ConversationStore).to receive(:clear_cancel_flag)
+    allow(Legion::LLM::Inference::Conversation).to receive(:skill_cancelled?).and_return(false)
+    allow(Legion::LLM::Inference::Conversation).to receive(:clear_skill_state)
+    allow(Legion::LLM::Inference::Conversation).to receive(:set_skill_state)
+    allow(Legion::LLM::Inference::Conversation).to receive(:clear_cancel_flag)
     stub_const('Legion::LLM::Skills::Registry',
                Module.new do
                  def self.chain_for(_)
@@ -69,23 +69,23 @@ RSpec.describe Legion::LLM::Skills::Base, '#run' do
     expect(result.gated).to be true
     expect(result.gate).to eq(:await_user_input)
     expect(result.resume_at).to eq(1)
-    expect(Legion::LLM::ConversationStore).to have_received(:set_skill_state)
+    expect(Legion::LLM::Inference::Conversation).to have_received(:set_skill_state)
       .with('conv-123', skill_key: 'test:run-test', resume_at: 1)
   end
 
   it 'returns cancelled result when cancel flag set before a step' do
-    allow(Legion::LLM::ConversationStore).to receive(:skill_cancelled?).and_return(true)
+    allow(Legion::LLM::Inference::Conversation).to receive(:skill_cancelled?).and_return(true)
     result = skill_class.new.run(from_step: 0, context: context)
     expect(result.complete).to be false
     expect(result.gated).to be false
-    expect(Legion::LLM::ConversationStore).to have_received(:clear_cancel_flag)
+    expect(Legion::LLM::Inference::Conversation).to have_received(:clear_cancel_flag)
   end
 
   it 'clears skill state and raises StepError on step exception' do
     allow_any_instance_of(skill_class).to receive(:step_a).and_raise(RuntimeError, 'boom')
     expect { skill_class.new.run(from_step: 0, context: context) }
       .to raise_error(Legion::LLM::Skills::StepError, /run-test#step_a failed: boom/)
-    expect(Legion::LLM::ConversationStore).to have_received(:clear_skill_state).with('conv-123')
+    expect(Legion::LLM::Inference::Conversation).to have_received(:clear_skill_state).with('conv-123')
   end
 
   it 'emits metering start + end per step (twice per step always)' do
