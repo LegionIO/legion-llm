@@ -122,16 +122,20 @@ module Legion
       def self.routing_defaults
         {
           enabled:        true,
-          tier_priority:  %w[local fleet direct],
+          tier_priority:  %w[local fleet openai_compat cloud frontier],
           default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
           tiers:          {
-            local: { provider: 'ollama' },
-            fleet: {
+            local:         { provider: 'ollama' },
+            fleet:         {
               queue:           'llm.request',
               timeout_seconds: 30,
               timeouts:        { embed: 10, chat: 30, generate: 30, default: 30 }
             },
-            cloud: { providers: %w[bedrock anthropic] }
+            openai_compat: {
+              gateways: []
+            },
+            cloud:         { providers: %w[bedrock azure gemini] },
+            frontier:      { providers: %w[anthropic openai] }
           },
           health:         {
             window_seconds:               300,
