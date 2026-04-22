@@ -283,13 +283,13 @@ RSpec.describe Legion::LLM::Cache::Response do
   # ──────────────────────────────────────────────
   # constants
   # ──────────────────────────────────────────────
-  describe 'constants' do
-    it 'defines DEFAULT_TTL as 300' do
-      expect(described_class::DEFAULT_TTL).to eq(300)
+  describe 'defaults via settings' do
+    it 'default ttl is 300 seconds' do
+      expect(Legion::LLM::Settings.prompt_caching_defaults.dig(:response_cache, :ttl_seconds)).to eq(300)
     end
 
-    it 'defines SPOOL_THRESHOLD as 8MB' do
-      expect(described_class::SPOOL_THRESHOLD).to eq(8 * 1024 * 1024)
+    it 'spool threshold default is 8MB' do
+      expect(Legion::LLM::Settings.prompt_caching_defaults.dig(:response_cache, :spool_threshold_bytes)).to eq(8 * 1024 * 1024)
     end
   end
 end

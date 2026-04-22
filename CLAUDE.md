@@ -186,21 +186,27 @@ Note: Backward-compat aliases live in lib/legion/llm/compat.rb (const_missing-ba
 
 ### Routing Architecture
 
-Three-tier dispatch model. Local-first avoids unnecessary network hops; fleet offloads to shared hardware via Transport; cloud is the fallback for frontier models.
+Five-tier dispatch model. Local-first avoids unnecessary network hops; fleet offloads to shared hardware via Transport; openai_compat routes to user-configured gateways; cloud handles managed cloud providers; frontier is the fallback for direct frontier model providers.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│              Legion::LLM Router (per-node)               │
-│                                                          │
-│  Tier 1: LOCAL  → Ollama on this machine (direct HTTP)   │
-│          Zero network overhead, no Transport              │
-│                                                          │
-│  Tier 2: FLEET  → Ollama on Mac Studios / GPU servers    │
-│          Via Fleet::Dispatcher RPC over AMQP             │
-│                                                          │
-│  Tier 3: CLOUD  → Bedrock / Anthropic / OpenAI / Gemini │
-│          Existing provider API calls                     │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│               Legion::LLM Router (per-node)                   │
+│                                                               │
+│  Tier 1: LOCAL        → Ollama on this machine (direct HTTP)  │
+│          Zero network overhead, no Transport                   │
+│                                                               │
+│  Tier 2: FLEET        → Ollama on Mac Studios / GPU servers   │
+│          Via Fleet::Dispatcher RPC over AMQP                  │
+│                                                               │
+│  Tier 3: OPENAI_COMPAT → User-configured OpenAI-spec gateways│
+│          UAIS, Kong AI, custom endpoints                      │
+│                                                               │
+│  Tier 4: CLOUD        → Bedrock, Azure, Gemini/Vertex AI     │
+│          Managed cloud provider API calls                     │
+│                                                               │
+│  Tier 5: FRONTIER     → Anthropic, OpenAI direct              │
+│          Direct API calls to frontier model providers          │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Routing Resolution Flow
@@ -392,9 +398,12 @@ Nested under `Legion::Settings[:llm][:routing]`:
 |-----|------|---------|-------------|
 | `enabled` | Boolean | `false` | Enable routing (opt-in) |
 | `default_intent` | Hash | `{ privacy: 'normal', capability: 'moderate', cost: 'normal' }` | Defaults merged into every intent |
+| `tier_priority` | Array | `%w[local fleet openai_compat cloud frontier]` | Ordered tier preference for routing |
 | `tiers.local` | Hash | `{ provider: 'ollama' }` | Local tier config |
 | `tiers.fleet` | Hash | `{ queue: 'llm.inference', timeout_seconds: 30 }` | Fleet tier config |
-| `tiers.cloud` | Hash | `{ providers: ['bedrock', 'anthropic'] }` | Cloud tier config |
+| `tiers.openai_compat` | Hash | `{ gateways: [] }` | User-configured OpenAI-compatible gateways |
+| `tiers.cloud` | Hash | `{ providers: ['bedrock', 'azure', 'gemini'] }` | Managed cloud provider API calls |
+| `tiers.frontier` | Hash | `{ providers: ['anthropic', 'openai'] }` | Direct API frontier providers |
 | `health.window_seconds` | Integer | `300` | Rolling window for latency tracking |
 | `health.circuit_breaker.failure_threshold` | Integer | `3` | Consecutive failures before circuit opens |
 | `health.circuit_breaker.cooldown_seconds` | Integer | `60` | Seconds before circuit transitions to half_open |
@@ -426,7 +435,7 @@ Each rule is a hash with:
 
 | Dimension | Values | Default | Effect |
 |-----------|--------|---------|--------|
-| `privacy` | `:strict`, `:normal` | `:normal` | `:strict` -> never cloud (via `never_cloud` constraint rules) |
+| `privacy` | `:strict`, `:normal` | `:normal` | `:strict` -> never external (via `never_external` constraint rules, blocks cloud + frontier + openai_compat) |
 | `capability` | `:basic`, `:moderate`, `:reasoning` | `:moderate` | Higher prefers larger/cloud models |
 | `cost` | `:minimize`, `:normal` | `:normal` | `:minimize` prefers local/fleet |
 

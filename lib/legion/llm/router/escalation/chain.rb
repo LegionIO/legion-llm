@@ -38,6 +38,7 @@ module Legion
         private
 
         def padded_resolutions
+          return [] if @resolutions.empty?
           return @resolutions.first(@max_attempts) if @resolutions.size >= @max_attempts
 
           last = @resolutions.last

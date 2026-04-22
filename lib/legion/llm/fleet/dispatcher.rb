@@ -6,15 +6,6 @@ module Legion
   module LLM
     module Fleet
       module Dispatcher
-        DEFAULT_TIMEOUT = 30
-
-        TIMEOUTS = {
-          embed:    10,
-          chat:     30,
-          generate: 30,
-          default:  30
-        }.freeze
-
         extend Legion::Logging::Helper
 
         module_function
@@ -98,32 +89,11 @@ module Legion
         def resolve_timeout(request_type: :default, override: nil)
           return override if override
 
-          configured = fleet_timeout_from_settings(request_type)
-          return configured if configured
-
-          TIMEOUTS[request_type.to_sym] || TIMEOUTS[:default]
-        end
-
-        def fleet_timeout_from_settings(request_type)
-          return unless defined?(Legion::Settings)
-
-          settings = begin
-            Legion::Settings[:llm]
-          rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.resolve_timeout')
-            nil
-          end
-
-          return unless settings.is_a?(Hash)
-
-          routing = settings[:routing]
-          return unless routing.is_a?(Hash)
-
-          fleet_settings = routing.dig(:tiers, :fleet)
-          fleet_settings = routing[:fleet] unless fleet_settings.is_a?(Hash)
-          return unless fleet_settings.is_a?(Hash)
-
-          fleet_settings.dig(:timeouts, request_type.to_sym) || fleet_settings[:timeout_seconds]
+          fleet = Legion::LLM.settings.dig(:routing, :tiers, :fleet) || {}
+          fleet.dig(:timeouts, request_type.to_sym) || fleet[:timeout_seconds] || 30
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.resolve_timeout')
+          30
         end
 
         def publish_request(**opts)

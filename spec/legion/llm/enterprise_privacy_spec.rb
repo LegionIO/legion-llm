@@ -25,6 +25,14 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
     end
   end
 
+  describe '.chat_direct with tier: :frontier' do
+    it 'raises PrivacyModeError when enterprise privacy is enabled' do
+      expect do
+        Legion::LLM.chat_direct(tier: :frontier, message: 'hello')
+      end.to raise_error(Legion::LLM::PrivacyModeError)
+    end
+  end
+
   describe '.chat_direct with tier: :local' do
     it 'does not raise PrivacyModeError for local tier' do
       session_double = double('session', ask: double('response', content: 'pong'))
@@ -52,6 +60,14 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
   describe 'Router.tier_available? with privacy enforcement' do
     it 'returns false for :cloud when enterprise privacy is enabled' do
       expect(Legion::LLM::Router.tier_available?(:cloud)).to be false
+    end
+
+    it 'returns false for :frontier when enterprise privacy is enabled' do
+      expect(Legion::LLM::Router.tier_available?(:frontier)).to be false
+    end
+
+    it 'returns false for :openai_compat when enterprise privacy is enabled' do
+      expect(Legion::LLM::Router.tier_available?(:openai_compat)).to be false
     end
 
     it 'returns true for :local when enterprise privacy is enabled' do

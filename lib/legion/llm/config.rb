@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
-require_relative 'config/settings'
 
 module Legion
   module LLM

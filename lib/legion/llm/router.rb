@@ -14,6 +14,10 @@ module Legion
     module Router
       extend Legion::Logging::Helper
 
+      PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
+                        gemini: :cloud, azure: :cloud, ollama: :local }.freeze
+      PROVIDER_ORDER = %i[ollama bedrock azure gemini anthropic openai].freeze
+
       class << self
         # Resolve an LLM routing intent to a tier/provider/model decision.
         #
@@ -44,8 +48,8 @@ module Legion
 
         def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil, exclude: {})
           max = max_escalations || escalation_max_attempts
-          return chain_from_defaults(model, provider, max) unless routing_enabled? && (intent || tier)
           return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model)], max_attempts: max) if tier
+          return chain_from_defaults(model, provider, max) unless routing_enabled? && intent
 
           chain_from_intent(intent, max, exclude: exclude)
         end
@@ -68,13 +72,16 @@ module Legion
         end
 
         # Check whether a tier can be used right now.
-        # :local — always available
-        # :fleet — available when Legion::Transport is loaded
-        # :cloud — always available
+        # :local          — always available
+        # :fleet          — available when Legion::Transport is loaded
+        # :openai_compat  — available when gateways are configured
+        # :cloud          — available unless privacy mode
+        # :frontier       — available unless privacy mode
         def tier_available?(tier)
           sym = tier.to_sym
-          return false if sym == :cloud && privacy_mode?
+          return false if external_tier?(sym) && privacy_mode?
           return Legion.const_defined?('Transport', false) if sym == :fleet
+          return openai_compat_available? if sym == :openai_compat
 
           true
         end
@@ -169,7 +176,14 @@ module Legion
           tier = (rule.target[:tier] || rule.target['tier'])&.to_sym
 
           constraints.any? do |c|
-            c.to_s == 'never_cloud' && tier == :cloud
+            case c.to_s
+            when 'never_external'
+              external_tier?(tier)
+            when 'never_cloud'
+              %i[cloud frontier].include?(tier)
+            else
+              false
+            end
           end
         end
 
@@ -231,6 +245,23 @@ module Legion
           end
         end
 
+        def external_tier?(tier)
+          %i[cloud frontier openai_compat].include?(tier)
+        end
+
+        def openai_compat_available?
+          !openai_compat_gateways.empty?
+        end
+
+        def openai_compat_gateways
+          tiers = routing_settings[:tiers] || {}
+          oc = (tiers[:openai_compat] || {}).transform_keys(&:to_sym)
+          gateways = oc[:gateways]
+          return [] unless gateways.is_a?(Array)
+
+          gateways.map { |g| g.is_a?(Hash) ? g.transform_keys(&:to_sym) : nil }.compact
+        end
+
         def pick_best(candidates)
           return nil if candidates.empty?
 
@@ -264,11 +295,18 @@ module Legion
         end
 
         def default_provider_for_tier(tier)
-          if tier.to_sym == :cloud
+          case tier.to_sym
+          when :local, :fleet
+            :ollama
+          when :openai_compat
+            :openai
+          when :cloud
             default = routing_settings[:default_provider]
             default ? default.to_sym : :bedrock
+          when :frontier
+            :anthropic
           else
-            :ollama
+            :bedrock
           end
         end
 
@@ -277,18 +315,53 @@ module Legion
           when :local
             ollama = Legion::Settings[:llm].dig(:providers, :ollama) || {}
             ollama[:default_model] || 'llama3'
-          when :fleet then 'llama4:70b'
+          when :fleet
+            'llama4:70b'
+          when :openai_compat
+            'gpt-4o'
           when :cloud
+            Legion::Settings[:llm][:default_model] || 'us.anthropic.claude-sonnet-4-6'
+          when :frontier
             Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6'
-          else 'llama3'
+          else
+            'llama3'
           end
         end
 
         def chain_from_defaults(model, provider, max)
-          fallback_model    = model || default_settings_model
-          fallback_provider = (provider || default_settings_provider)&.to_sym
-          res = Resolution.new(tier: :cloud, provider: fallback_provider || :bedrock, model: fallback_model || 'claude-sonnet-4-6')
-          EscalationChain.new(resolutions: [res], max_attempts: max)
+          if provider || model
+            p = (provider || default_settings_provider)&.to_sym
+            res = Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
+                                 provider: p || :anthropic,
+                                 model:    model || default_settings_model || 'claude-sonnet-4-6')
+            return EscalationChain.new(resolutions: [res], max_attempts: max)
+          end
+
+          resolutions = enabled_provider_chain
+          if resolutions.empty?
+            p = default_settings_provider&.to_sym || :anthropic
+            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
+                                          provider: p,
+                                          model:    default_settings_model || 'claude-sonnet-4-6')]
+          end
+          EscalationChain.new(resolutions: resolutions, max_attempts: max)
+        end
+
+        def enabled_provider_chain
+          providers = Legion::Settings[:llm][:providers]
+          return [] unless providers.is_a?(Hash)
+
+          PROVIDER_ORDER.filter_map do |pname|
+            config = providers[pname]
+            next unless config.is_a?(Hash) && config[:enabled]
+
+            tier  = PROVIDER_TIER.fetch(pname, :cloud)
+            model = config[:default_model]
+            next if model.nil? || model.to_s.empty?
+            next unless tier_available?(tier)
+
+            Resolution.new(tier: tier, provider: pname, model: model, rule: 'auto_chain')
+          end
         end
 
         def chain_from_intent(intent, max, exclude: {})
@@ -299,6 +372,13 @@ module Legion
           resolutions = sorted.map(&:to_resolution)
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
           resolutions = resolutions.uniq { |r| [r.provider, r.model] }
+          resolutions = enabled_provider_chain if resolutions.empty?
+          if resolutions.empty?
+            p = default_settings_provider&.to_sym || :anthropic
+            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
+                                          provider: p,
+                                          model:    default_settings_model || 'claude-sonnet-4-6')]
+          end
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end
 
@@ -310,7 +390,7 @@ module Legion
             fallback_target = current.fallback
             if fallback_target.is_a?(Hash)
               fb = fallback_target.transform_keys(&:to_sym)
-              fb_tier     = fb[:tier]&.to_sym || :cloud
+              fb_tier     = fb[:tier]&.to_sym || :frontier
               fb_provider = fb[:provider]&.to_sym || default_provider_for_tier(fb_tier)
               fb_model    = fb[:model] || default_model_for_tier(fb_tier)
               chain << Resolution.new(tier: fb_tier, provider: fb_provider, model: fb_model)

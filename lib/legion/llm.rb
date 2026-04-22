@@ -120,11 +120,7 @@ module Legion
       end
 
       def settings
-        if Legion.const_defined?('Settings', false)
-          Legion::Settings[:llm]
-        else
-          Config::Settings.default
-        end
+        Legion::Settings[:llm]
       end
 
       def chat(...) = Inference.chat(...)

@@ -81,15 +81,22 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
     end
   end
 
-  context 'when routing is disabled' do
+  context 'when routing is disabled (no rules)' do
     let(:rules) { [] }
 
     before { Legion::Settings[:llm][:routing][:enabled] = false }
 
-    it 'returns a single-resolution chain with defaults' do
+    it 'returns a multi-provider chain from all enabled providers' do
       chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })
+      expect(chain.size).to be >= 1
+      providers = chain.map(&:provider)
+      expect(providers).to include(:bedrock).or include(:ollama)
+    end
+
+    it 'honours explicit provider with a single-resolution chain' do
+      chain = Legion::LLM::Router.resolve_chain(provider: :bedrock, max_escalations: 3)
       expect(chain.size).to eq(1)
-      expect(chain.primary.model).to eq('claude-sonnet-4-6')
+      expect(chain.primary.provider).to eq(:bedrock)
     end
   end
 end

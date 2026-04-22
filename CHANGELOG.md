@@ -1,5 +1,84 @@
 # Legion LLM Changelog
 
+## [0.8.13] - 2026-04-22
+
+### Fixed
+- Escalation loop now feeds `Router.health_tracker` with an `:error` signal on every failure so the circuit breaker trips when a provider is consistently down — auth failures, rate limits, and general errors all count.
+- `AuthError` and `PrivacyModeError` in escalation are logged with `handled: true` so they appear in logs as gracefully-handled failures rather than uncaught exceptions.
+- `RateLimitError` in escalation is handled the same way (was previously re-raised, aborting the entire chain).
+- Extracted `attempt_escalation` and `record_escalation_failure` from `run_provider_call_with_escalation` to keep the method within Rubocop length limits and make each responsibility clear.
+
+### Changed
+- `CodexConfigLoader`: refactored to extract `read_config` helper (eliminates duplicate file-exist checks in `load` and `read_token`); added `read_openai_api_key` and `read_openai_credential` accessors for the multi-source credential probing chain.
+
+## [0.8.12] - 2026-04-22
+
+### Changed
+- `ClaudeConfigLoader`: `settings_path` and `config_path` are now read from `Legion::LLM.settings.dig(:claude_cli, ...)` instead of hardcoded constants, making both paths configurable. `SECRET_URI_PATTERN` remains a constant — it's a protocol definition, not a runtime knob. Corresponding settings keys added to `Legion::LLM::Settings.claude_cli_defaults`.
+
+## [0.8.11] - 2026-04-22
+
+### Added
+- Multi-source credential detection for all providers: `credential_available_for?` checks resolved env vars, not raw `env://` URI strings, so providers aren't falsely auto-enabled when the env var is unset.
+- `probe_provider_credentials`: when multiple API keys exist for a provider (e.g. both `OPENAI_API_KEY` and `CODEX_API_KEY`), each candidate is tested in order and the first working key is committed; provider is disabled if all fail.
+- `probe_via_model_list`: uses `RubyLLM::Provider.list_models` (a cheap GET with no token cost) to validate credentials before falling back to a lightweight chat probe.
+- `recover_openai_with_codex`: automatically attempts Codex bearer-token fallback when all direct OpenAI keys fail.
+
+### Fixed
+- `configure_bedrock`/`configure_anthropic`/`configure_openai`: use `resolve_setting_reference` to unwrap `env://` placeholders before passing to RubyLLM config, preventing "key not found" errors when env var is absent.
+- `ClaudeConfigLoader.apply_api_keys`: removed early-return pattern that prevented Bedrock bearer token import from running when no OpenAI key was found.
+
+## [0.8.10] - 2026-04-22
+
+### Changed
+- `compliance_defaults`: `classification_scan` and `encrypt_audit` default to `false`; classification is opt-in, audit encryption is opt-in.
+- `tool_trigger_defaults`: `scan_depth` raised to `10` (was `2`), `tool_limit` raised to `50` (was `10`).
+- `trigger_match.rb`: hardcoded `|| 2` fallback updated to `|| 10` to match new setting default.
+
+## [0.8.9] - 2026-04-22
+
+### Fixed
+- Classification spec: wholesale `Legion::Settings[:llm] = {...}` replacements converted to key-level writes (`[:llm][:default_provider] = :x`) to prevent wiping sibling settings.
+- Audit `encrypt?` specs: updated to test toggle behavior (`false` by default, `true` when `encrypt_audit` setting is enabled) instead of expecting always-on.
+- Trigger match spec: updated scan_depth expectation and before-block to match new defaults.
+
+## [0.8.8] - 2026-04-22
+
+### Changed
+- `Legion::LLM.settings` now calls `Legion::Settings[:llm]` directly — dead `const_defined?('Settings')` branch and `Settings.default` fallback removed. No explicit `require 'legion/settings'` is needed in `llm.rb` because `legion-settings` is a gemspec dependency and is always activated by Bundler before `legion-llm` is required.
+- `settings.rb` bootstrap call simplified from a guarded `begin/rescue` block to a direct `Legion::Settings.merge_settings(...)` call for the same reason.
+
+## [0.8.7] - 2026-04-22
+
+### Changed
+- Eliminated scattered constants and duplicate settings files across the codebase:
+  - `Skills::Settings` module deleted — defaults moved into `Legion::LLM::Settings.skills_defaults`; `Skills.start` no longer calls `Settings.apply` (merge happens at load time via the standard settings bootstrap)
+  - `Fleet::Dispatcher` `DEFAULT_TIMEOUT`/`TIMEOUTS` constants removed — `resolve_timeout` now reads directly from `Legion::LLM.settings.dig(:routing, :tiers, :fleet, :timeouts, ...)`; dead `defined?(Legion::Settings)` guard removed
+  - `Call::Embeddings` `PROVIDER_EMBEDDING_MODELS`, `TARGET_DIMENSION`, `OLLAMA_CONTEXT_CHARS`, `OLLAMA_DEFAULT_CONTEXT_CHARS`, `PREFIX_REGISTRY` constants removed — replaced with `target_dimension`/`embedding_settings` helpers reading from `settings[:embedding]`; `embedding_settings` corrected to use `Legion::LLM.settings` instead of bare `Legion::Settings.dig(:llm, :embedding)`
+  - `Cache::Response` `DEFAULT_TTL`, `SPOOL_THRESHOLD`, `SPOOL_DIR` constants removed — replaced with private `default_ttl`/`spool_threshold`/`spool_dir` helpers reading from `settings[:prompt_caching][:response_cache]`
+- `Settings.embedding_defaults` expanded: added `anthropic`/`gemini` to `provider_models`, added `ollama_context_chars`, `ollama_default_context_chars`, `prefix_registry`
+- `Settings.prompt_caching_defaults.response_cache` gains `spool_threshold_bytes: 8MB`
+
+## [0.8.6] - 2026-04-22
+
+### Changed
+- `Legion::LLM::Settings` is now the canonical module — content moved from `Legion::LLM::Config::Settings` directly into `lib/legion/llm/settings.rb`. The `Config::Settings` indirection and `lib/legion/llm/config/settings.rb` are removed. `service.rb` and any external callers using `Legion::LLM::Settings.default` continue to work unchanged.
+
+## [0.8.5] - 2026-04-22
+
+### Fixed
+- All compliance settings now have explicit defaults defined in `Config::Settings.compliance_defaults` (merged under `llm.compliance`): `classification_scan`, `encrypt_audit`, `phi_block_cloud`, `cloud_providers`, `redact_pii`, `redaction_placeholder`, `strict_hipaa`, `default_level`. Previously these keys were read via `dig` with no guaranteed defaults.
+- `Steps::Classification` now reads compliance settings via `Legion::LLM.settings.dig(:compliance, ...)` (consistent with all other llm settings) instead of bare `Legion::Settings.dig(:compliance, ...)` which targeted the wrong path.
+- Removed dead `defined?(Legion::Settings)` guards in `Steps::Classification` — `legion-settings` is a hard dependency and is always present.
+
+## [0.8.4] - 2026-04-22
+
+### Fixed
+- `Inference::Executor` now normalizes content-blocks arrays (`[{type: "text", text: "..."}]`) to a plain string before passing to `session.ask`. Previously the raw array was forwarded to RubyLLM, which serialized it as `{ type: 'text', text: [{...}] }` — an invalid Anthropic API payload causing HTTP 400 on every request when the Interlink sends structured content blocks.
+
+### Added
+- Audit encryption is now configurable: set `llm.compliance.encrypt_audit: true` in settings to encrypt payloads on the `llm.audit` exchange. Defaults to `false` (plaintext). Applies to `PromptEvent`, `ToolEvent`, and `SkillEvent`.
+
 ## [0.8.3] - 2026-04-22
 
 ### Fixed

@@ -152,27 +152,21 @@ module Legion
           end
 
           def default_classification_level
-            return :public unless defined?(Legion::Settings)
-
-            level = Legion::Settings.dig(:compliance, :default_level)
+            level = Legion::LLM.settings.dig(:compliance, :default_level)
             level ? level.to_sym : :public
           rescue StandardError
             :public
           end
 
           def classification_enabled?(_classification)
-            return true unless defined?(Legion::Settings)
-
-            enabled = Legion::Settings.dig(:compliance, :classification_scan)
+            enabled = Legion::LLM.settings.dig(:compliance, :classification_scan)
             enabled.nil? || enabled
           rescue StandardError
             true
           end
 
           def compliance_classification_default
-            return nil unless defined?(Legion::Settings)
-
-            level = Legion::Settings.dig(:compliance, :classification_level)
+            level = Legion::LLM.settings.dig(:compliance, :classification_level)
             return nil unless level
 
             { level: level.to_sym }
@@ -182,21 +176,21 @@ module Legion
           end
 
           def redaction_enabled?
-            setting = Legion::Settings.dig(:compliance, :redact_pii)
+            setting = Legion::LLM.settings.dig(:compliance, :redact_pii)
             setting == true
           rescue StandardError
             false
           end
 
           def strict_hipaa_mode?
-            setting = Legion::Settings.dig(:compliance, :strict_hipaa)
+            setting = Legion::LLM.settings.dig(:compliance, :strict_hipaa)
             setting == true
           rescue StandardError
             false
           end
 
           def redaction_placeholder
-            Legion::Settings.dig(:compliance, :redaction_placeholder) || '[REDACTED]'
+            Legion::LLM.settings.dig(:compliance, :redaction_placeholder) || '[REDACTED]'
           rescue StandardError
             '[REDACTED]'
           end
@@ -223,7 +217,7 @@ module Legion
           end
 
           def phi_block_cloud?
-            setting = Legion::Settings.dig(:compliance, :phi_block_cloud)
+            setting = Legion::LLM.settings.dig(:compliance, :phi_block_cloud)
             setting == true
           rescue StandardError
             false
@@ -232,7 +226,7 @@ module Legion
           def cloud_provider?(provider)
             return false unless provider
 
-            cloud_providers = Legion::Settings.dig(:compliance, :cloud_providers) ||
+            cloud_providers = Legion::LLM.settings.dig(:compliance, :cloud_providers) ||
                               %i[anthropic openai gemini bedrock azure]
             cloud_providers.map(&:to_sym).include?(provider.to_sym)
           rescue StandardError

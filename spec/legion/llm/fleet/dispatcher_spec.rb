@@ -38,7 +38,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
     end
 
     it 'reads from settings' do
-      Legion::Settings[:llm][:routing] = { fleet: { timeout_seconds: 45 } }
+      Legion::Settings[:llm][:routing] = { tiers: { fleet: { timeout_seconds: 45 } } }
       expect(described_class.resolve_timeout).to eq(45)
     end
 
@@ -47,7 +47,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
     end
 
     it 'reads per-type timeouts from settings' do
-      Legion::Settings[:llm][:routing] = { fleet: { timeouts: { chat: 60 } } }
+      Legion::Settings[:llm][:routing] = { tiers: { fleet: { timeouts: { chat: 60 } } } }
       expect(described_class.resolve_timeout(request_type: :chat)).to eq(60)
     end
   end

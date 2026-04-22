@@ -18,8 +18,8 @@ RSpec.describe Legion::LLM::Settings do
   describe '.routing_defaults' do
     subject(:routing) { described_class.routing_defaults }
 
-    it 'defaults routing to disabled' do
-      expect(routing[:enabled]).to be false
+    it 'defaults routing to enabled' do
+      expect(routing[:enabled]).to be true
     end
 
     # ─── 3. Includes default_intent with privacy/capability/cost ──────────────
@@ -47,7 +47,7 @@ RSpec.describe Legion::LLM::Settings do
       end
     end
 
-    # ─── 4. Includes tier definitions (local, fleet, cloud) ───────────────────
+    # ─── 4. Includes tier definitions (local, fleet, openai_compat, cloud, frontier) ───
 
     describe 'tiers' do
       subject(:tiers) { described_class.routing_defaults[:tiers] }
@@ -67,10 +67,33 @@ RSpec.describe Legion::LLM::Settings do
         expect(tiers[:fleet][:timeout_seconds]).to eq(30)
       end
 
-      it 'defines a cloud tier with providers list' do
-        expect(tiers).to have_key(:cloud)
-        expect(tiers[:cloud][:providers]).to eq(%w[bedrock anthropic])
+      it 'includes openai_compat tier config' do
+        expect(tiers).to have_key(:openai_compat)
       end
+
+      it 'openai_compat tier has gateways list' do
+        expect(tiers[:openai_compat][:gateways]).to eq([])
+      end
+
+      it 'cloud tier includes managed providers only' do
+        expect(tiers).to have_key(:cloud)
+        expect(tiers[:cloud][:providers]).to eq(%w[bedrock azure gemini])
+      end
+
+      it 'includes frontier tier config' do
+        expect(tiers).to have_key(:frontier)
+      end
+
+      it 'frontier tier includes direct-API providers' do
+        expect(tiers[:frontier][:providers]).to eq(%w[anthropic openai])
+      end
+    end
+
+    # ─── 4b. tier_priority order ─────────────────────────────────────────────
+
+    it 'defines tier_priority in correct order' do
+      routing = described_class.routing_defaults
+      expect(routing[:tier_priority]).to eq(%w[local fleet openai_compat cloud frontier])
     end
 
     # ─── 5. Includes health config with circuit_breaker sub-hash ──────────────
@@ -127,9 +150,9 @@ RSpec.describe Legion::LLM::Settings do
     it 'includes escalation settings in routing defaults' do
       routing = Legion::LLM::Settings.routing_defaults
       expect(routing[:escalation]).to be_a(Hash)
-      expect(routing[:escalation][:enabled]).to be false
+      expect(routing[:escalation][:enabled]).to be true
       expect(routing[:escalation][:max_attempts]).to eq(3)
-      expect(routing[:escalation][:quality_threshold]).to eq(50)
+      expect(routing[:escalation][:quality_threshold]).to eq(0)
     end
   end
 

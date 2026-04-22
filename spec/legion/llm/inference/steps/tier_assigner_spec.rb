@@ -119,7 +119,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         expect(result[:source]).to eq(:role_mapping)
       end
 
-      it 'routes user:* callers to cloud with reasoning capability' do
+      it 'routes user:* callers to frontier with reasoning capability' do
         result = assigner.assign(
           caller:          { requested_by: { identity: 'user:alice', type: :user } },
           classification:  nil,
@@ -128,7 +128,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           existing_tier:   nil,
           existing_intent: nil
         )
-        expect(result[:tier]).to eq(:cloud)
+        expect(result[:tier]).to eq(:frontier)
         expect(result[:intent]).to include(capability: :reasoning)
         expect(result[:source]).to eq(:role_mapping)
       end
@@ -236,7 +236,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
     end
 
     context 'priority-driven tier assignment' do
-      it 'routes critical priority to cloud with reasoning' do
+      it 'routes critical priority to frontier with reasoning' do
         result = assigner.assign(
           caller:          nil,
           classification:  nil,
@@ -245,12 +245,12 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           existing_tier:   nil,
           existing_intent: nil
         )
-        expect(result[:tier]).to eq(:cloud)
+        expect(result[:tier]).to eq(:frontier)
         expect(result[:intent]).to include(capability: :reasoning)
         expect(result[:source]).to eq(:priority)
       end
 
-      it 'routes high priority to cloud with reasoning' do
+      it 'routes high priority to frontier with reasoning' do
         result = assigner.assign(
           caller:          nil,
           classification:  nil,
@@ -259,7 +259,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           existing_tier:   nil,
           existing_intent: nil
         )
-        expect(result[:tier]).to eq(:cloud)
+        expect(result[:tier]).to eq(:frontier)
         expect(result[:source]).to eq(:priority)
       end
 

@@ -93,6 +93,54 @@ RSpec.describe Legion::LLM::Router::Resolution do
     end
   end
 
+  describe '#frontier?' do
+    it 'returns true for frontier tier' do
+      r = described_class.new(tier: :frontier, provider: :anthropic, model: 'claude-sonnet-4-6')
+      expect(r.frontier?).to be true
+    end
+
+    it 'returns false for non-frontier tier' do
+      expect(resolution.frontier?).to be false
+    end
+  end
+
+  describe '#openai_compat?' do
+    it 'returns true for openai_compat tier' do
+      r = described_class.new(tier: :openai_compat, provider: :custom_gateway, model: 'gpt-4o')
+      expect(r.openai_compat?).to be true
+    end
+
+    it 'returns false for non-openai_compat tier' do
+      expect(resolution.openai_compat?).to be false
+    end
+  end
+
+  describe '#external?' do
+    it 'returns true for cloud tier' do
+      r = described_class.new(tier: :cloud, provider: :bedrock, model: 'claude-sonnet-4-6')
+      expect(r.external?).to be true
+    end
+
+    it 'returns true for frontier tier' do
+      r = described_class.new(tier: :frontier, provider: :anthropic, model: 'claude-sonnet-4-6')
+      expect(r.external?).to be true
+    end
+
+    it 'returns true for openai_compat tier' do
+      r = described_class.new(tier: :openai_compat, provider: :custom_gateway, model: 'gpt-4o')
+      expect(r.external?).to be true
+    end
+
+    it 'returns false for local tier' do
+      expect(resolution.external?).to be false
+    end
+
+    it 'returns false for fleet tier' do
+      r = described_class.new(tier: :fleet, provider: :ollama, model: 'llama4:70b')
+      expect(r.external?).to be false
+    end
+  end
+
   describe '#to_h' do
     it 'returns expected hash with defaults' do
       expect(resolution.to_h).to eq(

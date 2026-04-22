@@ -92,6 +92,7 @@ RSpec.describe Legion::LLM do
   describe 'auto_configure_defaults' do
     before do
       allow(Legion::LLM::Call::Providers).to receive(:verify_providers)
+      allow(Legion::LLM::Call::Providers).to receive(:auto_enable_from_resolved_credentials)
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
       allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
       allow(Legion::LLM::Call::ClaudeConfigLoader).to receive(:load)
@@ -107,7 +108,7 @@ RSpec.describe Legion::LLM do
     end
 
     it 'picks anthropic when only anthropic is enabled' do
-      Legion::Settings[:llm][:providers][:bedrock][:bearer_token] = nil
+      Legion::Settings[:llm][:providers][:bedrock][:enabled] = false
       Legion::Settings[:llm][:providers][:anthropic][:enabled] = true
       described_class.start
       expect(Legion::Settings[:llm][:default_provider]).to eq(:anthropic)
