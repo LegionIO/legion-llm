@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/settings'
 
 require 'ruby_llm'
 require_relative 'llm/patches/ruby_llm_parallel_tools'
@@ -120,11 +121,7 @@ module Legion
       end
 
       def settings
-        if Legion.const_defined?('Settings', false)
-          Legion::Settings[:llm]
-        else
-          Settings.default
-        end
+        Legion::Settings[:llm]
       end
 
       def chat(...) = Inference.chat(...)

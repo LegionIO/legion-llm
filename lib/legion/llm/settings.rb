@@ -205,10 +205,10 @@ module Legion
 
       def self.embedding_defaults
         {
-          dimension:                  1024,
-          enforce_dimension:          true,
-          provider_fallback:          %w[ollama bedrock openai],
-          provider_models:            {
+          dimension:                    1024,
+          enforce_dimension:            true,
+          provider_fallback:            %w[ollama bedrock openai],
+          provider_models:              {
             bedrock:   'amazon.titan-embed-text-v2:0',
             anthropic: nil,
             openai:    'text-embedding-3-small',
@@ -216,15 +216,15 @@ module Legion
             azure:     'text-embedding-3-small',
             ollama:    'mxbai-embed-large'
           },
-          ollama_preferred:           %w[mxbai-embed-large nomic-embed-text bge-large snowflake-arctic-embed],
-          ollama_context_chars:       {
+          ollama_preferred:             %w[mxbai-embed-large nomic-embed-text bge-large snowflake-arctic-embed],
+          ollama_context_chars:         {
             'mxbai-embed-large'      => 1400,
             'bge-large'              => 1400,
             'snowflake-arctic-embed' => 1400,
             'nomic-embed-text'       => 24_000
           },
           ollama_default_context_chars: 1400,
-          prefix_registry:            {
+          prefix_registry:              {
             'nomic-embed-text'  => { document: 'search_document: ', query: 'search_query: ' },
             'mxbai-embed-large' => { query: 'Represent this sentence for searching relevant passages: ' }
           }
@@ -370,13 +370,4 @@ module Legion
   end
 end
 
-begin
-  Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default) if Legion.const_defined?('Settings', false)
-rescue StandardError => e
-  if Legion::LLM::Settings.respond_to?(:handle_exception)
-    Legion::LLM::Settings.handle_exception(e, level: :fatal, operation: 'llm.settings.merge_defaults')
-  else
-    warn e.message
-    warn e.backtrace.join("\n")
-  end
-end
+Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)

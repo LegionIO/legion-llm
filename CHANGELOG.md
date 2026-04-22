@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.8.8] - 2026-04-22
+
+### Changed
+- `Legion::LLM.settings` now calls `Legion::Settings[:llm]` directly — dead `const_defined?('Settings')` branch and `Settings.default` fallback removed. `require 'legion/settings'` added to `llm.rb` since it is a gemspec dependency and always present.
+- `settings.rb` bootstrap call simplified from a guarded `begin/rescue` block to a direct `Legion::Settings.merge_settings(...)` call for the same reason.
+
 ## [0.8.7] - 2026-04-22
 
 ### Changed
