@@ -11,7 +11,7 @@ module Legion
           def exchange    = Legion::LLM::Transport::Exchanges::Audit
           def routing_key = "audit.tool.#{@options[:tool_name]}"
           def priority    = 0
-          def encrypt?    = Legion::LLM.settings.dig(:compliance, :encrypt_audit) != false
+          def encrypt?    = Legion::LLM.settings.dig(:compliance, :encrypt_audit) == true
           def expiration  = nil
 
           def headers

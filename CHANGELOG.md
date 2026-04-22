@@ -45,7 +45,7 @@
 ## [0.8.8] - 2026-04-22
 
 ### Changed
-- `Legion::LLM.settings` now calls `Legion::Settings[:llm]` directly — dead `const_defined?('Settings')` branch and `Settings.default` fallback removed. `require 'legion/settings'` added to `llm.rb` since it is a gemspec dependency and always present.
+- `Legion::LLM.settings` now calls `Legion::Settings[:llm]` directly — dead `const_defined?('Settings')` branch and `Settings.default` fallback removed. No explicit `require 'legion/settings'` is needed in `llm.rb` because `legion-settings` is a gemspec dependency and is always activated by Bundler before `legion-llm` is required.
 - `settings.rb` bootstrap call simplified from a guarded `begin/rescue` block to a direct `Legion::Settings.merge_settings(...)` call for the same reason.
 
 ## [0.8.7] - 2026-04-22
@@ -77,7 +77,7 @@
 - `Inference::Executor` now normalizes content-blocks arrays (`[{type: "text", text: "..."}]`) to a plain string before passing to `session.ask`. Previously the raw array was forwarded to RubyLLM, which serialized it as `{ type: 'text', text: [{...}] }` — an invalid Anthropic API payload causing HTTP 400 on every request when the Interlink sends structured content blocks.
 
 ### Added
-- Audit encryption is now configurable: set `llm.compliance.encrypt_audit: false` in settings to emit plaintext payloads to the `llm.audit` exchange (useful for local development). Defaults to `true` (encrypted). Applies to `PromptEvent`, `ToolEvent`, and `SkillEvent`.
+- Audit encryption is now configurable: set `llm.compliance.encrypt_audit: true` in settings to encrypt payloads on the `llm.audit` exchange. Defaults to `false` (plaintext). Applies to `PromptEvent`, `ToolEvent`, and `SkillEvent`.
 
 ## [0.8.3] - 2026-04-22
 

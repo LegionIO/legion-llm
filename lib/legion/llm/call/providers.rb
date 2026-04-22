@@ -63,14 +63,14 @@ module Legion
           case provider
           when :bedrock
             usable_setting?(config[:bearer_token]) ||
-              ENV.key?('AWS_BEARER_TOKEN_BEDROCK') ||
+              env_present?('AWS_BEARER_TOKEN_BEDROCK') ||
               (usable_setting?(config[:api_key]) && usable_setting?(config[:secret_key]))
           when :anthropic
-            usable_setting?(config[:api_key]) || ENV.key?('ANTHROPIC_API_KEY')
+            usable_setting?(config[:api_key]) || env_present?('ANTHROPIC_API_KEY')
           when :openai
             usable_setting?(config[:api_key]) ||
-              ENV.key?('OPENAI_API_KEY') ||
-              ENV.key?('CODEX_API_KEY') ||
+              env_present?('OPENAI_API_KEY') ||
+              env_present?('CODEX_API_KEY') ||
               !Call::CodexConfigLoader.read_token.nil?
           when :azure
             config[:api_base] && (usable_setting?(config[:api_key]) || usable_setting?(config[:auth_token]))
@@ -86,6 +86,10 @@ module Legion
 
         def usable_setting?(value)
           !Call::ClaudeConfigLoader.resolve_setting_reference(value).nil?
+        end
+
+        def env_present?(key)
+          ENV.fetch(key, nil).to_s.strip != ''
         end
 
         def ollama_running?(config)
