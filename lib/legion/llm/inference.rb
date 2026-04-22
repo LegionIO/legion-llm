@@ -578,7 +578,7 @@ module Legion
         chain.each do |resolution|
           start_time = Time.now
           begin
-            assert_external_allowed! if resolution&.respond_to?(:external?) && resolution.external?
+            assert_external_allowed! if resolution.respond_to?(:external?) && resolution.external?
             opts = { model: resolution.model, provider: resolution.provider }
             opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
             chat_obj = RubyLLM.chat(**opts)
