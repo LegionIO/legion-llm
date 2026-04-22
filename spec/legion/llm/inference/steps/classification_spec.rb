@@ -46,10 +46,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
     context 'when compliance.default_level is configured' do
       before do
-        allow(Legion::Settings).to receive(:dig).and_call_original
-        allow(Legion::Settings).to receive(:dig).with(:compliance, :default_level).and_return('internal')
-        allow(Legion::Settings).to receive(:dig).with(:compliance, :classification_level).and_return(nil)
-        allow(Legion::Settings).to receive(:dig).with(:compliance, :classification_scan).and_return(nil)
+        Legion::Settings[:llm][:compliance] = Legion::Settings[:llm][:compliance].merge(default_level: 'internal')
       end
 
       it 'uses configured default level as baseline' do
@@ -61,8 +58,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
     context 'when compliance.classification_scan is false' do
       before do
-        allow(Legion::Settings).to receive(:dig).and_call_original
-        allow(Legion::Settings).to receive(:dig).with(:compliance, :classification_scan).and_return(false)
+        Legion::Settings[:llm][:compliance] = Legion::Settings[:llm][:compliance].merge(classification_scan: false)
       end
 
       it 'skips the step entirely' do
@@ -162,7 +158,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
     context 'PII detection (extended patterns, strict_hipaa=true)' do
       before do
-        Legion::Settings[:compliance] = { strict_hipaa: true }
+        Legion::Settings[:llm][:compliance] = { strict_hipaa: true }
       end
 
       it 'detects IP address pattern' do
@@ -311,7 +307,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
     context 'redaction (redact_pii=true)' do
       before do
-        Legion::Settings[:compliance] = { redact_pii: true }
+        Legion::Settings[:llm][:compliance] = { redact_pii: true }
       end
 
       it 'replaces detected PII with [REDACTED] in message content' do
@@ -386,7 +382,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
     context 'redaction with custom placeholder' do
       before do
-        Legion::Settings[:compliance] = { redact_pii: true, redaction_placeholder: '***' }
+        Legion::Settings[:llm][:compliance] = { redact_pii: true, redaction_placeholder: '***' }
       end
 
       it 'uses the custom placeholder' do
@@ -402,7 +398,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
     context 'redaction with strict_hipaa=true' do
       before do
-        Legion::Settings[:compliance] = { redact_pii: true, strict_hipaa: true }
+        Legion::Settings[:llm][:compliance] = { redact_pii: true, strict_hipaa: true }
       end
 
       it 'redacts extended patterns when strict_hipaa is on' do
@@ -443,8 +439,8 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
       context 'when phi_block_cloud=true with restricted + cloud provider' do
         before do
-          Legion::Settings[:compliance] = { phi_block_cloud: true }
-          Legion::Settings[:llm] = { default_provider: :anthropic }
+          Legion::Settings[:llm][:compliance] = { phi_block_cloud: true }
+          Legion::Settings[:llm][:default_provider] = :anthropic
         end
 
         it 'raises PipelineError' do
@@ -458,8 +454,8 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
       context 'when phi_block_cloud=true with restricted + local provider (ollama)' do
         before do
-          Legion::Settings[:compliance] = { phi_block_cloud: true }
-          Legion::Settings[:llm] = { default_provider: :ollama }
+          Legion::Settings[:llm][:compliance] = { phi_block_cloud: true }
+          Legion::Settings[:llm][:default_provider] = :ollama
         end
 
         it 'permits without warning' do
@@ -474,8 +470,8 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
       context 'when phi_block_cloud=true with non-restricted level + cloud provider' do
         before do
-          Legion::Settings[:compliance] = { phi_block_cloud: true }
-          Legion::Settings[:llm] = { default_provider: :anthropic }
+          Legion::Settings[:llm][:compliance] = { phi_block_cloud: true }
+          Legion::Settings[:llm][:default_provider] = :anthropic
         end
 
         it 'permits because gate only fires on restricted' do
@@ -491,11 +487,11 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
       context 'with custom cloud_providers list' do
         before do
-          Legion::Settings[:compliance] = {
+          Legion::Settings[:llm][:compliance] = {
             phi_block_cloud: true,
             cloud_providers: %i[anthropic openai]
           }
-          Legion::Settings[:llm] = { default_provider: :bedrock }
+          Legion::Settings[:llm][:default_provider] = :bedrock
         end
 
         it 'permits bedrock when it is not in the custom cloud list' do
@@ -518,8 +514,8 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
       context 'when provider comes from default_provider setting (no explicit routing)' do
         before do
-          Legion::Settings[:compliance] = { phi_block_cloud: true }
-          Legion::Settings[:llm] = { default_provider: :openai }
+          Legion::Settings[:llm][:compliance] = { phi_block_cloud: true }
+          Legion::Settings[:llm][:default_provider] = :openai
         end
 
         it 'blocks based on default provider when no explicit provider in routing' do

@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
-require 'legion/settings'
 
 require 'ruby_llm'
 require_relative 'llm/patches/ruby_llm_parallel_tools'

@@ -23,19 +23,21 @@ RSpec.describe Legion::LLM::Embeddings do
     double('EmbedResponse', vectors: [Array.new(1024, 0.1)], input_tokens: 5)
   end
 
-  describe 'PREFIX_REGISTRY' do
+  describe 'prefix_registry setting' do
+    let(:registry) { Legion::LLM::Settings.embedding_defaults[:prefix_registry] }
+
     it 'maps nomic-embed-text to document and query prefixes' do
-      expect(described_class::PREFIX_REGISTRY['nomic-embed-text']).to include(
+      expect(registry['nomic-embed-text']).to include(
         document: 'search_document: ',
         query:    'search_query: '
       )
     end
 
     it 'maps mxbai-embed-large to a query prefix only' do
-      expect(described_class::PREFIX_REGISTRY['mxbai-embed-large']).to include(
+      expect(registry['mxbai-embed-large']).to include(
         query: 'Represent this sentence for searching relevant passages: '
       )
-      expect(described_class::PREFIX_REGISTRY['mxbai-embed-large'].key?(:document)).to be false
+      expect(registry['mxbai-embed-large'].key?(:document)).to be false
     end
   end
 

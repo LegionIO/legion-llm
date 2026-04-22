@@ -120,7 +120,7 @@ module Legion
         end
 
         private_class_method def self.spool_threshold
-          Legion::LLM.settings.dig(:prompt_caching, :response_cache, :spool_threshold_bytes) || 8 * 1024 * 1024
+          Legion::LLM.settings.dig(:prompt_caching, :response_cache, :spool_threshold_bytes) || (8 * 1024 * 1024)
         end
 
         private_class_method def self.spool_dir
