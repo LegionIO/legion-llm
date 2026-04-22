@@ -49,17 +49,7 @@ module Legion
           Legion::LLM.settings[:providers].each do |provider, config|
             next if config[:enabled]
 
-            has_creds = case provider
-                        when :bedrock
-                          config[:bearer_token] || (config[:api_key] && config[:secret_key])
-                        when :azure
-                          config[:api_base] && (config[:api_key] || config[:auth_token])
-                        when :ollama
-                          ollama_running?(config)
-                        else
-                          config[:api_key]
-                        end
-
+            has_creds = credential_available_for?(provider, config)
             has_creds ||= broker_has_credential?(provider) unless has_creds
 
             next unless has_creds
@@ -67,6 +57,35 @@ module Legion
             config[:enabled] = true
             log.info "[llm][providers] auto-enabled provider=#{provider} reason=credentials_found"
           end
+        end
+
+        def credential_available_for?(provider, config)
+          case provider
+          when :bedrock
+            usable_setting?(config[:bearer_token]) ||
+              ENV.key?('AWS_BEARER_TOKEN_BEDROCK') ||
+              (usable_setting?(config[:api_key]) && usable_setting?(config[:secret_key]))
+          when :anthropic
+            usable_setting?(config[:api_key]) || ENV.key?('ANTHROPIC_API_KEY')
+          when :openai
+            usable_setting?(config[:api_key]) ||
+              ENV.key?('OPENAI_API_KEY') ||
+              ENV.key?('CODEX_API_KEY') ||
+              !Call::CodexConfigLoader.read_token.nil?
+          when :azure
+            config[:api_base] && (usable_setting?(config[:api_key]) || usable_setting?(config[:auth_token]))
+          when :ollama
+            ollama_running?(config)
+          else
+            usable_setting?(config[:api_key])
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.providers.credential_available_for', provider: provider)
+          false
+        end
+
+        def usable_setting?(value)
+          !Call::ClaudeConfigLoader.resolve_setting_reference(value).nil?
         end
 
         def ollama_running?(config)
@@ -97,8 +116,9 @@ module Legion
         end
 
         def configure_bedrock(config)
-          has_sigv4 = config[:api_key] && config[:secret_key]
-          has_bearer = config[:bearer_token]
+          has_sigv4 = usable_setting?(config[:api_key]) && usable_setting?(config[:secret_key])
+          has_bearer = Call::ClaudeConfigLoader.resolve_setting_reference(config[:bearer_token])
+          config[:bearer_token] = has_bearer if has_bearer
 
           unless has_sigv4 || has_bearer
             broker_creds = resolve_broker_aws_credentials
@@ -132,7 +152,9 @@ module Legion
         end
 
         def configure_anthropic(config)
-          api_key = resolve_broker_credential(:anthropic) || config[:api_key]
+          api_key = resolve_broker_credential(:anthropic) ||
+                    Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]) ||
+                    ENV.fetch('ANTHROPIC_API_KEY', nil)
           return unless api_key
 
           RubyLLM.configure do |c|
@@ -143,7 +165,10 @@ module Legion
         end
 
         def configure_openai(config)
-          api_key = resolve_broker_credential(:openai) || config[:api_key]
+          api_key = resolve_broker_credential(:openai) ||
+                    Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]) ||
+                    ENV.fetch('OPENAI_API_KEY', nil) ||
+                    ENV.fetch('CODEX_API_KEY', nil)
           return unless api_key
 
           RubyLLM.configure do |c|
@@ -196,7 +221,7 @@ module Legion
             model = config[:default_model]
             next unless model
 
-            verify_single_provider(provider, model, config)
+            probe_provider_credentials(provider, model, config)
           end
 
           recover_with_alternative_credentials
@@ -208,6 +233,153 @@ module Legion
             names = enabled.map { |name, c| "#{name}/#{c[:default_model] || 'auto'}" }
             log.info "[llm][providers] available providers=#{names.join(', ')}"
           end
+        end
+
+        def probe_provider_credentials(provider, model, config)
+          candidates = collect_credential_candidates(provider, config)
+
+          if candidates.size <= 1
+            ok = attempt_provider_call(provider, model)
+            config[:enabled] = false unless ok
+            return
+          end
+
+          working = candidates.find do |creds|
+            apply_credential_to_rubyllm(provider, creds, config)
+            attempt_provider_call(provider, model)
+          end
+
+          if working
+            apply_credential_to_config(provider, config, working)
+            log.info "[llm][providers] health_check ok provider=#{provider} model=#{model} credential=#{working.keys.join(',')}"
+          else
+            config[:enabled] = false
+            log.warn "[llm][providers] disabled provider=#{provider} reason=all_credentials_failed"
+          end
+        end
+
+        def collect_credential_candidates(provider, config)
+          case provider
+          when :bedrock
+            candidates = []
+            resolved_bearer = Call::ClaudeConfigLoader.resolve_setting_reference(config[:bearer_token])
+            bearer_env = ENV.fetch('AWS_BEARER_TOKEN_BEDROCK', nil)
+            claude_bearer = Call::ClaudeConfigLoader.bedrock_bearer_token
+            candidates += [resolved_bearer, bearer_env, claude_bearer].compact.uniq.map { |t| { bearer_token: t } }
+            api_key = Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key])
+            secret = Call::ClaudeConfigLoader.resolve_setting_reference(config[:secret_key])
+            candidates << { api_key: api_key, secret_key: secret } if api_key && secret
+            candidates
+          when :anthropic
+            [
+              Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]),
+              ENV.fetch('ANTHROPIC_API_KEY', nil)
+            ].compact.uniq.map { |k| { api_key: k } }
+          when :openai
+            keys = [
+              Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]),
+              ENV.fetch('OPENAI_API_KEY', nil),
+              ENV.fetch('CODEX_API_KEY', nil),
+              Call::CodexConfigLoader.read_token
+            ].compact.uniq
+            keys.map { |k| { api_key: k } }
+          when :gemini
+            [
+              Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]),
+              ENV.fetch('GEMINI_API_KEY', nil)
+            ].compact.uniq.map { |k| { api_key: k } }
+          else
+            []
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.providers.collect_credential_candidates', provider: provider)
+          []
+        end
+
+        def apply_credential_to_rubyllm(provider, creds, config)
+          case provider
+          when :bedrock
+            region = config[:region] || 'us-east-2'
+            if creds[:bearer_token]
+              require 'legion/llm/call/bedrock_auth'
+              RubyLLM.configure do |c|
+                c.bedrock_bearer_token = creds[:bearer_token]
+                c.bedrock_region = region
+              end
+            else
+              RubyLLM.configure do |c|
+                c.bedrock_api_key    = creds[:api_key]
+                c.bedrock_secret_key = creds[:secret_key]
+                c.bedrock_region     = region
+              end
+            end
+          when :anthropic
+            RubyLLM.configure { |c| c.anthropic_api_key = creds[:api_key] }
+          when :openai
+            RubyLLM.configure { |c| c.openai_api_key = creds[:api_key] }
+          when :gemini
+            RubyLLM.configure { |c| c.gemini_api_key = creds[:api_key] }
+          end
+        end
+
+        def apply_credential_to_config(provider, config, creds)
+          case provider
+          when :bedrock
+            config[:bearer_token] = creds[:bearer_token] if creds[:bearer_token]
+            config[:api_key]      = creds[:api_key]      if creds[:api_key]
+            config[:secret_key]   = creds[:secret_key]   if creds[:secret_key]
+          when :anthropic, :openai, :gemini
+            config[:api_key] = creds[:api_key]
+          end
+        end
+
+        def attempt_provider_call(provider, model)
+          start_time = Time.now
+          result = probe_via_model_list(provider, model)
+          elapsed = ((Time.now - start_time) * 1000).round
+
+          case result
+          when :auth_error
+            log.warn "[llm][providers] health_check auth_failed provider=#{provider}"
+            false
+          when :model_missing
+            log.warn "[llm][providers] health_check model_missing provider=#{provider} model=#{model} — provider ok, model unavailable"
+            false
+          else
+            log.info "[llm][providers] health_check ok provider=#{provider} model=#{model} elapsed_ms=#{elapsed}"
+            true
+          end
+        rescue StandardError => e
+          log.warn "[llm][providers] health_check failed provider=#{provider} error=#{e.class}"
+          handle_exception(e, level: :debug, operation: 'llm.providers.attempt_provider_call', provider: provider, model: model)
+          false
+        end
+
+        def probe_via_model_list(provider, target_model)
+          provider_class = RubyLLM::Provider.providers[provider.to_sym]
+          return probe_via_chat(provider, target_model) unless provider_class
+
+          models = provider_class.new(RubyLLM.config).list_models
+          model_ids = models.map { |m| m.is_a?(Hash) ? (m[:id] || m['id']).to_s : m.id.to_s }
+
+          return :ok if target_model.nil?
+          return :ok if model_ids.any? { |id| id.include?(target_model) || target_model.include?(id) }
+
+          :model_missing
+        rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError
+          :auth_error
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.providers.probe_via_model_list', provider: provider)
+          probe_via_chat(provider, target_model)
+        end
+
+        def probe_via_chat(provider, model)
+          RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
+          :ok
+        rescue RubyLLM::ModelNotFoundError
+          :model_missing
+        rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError
+          :auth_error
         end
 
         def recover_with_alternative_credentials
@@ -222,27 +394,14 @@ module Legion
           token = Call::CodexConfigLoader.read_token
           return unless token
 
-          log.info '[llm][providers] openai disabled — trying codex auth token as fallback'
+          log.info '[llm][providers] openai disabled — retrying with codex auth token'
           openai_config[:api_key] = token
           configure_openai(openai_config)
           openai_config[:enabled] = true
-          verify_single_provider(:openai, openai_config[:default_model], openai_config)
+          ok = attempt_provider_call(:openai, openai_config[:default_model])
+          openai_config[:enabled] = false unless ok
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.providers.recover_openai_with_codex')
-        end
-
-        def verify_single_provider(provider, model, _config)
-          start_time = Time.now
-          RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
-          elapsed = ((Time.now - start_time) * 1000).round
-          log.info "[llm][providers] health_check ok provider=#{provider} model=#{model} elapsed_ms=#{elapsed}"
-        rescue RubyLLM::ModelNotFoundError => e
-          handle_exception(e, level: :warn, operation: 'llm.providers.verify_single_provider', provider: provider, model: model)
-        rescue RubyLLM::ForbiddenError => e
-          handle_exception(e, level: :debug, operation: 'llm.providers.verify_single_provider', provider: provider, model: model)
-        rescue StandardError => e
-          log.warn "[llm][providers] provider unavailable provider=#{provider} error=#{e.class}"
-          handle_exception(e, level: :debug, operation: 'llm.providers.verify_single_provider', provider: provider, model: model)
         end
 
         def auto_register_providers
