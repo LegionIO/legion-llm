@@ -332,16 +332,16 @@ module Legion
         def chain_from_defaults(model, provider, max)
           if provider || model
             p = (provider || default_settings_provider)&.to_sym
-            res = Resolution.new(tier:     PROVIDER_TIER.fetch(p, :cloud),
-                                 provider: p || :bedrock,
+            res = Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
+                                 provider: p || :anthropic,
                                  model:    model || default_settings_model || 'claude-sonnet-4-6')
             return EscalationChain.new(resolutions: [res], max_attempts: max)
           end
 
           resolutions = enabled_provider_chain
           if resolutions.empty?
-            p = default_settings_provider&.to_sym || :bedrock
-            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :cloud),
+            p = default_settings_provider&.to_sym || :anthropic
+            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
                                           model:    default_settings_model || 'claude-sonnet-4-6')]
           end
@@ -375,8 +375,8 @@ module Legion
           resolutions = resolutions.uniq { |r| [r.provider, r.model] }
           resolutions = enabled_provider_chain if resolutions.empty?
           if resolutions.empty?
-            p = default_settings_provider&.to_sym || :bedrock
-            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :cloud),
+            p = default_settings_provider&.to_sym || :anthropic
+            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
                                           model:    default_settings_model || 'claude-sonnet-4-6')]
           end
@@ -391,7 +391,7 @@ module Legion
             fallback_target = current.fallback
             if fallback_target.is_a?(Hash)
               fb = fallback_target.transform_keys(&:to_sym)
-              fb_tier     = fb[:tier]&.to_sym || :cloud
+              fb_tier     = fb[:tier]&.to_sym || :frontier
               fb_provider = fb[:provider]&.to_sym || default_provider_for_tier(fb_tier)
               fb_model    = fb[:model] || default_model_for_tier(fb_tier)
               chain << Resolution.new(tier: fb_tier, provider: fb_provider, model: fb_model)
