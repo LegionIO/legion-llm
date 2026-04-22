@@ -39,7 +39,15 @@ module Legion
           tool_trigger:              tool_trigger_defaults,
           api:                       api_defaults,
           compliance:                compliance_defaults,
-          skills:                    skills_defaults
+          skills:                    skills_defaults,
+          claude_cli:                claude_cli_defaults
+        }
+      end
+
+      def self.claude_cli_defaults
+        {
+          settings_path: '~/.claude/settings.json',
+          config_path:   '~/.claude.json'
         }
       end
 

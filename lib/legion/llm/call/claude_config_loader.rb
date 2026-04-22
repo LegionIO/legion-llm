@@ -9,11 +9,17 @@ module Legion
       module ClaudeConfigLoader
         extend Legion::Logging::Helper
 
-        CLAUDE_SETTINGS = File.expand_path('~/.claude/settings.json')
-        CLAUDE_CONFIG   = File.expand_path('~/.claude.json')
         SECRET_URI_PATTERN = %r{\A(?:env|vault|lease)://}
 
         module_function
+
+        def claude_settings_path
+          File.expand_path(Legion::LLM.settings.dig(:claude_cli, :settings_path) || '~/.claude/settings.json')
+        end
+
+        def claude_config_path
+          File.expand_path(Legion::LLM.settings.dig(:claude_cli, :config_path) || '~/.claude.json')
+        end
 
         def load
           config = merged_config
@@ -23,7 +29,7 @@ module Legion
         end
 
         def merged_config
-          read_json(CLAUDE_SETTINGS).merge(read_json(CLAUDE_CONFIG))
+          read_json(claude_settings_path).merge(read_json(claude_config_path))
         end
 
         def read_json(path)
@@ -53,7 +59,7 @@ module Legion
         end
 
         def bedrock_bearer_token
-          env = read_json(CLAUDE_SETTINGS)[:env]
+          env = read_json(claude_settings_path)[:env]
           return nil unless env.is_a?(Hash)
 
           direct = first_present(env[:AWS_BEARER_TOKEN_BEDROCK], env['AWS_BEARER_TOKEN_BEDROCK'])
@@ -72,7 +78,7 @@ module Legion
         end
 
         def oauth_account_available?
-          oauth = read_json(CLAUDE_CONFIG)[:oauthAccount]
+          oauth = read_json(claude_config_path)[:oauthAccount]
           oauth.is_a?(Hash) && oauth.any? { |_k, value| !normalize_secret(value).nil? }
         end
 
