@@ -11,7 +11,7 @@ module Legion
 
         def intercept(resolution, context: {})
           return resolution unless gateway_enabled?
-          return resolution unless resolution&.tier == :cloud
+          return resolution unless resolution&.tier && %i[cloud frontier].include?(resolution.tier.to_sym)
 
           model = resolution.model
           risk_tier = context[:risk_tier]&.to_sym
@@ -22,7 +22,7 @@ module Legion
           end
 
           Resolution.new(
-            tier:     :cloud,
+            tier:     resolution.tier,
             provider: :gateway,
             model:    model,
             rule:     'gateway_intercept',

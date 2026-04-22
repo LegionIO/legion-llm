@@ -21,6 +21,14 @@ RSpec.describe Legion::LLM::Router::GatewayInterceptor do
       expect(result.metadata[:original_provider]).to eq(:bedrock)
     end
 
+    it 'rewrites frontier resolution to gateway provider' do
+      frontier = Legion::LLM::Router::Resolution.new(tier: :frontier, provider: :anthropic, model: 'claude-sonnet-4-6')
+      result = described_class.intercept(frontier)
+      expect(result.provider).to eq(:gateway)
+      expect(result.tier).to eq(:frontier)
+      expect(result.metadata[:original_provider]).to eq(:anthropic)
+    end
+
     it 'passes through non-cloud resolutions' do
       local = Legion::LLM::Router::Resolution.new(tier: :local, provider: :ollama, model: 'llama3')
       result = described_class.intercept(local)
