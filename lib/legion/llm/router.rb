@@ -14,9 +14,9 @@ module Legion
     module Router
       extend Legion::Logging::Helper
 
-      PROVIDER_TIER = { bedrock: :cloud, anthropic: :cloud, openai: :cloud,
+      PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
                         gemini: :cloud, azure: :cloud, ollama: :local }.freeze
-      PROVIDER_ORDER = %i[bedrock anthropic openai gemini azure ollama].freeze
+      PROVIDER_ORDER = %i[ollama bedrock azure gemini anthropic openai].freeze
 
       class << self
         # Resolve an LLM routing intent to a tier/provider/model decision.
