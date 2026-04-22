@@ -68,16 +68,6 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
     end
 
-    context 'when Legion::LLM does not respond to settings' do
-      before do
-        allow(Legion::LLM).to receive(:respond_to?).with(:settings).and_return(false)
-      end
-
-      it 'returns nil' do
-        expect(described_class.daemon_url).to be_nil
-      end
-    end
-
     context 'when daemon url is nil in settings' do
       before do
         allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: nil } })

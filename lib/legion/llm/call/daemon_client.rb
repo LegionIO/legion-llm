@@ -136,7 +136,7 @@ module Legion
           http.read_timeout = timeout
           request = Net::HTTP::Post.new(uri.request_uri)
           request['Content-Type'] = 'application/json'
-          request.body = ::JSON.dump(body)
+          request.body = Legion::JSON.dump(body)
           http.request(request)
         end
 
@@ -172,8 +172,6 @@ module Legion
         # ── private helpers ────────────────────────────────────────────────
 
         def fetch_daemon_url
-          return nil unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:settings)
-
           settings = Legion::LLM.settings
           return nil unless settings.is_a?(Hash)
 

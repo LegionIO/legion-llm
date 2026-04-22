@@ -86,12 +86,7 @@ module Legion
         def publish_reply(reply_to, correlation_id, response_hash)
           return unless defined?(Legion::Transport)
 
-          payload = if defined?(Legion::JSON)
-                      Legion::JSON.dump(response_hash)
-                    else
-                      require 'json'
-                      ::JSON.generate(response_hash)
-                    end
+          payload = Legion::JSON.dump(response_hash)
 
           channel = Legion::Transport.connection.create_channel
           channel.default_exchange.publish(

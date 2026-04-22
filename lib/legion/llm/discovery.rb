@@ -165,7 +165,7 @@ module Legion
           provider = provider&.to_sym
           return false unless provider
           return true if %i[ollama azure].include?(provider)
-          return false if %i[anthropic bedrock].include?(provider)
+          return false if provider == :anthropic
 
           klass = RubyLLM::Provider.resolve(provider)
           return false unless klass
