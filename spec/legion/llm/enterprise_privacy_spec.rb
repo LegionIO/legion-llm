@@ -25,6 +25,14 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
     end
   end
 
+  describe '.chat_direct with tier: :frontier' do
+    it 'raises PrivacyModeError when enterprise privacy is enabled' do
+      expect do
+        Legion::LLM.chat_direct(tier: :frontier, message: 'hello')
+      end.to raise_error(Legion::LLM::PrivacyModeError)
+    end
+  end
+
   describe '.chat_direct with tier: :local' do
     it 'does not raise PrivacyModeError for local tier' do
       session_double = double('session', ask: double('response', content: 'pong'))

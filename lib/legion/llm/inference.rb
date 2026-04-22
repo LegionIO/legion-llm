@@ -420,7 +420,7 @@ module Legion
       end
 
       def ask_direct(message:, model: nil, provider: nil, intent: nil, tier: nil, &)
-        assert_cloud_allowed! if effective_tier_is_cloud?(tier, provider)
+        assert_external_allowed! if effective_tier_is_external?(tier, provider)
         result = chat_direct(
           model:    model,
           provider: provider,
@@ -489,10 +489,10 @@ module Legion
             resolution = Router::GatewayInterceptor.intercept(resolution, context: kwargs.fetch(:context, {}))
             model = resolution.model
             provider = resolution.provider
-            assert_cloud_allowed! if resolution.tier.to_sym == :cloud
+            assert_external_allowed! if resolution.external?
           end
         elsif tier
-          assert_cloud_allowed! if tier.to_sym == :cloud
+          assert_external_allowed! if external_tier?(tier.to_sym)
         end
 
         model ||= Legion::LLM.settings[:default_model]
@@ -578,7 +578,7 @@ module Legion
         chain.each do |resolution|
           start_time = Time.now
           begin
-            assert_cloud_allowed! if resolution&.tier&.to_sym == :cloud
+            assert_external_allowed! if resolution&.respond_to?(:external?) && resolution.external?
             opts = { model: resolution.model, provider: resolution.provider }
             opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
             chat_obj = RubyLLM.chat(**opts)
@@ -719,21 +719,29 @@ module Legion
         end
       end
 
-      def assert_cloud_allowed!
+      def assert_external_allowed!
         return unless enterprise_privacy?
 
         raise Legion::LLM::PrivacyModeError,
-              'Cloud LLM tier is disabled: enterprise_data_privacy is enabled. ' \
-              'Only Tier 0 (cache) and Tier 1 (local Ollama) are permitted.'
+              'External LLM tiers are disabled: enterprise_data_privacy is enabled. ' \
+              'Only local and fleet tiers are permitted.'
       end
 
-      def effective_tier_is_cloud?(tier, provider)
-        return tier.to_sym == :cloud if tier
+      alias assert_cloud_allowed! assert_external_allowed!
+
+      def effective_tier_is_external?(tier, provider)
+        return external_tier?(tier.to_sym) if tier
         return false unless enterprise_privacy?
 
         resolved = provider || Legion::LLM.settings[:default_provider]
-        cloud_providers = %i[anthropic bedrock openai gemini azure]
-        cloud_providers.include?(resolved&.to_sym)
+        external_providers = %i[anthropic bedrock openai gemini azure]
+        external_providers.include?(resolved&.to_sym)
+      end
+
+      alias effective_tier_is_cloud? effective_tier_is_external?
+
+      def external_tier?(tier)
+        %i[cloud frontier openai_compat].include?(tier)
       end
     end
   end
