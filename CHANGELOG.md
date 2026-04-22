@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.6] - 2026-04-22
+
+### Changed
+- `Legion::LLM::Settings` is now the canonical module — content moved from `Legion::LLM::Config::Settings` directly into `lib/legion/llm/settings.rb`. The `Config::Settings` indirection and `lib/legion/llm/config/settings.rb` are removed. `service.rb` and any external callers using `Legion::LLM::Settings.default` continue to work unchanged.
+
 ## [0.8.5] - 2026-04-22
 
 ### Fixed

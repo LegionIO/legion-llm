@@ -123,7 +123,7 @@ module Legion
         if Legion.const_defined?('Settings', false)
           Legion::Settings[:llm]
         else
-          Config::Settings.default
+          Settings.default
         end
       end
 
