@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.8.1] - 2026-04-22
+
+### Fixed
+- `Inference::Executor` now normalizes content-blocks arrays (`[{type: "text", text: "..."}]`) to a plain string before passing to `session.ask`. Previously the raw array was forwarded to RubyLLM, which serialized it as `{ type: 'text', text: [{...}] }` — an invalid Anthropic API payload causing HTTP 400 on every request when the Interlink sends structured content blocks.
+
+### Added
+- Audit encryption is now configurable: set `llm.compliance.encrypt_audit: false` in settings to emit plaintext payloads to the `llm.audit` exchange (useful for local development). Defaults to `true` (encrypted). Applies to `PromptEvent`, `ToolEvent`, and `SkillEvent`.
+
 ## [0.8.0] - 2026-04-21
 
 ### Changed

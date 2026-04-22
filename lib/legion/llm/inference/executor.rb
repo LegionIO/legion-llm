@@ -732,7 +732,19 @@ module Legion
           messages = apply_conversation_breakpoint(@request.messages)
           add_ruby_llm_prior_messages(session, messages)
 
-          [session, messages.last&.dig(:content)]
+          [session, normalize_message_content(messages.last&.dig(:content))]
+        end
+
+        def normalize_message_content(content)
+          return content if content.nil? || content.is_a?(String)
+          return content unless content.is_a?(Array)
+
+          text_parts = content.filter_map do |b|
+            next unless (b[:type] || b['type']).to_s == 'text'
+
+            b[:text] || b['text']
+          end
+          text_parts.empty? ? nil : text_parts.join("\n\n")
         end
 
         def ruby_llm_chat_options
