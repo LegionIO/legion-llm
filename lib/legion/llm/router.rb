@@ -72,12 +72,11 @@ module Legion
         end
 
         # Check whether a tier can be used right now.
-        # :local         — always available
-        # :fleet         — available when Legion::Transport is loaded
-        # :cloud         — external tier; blocked when enterprise privacy is enabled
-        # :frontier      — external tier; blocked when enterprise privacy is enabled
-        # :openai_compat — external tier; blocked when enterprise privacy is enabled;
-        #                  also requires at least one gateway configured
+        # :local          — always available
+        # :fleet          — available when Legion::Transport is loaded
+        # :openai_compat  — available when gateways are configured
+        # :cloud          — available unless privacy mode
+        # :frontier       — available unless privacy mode
         def tier_available?(tier)
           sym = tier.to_sym
           return false if external_tier?(sym) && privacy_mode?
