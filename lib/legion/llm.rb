@@ -1072,7 +1072,10 @@ module Legion
         provider = provider&.to_sym
         return false unless provider
         return true if %i[ollama azure].include?(provider)
-        return false if %i[anthropic bedrock].include?(provider)
+        # Anthropic's native API has no embedding endpoint. Bedrock does (via Titan),
+        # so let the instance_method probe below decide — the exclusion was masking
+        # a missing render_embedding_payload implementation, not an API limitation.
+        return false if %i[anthropic].include?(provider)
 
         klass = RubyLLM::Provider.resolve(provider)
         return false unless klass
