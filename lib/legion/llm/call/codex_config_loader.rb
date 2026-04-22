@@ -15,18 +15,14 @@ module Legion
         module_function
 
         def load
-          return unless File.exist?(CODEX_AUTH)
-
-          config = read_json(CODEX_AUTH)
+          config = read_config
           return if config.empty?
 
           apply_codex_config(config)
         end
 
         def read_token
-          return nil unless File.exist?(CODEX_AUTH)
-
-          config = read_json(CODEX_AUTH)
+          config = read_config
           return nil if config.empty?
           return nil unless config[:auth_mode] == 'chatgpt'
 
@@ -35,6 +31,29 @@ module Legion
           return nil unless token_valid?(token)
 
           token
+        end
+
+        def read_openai_api_key
+          config = read_config
+          return nil if config.empty?
+
+          key = config[:OPENAI_API_KEY] || config[:openai_api_key]
+          return nil unless key.is_a?(String)
+
+          key = key.strip
+          return nil if key.empty?
+
+          key
+        end
+
+        def read_openai_credential
+          read_token || read_openai_api_key
+        end
+
+        def read_config
+          return {} unless File.exist?(CODEX_AUTH)
+
+          read_json(CODEX_AUTH)
         end
 
         def read_json(path)

@@ -1,5 +1,47 @@
 # Legion LLM Changelog
 
+## [0.8.13] - 2026-04-22
+
+### Fixed
+- Escalation loop now feeds `Router.health_tracker` with an `:error` signal on every failure so the circuit breaker trips when a provider is consistently down — auth failures, rate limits, and general errors all count.
+- `AuthError` and `PrivacyModeError` in escalation are logged with `handled: true` so they appear in logs as gracefully-handled failures rather than uncaught exceptions.
+- `RateLimitError` in escalation is handled the same way (was previously re-raised, aborting the entire chain).
+- Extracted `attempt_escalation` and `record_escalation_failure` from `run_provider_call_with_escalation` to keep the method within Rubocop length limits and make each responsibility clear.
+
+### Changed
+- `CodexConfigLoader`: refactored to extract `read_config` helper (eliminates duplicate file-exist checks in `load` and `read_token`); added `read_openai_api_key` and `read_openai_credential` accessors for the multi-source credential probing chain.
+
+## [0.8.12] - 2026-04-22
+
+### Changed
+- `ClaudeConfigLoader`: `settings_path` and `config_path` are now read from `Legion::LLM.settings.dig(:claude_cli, ...)` instead of hardcoded constants, making both paths configurable. `SECRET_URI_PATTERN` remains a constant — it's a protocol definition, not a runtime knob. Corresponding settings keys added to `Legion::LLM::Settings.claude_cli_defaults`.
+
+## [0.8.11] - 2026-04-22
+
+### Added
+- Multi-source credential detection for all providers: `credential_available_for?` checks resolved env vars, not raw `env://` URI strings, so providers aren't falsely auto-enabled when the env var is unset.
+- `probe_provider_credentials`: when multiple API keys exist for a provider (e.g. both `OPENAI_API_KEY` and `CODEX_API_KEY`), each candidate is tested in order and the first working key is committed; provider is disabled if all fail.
+- `probe_via_model_list`: uses `RubyLLM::Provider.list_models` (a cheap GET with no token cost) to validate credentials before falling back to a lightweight chat probe.
+- `recover_openai_with_codex`: automatically attempts Codex bearer-token fallback when all direct OpenAI keys fail.
+
+### Fixed
+- `configure_bedrock`/`configure_anthropic`/`configure_openai`: use `resolve_setting_reference` to unwrap `env://` placeholders before passing to RubyLLM config, preventing "key not found" errors when env var is absent.
+- `ClaudeConfigLoader.apply_api_keys`: removed early-return pattern that prevented Bedrock bearer token import from running when no OpenAI key was found.
+
+## [0.8.10] - 2026-04-22
+
+### Changed
+- `compliance_defaults`: `classification_scan` and `encrypt_audit` default to `false`; classification is opt-in, audit encryption is opt-in.
+- `tool_trigger_defaults`: `scan_depth` raised to `10` (was `2`), `tool_limit` raised to `50` (was `10`).
+- `trigger_match.rb`: hardcoded `|| 2` fallback updated to `|| 10` to match new setting default.
+
+## [0.8.9] - 2026-04-22
+
+### Fixed
+- Classification spec: wholesale `Legion::Settings[:llm] = {...}` replacements converted to key-level writes (`[:llm][:default_provider] = :x`) to prevent wiping sibling settings.
+- Audit `encrypt?` specs: updated to test toggle behavior (`false` by default, `true` when `encrypt_audit` setting is enabled) instead of expecting always-on.
+- Trigger match spec: updated scan_depth expectation and before-block to match new defaults.
+
 ## [0.8.8] - 2026-04-22
 
 ### Changed

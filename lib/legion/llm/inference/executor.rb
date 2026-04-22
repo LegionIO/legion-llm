@@ -414,56 +414,57 @@ module Legion
           quality_check = @request.extra[:quality_check]
           succeeded = false
 
-          # rubocop:disable Metrics/BlockLength
           chain.each do |resolution|
             start_time = Time.now
-            begin
-              @resolved_provider = resolution.provider
-              @resolved_model = resolution.model
-              execute_provider_request
-
-              duration_ms = ((Time.now - start_time) * 1000).round
-              result = Quality::Checker.check(@raw_response, quality_threshold: threshold,
-                                                             quality_check:     quality_check)
-
-              @timeline.record(
-                category: :provider, key: 'escalation:attempt',
-                direction: :internal,
-                detail: "attempt #{@escalation_history.size + 1}: #{resolution.provider}:#{resolution.model} => #{result.passed ? :success : :quality_failure}",
-                from: 'pipeline', to: "provider:#{resolution.provider}"
-              )
-
-              if result.passed
-                @escalation_history << { model: resolution.model, provider: resolution.provider,
-                                         tier: resolution.tier, outcome: :success,
-                                         failures: [], duration_ms: duration_ms }
-                succeeded = true
-                break
-              else
-                @escalation_history << { model: resolution.model, provider: resolution.provider,
-                                         tier: resolution.tier, outcome: :quality_failure,
-                                         failures: result.failures, duration_ms: duration_ms }
-              end
-            rescue Legion::LLM::AuthError, Legion::LLM::RateLimitError, Legion::LLM::PrivacyModeError
-              raise
-            rescue StandardError => e
-              duration_ms = ((Time.now - start_time) * 1000).round
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.escalation_attempt',
-                                  provider: resolution.provider, model: resolution.model, duration_ms: duration_ms)
-              @escalation_history << { model: resolution.model, provider: resolution.provider,
-                                       tier: resolution.tier, outcome: :error,
-                                       failures: [e.class.name], duration_ms: duration_ms }
-              @timeline.record(
-                category: :provider, key: 'escalation:attempt',
-                direction: :internal,
-                detail: "attempt #{@escalation_history.size}: #{resolution.provider}:#{resolution.model} => error: #{e.message}",
-                from: 'pipeline', to: "provider:#{resolution.provider}"
-              )
-            end
+            @resolved_provider = resolution.provider
+            @resolved_model = resolution.model
+            succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
+            break if succeeded
+          rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
+            record_escalation_failure(e, resolution, start_time,
+                                      outcome: :auth_error, operation: 'llm.pipeline.escalation_attempt.auth',
+                                      handled: true)
+          rescue Legion::LLM::RateLimitError => e
+            record_escalation_failure(e, resolution, start_time,
+                                      outcome: :rate_limited, operation: 'llm.pipeline.escalation_attempt.rate_limit',
+                                      handled: true)
+          rescue StandardError => e
+            record_escalation_failure(e, resolution, start_time, outcome:   :error,
+                                                                 operation: 'llm.pipeline.escalation_attempt')
           end
-          # rubocop:enable Metrics/BlockLength
-
           raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed" unless succeeded
+        end
+
+        def attempt_escalation(resolution, threshold, quality_check, start_time)
+          execute_provider_request
+          duration_ms = ((Time.now - start_time) * 1000).round
+          result = Quality::Checker.check(@raw_response, quality_threshold: threshold, quality_check: quality_check)
+          outcome = result.passed ? :success : :quality_failure
+          @timeline.record(
+            category: :provider, key: 'escalation:attempt', direction: :internal,
+            detail: "attempt #{@escalation_history.size + 1}: #{resolution.provider}:#{resolution.model} => #{outcome}",
+            from: 'pipeline', to: "provider:#{resolution.provider}"
+          )
+          @escalation_history << { model: resolution.model, provider: resolution.provider,
+                                   tier: resolution.tier, outcome: outcome,
+                                   failures: result.passed ? [] : result.failures, duration_ms: duration_ms }
+          result.passed
+        end
+
+        def record_escalation_failure(err, resolution, start_time, outcome:, operation:, handled: false)
+          duration_ms = ((Time.now - start_time) * 1000).round
+          handle_exception(err, level: :warn, handled: handled, operation: operation,
+                               provider: resolution.provider, model: resolution.model, duration_ms: duration_ms)
+          Router.health_tracker.report(provider: resolution.provider, signal: :error, value: 1,
+                                       metadata: { reason: err.class.name, message: err.message })
+          @escalation_history << { model: resolution.model, provider: resolution.provider,
+                                   tier: resolution.tier, outcome: outcome,
+                                   failures: [err.class.name], duration_ms: duration_ms }
+          @timeline.record(
+            category: :provider, key: 'escalation:attempt', direction: :internal,
+            detail: "attempt #{@escalation_history.size}: #{resolution.provider}:#{resolution.model} => #{outcome}",
+            from: 'pipeline', to: "provider:#{resolution.provider}"
+          )
         end
 
         def build_default_escalation_chain
