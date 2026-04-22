@@ -5,8 +5,13 @@ module Legion
     module Transport
       module Exchanges
         class Escalation < ::Legion::Transport::Exchange
-          exchange_name 'llm.escalation'
-          exchange_type :topic
+          def exchange_name
+            'llm.escalation'
+          end
+
+          def default_type
+            'topic'
+          end
         end
       end
     end

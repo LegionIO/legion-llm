@@ -93,7 +93,7 @@ module Legion
         LLM::Metering.load_transport
 
         @started = true
-        Legion::Settings[:llm][:connected] = true
+        Legion::Settings.loader.settings[:llm][:connected] = true
         log.info '[llm] started'
         API.register_routes if defined?(API)
       rescue StandardError => e
@@ -103,7 +103,7 @@ module Legion
 
       def shutdown
         log.debug '[llm] shutdown.enter'
-        Legion::Settings[:llm][:connected] = false
+        Legion::Settings.loader.settings[:llm][:connected] = false
         @started = false
         Discovery.reset!
         Call::Registry.reset!
