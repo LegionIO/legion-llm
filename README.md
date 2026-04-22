@@ -1,8 +1,8 @@
 # Legion LLM
 
-LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension.
+LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension. Exposes OpenAI- and Anthropic-compatible API endpoints so external tools can point at the Legion daemon and just work.
 
-**Version**: 0.6.23
+**Version**: 0.8.0
 
 ## Installation
 
@@ -11,6 +11,81 @@ gem 'legion-llm'
 ```
 
 Or add to your Gemfile and `bundle install`.
+
+## OpenAI / Anthropic API Compatibility
+
+Any tool built for the OpenAI or Anthropic API can talk to Legion by changing its `base_url`. No custom headers, no special config — path determines the response format.
+
+### Routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming via `data: [DONE]`) |
+| `GET`  | `/v1/models` | Unified model catalog across all providers |
+| `GET`  | `/v1/models/:id` | Single model detail |
+| `POST` | `/v1/embeddings` | OpenAI-compatible embedding generation |
+| `POST` | `/v1/messages` | Anthropic-compatible messages (streaming via typed events) |
+
+### Usage
+
+Point any OpenAI SDK at Legion:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:4567/v1", api_key="your-legion-key")
+response = client.chat.completions.create(
+    model="us.anthropic.claude-sonnet-4-6-v1",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+```
+
+Or any Anthropic SDK:
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(base_url="http://localhost:4567/v1", api_key="your-legion-key")
+response = client.messages.create(
+    model="us.anthropic.claude-sonnet-4-6-v1",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello"}]
+)
+```
+
+Requests flow through the full Inference pipeline — routing, metering, audit, quality checks — then the response is translated back into the caller's expected format.
+
+### Streaming
+
+Both formats supported with correct SSE shapes:
+- **OpenAI**: `data: {"choices":[{"delta":{"content":"..."}}]}` chunks, terminated by `data: [DONE]`
+- **Anthropic**: Typed events — `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`
+
+### API Authentication
+
+Config-driven via `settings[:llm][:api][:auth]`. Disabled by default for local dev and lite mode.
+
+```json
+{
+  "llm": {
+    "api": {
+      "auth": {
+        "enabled": false,
+        "api_keys": ["key-1", "key-2"],
+        "pass_through": false
+      }
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | Boolean | `false` | Enable auth for `/v1/` routes |
+| `api_keys` | Array | `[]` | Accepted Bearer tokens and `x-api-key` values |
+| `pass_through` | Boolean | `false` | Forward client token to the upstream provider instead of using Legion's own credentials |
+
+When enabled, validates `Authorization: Bearer <token>` or `x-api-key` headers against the configured `api_keys` list. The client authenticates to Legion; Legion authenticates to providers separately.
 
 ## Configuration
 
@@ -142,7 +217,7 @@ Large async responses that overflow the cache spool to disk under
 `Legion::LLM.chat` has two public modes:
 
 - Call it without `message:` or `messages:` to create a `RubyLLM::Chat` session for multi-turn conversation.
-- Call it with `message:` or `messages:` to execute immediately. When the pipeline is enabled, these request-shaped calls run through the pipeline and return a pipeline response object.
+- Call it with `message:` or `messages:` to execute immediately. These request-shaped calls run through the Inference pipeline and return a pipeline response object.
 
 ```ruby
 # Session creation for multi-turn conversation
@@ -242,6 +317,122 @@ result.verdict  # -> "approve" or "request_changes"
 result.issues   # -> ["Line 42: potential SQL injection", ...]
 ```
 
+## Types
+
+v0.8.0 introduces first-class immutable value types implemented as `Data.define` structs. These replace plain hashes throughout the pipeline, API translators, audit, and metering flows.
+
+| Type | Module | Purpose |
+|------|--------|---------|
+| `Message` | `Legion::LLM::Types::Message` | Conversation message with role, content, tool_calls, token counts |
+| `ToolCall` | `Legion::LLM::Types::ToolCall` | Tool invocation with name, arguments, status, duration, result |
+| `ContentBlock` | `Legion::LLM::Types::ContentBlock` | Typed content block (text, thinking, tool_use, tool_result) with cache_control |
+| `Chunk` | `Legion::LLM::Types::Chunk` | Streaming delta (content, thinking, tool_call, done) |
+
+Each type provides factory methods (`build`, `from_hash`, `text`, `tool_use`, etc.) and serialization helpers (`to_provider_hash`, `to_audit_hash`). All types are immutable after construction.
+
+## Module Structure
+
+```
+Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inference, Call, Discovery
+├── Errors                               # Typed error hierarchy (LLMError base + subtypes, retryable?)
+├── Types                                # Immutable Data.define structs
+│   ├── Message      # role, content, tool_calls, tokens, conversation_id, task_id
+│   ├── ToolCall     # name, arguments, source, status, duration_ms, result
+│   ├── ContentBlock # type, text, data, tool_use/result fields, cache_control
+│   └── Chunk        # Streaming delta: content_delta / thinking_delta / tool_call_delta / done
+├── Config                               # Settings and defaults
+│   └── Settings     # Default config, provider settings, routing defaults, API auth defaults
+├── Call                                 # Provider call layer (wraps RubyLLM)
+│   ├── Providers        # Provider configuration, auto-detect, verify
+│   ├── Registry         # Thread-safe lex-* provider extension registry
+│   ├── Dispatch         # Native provider dispatch to registered lex-* extensions
+│   ├── Embeddings       # generate, generate_batch, default_model, fallback chain
+│   ├── StructuredOutput # JSON schema enforcement with native response_format and prompt fallback
+│   ├── DaemonClient     # HTTP routing to LegionIO daemon with 30s health cache
+│   ├── BedrockAuth      # Monkey-patch for Bedrock Bearer Token auth (required lazily)
+│   ├── ClaudeConfigLoader # Import Claude CLI config from ~/.claude/settings.json
+│   └── CodexConfigLoader  # Import OpenAI bearer token from ~/.codex/auth.json
+├── Context                              # Prompt and conversation context management
+│   ├── Compressor   # Deterministic prompt compression (3 levels, code-block-aware)
+│   └── Curator      # Async conversation curation: strip thinking, distill tools, fold resolved exchanges
+├── Discovery                            # Runtime introspection
+│   ├── Ollama       # Queries Ollama /api/tags for pulled models (TTL-cached)
+│   └── System       # Queries OS memory: macOS (vm_stat/sysctl), Linux (/proc/meminfo)
+├── Quality                              # Response quality evaluation
+│   ├── Checker      # Quality heuristics (empty, too_short, repetition, json_parse) + pluggable
+│   ├── ShadowEval   # Parallel shadow evaluation on cheaper models with sampling
+│   └── Confidence/
+│       ├── Score    # Immutable ConfidenceScore value object (score, band, source, signals)
+│       └── Scorer   # Computes ConfidenceScore from logprobs, heuristics, or caller-provided value
+├── Metering                             # Unified token/cost accounting and AMQP event emission
+│   ├── Usage        # Immutable Usage struct (input_tokens, output_tokens, cache tokens)
+│   ├── Pricing      # Model cost estimation with fuzzy matching
+│   ├── Recorder     # Per-request in-memory cost accumulator
+│   └── Tokens       # Thread-safe per-session token budget accumulator
+├── Inference                            # 18-step request/response pipeline
+│   ├── Request      # Data.define struct for unified request representation
+│   ├── Response     # Data.define struct for unified response representation
+│   ├── Profile      # Caller-derived profiles (external/gaia/system) for step skipping
+│   ├── Tracing      # Distributed trace_id, span_id, exchange_id generation
+│   ├── Timeline     # Ordered event recording with participant tracking
+│   ├── Executor     # 18-step skeleton with profile-aware execution and call_stream
+│   ├── Conversation # In-memory LRU (256 slots) + optional Sequel DB persistence
+│   ├── Prompt       # Clean dispatch API: dispatch, request, summarize, extract, decide
+│   ├── ToolAdapter  # Wraps Tools::Base for RubyLLM sessions
+│   ├── ToolDispatcher # Routes tool calls: MCP client / LEX runner / RubyLLM builtin
+│   ├── AuditPublisher # Publishes audit events to llm.audit exchange
+│   ├── EnrichmentInjector # Converts RAG/GAIA enrichments into system prompt
+│   └── Steps/       # All 18+ pipeline step modules
+├── Router                               # Dynamic weighted routing engine
+│   ├── Resolution   # Value object: tier, provider, model, rule name, metadata, compress_level
+│   ├── Rule         # Routing rule: intent matching, schedule windows, constraints
+│   ├── HealthTracker # Circuit breaker, latency rolling window, pluggable signal handlers
+│   ├── EscalationChain # Ordered fallback resolution chain with max_attempts cap
+│   ├── Arbitrage    # Cost-aware model selection when no rules match
+│   └── Escalation/
+│       └── History  # EscalationHistory mixin
+├── Fleet                                # Fleet RPC dispatch over AMQP (built-in)
+│   ├── Dispatcher   # Fleet RPC dispatch with routing key building, per-type timeouts
+│   ├── Handler      # Fleet request handler for GPU worker nodes
+│   └── ReplyDispatcher # Correlation-based reply routing
+├── API                                  # All external HTTP interfaces
+│   ├── Auth         # Config-driven Bearer/x-api-key auth for /v1/ routes
+│   ├── Native/
+│   │   ├── Inference  # POST /api/llm/inference
+│   │   ├── Chat       # POST /api/llm/chat
+│   │   ├── Providers  # GET /api/llm/providers, GET /api/llm/providers/:name
+│   │   └── Helpers    # Shared: parse_request_body, json_response, emit_sse_event
+│   ├── OpenAI/
+│   │   ├── ChatCompletions # POST /v1/chat/completions (streaming via data: [DONE])
+│   │   ├── Models          # GET /v1/models, GET /v1/models/:id
+│   │   └── Embeddings      # POST /v1/embeddings
+│   ├── Anthropic/
+│   │   └── Messages        # POST /v1/messages (streaming via message_start/stop events)
+│   └── Translators/
+│       ├── OpenAIRequest / OpenAIResponse
+│       └── AnthropicRequest / AnthropicResponse
+├── Audit                                # Prompt, tool, and skill audit event emission
+├── Transport                            # Centralized AMQP exchange and message definitions
+│   ├── Message      # LLM base message: context propagation, LLM headers
+│   ├── Exchanges/   # Fleet, Metering, Audit, Escalation
+│   └── Messages/    # FleetRequest, FleetResponse, FleetError, MeteringEvent, etc.
+├── Scheduling                           # Deferred execution
+│   ├── Batch        # Non-urgent request batching with priority queue and auto-flush
+│   └── OffPeak      # Peak-hour deferral
+├── Tools                                # Tool call layer
+│   ├── Confidence   # 4-tier degrading confidence storage
+│   ├── Dispatcher   # Routes tool calls to MCP/LEX/RubyLLM
+│   ├── Interceptor  # Extensible pre-dispatch intercept registry
+│   └── Adapter      # Wraps lex-* extension tool as RubyLLM::Tool
+├── Hooks                                # Before/after chat interceptor registry
+│   ├── RagGuard, ResponseGuard, BudgetGuard, Reflection
+├── Cache                                # Application-level response caching
+│   └── Response     # Async delivery via memcached with spool overflow at 8MB
+├── Skills                               # Daemon-side skill execution subsystem
+│   ├── Base, Registry, Steps::SkillInjector
+└── Helper           # Extension helper mixin (llm_chat, llm_embed, llm_session, compress:)
+```
+
 ## Usage in Extensions
 
 Any LEX extension can use LLM capabilities. The gem provides helper methods that are auto-loaded when legion-llm is present.
@@ -296,12 +487,12 @@ session.with_tools(CodeAnalyzer, SecurityScanner)
 response = session.ask("Review this PR: #{diff}")
 ```
 
-### Unified Pipeline
+### Inference Pipeline
 
-`Legion::LLM.chat` calls that include `message:` or `messages:` flow through a multi-step request/response pipeline when `pipeline_enabled` is `true` (the default). Session-construction calls such as `Legion::LLM.chat(model: ..., provider: ...)` return a raw `RubyLLM::Chat` and do not enter the pipeline. The pipeline handles RBAC, classification, RAG context retrieval, MCP tool discovery, metering, billing, audit, and GAIA advisory in a consistent sequence. Steps are skipped based on the caller profile (`:external`, `:gaia`, `:system`).
+`Legion::LLM.chat` calls that include `message:` or `messages:` flow through `Legion::LLM::Inference`, an 18-step request/response pipeline. Session-construction calls such as `Legion::LLM.chat(model: ..., provider: ...)` return a raw `RubyLLM::Chat` and do not enter the pipeline. The pipeline handles RBAC, classification, RAG context retrieval, MCP tool discovery, metering, billing, audit, and GAIA advisory in a consistent sequence. Steps are skipped based on the caller profile (`:external`, `:gaia`, `:system`).
 
 ```ruby
-# Request-shaped calls enter the pipeline by default
+# Request-shaped calls enter the pipeline
 result = Legion::LLM.chat(message: "hello")
 
 # Session creation does not
@@ -333,7 +524,7 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 │          Zero network overhead, no Transport              │
 │                                                          │
 │  Tier 2: FLEET  → Ollama on Mac Studios / GPU servers    │
-│          Via lex-llm-gateway RPC over AMQP               │
+│          Built-in Fleet RPC over AMQP                     │
 │                                                          │
 │  Tier 3: CLOUD  → Bedrock / Anthropic / OpenAI / Gemini │
 │          Existing provider API calls                     │
@@ -343,8 +534,10 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 | Tier | Target | Use Case |
 |------|--------|----------|
 | `local` | Ollama on localhost | Privacy-sensitive, offline, or low-latency workloads |
-| `fleet` | Shared hardware via lex-llm-gateway (AMQP) | Larger models on dedicated GPU servers |
+| `fleet` | Shared hardware via built-in Fleet dispatcher (AMQP) | Larger models on dedicated GPU servers |
 | `cloud` | API providers (Bedrock, Anthropic, OpenAI, Gemini) | Frontier models, full-capability inference |
+
+Fleet dispatch is built into legion-llm. The `Fleet::Dispatcher` publishes requests to `llm.request.{provider}.{type}.{model}` and `Fleet::Handler` processes them on GPU worker nodes. No external extension required.
 
 #### Intent-Based Dispatch
 
@@ -559,7 +752,7 @@ llm:
 
 ### Prompt Compression
 
-`Legion::LLM::Compressor` strips low-signal words from prompts before sending to the API, reducing input token count and cost. Compression is deterministic (same input always produces the same output), preserving prompt caching compatibility.
+`Legion::LLM::Context::Compressor` strips low-signal words from prompts before sending to the API, reducing input token count and cost. Compression is deterministic (same input always produces the same output), preserving prompt caching compatibility.
 
 #### Levels
 
@@ -576,7 +769,7 @@ Code blocks (fenced and inline) are never modified. Negation words are never rem
 
 ```ruby
 # Direct API
-text = Legion::LLM::Compressor.compress("The very important system prompt", level: 2)
+text = Legion::LLM::Context::Compressor.compress("The very important system prompt", level: 2)
 
 # Via llm_chat helper (compresses both message and instructions)
 result = llm_chat("Analyze the data", instructions: "Be very concise", compress: 2)
@@ -624,6 +817,29 @@ module Legion::Extensions::SmartAlerts::Runners
 end
 ```
 
+## Backward Compatibility
+
+v0.8.0 reorganizes modules extensively. All old constant names continue to work via `lib/legion/llm/compat.rb`, which uses `const_missing` to resolve old names to new locations and emits a deprecation warning on first access.
+
+Key aliases:
+
+| Old Name | New Name |
+|----------|----------|
+| `Legion::LLM::Pipeline` | `Legion::LLM::Inference` |
+| `Legion::LLM::ConversationStore` | `Legion::LLM::Inference::Conversation` |
+| `Legion::LLM::NativeDispatch` | `Legion::LLM::Call::Dispatch` |
+| `Legion::LLM::ProviderRegistry` | `Legion::LLM::Call::Registry` |
+| `Legion::LLM::CostEstimator` | `Legion::LLM::Metering::Pricing` |
+| `Legion::LLM::CostTracker` | `Legion::LLM::Metering::Recorder` |
+| `Legion::LLM::TokenTracker` | `Legion::LLM::Metering::Tokens` |
+| `Legion::LLM::QualityChecker` | `Legion::LLM::Quality::Checker` |
+| `Legion::LLM::Compressor` | `Legion::LLM::Context::Compressor` |
+| `Legion::LLM::ResponseCache` | `Legion::LLM::Cache::Response` |
+| `Legion::LLM::DaemonClient` | `Legion::LLM::Call::DaemonClient` |
+| `Legion::LLM::ShadowEval` | `Legion::LLM::Quality::ShadowEval` |
+
+No code changes are needed in consumers immediately. The aliases will be maintained for at least one major version.
+
 ## Providers
 
 | Provider | Config Key | Credential Source | Notes |
@@ -665,7 +881,7 @@ bundle exec rspec
 
 ### Running Tests
 
-Tests use stubbed `Legion::Logging` and `Legion::Settings` modules (no need for the full LegionIO stack):
+Tests run against real `Legion::Logging` and `Legion::Settings` implementations (hard dependencies, never stubbed). Each test resets settings to defaults via `before(:each)`. No full LegionIO stack required.
 
 ```bash
 bundle exec rspec                              # Run all tests
@@ -680,8 +896,8 @@ bundle exec rspec spec/legion/llm/router_spec.rb  # Router tests only
 |-----|---------|
 | `ruby_llm` (>= 1.0) | Multi-provider LLM client |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
-| `legion-logging` | Logging |
-| `legion-settings` | Configuration |
+| `legion-logging` | Logging (hard dependency) |
+| `legion-settings` | Configuration (hard dependency) |
 
 ## License
 
