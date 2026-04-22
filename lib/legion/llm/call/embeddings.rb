@@ -9,30 +9,6 @@ module Legion
       module Embeddings
         extend Legion::Logging::Helper
 
-        PROVIDER_EMBEDDING_MODELS = {
-          bedrock:   'amazon.titan-embed-text-v2:0',
-          anthropic: nil,
-          openai:    'text-embedding-3-small',
-          gemini:    'text-embedding-004',
-          azure:     'text-embedding-3-small',
-          ollama:    'mxbai-embed-large'
-        }.freeze
-
-        TARGET_DIMENSION = 1024
-
-        OLLAMA_CONTEXT_CHARS = {
-          'mxbai-embed-large'      => 1400,
-          'bge-large'              => 1400,
-          'snowflake-arctic-embed' => 1400,
-          'nomic-embed-text'       => 24_000
-        }.freeze
-        OLLAMA_DEFAULT_CONTEXT_CHARS = 1400
-
-        PREFIX_REGISTRY = {
-          'nomic-embed-text'  => { document: 'search_document: ', query: 'search_query: ' },
-          'mxbai-embed-large' => { query: 'Represent this sentence for searching relevant passages: ' }
-        }.freeze
-
         class << self
           def generate(text:, model: nil, provider: nil, dimensions: nil, task: :document)
             return { vector: nil, model: model, provider: provider, error: 'LLM not started' } unless LLM.started?
@@ -117,7 +93,7 @@ module Legion
           end
 
           def build_opts(model, provider, dimensions)
-            target_dim = enforce_dimension? ? TARGET_DIMENSION : dimensions
+            target_dim = enforce_dimension? ? target_dimension : dimensions
             opts = { model: model }
             opts[:provider]   = provider if provider
             opts[:dimensions] = target_dim if target_dim && provider&.to_sym == :openai
@@ -145,10 +121,11 @@ module Legion
           end
 
           def enforce_dimensions(vector, _provider)
-            return vector if vector.size == TARGET_DIMENSION
-            return vector.first(TARGET_DIMENSION) if vector.size > TARGET_DIMENSION
+            dim = target_dimension
+            return vector if vector.size == dim
+            return vector.first(dim) if vector.size > dim
 
-            "got #{vector.size}, need #{TARGET_DIMENSION} (provider cannot upscale)"
+            "got #{vector.size}, need #{dim} (provider cannot upscale)"
           end
 
           def handle_embed_failure(error, text:, failed_provider:, failed_model:)
@@ -210,9 +187,6 @@ module Legion
             pm = models[provider&.to_sym] || models[provider.to_s]
             return pm.to_s if pm
 
-            provider_default = PROVIDER_EMBEDDING_MODELS[provider&.to_sym] if provider
-            return provider_default if provider_default
-
             'text-embedding-3-small'
           end
 
@@ -220,7 +194,8 @@ module Legion
             return text unless prefix_injection_enabled?
 
             base_model = model.to_s.split(':').first
-            prefixes   = PREFIX_REGISTRY[base_model]
+            registry   = embedding_settings[:prefix_registry] || {}
+            prefixes   = registry[base_model]
             return text unless prefixes
 
             prefix = prefixes[task.to_sym]
@@ -279,10 +254,14 @@ module Legion
           end
 
           def embedding_settings
-            Legion::Settings.dig(:llm, :embedding) || {}
+            Legion::LLM.settings[:embedding] || {}
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.embeddings.embedding_settings')
             {}
+          end
+
+          def target_dimension
+            embedding_settings[:dimension] || 1024
           end
 
           def generate_ollama(text:, model:)
@@ -359,8 +338,9 @@ module Legion
           end
 
           def ollama_context_chars(model)
-            base = model.to_s.split(':').first
-            OLLAMA_CONTEXT_CHARS[base] || OLLAMA_DEFAULT_CONTEXT_CHARS
+            base     = model.to_s.split(':').first
+            context  = embedding_settings[:ollama_context_chars] || {}
+            context[base] || embedding_settings[:ollama_default_context_chars] || 1400
           end
 
           # ── Azure OpenAI (direct HTTP with SNI, bypasses ruby_llm) ──
@@ -416,7 +396,7 @@ module Legion
             req['Content-Type'] = 'application/json'
             req['api-key'] = api_key
             body = { input: input }
-            body[:dimensions] = dimensions || TARGET_DIMENSION
+            body[:dimensions] = dimensions || target_dimension
             req.body = ::JSON.dump(body)
 
             response = http.request(req)

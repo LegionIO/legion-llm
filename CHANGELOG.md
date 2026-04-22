@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.8.7] - 2026-04-22
+
+### Changed
+- Eliminated scattered constants and duplicate settings files across the codebase:
+  - `Skills::Settings` module deleted — defaults moved into `Legion::LLM::Settings.skills_defaults`; `Skills.start` no longer calls `Settings.apply` (merge happens at load time via the standard settings bootstrap)
+  - `Fleet::Dispatcher` `DEFAULT_TIMEOUT`/`TIMEOUTS` constants removed — `resolve_timeout` now reads directly from `Legion::LLM.settings.dig(:routing, :tiers, :fleet, :timeouts, ...)`; dead `defined?(Legion::Settings)` guard removed
+  - `Call::Embeddings` `PROVIDER_EMBEDDING_MODELS`, `TARGET_DIMENSION`, `OLLAMA_CONTEXT_CHARS`, `OLLAMA_DEFAULT_CONTEXT_CHARS`, `PREFIX_REGISTRY` constants removed — replaced with `target_dimension`/`embedding_settings` helpers reading from `settings[:embedding]`; `embedding_settings` corrected to use `Legion::LLM.settings` instead of bare `Legion::Settings.dig(:llm, :embedding)`
+  - `Cache::Response` `DEFAULT_TTL`, `SPOOL_THRESHOLD`, `SPOOL_DIR` constants removed — replaced with private `default_ttl`/`spool_threshold`/`spool_dir` helpers reading from `settings[:prompt_caching][:response_cache]`
+- `Settings.embedding_defaults` expanded: added `anthropic`/`gemini` to `provider_models`, added `ollama_context_chars`, `ollama_default_context_chars`, `prefix_registry`
+- `Settings.prompt_caching_defaults.response_cache` gains `spool_threshold_bytes: 8MB`
+
 ## [0.8.6] - 2026-04-22
 
 ### Changed

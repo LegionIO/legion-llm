@@ -38,7 +38,8 @@ module Legion
           provider_layer:            provider_layer_defaults,
           tool_trigger:              tool_trigger_defaults,
           api:                       api_defaults,
-          compliance:                compliance_defaults
+          compliance:                compliance_defaults,
+          skills:                    skills_defaults
         }
       end
 
@@ -94,9 +95,10 @@ module Legion
           cache_conversation:  true,
           sort_tools:          true,
           response_cache:      {
-            enabled:     true,
-            ttl_seconds: 300,
-            spool_dir:   '~/.legionio/data/spool/llm_responses'
+            enabled:               true,
+            ttl_seconds:           300,
+            spool_dir:             '~/.legionio/data/spool/llm_responses',
+            spool_threshold_bytes: 8 * 1024 * 1024
           }
         }
       end
@@ -203,16 +205,29 @@ module Legion
 
       def self.embedding_defaults
         {
-          dimension:         1024,
-          enforce_dimension: true,
-          provider_fallback: %w[ollama bedrock openai],
-          provider_models:   {
-            ollama:  'mxbai-embed-large',
-            azure:   'text-embedding-3-small',
-            bedrock: 'amazon.titan-embed-text-v2:0',
-            openai:  'text-embedding-3-small'
+          dimension:                  1024,
+          enforce_dimension:          true,
+          provider_fallback:          %w[ollama bedrock openai],
+          provider_models:            {
+            bedrock:   'amazon.titan-embed-text-v2:0',
+            anthropic: nil,
+            openai:    'text-embedding-3-small',
+            gemini:    'text-embedding-004',
+            azure:     'text-embedding-3-small',
+            ollama:    'mxbai-embed-large'
           },
-          ollama_preferred:  %w[mxbai-embed-large nomic-embed-text bge-large snowflake-arctic-embed]
+          ollama_preferred:           %w[mxbai-embed-large nomic-embed-text bge-large snowflake-arctic-embed],
+          ollama_context_chars:       {
+            'mxbai-embed-large'      => 1400,
+            'bge-large'              => 1400,
+            'snowflake-arctic-embed' => 1400,
+            'nomic-embed-text'       => 24_000
+          },
+          ollama_default_context_chars: 1400,
+          prefix_registry:            {
+            'nomic-embed-text'  => { document: 'search_document: ', query: 'search_query: ' },
+            'mxbai-embed-large' => { query: 'Represent this sentence for searching relevant passages: ' }
+          }
         }
       end
 
@@ -282,6 +297,19 @@ module Legion
             api_keys:     [],
             pass_through: false
           }
+        }
+      end
+
+      def self.skills_defaults
+        {
+          enabled:           true,
+          auto_inject:       true,
+          on_demand:         true,
+          max_active_skills: 1,
+          directories:       ['.legion/skills', '~/.legionio/skills'],
+          auto_discover:     { claude: false, codex: false },
+          enabled_skills:    [],
+          disabled_skills:   []
         }
       end
 

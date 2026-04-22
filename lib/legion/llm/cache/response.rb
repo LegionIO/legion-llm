@@ -10,28 +10,21 @@ module Legion
       module Response
         extend Legion::Logging::Helper
 
-        DEFAULT_TTL      = 300
-        SPOOL_THRESHOLD  = 8 * 1024 * 1024 # 8 MB
-        SPOOL_DIR        = File.expand_path('~/.legionio/data/spool/llm_responses').freeze
-
         module_function
 
-        # Sets status to :pending for a new request.
-        def init_request(request_id, ttl: DEFAULT_TTL)
+        def init_request(request_id, ttl: default_ttl)
           cache_set(status_key(request_id), 'pending', ttl)
         end
 
-        # Writes response, meta, and marks status as :done.
-        def complete(request_id, response:, meta:, ttl: DEFAULT_TTL)
+        def complete(request_id, response:, meta:, ttl: default_ttl)
           write_response(request_id, response, ttl)
-          cache_set(meta_key(request_id), ::JSON.dump(meta), ttl)
+          cache_set(meta_key(request_id), Legion::JSON.dump(meta), ttl)
           cache_set(status_key(request_id), 'done', ttl)
         end
 
-        # Writes error details and marks status as :error.
-        def fail_request(request_id, code:, message:, ttl: DEFAULT_TTL)
+        def fail_request(request_id, code:, message:, ttl: default_ttl)
           log.warn("ResponseCache fail_request request_id=#{request_id} code=#{code} message=#{message}")
-          payload = ::JSON.dump({ code: code, message: message })
+          payload = Legion::JSON.dump({ code: code, message: message })
           cache_set(error_key(request_id), payload, ttl)
           cache_set(status_key(request_id), 'error', ttl)
         end
@@ -67,9 +60,7 @@ module Legion
           ::JSON.parse(raw, symbolize_names: true)
         end
 
-        # Blocking poll. Returns { status: :done, response:, meta: },
-        # { status: :error, error: }, or { status: :timeout }.
-        def poll(request_id, timeout: DEFAULT_TTL, interval: 0.1)
+        def poll(request_id, timeout: default_ttl, interval: 0.1)
           deadline = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) + timeout
 
           loop do
@@ -124,18 +115,21 @@ module Legion
           Legion::Cache.set(key, value, ttl)
         end
 
-        private_class_method def self.spool_dir
-          configured = if defined?(Legion::Settings) && Legion::Settings.respond_to?(:dig)
-                         Legion::Settings.dig(:llm, :prompt_caching, :response_cache, :spool_dir)
-                       end
-          configured = configured.to_s.strip
-          return SPOOL_DIR if configured.empty?
+        private_class_method def self.default_ttl
+          Legion::LLM.settings.dig(:prompt_caching, :response_cache, :ttl_seconds) || 300
+        end
 
-          File.expand_path(configured)
+        private_class_method def self.spool_threshold
+          Legion::LLM.settings.dig(:prompt_caching, :response_cache, :spool_threshold_bytes) || 8 * 1024 * 1024
+        end
+
+        private_class_method def self.spool_dir
+          configured = Legion::LLM.settings.dig(:prompt_caching, :response_cache, :spool_dir).to_s.strip
+          configured.empty? ? File.expand_path('~/.legionio/data/spool/llm_responses') : File.expand_path(configured)
         end
 
         private_class_method def self.write_response(request_id, response_text, ttl)
-          if response_text.bytesize > SPOOL_THRESHOLD
+          if response_text.bytesize > spool_threshold
             log.warn("ResponseCache spool overflow request_id=#{request_id} bytes=#{response_text.bytesize}")
             FileUtils.mkdir_p(spool_dir)
             path = File.join(spool_dir, "#{request_id}.txt")
