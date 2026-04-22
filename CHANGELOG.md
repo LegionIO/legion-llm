@@ -4,7 +4,7 @@
 
 ## [0.7.16] - 2026-04-22
 
-### Changed
+### Internal
 - `Legion::LLM.provider_supports_embeddings?` no longer hardcodes `:bedrock` as unsupported. Bedrock does expose embedding models (`PROVIDER_EMBEDDING_MODELS` already ships `bedrock: amazon.titan-embed-text-v2:0`); the hardcoded exclusion masked the real gap — the `Bedrock` provider class does not yet implement `render_embedding_payload`. Behavior is byte-identical today (the `instance_method` probe still falls through to `rescue NameError` → `false`), but once a sibling contribution adds `render_embedding_payload` to the Bedrock provider, Bedrock will be detected as embedding-capable with no further change required here. `:anthropic` stays hardcoded-false because its native API has no embedding endpoint. Adds `spec/legion/llm/provider_supports_embeddings_spec.rb` covering each provider class.
 
 ## [0.7.15] - 2026-04-20
