@@ -514,6 +514,7 @@ module Legion
         log.debug '[llm][inference] chat_single asking session'
         response = block ? session.ask(message, &block) : session.ask(message)
         log.debug "[llm][inference] chat_single response_class=#{response.class} response_nil=#{response.nil?}"
+        emit_non_pipeline_metering(response, model: opts[:model], provider: opts[:provider])
 
         if response && !block && defined?(Quality::ShadowEval) && Quality::ShadowEval.enabled?
           msgs = session.respond_to?(:messages) ? session.messages : nil
@@ -711,6 +712,19 @@ module Legion
         esc.fetch(:quality_threshold, 50)
       end
 
+      def emit_non_pipeline_metering(response, model:, provider:)
+        return unless response
+
+        input  = response.respond_to?(:input_tokens)  ? response.input_tokens.to_i  : 0
+        output = response.respond_to?(:output_tokens) ? response.output_tokens.to_i : 0
+        Legion::LLM::Metering.emit(
+          provider: provider, model_id: model, request_type: 'chat',
+          tier: 'direct', input_tokens: input, output_tokens: output, total_tokens: input + output
+        )
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.inference.non_pipeline_metering')
+      end
+
       def enterprise_privacy?
         if Legion.const_defined?('Settings', false) && Legion::Settings.respond_to?(:enterprise_privacy?)
           Legion::Settings.enterprise_privacy?
@@ -719,9 +733,21 @@ module Legion
         end
       end
 
+      def emit_privacy_blocked_audit
+        Legion::LLM::Audit.emit_prompt(
+          request_id: nil, conversation_id: nil, caller: nil,
+          routing: {}, tokens: {}, status: 'privacy_blocked',
+          error: { class: 'PrivacyModeError', message: 'External tiers blocked by enterprise privacy' },
+          timestamp: Time.now, request_type: 'chat'
+        )
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.inference.emit_privacy_blocked_audit')
+      end
+
       def assert_external_allowed!
         return unless enterprise_privacy?
 
+        emit_privacy_blocked_audit
         raise Legion::LLM::PrivacyModeError,
               'External LLM tiers are disabled: enterprise_data_privacy is enabled. ' \
               'Only local and fleet tiers are permitted.'

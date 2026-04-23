@@ -13,10 +13,12 @@ module Legion
           def generate(messages:, schema:, model: nil, provider: nil, **)
             model ||= Legion::LLM.settings[:default_model]
             result = call_with_schema(messages, schema, model, provider: provider, **)
+            log.info "[llm][structured_output] model=#{model} provider=#{provider} valid=true"
 
             parsed = Legion::JSON.load(result[:content])
             { data: parsed, raw: result[:content], model: result[:model], valid: true }
           rescue ::JSON::ParserError => e
+            log.warn "[llm][structured_output] model=#{model} provider=#{provider} parse_error=#{e.message}"
             handle_parse_error(e, messages, schema, model, provider, result, **)
           end
 

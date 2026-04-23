@@ -371,19 +371,23 @@ module Legion
           rescue RubyLLM::RateLimitError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.rate_limit',
                               provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'rate_limited')
             raise Legion::LLM::RateLimitError, e.message
           rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
                  Faraday::ServerError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_error',
                               provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'provider_error')
             raise Legion::LLM::ProviderError, e.message
           rescue Faraday::TooManyRequestsError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.http_rate_limit',
                               provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'rate_limited')
             raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
           rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_down',
                               provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'provider_down')
             raise Legion::LLM::ProviderDown, e.message
           end
         end
@@ -412,7 +416,13 @@ module Legion
             record_escalation_failure(e, resolution, start_time, outcome:   :error,
                                                                  operation: 'llm.pipeline.escalation_attempt')
           end
-          raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed" unless succeeded
+          return if succeeded
+
+          emit_error_audit(
+            EscalationExhausted.new("All #{@escalation_history.size} attempts failed"),
+            status: 'escalation_exhausted'
+          )
+          raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed"
         end
 
         def attempt_escalation(resolution, threshold, quality_check, start_time)
@@ -567,6 +577,23 @@ module Legion
           error.response[:headers]&.fetch('retry-after', nil)&.to_i
         end
 
+        def emit_error_audit(error, status:, provider: @resolved_provider, model: @resolved_model)
+          Legion::LLM::Audit.emit_prompt(
+            request_id:      @request.id,
+            conversation_id: @request.conversation_id,
+            caller:          @request.caller,
+            routing:         { provider: provider, model: model },
+            tokens:          {},
+            status:          status,
+            error:           { class: error.class.name, message: error.message },
+            tracing:         @tracing,
+            timestamp:       Time.now,
+            request_type:    'chat'
+          )
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_error_audit')
+        end
+
         def execute_pre_provider_steps
           PRE_PROVIDER_STEPS.each do |step|
             next if Profile.skip?(@profile, step)
@@ -645,19 +672,23 @@ module Legion
           rescue RubyLLM::RateLimitError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.rate_limit',
                               provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'rate_limited')
             raise Legion::LLM::RateLimitError, e.message
           rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
                  Faraday::ServerError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_error',
                               provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'provider_error')
             raise Legion::LLM::ProviderError, e.message
           rescue Faraday::TooManyRequestsError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.http_rate_limit',
                               provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'rate_limited')
             raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
           rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_down',
                               provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'provider_down')
             raise Legion::LLM::ProviderDown, e.message
           end
         end
@@ -1034,7 +1065,9 @@ module Legion
             request_type:  'chat',
             input_tokens:  input_tokens,
             output_tokens: output_tokens,
-            latency_ms:    latency_ms
+            latency_ms:    latency_ms,
+            request_id:    @request.id,
+            caller:        @request.caller
           )
           Steps::Metering.publish_or_spool(event)
         rescue StandardError => e
