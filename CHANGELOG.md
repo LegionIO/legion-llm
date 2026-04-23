@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.23] - 2026-04-23
+
+### Fixed
+- `Call::StructuredOutput` prompt-fallback path passed `messages:` (plural) to `chat_single` which only accepts `message:` (singular), leaking the unknown kwarg into `RubyLLM::Chat.new`. Visible as repeated "unknown keyword: :messages" warnings during dream cycle contradiction detection. Flattened instruction + messages into a single string via `extract_user_content`.
+
 ## [0.8.22] - 2026-04-22
 
 ### Fixed
