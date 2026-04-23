@@ -1,5 +1,24 @@
 # Legion LLM Changelog
 
+## [0.8.16] - 2026-04-22
+
+### Fixed
+- `RubyLLM::BadRequestError` (HTTP 400) and `RubyLLM::ContextLengthExceededError` now trigger the provider fallback-retry chain instead of bubbling up as unhandled 500s. Both `run_provider_call_single` and `step_provider_call_stream` retry on the next available provider before giving up.
+- Resolved provider/model is now logged (`log.info`) in `step_routing` so provider errors can be diagnosed from daemon logs without relying on SSE done events.
+
+### Changed
+- Extracted `try_fallback_or_raise` helper from duplicated retry logic in both rescue chains, reducing the auth/bad-request/context-overflow fallback pattern to a single call each.
+
+## [0.8.15] - 2026-04-22
+
+### Changed
+- **5-tier routing model**: restructured from 3 tiers (local/fleet/cloud) to 5 tiers (local/fleet/openai_compat/cloud/frontier). Anthropic and OpenAI are now `:frontier` (direct API); Bedrock, Azure, Gemini are `:cloud` (managed providers). New `:openai_compat` tier for user-configured OpenAI-spec gateways.
+- `Resolution`: added `frontier?`, `openai_compat?`, and `external?` predicates.
+- `TierAssigner`: `user:*` and critical/high priority requests route to `:frontier` instead of `:cloud`.
+- `GatewayInterceptor`: intercepts both `:cloud` and `:frontier` tiers, preserving original tier.
+- Privacy enforcement (`assert_external_allowed!`) blocks all external tiers (cloud + frontier + openai_compat), not just cloud. `never_cloud` constraint now blocks both `:cloud` and `:frontier`. New `never_external` constraint blocks all three external tiers.
+- `resolve_chain` fallback defaults changed from `:cloud`/`:bedrock` to `:frontier`/`:anthropic`.
+
 ## [0.8.13] - 2026-04-22
 
 ### Fixed
