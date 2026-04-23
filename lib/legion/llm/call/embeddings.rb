@@ -464,7 +464,8 @@ module Legion
           def emit_embedding_metering(provider:, model:, tokens:)
             caller = begin
               Legion::LLM.settings[:caller]
-            rescue StandardError
+            rescue StandardError => e
+              handle_exception(e, level: :debug, operation: 'llm.embeddings.metering.caller')
               nil
             end
             Legion::LLM::Metering.emit(
