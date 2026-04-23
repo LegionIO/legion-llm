@@ -42,7 +42,7 @@ module Legion
               tools = raw_tools || []
               validate_tools!(tools) unless tools.empty?
 
-              caller_identity = env['legion.tenant_id'] || 'api:inference'
+              caller_identity = resolve_caller_identity(env)
               last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
               prompt    = (last_user || {})[:content] || (last_user || {})['content'] || ''
 
@@ -79,7 +79,7 @@ module Legion
               server_caller_fields = {
                 source:       'api',
                 path:         request.path,
-                requested_by: { identity: caller_identity, type: :user, credential: :api }
+                requested_by: resolve_requested_by(env, caller_identity)
               }
               effective_caller = server_caller_fields.merge(safe_caller_fields)
               caller_summary = [effective_caller[:source], effective_caller[:path]].compact.join(':')

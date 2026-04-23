@@ -326,6 +326,58 @@ module Legion
                 end
               end
 
+              define_method(:resolve_caller_identity) do |rack_env|
+                return rack_env['legion.tenant_id'] if rack_env['legion.tenant_id']
+
+                kerb = begin
+                  Legion::Settings.dig(:kerberos, :username)
+                rescue StandardError
+                  nil
+                end
+                return "user:#{kerb}" if kerb.is_a?(String) && !kerb.empty?
+
+                principal = rack_env['legion.principal']
+                return "user:#{principal.canonical_name}" if principal.respond_to?(:canonical_name) && principal.canonical_name != 'system'
+
+                if defined?(Legion::Identity::Process)
+                  name = Legion::Identity::Process.canonical_name
+                  return "user:#{name}" if name && name != 'anonymous'
+                end
+
+                raw = ENV.fetch('USER', nil) || ENV.fetch('LOGNAME', nil) || 'anonymous'
+                username = raw.include?('@') ? raw.split('@').first : raw
+                "user:#{username}"
+              end
+
+              define_method(:resolve_requested_by) do |rack_env, identity_string|
+                hostname = begin
+                  Legion::Settings[:client][:hostname]
+                rescue StandardError
+                  Socket.gethostname
+                end
+                username = identity_string.delete_prefix('user:')
+
+                kerb = begin
+                  Legion::Settings.dig(:kerberos, :username)
+                rescue StandardError
+                  nil
+                end
+                if kerb.is_a?(String) && !kerb.empty?
+                  return { identity: identity_string, type: :user, credential: :kerberos,
+                           username: kerb, hostname: hostname }
+                end
+
+                principal = rack_env['legion.principal']
+                if principal.respond_to?(:canonical_name) && principal.canonical_name != 'system'
+                  return { identity: identity_string, type: principal.kind || :user,
+                           credential: principal.source || :local,
+                           username: principal.canonical_name, hostname: hostname }
+                end
+
+                { identity: identity_string, type: :user, credential: :local,
+                  username: username, hostname: hostname }
+              end
+
               define_method(:token_value) do |tokens, key|
                 return nil if tokens.nil?
                 return tokens[key] || tokens[key.to_s] if tokens.is_a?(Hash)

@@ -331,6 +331,7 @@ module Legion
           @resolved_provider = provider || Legion::LLM.settings[:default_provider]
           @resolved_model = model || Legion::LLM.settings[:default_model]
 
+          log.info "[llm][inference] resolved provider=#{@resolved_provider} model=#{@resolved_model}"
           @timeline.record(
             category: :audit, key: 'routing:provider_selection',
             direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
@@ -356,38 +357,17 @@ module Legion
             execute_provider_request
           rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError,
                  Faraday::UnauthorizedError, Faraday::ForbiddenError => e
-            providers_tried << @resolved_provider
-            fallback = find_fallback_provider(exclude: providers_tried)
-            handle_exception(
-              e,
-              level:             :warn,
-              operation:         'llm.pipeline.provider_call.auth',
-              provider:          @resolved_provider,
-              model:             @resolved_model,
-              fallback_provider: fallback&.dig(:provider)
-            )
-            if fallback
-              log.warn "[pipeline] #{@resolved_provider} auth failed (#{e.class}), falling back to #{fallback[:provider]}:#{fallback[:model]}"
-              from_provider = @resolved_provider
-              from_model = @resolved_model
-              @resolved_provider = fallback[:provider]
-              @resolved_model = fallback[:model]
-              @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
-              @tool_event_handler&.call(
-                type: :model_fallback,
-                from_provider: from_provider, to_provider: @resolved_provider,
-                from_model: from_model, to_model: @resolved_model,
-                error: e.message, reason: 'auth_failed'
-              )
-              @timeline.record(
-                category: :provider, key: 'provider:fallback',
-                direction: :internal,
-                detail: "auth failed on #{providers_tried.last}, trying #{@resolved_provider}",
-                from: 'pipeline', to: "provider:#{@resolved_provider}"
-              )
-              retry
-            end
-            raise Legion::LLM::AuthError, e.message
+            try_fallback_or_raise(e, providers_tried, operation: 'provider_call.auth',
+                                                      reason: 'auth_failed', error_class: Legion::LLM::AuthError)
+            retry
+          rescue RubyLLM::ContextLengthExceededError => e
+            try_fallback_or_raise(e, providers_tried, operation: 'provider_call.context_overflow',
+                                                      reason: 'context_overflow', error_class: Legion::LLM::ContextOverflow)
+            retry
+          rescue RubyLLM::BadRequestError => e
+            try_fallback_or_raise(e, providers_tried, operation: 'provider_call.bad_request',
+                                                      reason: 'bad_request', error_class: Legion::LLM::ProviderError)
+            retry
           rescue RubyLLM::RateLimitError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.rate_limit',
                               provider: @resolved_provider, model: @resolved_model)
@@ -651,33 +631,17 @@ module Legion
             execute_provider_request_stream(&)
           rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError,
                  Faraday::UnauthorizedError, Faraday::ForbiddenError => e
-            providers_tried << @resolved_provider
-            fallback = find_fallback_provider(exclude: providers_tried)
-            handle_exception(
-              e,
-              level:             :warn,
-              operation:         'llm.pipeline.provider_call_stream.auth',
-              provider:          @resolved_provider,
-              model:             @resolved_model,
-              fallback_provider: fallback&.dig(:provider)
-            )
-            if fallback
-              log.warn "[pipeline] #{@resolved_provider} stream auth failed (#{e.class}), " \
-                       "falling back to #{fallback[:provider]}:#{fallback[:model]}"
-              from_provider = @resolved_provider
-              from_model = @resolved_model
-              @resolved_provider = fallback[:provider]
-              @resolved_model = fallback[:model]
-              @warnings << { type: :provider_fallback, original_error: e.message, fallback: "#{@resolved_provider}:#{@resolved_model}" }
-              @tool_event_handler&.call(
-                type: :model_fallback,
-                from_provider: from_provider, to_provider: @resolved_provider,
-                from_model: from_model, to_model: @resolved_model,
-                error: e.message, reason: 'auth_failed'
-              )
-              retry
-            end
-            raise Legion::LLM::AuthError, e.message
+            try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.auth',
+                                                      reason: 'auth_failed', error_class: Legion::LLM::AuthError)
+            retry
+          rescue RubyLLM::ContextLengthExceededError => e
+            try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.context_overflow',
+                                                      reason: 'context_overflow', error_class: Legion::LLM::ContextOverflow)
+            retry
+          rescue RubyLLM::BadRequestError => e
+            try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.bad_request',
+                                                      reason: 'bad_request', error_class: Legion::LLM::ProviderError)
+            retry
           rescue RubyLLM::RateLimitError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.rate_limit',
                               provider: @resolved_provider, model: @resolved_model)
@@ -728,7 +692,14 @@ module Legion
           session = RubyLLM.chat(**ruby_llm_chat_options)
 
           inject_ruby_llm_tools(session)
-          apply_ruby_llm_instructions(session)
+          system_prompt = apply_ruby_llm_instructions(session)
+
+          @audit[:provider_payload] = {
+            system_prompt:  system_prompt,
+            injected_tools: @injected_tool_map.keys,
+            tool_count:     @injected_tool_map.size,
+            timestamp:      Time.now
+          }
 
           messages = apply_conversation_breakpoint(@request.messages)
           add_ruby_llm_prior_messages(session, messages)
@@ -887,10 +858,12 @@ module Legion
             system:      @request.system,
             enrichments: @enrichments
           )
-          return unless injected_system
+          return nil unless injected_system
 
           system_blocks = apply_cache_control([{ type: :text, content: injected_system }])
-          session.with_instructions(system_blocks.last[:content])
+          final = system_blocks.last[:content]
+          session.with_instructions(final)
+          final
         end
 
         def add_ruby_llm_prior_messages(session, messages)
@@ -965,6 +938,33 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.pipeline.annotate_top_level_span')
           nil
+        end
+
+        def try_fallback_or_raise(error, providers_tried, operation:, reason:, error_class:)
+          providers_tried << @resolved_provider
+          fallback = find_fallback_provider(exclude: providers_tried)
+          handle_exception(
+            error,
+            level: :warn, operation: "llm.pipeline.#{operation}",
+            provider: @resolved_provider, model: @resolved_model,
+            fallback_provider: fallback&.dig(:provider)
+          )
+          raise error_class, "#{@resolved_provider}:#{@resolved_model} #{reason} — #{error.message}" unless fallback
+
+          log.warn "[pipeline] #{@resolved_provider}:#{@resolved_model} #{reason} (#{error.message}), " \
+                   "falling back to #{fallback[:provider]}:#{fallback[:model]}"
+          from_provider = @resolved_provider
+          from_model = @resolved_model
+          @resolved_provider = fallback[:provider]
+          @resolved_model = fallback[:model]
+          @warnings << { type: :provider_fallback, original_error: error.message,
+                         fallback: "#{@resolved_provider}:#{@resolved_model}" }
+          @tool_event_handler&.call(
+            type: :model_fallback,
+            from_provider: from_provider, to_provider: @resolved_provider,
+            from_model: from_model, to_model: @resolved_model,
+            error: error.message, reason: reason
+          )
         end
 
         def find_fallback_provider(exclude: [])
