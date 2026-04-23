@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.8.22] - 2026-04-22
+
+### Fixed
+- Error paths in `Executor#run_provider_call_single` and `#step_provider_call_stream` now emit audit events (`Audit.emit_prompt`) before re-raising `RateLimitError`, `ProviderError`, and `ProviderDown`. Previously these errors produced no audit trail.
+- Escalation exhaustion (`EscalationExhausted`) in the pipeline executor now emits an audit event with `status: 'escalation_exhausted'` before raising.
+- `assert_external_allowed!` in the Inference module now emits an audit event with `status: 'privacy_blocked'` before raising `PrivacyModeError`, so enterprise privacy blocks are observable in the audit trail.
+- `step_metering` in `Executor` now passes `request_id:` and `caller:` to `Steps::Metering.build_event` so every metering event carries caller identity and request correlation.
+- `Steps::Metering.identity_fields` updated to include `request_id` and `caller` fields in the emitted metering event payload.
+- `Call::Embeddings.generate` now emits a metering event via `Metering.emit` after each successful `RubyLLM.embed` call, covering the previously unmetered embedding path.
+- `chat_single` in Inference now calls `emit_non_pipeline_metering` after a direct (non-pipeline) `session.ask` so token usage is recorded when the pipeline is disabled.
+- `Call::StructuredOutput.generate` now logs `info` on successful parse and `warn` on `JSON::ParserError` for observability.
+
 ## [0.8.21] - 2026-04-22
 
 ### Fixed

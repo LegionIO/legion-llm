@@ -25,8 +25,9 @@ module Legion
             return { vector: nil, model: model, provider: provider, error: "provider #{provider} does not support embeddings" } \
               if provider && !provider_supports_embeddings?(provider)
 
-            response   = RubyLLM.embed(text, **build_opts(model, provider, dimensions))
-            vector     = apply_dimension_enforcement(response.vectors.first, provider)
+            response = RubyLLM.embed(text, **build_opts(model, provider, dimensions))
+            emit_embedding_metering(provider: provider, model: model, tokens: response.input_tokens)
+            vector = apply_dimension_enforcement(response.vectors.first, provider)
             return dimension_error(model, provider, vector) if vector.is_a?(String)
 
             { vector: vector, model: model, provider: provider, dimensions: vector&.size || 0, tokens: response.input_tokens }
@@ -458,6 +459,15 @@ module Legion
             return [embedding] if embedding.is_a?(Array)
 
             []
+          end
+
+          def emit_embedding_metering(provider:, model:, tokens:)
+            Legion::LLM::Metering.emit(
+              provider: provider, model_id: model, request_type: 'embed',
+              tier: 'cloud', input_tokens: tokens.to_i, output_tokens: 0, total_tokens: tokens.to_i
+            )
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.embeddings.metering')
           end
         end
       end

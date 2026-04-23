@@ -9,6 +9,7 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
     allow(Legion::Settings).to receive(:[]).with(:llm).and_return(
       Legion::LLM::Settings.default
     )
+    allow(Legion::Settings).to receive(:[]).with(:transport).and_return({ connected: false })
   end
 
   describe 'Legion::LLM::PrivacyModeError' do
@@ -51,6 +52,7 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
           default_model:    'claude-sonnet-4-6'
         )
       )
+      allow(Legion::Settings).to receive(:[]).with(:transport).and_return({ connected: false })
       expect do
         Legion::LLM::Inference.send(:ask_direct, message: 'hello')
       end.to raise_error(Legion::LLM::PrivacyModeError)

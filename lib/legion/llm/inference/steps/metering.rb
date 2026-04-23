@@ -29,6 +29,8 @@ module Legion
               node_id:      opts[:node_id],
               worker_id:    opts[:worker_id],
               agent_id:     opts[:agent_id],
+              request_id:   opts[:request_id],
+              caller:       opts[:caller],
               request_type: opts[:request_type],
               tier:         opts[:tier],
               provider:     opts[:provider],
