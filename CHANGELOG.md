@@ -1,12 +1,16 @@
 # Legion LLM Changelog
 
+## [0.8.24] - 2026-04-23
+
+### Fixed
+- All AMQP transport messages (audit, metering, tool, escalation) now include identity headers (`x-legion-identity`, `x-legion-credential`, `x-legion-hostname`) extracted from the `caller` field. Previously only prompt audit events carried identity in the body — tool audit and metering messages had no identity at all.
+- Embedding metering events now include `caller` context.
+- Non-pipeline `chat_single` metering events now include `caller` context from kwargs.
+
 ## [0.8.23] - 2026-04-23
 
 ### Fixed
 - `Call::StructuredOutput` prompt-fallback path passed `messages:` (plural) to `chat_single` which only accepts `message:` (singular), leaking the unknown kwarg into `RubyLLM::Chat.new`. Visible as repeated "unknown keyword: :messages" warnings during dream cycle contradiction detection. Flattened instruction + messages into a single string via `extract_user_content`.
-- All AMQP transport messages (audit, metering, tool, escalation) now include identity headers (`x-legion-identity`, `x-legion-credential`, `x-legion-hostname`) extracted from the `caller` field. Previously only prompt audit events carried identity in the body — tool audit and metering messages had no identity at all.
-- Embedding metering events now include `caller` context.
-- Non-pipeline `chat_single` metering events now include `caller` context from kwargs.
 
 ## [0.8.22] - 2026-04-22
 
