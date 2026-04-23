@@ -692,7 +692,14 @@ module Legion
           session = RubyLLM.chat(**ruby_llm_chat_options)
 
           inject_ruby_llm_tools(session)
-          apply_ruby_llm_instructions(session)
+          system_prompt = apply_ruby_llm_instructions(session)
+
+          @audit[:provider_payload] = {
+            system_prompt:  system_prompt,
+            injected_tools: @injected_tool_map.keys,
+            tool_count:     @injected_tool_map.size,
+            timestamp:      Time.now
+          }
 
           messages = apply_conversation_breakpoint(@request.messages)
           add_ruby_llm_prior_messages(session, messages)
@@ -851,10 +858,12 @@ module Legion
             system:      @request.system,
             enrichments: @enrichments
           )
-          return unless injected_system
+          return nil unless injected_system
 
           system_blocks = apply_cache_control([{ type: :text, content: injected_system }])
-          session.with_instructions(system_blocks.last[:content])
+          final = system_blocks.last[:content]
+          session.with_instructions(final)
+          final
         end
 
         def add_ruby_llm_prior_messages(session, messages)

@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.8.17] - 2026-04-22
+
+### Added
+- Audit events now include `system_prompt` (full text sent to provider), `injected_tools` (list of tool names injected), and `identity` (extracted user identity from caller).
+
+### Fixed
+- `tokens` field in audit events was serialized as a `#<data ...>` inspect string instead of a proper hash. Now calls `.to_h` on Data.define objects.
+- `enrichments` in audit events now compacted: array values (e.g. GAIA valence history) reduced to their last element.
+- `timeline` in audit events filtered to only provider, escalation, and tool execution events — diagnostic trace entries (tracing:init, rbac, context:stored, etc.) are stripped.
+
 ## [0.8.16] - 2026-04-22
 
 ### Fixed
