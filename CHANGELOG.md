@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.8.21] - 2026-04-22
+
+### Fixed
+- Tool audit events are now published to `llm.audit` exchange via `Audit.emit_tools` after each tool execution completes. Previously `emit_tools` was defined but never called — the `llm.audit.tools` queue was always empty.
+- Metering events now include `request_type: 'chat'` so the routing key is `metering.chat` instead of `metering.` (empty suffix).
+
+## [0.8.20] - 2026-04-22
+
+### Fixed
+- `tool_trigger_defaults[:tool_limit]` raised from 10 to 25. The v0.8.19 reduction from 50→10 was too aggressive — extension tools (Teams, etc.) are only injected via trigger matching, and a limit of 10 crowded them out when multiple extensions matched.
+
 ## [0.8.19] - 2026-04-22
 
 ### Fixed

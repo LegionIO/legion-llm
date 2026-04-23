@@ -179,6 +179,7 @@ module Legion
                     "conversation_id=#{pipeline_response.conversation_id || conversation_id || 'none'} " \
                     "provider=#{routing[:provider] || routing['provider'] || 'unknown'} " \
                     "model=#{routing[:model] || routing['model'] || 'unknown'} " \
+                    "input_tokens=#{token_value(tokens, :input) || 0} output_tokens=#{token_value(tokens, :output) || 0} " \
                     "tool_calls=#{extract_tool_calls(pipeline_response).size} " \
                     "tool_executions=#{Array(pipeline_response.timeline).count { |event| event[:key].to_s.start_with?('tool:execute:') }} " \
                     "stop_reason=#{pipeline_response.stop&.dig(:reason) || 'unknown'} stream=true"
@@ -204,6 +205,7 @@ module Legion
                   "conversation_id=#{pipeline_response.conversation_id || conversation_id || 'none'} " \
                   "provider=#{routing[:provider] || routing['provider'] || 'unknown'} " \
                   "model=#{routing[:model] || routing['model'] || 'unknown'} " \
+                  "input_tokens=#{token_value(tokens, :input) || 0} output_tokens=#{token_value(tokens, :output) || 0} " \
                   "tool_calls=#{tool_calls.size} " \
                   "tool_executions=#{Array(pipeline_response.timeline).count { |event| event[:key].to_s.start_with?('tool:execute:') }} " \
                   "stop_reason=#{pipeline_response.stop&.dig(:reason) || 'unknown'} stream=false"
