@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.18] - 2026-04-22
+
+### Fixed
+- API caller identity no longer hardcoded as `api:inference`. The inference route now resolves the actual user via `env['legion.principal']` (from Identity::Middleware), `Legion::Identity::Process` (LDAP/Kerberos), or OS username (with email domain stripped). Adds `username` and `hostname` to the `requested_by` hash in audit trails.
+
 ## [0.8.17] - 2026-04-22
 
 ### Added
