@@ -37,7 +37,7 @@ module Legion
             end
           end
 
-          def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity
+          def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
             case ref
             when 'sh'
               cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s
@@ -55,8 +55,10 @@ module Legion
               path = kwargs[:path] || kwargs[:file_path]
               old_text = kwargs[:old_text] || kwargs[:search]
               new_text = kwargs[:new_text] || kwargs[:replace]
+              return 'file_edit error: old_text is required' if old_text.nil? || old_text.empty?
+
               content = ::File.read(path, encoding: 'utf-8')
-              content.sub!(old_text, new_text)
+              content.sub!(old_text, new_text || '')
               ::File.write(path, content)
               "Edited #{path}"
             when 'list_directory'

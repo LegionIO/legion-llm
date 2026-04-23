@@ -246,7 +246,7 @@ module Legion
         def emit_event(conv_id, event, **payload)
           return unless conv_id
 
-          Legion::Events.emit(event, { conversation_id: conv_id }.merge(payload))
+          Legion::Events.emit(event, conversation_id: conv_id, **payload)
         end
 
         protected

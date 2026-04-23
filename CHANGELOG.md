@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.8.19] - 2026-04-22
+
+### Fixed
+- `Skills::Base#emit_event` passed a positional Hash to `Legion::Events.emit(**payload)`, causing `ArgumentError` on every skill activation. Now uses keyword splat correctly.
+- `file_edit` client tool crashed with `TypeError: no implicit conversion of nil into String` when the LLM passed nil `old_text`/`new_text`. Now returns an error message to the LLM instead of crashing.
+- `tool_trigger_defaults[:tool_limit]` reduced from 50 to 10 to prevent trigger word matching from injecting dozens of unrelated extension tools on normal user messages.
+
 ## [0.8.18] - 2026-04-22
 
 ### Fixed
