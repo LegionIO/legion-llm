@@ -265,6 +265,16 @@ RSpec.describe Legion::LLM::Embeddings do
       expect(result[:provider]).to eq(:openai)
     end
 
+    it 'handles unwrapped vectors from providers that flatten single-input results' do
+      flat_response = double(vectors: Array.new(1024, 0.1), input_tokens: 5)
+      allow(RubyLLM).to receive(:embed).and_return(flat_response)
+
+      result = described_class.generate(text: 'test')
+      expect(result[:vector]).to be_a(Array)
+      expect(result[:vector].size).to eq(1024)
+      expect(result[:dimensions]).to eq(1024)
+    end
+
     it 'resolves provider from llm settings when not specified' do
       allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(:bedrock)
       allow(Legion::Settings).to receive(:dig).with(:llm, :embedding).and_return(nil)
