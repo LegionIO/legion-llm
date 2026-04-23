@@ -36,10 +36,10 @@ module Legion
               instruction = "You MUST respond with valid JSON matching this schema:\n" \
                             "```json\n#{Legion::JSON.dump(schema)}\n```\n" \
                             'Respond with ONLY the JSON object, no other text.'
-              augmented = [{ role: 'system', content: instruction }] + Array(messages)
+              user_content = extract_user_content(messages, instruction)
               Legion::LLM::Inference.send(:chat_single,
                                           model: model, provider: provider, intent: nil, tier: nil,
-                                          messages: augmented, **opts.except(:attempt))
+                                          message: user_content, **opts.except(:attempt))
             end
           end
 
@@ -55,16 +55,25 @@ module Legion
 
           def retry_with_instruction(messages, schema, model, provider: nil, **opts)
             instruction = "Your previous response was not valid JSON. Respond with ONLY a valid JSON object matching this schema:\n#{Legion::JSON.dump(schema)}"
-            augmented = Array(messages) + [{ role: 'user', content: instruction }]
+            user_content = extract_user_content(messages, instruction)
             result = Legion::LLM::Inference.send(:chat_single,
                                                  model: model, provider: provider, intent: nil, tier: nil,
-                                                 messages: augmented, **opts.except(:attempt))
+                                                 message: user_content, **opts.except(:attempt))
 
             parsed = Legion::JSON.load(result[:content])
             { data: parsed, raw: result[:content], model: result[:model], valid: true, retried: true }
           rescue StandardError => e
             handle_exception(e, level: :warn)
             { data: nil, error: e.message, valid: false }
+          end
+
+          def extract_user_content(messages, instruction)
+            parts = [instruction]
+            Array(messages).each do |msg|
+              content = msg[:content] || msg['content']
+              parts << content.to_s unless content.to_s.empty?
+            end
+            parts.join("\n\n")
           end
 
           def supports_response_format?(model)
