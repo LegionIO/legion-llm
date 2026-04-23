@@ -285,7 +285,7 @@ module Legion
       def self.tool_trigger_defaults
         {
           scan_depth: 10,
-          tool_limit: 10
+          tool_limit: 25
         }
       end
 

@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.20] - 2026-04-22
+
+### Fixed
+- `tool_trigger_defaults[:tool_limit]` raised from 10 to 25. The v0.8.19 reduction from 50→10 was too aggressive — extension tools (Teams, etc.) are only injected via trigger matching, and a limit of 10 crowded them out when multiple extensions matched.
+
 ## [0.8.19] - 2026-04-22
 
 ### Fixed
