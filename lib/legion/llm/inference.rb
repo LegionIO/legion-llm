@@ -514,7 +514,7 @@ module Legion
         log.debug '[llm][inference] chat_single asking session'
         response = block ? session.ask(message, &block) : session.ask(message)
         log.debug "[llm][inference] chat_single response_class=#{response.class} response_nil=#{response.nil?}"
-        emit_non_pipeline_metering(response, model: opts[:model], provider: opts[:provider])
+        emit_non_pipeline_metering(response, model: opts[:model], provider: opts[:provider], caller: kwargs[:caller])
 
         if response && !block && defined?(Quality::ShadowEval) && Quality::ShadowEval.enabled?
           msgs = session.respond_to?(:messages) ? session.messages : nil
@@ -712,14 +712,15 @@ module Legion
         esc.fetch(:quality_threshold, 50)
       end
 
-      def emit_non_pipeline_metering(response, model:, provider:)
+      def emit_non_pipeline_metering(response, model:, provider:, caller: nil)
         return unless response
 
         input  = response.respond_to?(:input_tokens)  ? response.input_tokens.to_i  : 0
         output = response.respond_to?(:output_tokens) ? response.output_tokens.to_i : 0
         Legion::LLM::Metering.emit(
           provider: provider, model_id: model, request_type: 'chat',
-          tier: 'direct', input_tokens: input, output_tokens: output, total_tokens: input + output
+          tier: 'direct', input_tokens: input, output_tokens: output, total_tokens: input + output,
+          caller: caller
         )
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.non_pipeline_metering')

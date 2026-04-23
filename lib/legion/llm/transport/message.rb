@@ -65,6 +65,19 @@ module Legion
           h['x-legion-llm-model']          = model_val.to_s                     if model_val
           h['x-legion-llm-request-type']   = @options[:request_type].to_s       if @options[:request_type]
           h['x-legion-llm-schema-version'] = '1.0.0'
+          h.merge(identity_headers)
+        end
+
+        def identity_headers
+          caller = @options[:caller]
+          return {} unless caller.is_a?(Hash)
+
+          rb = caller[:requested_by] || caller['requested_by'] || {}
+          h = {}
+          identity = rb[:identity] || rb['identity'] || rb[:username] || rb['username']
+          h['x-legion-identity']   = identity.to_s   if identity
+          h['x-legion-credential'] = (rb[:credential] || rb['credential']).to_s if rb[:credential] || rb['credential']
+          h['x-legion-hostname']   = (rb[:hostname] || rb['hostname']).to_s     if rb[:hostname] || rb['hostname']
           h
         end
 
