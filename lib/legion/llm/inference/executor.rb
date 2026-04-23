@@ -842,6 +842,33 @@ module Legion
             result: result_str[0, 4096], result_size: result_str.bytesize,
             started_at: started_at, finished_at: finished_at, duration_ms: duration_ms
           )
+
+          publish_tool_audit(tc_id, tc_name, result_str, is_error, duration_ms, started_at, finished_at)
+        end
+
+        def publish_tool_audit(tc_id, tc_name, result_str, is_error, duration_ms, started_at, finished_at)
+          Legion::LLM::Audit.emit_tools(
+            request_id:      @request.id,
+            conversation_id: @request.conversation_id,
+            exchange_id:     @exchange_id,
+            tool_name:       tc_name,
+            tool_call:       {
+              id:          tc_id,
+              name:        tc_name,
+              status:      is_error ? :error : :success,
+              duration_ms: duration_ms,
+              started_at:  started_at,
+              finished_at: finished_at
+            },
+            result:          result_str[0, 4096],
+            caller:          @request.caller,
+            classification:  @request.classification,
+            tracing:         @tracing,
+            timestamp:       finished_at,
+            request_type:    'tool'
+          )
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.publish_tool_audit', tool_name: tc_name)
         end
 
         def tool_call_field(tool_call, field)
@@ -1004,6 +1031,7 @@ module Legion
             provider:      @resolved_provider,
             model_id:      @resolved_model,
             tier:          tier,
+            request_type:  'chat',
             input_tokens:  input_tokens,
             output_tokens: output_tokens,
             latency_ms:    latency_ms
