@@ -32,6 +32,7 @@ RSpec.describe Legion::LLM do
     before do
       Legion::Settings[:llm][:providers][:ollama][:enabled] = true
       allow(Legion::LLM::Call::Providers).to receive(:verify_providers)
+      allow(Legion::LLM::Call::Providers).to receive(:vllm_running?).and_return(false)
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
       stub_request(:get, 'http://localhost:11434/api/tags')
         .to_return(status: 200, body: { 'models' => [] }.to_json)
