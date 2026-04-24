@@ -1030,7 +1030,7 @@ module Legion
           providers.each do |name, config|
             next unless config.is_a?(Hash) && config[:enabled]
             next if exclude.include?(name) || exclude.include?(name.to_s)
-            next if name == :ollama
+            next if %i[ollama vllm].include?(name)
             next unless config[:default_model]
 
             return { provider: name, model: config[:default_model] }
