@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.25] - 2026-04-24
+
+### Fixed
+- `StructuredOutput.generate`, `handle_parse_error`, and `retry_with_instruction` used hash-style access (`result[:content]`, `result[:model]`) on the return value of `chat_single`, but `chat_single` returns a `RubyLLM::Message` object which only supports method access (`.content`, `.model_id`). All four access sites now use `respond_to?` duck-typing so both hash and Message objects work. Visible as `undefined method '[]' for an instance of RubyLLM::Message` in Apollo's `llm_detects_conflict?` and any structured output caller using non-schema-capable models (e.g. ollama/qwen).
+
 ## [0.8.24] - 2026-04-23
 
 ### Fixed
