@@ -846,6 +846,7 @@ module Legion
           duration_ms = started_at ? ((finished_at - started_at) * 1000).round : nil
 
           result_str = (raw.is_a?(String) ? raw : raw.to_s)
+          result_str = result_str.encode('UTF-8', invalid: :replace, undef: :replace, replace: '�') unless result_str.valid_encoding?
           is_error = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
 
           @pending_tool_history_mutex.synchronize do
