@@ -14,16 +14,12 @@
 # because lex-bedrock wraps `aws-sdk-bedrockruntime`, not RubyLLM.
 #
 # ─── Upstream tracking ────────────────────────────────────────────
-# This is a deprecation-scheduled shim. The true home for these
-# methods is `crmne/ruby_llm`'s Bedrock provider.
-#
-# Upstream issue: https://github.com/crmne/ruby_llm/issues/<TBD>
-# (file before merging; link back here when created)
-#
-# Remove this file when ruby_llm ships native Bedrock embedding
-# support. The short-circuit below renders the patch inert when
-# ruby_llm gains a native `render_embedding_payload`, so accidental
-# double-load after an upstream bump is safe.
+# This is a deprecation-scheduled shim. The methods below are the
+# kind of thing that eventually belongs in the underlying ruby_llm
+# library's Bedrock provider. Remove this file once upstream ships
+# equivalent support. The short-circuit below renders the patch
+# inert when `render_embedding_payload` is defined natively, so an
+# accidental double-load after an upstream bump is safe.
 # ───────────────────────────────────────────────────────────────────
 #
 # Titan v2 request shape:
