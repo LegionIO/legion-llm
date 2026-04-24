@@ -111,7 +111,7 @@ module Legion
         def vllm_running?(config)
           require 'faraday'
           url = config[:base_url] || 'http://localhost:8000/v1'
-          base = url.chomp('/v1').chomp('/')
+          base = url.sub(%r{/+\z}, '').sub(%r{/v1\z}, '')
           log.debug "[llm][providers] vllm_running? url=#{base}/health"
           response = Faraday.new(url: base) do |f|
             f.options.timeout = 2

@@ -15,7 +15,7 @@ module Legion
       extend Legion::Logging::Helper
 
       PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
-                        gemini: :cloud, azure: :cloud, ollama: :local, vllm: :fleet }.freeze
+                        gemini: :cloud, azure: :cloud, ollama: :local, vllm: :local }.freeze
       PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
 
       class << self

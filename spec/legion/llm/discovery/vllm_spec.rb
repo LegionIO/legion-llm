@@ -41,8 +41,8 @@ RSpec.describe Legion::LLM::Discovery::Vllm do
 
     it 'includes model id and max_model_len' do
       model = described_class.models.first
-      expect(model['id']).to eq('qwen3.6-27b')
-      expect(model['max_model_len']).to eq(32_768)
+      expect(model[:id]).to eq('qwen3.6-27b')
+      expect(model[:max_model_len]).to eq(32_768)
     end
   end
 

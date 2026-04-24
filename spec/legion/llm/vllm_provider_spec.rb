@@ -16,8 +16,8 @@ RSpec.describe 'vLLM provider integration' do
   end
 
   describe 'PROVIDER_TIER' do
-    it 'maps vllm to fleet tier' do
-      expect(Legion::LLM::Router::PROVIDER_TIER[:vllm]).to eq(:fleet)
+    it 'maps vllm to local tier' do
+      expect(Legion::LLM::Router::PROVIDER_TIER[:vllm]).to eq(:local)
     end
   end
 

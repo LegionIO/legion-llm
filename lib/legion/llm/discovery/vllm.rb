@@ -3,6 +3,7 @@
 require 'faraday'
 
 require 'legion/logging/helper'
+require 'legion/json'
 
 module Legion
   module LLM
@@ -17,7 +18,7 @@ module Legion
           end
 
           def model_names
-            models.map { |m| m['id'] }
+            models.map { |m| m[:id] }
           end
 
           def model_available?(name)
@@ -25,8 +26,8 @@ module Legion
           end
 
           def max_context(name)
-            model = models.find { |m| m['id'] == name }
-            model&.dig('max_model_len')
+            model = models.find { |m| m[:id] == name }
+            model&.dig(:max_model_len)
           end
 
           def healthy?
@@ -40,8 +41,8 @@ module Legion
           def refresh!
             response = connection.get('/v1/models')
             if response.success?
-              parsed = ::JSON.parse(response.body)
-              @models = parsed['data'] || []
+              parsed = Legion::JSON.load(response.body)
+              @models = parsed[:data] || []
               log.debug "[llm][discovery][vllm] model list refreshed count=#{@models.size}"
             else
               log.warn "[llm][discovery][vllm] HTTP failure status=#{response.status}"
@@ -81,7 +82,7 @@ module Legion
           end
 
           def health_connection
-            base = vllm_base_url.chomp('/v1').chomp('/')
+            base = vllm_base_url.sub(%r{/+\z}, '').sub(%r{/v1\z}, '')
             Faraday.new(url: base) do |f|
               f.options.timeout = 2
               f.options.open_timeout = 2
