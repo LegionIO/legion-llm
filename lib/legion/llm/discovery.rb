@@ -2,6 +2,7 @@
 
 require 'legion/logging/helper'
 require_relative 'discovery/ollama'
+require_relative 'discovery/vllm'
 require_relative 'discovery/system'
 
 module Legion
@@ -23,15 +24,21 @@ module Legion
 
         def run
           log.debug '[llm][discovery] run.enter'
-          return unless Legion::LLM.settings.dig(:providers, :ollama, :enabled)
 
-          Ollama.refresh!
-          System.refresh!
+          if Legion::LLM.settings.dig(:providers, :ollama, :enabled)
+            Ollama.refresh!
+            System.refresh!
+            names = Ollama.model_names
+            log.info "[llm][discovery] ollama model_count=#{names.size} models=#{names.join(', ')}"
+            log.info "[llm][discovery] system total_mb=#{System.total_memory_mb} available_mb=#{System.available_memory_mb}"
+          end
 
-          names = Ollama.model_names
-          count = names.size
-          log.info "[llm][discovery] ollama model_count=#{count} models=#{names.join(', ')}"
-          log.info "[llm][discovery] system total_mb=#{System.total_memory_mb} available_mb=#{System.available_memory_mb}"
+          if Legion::LLM.settings.dig(:providers, :vllm, :enabled)
+            Vllm.refresh!
+            names = Vllm.model_names
+            contexts = names.map { |n| "#{n}(#{Vllm.max_context(n)})" }
+            log.info "[llm][discovery] vllm model_count=#{names.size} models=#{contexts.join(', ')}"
+          end
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.discovery.run')
         end
