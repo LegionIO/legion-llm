@@ -3,6 +3,16 @@
 module RubyLLM
   module Providers
     class Vllm < OpenAI
+      module Chat
+        module_function
+
+        def format_role(role)
+          role.to_s
+        end
+      end
+
+      include Vllm::Chat
+
       def api_base
         @config.vllm_api_base
       end
