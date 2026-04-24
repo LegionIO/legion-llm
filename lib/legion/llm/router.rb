@@ -15,8 +15,8 @@ module Legion
       extend Legion::Logging::Helper
 
       PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
-                        gemini: :cloud, azure: :cloud, ollama: :local }.freeze
-      PROVIDER_ORDER = %i[ollama bedrock azure gemini anthropic openai].freeze
+                        gemini: :cloud, azure: :cloud, ollama: :local, vllm: :local }.freeze
+      PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
 
       class << self
         # Resolve an LLM routing intent to a tier/provider/model decision.
@@ -296,8 +296,11 @@ module Legion
 
         def default_provider_for_tier(tier)
           case tier.to_sym
-          when :local, :fleet
+          when :local
             :ollama
+          when :fleet
+            vllm_config = Legion::Settings[:llm].dig(:providers, :vllm)
+            vllm_config.is_a?(Hash) && vllm_config[:enabled] ? :vllm : :ollama
           when :openai_compat
             :openai
           when :cloud
@@ -316,7 +319,13 @@ module Legion
             ollama = Legion::Settings[:llm].dig(:providers, :ollama) || {}
             ollama[:default_model] || 'llama3'
           when :fleet
-            'llama4:70b'
+            vllm_config = Legion::Settings[:llm].dig(:providers, :vllm) || {}
+            if vllm_config[:enabled]
+              vllm_config[:default_model] || 'qwen3.6-27b'
+            else
+              ollama = Legion::Settings[:llm].dig(:providers, :ollama) || {}
+              ollama[:default_model] || 'llama3'
+            end
           when :openai_compat
             'gpt-4o'
           when :cloud

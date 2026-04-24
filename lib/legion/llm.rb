@@ -4,6 +4,7 @@ require 'legion/logging/helper'
 
 require 'ruby_llm'
 require_relative 'llm/patches/ruby_llm_parallel_tools'
+require_relative 'llm/patches/ruby_llm_vllm'
 require_relative 'llm/version'
 require_relative 'llm/errors'
 require_relative 'llm/settings'

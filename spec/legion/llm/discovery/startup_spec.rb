@@ -14,6 +14,7 @@ RSpec.describe 'LLM startup discovery' do
     allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
     # Prevent auto-enabling of providers with unresolved env:// credentials
     allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
+    allow(Legion::LLM::Call::Providers).to receive(:vllm_running?).and_return(false)
   end
 
   context 'when Ollama provider is enabled' do

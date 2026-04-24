@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.8.26] - 2026-04-24
+
+### Added
+- First-class vLLM provider support. vLLM exposes an OpenAI-compatible API and is registered as a new RubyLLM provider (`:vllm`). Configured via `providers.vllm.base_url` in settings. Mapped to `:fleet` tier in the router.
+- vLLM discovery via `/v1/models` endpoint. Caches model list with `max_model_len` (context window size) using the same TTL as Ollama discovery. Health checks via `/health` endpoint.
+- Context overflow escalation: when vLLM rejects a request due to context length limits (32k on V100 hardware), the executor automatically falls back to cloud/frontier providers.
+
+### Changed
+- `find_fallback_provider` in `Executor` now skips all local providers (`:ollama` and `:vllm`) when searching for fallbacks, not just `:ollama`. Ensures context overflow escalates to cloud/frontier.
+- `Router::PROVIDER_ORDER` updated: `:vllm` inserted after `:ollama` and before `:bedrock`.
+- `default_provider_for_tier(:fleet)` returns `:vllm` when vLLM is enabled, falls back to `:ollama`.
+
 ## [0.8.25] - 2026-04-24
 
 ### Fixed
