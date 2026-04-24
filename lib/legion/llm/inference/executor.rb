@@ -847,6 +847,7 @@ module Legion
 
           result_str = (raw.is_a?(String) ? raw : raw.to_s)
           result_str = result_str.encode('UTF-8', invalid: :replace, undef: :replace, replace: '�') unless result_str.valid_encoding?
+          result_str = result_str.delete("\x00")
           is_error = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
 
           @pending_tool_history_mutex.synchronize do
