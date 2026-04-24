@@ -76,6 +76,8 @@ module Legion
             config[:api_base] && (usable_setting?(config[:api_key]) || usable_setting?(config[:auth_token]))
           when :ollama
             ollama_running?(config)
+          when :vllm
+            vllm_running?(config)
           else
             usable_setting?(config[:api_key])
           end
@@ -106,6 +108,22 @@ module Legion
           false
         end
 
+        def vllm_running?(config)
+          require 'faraday'
+          url = config[:base_url] || 'http://localhost:8000/v1'
+          base = url.chomp('/v1').chomp('/')
+          log.debug "[llm][providers] vllm_running? url=#{base}/health"
+          response = Faraday.new(url: base) { |f|
+            f.options.timeout = 2
+            f.options.open_timeout = 2
+            f.adapter Faraday.default_adapter
+          }.get('/health')
+          response.success?
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.providers.vllm_running', base_url: url)
+          false
+        end
+
         def apply_provider_config(provider, config)
           case provider
           when :bedrock   then configure_bedrock(config)
@@ -114,6 +132,7 @@ module Legion
           when :gemini    then configure_gemini(config)
           when :azure     then configure_azure(config)
           when :ollama    then configure_ollama(config)
+          when :vllm    then configure_vllm(config)
           else
             log.warn "[llm][providers] unknown provider=#{provider}"
           end
@@ -212,6 +231,15 @@ module Legion
             c.ollama_api_base = config[:base_url] if config[:base_url]
           end
           log.info "[llm][providers] configured ollama base_url=#{config[:base_url].inspect}"
+        end
+
+        def configure_vllm(config)
+          base_url = config[:base_url] || 'http://localhost:8000/v1'
+          RubyLLM.configure do |c|
+            c.vllm_api_base = base_url
+            c.vllm_api_key = config[:api_key] if config[:api_key]
+          end
+          log.info "[llm][providers] configured vllm base_url=#{base_url.inspect}"
         end
 
         SAAS_PROVIDERS = %i[bedrock anthropic openai gemini azure].freeze
