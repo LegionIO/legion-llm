@@ -328,7 +328,9 @@ module Legion
             end
           end
 
-          @resolved_provider = provider || Legion::LLM.settings[:default_provider]
+          @resolved_provider = provider ||
+                               (model && Router.infer_provider_for_model(model)) ||
+                               Legion::LLM.settings[:default_provider]
           @resolved_model = model || Legion::LLM.settings[:default_model]
 
           log.info "[llm][inference] resolved provider=#{@resolved_provider} model=#{@resolved_model}"
