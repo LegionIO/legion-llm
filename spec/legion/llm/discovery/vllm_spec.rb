@@ -14,13 +14,13 @@ RSpec.describe Legion::LLM::Discovery::Vllm do
   let(:models_response) do
     {
       'object' => 'list',
-      'data' => [
+      'data'   => [
         {
-          'id' => 'qwen3.6-27b',
-          'object' => 'model',
-          'created' => 1_777_010_712,
-          'owned_by' => 'vllm',
-          'root' => '/data/models/qwen3.6-27b',
+          'id'            => 'qwen3.6-27b',
+          'object'        => 'model',
+          'created'       => 1_777_010_712,
+          'owned_by'      => 'vllm',
+          'root'          => '/data/models/qwen3.6-27b',
           'max_model_len' => 32_768
         }
       ]
