@@ -377,10 +377,11 @@ module Legion
             base_url:      'http://localhost:11434'
           },
           vllm:      {
-            enabled:       false,
-            default_model: 'qwen3.6-27b',
-            base_url:      'http://localhost:8000/v1',
-            api_key:       nil
+            enabled:         false,
+            default_model:   'qwen3.6-27b',
+            base_url:        'http://localhost:8000/v1',
+            api_key:         nil,
+            enable_thinking: true
           }
         }
       end

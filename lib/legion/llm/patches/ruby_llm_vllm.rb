@@ -22,8 +22,23 @@ module RubyLLM
         def render_payload(messages, tools:, temperature:, model:, stream: false, schema: nil,
                            thinking: nil, tool_prefs: nil)
           payload = super
-          payload[:chat_template_kwargs] = { enable_thinking: true }
+          enable = if thinking.nil?
+                     vllm_thinking_default
+                   else
+                     thinking ? true : false
+                   end
+          payload[:chat_template_kwargs] = { enable_thinking: enable }
           payload
+        end
+
+        private
+
+        def vllm_thinking_default
+          return true unless defined?(Legion::Settings)
+
+          Legion::Settings[:llm].dig(:providers, :vllm, :enable_thinking) != false
+        rescue StandardError
+          true
         end
       end
 
