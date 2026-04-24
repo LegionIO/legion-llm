@@ -113,11 +113,11 @@ module Legion
           url = config[:base_url] || 'http://localhost:8000/v1'
           base = url.chomp('/v1').chomp('/')
           log.debug "[llm][providers] vllm_running? url=#{base}/health"
-          response = Faraday.new(url: base) { |f|
+          response = Faraday.new(url: base) do |f|
             f.options.timeout = 2
             f.options.open_timeout = 2
             f.adapter Faraday.default_adapter
-          }.get('/health')
+          end.get('/health')
           response.success?
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.providers.vllm_running', base_url: url)
@@ -132,7 +132,7 @@ module Legion
           when :gemini    then configure_gemini(config)
           when :azure     then configure_azure(config)
           when :ollama    then configure_ollama(config)
-          when :vllm    then configure_vllm(config)
+          when :vllm then configure_vllm(config)
           else
             log.warn "[llm][providers] unknown provider=#{provider}"
           end
