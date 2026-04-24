@@ -496,7 +496,8 @@ module Legion
         end
 
         model ||= Legion::LLM.settings[:default_model]
-        provider ||= Legion::LLM.settings[:default_provider]
+        provider ||= (model && Router.infer_provider_for_model(model)) ||
+                     Legion::LLM.settings[:default_provider]
 
         opts = {}
         opts[:model] = model if model
