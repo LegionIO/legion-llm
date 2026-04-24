@@ -40,7 +40,7 @@ module Legion
             timeline:         compact_timeline(response.timeline),
             classification:   response.classification,
             tracing:          response.tracing,
-            messages:         request.messages,
+            messages:         current_turn_messages(request.messages),
             response_content: msg_content,
             tools_used:       tools_data,
             timestamp:        Time.now,
@@ -107,6 +107,23 @@ module Legion
             key = (event[:key] || event['key']).to_s
             key.start_with?('provider:') || key.start_with?('escalation:') || key.start_with?('tool:execute:')
           end
+        end
+
+        def current_turn_messages(messages)
+          return messages unless messages.is_a?(Array)
+
+          max = audit_max_messages
+          return messages if messages.size <= max
+
+          messages.last(max)
+        end
+
+        def audit_max_messages
+          return 20 unless defined?(Legion::Settings)
+
+          Legion::Settings[:llm].dig(:compliance, :audit_max_messages) || 20
+        rescue StandardError
+          20
         end
 
         def build_message_context(response:, **)

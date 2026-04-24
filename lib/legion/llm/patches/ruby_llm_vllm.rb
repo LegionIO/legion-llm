@@ -3,6 +3,47 @@
 module RubyLLM
   module Providers
     class Vllm < OpenAI
+      module Chat
+        def format_role(role)
+          role.to_s
+        end
+
+        def format_messages(messages)
+          messages.map do |msg|
+            {
+              role:         format_role(msg.role),
+              content:      OpenAI::Media.format_content(msg.content),
+              tool_calls:   format_tool_calls(msg.tool_calls),
+              tool_call_id: msg.tool_call_id
+            }.compact.merge(OpenAI::Chat.format_thinking(msg))
+          end
+        end
+
+        def render_payload(messages, tools:, temperature:, model:, stream: false, schema: nil,
+                           thinking: nil, tool_prefs: nil)
+          payload = super
+          enable = if thinking.nil?
+                     vllm_thinking_default
+                   else
+                     thinking ? true : false
+                   end
+          payload[:chat_template_kwargs] = { enable_thinking: enable }
+          payload
+        end
+
+        private
+
+        def vllm_thinking_default
+          return true unless defined?(Legion::Settings)
+
+          Legion::Settings[:llm].dig(:providers, :vllm, :enable_thinking) != false
+        rescue StandardError
+          true
+        end
+      end
+
+      include Vllm::Chat
+
       def api_base
         @config.vllm_api_base
       end

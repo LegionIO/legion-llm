@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.8.27] - 2026-04-24
+
+### Fixed
+- vLLM provider sent `developer` message role (OpenAI convention) which Qwen's chat template rejects. Added `Vllm::Chat` module that overrides `format_messages` and `format_role` to always send `system`.
+- vLLM provider called `OpenAI::Chat.render_payload` as a module function without provider instance context, causing `NoMethodError` on `openai_use_system_role`. Rewrote to use `super` with instance method overrides.
+- Audit events included the full conversation history in every message — quadratic payload growth. Now caps at the last 20 messages (configurable via `compliance.audit_max_messages`). Full conversation reconstructable via `conversation_id`.
+
+### Added
+- vLLM `chat_template_kwargs` with `enable_thinking` sent on every request so vLLM separates reasoning into the `reasoning` response field instead of inline `<think>` tags.
+- `providers.vllm.enable_thinking` setting (default: `true`). Controls whether thinking is enabled for vLLM requests. Per-request `thinking` param overrides.
+
 ## [0.8.26] - 2026-04-24
 
 ### Added
