@@ -27,7 +27,8 @@ module Legion
 
             response = RubyLLM.embed(text, **build_opts(model, provider, dimensions))
             emit_embedding_metering(provider: provider, model: model, tokens: response.input_tokens)
-            vector = apply_dimension_enforcement(response.vectors.first, provider)
+            vector = normalize_vectors_first(response.vectors)
+            vector = apply_dimension_enforcement(vector, provider)
             return dimension_error(model, provider, vector) if vector.is_a?(String)
 
             { vector: vector, model: model, provider: provider, dimensions: vector&.size || 0, tokens: response.input_tokens }
@@ -99,6 +100,16 @@ module Legion
             opts[:provider]   = provider if provider
             opts[:dimensions] = target_dim if target_dim && provider&.to_sym == :openai
             opts
+          end
+
+          def normalize_vectors_first(vectors)
+            return nil if vectors.nil? || (vectors.is_a?(Array) && vectors.empty?)
+
+            first = vectors.first
+            return first if first.is_a?(Array)
+            return vectors if vectors.is_a?(Array) && vectors.first.is_a?(Numeric)
+
+            first
           end
 
           def apply_dimension_enforcement(vector, provider)

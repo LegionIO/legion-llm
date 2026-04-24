@@ -15,8 +15,11 @@ module Legion
             result = call_with_schema(messages, schema, model, provider: provider, **)
             log.info "[llm][structured_output] model=#{model} provider=#{provider} valid=true"
 
-            parsed = Legion::JSON.load(result[:content])
-            { data: parsed, raw: result[:content], model: result[:model], valid: true }
+            content = result.respond_to?(:content) ? result.content : result[:content]
+            raw_model = result.respond_to?(:model_id) ? result.model_id : result[:model]
+
+            parsed = Legion::JSON.load(content)
+            { data: parsed, raw: content, model: raw_model, valid: true }
           rescue ::JSON::ParserError => e
             log.warn "[llm][structured_output] model=#{model} provider=#{provider} parse_error=#{e.message}"
             handle_parse_error(e, messages, schema, model, provider, result, **)
@@ -49,7 +52,8 @@ module Legion
             if retry_enabled? && attempt < max_retries
               retry_with_instruction(messages, schema, model, provider: provider, attempt: attempt + 1, **opts)
             else
-              { data: nil, error: "JSON parse failed: #{error.message}", raw: result&.dig(:content), valid: false }
+              raw = result.respond_to?(:content) ? result&.content : result&.dig(:content)
+              { data: nil, error: "JSON parse failed: #{error.message}", raw: raw, valid: false }
             end
           end
 
@@ -60,8 +64,11 @@ module Legion
                                                  model: model, provider: provider, intent: nil, tier: nil,
                                                  message: user_content, **opts.except(:attempt))
 
-            parsed = Legion::JSON.load(result[:content])
-            { data: parsed, raw: result[:content], model: result[:model], valid: true, retried: true }
+            retry_content = result.respond_to?(:content) ? result.content : result[:content]
+            retry_model = result.respond_to?(:model_id) ? result.model_id : result[:model]
+
+            parsed = Legion::JSON.load(retry_content)
+            { data: parsed, raw: retry_content, model: retry_model, valid: true, retried: true }
           rescue StandardError => e
             handle_exception(e, level: :warn)
             { data: nil, error: e.message, valid: false }
