@@ -18,7 +18,22 @@ module Legion
                         gemini: :cloud, azure: :cloud, ollama: :local, vllm: :local }.freeze
       PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
 
+      OLLAMA_MODEL_PATTERN = %r{[:/]}
+
       class << self
+        def infer_provider_for_model(model)
+          return nil if model.nil? || model.to_s.empty?
+
+          model_s = model.to_s
+          return :bedrock if model_s.start_with?('us.')
+          return :openai if model_s.match?(/\Agpt-|\Ao[134]-/)
+          return :anthropic if model_s.start_with?('claude-')
+          return :gemini if model_s.start_with?('gemini-')
+          return :ollama if model_s.match?(OLLAMA_MODEL_PATTERN)
+
+          nil
+        end
+
         # Resolve an LLM routing intent to a tier/provider/model decision.
         #
         # @param intent   [Hash, nil] routing intent (capability, privacy, etc.)
@@ -95,18 +110,12 @@ module Legion
           model = Arbitrage.cheapest_for(capability: capability)
           return nil unless model
 
-          provider = Arbitrage.cost_table[model] ? infer_provider(model) : nil
-          log.debug("Router: arbitrage fallback selected model=#{model}")
-          Resolution.new(tier: :cloud, provider: provider || :bedrock, model: model, rule: 'arbitrage_fallback')
-        end
+          provider = infer_provider_for_model(model)
+          return nil unless provider
 
-        def infer_provider(model)
-          return :ollama if model.include?('llama')
-          return :bedrock if model.start_with?('us.')
-          return :openai if model.start_with?('gpt')
-          return :google if model.start_with?('gemini')
-
-          :anthropic if model.start_with?('claude')
+          tier = PROVIDER_TIER.fetch(provider, :cloud)
+          log.debug("Router: arbitrage fallback selected model=#{model} provider=#{provider} tier=#{tier}")
+          Resolution.new(tier: tier, provider: provider, model: model, rule: 'arbitrage_fallback')
         end
 
         def explicit_resolution(tier, provider, model)
