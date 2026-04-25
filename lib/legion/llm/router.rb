@@ -18,7 +18,7 @@ module Legion
                         gemini: :cloud, azure: :cloud, ollama: :local, vllm: :local }.freeze
       PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
 
-      OLLAMA_MODEL_PATTERN = /[:\/]/.freeze
+      OLLAMA_MODEL_PATTERN = %r{[:/]}
 
       class << self
         def infer_provider_for_model(model)
