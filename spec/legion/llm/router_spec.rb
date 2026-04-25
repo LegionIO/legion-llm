@@ -349,4 +349,43 @@ RSpec.describe Legion::LLM::Router do
       expect(described_class.routing_enabled?).to be false
     end
   end
+
+  describe '.infer_provider_for_model' do
+    {
+      'qwen3.5:latest'                    => :ollama,
+      'qwen3:7b'                          => :ollama,
+      'llama3:70b'                        => :ollama,
+      'mistral:latest'                    => :ollama,
+      'phi3:mini'                         => :ollama,
+      'deepseek-coder:6.7b'               => :ollama,
+      'nomic-embed-text:latest'           => :ollama,
+      'us.anthropic.claude-sonnet-4-6-v1' => :bedrock,
+      'us.meta.llama3-70b-instruct-v1:0'  => :bedrock,
+      'gpt-4o'                            => :openai,
+      'gpt-4o-mini'                       => :openai,
+      'o1-preview'                        => :openai,
+      'o3-mini'                           => :openai,
+      'o4-mini'                           => :openai,
+      'claude-sonnet-4-6'                 => :anthropic,
+      'claude-3-5-haiku-20241022'         => :anthropic,
+      'gemini-2.0-flash'                  => :gemini,
+      'gemini-1.5-pro'                    => :gemini
+    }.each do |model, expected_provider|
+      it "infers #{expected_provider} for #{model}" do
+        expect(described_class.infer_provider_for_model(model)).to eq(expected_provider)
+      end
+    end
+
+    it 'returns nil for nil model' do
+      expect(described_class.infer_provider_for_model(nil)).to be_nil
+    end
+
+    it 'returns nil for empty string' do
+      expect(described_class.infer_provider_for_model('')).to be_nil
+    end
+
+    it 'returns nil for unrecognized model names' do
+      expect(described_class.infer_provider_for_model('some-custom-model')).to be_nil
+    end
+  end
 end
