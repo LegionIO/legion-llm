@@ -11,8 +11,8 @@ module Legion
 
       def set_defaults
         log.debug '[llm][config] set_defaults.enter'
-        default_model = Legion::LLM.settings[:default_model]
-        default_provider = Legion::LLM.settings[:default_provider]
+        default_model = Legion::LLM::Settings.value(:default_model)
+        default_provider = Legion::LLM::Settings.value(:default_provider)
 
         RubyLLM.configure do |c|
           c.default_model = default_model if default_model
@@ -22,15 +22,15 @@ module Legion
           log.debug '[llm][config] set_defaults auto_configure_defaults'
           auto_configure_defaults
         end
-        log.debug "[llm][config] set_defaults.exit default_model=#{Legion::LLM.settings[:default_model]} default_provider=#{Legion::LLM.settings[:default_provider]}"
+        log.debug "[llm][config] set_defaults.exit default_model=#{Legion::LLM::Settings.value(:default_model)} default_provider=#{Legion::LLM::Settings.value(:default_provider)}"
       end
 
       def auto_configure_defaults
         log.debug '[llm][config] auto_configure_defaults.enter'
-        Legion::LLM.settings[:providers].each do |provider, config|
-          next unless config&.dig(:enabled)
+        Legion::LLM::Settings.value(:providers, default: {}).each do |provider, config|
+          next unless Legion::LLM::Settings.config_value(config, :enabled)
 
-          model = config[:default_model]
+          model = Legion::LLM::Settings.config_value(config, :default_model)
           next unless model
 
           Legion::LLM.settings[:default_model] = model

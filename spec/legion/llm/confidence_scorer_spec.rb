@@ -186,15 +186,24 @@ RSpec.describe Legion::LLM::Quality::Confidence::Scorer do
 
     context 'configurable band boundaries via Settings' do
       before do
-        allow(Legion::Settings).to receive(:[]).with(:llm).and_return(
-          { confidence: { bands: { low: 0.2, medium: 0.4, high: 0.6, very_high: 0.8 } } }
-        )
+        Legion::Settings[:llm][:confidence] = { bands: { low: 0.2, medium: 0.4, high: 0.6, very_high: 0.8 } }
       end
 
       it 'reads bands from Legion::Settings[:llm][:confidence][:bands]' do
         # score 0.75: with default bands (very_high >= 0.9) this is :high
         # with custom bands (very_high >= 0.8) this is also :high (0.75 < 0.8)
         # use 0.85 which is >= 0.8 -> :very_high under custom bands, but :high under default
+        result_custom = described_class.score(make_response('ok'), confidence_score: 0.85)
+        expect(result_custom.band).to eq(:very_high)
+      end
+
+      it 'reads string-keyed band settings' do
+        Legion::Settings[:llm] = {
+          'confidence' => {
+            'bands' => { 'low' => 0.2, 'medium' => 0.4, 'high' => 0.6, 'very_high' => 0.8 }
+          }
+        }
+
         result_custom = described_class.score(make_response('ok'), confidence_score: 0.85)
         expect(result_custom.band).to eq(:very_high)
       end

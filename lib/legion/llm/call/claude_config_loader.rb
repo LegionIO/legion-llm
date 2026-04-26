@@ -14,11 +14,11 @@ module Legion
         module_function
 
         def claude_settings_path
-          File.expand_path(Legion::LLM.settings.dig(:claude_cli, :settings_path) || '~/.claude/settings.json')
+          File.expand_path(Legion::LLM::Settings.value(:claude_cli, :settings_path, default: '~/.claude/settings.json'))
         end
 
         def claude_config_path
-          File.expand_path(Legion::LLM.settings.dig(:claude_cli, :config_path) || '~/.claude.json')
+          File.expand_path(Legion::LLM::Settings.value(:claude_cli, :config_path, default: '~/.claude.json'))
         end
 
         def load

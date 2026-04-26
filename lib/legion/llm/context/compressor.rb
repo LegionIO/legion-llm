@@ -186,7 +186,11 @@ module Legion
           end
 
           def summarize_model
-            (defined?(Legion::Settings) && Legion::Settings.dig(:llm, :compressor, :model)) || 'gpt-4o-mini'
+            if defined?(Legion::LLM::Settings)
+              Legion::LLM::Settings.value(:compressor, :model, default: 'gpt-4o-mini')
+            else
+              'gpt-4o-mini'
+            end
           end
 
           def jaccard_similarity(text_a, text_b)

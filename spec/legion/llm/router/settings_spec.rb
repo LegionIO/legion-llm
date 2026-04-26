@@ -13,6 +13,22 @@ RSpec.describe Legion::LLM::Settings do
     end
   end
 
+  describe '.value' do
+    it 'reads nested symbol-keyed settings' do
+      Legion::Settings[:llm][:routing] = { fleet: { timeout_seconds: 45 } }
+      expect(described_class.value(:routing, :fleet, :timeout_seconds)).to eq(45)
+    end
+
+    it 'reads nested string-keyed settings' do
+      Legion::Settings[:llm] = { 'routing' => { 'fleet' => { 'timeout_seconds' => 60 } } }
+      expect(described_class.value(:routing, :fleet, :timeout_seconds)).to eq(60)
+    end
+
+    it 'returns the default when a path is missing' do
+      expect(described_class.value(:missing, :path, default: 'fallback')).to eq('fallback')
+    end
+  end
+
   # ─── 2. Routing defaults to disabled ─────────────────────────────────────────
 
   describe '.routing_defaults' do

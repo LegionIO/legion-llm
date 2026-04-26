@@ -299,8 +299,8 @@ RSpec.describe Legion::LLM::Embeddings do
     end
 
     it 'resolves provider from llm settings when not specified' do
-      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(:bedrock)
-      allow(Legion::Settings).to receive(:dig).with(:llm, :embedding).and_return(nil)
+      Legion::Settings[:llm][:default_provider] = :bedrock
+      Legion::Settings[:llm][:embedding] = {}
 
       mock_response = double(vectors: [Array.new(1024, 0.1)], input_tokens: 1)
       allow(RubyLLM).to receive(:embed).and_return(mock_response)

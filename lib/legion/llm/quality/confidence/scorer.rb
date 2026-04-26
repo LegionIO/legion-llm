@@ -100,12 +100,7 @@ module Legion
             end
 
             def settings_bands
-              return DEFAULT_BANDS unless defined?(Legion::Settings)
-
-              raw = Legion::Settings[:llm]
-              return DEFAULT_BANDS unless raw.is_a?(Hash)
-
-              conf = raw.dig(:confidence, :bands)
+              conf = Legion::LLM::Settings.value(:confidence, :bands)
               return DEFAULT_BANDS unless conf.is_a?(Hash)
 
               DEFAULT_BANDS.merge(conf.transform_keys(&:to_sym))

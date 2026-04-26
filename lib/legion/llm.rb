@@ -87,7 +87,7 @@ module Legion
         Hooks.install_defaults
         Tools::Interceptor.load_defaults
 
-        Legion::LLM::Skills.start if defined?(Legion::LLM::Skills) && settings.dig(:skills, :enabled) != false
+        Legion::LLM::Skills.start if defined?(Legion::LLM::Skills) && Settings.value(:skills, :enabled) != false
 
         LLM::Transport.load_all
         LLM::Fleet.load_transport
@@ -132,7 +132,7 @@ module Legion
       def embed(text, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.embedding_span(
-            model: (settings[:default_model] || 'unknown').to_s
+            model: (Settings.value(:default_model) || 'unknown').to_s
           ) { |_span| Call::Embeddings.generate(text: text, **) }
         else
           Call::Embeddings.generate(text: text, **)

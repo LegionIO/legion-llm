@@ -25,7 +25,7 @@ module Legion
 
               request_id = SecureRandom.uuid
               normalized = Legion::LLM::API::Translators::OpenAIRequest.normalize(body)
-              model = normalized[:model] || Legion::LLM.settings[:default_model] || 'default'
+              model = normalized[:model] || Legion::LLM::Settings.value(:default_model) || 'default'
               streaming = normalized[:stream] == true
 
               log.info("[llm][api][openai][chat_completions] action=accepted request_id=#{request_id} model=#{model} stream=#{streaming}")

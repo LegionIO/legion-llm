@@ -44,6 +44,35 @@ module Legion
         }
       end
 
+      def self.value(*keys, default: nil)
+        keys.reduce(current_settings) do |current, key|
+          return default unless current.respond_to?(:key?)
+
+          config_value(current, key)
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.settings.value')
+        default
+      end
+
+      def self.config_value(config, key, default = nil)
+        return default unless config.respond_to?(:key?)
+
+        string_key = key.to_s
+        return config[string_key] if config.key?(string_key)
+
+        symbol_key = key.to_sym if key.respond_to?(:to_sym)
+        return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+        default
+      end
+
+      def self.current_settings
+        Legion::LLM.settings || {}
+      rescue StandardError
+        defined?(Legion::Settings) ? Legion::Settings[:llm] : {}
+      end
+
       def self.claude_cli_defaults
         {
           settings_path: '~/.claude/settings.json',

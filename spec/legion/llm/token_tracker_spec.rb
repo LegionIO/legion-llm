@@ -72,6 +72,12 @@ RSpec.describe Legion::LLM::Metering::Tokens do
       expect(described_class.session_exceeded?).to be true
     end
 
+    it 'reads string-keyed budget limits' do
+      Legion::Settings[:llm] = { 'budget' => { 'session_max_tokens' => 500 } }
+      described_class.record(input_tokens: 300, output_tokens: 200)
+      expect(described_class.session_exceeded?).to be true
+    end
+
     it 'returns true when total exceeds the limit' do
       Legion::Settings[:llm][:budget] = { session_max_tokens: 100 }
       described_class.record(input_tokens: 80, output_tokens: 80)
@@ -93,6 +99,12 @@ RSpec.describe Legion::LLM::Metering::Tokens do
 
     it 'returns true when total reaches the warning threshold' do
       Legion::Settings[:llm][:budget] = { session_warn_tokens: 500 }
+      described_class.record(input_tokens: 300, output_tokens: 200)
+      expect(described_class.session_warning?).to be true
+    end
+
+    it 'reads string-keyed warning thresholds' do
+      Legion::Settings[:llm] = { 'budget' => { 'session_warn_tokens' => 500 } }
       described_class.record(input_tokens: 300, output_tokens: 200)
       expect(described_class.session_warning?).to be true
     end
