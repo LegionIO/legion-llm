@@ -365,6 +365,30 @@ confidence: 0.9 }],
       expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
     end
 
+    it 'honors string-keyed max_tool_rounds settings' do
+      allow(Legion::LLM).to receive(:settings).and_return({ 'max_tool_rounds' => 2 })
+
+      executor = described_class.new(request)
+      session = double('RubyLLM::Chat')
+      tool_call_block = nil
+
+      allow(session).to receive(:on_tool_call) { |&blk| tool_call_block = blk }
+      allow(session).to receive(:respond_to?).with(:on_tool_result).and_return(false)
+      allow(session).to receive(:respond_to?).with(:on_tool_call).and_return(true)
+      allow(session).to receive(:with_tool)
+      allow(session).to receive(:with_instructions)
+      allow(RubyLLM).to receive(:chat).and_return(session)
+      allow(session).to receive(:ask) do
+        tool_call = double('ToolCall', id: 'tc_1', name: 'test_tool', arguments: {})
+        3.times { tool_call_block.call(tool_call) }
+        double(content: 'done', input_tokens: 5, output_tokens: 3, model_id: 'test')
+      end
+
+      allow(executor).to receive(:step_response_normalization)
+
+      expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
+    end
+
     it 'uses MAX_RUBY_LLM_TOOL_ROUNDS as default when max_tool_rounds not in settings' do
       allow(Legion::LLM).to receive(:settings).and_return({})
 
@@ -383,6 +407,57 @@ confidence: 0.9 }],
 
       # Should not raise — no tool calls fired, just verifying guard installs without crash
       expect { executor.call }.not_to raise_error
+    end
+  end
+
+  describe 'string-keyed routing settings' do
+    subject(:executor) { described_class.new(request) }
+
+    it 'honors string-keyed pipeline escalation settings' do
+      allow(Legion::LLM).to receive(:settings).and_return({
+                                                            'routing' => {
+                                                              'escalation' => {
+                                                                'enabled'           => true,
+                                                                'pipeline_enabled'  => true,
+                                                                'max_attempts'      => 7,
+                                                                'quality_threshold' => 85
+                                                              }
+                                                            }
+                                                          })
+
+      expect(executor.send(:pipeline_escalation_enabled?)).to be(true)
+      expect(executor.send(:pipeline_escalation_max_attempts)).to eq(7)
+      expect(executor.send(:pipeline_escalation_quality_threshold)).to eq(85)
+    end
+
+    it 'honors string-keyed native provider layer settings' do
+      allow(Legion::LLM).to receive(:settings).and_return({
+                                                            'provider_layer' => {
+                                                              'mode' => 'auto'
+                                                            }
+                                                          })
+      allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
+
+      expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
+    end
+
+    it 'finds string-keyed fallback provider configs' do
+      allow(Legion::LLM).to receive(:settings).and_return({
+                                                            'providers' => {
+                                                              'ollama'  => {
+                                                                'enabled'       => true,
+                                                                'default_model' => 'qwen3.6:27b'
+                                                              },
+                                                              'bedrock' => {
+                                                                'enabled'       => true,
+                                                                'default_model' => 'claude-sonnet-4-6'
+                                                              }
+                                                            }
+                                                          })
+
+      expect(executor.send(:find_fallback_provider, exclude: [])).to eq(
+        { provider: :bedrock, model: 'claude-sonnet-4-6' }
+      )
     end
   end
 

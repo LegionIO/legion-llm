@@ -97,6 +97,29 @@ module Legion
 
         private
 
+        def llm_setting(key, default = nil)
+          config_value(llm_settings, key, default)
+        end
+
+        def llm_settings
+          Legion::LLM.settings || {}
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.pipeline.settings')
+          {}
+        end
+
+        def config_value(config, key, default = nil)
+          return default unless config.respond_to?(:key?)
+
+          string_key = key.to_s
+          return config[string_key] if config.key?(string_key)
+
+          symbol_key = key.to_sym if key.respond_to?(:to_sym)
+          return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+          default
+        end
+
         def inject_registry_tools(session)
           return unless defined?(::Legion::Tools::Registry)
 
@@ -230,12 +253,12 @@ module Legion
         end
 
         def maybe_compact_history(conv_id, history)
-          conv_settings = Legion::LLM.settings[:conversation] || {}
-          return history unless conv_settings[:auto_compact]
+          conv_settings = llm_setting(:conversation, {})
+          return history unless config_value(conv_settings, :auto_compact)
 
-          threshold = conv_settings[:summarize_threshold] || 50_000
-          target_tokens = conv_settings[:target_tokens] || 20_000
-          preserve_recent = conv_settings[:preserve_recent] || 10
+          threshold = config_value(conv_settings, :summarize_threshold, 50_000)
+          target_tokens = config_value(conv_settings, :target_tokens, 20_000)
+          preserve_recent = config_value(conv_settings, :preserve_recent, 10)
 
           estimated = Context::Compressor.estimate_tokens(history)
           return history unless estimated >= threshold
@@ -330,8 +353,8 @@ module Legion
 
           @resolved_provider = provider ||
                                (model && Router.infer_provider_for_model(model)) ||
-                               Legion::LLM.settings[:default_provider]
-          @resolved_model = model || Legion::LLM.settings[:default_model]
+                               llm_setting(:default_provider)
+          @resolved_model = model || llm_setting(:default_model)
 
           log.info "[llm][inference] resolved provider=#{@resolved_provider} model=#{@resolved_model}"
           @timeline.record(
@@ -464,27 +487,27 @@ module Legion
         end
 
         def pipeline_escalation_enabled?
-          routing = Legion::LLM.settings[:routing]
+          routing = llm_setting(:routing)
           return false unless routing.is_a?(Hash)
 
-          esc = routing[:escalation] || {}
-          esc[:enabled] == true && esc[:pipeline_enabled] == true
+          esc = config_value(routing, :escalation, {})
+          config_value(esc, :enabled) == true && config_value(esc, :pipeline_enabled) == true
         end
 
         def pipeline_escalation_max_attempts
-          routing = Legion::LLM.settings[:routing]
+          routing = llm_setting(:routing)
           return 3 unless routing.is_a?(Hash)
 
-          esc = routing[:escalation] || {}
-          esc.fetch(:max_attempts, 3)
+          esc = config_value(routing, :escalation, {})
+          config_value(esc, :max_attempts, 3)
         end
 
         def pipeline_escalation_quality_threshold
-          routing = Legion::LLM.settings[:routing]
+          routing = llm_setting(:routing)
           return 50 unless routing.is_a?(Hash)
 
-          esc = routing[:escalation] || {}
-          esc.fetch(:quality_threshold, 50)
+          esc = config_value(routing, :escalation, {})
+          config_value(esc, :quality_threshold, 50)
         end
 
         def execute_provider_request
@@ -531,8 +554,8 @@ module Legion
             )
             @raw_response = Call::NativeResponseAdapter.new(result)
           rescue Legion::LLM::ProviderError => e
-            layer_settings = Legion::LLM.settings[:provider_layer] || {}
-            raise unless layer_settings.fetch(:fallback_to_ruby_llm, true)
+            layer_settings = llm_setting(:provider_layer, {})
+            raise unless config_value(layer_settings, :fallback_to_ruby_llm, true)
 
             handle_exception(
               e,
@@ -548,8 +571,8 @@ module Legion
         def use_native_dispatch?(provider)
           return false unless defined?(Call::Dispatch)
 
-          layer_settings = Legion::LLM.settings[:provider_layer] || {}
-          mode = layer_settings.fetch(:mode, 'ruby_llm').to_s
+          layer_settings = llm_setting(:provider_layer, {})
+          mode = config_value(layer_settings, :mode, 'ruby_llm').to_s
 
           case mode
           when 'native'
@@ -649,7 +672,7 @@ module Legion
         private :execute_post_provider_steps_mixed
 
         def async_post_enabled?
-          Legion::LLM.settings[:pipeline_async_post_steps] == true
+          llm_setting(:pipeline_async_post_steps) == true
         end
 
         private :async_post_enabled?
@@ -779,7 +802,7 @@ module Legion
             return
           end
 
-          max_rounds = Legion::LLM.settings[:max_tool_rounds] || MAX_RUBY_LLM_TOOL_ROUNDS
+          max_rounds = llm_setting(:max_tool_rounds, MAX_RUBY_LLM_TOOL_ROUNDS)
           tool_round = 0
           session.on_tool_call do |tool_call|
             tool_round += 1
@@ -961,10 +984,10 @@ module Legion
         def pipeline_spans_enabled?
           return false unless telemetry_enabled?
 
-          settings = Legion::LLM.settings[:telemetry]
+          settings = llm_setting(:telemetry)
           return true unless settings.is_a?(Hash)
 
-          settings.fetch(:pipeline_spans, true)
+          config_value(settings, :pipeline_spans, true)
         end
 
         def annotate_span(span, step_name)
@@ -1030,14 +1053,18 @@ module Legion
         end
 
         def find_fallback_provider(exclude: [])
-          providers = Legion::LLM.settings[:providers] || {}
+          providers = llm_setting(:providers, {})
           providers.each do |name, config|
-            next unless config.is_a?(Hash) && config[:enabled]
+            normalized_name = name.to_sym
+            next unless config.is_a?(Hash) && config_value(config, :enabled)
             next if exclude.include?(name) || exclude.include?(name.to_s)
-            next if %i[ollama vllm].include?(name)
-            next unless config[:default_model]
+            next if exclude.include?(normalized_name)
+            next if %i[ollama vllm].include?(normalized_name)
 
-            return { provider: name, model: config[:default_model] }
+            default_model = config_value(config, :default_model)
+            next unless default_model
+
+            return { provider: normalized_name, model: default_model }
           end
           nil
         end
