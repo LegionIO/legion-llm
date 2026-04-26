@@ -125,14 +125,31 @@ RSpec.describe Legion::LLM::Hooks::RagGuard do
 
       context 'when reading threshold from settings' do
         before do
-          allow(Legion::Settings).to receive(:dig).with(:llm, :rag_guard, :threshold).and_return(0.5)
-          allow(Legion::Settings).to receive(:dig).with(:llm, :rag_guard, :evaluators).and_return(nil)
+          Legion::Settings[:llm][:rag_guard] = { threshold: 0.5 }
           allow(mock_client).to receive(:run_evaluation).and_return({ summary: { avg_score: 0.6 } })
         end
 
         it 'uses the settings threshold' do
           result = described_class.check_rag_faithfulness(response: response, context: context)
           expect(result[:faithful]).to be true
+        end
+      end
+
+      context 'when reading string-keyed settings' do
+        before do
+          Legion::Settings[:llm] = {
+            'rag_guard' => {
+              'threshold'  => 0.5,
+              'evaluators' => ['faithfulness']
+            }
+          }
+          allow(mock_client).to receive(:run_evaluation).and_return({ summary: { avg_score: 0.6 } })
+        end
+
+        it 'uses the settings threshold and evaluators' do
+          result = described_class.check_rag_faithfulness(response: response, context: context)
+          expect(result[:faithful]).to be true
+          expect(result[:scores].keys).to eq(['faithfulness'])
         end
       end
     end

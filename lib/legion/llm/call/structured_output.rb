@@ -11,7 +11,7 @@ module Legion
 
         class << self
           def generate(messages:, schema:, model: nil, provider: nil, **)
-            model ||= Legion::LLM.settings[:default_model]
+            model ||= Legion::LLM::Settings.value(:default_model)
             result = call_with_schema(messages, schema, model, provider: provider, **)
             log.info "[llm][structured_output] model=#{model} provider=#{provider} valid=true"
 
@@ -88,11 +88,11 @@ module Legion
           end
 
           def retry_enabled?
-            Legion::Settings.dig(:llm, :structured_output, :retry_on_parse_failure) != false
+            Legion::LLM::Settings.value(:structured_output, :retry_on_parse_failure, default: true) != false
           end
 
           def max_retries
-            Legion::Settings.dig(:llm, :structured_output, :max_retries) || 2
+            Legion::LLM::Settings.value(:structured_output, :max_retries, default: 2)
           end
         end
       end

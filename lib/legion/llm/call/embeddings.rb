@@ -178,11 +178,6 @@ module Legion
             return configured&.to_sym if configured
 
             configured = config_value(llm_settings, :default_provider)
-            configured ||= begin
-              Legion::Settings.dig(:llm, :default_provider)
-            rescue StandardError
-              nil
-            end
             configured&.to_sym
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.embeddings.resolve_provider')
@@ -273,15 +268,7 @@ module Legion
           end
 
           def embedding_settings
-            direct = config_value(llm_settings, :embedding)
-            if direct.nil?
-              direct = begin
-                Legion::Settings.dig(:llm, :embedding)
-              rescue StandardError
-                nil
-              end
-            end
-            direct || {}
+            config_value(llm_settings, :embedding, {})
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.embeddings.embedding_settings')
             {}
@@ -514,12 +501,7 @@ module Legion
           end
 
           def providers_settings
-            begin
-              direct = Legion::Settings.dig(:llm, :providers)
-            rescue StandardError
-              return {}
-            end
-            config_value(llm_settings, :providers) || direct || {}
+            config_value(llm_settings, :providers, {})
           end
 
           def llm_settings

@@ -116,15 +116,15 @@ module Legion
         end
 
         private_class_method def self.default_ttl
-          Legion::LLM.settings.dig(:prompt_caching, :response_cache, :ttl_seconds) || 300
+          Legion::LLM::Settings.value(:prompt_caching, :response_cache, :ttl_seconds, default: 300)
         end
 
         private_class_method def self.spool_threshold
-          Legion::LLM.settings.dig(:prompt_caching, :response_cache, :spool_threshold_bytes) || (8 * 1024 * 1024)
+          Legion::LLM::Settings.value(:prompt_caching, :response_cache, :spool_threshold_bytes, default: 8 * 1024 * 1024)
         end
 
         private_class_method def self.spool_dir
-          configured = Legion::LLM.settings.dig(:prompt_caching, :response_cache, :spool_dir).to_s.strip
+          configured = Legion::LLM::Settings.value(:prompt_caching, :response_cache, :spool_dir).to_s.strip
           configured.empty? ? File.expand_path('~/.legionio/data/spool/llm_responses') : File.expand_path(configured)
         end
 

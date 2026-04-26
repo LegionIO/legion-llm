@@ -23,7 +23,7 @@ module Legion
       end
 
       def settings_directories
-        Array(Legion::LLM.settings.dig(:skills, :directories) || [])
+        Array(Legion::LLM::Settings.value(:skills, :directories, default: []))
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.skills.settings_directories')
         []

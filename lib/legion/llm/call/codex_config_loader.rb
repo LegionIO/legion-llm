@@ -74,12 +74,17 @@ module Legion
             return
           end
 
-          providers = Legion::LLM.settings[:providers]
-          existing_raw = providers.dig(:openai, :api_key)
+          providers = Legion::LLM::Settings.value(:providers, default: {})
+          openai_config = Legion::LLM::Settings.config_value(providers, :openai, {})
+          existing_raw = Legion::LLM::Settings.config_value(openai_config, :api_key)
           resolved_existing = resolve_env_api_key(existing_raw)
           return unless resolved_existing.nil? || (resolved_existing.respond_to?(:empty?) && resolved_existing.empty?)
 
-          providers[:openai][:api_key] = token
+          if openai_config.key?('api_key')
+            openai_config['api_key'] = token
+          else
+            openai_config[:api_key] = token
+          end
           log.debug 'Imported OpenAI API key from Codex auth config'
         end
 

@@ -71,9 +71,7 @@ module Legion
         end
 
         def budget_setting
-          return 0.0 unless defined?(Legion::Settings)
-
-          settings = Legion::Settings.dig(:llm, :budget, :session_usd)
+          settings = Legion::LLM::Settings.value(:budget, :session_usd, default: 0.0)
           settings.to_f
         rescue StandardError => e
           handle_exception(e, level: :debug)

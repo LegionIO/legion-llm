@@ -83,6 +83,22 @@ RSpec.describe Legion::LLM::Cache::Response do
       expect(described_class.response(request_id)).to eq('Hello world')
     end
 
+    it 'uses string-keyed response cache settings' do
+      Legion::Settings[:llm] = {
+        'prompt_caching' => {
+          'response_cache' => {
+            'spool_dir'             => spool_dir,
+            'spool_threshold_bytes' => 1,
+            'ttl_seconds'           => 300
+          }
+        }
+      }
+
+      described_class.complete(request_id, response: 'Hello world', meta: {})
+      expect(described_class.response(request_id)).to eq('Hello world')
+      expect(Dir.children(spool_dir)).to include("#{request_id}.txt")
+    end
+
     it 'stores meta as JSON with symbolized keys on read' do
       described_class.complete(request_id, response: 'ok', meta: { model: 'gpt-4o', tokens: 42 }, ttl: 300)
       result = described_class.meta(request_id)

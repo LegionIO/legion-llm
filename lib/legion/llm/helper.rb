@@ -12,27 +12,21 @@ module Legion
       # Resolution chain: per-call kwarg -> LEX override -> Settings -> nil (auto-detect)
 
       def llm_default_model
-        return nil unless defined?(Legion::Settings)
-
-        Legion::Settings.dig(:llm, :default_model)
+        Legion::LLM::Settings.value(:default_model)
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.helper.default_model')
         nil
       end
 
       def llm_default_provider
-        return nil unless defined?(Legion::Settings)
-
-        Legion::Settings.dig(:llm, :default_provider)
+        Legion::LLM::Settings.value(:default_provider)
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.helper.default_provider')
         nil
       end
 
       def llm_default_intent
-        return nil unless defined?(Legion::Settings)
-
-        Legion::Settings.dig(:llm, :routing, :default_intent)
+        Legion::LLM::Settings.value(:routing, :default_intent)
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.helper.default_intent')
         nil

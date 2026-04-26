@@ -140,8 +140,8 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       expect(result).to be false
     end
 
-    it 'returns false when Settings.dig raises' do
-      allow(Legion::Settings).to receive(:dig).and_raise(StandardError.new('boom'))
+    it 'returns false when settings access raises' do
+      allow(Legion::Settings).to receive(:[]).and_raise(StandardError.new('boom'))
       result = Legion::LLM::Embeddings.send(:provider_disabled?, :bedrock)
       expect(result).to be false
     end
