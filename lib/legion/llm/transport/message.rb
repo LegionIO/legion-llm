@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'securerandom'
+require 'uri'
 
 module Legion
   module LLM
@@ -40,10 +41,24 @@ module Legion
           super.merge(llm_headers).merge(context_headers).merge(tracing_headers)
         end
 
-        # Subclasses override to inject OpenTelemetry span context.
-        # Stub returns empty hash until tracing integration is implemented.
         def tracing_headers
-          {}
+          tracing = @options[:tracing] || context_value(message_context, :tracing)
+          return {} unless tracing.is_a?(Hash)
+
+          trace_id = context_value(tracing, :trace_id)
+          span_id = context_value(tracing, :span_id)
+          parent_span_id = context_value(tracing, :parent_span_id)
+          correlation_id = context_value(tracing, :correlation_id)
+          baggage = baggage_header(context_value(tracing, :baggage))
+
+          h = {}
+          h['traceparent'] = "00-#{trace_id}-#{span_id}-01" if w3c_trace_id?(trace_id) && w3c_span_id?(span_id)
+          h['baggage'] = baggage if baggage
+          h['x-legion-trace-id']       = trace_id.to_s       if trace_id
+          h['x-legion-span-id']        = span_id.to_s        if span_id
+          h['x-legion-parent-span-id'] = parent_span_id.to_s if parent_span_id
+          h['x-legion-correlation-id'] = correlation_id.to_s if correlation_id
+          h
         end
 
         private
@@ -99,6 +114,25 @@ module Legion
 
           string_key = key.to_s
           context[string_key] if context.key?(string_key)
+        end
+
+        def w3c_trace_id?(value)
+          value.to_s.match?(/\A[0-9a-f]{32}\z/) && value.to_s != ('0' * 32)
+        end
+
+        def w3c_span_id?(value)
+          value.to_s.match?(/\A[0-9a-f]{16}\z/) && value.to_s != ('0' * 16)
+        end
+
+        def baggage_header(baggage)
+          return nil unless baggage.is_a?(Hash) && !baggage.empty?
+
+          header = baggage.filter_map do |key, value|
+            next if value.nil?
+
+            "#{URI.encode_www_form_component(key.to_s)}=#{URI.encode_www_form_component(value.to_s)}"
+          end.join(',')
+          header.empty? ? nil : header
         end
       end
     end

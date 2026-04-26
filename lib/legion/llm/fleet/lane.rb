@@ -39,7 +39,7 @@ module Legion
           forbidden = forbidden_keys(normalized)
           raise ArgumentError, "eligibility facts include sensitive keys: #{forbidden.join(', ')}" if forbidden.any?
 
-          Digest::SHA256.hexdigest(JSON.generate(normalized))[0, 16]
+          Digest::SHA256.hexdigest(::JSON.generate(normalized))[0, 16]
         end
 
         def operation_slug(operation)

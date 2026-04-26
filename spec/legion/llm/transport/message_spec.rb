@@ -140,9 +140,49 @@ RSpec.describe Legion::LLM::Transport::Message do
   end
 
   describe '#tracing_headers' do
-    it 'returns empty hash (stub)' do
+    it 'returns empty hash when tracing is absent' do
       msg = build
       expect(msg.tracing_headers).to eq({})
+    end
+
+    it 'adds W3C traceparent and Legion trace headers for valid trace ids' do
+      msg = build(
+        tracing: {
+          trace_id:       'a' * 32,
+          span_id:        'b' * 16,
+          parent_span_id: 'c' * 16,
+          correlation_id: 'corr-123'
+        }
+      )
+
+      expect(msg.tracing_headers['traceparent']).to eq("00-#{'a' * 32}-#{'b' * 16}-01")
+      expect(msg.tracing_headers['x-legion-trace-id']).to eq('a' * 32)
+      expect(msg.tracing_headers['x-legion-span-id']).to eq('b' * 16)
+      expect(msg.tracing_headers['x-legion-parent-span-id']).to eq('c' * 16)
+      expect(msg.tracing_headers['x-legion-correlation-id']).to eq('corr-123')
+    end
+
+    it 'keeps Legion trace headers when trace ids are not W3C-compatible' do
+      msg = build(tracing: { trace_id: 'trace_abc', span_id: 'span_123' })
+
+      expect(msg.tracing_headers).not_to have_key('traceparent')
+      expect(msg.tracing_headers['x-legion-trace-id']).to eq('trace_abc')
+      expect(msg.tracing_headers['x-legion-span-id']).to eq('span_123')
+    end
+
+    it 'accepts tracing from string-keyed message context and formats baggage' do
+      msg = build(
+        message_context: {
+          'tracing' => {
+            'trace_id' => 'd' * 32,
+            'span_id'  => 'e' * 16,
+            'baggage'  => { 'conversation id' => 'conv 1' }
+          }
+        }
+      )
+
+      expect(msg.tracing_headers['traceparent']).to eq("00-#{'d' * 32}-#{'e' * 16}-01")
+      expect(msg.tracing_headers['baggage']).to eq('conversation+id=conv+1')
     end
   end
 

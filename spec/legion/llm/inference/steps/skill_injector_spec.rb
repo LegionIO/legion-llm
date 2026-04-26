@@ -55,7 +55,7 @@ RSpec.describe Legion::LLM::Inference::Steps::SkillInjector do
                 disabled_skills: [], enabled_skills: [] }
     )
     stub_const('Legion::Events', Module.new { def self.emit(*); end }) unless defined?(Legion::Events)
-    stub_const('Legion::LLM::Metering', Module.new { def self.emit(**); end }) unless Legion::LLM.const_defined?(:Metering)
+    stub_const('Legion::LLM::Metering', Module.new { def self.emit(**); end }) unless Legion::LLM.const_defined?(:Metering, false)
     allow(Legion::Events).to receive(:emit)
     allow(Legion::LLM::Metering).to receive(:emit)
     allow(Legion::LLM::Audit).to receive(:emit_skill)
