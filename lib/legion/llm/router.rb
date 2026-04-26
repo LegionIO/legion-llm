@@ -222,10 +222,7 @@ module Legion
         end
 
         def discovery_settings
-          llm = Legion::Settings[:llm]
-          return {} unless llm.is_a?(Hash)
-
-          discovery = config_value(llm, :discovery, {})
+          discovery = Legion::LLM::Settings.value(:discovery, default: {})
           discovery.is_a?(Hash) ? discovery.transform_keys(&:to_sym) : {}
         rescue StandardError => e
           handle_exception(e, level: :warn)
@@ -286,10 +283,9 @@ module Legion
         end
 
         def routing_settings
-          llm = Legion::Settings[:llm]
-          return {} unless llm.is_a?(Hash)
+          routing = Legion::LLM::Settings.value(:routing, default: {})
+          return {} unless routing.is_a?(Hash)
 
-          routing = llm[:routing] || llm['routing'] || {}
           routing.transform_keys(&:to_sym)
         end
 
@@ -342,9 +338,9 @@ module Legion
           when :openai_compat
             'gpt-4o'
           when :cloud
-            config_value(Legion::Settings[:llm], :default_model) || 'us.anthropic.claude-sonnet-4-6'
+            default_settings_model || 'us.anthropic.claude-sonnet-4-6'
           when :frontier
-            config_value(Legion::Settings[:llm], :default_model) || 'claude-sonnet-4-6'
+            default_settings_model || 'claude-sonnet-4-6'
           else
             'llama3'
           end
@@ -438,20 +434,15 @@ module Legion
         end
 
         def default_settings_model
-          llm = Legion::Settings[:llm]
-          config_value(llm, :default_model) if llm.is_a?(Hash)
+          Legion::LLM::Settings.value(:default_model)
         end
 
         def default_settings_provider
-          llm = Legion::Settings[:llm]
-          config_value(llm, :default_provider) if llm.is_a?(Hash)
+          Legion::LLM::Settings.value(:default_provider)
         end
 
         def providers_settings
-          llm = Legion::Settings[:llm]
-          return {} unless llm.is_a?(Hash)
-
-          config_value(llm, :providers, {})
+          Legion::LLM::Settings.value(:providers, default: {})
         end
 
         def config_value(hash, key, default = nil)

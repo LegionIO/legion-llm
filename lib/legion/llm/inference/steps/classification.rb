@@ -239,14 +239,14 @@ module Legion
           def resolve_current_provider
             routing = @request.respond_to?(:routing) ? @request.routing : nil
             provider = config_value(routing, :provider) if routing.is_a?(Hash)
-            provider ||= config_value(Legion::Settings[:llm], :default_provider)
+            provider ||= settings_value(:default_provider)
             provider&.to_sym
           rescue StandardError
             nil
           end
 
           def settings_value(*keys)
-            nested_value(Legion::LLM.settings, *keys)
+            Legion::LLM::Settings.value(*keys)
           end
 
           def nested_value(hash, *keys)

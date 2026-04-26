@@ -41,6 +41,18 @@ RSpec.describe Legion::LLM::Cache do
     }
   end
 
+  describe '.enabled?' do
+    it 'reads string-keyed response cache settings' do
+      Legion::Settings[:llm] = {
+        'prompt_caching' => {
+          'response_cache' => { 'enabled' => false }
+        }
+      }
+
+      expect(described_class.enabled?).to be false
+    end
+  end
+
   # ──────────────────────────────────────────────
   # .key
   # ──────────────────────────────────────────────

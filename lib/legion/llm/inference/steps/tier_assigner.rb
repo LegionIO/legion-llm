@@ -70,7 +70,7 @@ module Legion
           end
 
           def tier_mappings
-            configured = nested_value(Legion::Settings[:llm], :routing, :tier_mappings)
+            configured = Legion::LLM::Settings.value(:routing, :tier_mappings)
             configured.nil? || configured.empty? ? DEFAULT_MAPPINGS : configured
           end
 
