@@ -114,6 +114,20 @@ RSpec.describe 'vLLM provider integration' do
     end
   end
 
+  describe '.normalize_vllm_base_url' do
+    it 'strips trailing slashes and a v1 suffix without regex backtracking' do
+      normalized = Legion::LLM::Call::Providers.send(:normalize_vllm_base_url, 'http://gpu:8000/v1////')
+
+      expect(normalized).to eq('http://gpu:8000')
+    end
+
+    it 'keeps non-v1 paths' do
+      normalized = Legion::LLM::Call::Providers.send(:normalize_vllm_base_url, 'http://gpu:8000/api////')
+
+      expect(normalized).to eq('http://gpu:8000/api')
+    end
+  end
+
   describe 'escalation chain' do
     it 'includes vllm in enabled_provider_chain when enabled' do
       Legion::Settings[:llm][:providers][:vllm] = { enabled: true, default_model: 'qwen3.6-27b' }
