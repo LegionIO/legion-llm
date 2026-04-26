@@ -26,7 +26,7 @@ module Legion
           log.debug '[llm][providers] resolve_llm_secrets.enter'
           return unless defined?(Legion::Settings::Resolver)
 
-          Legion::Settings::Resolver.resolve_secrets!(Legion::LLM.settings)
+          Legion::Settings::Resolver.resolve_secrets!(Legion::LLM::Settings.current_settings)
           log.debug '[llm][providers] resolve_llm_secrets.exit'
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.resolve_llm_secrets')
@@ -465,10 +465,10 @@ module Legion
         end
 
         def inject_anthropic_cache_control!(opts, provider)
-          resolved_provider = (provider || config_value(Legion::LLM.settings, :default_provider))&.to_sym
+          resolved_provider = (provider || Legion::LLM::Settings.value(:default_provider))&.to_sym
           return unless resolved_provider == :anthropic
 
-          caching_settings = config_value(Legion::LLM.settings, :prompt_caching) || {}
+          caching_settings = Legion::LLM::Settings.value(:prompt_caching, default: {}) || {}
           return unless config_value(caching_settings, :enabled, true) != false
 
           min_tokens = config_value(caching_settings, :min_tokens) || 1024
@@ -528,7 +528,7 @@ module Legion
         end
 
         def providers_settings
-          config_value(Legion::LLM.settings, :providers, {})
+          Legion::LLM::Settings.value(:providers, default: {})
         end
 
         def config_enabled?(config)

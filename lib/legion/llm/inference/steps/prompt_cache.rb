@@ -67,7 +67,7 @@ module Legion
           private
 
           def prompt_caching_settings
-            config_value(Legion::LLM.settings || {}, :prompt_caching, {})
+            Legion::LLM::Settings.value(:prompt_caching, default: {})
           rescue StandardError
             {}
           end

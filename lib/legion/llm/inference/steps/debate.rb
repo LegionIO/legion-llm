@@ -181,11 +181,7 @@ module Legion
           end
 
           def settings_value(*keys, default: nil)
-            keys.reduce(Legion::LLM.settings || {}) do |current, key|
-              return default unless current.respond_to?(:key?)
-
-              config_value(current, key)
-            end
+            Legion::LLM::Settings.value(*keys, default: default)
           rescue StandardError
             default
           end

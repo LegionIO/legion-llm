@@ -32,18 +32,14 @@ module Legion
       end
 
       def llm_settings
-        Legion::LLM.settings || {}
+        Legion::LLM::Settings.current_settings
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.inference.settings')
         {}
       end
 
       def settings_value(*keys, default: nil)
-        keys.reduce(llm_settings) do |current, key|
-          return default unless current.respond_to?(:key?)
-
-          config_value(current, key)
-        end
+        Legion::LLM::Settings.value(*keys, default: default)
       end
 
       def config_value(config, key, default = nil)

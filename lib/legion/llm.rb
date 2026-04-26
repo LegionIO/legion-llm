@@ -145,7 +145,7 @@ module Legion
       def structured(messages:, schema:, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.llm_span(
-            model: (settings[:default_model] || 'unknown').to_s, input: messages.to_s
+            model: (Settings.value(:default_model) || 'unknown').to_s, input: messages.to_s
           ) { |_span| Call::StructuredOutput.generate(messages: messages, schema: schema, **) }
         else
           Call::StructuredOutput.generate(messages: messages, schema: schema, **)
