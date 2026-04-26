@@ -116,6 +116,12 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       expect(result).to be true
     end
 
+    it 'returns true when provider config was loaded from JSON string keys' do
+      Legion::Settings[:llm]['providers'] = { 'bedrock' => { 'enabled' => false } }
+      result = Legion::LLM::Embeddings.send(:provider_disabled?, :bedrock)
+      expect(result).to be true
+    end
+
     it 'returns false when provider has enabled: true' do
       Legion::Settings[:llm][:providers][:bedrock] = { enabled: true }
       result = Legion::LLM::Embeddings.send(:provider_disabled?, :bedrock)
@@ -123,6 +129,7 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
     end
 
     it 'returns false when provider config is not a Hash' do
+      allow(Legion::Settings).to receive(:dig).and_call_original
       allow(Legion::Settings).to receive(:dig).with(:llm, :providers, :unknown).and_return(nil)
       result = Legion::LLM::Embeddings.send(:provider_disabled?, :unknown)
       expect(result).to be false

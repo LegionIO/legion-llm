@@ -320,5 +320,13 @@ RSpec.describe Legion::LLM::Embeddings do
       Legion::LLM.instance_variable_set(:@embedding_model, 'amazon.titan-embed-text-v2:0')
       expect(described_class.default_model).to eq('amazon.titan-embed-text-v2:0')
     end
+
+    it 'uses string-keyed provider_models from JSON-loaded embedding settings' do
+      Legion::Settings[:llm]['embedding'] = {
+        'provider'        => 'bedrock',
+        'provider_models' => { 'bedrock' => 'amazon.titan-embed-text-v2:0' }
+      }
+      expect(described_class.default_model).to eq('amazon.titan-embed-text-v2:0')
+    end
   end
 end
