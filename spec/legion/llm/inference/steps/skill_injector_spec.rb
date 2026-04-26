@@ -88,6 +88,12 @@ RSpec.describe Legion::LLM::Inference::Steps::SkillInjector do
       executor.step_skill_injector
       expect(executor.enrichments).to be_empty
     end
+
+    it 'does nothing when skills.enabled is string-keyed false' do
+      allow(Legion::LLM).to receive(:settings).and_return({ 'skills' => { 'enabled' => false } })
+      executor.step_skill_injector
+      expect(executor.enrichments).to be_empty
+    end
   end
 
   describe 'resume active skill from ConversationStore' do

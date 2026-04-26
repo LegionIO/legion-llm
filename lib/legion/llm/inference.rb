@@ -27,6 +27,37 @@ module Legion
 
       module_function
 
+      def llm_setting(key, default = nil)
+        config_value(llm_settings, key, default)
+      end
+
+      def llm_settings
+        Legion::LLM.settings || {}
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'llm.inference.settings')
+        {}
+      end
+
+      def settings_value(*keys, default: nil)
+        keys.reduce(llm_settings) do |current, key|
+          return default unless current.respond_to?(:key?)
+
+          config_value(current, key)
+        end
+      end
+
+      def config_value(config, key, default = nil)
+        return default unless config.respond_to?(:key?)
+
+        string_key = key.to_s
+        return config[string_key] if config.key?(string_key)
+
+        symbol_key = key.to_sym if key.respond_to?(:to_sym)
+        return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+        default
+      end
+
       # Public inference entry points — these are the methods delegated from Legion::LLM
 
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
@@ -44,7 +75,7 @@ module Legion
 
         result = if defined?(Legion::Telemetry::OpenInference)
                    Legion::Telemetry::OpenInference.llm_span(
-                     model:    (model || Legion::LLM.settings[:default_model]).to_s,
+                     model:    (model || llm_setting(:default_model)).to_s,
                      provider: provider&.to_s,
                      input:    message
                    ) do |_span|
@@ -168,7 +199,7 @@ module Legion
         log.debug("[llm][inference] chat_direct.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
-          ttl = Legion::LLM.settings.dig(:prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
+          ttl = settings_value(:prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
           Cache.set(cache_key, result, ttl: ttl)
         end
 
@@ -367,7 +398,7 @@ module Legion
         end
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
-        resolved_model = model || Legion::LLM.settings[:default_model]
+        resolved_model = model || llm_setting(:default_model)
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_before(messages: messages, model: resolved_model)
@@ -389,7 +420,7 @@ module Legion
       end
 
       def pipeline_enabled?
-        Legion::LLM.settings[:pipeline_enabled] == true
+        llm_setting(:pipeline_enabled) == true
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'llm.inference.pipeline_enabled')
         false
@@ -430,7 +461,7 @@ module Legion
           &
         )
         return result if result.is_a?(Hash) && result[:deferred]
-        return normalize_ask_direct_hash(result, fallback_model: model || Legion::LLM.settings[:default_model]) if result.is_a?(Hash)
+        return normalize_ask_direct_hash(result, fallback_model: model || llm_setting(:default_model)) if result.is_a?(Hash)
 
         response, resolved_model = resolve_ask_direct_response(result, message, model, &)
 
@@ -459,7 +490,7 @@ module Legion
         resolved_model = if result.respond_to?(:model_id) && result.model_id
                            result.model_id.to_s
                          else
-                           (requested_model || Legion::LLM.settings[:default_model]).to_s
+                           (requested_model || llm_setting(:default_model)).to_s
                          end
         [result, resolved_model]
       end
@@ -495,9 +526,9 @@ module Legion
           assert_external_allowed! if external_tier?(tier.to_sym)
         end
 
-        model ||= Legion::LLM.settings[:default_model]
+        model ||= llm_setting(:default_model)
         provider ||= (model && Router.infer_provider_for_model(model)) ||
-                     Legion::LLM.settings[:default_provider]
+                     llm_setting(:default_provider)
 
         opts = {}
         opts[:model] = model if model
@@ -665,7 +696,7 @@ module Legion
       end
 
       def response_guards_enabled?
-        Legion::LLM.settings.dig(:response_guards, :enabled) == true
+        settings_value(:response_guards, :enabled) == true
       end
 
       def apply_response_guards(result, kwargs)
@@ -690,27 +721,27 @@ module Legion
       def build_cache_key(model, provider, message, temperature)
         messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         Cache.key(
-          model:       model || Legion::LLM.settings[:default_model],
-          provider:    provider || Legion::LLM.settings[:default_provider],
+          model:       model || llm_setting(:default_model),
+          provider:    provider || llm_setting(:default_provider),
           messages:    messages_arr,
           temperature: temperature
         )
       end
 
       def escalation_enabled?
-        routing = Legion::LLM.settings[:routing]
+        routing = llm_setting(:routing)
         return false unless routing.is_a?(Hash)
 
-        esc = routing[:escalation] || {}
-        esc[:enabled] == true
+        esc = config_value(routing, :escalation, {})
+        config_value(esc, :enabled) == true
       end
 
       def escalation_quality_threshold
-        routing = Legion::LLM.settings[:routing]
+        routing = llm_setting(:routing)
         return 50 unless routing.is_a?(Hash)
 
-        esc = routing[:escalation] || {}
-        esc.fetch(:quality_threshold, 50)
+        esc = config_value(routing, :escalation, {})
+        config_value(esc, :quality_threshold, 50)
       end
 
       def emit_non_pipeline_metering(response, model:, provider:, caller: nil)
@@ -761,7 +792,7 @@ module Legion
         return external_tier?(tier.to_sym) if tier
         return false unless enterprise_privacy?
 
-        resolved = provider || Legion::LLM.settings[:default_provider]
+        resolved = provider || llm_setting(:default_provider)
         external_providers = %i[anthropic bedrock openai gemini azure]
         external_providers.include?(resolved&.to_sym)
       end
