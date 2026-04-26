@@ -60,10 +60,19 @@ module Legion
         end
 
         def sanitize_segment(value)
-          value.to_s.downcase
-               .gsub(/[^a-z0-9]+/, '-')
-               .gsub(/\A-+|-+\z/, '')
-               .squeeze('-')
+          output = +''
+          previous_dash = true
+          value.to_s.downcase.each_byte do |byte|
+            if byte.between?(97, 122) || byte.between?(48, 57)
+              output << byte
+              previous_dash = false
+            elsif !previous_dash
+              output << '-'
+              previous_dash = true
+            end
+          end
+          output.chop! if output.end_with?('-')
+          output
         end
 
         def normalize_facts(value)

@@ -112,7 +112,7 @@ module Legion
         def vllm_running?(config)
           require 'faraday'
           url = config_value(config, :base_url) || 'http://localhost:8000/v1'
-          base = url.sub(%r{/+\z}, '').sub(%r{/v1\z}, '')
+          base = normalize_vllm_base_url(url)
           log.debug "[llm][providers] vllm_running? url=#{base}/health"
           response = Faraday.new(url: base) do |f|
             f.options.timeout = 2
@@ -123,6 +123,13 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.providers.vllm_running', base_url: url)
           false
+        end
+
+        def normalize_vllm_base_url(url)
+          base = url.to_s.dup
+          base.chop! while base.end_with?('/')
+          base = base[0...-3] if base.end_with?('/v1')
+          base.empty? ? 'http://localhost:8000' : base
         end
 
         def apply_provider_config(provider, config)

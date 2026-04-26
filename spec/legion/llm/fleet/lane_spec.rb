@@ -31,6 +31,16 @@ RSpec.describe Legion::LLM::Fleet::Lane do
 
       expect(key).to eq('llm.fleet.inference.qwen3-6-27b.ctx32768.elig.abc123')
     end
+
+    it 'sanitizes repeated separators without regex backtracking' do
+      key = described_class.routing_key(
+        operation: :chat,
+        model:     '---Qwen///3.6:::27B---',
+        boundary:  '///corp---lan///'
+      )
+
+      expect(key).to eq('llm.fleet.inference.qwen-3-6-27b.boundary.corp-lan')
+    end
   end
 
   describe '.offering_key' do

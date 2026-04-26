@@ -14,6 +14,7 @@
 - Sticky tool history, trigger matching, and RAG context settings now honor JSON/string-keyed settings.
 - Shared settings helpers now normalize string and symbol keys across router, fleet, scheduling, response cache, API auth/defaults, metering, quality, guards, skills, discovery, inventory, daemon, config loaders, and audit checks.
 - LLM transport messages now promote tracing metadata into W3C `traceparent`, `baggage`, and Legion trace headers for fleet/audit/metering correlation.
+- Fleet lane sanitization and vLLM health URL normalization now avoid regex patterns flagged by CodeQL for uncontrolled input.
 
 ## [0.8.28] - 2026-04-24
 
