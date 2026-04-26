@@ -11,6 +11,7 @@
 - Discovery for Ollama, vLLM, and embedding fallback chains now honors JSON/string-keyed provider, embedding, base URL, model metadata, and refresh TTL settings.
 - Inference executor routing defaults, conversation compaction, pipeline escalation, native dispatch, async post-step, telemetry span, tool-loop, and fallback-provider settings now honor JSON/string-keyed settings.
 - Module-level inference, prompt dispatch, prompt-cache, debate, and skill-injector settings now honor JSON/string-keyed settings.
+- Sticky tool history, trigger matching, and RAG context settings now honor JSON/string-keyed settings.
 
 ## [0.8.28] - 2026-04-24
 
