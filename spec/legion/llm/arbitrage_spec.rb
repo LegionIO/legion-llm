@@ -18,6 +18,11 @@ RSpec.describe Legion::LLM::Router::Arbitrage do
       expect(described_class.enabled?).to be true
     end
 
+    it 'reads string-keyed arbitrage settings' do
+      Legion::Settings[:llm] = { 'arbitrage' => { 'enabled' => true } }
+      expect(described_class.enabled?).to be true
+    end
+
     it 'returns false when explicitly disabled' do
       Legion::Settings[:llm][:arbitrage] = { enabled: false }
       expect(described_class.enabled?).to be false
@@ -47,6 +52,15 @@ RSpec.describe Legion::LLM::Router::Arbitrage do
         cost_table: { 'gpt-4o' => { input: 1.0, output: 5.0 } }
       }
       expect(described_class.cost_table['gpt-4o']).to eq({ input: 1.0, output: 5.0 })
+    end
+
+    it 'reads string-keyed cost table overrides' do
+      Legion::Settings[:llm] = {
+        'arbitrage' => {
+          'cost_table' => { 'my-custom-model' => { 'input' => 1.0, 'output' => 2.0 } }
+        }
+      }
+      expect(described_class.cost_table['my-custom-model']).to eq({ input: 1.0, output: 2.0 })
     end
   end
 

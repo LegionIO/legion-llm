@@ -34,9 +34,9 @@ module RubyLLM
         private
 
         def vllm_thinking_default
-          return true unless defined?(Legion::Settings)
+          return true unless defined?(Legion::LLM::Settings)
 
-          Legion::Settings[:llm].dig(:providers, :vllm, :enable_thinking) != false
+          Legion::LLM::Settings.value(:providers, :vllm, :enable_thinking, default: true) != false
         rescue StandardError
           true
         end

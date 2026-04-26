@@ -119,9 +119,9 @@ module Legion
         end
 
         def audit_max_messages
-          return 20 unless defined?(Legion::Settings)
-
-          nested_value(Legion::Settings[:llm], :compliance, :audit_max_messages) || 20
+          max = Legion::LLM::Settings.value(:compliance, :audit_max_messages)
+          max = max.to_i if max.respond_to?(:to_i)
+          max.is_a?(Integer) && max.positive? ? max : 20
         rescue StandardError
           20
         end

@@ -57,8 +57,7 @@ module Legion
       def enabled?
         return false unless available?
 
-        settings = llm_settings
-        settings.dig(:prompt_caching, :response_cache, :enabled) != false
+        Legion::LLM::Settings.value(:prompt_caching, :response_cache, :enabled, default: true) != false
       end
 
       private_class_method def self.available?
@@ -66,11 +65,7 @@ module Legion
       end
 
       private_class_method def self.llm_settings
-        if Legion.const_defined?('Settings', false)
-          Legion::Settings[:llm]
-        else
-          Legion::LLM::Settings.default
-        end
+        Legion::LLM::Settings.current_settings
       rescue StandardError => e
         handle_exception(e, level: :warn)
         {}

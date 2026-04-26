@@ -95,7 +95,7 @@ module Legion
           end
 
           def llm_settings
-            Legion::Settings[:llm] || Legion::Settings['llm'] || {}
+            Legion::LLM::Settings.current_settings
           end
 
           def config_value(config, key, default = nil)

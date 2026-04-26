@@ -38,20 +38,7 @@ module Legion
         end
 
         def require_auth?
-          return false unless defined?(Legion::Settings)
-
-          settings = begin
-            Legion::Settings[:llm]
-          rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.fleet.handler.require_auth')
-            nil
-          end
-          return false unless settings.is_a?(Hash)
-
-          fleet = nested_fetch(settings, :routing, :fleet)
-          return false unless fleet.is_a?(Hash)
-
-          fetch_option(fleet, :require_auth) == true
+          Legion::LLM::Settings.value(:routing, :fleet, :require_auth) == true
         end
 
         def call_local_llm(payload)

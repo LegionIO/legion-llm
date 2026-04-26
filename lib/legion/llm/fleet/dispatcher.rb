@@ -86,9 +86,8 @@ module Legion
         end
 
         def default_routing_style
-          settings = Legion::LLM.settings
-          nested_fetch(settings, :routing, :tiers, :fleet, :routing_style) ||
-            nested_fetch(settings, :routing, :fleet, :routing_style) ||
+          Legion::LLM::Settings.value(:routing, :tiers, :fleet, :routing_style) ||
+            Legion::LLM::Settings.value(:routing, :fleet, :routing_style) ||
             :shared_lane
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.default_routing_style')
@@ -139,17 +138,7 @@ module Legion
         end
 
         def fleet_enabled?
-          return true unless defined?(Legion::Settings)
-
-          settings = begin
-            Legion::Settings[:llm]
-          rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.fleet_enabled')
-            nil
-          end
-          return true unless settings.is_a?(Hash)
-
-          routing = fetch_option(settings, :routing)
+          routing = Legion::LLM::Settings.value(:routing, default: {})
           return true unless routing.is_a?(Hash)
 
           fetch_option(routing, :use_fleet) != false
@@ -158,9 +147,8 @@ module Legion
         def resolve_timeout(request_type: :default, override: nil)
           return override if override
 
-          settings = Legion::LLM.settings
-          fleet = nested_fetch(settings, :routing, :tiers, :fleet) ||
-                  nested_fetch(settings, :routing, :fleet) ||
+          fleet = Legion::LLM::Settings.value(:routing, :tiers, :fleet) ||
+                  Legion::LLM::Settings.value(:routing, :fleet) ||
                   {}
           timeouts = fetch_option(fleet, :timeouts) || {}
           fetch_option(timeouts, request_type.to_sym) || fetch_option(fleet, :timeout_seconds) || 30
