@@ -32,6 +32,11 @@ RSpec.describe Legion::LLM::Providers, 'base_url forwarding' do
       expect(ruby_llm_config).to have_received(:anthropic_api_base=).with('https://gateway.example.com')
     end
 
+    it 'sets anthropic_api_base from string-keyed config' do
+      host.send(:configure_anthropic, { 'api_key' => 'sk-ant', 'base_url' => 'https://gateway.example.com' })
+      expect(ruby_llm_config).to have_received(:anthropic_api_base=).with('https://gateway.example.com')
+    end
+
     it 'does not set anthropic_api_base when base_url is absent' do
       host.send(:configure_anthropic, { api_key: 'sk-ant' })
       expect(ruby_llm_config).not_to have_received(:anthropic_api_base=)
@@ -49,6 +54,11 @@ RSpec.describe Legion::LLM::Providers, 'base_url forwarding' do
       expect(ruby_llm_config).to have_received(:openai_api_base=).with('https://gateway.example.com')
     end
 
+    it 'sets openai_api_base from string-keyed config' do
+      host.send(:configure_openai, { 'api_key' => 'sk-oai', 'base_url' => 'https://gateway.example.com' })
+      expect(ruby_llm_config).to have_received(:openai_api_base=).with('https://gateway.example.com')
+    end
+
     it 'does not set openai_api_base when base_url is absent' do
       host.send(:configure_openai, { api_key: 'sk-oai' })
       expect(ruby_llm_config).not_to have_received(:openai_api_base=)
@@ -63,6 +73,11 @@ RSpec.describe Legion::LLM::Providers, 'base_url forwarding' do
 
     it 'sets gemini_api_base when base_url is present' do
       host.send(:configure_gemini, { api_key: 'gem-key', base_url: 'https://gateway.example.com' })
+      expect(ruby_llm_config).to have_received(:gemini_api_base=).with('https://gateway.example.com')
+    end
+
+    it 'sets gemini_api_base from string-keyed config' do
+      host.send(:configure_gemini, { 'api_key' => 'gem-key', 'base_url' => 'https://gateway.example.com' })
       expect(ruby_llm_config).to have_received(:gemini_api_base=).with('https://gateway.example.com')
     end
 

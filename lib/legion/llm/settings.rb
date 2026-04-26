@@ -127,7 +127,8 @@ module Legion
           tiers:          {
             local:         { provider: 'ollama' },
             fleet:         {
-              queue:           'llm.request',
+              queue:           'llm.fleet',
+              routing_style:   :shared_lane,
               timeout_seconds: 30,
               timeouts:        { embed: 10, chat: 30, generate: 30, default: 30 }
             },

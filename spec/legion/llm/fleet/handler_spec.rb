@@ -19,6 +19,11 @@ RSpec.describe Legion::LLM::Fleet::Handler do
       Legion::Settings[:llm][:routing] = { fleet: { require_auth: true } }
       expect(described_class.require_auth?).to eq(true)
     end
+
+    it 'reads string-keyed auth settings' do
+      Legion::Settings[:llm]['routing'] = { 'fleet' => { 'require_auth' => true } }
+      expect(described_class.require_auth?).to eq(true)
+    end
   end
 
   describe '.build_response' do
@@ -54,6 +59,16 @@ RSpec.describe Legion::LLM::Fleet::Handler do
       expect(result[:provider]).to eq(:openai)
       expect(result[:model_id]).to eq('gpt-4o')
     end
+
+    it 'preserves message_context when supplied' do
+      result = described_class.build_response(
+        'corr-123',
+        { success: true, model: 'qwen3.6' },
+        message_context: { conversation_id: 'conv-1', request_id: 'req-1' }
+      )
+
+      expect(result[:message_context]).to eq(conversation_id: 'conv-1', request_id: 'req-1')
+    end
   end
 
   describe '.valid_token?' do
@@ -79,6 +94,18 @@ RSpec.describe Legion::LLM::Fleet::Handler do
       expect(result[:success]).to eq(false)
       expect(result[:error]).to eq('llm_not_available')
       expect(result[:response]).to eq(success: false, error: 'llm_not_available')
+    end
+
+    it 'normalizes string-keyed payloads and carries message_context into replies' do
+      allow(described_class).to receive(:call_local_llm).and_return(success: true, model: 'qwen3.6')
+
+      result = described_class.handle_fleet_request(
+        'correlation_id'  => 'corr-json',
+        'message_context' => { 'conversation_id' => 'conv-json', 'request_id' => 'req-json' }
+      )
+
+      expect(result[:correlation_id]).to eq('corr-json')
+      expect(result[:message_context]).to eq({ 'conversation_id' => 'conv-json', 'request_id' => 'req-json' })
     end
   end
 

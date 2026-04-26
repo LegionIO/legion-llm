@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.8.29] - 2026-04-25
+
+### Fixed
+- Fleet dispatch now registers reply futures before publishing requests, consumes structured publish results, fails fast on unroutable/nacked/confirm-timeout publishes, and validates reply metadata before fulfilling pending requests.
+- `FleetRequest` now opts out of live-request spooling, requires mandatory publish and publisher confirms by default, and includes reply routing fields in the worker payload.
+- `FleetResponse` and `FleetError` now publish live replies with mandatory routing, publisher confirms, and no spool/replay.
+- LLM transport message IDs are memoized per message instance so AMQP return/confirm correlation sees the same `message_id` that was published.
+
 ## [0.8.28] - 2026-04-24
 
 ### Fixed

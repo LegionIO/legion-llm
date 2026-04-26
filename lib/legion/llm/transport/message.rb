@@ -23,7 +23,7 @@ module Legion
         end
 
         def message_id
-          @options[:message_id] || "#{message_id_prefix}_#{SecureRandom.uuid}"
+          @message_id ||= @options[:message_id] || "#{message_id_prefix}_#{SecureRandom.uuid}"
         end
 
         # Fleet messages use :fleet_correlation_id to avoid collision with the
@@ -84,10 +84,21 @@ module Legion
         def context_headers
           ctx = message_context
           h = {}
-          h['x-legion-llm-conversation-id'] = ctx[:conversation_id].to_s if ctx[:conversation_id]
-          h['x-legion-llm-message-id']      = ctx[:message_id].to_s      if ctx[:message_id]
-          h['x-legion-llm-request-id']      = ctx[:request_id].to_s      if ctx[:request_id]
+          conversation_id = context_value(ctx, :conversation_id)
+          message_id = context_value(ctx, :message_id)
+          request_id = context_value(ctx, :request_id)
+          h['x-legion-llm-conversation-id'] = conversation_id.to_s if conversation_id
+          h['x-legion-llm-message-id']      = message_id.to_s      if message_id
+          h['x-legion-llm-request-id']      = request_id.to_s      if request_id
           h
+        end
+
+        def context_value(context, key)
+          return nil unless context.respond_to?(:key?)
+          return context[key] if context.key?(key)
+
+          string_key = key.to_s
+          context[string_key] if context.key?(string_key)
         end
       end
     end

@@ -63,7 +63,8 @@ RSpec.describe Legion::LLM::Settings do
 
       it 'defines a fleet tier with queue and timeout' do
         expect(tiers).to have_key(:fleet)
-        expect(tiers[:fleet][:queue]).to eq('llm.request')
+        expect(tiers[:fleet][:queue]).to eq('llm.fleet')
+        expect(tiers[:fleet][:routing_style]).to eq(:shared_lane)
         expect(tiers[:fleet][:timeout_seconds]).to eq(30)
       end
 

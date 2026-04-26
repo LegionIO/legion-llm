@@ -1,6 +1,16 @@
 # Legion::LLM Routing Re-envisioned
 
-> **Status: Superseded by unified integration design (2026-03-23). This document remains as conceptual foundation. Authoritative step reference is `docs/plans/2026-03-23-llm-unified-integration-design.md`**
+> **Current routing redesign**: The active model-offering, multi-instance, operation-aware routing design lives in `docs/superpowers/specs/2026-04-25-routing-inventory-redesign.md`, with implementation steps in `docs/superpowers/plans/2026-04-25-routing-inventory-redesign.md`. This document remains useful conceptual background for centralized Legion::LLM ownership, conversation UUIDs, context, RAG, RBAC, audit, and provider selection.
+
+> **Repository boundary update (2026-04-25)**: `legion-llm` is the router/orchestrator. `lex-llm` is the shared base provider framework that concrete provider gems require and override. RubyLLM inspired the fork that became `lex-llm`, but the target runtime contract is Legion-native. Routing decisions, policy, audit, metering, enrichment, and API ownership stay in `legion-llm`; shared provider request/response types, HTTP/streaming helpers, error taxonomy, content/tool/thinking/usage normalization, and structured-output helpers belong in `lex-llm`.
+
+> **Audit and ledger update (2026-04-25)**: The routing redesign must publish enough metadata for `lex-llm-ledger` to persist model-offering identity, provider instance, canonical/provider-native model IDs, failover/escalation chains, excluded candidates, policy decisions, data class flags (`PII`, `PHI`, `PCI`), retention policy, and capture mode. Regulated deployments should be able to choose metadata-only, redacted, encrypted-raw, or raw audit capture.
+
+> **Identity update (2026-04-25)**: LLM requests must preserve `Legion::Identity` caller identity, runtime identity, credential lease/grant context, and trace correlation through both synchronous calls and async `:fleet` RabbitMQ dispatch. Fleet workers preserve the original caller, add the executing runtime, echo the registered correlation ID, and persist only a hashed reply target in audit/ledger records.
+
+> **Fleet topology update (2026-04-25)**: Existing `lex-ollama` model-scoped RabbitMQ workers are prior art only. The routing uplift treats `:fleet` as a shared work fabric across datacenter GPUs, cloud/VPC workers, always-on Mac Studios, servers, labs, and endpoint Apple Silicon MacBooks. RabbitMQ queues are shared quorum work lanes such as `llm.fleet.inference.qwen3-6-27b.ctx32768`; every consumer on a lane must be eligible for every message on that lane. Server/GPU workers use normal push consumers with consumer priority and prefetch steering work toward preferred capacity. Endpoint MacBooks advertise broad model inventory but use `basic_get` pull scheduling by default: acquire a local execution slot, check eligible lanes, fetch one message with manual ack, execute, ack, and repeat. Endpoint workers must not keep push consumers open on every installed model lane, because quorum queues do not support channel-global QoS and Bunny's per-consumer prefetch would strand extra unacked messages on low-concurrency hosts. Fleet lanes use mandatory publish, publisher confirms, non-spooled live LLM requests, durable quorum queues, queue expiration, per-message publish expiration controlled by the requestor's wait budget, a generous queue-level TTL safety cap, `reject-publish` overflow, bounded ready-message depth, and `balanced` queue leader placement so dead lanes stop routing after the last eligible consumer leaves and the TTL window expires. Fleet readiness is class-specific: laptops can require power/VPN/idle checks, always-on hosts can use no readiness checks beyond enablement, and cloud/VPC proxy workers can advertise region, network boundary, and provider adjacency. Provider family is not the execution boundary: Anthropic direct remains frontier, Bedrock remains managed cloud, and a Legion-controlled Azure VM over ExpressRoute can still be fleet/private execution depending on ownership, network boundary, and transport.
+
+> **Status**: Conceptual background only. The 2026-04-25 routing inventory redesign is the current source of truth for model-offering routing, multi-instance provider support, and fleet lane topology.
 
 ## Status: Draft / Brainstorming
 
@@ -449,7 +459,9 @@ Action:
   12c. Update local cache (hot layer)
   12d. If conversation is shared: update shared cache
 Output: updated conversation record
-Fail:   TBD - hard fail or degraded mode? (design decision)
+Fail:   if persistence is required by request or policy, return an error before
+        claiming success; otherwise return the response and enqueue a durable
+        retry/repair event with routing and audit correlation IDs
 ```
 
 ### Step 13: Semantic Index Update
@@ -473,7 +485,11 @@ Action: write audit record
         → ties to conversation UUID
         → immutable append-only log
 Output: (async, no output to caller)
-Fail:   TBD - reject request if audit fails? (compliance decision)
+Fail:   prompt/tool audit must be durable. If audit transport is unavailable,
+        spool locally or enqueue a durable retry. Reject only when policy
+        requires audit before response and no durable capture path is available.
+        Best-effort drops are allowed only for capture_mode: none or explicit
+        non-regulated policy.
 ```
 
 ### Step 15: Prediction Resolution
