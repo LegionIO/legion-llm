@@ -116,6 +116,23 @@ RSpec.describe Legion::LLM::Embeddings do
     end
   end
 
+  describe '.generate with JSON-loaded prefix settings' do
+    before do
+      Legion::Settings[:llm]['embedding'] = {
+        'prefix_registry' => {
+          'custom-embed' => {
+            'query' => 'query: '
+          }
+        }
+      }
+    end
+
+    it 'uses string-keyed prefix registry entries' do
+      expect(RubyLLM).to receive(:embed).with('query: hello', anything).and_return(mock_response)
+      described_class.generate(text: 'hello', model: 'custom-embed', provider: :openai, task: :query)
+    end
+  end
+
   describe '.generate_batch with prefix injection' do
     let(:batch_response) do
       double('EmbedResponse', vectors: [Array.new(1024, 0.1), Array.new(1024, 0.2)])

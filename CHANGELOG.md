@@ -7,6 +7,7 @@
 - `FleetRequest` now opts out of live-request spooling, requires mandatory publish and publisher confirms by default, and includes reply routing fields in the worker payload.
 - `FleetResponse` and `FleetError` now publish live replies with mandatory routing, publisher confirms, and no spool/replay.
 - LLM transport message IDs are memoized per message instance so AMQP return/confirm correlation sees the same `message_id` that was published.
+- Embedding provider/model resolution, provider disable gates, prefix injection, fallback chains, Azure settings, Ollama base URLs, and metering caller context now honor JSON/string-keyed settings in addition to symbol-keyed runtime settings.
 
 ## [0.8.28] - 2026-04-24
 
