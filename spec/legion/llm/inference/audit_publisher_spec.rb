@@ -54,6 +54,24 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:audit]).not_to have_key(:provider_payload)
     end
 
+    it 'reads string-keyed provider payloads and routing metadata' do
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'r', conversation_id: 'c',
+        message: { 'role' => 'assistant', 'content' => 'answer' },
+        routing: { 'provider' => 'bedrock', 'model' => 'claude-sonnet-4-6', 'tier' => 'cloud' },
+        audit: { 'provider_payload' => { 'system_prompt' => 'sys', 'injected_tools' => ['tool_a'] }, 'kept' => true }
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+
+      expect(event[:response_content]).to eq('answer')
+      expect(event[:system_prompt]).to eq('sys')
+      expect(event[:injected_tools]).to eq(['tool_a'])
+      expect(event[:tier]).to eq('cloud')
+      expect(event[:audit]).to eq('kept' => true)
+    end
+
     it 'includes compacted enrichments in event' do
       response = Legion::LLM::Inference::Response.build(
         request_id: 'req_abc', conversation_id: 'conv_xyz',
@@ -65,6 +83,19 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       event = described_class.build_event(request: request, response: response)
       expect(event[:enrichments]).to have_key('gaia:advisory')
       expect(event[:enrichments]['gaia:advisory'][:data][:valence]).to eq(0.7)
+    end
+
+    it 'compacts string-keyed enrichments' do
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'req_abc', conversation_id: 'conv_xyz',
+        message: { role: :assistant, content: 'hi' },
+        enrichments: { 'gaia:advisory' => { 'content' => 'summary', 'data' => { 'valence' => [0.1, 0.8] } } }
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+      expect(event[:enrichments]['gaia:advisory'][:content]).to eq('summary')
+      expect(event[:enrichments]['gaia:advisory'][:data]['valence']).to eq(0.8)
     end
 
     it 'filters timeline to provider and escalation events only' do

@@ -93,6 +93,23 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
       expect(providers).to include(:bedrock).or include(:ollama)
     end
 
+    it 'returns a multi-provider chain from string-keyed provider settings' do
+      Legion::Settings[:llm] = {
+        'default_model'    => 'claude-sonnet-4-6',
+        'default_provider' => 'bedrock',
+        'providers'        => {
+          'ollama'  => { 'enabled' => true, 'default_model' => 'llama3' },
+          'bedrock' => { 'enabled' => true, 'default_model' => 'us.anthropic.claude-sonnet-4-6-v1' }
+        },
+        'discovery'        => { 'enabled' => false },
+        'routing'          => { 'enabled' => false, 'rules' => [] }
+      }
+
+      chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })
+
+      expect(chain.map(&:provider)).to include(:bedrock, :ollama)
+    end
+
     it 'honours explicit provider with a single-resolution chain' do
       chain = Legion::LLM::Router.resolve_chain(provider: :bedrock, max_escalations: 3)
       expect(chain.size).to eq(1)

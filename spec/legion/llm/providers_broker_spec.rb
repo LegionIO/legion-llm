@@ -92,6 +92,32 @@ RSpec.describe Legion::LLM::Providers do
         host.send(:configure_openai, { api_key: 'sk-settings-key' })
         expect(ruby_llm_config).to have_received(:openai_api_key=).with('sk-settings-key')
       end
+
+      it 'falls back to string-keyed config api_key' do
+        host.send(:configure_openai, { 'api_key' => 'sk-settings-key' })
+        expect(ruby_llm_config).to have_received(:openai_api_key=).with('sk-settings-key')
+      end
+    end
+  end
+
+  describe '#configure_providers' do
+    before do
+      hide_const('Legion::Identity::Broker')
+      allow(host).to receive(:auto_enable_from_resolved_credentials)
+      allow(host).to receive(:apply_provider_config)
+    end
+
+    it 'iterates top-level string-keyed provider settings' do
+      Legion::Settings[:llm]['providers'] = {
+        'openai' => { 'enabled' => true, 'api_key' => 'sk-settings-key' }
+      }
+
+      host.send(:configure_providers)
+
+      expect(host).to have_received(:apply_provider_config).with(
+        'openai',
+        { 'enabled' => true, 'api_key' => 'sk-settings-key' }
+      )
     end
   end
 

@@ -78,8 +78,9 @@ module Legion
       end
 
       def transport_connected?
-        !!(defined?(Legion::Settings) &&
-          Legion::Settings[:transport][:connected] == true)
+        return false unless defined?(Legion::Settings)
+
+        settings_value(Legion::Settings[:transport], :connected) == true
       end
 
       def spool_available?
@@ -94,23 +95,32 @@ module Legion
       def extract_usage(response)
         return { input_tokens: 0, output_tokens: 0 } unless response.is_a?(Hash)
 
-        usage = response[:usage] || {}
+        usage = settings_value(response, :usage) || {}
         {
-          input_tokens:  usage[:input_tokens] || usage[:prompt_tokens] || 0,
-          output_tokens: usage[:output_tokens] || usage[:completion_tokens] || 0
+          input_tokens:  settings_value(usage, :input_tokens) || settings_value(usage, :prompt_tokens) || 0,
+          output_tokens: settings_value(usage, :output_tokens) || settings_value(usage, :completion_tokens) || 0
         }
       end
 
       def extract_provider(response)
         return nil unless response.is_a?(Hash)
 
-        response.dig(:meta, :provider) || response[:provider]
+        settings_value(settings_value(response, :meta), :provider) || settings_value(response, :provider)
       end
 
       def extract_model(response)
         return nil unless response.is_a?(Hash)
 
-        response.dig(:meta, :model) || response[:model]
+        settings_value(settings_value(response, :meta), :model) || settings_value(response, :model)
+      end
+
+      def settings_value(hash, key)
+        return nil unless hash.respond_to?(:key?)
+
+        string_key = key.to_s
+        return hash[string_key] if hash.key?(string_key)
+
+        hash[key] if hash.key?(key)
       end
 
       # Backward-compat: resolve old Legion::LLM::Metering::Exchange, ::Event

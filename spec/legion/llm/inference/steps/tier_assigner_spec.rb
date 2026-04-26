@@ -44,6 +44,15 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         expect(result[:tier]).to eq(:cloud)
       end
 
+      it 'reads string-keyed GAIA routing hints' do
+        gaia_hint = { 'data' => { 'recommended_tier' => 'fleet' }, 'timestamp' => Time.now }
+        result = assigner.assign(
+          caller: nil, classification: nil, priority: :normal,
+          gaia_hint: gaia_hint, existing_tier: nil, existing_intent: nil
+        )
+        expect(result[:tier]).to eq(:fleet)
+      end
+
       it 'skips GAIA hint when recommended_tier is absent' do
         gaia_hint = { data: { other_key: 'value' }, timestamp: Time.now }
         result = assigner.assign(
@@ -133,6 +142,19 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         expect(result[:source]).to eq(:role_mapping)
       end
 
+      it 'reads string-keyed caller identity' do
+        result = assigner.assign(
+          caller:          { 'requested_by' => { 'identity' => 'user:string', 'type' => 'user' } },
+          classification:  nil,
+          priority:        :normal,
+          gaia_hint:       nil,
+          existing_tier:   nil,
+          existing_intent: nil
+        )
+        expect(result[:tier]).to eq(:frontier)
+        expect(result[:source]).to eq(:role_mapping)
+      end
+
       it 'returns nil when identity does not match any pattern' do
         result = assigner.assign(
           caller:          { requested_by: { identity: 'unknown:service', type: :system } },
@@ -173,6 +195,26 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         )
         expect(result[:tier]).to eq(:fleet)
         expect(result[:source]).to eq(:role_mapping)
+      end
+
+      it 'uses string-keyed tier_mappings from settings' do
+        Legion::Settings[:llm]['routing'] = {
+          'tier_mappings' => [
+            { 'pattern' => 'gpu:*', 'tier' => 'fleet', 'intent' => { 'cost' => 'minimize' } }
+          ]
+        }
+
+        result = assigner.assign(
+          caller:          { 'requested_by' => { 'identity' => 'gpu:worker:1' } },
+          classification:  nil,
+          priority:        :normal,
+          gaia_hint:       nil,
+          existing_tier:   nil,
+          existing_intent: nil
+        )
+
+        expect(result[:tier]).to eq(:fleet)
+        expect(result[:intent]).to eq({ 'cost' => 'minimize' })
       end
     end
 
@@ -217,6 +259,20 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           existing_tier:   nil,
           existing_intent: nil
         )
+        expect(result[:tier]).to eq(:local)
+        expect(result[:source]).to eq(:classification)
+      end
+
+      it 'reads string-keyed classification flags' do
+        result = assigner.assign(
+          caller:          nil,
+          classification:  { 'contains_phi' => true, 'level' => 'restricted' },
+          priority:        :normal,
+          gaia_hint:       nil,
+          existing_tier:   nil,
+          existing_intent: nil
+        )
+
         expect(result[:tier]).to eq(:local)
         expect(result[:source]).to eq(:classification)
       end

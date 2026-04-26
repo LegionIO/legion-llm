@@ -24,6 +24,15 @@ RSpec.describe Legion::LLM::Metering do
       expect(msg_instance).to have_received(:publish)
     end
 
+    it 'treats string-keyed transport settings as connected' do
+      Legion::Settings[:transport]['connected'] = true
+      msg_instance = instance_double(Legion::LLM::Metering::Event)
+      allow(Legion::LLM::Metering::Event).to receive(:new).and_return(msg_instance)
+      allow(msg_instance).to receive(:publish)
+
+      expect(described_class.emit(event)).to eq(:published)
+    end
+
     it 'returns :spooled when spool available and transport down' do
       stub_const('Legion::Data::Spool', Class.new)
       spool = double('spool')
@@ -45,6 +54,25 @@ RSpec.describe Legion::LLM::Metering do
   describe '.flush_spool' do
     it 'returns 0 when spool unavailable' do
       expect(described_class.flush_spool).to eq(0)
+    end
+  end
+
+  describe '.extract_usage' do
+    it 'reads OpenAI-style string-keyed usage payloads' do
+      usage = described_class.extract_usage(
+        'usage' => { 'prompt_tokens' => 10, 'completion_tokens' => 7 }
+      )
+
+      expect(usage).to eq(input_tokens: 10, output_tokens: 7)
+    end
+  end
+
+  describe '.extract_provider and .extract_model' do
+    it 'reads string-keyed metadata' do
+      response = { 'meta' => { 'provider' => 'anthropic', 'model' => 'claude-sonnet-4-6' } }
+
+      expect(described_class.extract_provider(response)).to eq('anthropic')
+      expect(described_class.extract_model(response)).to eq('claude-sonnet-4-6')
     end
   end
 end

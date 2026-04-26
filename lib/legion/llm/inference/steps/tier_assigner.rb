@@ -26,7 +26,7 @@ module Legion
             end
 
             # 1. GAIA routing hint
-            recommended = gaia_hint&.dig(:data, :recommended_tier)
+            recommended = nested_value(gaia_hint, :data, :recommended_tier)
             if recommended
               log.info("[llm][routing] tier_assigned source=gaia tier=#{recommended}")
               return { tier: recommended.to_sym, source: :gaia }
@@ -37,8 +37,8 @@ module Legion
             return mapping if mapping
 
             # 3. Classification-driven: PHI/PII/restricted -> local only (fail closed)
-            if classification && (classification[:contains_phi] || classification[:contains_pii] ||
-                                  classification[:level]&.to_sym == :restricted)
+            if classification && (value(classification, :contains_phi) || value(classification, :contains_pii) ||
+                                  value(classification, :level)&.to_sym == :restricted)
               log.info('[llm][routing] tier_assigned source=classification tier=local (phi/pii/restricted)')
               return { tier: :local, intent: { privacy: :strict }, source: :classification }
             end
@@ -55,21 +55,40 @@ module Legion
           end
 
           def find_role_mapping(caller)
-            return nil unless caller&.dig(:requested_by, :identity)
+            identity = nested_value(caller, :requested_by, :identity)
+            return nil unless identity
 
-            identity = caller[:requested_by][:identity].to_s
+            identity = identity.to_s
             tier_mappings.each do |mapping|
-              next unless File.fnmatch?(mapping[:pattern], identity)
+              next unless File.fnmatch?(value(mapping, :pattern).to_s, identity)
 
-              log.info("[llm][routing] tier_mapping identity=#{identity} tier=#{mapping[:tier]}")
-              return { tier: mapping[:tier]&.to_sym, intent: mapping[:intent], source: :role_mapping }
+              tier = value(mapping, :tier)
+              log.info("[llm][routing] tier_mapping identity=#{identity} tier=#{tier}")
+              return { tier: tier&.to_sym, intent: value(mapping, :intent), source: :role_mapping }
             end
             nil
           end
 
           def tier_mappings
-            configured = Legion::Settings.dig(:llm, :routing, :tier_mappings)
+            configured = nested_value(Legion::Settings[:llm], :routing, :tier_mappings)
             configured.nil? || configured.empty? ? DEFAULT_MAPPINGS : configured
+          end
+
+          def value(hash, key)
+            return nil unless hash.respond_to?(:key?)
+
+            string_key = key.to_s
+            return hash[string_key] if hash.key?(string_key)
+
+            hash[key] if hash.key?(key)
+          end
+
+          def nested_value(hash, *keys)
+            keys.reduce(hash) do |current, key|
+              return nil unless current.respond_to?(:key?)
+
+              value(current, key)
+            end
           end
         end
       end

@@ -5,6 +5,7 @@ require_relative 'api/native/helpers'
 require_relative 'api/native/inference'
 require_relative 'api/native/chat'
 require_relative 'api/native/providers'
+require_relative 'api/native/models'
 require_relative 'api/translators/openai_request'
 require_relative 'api/translators/openai_response'
 require_relative 'api/openai/chat_completions'
@@ -28,6 +29,7 @@ module Legion
         Native::Inference.registered(app)
         Native::Chat.registered(app)
         Native::Providers.registered(app)
+        Native::Models.registered(app)
         OpenAI::ChatCompletions.registered(app)
         OpenAI::Models.registered(app)
         OpenAI::Embeddings.registered(app)

@@ -13,7 +13,7 @@ module Legion
           log.debug("[audit_publisher][build_event] action=build request_id=#{response.request_id} conversation_id=#{response.conversation_id}")
 
           resp_message = response.message
-          msg_content = resp_message.is_a?(Types::Message) ? resp_message.text : resp_message[:content]
+          msg_content = resp_message.is_a?(Types::Message) ? resp_message.text : hash_value(resp_message, :content)
           msg_id = resp_message.is_a?(Types::Message) ? resp_message.id : nil
           msg_task_id = resp_message.is_a?(Types::Message) ? resp_message.task_id : nil
           msg_conversation_id = resp_message.is_a?(Types::Message) ? resp_message.conversation_id : nil
@@ -23,7 +23,7 @@ module Legion
           end
 
           audit_data = response.audit || {}
-          provider_payload = audit_data[:provider_payload] || {}
+          provider_payload = hash_value(audit_data, :provider_payload) || {}
 
           event = {
             request_id:       response.request_id,
@@ -33,10 +33,10 @@ module Legion
             routing:          response.routing,
             tokens:           serialize_tokens(response.tokens),
             cost:             response.cost,
-            system_prompt:    provider_payload[:system_prompt],
-            injected_tools:   provider_payload[:injected_tools],
+            system_prompt:    hash_value(provider_payload, :system_prompt),
+            injected_tools:   hash_value(provider_payload, :injected_tools),
             enrichments:      compact_enrichments(response.enrichments),
-            audit:            audit_data.except(:provider_payload),
+            audit:            without_provider_payload(audit_data),
             timeline:         compact_timeline(response.timeline),
             classification:   response.classification,
             tracing:          response.tracing,
@@ -45,7 +45,7 @@ module Legion
             tools_used:       tools_data,
             timestamp:        Time.now,
             request_type:     request.respond_to?(:request_type) ? request.request_type : 'chat',
-            tier:             response.routing.is_a?(Hash) ? response.routing[:tier] : nil,
+            tier:             hash_value(response.routing, :tier),
             message_context:  build_message_context(request: request, response: response)
           }
           event[:message_id] = msg_id if msg_id
@@ -89,8 +89,8 @@ module Legion
           enrichments.transform_values do |v|
             next v unless v.is_a?(Hash)
 
-            summary = { content: v[:content], timestamp: v[:timestamp] }
-            data = v[:data]
+            summary = { content: hash_value(v, :content), timestamp: hash_value(v, :timestamp) }
+            data = hash_value(v, :data)
             next summary unless data.is_a?(Hash)
 
             compacted = data.transform_values do |dv|
@@ -121,7 +121,7 @@ module Legion
         def audit_max_messages
           return 20 unless defined?(Legion::Settings)
 
-          Legion::Settings[:llm].dig(:compliance, :audit_max_messages) || 20
+          nested_value(Legion::Settings[:llm], :compliance, :audit_max_messages) || 20
         rescue StandardError
           20
         end
@@ -131,6 +131,29 @@ module Legion
             request_id:      response.request_id,
             conversation_id: response.conversation_id
           }.compact
+        end
+
+        def without_provider_payload(audit_data)
+          return {} unless audit_data.is_a?(Hash)
+
+          audit_data.reject { |key, _| key.to_s == 'provider_payload' }
+        end
+
+        def nested_value(hash, *keys)
+          keys.reduce(hash) do |current, key|
+            return nil unless current.respond_to?(:key?)
+
+            hash_value(current, key)
+          end
+        end
+
+        def hash_value(hash, key)
+          return nil unless hash.respond_to?(:key?)
+
+          string_key = key.to_s
+          return hash[string_key] if hash.key?(string_key)
+
+          hash[key] if hash.key?(key)
         end
       end
     end

@@ -10,14 +10,18 @@ module Legion
         module_function
 
         def handle_fleet_request(payload)
+          payload = normalize_payload(payload)
+          message_context = payload[:message_context] || {}
+
           if Dispatcher.fleet_enabled? && !valid_token?(payload[:signed_token])
-            error_response = { success: false, error: 'invalid_token' }
+            error_response = { success: false, error: 'invalid_token',
+                               message_context: optional_message_context(message_context) }.compact
             publish_reply(payload[:reply_to], payload[:correlation_id], error_response) if payload[:reply_to]
             return error_response
           end
 
           response = call_local_llm(payload)
-          response_hash = build_response(payload[:correlation_id], response)
+          response_hash = build_response(payload[:correlation_id], response, message_context: message_context)
           publish_reply(payload[:reply_to], payload[:correlation_id], response_hash) if payload[:reply_to]
           response_hash
         end
@@ -44,10 +48,10 @@ module Legion
           end
           return false unless settings.is_a?(Hash)
 
-          fleet = settings.dig(:routing, :fleet)
+          fleet = nested_fetch(settings, :routing, :fleet)
           return false unless fleet.is_a?(Hash)
 
-          fleet.fetch(:require_auth, false)
+          fetch_option(fleet, :require_auth) == true
         end
 
         def call_local_llm(payload)
@@ -69,7 +73,7 @@ module Legion
           end
         end
 
-        def build_response(correlation_id, response)
+        def build_response(correlation_id, response, message_context: {})
           {
             correlation_id:  correlation_id,
             success:         extract_success(response),
@@ -79,7 +83,8 @@ module Legion
             output_tokens:   extract_token(response, :output_tokens),
             thinking_tokens: extract_token(response, :thinking_tokens),
             provider:        extract_field(response, :provider),
-            model_id:        extract_field(response, :model)
+            model_id:        extract_field(response, :model),
+            message_context: optional_message_context(message_context)
           }.compact
         end
 
@@ -112,6 +117,33 @@ module Legion
           return 0 unless response.respond_to?(field)
 
           response.public_send(field).to_i
+        end
+
+        def normalize_payload(payload)
+          return {} unless payload.is_a?(Hash)
+
+          payload.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+        end
+
+        def fetch_option(hash, key)
+          return nil unless hash.respond_to?(:key?)
+
+          string_key = key.to_s
+          return hash[string_key] if hash.key?(string_key)
+
+          hash[key] if hash.key?(key)
+        end
+
+        def nested_fetch(hash, *keys)
+          keys.reduce(hash) do |current, key|
+            return nil unless current.respond_to?(:key?)
+
+            fetch_option(current, key)
+          end
+        end
+
+        def optional_message_context(message_context)
+          message_context.nil? || message_context.empty? ? nil : message_context
         end
 
         def extract_field(response, field)

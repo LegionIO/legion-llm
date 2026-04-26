@@ -26,7 +26,7 @@ For the AMQP wire protocol (exchange topology, queue configuration, message enve
 | **Enrichment** | Implemented | RAG/GAIA enrichments work. Value shapes vary between steps. |
 | **Prediction** | Partial | Request-side works. Response-side actuals never filled in. |
 | **Tracing** | Implemented | trace_id, span_id, exchange_id all generated and propagated. |
-| **Classification** | Partial | Labels applied but routing restrictions not enforced. |
+| **Classification** | Partial | Labels applied; target uplift requires effective scan results for PHI/PII/PCI, data classes, retention, capture mode, and routing/audit policy decisions. |
 | **Caller** | Implemented | Identity propagated, Profile derived. |
 | **Agent** | Not implemented | Response `agent` field always nil. |
 | **Billing** | Partial | Per-request cap only. No cumulative budget enforcement. |
@@ -47,13 +47,13 @@ For the AMQP wire protocol (exchange topology, queue configuration, message enve
 | **Provider Features** | Not implemented | Response `features` field always nil. |
 | **Model Deprecation** | Not implemented | Response `deprecation` field always nil. |
 | **Cache** | Partial | Request cache mapped to first-class field. Response `cache` always `{}`. |
-| **Chunk (Streaming)** | Not implemented | Raw RubyLLM chunks passed through; no spec-compliant Chunk struct. |
+| **Chunk (Streaming)** | Not implemented | Raw RubyLLM chunks passed through; target uplift requires typed chunks from `lex-llm`, including text and thinking deltas. |
 | **ErrorResponse** | Not implemented | No struct; only exception classes (`LLMError` hierarchy). |
 | **Conversation** | Partial | `ConversationStore` exists but no `Conversation` struct. Limited fields. |
 | **Config (Generation)** | Implemented | `from_chat_args` now maps generation, thinking, response_format, etc. to first-class fields. |
 | **Quality** | Implemented | Returns `{ score:, band:, source: }` (not `{ score:, acceptable:, checker: }` as spec says). |
 | **Cost** | Implemented | Populated via `CostEstimator.estimate` with `estimated_usd`, `provider`, `model`. |
-| **Routing (response)** | Implemented | `provider`, `model`, `strategy`, `tier`, `escalated`, `escalation_chain`, `latency_ms` populated. |
+| **Routing (response)** | Partial | Current implementation populates `provider`, `model`, `strategy`, `tier`, `escalated`, `escalation_chain`, `latency_ms`. Target uplift replaces this with requested/selected/excluded/failover/escalation model-offering metadata. |
 | **Stop** | Implemented | `stop.reason` extracted from provider response (`:end_turn`, `:tool_use`, etc.). |
 | **Metering** | Not implemented | Module exists but not wired into pipeline steps. |
 
@@ -583,13 +583,18 @@ classification:    Hash?
   level:           Symbol       # :public, :internal, :confidential, :restricted
   contains_pii:    Boolean      # personally identifiable information
   contains_phi:    Boolean      # protected health information (HIPAA)
+  contains_pci:    Boolean      # payment card data
+  data_classes:    Array<Symbol> # [:pii, :phi, :pci, :credentials, :secrets]
   jurisdictions:   Array<String>  # where data can be processed: ["us"], ["us", "eu"], ["*"]
   retention:       Symbol       # :default, :session_only, :days_30, :days_90, :permanent
+  capture_mode:    Symbol       # :none, :metadata_only, :redacted, :encrypted_raw, :raw
   consent:         Hash?        # user consent record
     granted:       Boolean
     scope:         String       # what was consented to
     timestamp:     Time
 ```
+
+`classification` on the response and audit event must represent the effective classification after declared labels, scan results, redaction, and policy upgrades have been merged. Ledger retention and capture decisions must not depend only on caller-declared labels.
 
 ### Classification levels
 
@@ -611,7 +616,19 @@ Request has classification.level = :restricted
 Request has classification.contains_phi = true
   → Router removes providers not in PHI-approved list
   → Audit enrichment: "PHI detected, restricted to HIPAA-compliant providers"
+
+Request has classification.contains_pci = true
+  → Router removes providers without PCI approval
+  → Audit capture mode is forced to metadata_only, redacted, or encrypted_raw unless policy explicitly permits raw
 ```
+
+### Audit capture modes
+
+- `:none` -- no prompt/tool body audit is published.
+- `:metadata_only` -- publish request IDs, routing, policy, classification, token, latency, and cost metadata only.
+- `:redacted` -- publish redacted prompt/response/tool bodies plus redaction metadata.
+- `:encrypted_raw` -- publish full audit payload encrypted for approved ledger consumers.
+- `:raw` -- publish plaintext audit payload; intended for local/dev or explicitly approved environments.
 
 ### Jurisdiction
 
@@ -627,7 +644,7 @@ Provider registry includes each provider's processing jurisdiction. Router match
 
 ## Caller
 
-> **Implementation status: IMPLEMENTED** — Caller identity propagated through the pipeline. `Profile.derive` reads `caller[:requested_by][:type]` to determine step skipping.
+> **Implementation status: IMPLEMENTED / TARGET EXPANSION** — Caller identity is propagated through the pipeline today as a compatibility hash. The routing uplift keeps this shape but adds a server-resolved `identity` envelope built from `Legion::Identity::Request`, `Legion::Identity::Process`, fleet correlation metadata, and credential lease/grant metadata.
 
 Auth-level identity tracking. Who authenticated to make this request, and on whose behalf. Separate from `agent` (which tracks AI entity identity).
 
@@ -680,6 +697,52 @@ agent: { id: "agent_scheduler", name: "Scheduler", type: :system }
 ### RBAC and caller
 
 RBAC checks `caller.requested_by` for permission evaluation. If `requested_for` is present, RBAC can also check: "Does this bot have permission to act on behalf of this customer?" Billing can route costs to `requested_for` instead of `requested_by`.
+
+## Identity Context
+
+`identity` is the authoritative audit and legal trace envelope. API handlers derive it from `env['legion.principal']` when available, not from untrusted request JSON. Client-provided `caller` values may add source path/session metadata, but they must not override `principal_id`, `canonical_name`, `kind`, `groups`, `roles`, or credential source once middleware has resolved a principal.
+
+```
+identity:          Hash?
+  caller:          Hash
+    principal_id:  String?       # Legion::Identity::Request#principal_id
+    canonical_name: String       # normalized stable principal name
+    kind:          Symbol        # :human, :service, :worker, :bot
+    source:        Symbol        # :kerberos, :jwt, :api, :system, etc.
+    groups:        Array<String>
+    roles:         Array<String>
+    trust:         Symbol?       # :verified, :authenticated, :configured, :cached, :unverified
+
+  runtime:         Hash
+    process_id:    String        # Legion::Identity::Process.id
+    canonical_name: String       # Legion::Identity::Process.canonical_name
+    kind:          Symbol?
+    mode:          Symbol        # :agent, :worker, :infra, :lite
+    queue_prefix:  String
+    trust:         Symbol?
+
+  fleet:           Hash?
+    requested_by_runtime: String?
+    executed_by_runtime:  String?
+    reply_to_hash:        String? # raw reply_to stays transport-only
+    correlation_id:       String?
+    response_target:      Symbol? # :requesting_runtime, :direct_reply_queue
+    lane:                 String? # llm.fleet.inference.<model>.ctx<bucket>[.boundary.<network_boundary>]
+    fleet_class:          Symbol? # :endpoint, :datacenter, :server, :lab, :cloud_vpc
+    network_boundary:     Symbol? # :local, :corp_lan, :vpn, :express_route, :aws_vpc, :azure_vnet, :gcp_vpc
+    placement_policy:     String?
+
+  credential:      Hash?
+    provider:      Symbol?
+    qualifier:     Symbol?
+    purpose:       Symbol?
+    lease_id:      String?
+    granted:       Boolean?
+```
+
+For `tier: :fleet`, the request and response both carry this envelope. The worker preserves the original `identity.caller`, adds or replaces `identity.runtime` with the executing worker runtime, and records `identity.fleet.correlation_id`. A fleet response without the registered correlation ID must not satisfy a pending request.
+
+Prompt, tool, routing, metering, error, and ledger events include `identity` plus tracing fields so an investigation can reconstruct who asked, which process accepted the work, which process executed it, which credential was used, and how the async response returned.
 
 ### Credential types
 
@@ -1023,6 +1086,11 @@ AuditEvent
 "billing:budget_check"        # Budget check passed/failed
 "routing:provider_selection"  # Provider selected and why
 "routing:modality_filter"     # Providers filtered by modality capability
+"fleet:publish_attempted"     # Fleet request publish attempted
+"fleet:publish_accepted"      # Broker accepted fleet request publish
+"fleet:publish_unroutable"    # Mandatory publish found no bound fleet lane
+"fleet:publish_failed"        # Publish nack/timeout/failure before worker execution
+"fleet:response_validated"    # Fleet reply matched registered correlation/metadata
 
 # Pipeline outcomes
 "persistence:store"           # Conversation stored (direct or spooled)
@@ -1082,6 +1150,47 @@ When the system detects content at a higher classification than the caller decla
 ```
 
 Classification can only be upgraded, never downgraded. If the caller says `:restricted` but the system sees no sensitive data, it stays `:restricted`.
+
+---
+
+## Fleet Publish Result
+
+> **Implementation status: PARTIAL** — `Legion::Transport::Message#publish` and `FleetRequest` now support mandatory publish, publisher confirms, confirm timeout, `spool: false`, and structured publish results for broker acceptance. The broader shared-lane executor path and streaming status hooks are still target work.
+
+Fleet publish results describe whether RabbitMQ accepted a live fleet request. They are not provider/model responses.
+
+```
+FleetPublishResult
+  status:          Symbol       # :accepted, :unroutable, :nacked,
+                                # :confirm_timeout, :spooled, :failed
+  accepted:        Boolean
+  exchange:        String
+  routing_key:     String
+  message_id:      String?
+  correlation_id:  String?
+  elapsed_ms:      Integer?
+  return_reply_code: Integer?
+  return_reply_text: String?
+  error_class:     String?
+  error_message:   String?
+```
+
+Live LLM fleet requests must use `spool: false`; a `:spooled` result for chat, inference, or embedding work is a contract violation. `:unroutable`, `:nacked`, `:confirm_timeout`, and `:failed` feed lateral failover, vertical escalation, or final structured error handling.
+
+Canonical routing/error mappings:
+
+```ruby
+{
+  unroutable: :no_fleet_queue,
+  nacked: :fleet_backpressure,
+  confirm_timeout: :fleet_publish_timeout,
+  failed: :fleet_publish_failed
+}
+```
+
+Fleet replies must still be validated against the registered `correlation_id`, expected reply target, selected offering or lane when present, and identity/runtime context before fulfilling a pending request.
+
+Fleet responses and fleet errors are also live RPC messages. They use the same broker-acceptance rules as requests: mandatory routing, publisher confirms, and no spool/replay. If the auto-delete reply queue is gone, the worker records a reply-delivery failure event; delayed replay cannot recover the original waiting request.
 
 ### Direct lookup
 
@@ -1227,6 +1336,38 @@ The timeline enables a ladder diagram identical to Homer's call flow:
 ### Timeline is response-only
 
 The timeline is built during pipeline execution and returned on the response. It's not sent on the request.
+
+### Ledger event spine
+
+Timeline is the in-response chronological view for one request. Ledger needs the durable cross-request version of the same idea. Every meaningful LLM lifecycle event should be publishable as a ledger event with stable correlation keys so operators can reconstruct an entire conversation, not just one response.
+
+```
+LLMEvent
+  event_id:        String
+  event_seq:       Integer       # sequence within request/conversation scope
+  event_type:      String        # "request.received", "tool.call_completed", etc.
+  event_status:    Symbol        # :started, :succeeded, :failed, :spooled, :denied
+  conversation_id: String
+  request_id:      String?
+  exchange_id:     String?
+  message_id:      String?
+  parent_message_id: String?
+  message_seq:     Integer?
+  correlation_id:  String?
+  trace_id:        String?
+  span_id:         String?
+  routing:         Hash?
+  identity:        Hash?
+  tokens:          Hash?
+  cost:            Hash?
+  tool:            Hash?
+  fleet:           Hash?
+  error:           Hash?
+  timestamps:      Hash
+  payload:         Hash?         # metadata-safe structured detail
+```
+
+Ledger event types should cover request, response, routing, provider, MCP/tool, fleet, audit, metering, persistence, and error/cancel lifecycle steps. Specialized tables such as metering, prompt, and tool records can remain for fast reporting, but they should be tied back to this event spine through `event_id` or the shared correlation envelope.
 
 ---
 
@@ -1512,29 +1653,72 @@ Thinking tokens are tracked separately from regular output tokens because they h
 
 ---
 
-## Context Window Utilization
+## Token Usage Context and Context Window Utilization
 
-> **Implementation status: NOT IMPLEMENTED** — `tokens.context_window`, `tokens.utilization`, and `tokens.headroom` are never populated on the Response. Only `input_tokens` and `output_tokens` are set.
+> **Implementation status: TARGET EXPANSION** — `tokens.context_window`, `tokens.utilization`, and `tokens.headroom` are never populated on the Response today. The routing uplift also adds first-class prior/delta/actual usage context so every local, private, fleet, cloud, and frontier request can explain the token basis used for context-fit routing.
 
-Expands response-side tokens with capacity information. Drives context strategy decisions.
+Expands request- and response-side tokens with cumulative context and capacity information. Drives context-fit routing, context strategy decisions, audit, metering, and ledger correction.
 
-Added to `response.tokens`:
+Added to `request.tokens` and echoed/augmented on `response.tokens`:
 
 ```
 tokens:            Hash
-  # Existing fields
   max:             Integer      # echoed from request
+
+  # Prior conversation usage known before this request
+  prior_context:   Hash?
+    input:         Integer?
+    output:        Integer?
+    total:         Integer?
+    source:        Symbol?      # :ledger, :in_memory, :caller, :unknown
+    as_of_turn:    Integer?
+    as_of_message_id: String?
+
+  # New request delta estimate used for routing
+  estimate:        Hash?
+    delta_input:   Integer?
+    delta_output:  Integer?
+    required_context: Integer?
+    basis:         Symbol?      # :ledger_plus_delta, :in_memory_plus_delta, :tokenizer_estimate, :heuristic
+    confidence:    Float?
+
+  # Context/history assembly chosen from token pressure
+  assembly:        Hash?
+    strategy:      Symbol?      # :full, :recent, :rag, :summary, :compact, :none
+    included_messages: Integer?
+    omitted_messages: Integer?
+    summarized_messages: Integer?
+    compacted:     Boolean?
+    over_by:       Integer?
+    target_context_window: Integer?
+
+  # Response-only provider usage for this execution
+  actual:          Hash?
+    input:         Integer?
+    output:        Integer?
+    total:         Integer?
+    source:        Symbol?      # :provider_usage, :normalized_provider_usage, :estimated
+
+  # Response-only normalized usage/capacity
   input:           Integer
   output:          Integer
   total:           Integer
   cache_read:      Integer?
   cache_create:    Integer?
-
-  # New: capacity awareness
   context_window:  Integer      # provider's maximum context window for this model
   utilization:     Float        # total / context_window (0.0 to 1.0)
   headroom:        Integer      # context_window - total (remaining capacity)
 ```
+
+For first prompts, `prior_context.total` is zero or unknown and `estimate.required_context` is based on the whole prompt. For later turns, `prior_context.total` should come from cumulative usage already emitted through `Legion::Transport` and persisted by `lex-llm-ledger` when available; only the new message/tool/RAG/system delta is estimated. This applies regardless of selected tier or transport.
+
+The same token context also drives context assembly before final provider execution:
+
+- send full history when `required_context` fits with acceptable headroom;
+- send recent history when only the newest turns fit;
+- retrieve with RAG when older relevant history should be reintroduced selectively;
+- summarize or compact when the conversation is materially over the target context window;
+- record `tokens.assembly` so the response, audit trail, and ledger explain how much history was included, omitted, summarized, or compacted.
 
 ### How utilization drives decisions
 
@@ -1788,6 +1972,27 @@ Request
   # Tokens (symmetric with response)
   tokens:            Hash
     max:             Integer
+    prior_context:   Hash?        # cumulative known usage before this request
+      input:         Integer?
+      output:        Integer?
+      total:         Integer?
+      source:        Symbol?      # :ledger, :in_memory, :caller, :unknown
+      as_of_turn:    Integer?
+      as_of_message_id: String?
+    estimate:        Hash?        # estimate used before provider execution
+      delta_input:   Integer?     # estimated new prompt/message/tool/RAG/system tokens
+      delta_output:  Integer?     # requested or estimated completion budget
+      required_context: Integer?  # prior_context.total + delta_input + delta_output
+      basis:         Symbol?      # :ledger_plus_delta, :in_memory_plus_delta, :tokenizer_estimate, :heuristic
+      confidence:    Float?
+    assembly:        Hash?        # context assembly decision before provider execution
+      strategy:      Symbol?      # :full, :recent, :rag, :summary, :compact, :none
+      included_messages: Integer?
+      omitted_messages: Integer?
+      summarized_messages: Integer?
+      compacted:     Boolean?
+      over_by:       Integer?     # tokens over selected/target context window before assembly
+      target_context_window: Integer?
 
   # Stop (symmetric with response)
   stop:              Hash
@@ -1846,6 +2051,7 @@ Request
   caller:            Hash?        # auth principal (see Caller section)
     requested_by:    Hash         #   identity, type, credential, name
     requested_for:   Hash?        #   identity, type, name, relationship
+  identity:          Hash?        # authoritative caller/runtime/fleet/credential envelope
   agent:             Hash?        # AI entity (see Agent Identity section)
     id:              String
     name:            String
@@ -1898,11 +2104,15 @@ request.provider  # shorthand for request.routing[:provider]
 
 Controls how the ContextBuilder assembles conversation history:
 
-- `:auto` -- ContextBuilder decides (RAG if long, full if short)
+- `:auto` -- ContextBuilder decides from `tokens.prior_context`, `tokens.estimate`, target context window, and requested output budget
 - `:full` -- send entire conversation history (may hit context limits)
 - `:recent` -- last N messages only, no RAG
 - `:rag` -- force RAG retrieval even for short conversations
+- `:summary` -- use a conversation summary plus recent turns
+- `:compact` -- rewrite/compact history before sending
 - `:none` -- no history, treat as one-shot even if conversation_id has history
+
+The selected assembly result is recorded in `tokens.assembly` so callers can tell whether all prior messages were sent, how far the request was over context, how many turns were omitted, and whether summarization/compaction was used.
 
 ### cache
 
@@ -1941,14 +2151,45 @@ Response
   # Content
   message:           Message
 
-  # Routing (symmetric with request)
+  # Identity
+  identity:          Hash?        # authoritative caller/runtime/fleet/credential envelope
+    caller:          Hash?
+    runtime:         Hash?
+    fleet:           Hash?
+    credential:      Hash?
+
+  # Routing (symmetric with request; target model-offering shape)
   routing:           Hash
-    provider:        Symbol       # actual provider used
-    model:           String       # actual model used
-    strategy:        Symbol       # :explicit, :rules, :smart, :default
-    reason:          String       # human-readable routing reason
-    escalated:       Boolean
-    escalation_chain: Array<Hash>?  # provider history if escalated
+    requested:       Hash
+      operation:     Symbol       # :generation, :embed, future :safety
+      model:         String?
+      instance_id:   String?
+      tier:          Symbol?
+      capabilities:  Array<Symbol>?
+    selected:        Hash
+      offering_id:   String       # instance:canonical_model:operation
+      provider_family: Symbol     # :bedrock, :ollama, :vllm, :anthropic, etc.
+      instance_id:   String
+      canonical_model: String
+      provider_model: String
+      operation:     Symbol
+      tier:          Symbol       # :local, :private, :fleet, :cloud, :frontier
+      transport:     Symbol       # :local, :http, :rabbitmq, :sdk
+      region:        String?
+      endpoint_hash: String?      # stable non-secret endpoint identifier
+      fleet_lane:    String?      # selected shared fleet work lane, if tier == :fleet
+      model_provenance: Hash?
+        management_state: Symbol? # :managed, :discovered, :unmanaged, :blocked
+        registry_id:  String?
+        digest:       String?
+        signature_verified: Boolean?
+    decision:        Hash
+      strategy:      Symbol       # :explicit_model, :policy, :default, etc.
+      reason:        String       # human-readable routing reason
+      policy_decisions: Array<Hash>?
+    excluded:        Array<Hash>  # offering_id + reason
+    failover_chain:  Array<Hash>  # lateral attempts
+    escalation_chain: Array<Hash> # vertical model/capability changes
     latency_ms:      Integer
     connection:      Hash?        # provider connection context
       pool_id:       String?
@@ -1956,6 +2197,11 @@ Response
       tls_version:   String?
       endpoint:      String?
       connect_ms:    Integer?
+
+  # Backward compatibility projection
+  # response.routing[:provider] and response.routing[:model] may be emitted by
+  # compatibility callers as aliases for selected.provider_family and
+  # selected.provider_model/canonical_model during migration.
 
   # Tokens (symmetric with request + capacity awareness)
   tokens:            Hash
@@ -1965,6 +2211,32 @@ Response
     total:           Integer
     cache_read:      Integer?     # Anthropic prompt caching
     cache_create:    Integer?
+    prior_context:   Hash?        # cumulative known usage before this request
+      input:         Integer?
+      output:        Integer?
+      total:         Integer?
+      source:        Symbol?      # :ledger, :in_memory, :caller, :unknown
+      as_of_turn:    Integer?
+      as_of_message_id: String?
+    estimate:        Hash?        # estimate used for routing/context fit
+      delta_input:   Integer?
+      delta_output:  Integer?
+      required_context: Integer?
+      basis:         Symbol?      # :ledger_plus_delta, :in_memory_plus_delta, :tokenizer_estimate, :heuristic
+      confidence:    Float?
+    assembly:        Hash?        # context/history assembly actually used
+      strategy:      Symbol?      # :full, :recent, :rag, :summary, :compact, :none
+      included_messages: Integer?
+      omitted_messages: Integer?
+      summarized_messages: Integer?
+      compacted:     Boolean?
+      over_by:       Integer?
+      target_context_window: Integer?
+    actual:          Hash?        # provider-reported usage for this execution
+      input:         Integer?
+      output:        Integer?
+      total:         Integer?
+      source:        Symbol?      # :provider_usage, :normalized_provider_usage, :estimated
     context_window:  Integer      # provider's max context for this model
     utilization:     Float        # total / context_window (0.0 to 1.0)
     headroom:        Integer      # context_window - total
@@ -2004,6 +2276,16 @@ Response
     estimated_usd:   Float        # based on token usage + provider pricing
     provider:        Symbol       # which provider's pricing
     model:           String       # which model's pricing
+    pricing_tier:    Integer?     # 0 = free/local, higher = more expensive
+    comparable_frontier_usd: Float? # estimated cost if routed to comparable paid frontier/cloud model
+    avoided_usd:     Float?       # comparable_frontier_usd - estimated_usd
+    savings_basis:   Symbol?      # :frontier_comparable, :cloud_comparable, :configured_baseline, :none
+    aggregation_keys: Hash?
+      conversation_id: String?
+      tier:          Symbol?
+      fleet_class:   Symbol?
+      provider_family: Symbol?
+      instance_id:   String?
   quality:           Hash?        # nil if quality checking didn't run
     score:           Integer
     acceptable:      Boolean
@@ -2128,7 +2410,7 @@ Chunk
   exchange_id:         String      # which exchange is streaming
   index:               Integer     # chunk sequence number
   type:                Symbol      # :content_delta, :thinking_delta,
-                                   # :tool_call_delta, :usage, :done, :error
+                                   # :tool_call_delta, :routing_status, :usage, :done, :error
   content_block_index: Integer?    # which content block this delta belongs to
   delta:               String?     # text content delta
   tool_call:           ToolCall?   # partial tool call data
@@ -2137,11 +2419,14 @@ Chunk
   tracing:             Hash?       # trace_id, span_id (echoed from request)
 ```
 
+Provider adapters translate native stream events into this shape before API handlers see them. API handlers must never stringify provider-native structured content blocks with `to_s`; compatibility text streams flatten only text blocks intentionally, while structured routes emit typed chunks/events.
+
 ### Chunk types
 
 - `:content_delta` -- text content being streamed
 - `:thinking_delta` -- reasoning trace being streamed (separate from content)
 - `:tool_call_delta` -- tool call being assembled incrementally
+- `:routing_status` -- non-terminal routing/fleet lifecycle event such as lateral failover, escalation, publish accepted, unroutable lane, or fleet timeout. Clients must keep listening after this event.
 - `:usage` -- token usage data (may arrive before :done on some providers)
 - `:done` -- stream complete, includes final usage and stop_reason
 - `:error` -- error occurred during streaming
@@ -2228,6 +2513,10 @@ Conversation
     output:          Integer
     total:           Integer
     cost_usd:        Float
+    by_tier:         Hash         # local/fleet/cloud/frontier token and cost totals
+    by_fleet_class:  Hash         # endpoint/datacenter/cloud_vpc token and cost totals
+    by_provider:     Hash         # provider family/model/instance totals
+    avoided_cost_usd: Float       # estimated spend avoided versus configured baseline
   routing_history:   Array<Hash>     # every provider decision made
 
   # Timestamps
@@ -2441,7 +2730,33 @@ Legion's internal format uses:
   ],
   "tool_choice": { "mode": "auto" },
   "routing": { "provider": null, "model": null },
-  "tokens": { "max": 4096 },
+  "tokens": {
+    "max": 4096,
+    "prior_context": {
+      "input": 31110,
+      "output": 0,
+      "total": 31110,
+      "source": "ledger",
+      "as_of_turn": 8,
+      "as_of_message_id": "msg_prev"
+    },
+    "estimate": {
+      "delta_input": 245,
+      "delta_output": 4096,
+      "required_context": 35451,
+      "basis": "ledger_plus_delta",
+      "confidence": 0.72
+    },
+    "assembly": {
+      "strategy": "full",
+      "included_messages": 8,
+      "omitted_messages": 0,
+      "summarized_messages": 0,
+      "compacted": false,
+      "over_by": 0,
+      "target_context_window": 200000
+    }
+  },
   "stop": { "sequences": [] },
   "generation": { "temperature": 0.7 },
   "thinking": null,
@@ -2556,6 +2871,36 @@ Legion's internal format uses:
     "input": 245,
     "output": 18,
     "total": 263,
+    "prior_context": {
+      "input": 31110,
+      "output": 0,
+      "total": 31110,
+      "source": "ledger",
+      "as_of_turn": 8,
+      "as_of_message_id": "msg_prev"
+    },
+    "estimate": {
+      "delta_input": 245,
+      "delta_output": 4096,
+      "required_context": 35451,
+      "basis": "ledger_plus_delta",
+      "confidence": 0.72
+    },
+    "assembly": {
+      "strategy": "full",
+      "included_messages": 8,
+      "omitted_messages": 0,
+      "summarized_messages": 0,
+      "compacted": false,
+      "over_by": 0,
+      "target_context_window": 200000
+    },
+    "actual": {
+      "input": 245,
+      "output": 18,
+      "total": 263,
+      "source": "normalized_provider_usage"
+    },
     "context_window": 200000,
     "utilization": 0.001315,
     "headroom": 199737
@@ -2596,7 +2941,18 @@ Legion's internal format uses:
   "cost": {
     "estimated_usd": 0.0042,
     "provider": "claude",
-    "model": "claude-opus-4-6-20250415"
+    "model": "claude-opus-4-6-20250415",
+    "pricing_tier": 4,
+    "comparable_frontier_usd": 0.0042,
+    "avoided_usd": 0.0,
+    "savings_basis": "frontier_comparable",
+    "aggregation_keys": {
+      "conversation_id": "conv_xyz789",
+      "tier": "frontier",
+      "fleet_class": null,
+      "provider_family": "anthropic",
+      "instance_id": "anthropic-direct"
+    }
   },
   "validation": null,
   "safety": null,

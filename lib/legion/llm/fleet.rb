@@ -2,6 +2,7 @@
 
 require_relative 'fleet/dispatcher'
 require_relative 'fleet/handler'
+require_relative 'fleet/lane'
 require_relative 'fleet/reply_dispatcher'
 
 module Legion
