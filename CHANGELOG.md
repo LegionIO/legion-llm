@@ -12,7 +12,7 @@
 - Inference executor routing defaults, conversation compaction, pipeline escalation, native dispatch, async post-step, telemetry span, tool-loop, and fallback-provider settings now honor JSON/string-keyed settings.
 - Module-level inference, prompt dispatch, prompt-cache, debate, and skill-injector settings now honor JSON/string-keyed settings.
 - Sticky tool history, trigger matching, and RAG context settings now honor JSON/string-keyed settings.
-- Shared settings helpers now normalize string and symbol keys across router, fleet, scheduling, response cache, API auth/defaults, metering, quality, guards, skills, config loaders, and audit checks.
+- Shared settings helpers now normalize string and symbol keys across router, fleet, scheduling, response cache, API auth/defaults, metering, quality, guards, skills, discovery, inventory, daemon, config loaders, and audit checks.
 
 ## [0.8.28] - 2026-04-24
 

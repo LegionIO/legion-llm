@@ -96,7 +96,7 @@ module Legion
           end
 
           def self.settings_value(key, default = nil)
-            config_value(Legion::LLM.settings, key, default)
+            Legion::LLM::Settings.value(key, default: default)
           end
 
           def self.safe_config(config)

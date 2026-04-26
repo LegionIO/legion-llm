@@ -7,7 +7,7 @@ module Legion
         module_function
 
         def llm_setting(key, default = nil)
-          config_value(Legion::LLM.settings || {}, key, default)
+          Legion::LLM::Settings.value(key, default: default)
         rescue StandardError
           default
         end

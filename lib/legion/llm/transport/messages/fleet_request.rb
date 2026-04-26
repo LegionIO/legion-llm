@@ -49,9 +49,8 @@ module Legion
           def publish_confirm_timeout_ms
             return 500 unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:settings)
 
-            settings = Legion::LLM.settings
-            nested_fetch(settings, :routing, :tiers, :fleet, :publish_confirm_timeout_ms) ||
-              nested_fetch(settings, :routing, :fleet, :publish_confirm_timeout_ms) ||
+            Legion::LLM::Settings.value(:routing, :tiers, :fleet, :publish_confirm_timeout_ms) ||
+              Legion::LLM::Settings.value(:routing, :fleet, :publish_confirm_timeout_ms) ||
               500
           rescue StandardError
             500

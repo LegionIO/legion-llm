@@ -102,7 +102,7 @@ module Legion
         end
 
         def llm_settings
-          Legion::LLM.settings || {}
+          Legion::LLM::Settings.current_settings
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.pipeline.settings')
           {}

@@ -58,11 +58,11 @@ module Legion
         private
 
         def providers_config
-          option(Legion::LLM.settings, :providers, {})
+          Legion::LLM::Settings.value(:providers, default: {})
         end
 
         def embedding_settings
-          option(Legion::LLM.settings, :embedding, {})
+          Legion::LLM::Settings.value(:embedding, default: {})
         end
 
         def enabled_config?(config)
