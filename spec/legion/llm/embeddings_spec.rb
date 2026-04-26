@@ -67,6 +67,29 @@ RSpec.describe '.detect_embedding_capability' do
     end
   end
 
+  context 'when embedding discovery settings were loaded from JSON string keys' do
+    before do
+      Legion::Settings[:llm]['providers'] = {
+        'ollama' => { 'enabled' => true }
+      }
+      Legion::Settings[:llm]['embedding'] = {
+        'provider_fallback' => %w[ollama],
+        'ollama_preferred'  => %w[nomic-embed-text]
+      }
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+        .and_return(false)
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+        .with('nomic-embed-text').and_return(true)
+    end
+
+    it 'uses string-keyed embedding fallback and model preference settings' do
+      Legion::LLM::Discovery.detect_embedding_capability
+      expect(Legion::LLM.can_embed?).to be true
+      expect(Legion::LLM.embedding_provider).to eq(:ollama)
+      expect(Legion::LLM.embedding_model).to eq('nomic-embed-text')
+    end
+  end
+
   context 'when Ollama has no models, bedrock is configured, and openai is enabled' do
     before do
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
