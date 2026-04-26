@@ -30,6 +30,16 @@ RSpec.describe 'Pipeline integration with Legion::LLM.chat' do
     expect(result.timeline).not_to be_empty
   end
 
+  it 'treats string-keyed pipeline_enabled as enabled' do
+    allow(Legion::LLM).to receive(:settings).and_return({
+                                                          'pipeline_enabled' => true,
+                                                          'default_model'    => 'test-model',
+                                                          'default_provider' => :test
+                                                        })
+
+    expect(Legion::LLM::Inference.pipeline_enabled?).to be(true)
+  end
+
   describe 'streaming via pipeline' do
     it 'uses call_stream when block is given' do
       mock_session = double('session', with_tool: nil)

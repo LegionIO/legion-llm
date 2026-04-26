@@ -10,6 +10,7 @@
 - Embedding provider/model resolution, provider disable gates, prefix injection, fallback chains, Azure settings, Ollama base URLs, and metering caller context now honor JSON/string-keyed settings in addition to symbol-keyed runtime settings.
 - Discovery for Ollama, vLLM, and embedding fallback chains now honors JSON/string-keyed provider, embedding, base URL, model metadata, and refresh TTL settings.
 - Inference executor routing defaults, conversation compaction, pipeline escalation, native dispatch, async post-step, telemetry span, tool-loop, and fallback-provider settings now honor JSON/string-keyed settings.
+- Module-level inference, prompt dispatch, prompt-cache, debate, and skill-injector settings now honor JSON/string-keyed settings.
 
 ## [0.8.28] - 2026-04-24
 

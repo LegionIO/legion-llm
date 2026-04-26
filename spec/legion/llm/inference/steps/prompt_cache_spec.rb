@@ -65,6 +65,20 @@ RSpec.describe Legion::LLM::Inference::Steps::PromptCache do
         expect(result.last[:cache_control]).to eq({ type: 'persistent' })
       end
 
+      it 'honors string-keyed prompt caching settings' do
+        allow(Legion::LLM).to receive(:settings).and_return({
+                                                              'prompt_caching' => {
+                                                                'enabled'             => true,
+                                                                'min_tokens'          => 1024,
+                                                                'scope'               => 'persistent',
+                                                                'cache_system_prompt' => true
+                                                              }
+                                                            })
+        blocks = [{ type: :text, content: long_content }]
+        result = mod.apply_cache_control(blocks)
+        expect(result.last[:cache_control]).to eq({ type: 'persistent' })
+      end
+
       it 'returns the original blocks unchanged when the array is empty' do
         expect(mod.apply_cache_control([])).to eq([])
       end

@@ -6,6 +6,24 @@ module Legion
       module Prompt
         module_function
 
+        def llm_setting(key, default = nil)
+          config_value(Legion::LLM.settings || {}, key, default)
+        rescue StandardError
+          default
+        end
+
+        def config_value(config, key, default = nil)
+          return default unless config.respond_to?(:key?)
+
+          string_key = key.to_s
+          return config[string_key] if config.key?(string_key)
+
+          symbol_key = key.to_sym if key.respond_to?(:to_sym)
+          return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+          default
+        end
+
         # Auto-routed: Router picks the best provider+model based on intent.
         # Primary entry point for most LLM calls.
         # When provider/model are passed explicitly, they take precedence over routing.
@@ -37,8 +55,8 @@ module Legion
             resolved_model = resolution&.model
           end
 
-          resolved_provider ||= Legion::LLM.settings[:default_provider]
-          resolved_model ||= Legion::LLM.settings[:default_model]
+          resolved_provider ||= llm_setting(:default_provider)
+          resolved_model ||= llm_setting(:default_model)
 
           request(message,
                   provider:        resolved_provider,
