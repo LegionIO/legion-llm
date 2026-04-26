@@ -153,6 +153,32 @@ RSpec.describe Legion::LLM::Discovery::Vllm do
       described_class.instance_variable_set(:@last_refreshed_at, Time.now - 11)
       expect(described_class.stale?).to be true
     end
+
+    it 'uses refresh_seconds from JSON string-keyed settings' do
+      Legion::Settings[:llm]['discovery'] = { 'enabled' => true, 'refresh_seconds' => 10 }
+      described_class.refresh!
+      expect(described_class.stale?).to be false
+
+      described_class.instance_variable_set(:@last_refreshed_at, Time.now - 11)
+      expect(described_class.stale?).to be true
+    end
+  end
+
+  describe 'JSON string-keyed provider settings' do
+    before do
+      described_class.reset!
+      Legion::Settings[:llm]['providers'] = {
+        'vllm' => { 'enabled' => true, 'base_url' => 'http://json-gpu:8000/v1' }
+      }
+      stub_request(:get, 'http://json-gpu:8000/v1/models')
+        .to_return(status: 200, body: models_response.to_json,
+                   headers: { 'Content-Type' => 'application/json' })
+    end
+
+    it 'uses the string-keyed base_url for model discovery' do
+      expect(described_class.model_names).to eq(['qwen3.6-27b'])
+      expect(a_request(:get, 'http://json-gpu:8000/v1/models')).to have_been_made
+    end
   end
 
   describe 'multiple models' do

@@ -25,7 +25,7 @@ module Legion
         def run
           log.debug '[llm][discovery] run.enter'
 
-          if Legion::LLM.settings.dig(:providers, :ollama, :enabled)
+          if provider_enabled?(:ollama)
             Ollama.refresh!
             System.refresh!
             names = Ollama.model_names
@@ -33,7 +33,7 @@ module Legion
             log.info "[llm][discovery] system total_mb=#{System.total_memory_mb} available_mb=#{System.available_memory_mb}"
           end
 
-          if Legion::LLM.settings.dig(:providers, :vllm, :enabled)
+          if provider_enabled?(:vllm)
             Vllm.refresh!
             names = Vllm.model_names
             contexts = names.map { |n| "#{n}(#{Vllm.max_context(n)})" }
@@ -45,7 +45,7 @@ module Legion
 
         def detect_embedding_capability
           log.debug '[llm][discovery] detect_embedding_capability.enter'
-          embedding_settings = Legion::LLM.settings[:embedding] || {}
+          embedding_settings = self.embedding_settings
           found = find_embedding_provider(embedding_settings)
           if found
             @can_embed = true
@@ -75,14 +75,15 @@ module Legion
         private
 
         def find_embedding_provider(embedding_settings)
-          fallback = embedding_settings[:provider_fallback] || %w[ollama bedrock openai]
-          provider_models = embedding_settings[:provider_models] || {}
-          ollama_preferred = embedding_settings[:ollama_preferred] || %w[mxbai-embed-large bge-large snowflake-arctic-embed]
+          fallback = config_value(embedding_settings, :provider_fallback, %w[ollama bedrock openai])
+          provider_models = config_value(embedding_settings, :provider_models, {})
+          ollama_preferred = config_value(embedding_settings, :ollama_preferred,
+                                          %w[mxbai-embed-large bge-large snowflake-arctic-embed])
 
           log.debug "[llm][discovery] find_embedding_provider fallback=#{fallback}"
           fallback.each do |provider_name|
             provider = provider_name.to_sym
-            model = provider_models[provider_name] || provider_models[provider]
+            model = config_value(provider_models, provider_name)
             available = probe_embedding_provider(provider, ollama_preferred)
             log.debug "[llm][discovery] find_embedding_provider provider=#{provider} available=#{available.inspect}"
             next unless available
@@ -124,7 +125,7 @@ module Legion
         def detect_ollama_embedding(preferred_models)
           log.debug "[llm][discovery] detect_ollama_embedding preferred=#{preferred_models}"
           return nil unless defined?(Legion::LLM::Discovery::Ollama)
-          return nil unless Legion::LLM.settings.dig(:providers, :ollama, :enabled)
+          return nil unless provider_enabled?(:ollama)
 
           preferred_models.each do |model|
             log.debug "[llm][discovery] detect_ollama_embedding checking model=#{model}"
@@ -138,8 +139,8 @@ module Legion
 
         def detect_cloud_embedding(provider)
           log.debug "[llm][discovery] detect_cloud_embedding provider=#{provider}"
-          provider_config = Legion::LLM.settings.dig(:providers, provider)
-          return nil unless provider_config.is_a?(Hash) && provider_config[:enabled]
+          provider_config = config_value(providers_settings, provider)
+          return nil unless provider_config.is_a?(Hash) && config_value(provider_config, :enabled)
           return nil unless provider_supports_embeddings?(provider)
 
           true
@@ -149,9 +150,10 @@ module Legion
         end
 
         def build_embedding_fallback_chain(embedding_settings)
-          fallback = embedding_settings[:provider_fallback] || %w[ollama bedrock openai]
-          provider_models = embedding_settings[:provider_models] || {}
-          ollama_preferred = embedding_settings[:ollama_preferred] || %w[mxbai-embed-large bge-large snowflake-arctic-embed]
+          fallback = config_value(embedding_settings, :provider_fallback, %w[ollama bedrock openai])
+          provider_models = config_value(embedding_settings, :provider_models, {})
+          ollama_preferred = config_value(embedding_settings, :ollama_preferred,
+                                          %w[mxbai-embed-large bge-large snowflake-arctic-embed])
 
           log.debug "[llm][discovery] build_embedding_fallback_chain fallback=#{fallback}"
           fallback.filter_map do |provider_name|
@@ -162,7 +164,7 @@ module Legion
             available = probe_embedding_provider(provider, ollama_preferred)
             next unless available
 
-            model = available.is_a?(String) ? available : (provider_models[provider_name] || provider_models[provider])&.to_s
+            model = available.is_a?(String) ? available : config_value(provider_models, provider_name)&.to_s
             log.debug "[llm][discovery] fallback chain entry provider=#{provider} model=#{model}"
             { provider: provider, model: model }
           end
@@ -187,8 +189,35 @@ module Legion
         end
 
         def provider_enabled?(provider)
-          config = Legion::LLM.settings.dig(:providers, provider)
-          config.is_a?(Hash) && config[:enabled] != false
+          config = config_value(providers_settings, provider)
+          config.is_a?(Hash) && config_value(config, :enabled) != false
+        end
+
+        def embedding_settings
+          config_value(llm_settings, :embedding, {})
+        end
+
+        def providers_settings
+          config_value(llm_settings, :providers, {})
+        end
+
+        def llm_settings
+          Legion::LLM.settings || {}
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.discovery.settings')
+          {}
+        end
+
+        def config_value(config, key, default = nil)
+          return default unless config.respond_to?(:key?)
+
+          string_key = key.to_s
+          return config[string_key] if config.key?(string_key)
+
+          symbol_key = key.to_sym if key.respond_to?(:to_sym)
+          return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+          default
         end
       end
     end
