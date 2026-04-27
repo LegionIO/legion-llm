@@ -73,24 +73,32 @@ module Legion
         attr_reader :provider_name, :provider_class
 
         def provider
-          provider_class.new(::LexLLM.config)
+          provider_class.new(lex_llm_namespace.config)
         end
 
         def model_info(model)
-          ::LexLLM::Model::Info.new(id: model, provider: provider_name)
+          lex_llm_namespace::Model::Info.new(id: model, provider: provider_name)
         end
 
         def normalize_messages(messages)
+          message_class = lex_llm_namespace::Message
           Array(messages).map do |message|
-            next message if message.is_a?(::LexLLM::Message)
+            next message if message.is_a?(message_class)
 
             message_hash = normalize_hash(message)
-            ::LexLLM::Message.new(
+            message_class.new(
               role:         message_hash[:role] || :user,
               content:      message_hash[:content].to_s,
               tool_call_id: message_hash[:tool_call_id]
             )
           end
+        end
+
+        def lex_llm_namespace
+          return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)
+          return ::LexLLM if defined?(::LexLLM::Provider)
+
+          raise NameError, 'lex-llm provider namespace is not loaded'
         end
 
         def normalize_tools(tools)

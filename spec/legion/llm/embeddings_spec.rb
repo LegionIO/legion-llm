@@ -90,16 +90,19 @@ RSpec.describe '.detect_embedding_capability' do
     end
   end
 
-  context 'when Ollama has no models, bedrock is configured, and openai is enabled' do
+  context 'when Ollama has no models and bedrock health check fails, falls back to openai' do
     before do
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
         .and_return(false)
       Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
       Legion::Settings[:llm][:providers][:openai][:enabled] = true
+      # Bedrock is now a supported embedding provider (see bedrock_embeddings.rb),
+      # so to exercise fallback we simulate a failing health check instead.
+      allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(false)
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:openai, 'text-embedding-3-small').and_return(true)
     end
 
-    it 'skips unsupported bedrock and falls back to openai' do
+    it 'skips bedrock on health-check failure and falls back to openai' do
       Legion::LLM::Discovery.detect_embedding_capability
       expect(Legion::LLM.can_embed?).to be true
       expect(Legion::LLM.embedding_provider).to eq(:openai)
@@ -107,11 +110,28 @@ RSpec.describe '.detect_embedding_capability' do
     end
   end
 
-  context 'when only bedrock is configured' do
+  context 'when only bedrock is configured and its health check passes' do
     before do
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
         .and_return(false)
       Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+      allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(true)
+    end
+
+    it 'selects bedrock with the Titan v2 model' do
+      Legion::LLM::Discovery.detect_embedding_capability
+      expect(Legion::LLM.can_embed?).to be true
+      expect(Legion::LLM.embedding_provider).to eq(:bedrock)
+      expect(Legion::LLM.embedding_model).to eq('amazon.titan-embed-text-v2:0')
+    end
+  end
+
+  context 'when only bedrock is configured and its health check fails' do
+    before do
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+        .and_return(false)
+      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+      allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(false)
     end
 
     it 'leaves embeddings unavailable' do
