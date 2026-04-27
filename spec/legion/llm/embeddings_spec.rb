@@ -295,7 +295,7 @@ RSpec.describe Legion::LLM::Embeddings do
       expect(result[:dimensions]).to eq(1024)
     end
 
-    it 'resolves provider from llm settings when not specified' do
+    it 'does not resolve provider from chat default_provider when not specified' do
       allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(:bedrock)
       allow(Legion::Settings).to receive(:dig).with(:llm, :embedding).and_return(nil)
 
@@ -303,7 +303,18 @@ RSpec.describe Legion::LLM::Embeddings do
       allow(RubyLLM).to receive(:embed).and_return(mock_response)
 
       result = described_class.generate(text: 'test')
-      expect(result[:provider]).to eq(:bedrock)
+      expect(result[:provider]).to be_nil
+    end
+
+    it 'does not route embeddings to vllm when vllm is the chat default provider' do
+      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(:vllm)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :embedding).and_return(nil)
+
+      mock_response = double(vectors: [Array.new(1024, 0.1)], input_tokens: 1)
+      expect(RubyLLM).to receive(:embed).with('test', hash_excluding(provider: :vllm)).and_return(mock_response)
+
+      result = described_class.generate(text: 'test')
+      expect(result[:provider]).to be_nil
     end
   end
 
@@ -335,7 +346,6 @@ RSpec.describe Legion::LLM::Embeddings do
       allow(Legion::Settings).to receive(:dig).with(:llm, :embedding).and_return(
         { provider_models: { bedrock: 'amazon.titan-embed-text-v2:0' } }
       )
-      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(:bedrock)
       Legion::LLM.instance_variable_set(:@embedding_provider, :bedrock)
       Legion::LLM.instance_variable_set(:@embedding_model, 'amazon.titan-embed-text-v2:0')
       expect(described_class.default_model).to eq('amazon.titan-embed-text-v2:0')

@@ -176,7 +176,7 @@ module Legion
             configured = embedding_settings[:provider]
             return configured&.to_sym if configured
 
-            Legion::Settings.dig(:llm, :default_provider)&.to_sym
+            nil
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.embeddings.resolve_provider')
             nil
