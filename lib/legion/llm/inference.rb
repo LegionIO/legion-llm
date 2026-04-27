@@ -685,7 +685,7 @@ module Legion
 
         log.info "[llm][inference] escalation_event outcome=#{final_outcome} attempts=#{history.size}"
 
-        Transport::Messages::EscalationEvent.new(payload).publish if defined?(Legion::Settings) && Legion::Settings[:transport][:connected] == true
+        Transport::Messages::EscalationEvent.new(payload).publish if Legion::LLM::Settings.transport_connected?
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.publish_escalation_event', outcome: final_outcome)
         nil
@@ -755,11 +755,7 @@ module Legion
       end
 
       def enterprise_privacy?
-        if Legion.const_defined?('Settings', false) && Legion::Settings.respond_to?(:enterprise_privacy?)
-          Legion::Settings.enterprise_privacy?
-        else
-          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
-        end
+        Legion::LLM::Settings.enterprise_privacy?
       end
 
       def emit_privacy_blocked_audit

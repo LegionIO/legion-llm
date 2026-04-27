@@ -28,11 +28,19 @@ module Legion
       end
 
       def []=(key, value)
-        @store[key.to_sym] = value
+        if respond_to?(:set_prop)
+          set_prop(key.to_sym, value)
+        else
+          @store[key.to_sym] = value
+        end
       end
 
       def key?(key)
-        @store.key?(key.to_sym)
+        if respond_to?(:get)
+          get.settings.key?(key.to_sym) || get.settings.key?(key.to_s)
+        else
+          @store.key?(key.to_sym)
+        end
       end
 
       def dig(*keys)

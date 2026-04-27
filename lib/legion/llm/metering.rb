@@ -78,9 +78,7 @@ module Legion
       end
 
       def transport_connected?
-        return false unless defined?(Legion::Settings)
-
-        settings_value(Legion::Settings[:transport], :connected) == true
+        Legion::LLM::Settings.transport_connected?
       end
 
       def spool_available?

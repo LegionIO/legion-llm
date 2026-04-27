@@ -57,6 +57,7 @@ RSpec.describe Legion::LLM::Fleet::Handler do
       expect(result[:success]).to eq(false)
       expect(result[:error]).to eq('llm_not_available')
       expect(result[:provider]).to eq(:openai)
+      expect(result[:model]).to eq('gpt-4o')
       expect(result[:model_id]).to eq('gpt-4o')
     end
 

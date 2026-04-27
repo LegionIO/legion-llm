@@ -33,8 +33,8 @@ module Legion
           model = Legion::LLM::Settings.config_value(config, :default_model)
           next unless model
 
-          Legion::LLM.settings[:default_model] = model
-          Legion::LLM.settings[:default_provider] = provider
+          Legion::LLM::Settings.set_value(:default_model, value: model)
+          Legion::LLM::Settings.set_value(:default_provider, value: provider)
           log.info "[llm][config] auto-configured default model=#{model} provider=#{provider}"
           break
         end

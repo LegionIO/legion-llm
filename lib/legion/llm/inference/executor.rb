@@ -177,7 +177,7 @@ module Legion
         def registry_tool_limit
           return nil unless local_provider?
 
-          raw_limit = (Legion::LLM.settings[:tool_trigger] || {})[:local_tool_limit]
+          raw_limit = Legion::LLM::Settings.value(:tool_trigger, :local_tool_limit)
           limit = raw_limit.to_i
           limit.positive? ? limit : nil
         end

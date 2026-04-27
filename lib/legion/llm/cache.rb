@@ -14,14 +14,14 @@ module Legion
 
       # Generates a deterministic SHA256 cache key from request parameters.
       def key(model:, provider:, messages:, temperature: nil, tools: nil, schema: nil)
-        payload = ::JSON.dump({
-                                model:       model.to_s,
-                                provider:    provider.to_s,
-                                messages:    messages,
-                                temperature: temperature,
-                                tools:       tools,
-                                schema:      schema
-                              })
+        payload = Legion::JSON.dump({
+                                      model:       model.to_s,
+                                      provider:    provider.to_s,
+                                      messages:    messages,
+                                      temperature: temperature,
+                                      tools:       tools,
+                                      schema:      schema
+                                    })
         Digest::SHA256.hexdigest(payload)
       end
 
@@ -29,15 +29,15 @@ module Legion
       def get(cache_key)
         return nil unless available?
 
-        raw = Legion::Cache.get(cache_key)
+        raw = cache_backend_get(cache_key)
         if raw.nil?
           log.debug("LLM cache miss key=#{cache_key}")
           return nil
         end
 
-        ::JSON.parse(raw, symbolize_names: true)
+        Legion::JSON.load(raw)
       rescue StandardError => e
-        handle_exception(e, level: :warn)
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.cache.get', key: cache_key)
         nil
       end
 
@@ -45,11 +45,11 @@ module Legion
       def set(cache_key, response, ttl: DEFAULT_TTL)
         return false unless available?
 
-        Legion::Cache.set(cache_key, ::JSON.dump(response), ttl)
+        cache_backend_set(cache_key, Legion::JSON.dump(response), ttl: ttl)
         log.debug("LLM cache write key=#{cache_key} ttl=#{ttl}")
         true
       rescue StandardError => e
-        handle_exception(e, level: :warn)
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.cache.set', key: cache_key)
         false
       end
 
@@ -61,14 +61,37 @@ module Legion
       end
 
       private_class_method def self.available?
-        defined?(Legion::Cache) && Legion::Cache.respond_to?(:get)
+        local_cache_backend? || shared_cache_backend?
       end
 
       private_class_method def self.llm_settings
         Legion::LLM::Settings.current_settings
       rescue StandardError => e
-        handle_exception(e, level: :warn)
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.cache.settings')
         {}
+      end
+
+      private_class_method def self.cache_backend_get(key)
+        return Legion::Cache::Local.get(key) if local_cache_backend?
+
+        Legion::Cache.get(key)
+      end
+
+      private_class_method def self.cache_backend_set(key, value, ttl:)
+        return Legion::Cache::Local.set(key, value, ttl: ttl) if local_cache_backend?
+
+        Legion::Cache.set(key, value, ttl)
+      end
+
+      private_class_method def self.local_cache_backend?
+        defined?(Legion::Cache::Local) &&
+          Legion::Cache::Local.respond_to?(:connected?) &&
+          Legion::Cache::Local.connected? &&
+          Legion::Cache::Local.respond_to?(:get)
+      end
+
+      private_class_method def self.shared_cache_backend?
+        defined?(Legion::Cache) && Legion::Cache.respond_to?(:get)
       end
     end
   end

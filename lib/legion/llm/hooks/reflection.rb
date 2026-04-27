@@ -222,8 +222,7 @@ module Legion
         private_class_method :truncate
 
         def apollo_transport?
-          defined?(Legion::Settings) &&
-            Legion::Settings[:transport][:connected] == true
+          Legion::LLM::Settings.transport_connected?
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.hooks.reflection.apollo_transport')
           false

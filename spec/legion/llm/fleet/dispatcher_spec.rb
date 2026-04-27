@@ -37,8 +37,10 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       future = instance_double(Concurrent::Promises::ResolvableFuture)
       allow(described_class).to receive(:fleet_available?).and_return(true)
       allow(future).to receive(:value!).and_return({ success: true })
-      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register) do
+      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register) do |correlation_id, expected: {}|
         order << :register
+        expect(correlation_id).not_to be_nil
+        expect(expected).to eq({})
         future
       end
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:deregister)
@@ -50,6 +52,30 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       described_class.dispatch(model: 'test', messages: [], timeout: 1)
 
       expect(order).to eq(%i[register publish])
+    end
+
+    it 'does not attach request metadata gates to legacy fleet replies' do
+      future = instance_double(Concurrent::Promises::ResolvableFuture)
+      allow(described_class).to receive(:fleet_available?).and_return(true)
+      allow(future).to receive(:value!).and_return({ success: true })
+      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:deregister)
+      allow(described_class).to receive(:publish_request).and_return({ accepted: true, status: :accepted })
+
+      expect(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register).with(String, expected: {}).and_return(future)
+
+      described_class.dispatch(model: 'test', messages: [], timeout: 1)
+    end
+
+    it 'does not attach request metadata gates to request-object fleet replies' do
+      future = instance_double(Concurrent::Promises::ResolvableFuture)
+      allow(described_class).to receive(:fleet_available?).and_return(true)
+      allow(future).to receive(:value!).and_return({ success: true })
+      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:deregister)
+      allow(described_class).to receive(:publish_request).and_return({ accepted: true, status: :accepted })
+
+      expect(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register).with(String, expected: {}).and_return(future)
+
+      described_class.dispatch(request: { model: 'test', request_type: 'chat', provider: 'ollama' })
     end
 
     it 'uses the effective wait timeout as the fleet message TTL' do

@@ -62,6 +62,30 @@ RSpec.describe Legion::LLM::Settings do
     end
   end
 
+  describe '.global_value' do
+    it 'reads non-LLM settings with string and symbol keys' do
+      Legion::Settings[:transport] = { 'connected' => true }
+
+      expect(described_class.global_value(:transport, :connected)).to be true
+    end
+  end
+
+  describe '.set_value' do
+    it 'writes through the canonical LLM settings store' do
+      described_class.set_value(:connected, value: true)
+
+      expect(Legion::Settings[:llm][:connected]).to be true
+    end
+  end
+
+  describe '.transport_connected?' do
+    it 'uses the shared settings helper path' do
+      Legion::Settings[:transport] = { connected: true }
+
+      expect(described_class.transport_connected?).to be true
+    end
+  end
+
   # ─── 2. Routing defaults to disabled ─────────────────────────────────────────
 
   describe '.routing_defaults' do

@@ -3,6 +3,7 @@
 require 'securerandom'
 require 'open3'
 require 'time'
+require 'legion/cache/helper'
 require 'legion/logging/helper'
 
 module Legion
@@ -170,6 +171,7 @@ module Legion
 
             app.helpers do # rubocop:disable Metrics/BlockLength
               include Legion::Logging::Helper
+              include ::Legion::Cache::Helper
 
               unless method_defined?(:parse_request_body)
                 define_method(:parse_request_body) do
@@ -238,9 +240,7 @@ module Legion
 
               unless method_defined?(:cache_available?)
                 define_method(:cache_available?) do
-                  defined?(Legion::Cache) &&
-                    Legion::Cache.respond_to?(:connected?) &&
-                    Legion::Cache.connected?
+                  cache_connected? || local_cache_connected?
                 end
               end
 
@@ -400,12 +400,7 @@ module Legion
               define_method(:resolve_caller_identity) do |rack_env|
                 return rack_env['legion.tenant_id'] if rack_env['legion.tenant_id']
 
-                kerb = begin
-                  Legion::Settings.dig(:kerberos, :username)
-                rescue StandardError => e
-                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.kerberos_username')
-                  nil
-                end
+                kerb = Legion::LLM::Settings.global_value(:kerberos, :username)
                 return "user:#{kerb}" if kerb.is_a?(String) && !kerb.empty?
 
                 principal = rack_env['legion.principal']
@@ -422,20 +417,10 @@ module Legion
               end
 
               define_method(:resolve_requested_by) do |rack_env, identity_string|
-                hostname = begin
-                  Legion::Settings[:client][:hostname]
-                rescue StandardError => e
-                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.client_hostname')
-                  Socket.gethostname
-                end
+                hostname = Legion::LLM::Settings.global_value(:client, :hostname) || Socket.gethostname
                 username = identity_string.delete_prefix('user:')
 
-                kerb = begin
-                  Legion::Settings.dig(:kerberos, :username)
-                rescue StandardError => e
-                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.requested_by_kerberos')
-                  nil
-                end
+                kerb = Legion::LLM::Settings.global_value(:kerberos, :username)
                 if kerb.is_a?(String) && !kerb.empty?
                   return { identity: identity_string, type: :user, credential: :kerberos,
                            username: kerb, hostname: hostname }

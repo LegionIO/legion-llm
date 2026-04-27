@@ -54,16 +54,18 @@ require_relative 'llm/config'
 require_relative 'llm/discovery'
 require_relative 'llm/transport'
 
+boot_logger = Object.new.extend(Legion::Logging::Helper)
+
 begin
   require_relative 'llm/skills'
 rescue LoadError => e
-  Legion::Logging.debug "LLM: skills not loadable: #{e.message}"
+  boot_logger.handle_exception(e, level: :debug, handled: true, operation: 'llm.boot.require_skills')
 end
 
 begin
   require_relative 'llm/api'
 rescue LoadError => e
-  Legion::Logging.debug "LLM: api routes not loadable (Sinatra not available): #{e.message}"
+  boot_logger.handle_exception(e, level: :debug, handled: true, operation: 'llm.boot.require_api')
 end
 
 require_relative 'llm/compat'
@@ -97,7 +99,7 @@ module Legion
         LLM::Metering.load_transport
 
         @started = true
-        Legion::Settings[:llm][:connected] = true
+        Settings.set_value(:connected, value: true)
         log.info '[llm] started'
         API.register_routes if defined?(API)
       rescue StandardError => e
@@ -107,7 +109,7 @@ module Legion
 
       def shutdown
         log.debug '[llm] shutdown.enter'
-        Legion::Settings[:llm][:connected] = false
+        Settings.set_value(:connected, value: false)
         @started = false
         Discovery.reset!
         Call::Registry.reset!
@@ -124,7 +126,7 @@ module Legion
       end
 
       def settings
-        Legion::Settings[:llm]
+        Settings.current_settings
       end
 
       def chat(...) = Inference.chat(...)

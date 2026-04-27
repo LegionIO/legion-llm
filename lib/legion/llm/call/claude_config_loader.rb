@@ -88,7 +88,7 @@ module Legion
         end
 
         def apply_api_keys(config)
-          llm = Legion::LLM.settings
+          llm = Legion::LLM::Settings.current_settings
           providers = Legion::LLM::Settings.config_value(llm, :providers, {})
           providers = llm[:providers] = {} unless providers.is_a?(Hash)
 
@@ -118,10 +118,9 @@ module Legion
           return unless config[:preferredModel] || config[:model]
 
           model = config[:preferredModel] || config[:model]
-          llm = Legion::LLM.settings
           return if Legion::LLM::Settings.value(:default_model)
 
-          llm[:default_model] = model
+          Legion::LLM::Settings.set_value(:default_model, value: model)
           log.debug "Imported model preference from Claude CLI config: #{model}"
         end
 

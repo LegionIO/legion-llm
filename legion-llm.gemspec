@@ -27,6 +27,7 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency 'concurrent-ruby'
   spec.add_dependency 'faraday'
+  spec.add_dependency 'legion-cache', '>= 1.4.2'
   spec.add_dependency 'legion-json', '>= 1.2.0'
   spec.add_dependency 'legion-logging', '>= 1.2.8'
   spec.add_dependency 'legion-settings', '>= 1.3.12'
