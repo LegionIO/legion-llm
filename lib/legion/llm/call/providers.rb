@@ -87,7 +87,11 @@ module Legion
         end
 
         def usable_setting?(value)
-          !Call::ClaudeConfigLoader.resolve_setting_reference(value).nil?
+          !resolve_credential_value(value).nil?
+        end
+
+        def resolve_credential_value(value)
+          Call::ClaudeConfigLoader.resolve_setting_reference(value)
         end
 
         def env_present?(key)
@@ -139,9 +143,15 @@ module Legion
         end
 
         def configure_bedrock(config)
-          has_sigv4 = usable_setting?(config[:api_key]) && usable_setting?(config[:secret_key])
-          has_bearer = Call::ClaudeConfigLoader.resolve_setting_reference(config[:bearer_token])
+          resolved_api_key = resolve_credential_value(config[:api_key])
+          resolved_secret_key = resolve_credential_value(config[:secret_key])
+          resolved_session_token = resolve_credential_value(config[:session_token])
+          has_sigv4 = resolved_api_key && resolved_secret_key
+          has_bearer = resolve_credential_value(config[:bearer_token])
           config[:bearer_token] = has_bearer if has_bearer
+          config[:api_key] = resolved_api_key if resolved_api_key
+          config[:secret_key] = resolved_secret_key if resolved_secret_key
+          config[:session_token] = resolved_session_token if resolved_session_token
 
           unless has_sigv4 || has_bearer
             broker_creds = resolve_broker_aws_credentials
@@ -176,7 +186,7 @@ module Legion
 
         def configure_anthropic(config)
           api_key = resolve_broker_credential(:anthropic) ||
-                    Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]) ||
+                    resolve_credential_value(config[:api_key]) ||
                     ENV.fetch('ANTHROPIC_API_KEY', nil)
           return unless api_key
 
@@ -189,7 +199,7 @@ module Legion
 
         def configure_openai(config)
           api_key = resolve_broker_credential(:openai) ||
-                    Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]) ||
+                    resolve_credential_value(config[:api_key]) ||
                     ENV.fetch('OPENAI_API_KEY', nil) ||
                     ENV.fetch('CODEX_API_KEY', nil)
           return unless api_key
@@ -202,7 +212,9 @@ module Legion
         end
 
         def configure_gemini(config)
-          api_key = resolve_broker_credential(:gemini) || config[:api_key]
+          api_key = resolve_broker_credential(:gemini) ||
+                    resolve_credential_value(config[:api_key]) ||
+                    ENV.fetch('GEMINI_API_KEY', nil)
           return unless api_key
 
           RubyLLM.configure do |c|
@@ -214,8 +226,8 @@ module Legion
 
         def configure_azure(config)
           api_base = config[:api_base]
-          api_key = resolve_broker_credential(:azure) || config[:api_key]
-          auth_token = config[:auth_token]
+          api_key = resolve_broker_credential(:azure) || resolve_credential_value(config[:api_key])
+          auth_token = resolve_credential_value(config[:auth_token])
           return unless api_base && (api_key || auth_token)
 
           RubyLLM.configure do |c|
@@ -235,9 +247,10 @@ module Legion
 
         def configure_vllm(config)
           base_url = config[:base_url] || 'http://localhost:8000/v1'
+          api_key = resolve_credential_value(config[:api_key])
           RubyLLM.configure do |c|
             c.vllm_api_base = base_url
-            c.vllm_api_key = config[:api_key] if config[:api_key]
+            c.vllm_api_key = api_key if api_key
           end
           log.info "[llm][providers] configured vllm base_url=#{base_url.inspect}"
         end
@@ -294,22 +307,22 @@ module Legion
           case provider
           when :bedrock
             candidates = []
-            resolved_bearer = Call::ClaudeConfigLoader.resolve_setting_reference(config[:bearer_token])
+            resolved_bearer = resolve_credential_value(config[:bearer_token])
             bearer_env = ENV.fetch('AWS_BEARER_TOKEN_BEDROCK', nil)
             claude_bearer = Call::ClaudeConfigLoader.bedrock_bearer_token
             candidates += [resolved_bearer, bearer_env, claude_bearer].compact.uniq.map { |t| { bearer_token: t } }
-            api_key = Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key])
-            secret = Call::ClaudeConfigLoader.resolve_setting_reference(config[:secret_key])
+            api_key = resolve_credential_value(config[:api_key])
+            secret = resolve_credential_value(config[:secret_key])
             candidates << { api_key: api_key, secret_key: secret } if api_key && secret
             candidates
           when :anthropic
             [
-              Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]),
+              resolve_credential_value(config[:api_key]),
               ENV.fetch('ANTHROPIC_API_KEY', nil)
             ].compact.uniq.map { |k| { api_key: k } }
           when :openai
             keys = [
-              Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]),
+              resolve_credential_value(config[:api_key]),
               ENV.fetch('OPENAI_API_KEY', nil),
               ENV.fetch('CODEX_API_KEY', nil),
               Call::CodexConfigLoader.read_token
@@ -317,7 +330,7 @@ module Legion
             keys.map { |k| { api_key: k } }
           when :gemini
             [
-              Call::ClaudeConfigLoader.resolve_setting_reference(config[:api_key]),
+              resolve_credential_value(config[:api_key]),
               ENV.fetch('GEMINI_API_KEY', nil)
             ].compact.uniq.map { |k| { api_key: k } }
           else

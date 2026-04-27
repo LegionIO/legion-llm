@@ -95,6 +95,93 @@ RSpec.describe Legion::LLM::Providers do
     end
   end
 
+  describe '#resolve_credential_value' do
+    before do
+      hide_const('Legion::Identity::Broker')
+      allow(Legion::LLM::Call::CodexConfigLoader).to receive(:read_token).and_return(nil)
+    end
+
+    around do |example|
+      old_a = ENV.fetch('LEGION_TEST_A', nil)
+      old_b = ENV.fetch('LEGION_TEST_B', nil)
+      old_openai = ENV.fetch('OPENAI_API_KEY', nil)
+      old_codex = ENV.fetch('CODEX_API_KEY', nil)
+      ENV.delete('LEGION_TEST_A')
+      ENV.delete('LEGION_TEST_B')
+      ENV.delete('OPENAI_API_KEY')
+      ENV.delete('CODEX_API_KEY')
+      example.run
+    ensure
+      old_a.nil? ? ENV.delete('LEGION_TEST_A') : ENV['LEGION_TEST_A'] = old_a
+      old_b.nil? ? ENV.delete('LEGION_TEST_B') : ENV['LEGION_TEST_B'] = old_b
+      old_openai.nil? ? ENV.delete('OPENAI_API_KEY') : ENV['OPENAI_API_KEY'] = old_openai
+      old_codex.nil? ? ENV.delete('CODEX_API_KEY') : ENV['CODEX_API_KEY'] = old_codex
+    end
+
+    it 'resolves env placeholders' do
+      ENV['LEGION_TEST_A'] = 'resolved-key'
+
+      expect(host.send(:resolve_credential_value, 'env://LEGION_TEST_A')).to eq('resolved-key')
+    end
+
+    it 'returns the first resolved value from placeholder arrays' do
+      ENV['LEGION_TEST_B'] = 'second-key'
+
+      expect(host.send(:resolve_credential_value, ['env://LEGION_TEST_A', 'env://LEGION_TEST_B'])).to eq('second-key')
+    end
+
+    it 'does not treat unresolved placeholder arrays as credentials' do
+      expect(host.send(:credential_available_for?, :openai, { api_key: ['env://LEGION_TEST_A', 'env://LEGION_TEST_B'] })).to be false
+    end
+  end
+
+  describe '#configure providers with env placeholders' do
+    let(:ruby_llm_config) { double('config') }
+
+    before do
+      hide_const('Legion::Identity::Broker')
+      allow(RubyLLM).to receive(:configure).and_yield(ruby_llm_config)
+      allow(ruby_llm_config).to receive(:gemini_api_key=)
+      allow(ruby_llm_config).to receive(:azure_api_base=)
+      allow(ruby_llm_config).to receive(:azure_api_key=)
+      allow(ruby_llm_config).to receive(:azure_ai_auth_token=)
+      allow(ruby_llm_config).to receive(:vllm_api_base=)
+      allow(ruby_llm_config).to receive(:vllm_api_key=)
+    end
+
+    around do |example|
+      old_gemini = ENV.fetch('LEGION_TEST_GEMINI', nil)
+      old_azure = ENV.fetch('LEGION_TEST_AZURE', nil)
+      old_vllm = ENV.fetch('LEGION_TEST_VLLM', nil)
+      ENV['LEGION_TEST_GEMINI'] = 'gemini-key'
+      ENV['LEGION_TEST_AZURE'] = 'azure-key'
+      ENV['LEGION_TEST_VLLM'] = 'vllm-key'
+      example.run
+    ensure
+      old_gemini.nil? ? ENV.delete('LEGION_TEST_GEMINI') : ENV['LEGION_TEST_GEMINI'] = old_gemini
+      old_azure.nil? ? ENV.delete('LEGION_TEST_AZURE') : ENV['LEGION_TEST_AZURE'] = old_azure
+      old_vllm.nil? ? ENV.delete('LEGION_TEST_VLLM') : ENV['LEGION_TEST_VLLM'] = old_vllm
+    end
+
+    it 'resolves gemini env placeholders before configuring RubyLLM' do
+      host.send(:configure_gemini, { api_key: 'env://LEGION_TEST_GEMINI' })
+
+      expect(ruby_llm_config).to have_received(:gemini_api_key=).with('gemini-key')
+    end
+
+    it 'resolves azure env placeholders before configuring RubyLLM' do
+      host.send(:configure_azure, { api_base: 'https://azure.example.com', api_key: 'env://LEGION_TEST_AZURE' })
+
+      expect(ruby_llm_config).to have_received(:azure_api_key=).with('azure-key')
+    end
+
+    it 'resolves vllm env placeholders before configuring RubyLLM' do
+      host.send(:configure_vllm, { base_url: 'http://gpu:8000/v1', api_key: 'env://LEGION_TEST_VLLM' })
+
+      expect(ruby_llm_config).to have_received(:vllm_api_key=).with('vllm-key')
+    end
+  end
+
   describe '#broker_has_credential?' do
     context 'when Broker has an API key provider' do
       before do

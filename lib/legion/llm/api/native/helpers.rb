@@ -45,7 +45,7 @@ module Legion
               "exit=#{status.exitstatus}\n#{output}"
             when 'file_read'
               path = kwargs[:path] || kwargs[:file_path] || kwargs.values.first.to_s
-              ::File.exist?(path) ? ::File.read(path, encoding: 'utf-8') : "File not found: #{path}"
+              read_client_file(path)
             when 'file_write'
               path = kwargs[:path] || kwargs[:file_path]
               content = kwargs[:content] || kwargs[:contents]
@@ -98,6 +98,46 @@ module Legion
             else
               "Tool #{ref} is not executable server-side. Use a legion_ prefixed tool instead."
             end
+          end
+
+          def read_client_file(path)
+            return "File not found: #{path}" unless ::File.exist?(path)
+
+            return read_pdf_text(path) if pdf_file?(path)
+
+            content = ::File.binread(path)
+            return 'Binary file detected, cannot read as text.' if binary_content?(content)
+
+            content.force_encoding('UTF-8')
+            content
+          rescue StandardError => e
+            "file_read error: #{e.message}"
+          end
+
+          def pdf_file?(path)
+            ::File.extname(path).casecmp('.pdf').zero? || ::File.binread(path, 5) == '%PDF-'
+          rescue StandardError
+            false
+          end
+
+          def read_pdf_text(path)
+            require 'pdf-reader' unless defined?(::PDF::Reader)
+
+            reader = ::PDF::Reader.new(path)
+            text = reader.pages.map(&:text).join("\n\n").strip
+            text.empty? ? 'PDF contained no extractable text.' : text
+          rescue LoadError
+            'PDF text extraction unavailable: missing pdf-reader gem.'
+          rescue StandardError => e
+            "PDF text extraction failed: #{e.message}"
+          end
+
+          def binary_content?(content)
+            return true if content.include?("\x00")
+
+            sample = content.byteslice(0, 4096).to_s
+            sample.force_encoding('UTF-8')
+            !sample.valid_encoding?
           end
 
           def notify_tool_event(type, ref, **data)
@@ -284,6 +324,25 @@ module Legion
                     name:      tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'] || tc.to_s),
                     arguments: tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
                   }
+                end
+              end
+
+              define_method(:extract_text_content) do |content|
+                case content
+                when nil
+                  ''
+                when String
+                  content
+                when Array
+                  content.filter_map { |entry| extract_text_content(entry) }.join
+                when Hash
+                  type = content[:type] || content['type']
+                  return '' unless type.nil? || type.to_s == 'text'
+
+                  text = content.key?(:text) || content.key?('text') ? (content[:text] || content['text']) : (content[:content] || content['content'])
+                  extract_text_content(text)
+                else
+                  content.to_s
                 end
               end
 
