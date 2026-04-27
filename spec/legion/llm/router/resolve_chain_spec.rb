@@ -86,23 +86,21 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
 
     before { Legion::Settings[:llm][:routing][:enabled] = false }
 
-    it 'returns a multi-provider chain from all enabled providers' do
+    it 'honours explicit default provider/model before auto-enabled providers' do
       chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })
-      expect(chain.size).to be >= 1
-      providers = chain.map(&:provider)
-      expect(providers).to include(:bedrock).or include(:ollama)
+      expect(chain.size).to eq(1)
+      expect(chain.primary.provider).to eq(:bedrock)
+      expect(chain.primary.model).to eq('claude-sonnet-4-6')
     end
 
     it 'returns a multi-provider chain from string-keyed provider settings' do
       Legion::Settings[:llm] = {
-        'default_model'    => 'claude-sonnet-4-6',
-        'default_provider' => 'bedrock',
-        'providers'        => {
+        'providers' => {
           'ollama'  => { 'enabled' => true, 'default_model' => 'llama3' },
           'bedrock' => { 'enabled' => true, 'default_model' => 'us.anthropic.claude-sonnet-4-6-v1' }
         },
-        'discovery'        => { 'enabled' => false },
-        'routing'          => { 'enabled' => false, 'rules' => [] }
+        'discovery' => { 'enabled' => false },
+        'routing'   => { 'enabled' => false, 'rules' => [] }
       }
 
       chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })

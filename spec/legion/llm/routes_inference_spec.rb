@@ -227,6 +227,25 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(body[:data][:stop_reason]).to eq('tool_use')
     end
 
+    it 'flattens structured sync content blocks into text' do
+      content_blocks = [
+        { type: 'text', text: 'plain ' },
+        { type: 'tool_use', id: 'tc_1', name: 'legion_tools', input: { query: 'status' } },
+        { 'type' => 'text', 'text' => 'reply' }
+      ]
+      response = make_pipeline_response(content: content_blocks)
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+
+      response = post_json('/api/llm/inference', { messages: [{ role: 'user', content: 'hello' }] })
+
+      expect(response.status).to eq(200)
+      body = Legion::JSON.load(response.body)
+      expect(body[:data][:content]).to eq('plain reply')
+    end
+
     it 'streams text and tool events for daemon consumers' do
       tool_call = { id: 'tc_1', name: 'legion_tools', arguments: { query: 'status' } }
       timeline = [
@@ -265,6 +284,59 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.body).to include('event: tool-progress')
       expect(response.body).to include('event: tool-result')
       expect(response.body).to include('event: done')
+    end
+
+    it 'flattens structured streaming content blocks into text deltas' do
+      response = make_pipeline_response(content: 'Plain reply')
+      executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
+      allow(executor).to receive(:tool_event_handler=)
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:call_stream) do |&block|
+        block&.call(double('chunk1', content: [{ type: 'text', text: 'Plain ' }]))
+        block&.call(double('chunk2', content: [{ type: 'tool_use', id: 'tc_1', name: 'legion_tools' }]))
+        block&.call(double('chunk3', content: [{ 'type' => 'text', 'text' => 'reply' }]))
+        response
+      end
+
+      response = post_json(
+        '/api/llm/inference',
+        { messages: [{ role: 'user', content: 'stream me' }], stream: true },
+        'HTTP_ACCEPT' => 'text/event-stream'
+      )
+
+      expect(response.status).to eq(200)
+      expect(response.body).to include('data: {"delta":"Plain "}')
+      expect(response.body).to include('data: {"delta":"reply"}')
+      expect(response.body).to include('"content":"Plain reply"')
+      expect(response.body).not_to include('tool_use')
+    end
+
+    it 'emits thinking deltas without appending them to final content' do
+      response = make_pipeline_response(content: 'answer')
+      executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
+      allow(executor).to receive(:tool_event_handler=)
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:call_stream) do |&block|
+        block&.call(double('thinking_chunk', content: nil, thinking: 'reasoning...'))
+        block&.call(double('text_chunk', content: 'answer', thinking: nil))
+        response
+      end
+
+      response = post_json(
+        '/api/llm/inference',
+        { messages: [{ role: 'user', content: 'think first' }], stream: true },
+        'HTTP_ACCEPT' => 'text/event-stream'
+      )
+
+      expect(response.status).to eq(200)
+      expect(response.body).to include('event: thinking-delta')
+      expect(response.body).to include('data: {"delta":"reasoning..."}')
+      expect(response.body).to include('"content":"answer"')
+      expect(response.body).not_to include('"content":"reasoning...answer"')
     end
   end
 end

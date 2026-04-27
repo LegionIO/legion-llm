@@ -231,6 +231,43 @@ confidence: 0.9 }],
         expect(names).to include('legion_query_knowledge', 'legion_test_extra')
         expect(names).not_to include('legion_test_skipped')
       end
+
+      it 'caps registry tools for local providers and prioritizes trigger-matched tools' do
+        always_tools = 3.times.map do |idx|
+          Class.new do
+            define_singleton_method(:tool_name) { "legion.always.#{idx}" }
+            define_singleton_method(:description) { 'Always loaded tool' }
+            define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+          end
+        end
+        triggered_tools = 3.times.map do |idx|
+          Class.new do
+            define_singleton_method(:tool_name) { "legion.triggered.#{idx}" }
+            define_singleton_method(:description) { 'Triggered tool' }
+            define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+          end
+        end
+
+        registry_mod = Module.new do
+          define_singleton_method(:tools) { always_tools }
+          define_singleton_method(:deferred_tools) { [] }
+        end
+        stub_const('Legion::Tools::Registry', registry_mod)
+        Legion::LLM.settings[:tool_trigger][:local_tool_limit] = 2
+
+        req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
+        executor = described_class.new(req)
+        executor.instance_variable_set(:@resolved_provider, :vllm)
+        executor.instance_variable_set(:@triggered_tools, triggered_tools)
+        session = double('RubyLLM::Chat')
+        names = []
+        allow(session).to receive(:with_tool) { |tool| names << tool.name }
+
+        executor.send(:inject_registry_tools, session)
+
+        expect(session).to have_received(:with_tool).twice
+        expect(names).to eq(%w[legion_triggered_0 legion_triggered_1])
+      end
     end
   end
 
