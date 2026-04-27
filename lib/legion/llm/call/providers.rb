@@ -498,7 +498,12 @@ module Legion
         end
 
         def load_lex_llm_base
-          load_optional_feature('legion/extensions/llm') || load_optional_feature('lex_llm')
+          load_optional_feature('legion/extensions/llm')
+          load_optional_feature('legion/extensions/llm/provider') unless lex_llm_namespace
+          return true if lex_llm_namespace
+
+          load_optional_feature('lex_llm')
+          !lex_llm_namespace.nil?
         end
 
         def lex_llm_namespace
