@@ -48,6 +48,17 @@ RSpec.describe Legion::LLM::Inventory do
     expect(inference_offerings.map { |offering| offering[:model] }).to include('qwen3.6:27b')
   end
 
+  it 'includes MLX as a local HTTP provider' do
+    Legion::Settings[:llm][:providers][:mlx] = {
+      enabled:       true,
+      default_model: 'mlx-community/Qwen3-14B-4bit'
+    }
+
+    offering = described_class.offerings(provider: 'mlx').first
+
+    expect(offering).to include(tier: :local, transport: :http, model: 'mlx-community/Qwen3-14B-4bit')
+  end
+
   it 'accepts future instance-level configured offerings' do
     Legion::Settings[:llm][:providers][:bedrock] = {
       enabled:   true,

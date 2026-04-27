@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'lex_llm'
+
 RSpec.describe Legion::LLM::Providers do
   let(:host) do
     Class.new do
@@ -118,6 +120,29 @@ RSpec.describe Legion::LLM::Providers do
         'openai',
         { 'enabled' => true, 'api_key' => 'sk-settings-key' }
       )
+    end
+  end
+
+  describe '#auto_register_lex_llm_providers' do
+    before do
+      Legion::LLM::Call::Registry.reset!
+      LexLLM::Provider.providers.clear
+      provider_class = Class.new(LexLLM::Provider) { def api_base = 'https://provider.invalid' }
+      LexLLM::Provider.register(:anthropic, provider_class)
+
+      allow(host).to receive(:load_optional_feature).and_return(true)
+    end
+
+    after do
+      LexLLM::Provider.providers.clear
+      Legion::LLM::Call::Registry.reset!
+    end
+
+    it 'bridges registered LexLLM providers into the native registry' do
+      host.send(:auto_register_lex_llm_providers)
+
+      expect(Legion::LLM::Call::Registry.for(:anthropic)).to be_a(Legion::LLM::Call::LexLLMAdapter)
+      expect(Legion::LLM::Call::Registry.for(:claude)).to be_a(Legion::LLM::Call::LexLLMAdapter)
     end
   end
 

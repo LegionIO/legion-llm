@@ -10,6 +10,7 @@ module Legion
       DEFAULT_PROVIDER_TIERS = {
         ollama:    :local,
         vllm:      :fleet,
+        mlx:       :local,
         bedrock:   :cloud,
         azure:     :cloud,
         gemini:    :cloud,
@@ -20,6 +21,7 @@ module Legion
       DEFAULT_PROVIDER_TRANSPORTS = {
         ollama:    :http,
         vllm:      :http,
+        mlx:       :http,
         bedrock:   :sdk,
         azure:     :http,
         gemini:    :http,

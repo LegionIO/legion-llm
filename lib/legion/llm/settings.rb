@@ -306,8 +306,8 @@ module Legion
 
       def self.provider_layer_defaults
         {
-          mode:                 'ruby_llm',
-          native_providers:     %w[claude bedrock],
+          mode:                 'auto',
+          native_providers:     %w[ollama vllm anthropic openai gemini mlx claude bedrock],
           fallback_to_ruby_llm: true
         }
       end
@@ -412,6 +412,12 @@ module Legion
             base_url:        'http://localhost:8000/v1',
             api_key:         nil,
             enable_thinking: true
+          },
+          mlx:       {
+            enabled:       false,
+            default_model: nil,
+            base_url:      'http://localhost:8000',
+            api_key:       nil
           }
         }
       end

@@ -16,22 +16,21 @@ RSpec.describe 'Provider layer mode switching' do
   before do
     Legion::LLM::Call::Registry.reset!
     Legion::Settings[:llm][:provider_layer] = {
-      mode:                 'ruby_llm',
-      native_providers:     %w[claude bedrock],
+      mode:                 'auto',
+      native_providers:     %w[ollama vllm anthropic openai gemini mlx claude bedrock],
       fallback_to_ruby_llm: true
     }
   end
 
-  describe 'ruby_llm mode (default)' do
-    it 'reports ruby_llm as the default mode' do
+  describe 'auto mode (default)' do
+    it 'reports auto as the default mode' do
       layer = Legion::LLM.settings[:provider_layer]
-      expect(layer[:mode]).to eq('ruby_llm')
+      expect(layer[:mode]).to eq('auto')
     end
 
-    it 'does not use native dispatch when mode is ruby_llm' do
-      Legion::LLM::Call::Registry.register(:claude, fake_ext)
-      # use_native_dispatch? is private but we can test the setting contract
-      expect(Legion::LLM.settings.dig(:provider_layer, :mode)).to eq('ruby_llm')
+    it 'uses native dispatch when provider is registered in auto mode' do
+      Legion::LLM::Call::Registry.register(:anthropic, fake_ext)
+      expect(Legion::LLM::Call::Dispatch.available?(:anthropic)).to be true
     end
 
     it 'includes expected default keys' do
@@ -41,9 +40,9 @@ RSpec.describe 'Provider layer mode switching' do
       expect(layer).to have_key(:fallback_to_ruby_llm)
     end
 
-    it 'lists claude and bedrock as default native_providers' do
+    it 'lists new LexLLM providers as default native_providers' do
       layer = Legion::LLM.settings[:provider_layer]
-      expect(layer[:native_providers]).to include('claude', 'bedrock')
+      expect(layer[:native_providers]).to include('ollama', 'vllm', 'anthropic', 'openai', 'gemini', 'mlx')
     end
 
     it 'enables fallback_to_ruby_llm by default' do

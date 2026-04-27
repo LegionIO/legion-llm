@@ -22,6 +22,15 @@ module Legion
           raise
         end
 
+        LEX_LLM_PROVIDER_REQUIRES = {
+          ollama:    'legion/extensions/llm/ollama',
+          vllm:      'legion/extensions/llm/vllm',
+          anthropic: 'legion/extensions/llm/anthropic',
+          openai:    'legion/extensions/llm/openai',
+          gemini:    'legion/extensions/llm/gemini',
+          mlx:       'legion/extensions/llm/mlx'
+        }.freeze
+
         def resolve_llm_secrets
           log.debug '[llm][providers] resolve_llm_secrets.enter'
           return unless defined?(Legion::Settings::Resolver)
@@ -460,6 +469,7 @@ module Legion
           try_register_native_provider(:gemini, 'Legion::Extensions::Gemini', 'Legion::Extensions::Gemini::Runners::Generate') do |klass|
             Call::Registry.register(:gemini, klass)
           end
+          auto_register_lex_llm_providers
 
           registered = Call::Registry.available
           if registered.any?
@@ -469,6 +479,29 @@ module Legion
           end
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.auto_register')
+        end
+
+        def auto_register_lex_llm_providers
+          return unless load_optional_feature('lex_llm')
+
+          LEX_LLM_PROVIDER_REQUIRES.each_value { |feature| load_optional_feature(feature) }
+          return unless defined?(::LexLLM::Provider)
+
+          ::LexLLM::Provider.providers.each do |provider_name, provider_class|
+            adapter = Call::LexLLMAdapter.new(provider_name, provider_class)
+            Call::Registry.register(provider_name, adapter)
+            Call::Registry.register(:claude, adapter) if provider_name.to_sym == :anthropic
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.providers.auto_register_lex_llm')
+        end
+
+        def load_optional_feature(feature)
+          require feature
+          true
+        rescue LoadError => e
+          log.debug "[llm][providers] optional_feature_unavailable feature=#{feature} error=#{e.message}"
+          false
         end
 
         def inject_anthropic_cache_control!(opts, provider)
@@ -527,11 +560,28 @@ module Legion
 
         def try_register_native_provider(name, ext_const, runner_const)
           log.debug "[llm][providers] try_register_native_provider name=#{name} ext=#{ext_const}"
-          return unless Object.const_defined?(ext_const, false) && Object.const_defined?(runner_const, false)
+          return unless constant_defined_path?(ext_const) && constant_defined_path?(runner_const)
 
-          klass = Object.const_get(runner_const)
+          klass = constant_get_path(runner_const)
           yield klass
           log.debug "[llm][providers] registered native provider name=#{name}"
+        end
+
+        def constant_defined_path?(path)
+          names = path.to_s.split('::')
+          names.shift if names.first == ''
+          owner = Object
+          names.all? do |name|
+            return false unless owner.const_defined?(name, false)
+
+            owner = owner.const_get(name, false)
+          end
+        end
+
+        def constant_get_path(path)
+          path.to_s.split('::').reject(&:empty?).reduce(Object) do |owner, name|
+            owner.const_get(name, false)
+          end
         end
 
         def providers_settings

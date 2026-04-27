@@ -1,0 +1,142 @@
+# frozen_string_literal: true
+
+require 'legion/logging/helper'
+
+module Legion
+  module LLM
+    module Call
+      # Adapts a lex-llm provider class to legion-llm's native dispatch contract.
+      class LexLLMAdapter
+        include Legion::Logging::Helper
+
+        def initialize(provider_name, provider_class)
+          @provider_name = provider_name.to_sym
+          @provider_class = provider_class
+        end
+
+        def chat(model:, messages:, **opts)
+          response = provider.complete(
+            normalize_messages(messages),
+            tools:       normalize_tools(opts[:tools]),
+            temperature: opts[:temperature],
+            model:       model_info(model),
+            params:      opts[:params] || {},
+            headers:     opts[:headers] || {},
+            schema:      opts[:schema],
+            thinking:    opts[:thinking],
+            tool_prefs:  opts[:tool_prefs]
+          )
+
+          message_response(response)
+        end
+
+        def stream(model:, messages:, **opts, &block)
+          chunks = []
+          provider.complete(
+            normalize_messages(messages),
+            tools:       normalize_tools(opts[:tools]),
+            temperature: opts[:temperature],
+            model:       model_info(model),
+            params:      opts[:params] || {},
+            headers:     opts[:headers] || {},
+            schema:      opts[:schema],
+            thinking:    opts[:thinking],
+            tool_prefs:  opts[:tool_prefs]
+          ) do |chunk|
+            chunks << chunk
+            block&.call(chunk)
+          end
+
+          chunk_response(chunks)
+        end
+
+        def embed(model:, text:, dimensions: nil, **)
+          response = provider.embed(text, model: model, dimensions: dimensions)
+
+          {
+            result: response.vectors,
+            model:  response.model,
+            usage:  { input_tokens: response.input_tokens.to_i, output_tokens: 0 }
+          }
+        end
+
+        def count_tokens(model:, messages:, **)
+          {
+            result: estimate_tokens(messages),
+            model:  model,
+            usage:  {}
+          }
+        end
+
+        private
+
+        attr_reader :provider_name, :provider_class
+
+        def provider
+          provider_class.new(::LexLLM.config)
+        end
+
+        def model_info(model)
+          ::LexLLM::Model::Info.new(id: model, provider: provider_name)
+        end
+
+        def normalize_messages(messages)
+          Array(messages).map do |message|
+            next message if message.is_a?(::LexLLM::Message)
+
+            message_hash = normalize_hash(message)
+            ::LexLLM::Message.new(
+              role:         message_hash[:role] || :user,
+              content:      message_hash[:content].to_s,
+              tool_call_id: message_hash[:tool_call_id]
+            )
+          end
+        end
+
+        def normalize_tools(tools)
+          case tools
+          when Hash then tools
+          when Array then tools.to_h { |tool| [tool.name.to_sym, tool] }
+          else {}
+          end
+        end
+
+        def normalize_hash(value)
+          return value.transform_keys(&:to_sym) if value.respond_to?(:transform_keys)
+
+          { role: :user, content: value }
+        end
+
+        def message_response(response)
+          {
+            result: response.content,
+            model:  response.model_id,
+            usage:  usage_hash(response)
+          }
+        end
+
+        def chunk_response(chunks)
+          last = chunks.reverse.find { |chunk| chunk.respond_to?(:input_tokens) }
+          {
+            result: chunks.filter_map(&:content).join,
+            model:  last&.model_id,
+            usage:  last ? usage_hash(last) : {}
+          }
+        end
+
+        def usage_hash(response)
+          {
+            input_tokens:       response.input_tokens.to_i,
+            output_tokens:      response.output_tokens.to_i,
+            cache_read_tokens:  response.cached_tokens.to_i,
+            cache_write_tokens: response.cache_creation_tokens.to_i
+          }
+        end
+
+        def estimate_tokens(messages)
+          normalize_messages(messages).sum { |message| (message.content.to_s.length / 4.0).ceil }
+        end
+      end
+    end
+  end
+end
