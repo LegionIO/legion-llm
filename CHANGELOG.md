@@ -1,6 +1,6 @@
 # Legion LLM Changelog
 
-## [0.8.29] - 2026-04-25
+## [0.8.30] - 2026-04-27
 
 ### Fixed
 - `legion-llm` can now bridge loaded `lex-llm-*` provider classes into native dispatch through a `LexLLMAdapter`, allowing the new provider-gem split to participate without duplicating old `lex-*` runner constants.
@@ -18,6 +18,18 @@
 - Shared settings helpers now normalize string and symbol keys across router, fleet, scheduling, response cache, API auth/defaults, metering, quality, guards, skills, discovery, inventory, daemon, config loaders, and audit checks.
 - LLM transport messages now promote tracing metadata into W3C `traceparent`, `baggage`, and Legion trace headers for fleet/audit/metering correlation.
 - Fleet lane sanitization and vLLM health URL normalization now avoid regex patterns flagged by CodeQL for uncontrolled input.
+
+## [0.8.29] - 2026-04-27
+
+### Added
+- Bedrock embedding support via `call/bedrock_embeddings.rb` — a `RubyLLM::Providers::Bedrock` monkey-patch (same pattern as `bedrock_auth.rb`) that implements `render_embedding_payload`, `embedding_url`, `parse_embedding_response`, and overrides `embed` for signed transport. Covers Amazon Titan v1, Titan v2 (selectable 256/512/1024 dimensions), and Cohere Embed v3 (English + multilingual).
+- Short-circuit guard: when ruby_llm eventually ships native `render_embedding_payload`, the patch becomes inert rather than double-loading the method.
+- Trap-and-continue batch semantics for Titan (which is single-text-per-call): `embed_titan_batch` iterates client-side, preserves partial successes on mid-batch failures, logs the failure count via `RubyLLM.logger.warn`, and only raises when 100% of inputs fail.
+- Input-size guards: Titan rejects >8k tokens with a billable 400 — we now raise a descriptive `RubyLLM::Error` at ≥45 000 bytes before the wire call. Cohere enforces the 96-texts / 8 KB-per-text documented limits.
+- Full spec coverage in `spec/legion/llm/bedrock_embeddings_spec.rb` (probe contract, per-model payload shapes, dimension validation, batch limits, error paths).
+
+### Fixed
+- `Legion::LLM::Discovery.find_embedding_provider` can now actually resolve Bedrock when it is the configured fallback. Previously, the discovery probe (`klass.instance_method(:render_embedding_payload)`) raised `NameError` for Bedrock and the fallback chain skipped past it with `[llm][discovery] no embedding provider available` — even when Bedrock was the only reachable embedding provider.
 
 ## [0.8.28] - 2026-04-24
 

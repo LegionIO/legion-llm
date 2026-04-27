@@ -482,18 +482,30 @@ module Legion
         end
 
         def auto_register_lex_llm_providers
-          return unless load_optional_feature('lex_llm')
+          return unless load_lex_llm_base
 
           LEX_LLM_PROVIDER_REQUIRES.each_value { |feature| load_optional_feature(feature) }
-          return unless defined?(::LexLLM::Provider)
+          namespace = lex_llm_namespace
+          return unless namespace
 
-          ::LexLLM::Provider.providers.each do |provider_name, provider_class|
+          namespace::Provider.providers.each do |provider_name, provider_class|
             adapter = Call::LexLLMAdapter.new(provider_name, provider_class)
             Call::Registry.register(provider_name, adapter)
             Call::Registry.register(:claude, adapter) if provider_name.to_sym == :anthropic
           end
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.auto_register_lex_llm')
+        end
+
+        def load_lex_llm_base
+          load_optional_feature('legion/extensions/llm') || load_optional_feature('lex_llm')
+        end
+
+        def lex_llm_namespace
+          return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)
+          return ::LexLLM if defined?(::LexLLM::Provider)
+
+          nil
         end
 
         def load_optional_feature(feature)

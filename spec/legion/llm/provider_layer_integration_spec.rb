@@ -40,7 +40,7 @@ RSpec.describe 'Provider layer mode switching' do
       expect(layer).to have_key(:fallback_to_ruby_llm)
     end
 
-    it 'lists new LexLLM providers as default native_providers' do
+    it 'lists new lex-llm providers as default native_providers' do
       layer = Legion::LLM.settings[:provider_layer]
       expect(layer[:native_providers]).to include('ollama', 'vllm', 'anthropic', 'openai', 'gemini', 'mlx')
     end
