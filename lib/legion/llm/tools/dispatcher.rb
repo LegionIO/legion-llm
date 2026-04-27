@@ -52,7 +52,7 @@ module Legion
         end
 
         def check_settings_override(tool_name)
-          overrides = Legion::Settings.dig(:mcp, :overrides) rescue nil # rubocop:disable Style/RescueModifier
+          overrides = Legion::LLM::Settings.global_value(:mcp, :overrides)
           return nil unless overrides.is_a?(Hash)
 
           override = overrides[tool_name]

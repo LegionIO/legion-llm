@@ -61,6 +61,7 @@ module Legion
         end
 
         def build_response(correlation_id, response, message_context: {})
+          model = extract_field(response, :model)
           {
             correlation_id:  correlation_id,
             success:         extract_success(response),
@@ -70,7 +71,8 @@ module Legion
             output_tokens:   extract_token(response, :output_tokens),
             thinking_tokens: extract_token(response, :thinking_tokens),
             provider:        extract_field(response, :provider),
-            model_id:        extract_field(response, :model),
+            model:           model,
+            model_id:        model,
             message_context: optional_message_context(message_context)
           }.compact
         end

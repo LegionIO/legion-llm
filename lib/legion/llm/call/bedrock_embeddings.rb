@@ -32,12 +32,23 @@
 #   { "texts": ["..."], "input_type": "search_document" }
 #   => { "embeddings": [[...]], ... }
 
+require 'legion/logging/helper'
 require 'ruby_llm'
 require_relative 'bedrock_auth'
 
+module Legion
+  module LLM
+    module Call
+      module BedrockEmbeddingsLog
+        extend Legion::Logging::Helper
+      end
+    end
+  end
+end
+
 if RubyLLM::Providers::Bedrock.method_defined?(:render_embedding_payload)
   # Native support landed upstream — patch is inert.
-  Legion::Logging.logger.info('[llm][bedrock_embeddings] native ruby_llm embedding support detected — skipping patch')
+  Legion::LLM::Call::BedrockEmbeddingsLog.log.info('[llm][bedrock_embeddings] native ruby_llm embedding support detected - skipping patch')
 else
 
   module RubyLLM

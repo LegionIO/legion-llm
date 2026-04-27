@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module CompatWarning
+      extend Legion::Logging::Helper
+
       def self.warn_once(old_name, new_name)
         @warned ||= {}
         return if @warned[old_name]
@@ -11,11 +15,9 @@ module Legion
         location = caller_locations(2, 1)&.first
         msg = "[DEPRECATION] #{old_name} is deprecated, use #{new_name} instead"
         msg += " (called from #{location})" if location
-        if defined?(Legion::Logging)
-          Legion::Logging.warn(msg)
-        else
-          warn msg
-        end
+        log.warn(msg)
+      rescue StandardError
+        warn msg
       end
     end
 

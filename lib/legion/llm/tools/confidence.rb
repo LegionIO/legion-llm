@@ -128,14 +128,14 @@ module Legion
           private
 
           def sync_to_l1(tool)
-            return unless defined?(Legion::Cache)
+            return unless local_cache_available?
 
             entry = @mutex.synchronize { @overrides_l0[tool] }
             return unless entry
 
-            Legion::Cache.set("override:#{tool}", Legion::JSON.dump(entry), ttl: 3600)
+            l1_cache_set("override:#{tool}", Legion::JSON.dump(entry), ttl: 3600)
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.sync_l1', tool: tool)
             nil
           end
 
@@ -152,15 +152,42 @@ module Legion
           end
 
           def lookup_l1(tool)
-            return nil unless defined?(Legion::Cache)
+            return nil unless local_cache_available?
 
-            raw = Legion::Cache.get("override:#{tool}")
+            raw = l1_cache_get("override:#{tool}")
             return nil unless raw
 
             Legion::JSON.load(raw)
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.lookup_l1', tool: tool)
             nil
+          end
+
+          def local_cache_available?
+            local_cache_backend? || shared_cache_backend?
+          end
+
+          def l1_cache_get(key)
+            return Legion::Cache::Local.get(key) if local_cache_backend?
+
+            Legion::Cache.get(key)
+          end
+
+          def l1_cache_set(key, value, ttl:)
+            return Legion::Cache::Local.set(key, value, ttl: ttl) if local_cache_backend?
+
+            Legion::Cache.set(key, value, ttl)
+          end
+
+          def local_cache_backend?
+            defined?(Legion::Cache::Local) &&
+              Legion::Cache::Local.respond_to?(:connected?) &&
+              Legion::Cache::Local.connected? &&
+              Legion::Cache::Local.respond_to?(:get)
+          end
+
+          def shared_cache_backend?
+            defined?(Legion::Cache) && Legion::Cache.respond_to?(:get)
           end
 
           def lookup_l2(tool)

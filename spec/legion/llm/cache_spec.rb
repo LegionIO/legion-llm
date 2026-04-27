@@ -5,6 +5,22 @@ require 'spec_helper'
 # Stub Legion::Cache with an in-memory hash for testing
 module Legion
   module Cache
+    unless const_defined?(:Local, false)
+      module Local
+        class << self
+          def connected?
+            false
+          end
+
+          def get(_key); end
+
+          def set(*)
+            true
+          end
+        end
+      end
+    end
+
     class << self
       def reset!
         @store = {}
@@ -24,6 +40,10 @@ module Legion
       def delete(key)
         @store&.delete(key)
       end
+
+      def enforce_phi_ttl(ttl, _phi: false)
+        ttl
+      end
     end
   end
 end
@@ -33,6 +53,11 @@ require 'legion/llm/cache'
 RSpec.describe Legion::LLM::Cache do
   before(:each) do
     Legion::Cache.reset!
+    allow(Legion::Cache::Local).to receive(:respond_to?).and_call_original
+    allow(Legion::Cache::Local).to receive(:respond_to?).with(:get).and_return(true)
+    allow(Legion::Cache::Local).to receive(:connected?).and_return(true)
+    allow(Legion::Cache::Local).to receive(:get) { |key| Legion::Cache.get(key) }
+    allow(Legion::Cache::Local).to receive(:set) { |key, value, ttl: nil, **| Legion::Cache.set(key, value, ttl || 300) }
     # Ensure prompt_caching is enabled in settings
     Legion::Settings[:llm][:prompt_caching] = {
       enabled:        true,
@@ -186,6 +211,7 @@ RSpec.describe Legion::LLM::Cache do
   describe 'when Legion::Cache is unavailable' do
     before do
       # Hide Legion::Cache by making respond_to?(:get) return false
+      allow(Legion::Cache::Local).to receive(:connected?).and_return(false)
       allow(Legion::Cache).to receive(:respond_to?).with(:get).and_return(false)
     end
 

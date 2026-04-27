@@ -245,11 +245,7 @@ module Legion
         end
 
         def privacy_mode?
-          if Legion.const_defined?('Settings', false) && Legion::Settings.respond_to?(:enterprise_privacy?)
-            Legion::Settings.enterprise_privacy?
-          else
-            ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
-          end
+          Legion::LLM::Settings.enterprise_privacy?
         end
 
         def external_tier?(tier)

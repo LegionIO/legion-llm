@@ -25,8 +25,7 @@ module Legion
                                               routing_style: opts[:routing_style])
             reply_to ||= ReplyDispatcher.agent_queue_name
             correlation_id = next_correlation_id
-            future = register_response(correlation_id, routing_key: routing_key, reply_to: reply_to, model: model,
-                                                       request_type: request_type, provider: provider)
+            future = register_response(correlation_id)
             timeout = resolve_timeout(request_type: request_type, override: opts[:timeout])
             publish_opts = opts.except(:timeout).merge(ttl: effective_ttl(opts, timeout))
             publish_result = publish_request(
@@ -59,8 +58,7 @@ module Legion
                                             routing_style: request_opts[:routing_style] || opts[:routing_style])
           reply_to ||= ReplyDispatcher.agent_queue_name
           correlation_id = next_correlation_id
-          future = register_response(correlation_id, routing_key: routing_key, reply_to: reply_to, model: model,
-                                                     request_type: request_type, provider: provider)
+          future = register_response(correlation_id)
           timeout = resolve_timeout(request_type: request_type, override: request_opts[:timeout] || opts[:timeout])
           request_opts[:ttl] = effective_ttl(request_opts, timeout)
           publish_result = publish_request(
@@ -132,9 +130,7 @@ module Legion
         end
 
         def transport_ready?
-          return false unless defined?(Legion::Settings)
-
-          fetch_option(Legion::Settings[:transport], :connected) == true
+          Legion::LLM::Settings.transport_connected?
         end
 
         def fleet_enabled?

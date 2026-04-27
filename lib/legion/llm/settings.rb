@@ -45,10 +45,14 @@ module Legion
       end
 
       def self.value(*keys, default: nil)
+        missing = Object.new
         keys.reduce(current_settings) do |current, key|
           return default unless current.respond_to?(:key?)
 
-          config_value(current, key)
+          value = config_value(current, key, missing)
+          return default if value.equal?(missing)
+
+          value
         end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.settings.value')
@@ -67,13 +71,65 @@ module Legion
         default
       end
 
+      def self.namespace(namespace)
+        return {} unless defined?(Legion::Settings)
+
+        settings = Legion::Settings[namespace]
+        settings.is_a?(Hash) ? settings : {}
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.namespace', namespace: namespace)
+        {}
+      end
+
+      def self.global_value(namespace, *keys, default: nil)
+        if defined?(Legion::Settings) && Legion::Settings.respond_to?(:dig) && keys.any?
+          direct = Legion::Settings.dig(namespace, *keys)
+          return direct unless direct.nil?
+        end
+
+        keys.reduce(self.namespace(namespace)) do |current, key|
+          return default unless current.respond_to?(:key?)
+
+          config_value(current, key)
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.global_value', namespace: namespace, keys: keys)
+        default
+      end
+
+      def self.set_value(*keys, value:)
+        target = current_settings
+        return value unless target.is_a?(Hash)
+
+        assign_value(target, keys, value)
+        value
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.set_value', keys: keys)
+        value
+      end
+
+      def self.transport_connected?
+        global_value(:transport, :connected) == true
+      end
+
+      def self.enterprise_privacy?
+        if defined?(Legion::Settings) && Legion::Settings.respond_to?(:enterprise_privacy?)
+          Legion::Settings.enterprise_privacy?
+        else
+          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.enterprise_privacy')
+        ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+      end
+
       def self.current_settings
         if defined?(Legion::Settings)
           settings = Legion::Settings[:llm]
           return settings if settings.is_a?(Hash)
         end
 
-        Legion::LLM.settings || {}
+        {}
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.current_settings')
         defined?(Legion::Settings) ? Legion::Settings[:llm] : {}
@@ -84,6 +140,19 @@ module Legion
 
         Legion::Settings.merge_settings(:llm, default)
       end
+
+      def self.assign_value(target, keys, value)
+        leaf = keys[0...-1].reduce(target) do |current, key|
+          existing = config_value(current, key)
+          unless existing.is_a?(Hash)
+            existing = {}
+            current[key] = existing
+          end
+          existing
+        end
+        leaf[keys.last] = value
+      end
+      private_class_method :assign_value
 
       def self.claude_cli_defaults
         {

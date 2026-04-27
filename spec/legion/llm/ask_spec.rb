@@ -29,6 +29,10 @@ unless defined?(Legion::Cache)
         def delete(key)
           @store&.delete(key)
         end
+
+        def enforce_phi_ttl(ttl, _phi: false)
+          ttl
+        end
       end
     end
   end
@@ -59,6 +63,11 @@ RSpec.describe 'Legion::LLM.ask' do
   before(:each) do
     Legion::LLM::DaemonClient.reset!
     Legion::Cache.reset! if defined?(Legion::Cache) && Legion::Cache.respond_to?(:reset!)
+    allow(Legion::Cache).to receive(:enforce_phi_ttl) { |ttl, _phi: false| ttl } if defined?(Legion::Cache)
+    allow(Legion::Cache::Local).to receive(:connected?).and_return(true)
+    allow(Legion::Cache::Local).to receive(:get) { |key| Legion::Cache.get(key) }
+    allow(Legion::Cache::Local).to receive(:set) { |key, value, ttl: nil, **| Legion::Cache.set(key, value, ttl || 300) }
+    allow(Legion::Cache::Local).to receive(:delete) { |key, **| Legion::Cache.delete(key) }
   end
 
   # ─────────────────────────────────────────────
