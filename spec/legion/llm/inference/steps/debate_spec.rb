@@ -108,11 +108,11 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       end
 
       it 'returns true when debate.enabled is string-keyed' do
-        allow(Legion::LLM).to receive(:settings).and_return({
-                                                              'debate' => {
-                                                                'enabled' => true
-                                                              }
-                                                            })
+        Legion::Settings[:llm] = {
+          'debate' => {
+            'enabled' => true
+          }
+        }
         step = host_class.new(base_request)
         expect(step.debate_enabled?(base_request)).to be true
       end
@@ -303,27 +303,27 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
     end
 
     it 'uses string-keyed debate and provider settings' do
-      allow(Legion::LLM).to receive(:settings).and_return({
-                                                            'default_provider' => 'anthropic',
-                                                            'default_model'    => 'claude-sonnet-4-6',
-                                                            'debate'           => {
-                                                              'enabled'          => true,
-                                                              'default_rounds'   => 1,
-                                                              'max_rounds'       => 2,
-                                                              'challenger_model' => 'openai:gpt-4o',
-                                                              'judge_model'      => 'anthropic:claude-sonnet-4-5'
-                                                            },
-                                                            'providers'        => {
-                                                              'anthropic' => {
-                                                                'enabled'       => true,
-                                                                'default_model' => 'claude-sonnet-4-6'
-                                                              },
-                                                              'openai'    => {
-                                                                'enabled'       => true,
-                                                                'default_model' => 'gpt-4o'
-                                                              }
-                                                            }
-                                                          })
+      Legion::Settings[:llm] = {
+        'default_provider' => 'anthropic',
+        'default_model'    => 'claude-sonnet-4-6',
+        'debate'           => {
+          'enabled'          => true,
+          'default_rounds'   => 1,
+          'max_rounds'       => 2,
+          'challenger_model' => 'openai:gpt-4o',
+          'judge_model'      => 'anthropic:claude-sonnet-4-5'
+        },
+        'providers'        => {
+          'anthropic' => {
+            'enabled'       => true,
+            'default_model' => 'claude-sonnet-4-6'
+          },
+          'openai'    => {
+            'enabled'       => true,
+            'default_model' => 'gpt-4o'
+          }
+        }
+      }
 
       step = host_class.new(base_request, raw_response)
       step.step_debate

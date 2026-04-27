@@ -70,10 +70,10 @@ RSpec.describe Legion::LLM::Prompt do
     context 'when defaults are string-keyed' do
       before do
         allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-        allow(Legion::LLM).to receive(:settings).and_return({
-                                                              'default_provider' => 'anthropic',
-                                                              'default_model'    => 'claude-sonnet-4-6'
-                                                            })
+        Legion::Settings[:llm] = {
+          'default_provider' => 'anthropic',
+          'default_model'    => 'claude-sonnet-4-6'
+        }
       end
 
       it 'falls back to string-keyed default_provider and default_model' do

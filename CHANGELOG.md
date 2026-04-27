@@ -16,6 +16,7 @@
 - Module-level inference, prompt dispatch, prompt-cache, debate, and skill-injector settings now honor JSON/string-keyed settings.
 - Sticky tool history, trigger matching, and RAG context settings now honor JSON/string-keyed settings.
 - Shared settings helpers now normalize string and symbol keys across router, fleet, scheduling, response cache, API auth/defaults, metering, quality, guards, skills, discovery, inventory, daemon, config loaders, and audit checks.
+- Shared settings helpers now register defaults through `Legion::Settings.merge_settings(:llm, ...)` and read directly from the canonical `Legion::Settings[:llm]` store so JSON-loaded settings files and runtime overrides remain authoritative.
 - LLM transport messages now promote tracing metadata into W3C `traceparent`, `baggage`, and Legion trace headers for fleet/audit/metering correlation.
 - Fleet lane sanitization and vLLM health URL normalization now avoid regex patterns flagged by CodeQL for uncontrolled input.
 - Structured output parsing now strips markdown code fences before JSON parse, including retry responses from models that keep returning fenced JSON.
