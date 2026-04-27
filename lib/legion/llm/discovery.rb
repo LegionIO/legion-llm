@@ -133,7 +133,7 @@ module Legion
           end
           nil
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.discovery.detect_ollama_embedding')
+          handle_exception(e, level: :warn, operation: 'llm.discovery.detect_ollama_embedding')
           nil
         end
 
@@ -145,7 +145,7 @@ module Legion
 
           true
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.discovery.detect_cloud_embedding', provider: provider)
+          handle_exception(e, level: :warn, operation: 'llm.discovery.detect_cloud_embedding', provider: provider)
           nil
         end
 
@@ -184,7 +184,7 @@ module Legion
         rescue NameError
           false
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.discovery.provider_supports_embeddings', provider: provider)
+          handle_exception(e, level: :warn, operation: 'llm.discovery.provider_supports_embeddings', provider: provider)
           false
         end
 
@@ -204,7 +204,7 @@ module Legion
         def llm_settings
           Legion::LLM::Settings.current_settings
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.discovery.settings')
+          handle_exception(e, level: :warn, operation: 'llm.discovery.settings')
           {}
         end
 

@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Inference
       module Steps
         module StickyHelpers
+          include Legion::Logging::Helper
+
           private
 
           def sticky_enabled?
@@ -37,7 +41,8 @@ module Legion
 
           def settings_value(*keys, default: nil)
             Legion::LLM::Settings.value(*keys, default: default)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.sticky.settings', keys: keys)
             default
           end
 

@@ -104,7 +104,7 @@ module Legion
         def llm_settings
           Legion::LLM::Settings.current_settings
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.settings')
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.settings')
           {}
         end
 
@@ -939,7 +939,7 @@ module Legion
 
           tool_call[field]
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.tool_call_field', field: field)
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.tool_call_field', field: field)
           nil
         end
 
@@ -973,7 +973,7 @@ module Legion
               result
             end
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.with_step_span', step: name, block_called: block_called)
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.with_step_span', step: name, block_called: block_called)
             raise if block_called
 
             block.call
@@ -1258,7 +1258,7 @@ module Legion
                    end
           { reason: reason || :end_turn }
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.extract_stop_reason')
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.extract_stop_reason')
           { reason: :end_turn }
         end
 
@@ -1275,7 +1275,7 @@ module Legion
           )
           { estimated_usd: estimated, provider: @resolved_provider, model: @resolved_model }
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.estimate_response_cost')
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.estimate_response_cost')
           {}
         end
 

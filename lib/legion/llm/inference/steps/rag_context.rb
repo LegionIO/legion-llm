@@ -39,7 +39,8 @@ module Legion
 
           def settings_value(*keys, default: nil)
             Legion::LLM::Settings.value(*keys, default: default)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.rag_context.settings', keys: keys)
             default
           end
 
@@ -136,7 +137,7 @@ module Legion
 
             defined?(::Legion::Apollo) && ::Legion::Apollo.started?
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.rag_context.apollo_available')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_context.apollo_available')
             false
           end
 
@@ -158,7 +159,7 @@ module Legion
                   []
                 end
               rescue StandardError => e
-                handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.rag_context.apollo_retrieve')
+                handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_context.apollo_retrieve')
                 []
               end
             else

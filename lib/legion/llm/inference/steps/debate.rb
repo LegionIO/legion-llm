@@ -182,7 +182,8 @@ module Legion
 
           def settings_value(*keys, default: nil)
             Legion::LLM::Settings.value(*keys, default: default)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.debate.settings', keys: keys)
             default
           end
 
@@ -295,7 +296,7 @@ module Legion
             response = Legion::LLM.chat_direct(**opts)
             extract_content(response)
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.debate.role')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.debate.role')
             "[debate role error: #{e.message}]"
           end
 

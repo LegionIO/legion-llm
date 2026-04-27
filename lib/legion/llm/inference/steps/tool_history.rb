@@ -48,7 +48,11 @@ module Legion
 
             begin
               parsed = Legion::JSON.load(result_str.to_s)
-            rescue StandardError
+            rescue Legion::JSON::ParseError => e
+              handle_exception(e, level: :debug, handled: true,
+                                  operation: 'llm.pipeline.steps.tool_history.summarize_result',
+                                  result_class: result_str.class.name,
+                                  result_bytes: result_str.to_s.bytesize)
               return result_str.to_s[0, 200]
             end
 

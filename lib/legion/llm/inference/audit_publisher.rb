@@ -122,7 +122,8 @@ module Legion
           max = Legion::LLM::Settings.value(:compliance, :audit_max_messages)
           max = max.to_i if max.respond_to?(:to_i)
           max.is_a?(Integer) && max.positive? ? max : 20
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.audit_publisher.audit_max_messages')
           20
         end
 

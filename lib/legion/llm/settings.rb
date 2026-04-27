@@ -51,7 +51,7 @@ module Legion
           config_value(current, key)
         end
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.settings.value')
+        handle_exception(e, level: :warn, operation: 'llm.settings.value')
         default
       end
 
@@ -69,7 +69,8 @@ module Legion
 
       def self.current_settings
         Legion::LLM.settings || {}
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.current_settings')
         defined?(Legion::Settings) ? Legion::Settings[:llm] : {}
       end
 

@@ -1,9 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module RubyLLM
   module Providers
     class Vllm < OpenAI
       module Chat
+        include Legion::Logging::Helper
+
         def format_role(role)
           role.to_s
         end
@@ -37,7 +41,8 @@ module RubyLLM
           return true unless defined?(Legion::LLM::Settings)
 
           Legion::LLM::Settings.value(:providers, :vllm, :enable_thinking, default: true) != false
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.vllm_patch.thinking_default')
           true
         end
       end

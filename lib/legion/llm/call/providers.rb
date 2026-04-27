@@ -536,7 +536,9 @@ module Legion
           require feature
           true
         rescue LoadError => e
-          log.debug "[llm][providers] optional_feature_unavailable feature=#{feature} error=#{e.message}"
+          handle_exception(e, level: :warn, handled: true,
+                              operation: 'llm.providers.optional_feature',
+                              feature: feature)
           false
         end
 

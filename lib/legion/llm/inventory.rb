@@ -202,7 +202,8 @@ module Legion
 
         def integer_or_nil(value)
           Integer(value)
-        rescue ArgumentError, TypeError
+        rescue ArgumentError, TypeError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.integer_or_nil', value: value)
           nil
         end
 
@@ -243,7 +244,7 @@ module Legion
             build_offering(:ollama, config, model: model_name, type: infer_model_type(model_name), source: :discovery)
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.inventory.discovery.ollama')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.discovery.ollama')
           []
         end
 
@@ -263,7 +264,7 @@ module Legion
                            source:         :discovery)
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.inventory.discovery.vllm')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.discovery.vllm')
           []
         end
 
@@ -280,9 +281,7 @@ module Legion
           return {} unless hash.is_a?(Hash)
 
           hash.each_with_object({}) do |(key, value), normalized|
-            normalized[key.to_sym] = value
-          rescue NoMethodError
-            normalized[key] = value
+            normalized[key.respond_to?(:to_sym) ? key.to_sym : key] = value
           end
         end
 
