@@ -84,7 +84,7 @@ module Legion
                 max_length ? content[0, max_length] : content
               rescue LoadError => e
                 missing = e.respond_to?(:path) && e.path ? e.path : 'legion/cli/chat/web_fetch'
-                log.warn("[llm][api][helpers] web_fetch unavailable missing=#{missing} error=#{e.class}: #{e.message}")
+                handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.web_fetch', missing: missing)
                 "web_fetch is unavailable: missing optional dependency #{missing}"
               end
             when 'web_search'
@@ -96,7 +96,7 @@ module Legion
                 results[:results].map { |r| "### #{r[:title]}\n#{r[:url]}\n#{r[:snippet]}" }.join("\n\n")
               rescue LoadError => e
                 missing = e.respond_to?(:path) && e.path ? e.path : 'legion/cli/chat/web_search'
-                log.warn("[llm][api][helpers] web_search unavailable missing=#{missing} error=#{e.class}: #{e.message}")
+                handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.web_search', missing: missing)
                 "web_search is unavailable: missing optional dependency #{missing}"
               end
             else
@@ -115,14 +115,14 @@ module Legion
             content.force_encoding('UTF-8')
             content
           rescue StandardError => e
-            log.error("[llm][api][helpers] file_read failed path=#{path} error=#{e.class}: #{e.message}")
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.file_read', path: path)
             "file_read error: #{e.message}"
           end
 
           def pdf_file?(path)
             ::File.extname(path).casecmp('.pdf').zero? || ::File.binread(path, 5) == '%PDF-'
           rescue StandardError => e
-            log.debug("[llm][api][helpers] pdf sniff failed path=#{path} error=#{e.class}: #{e.message}")
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.api.client_tool.pdf_sniff', path: path)
             false
           end
 
@@ -133,10 +133,11 @@ module Legion
             text = reader.pages.map(&:text).join("\n\n").strip
             text.empty? ? 'PDF contained no extractable text.' : text
           rescue LoadError => e
-            log.warn("[llm][api][helpers] pdf extraction unavailable error=#{e.class}: #{e.message}")
+            missing = e.respond_to?(:path) && e.path ? e.path : 'pdf-reader'
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.pdf_extract', missing: missing)
             'PDF text extraction unavailable: missing pdf-reader gem.'
           rescue StandardError => e
-            log.error("[llm][api][helpers] pdf extraction failed path=#{path} error=#{e.class}: #{e.message}")
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.pdf_extract', path: path)
             "PDF text extraction failed: #{e.message}"
           end
 
@@ -306,10 +307,10 @@ module Legion
                     ms = begin
                       ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round(1)
                     rescue StandardError => e
-                      log.debug("[tool][#{tool_ref}] duration measurement failed: #{e.class}: #{e.message}")
+                      handle_exception(e, level: :debug, handled: true,
+                                          operation: 'llm.api.client_tool.duration_measurement', tool_ref: tool_ref)
                       nil
                     end
-                    log.error("[tool][#{tool_ref}] #{e.message}")
                     log_tool(:error, tool_ref, 'failed', duration_ms: ms, error: e.message)
                     notify_tool_event(:tool_error, tool_ref, error: e.message)
                     handle_exception(e, level: :error, handled: true, operation: "llm.api.client_tool.#{tool_ref}")
@@ -402,7 +403,7 @@ module Legion
                 kerb = begin
                   Legion::Settings.dig(:kerberos, :username)
                 rescue StandardError => e
-                  log.debug("[llm][api][helpers] kerberos username lookup failed error=#{e.class}: #{e.message}")
+                  handle_exception(e, level: :debug, handled: true, operation: 'llm.api.identity.kerberos_username')
                   nil
                 end
                 return "user:#{kerb}" if kerb.is_a?(String) && !kerb.empty?
@@ -424,7 +425,7 @@ module Legion
                 hostname = begin
                   Legion::Settings[:client][:hostname]
                 rescue StandardError => e
-                  log.debug("[llm][api][helpers] client hostname lookup failed error=#{e.class}: #{e.message}")
+                  handle_exception(e, level: :debug, handled: true, operation: 'llm.api.identity.client_hostname')
                   Socket.gethostname
                 end
                 username = identity_string.delete_prefix('user:')
@@ -432,7 +433,7 @@ module Legion
                 kerb = begin
                   Legion::Settings.dig(:kerberos, :username)
                 rescue StandardError => e
-                  log.debug("[llm][api][helpers] requested_by kerberos lookup failed error=#{e.class}: #{e.message}")
+                  handle_exception(e, level: :debug, handled: true, operation: 'llm.api.identity.requested_by_kerberos')
                   nil
                 end
                 if kerb.is_a?(String) && !kerb.empty?
