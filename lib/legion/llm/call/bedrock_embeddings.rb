@@ -208,7 +208,7 @@ else
           # block — the block runs after middleware, so the pre-serialized bytes win
           # over whatever JSON middleware would have produced.
           def invoke_embedding(url, payload)
-            body    = JSON.generate(payload)
+            body    = Legion::JSON.dump(payload)
             headers = sign_headers('POST', url, body)
 
             @connection.post(url, payload) do |req|
