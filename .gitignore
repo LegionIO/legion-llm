@@ -2,10 +2,10 @@
 /.yardoc
 /Gemfile.lock
 Gemfile.lock
+*.gem
 /_yardoc/
 /coverage/
 /doc/
-*.gem
 /pkg/
 /spec/reports/
 /tmp/

@@ -1,6 +1,6 @@
 # Legion LLM Changelog
 
-## [0.8.31] - 2026-04-27
+## [0.8.33] - 2026-04-27
 
 ### Fixed
 - `legion-llm` can now bridge loaded `lex-llm-*` provider classes into native dispatch through a `LexLLMAdapter`, allowing the new provider-gem split to participate without duplicating old `lex-*` runner constants.
@@ -22,6 +22,16 @@
 - LLM transport messages now promote tracing metadata into W3C `traceparent`, `baggage`, and Legion trace headers for fleet/audit/metering correlation.
 - Fleet dispatch replies now avoid request-side metadata gates by default and expose both `model` and `model_id` so downstream metering and metadata readers can resolve the model consistently.
 - Fleet lane sanitization and vLLM health URL normalization now avoid regex patterns flagged by CodeQL for uncontrolled input.
+
+## [0.8.32] - 2026-04-27
+
+### Fixed
+- Embedding calls now return a clear unavailable-provider error when no embedding provider is configured or detected, preventing RubyLLM from implicitly selecting a chat/default provider.
+
+## [0.8.31] - 2026-04-27
+
+### Fixed
+- Embedding calls no longer inherit the chat `llm.default_provider`, preventing vLLM or other chat defaults from receiving embedding traffic unless explicitly configured for embeddings. Fixes #104
 
 ## [0.8.30] - 2026-04-27
 
