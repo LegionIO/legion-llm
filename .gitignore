@@ -4,6 +4,7 @@
 /_yardoc/
 /coverage/
 /doc/
+*.gem
 /pkg/
 /spec/reports/
 /tmp/
