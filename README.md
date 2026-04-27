@@ -2,7 +2,7 @@
 
 LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension. Exposes OpenAI- and Anthropic-compatible API endpoints so external tools can point at the Legion daemon and just work.
 
-**Version**: 0.8.30
+**Version**: 0.8.31
 
 ## Installation
 
@@ -114,6 +114,16 @@ Add to your LegionIO settings directory (e.g. `~/.legionio/settings/llm.json`):
       "ollama": {
         "enabled": false,
         "base_url": "http://localhost:11434"
+      },
+      "vllm": {
+        "enabled": false,
+        "base_url": "http://localhost:8000/v1",
+        "default_model": "qwen3.6-27b",
+        "enable_thinking": true
+      },
+      "mlx": {
+        "enabled": false,
+        "base_url": "http://localhost:8000"
       }
     }
   }
@@ -138,6 +148,8 @@ Provider-specific fields:
 | **Bedrock** | `secret_key`, `session_token`, `region` (default: `us-east-2`), `bearer_token` (alternative to SigV4 — for AWS Identity Center/SSO) |
 | **Azure** | `api_base` (Azure OpenAI endpoint URL, required), `auth_token` (bearer token alternative to `api_key`) |
 | **Ollama** | `base_url` (default: `http://localhost:11434`) |
+| **vLLM** | `base_url` (default: `http://localhost:8000/v1`), `api_key`, `enable_thinking` |
+| **MLX** | `base_url` (default: `http://localhost:8000`), `api_key` |
 
 ### Credential Resolution
 
@@ -168,7 +180,9 @@ If no `default_model` or `default_provider` is set, legion-llm auto-detects from
 | 3 | OpenAI | `gpt-4o` |
 | 4 | Gemini | `gemini-2.0-flash` |
 | 5 | Azure | (endpoint-specific) |
-| 6 | Ollama | `llama3` |
+| 6 | Ollama | `qwen3.5:latest` |
+| 7 | vLLM | `qwen3.6-27b` |
+| 8 | MLX | (configured model) |
 
 ## Core API
 
@@ -358,6 +372,7 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   └── Curator      # Async conversation curation: strip thinking, distill tools, fold resolved exchanges
 ├── Discovery                            # Runtime introspection
 │   ├── Ollama       # Queries Ollama /api/tags for pulled models (TTL-cached)
+│   ├── Vllm         # Queries vLLM /v1/models and /health for model/context discovery
 │   └── System       # Queries OS memory: macOS (vm_stat/sysctl), Linux (/proc/meminfo)
 ├── Quality                              # Response quality evaluation
 │   ├── Checker      # Quality heuristics (empty, too_short, repetition, json_parse) + pluggable
@@ -402,6 +417,7 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   │   ├── Inference  # POST /api/llm/inference
 │   │   ├── Chat       # POST /api/llm/chat
 │   │   ├── Providers  # GET /api/llm/providers, GET /api/llm/providers/:name
+│   │   ├── Models     # GET /api/llm/models, GET /api/llm/models/:id, GET /api/llm/providers/:name/models
 │   │   └── Helpers    # Shared: parse_request_body, json_response, emit_sse_event
 │   ├── OpenAI/
 │   │   ├── ChatCompletions # POST /v1/chat/completions (streaming via data: [DONE])
@@ -513,9 +529,9 @@ System callers (type: `:system`) derive the `:system` profile, which skips gover
 
 ### Routing
 
-legion-llm includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health. Routing is **disabled by default** — opt in by setting `routing.enabled: true` in settings.
+legion-llm includes a dynamic weighted routing engine that dispatches requests across local, fleet, OpenAI-compatible, cloud, and frontier tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health. Routing is enabled by default; set `routing.enabled: false` to bypass routing and call the configured provider directly.
 
-#### Three Tiers
+#### Routing Tiers
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -524,10 +540,11 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 │  Tier 1: LOCAL  → Ollama on this machine (direct HTTP)   │
 │          Zero network overhead, no Transport              │
 │                                                          │
-│  Tier 2: FLEET  → Ollama on Mac Studios / GPU servers    │
+│  Tier 2: FLEET  → vLLM/Ollama on GPU workers             │
 │          Built-in Fleet RPC over AMQP                     │
 │                                                          │
-│  Tier 3: CLOUD  → Bedrock / Anthropic / OpenAI / Gemini │
+│  Tier 3: CLOUD  → Bedrock / Azure / Gemini               │
+│  Tier 4: FRONTIER → Anthropic / OpenAI                   │
 │          Existing provider API calls                     │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -535,10 +552,12 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 | Tier | Target | Use Case |
 |------|--------|----------|
 | `local` | Ollama on localhost | Privacy-sensitive, offline, or low-latency workloads |
-| `fleet` | Shared hardware via built-in Fleet dispatcher (AMQP) | Larger models on dedicated GPU servers |
-| `cloud` | API providers (Bedrock, Anthropic, OpenAI, Gemini) | Frontier models, full-capability inference |
+| `fleet` | Shared hardware via built-in Fleet dispatcher (AMQP) | Larger vLLM/Ollama models on dedicated GPU servers |
+| `openai_compat` | OpenAI-compatible gateways | Self-hosted or proxy endpoints with OpenAI-compatible APIs |
+| `cloud` | API providers (Bedrock, Azure, Gemini) | Managed cloud inference |
+| `frontier` | API providers (Anthropic, OpenAI) | Frontier models, full-capability inference |
 
-Fleet dispatch is built into legion-llm. The `Fleet::Dispatcher` publishes requests to `llm.request.{provider}.{type}.{model}` and `Fleet::Handler` processes them on GPU worker nodes. No external extension required.
+Fleet dispatch is built into legion-llm. The `Fleet::Dispatcher` publishes shared-lane requests to keys such as `llm.fleet.inference.qwen3-6-27b.ctx32000` or `llm.fleet.embed.nomic-embed-text`; `Fleet::Handler` processes them on GPU worker nodes and replies through correlated live responses. Set `routing.tiers.fleet.routing_style` away from `shared_lane` only when you need the legacy `llm.request.{provider}.{type}.{model}` keys.
 
 #### Intent-Based Dispatch
 
@@ -603,8 +622,15 @@ Add routing configuration under the `llm` key:
       "default_intent": { "privacy": "normal", "capability": "moderate", "cost": "normal" },
       "tiers": {
         "local": { "provider": "ollama" },
-        "fleet": { "queue": "llm.inference", "timeout_seconds": 30 },
-        "cloud": { "providers": ["bedrock", "anthropic"] }
+        "fleet": {
+          "queue": "llm.fleet",
+          "routing_style": "shared_lane",
+          "timeout_seconds": 30,
+          "timeouts": { "embed": 10, "chat": 30, "generate": 30, "default": 30 }
+        },
+        "openai_compat": { "gateways": [] },
+        "cloud": { "providers": ["bedrock", "azure", "gemini"] },
+        "frontier": { "providers": ["anthropic", "openai"] }
       },
       "health": {
         "window_seconds": 300,
@@ -683,16 +709,17 @@ tracker.adjustment(:anthropic)     # -> Integer (priority offset)
 tracker.register_handler(:gpu_utilization) { |data| ... }
 ```
 
-When routing is disabled (the default), `chat`, `llm_chat`, and `llm_session` behave exactly as before — no behavior change until you opt in.
+When routing is disabled, `chat`, `llm_chat`, and `llm_session` bypass route resolution and behave like direct provider calls.
 
 #### Local Model Discovery
 
-When the Ollama provider is enabled, legion-llm discovers which models are actually pulled and checks available system memory before routing to local models. This prevents the router from selecting models that aren't installed or that won't fit in RAM.
+When the Ollama provider is enabled, legion-llm discovers which models are actually pulled and checks available system memory before routing to local models. When vLLM is enabled, legion-llm discovers `/v1/models`, records `max_model_len` as the model context window, and checks `/health` for provider availability. This prevents the router from selecting models that are not installed, unhealthy, or too large for the requested context.
 
 Discovery uses lazy TTL-based caching (default: 60 seconds). At startup, caches are warmed and logged:
 
 ```
 Ollama: 3 models available (llama3.1:8b, qwen2.5:32b, nomic-embed-text)
+vLLM: 1 model available (qwen3.6-27b ctx=32000)
 System: 65536 MB total, 42000 MB available
 ```
 
@@ -850,7 +877,9 @@ No code changes are needed in consumers immediately. The aliases will be maintai
 | OpenAI | `openai` | `vault://`, `env://`, or direct | GPT models |
 | Google Gemini | `gemini` | `vault://`, `env://`, or direct | Gemini models |
 | Azure AI | `azure` | `vault://`, `env://`, or direct | Azure OpenAI endpoint; `api_base` + `api_key` or `auth_token` |
-| Ollama | `ollama` | Local, no credentials needed | Local inference |
+| Ollama | `ollama` | Local, no credentials needed | Local inference and embeddings |
+| vLLM | `vllm` | Optional API key | OpenAI-compatible local/fleet inference with `/health` and `/v1/models` discovery |
+| MLX | `mlx` | Optional API key | Local Apple Silicon inference through lex-llm provider adapters |
 
 `env://NAME` credential placeholders resolve at provider configuration time, including array fallbacks such as `["env://OPENAI_API_KEY", "env://CODEX_API_KEY"]`. Unresolved placeholders do not auto-enable hosted providers.
 
@@ -879,7 +908,7 @@ Legion::Service#initialize
 git clone https://github.com/LegionIO/legion-llm.git
 cd legion-llm
 bundle install
-bundle exec rspec
+bundle exec rspec --format json --out tmp/rspec_results.json --format progress --out tmp/rspec_progress.txt
 ```
 
 ### Running Tests
@@ -887,10 +916,8 @@ bundle exec rspec
 Tests run against real `Legion::Logging` and `Legion::Settings` implementations (hard dependencies, never stubbed). Each test resets settings to defaults via `before(:each)`. No full LegionIO stack required.
 
 ```bash
-bundle exec rspec                              # Run all tests
-bundle exec rubocop                            # Lint (0 offenses)
-bundle exec rspec spec/legion/llm_spec.rb      # Run specific test file
-bundle exec rspec spec/legion/llm/router_spec.rb  # Router tests only
+bundle exec rspec --format json --out tmp/rspec_results.json --format progress --out tmp/rspec_progress.txt
+bundle exec rubocop -A
 ```
 
 ## Dependencies

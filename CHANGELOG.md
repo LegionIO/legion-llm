@@ -1,6 +1,6 @@
 # Legion LLM Changelog
 
-## [0.8.30] - 2026-04-27
+## [0.8.31] - 2026-04-27
 
 ### Fixed
 - `legion-llm` can now bridge loaded `lex-llm-*` provider classes into native dispatch through a `LexLLMAdapter`, allowing the new provider-gem split to participate without duplicating old `lex-*` runner constants.
@@ -19,6 +19,10 @@
 - Shared settings helpers now register defaults through `Legion::Settings.merge_settings(:llm, ...)` and read directly from the canonical `Legion::Settings[:llm]` store so JSON-loaded settings files and runtime overrides remain authoritative.
 - LLM transport messages now promote tracing metadata into W3C `traceparent`, `baggage`, and Legion trace headers for fleet/audit/metering correlation.
 - Fleet lane sanitization and vLLM health URL normalization now avoid regex patterns flagged by CodeQL for uncontrolled input.
+
+## [0.8.30] - 2026-04-27
+
+### Fixed
 - Structured output parsing now strips markdown code fences before JSON parse, including retry responses from models that keep returning fenced JSON.
 - LLM tool adapter dispatch now symbolizes JSON/string-keyed tool arguments before invoking Ruby keyword-argument tool classes.
 - Default routing chains now honor explicit `default_provider` / `default_model` before auto-enabled local providers, preventing Ollama defaults from overriding a configured Bedrock default.
