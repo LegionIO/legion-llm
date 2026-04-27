@@ -102,30 +102,15 @@ module Legion
 
           injected_names = []
 
-          # Always-loaded tools — inject all unconditionally
-          ::Legion::Tools::Registry.tools.each do |tool_class|
-            adapter = ToolAdapter.new(tool_class)
-            @injected_tool_map[adapter.name] = tool_class
-            session.with_tool(adapter)
-            injected_names << adapter.name
-          rescue StandardError => e
-            @warnings << "Failed to inject always tool: #{e.message}"
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_always_tool')
-          end
+          always_tools = Array(::Legion::Tools::Registry.tools)
+          triggered_tools = @triggered_tools.any? ? Array(@triggered_tools) : []
+          inject_limit = registry_tool_limit
+          prioritized_tools = local_provider? ? triggered_tools + always_tools : always_tools + triggered_tools
 
-          # Trigger-matched tools — inject tools surfaced by trigger word matching
-          if @triggered_tools.any?
-            @triggered_tools.each do |tool_class|
-              adapter = ToolAdapter.new(tool_class)
-              next if injected_names.include?(adapter.name)
+          prioritized_tools.each do |tool_class|
+            break if inject_limit && injected_names.size >= inject_limit
 
-              @injected_tool_map[adapter.name] = tool_class
-              session.with_tool(adapter)
-              injected_names << adapter.name
-            rescue StandardError => e
-              @warnings << "Failed to inject triggered tool: #{e.message}"
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_triggered_tool')
-            end
+            inject_tool_class(session, tool_class, injected_names, operation: 'llm.pipeline.inject_registry_tool')
           end
 
           # Requested deferred tools — inject only if explicitly requested
@@ -133,15 +118,9 @@ module Legion
           requested = requested_deferred_tool_names
           if requested.any?
             deferred.each do |tool_class|
-              adapter = ToolAdapter.new(tool_class)
-              next unless requested.include?(adapter.name)
-
-              @injected_tool_map[adapter.name] = tool_class
-              session.with_tool(adapter)
-              injected_names << adapter.name
-            rescue StandardError => e
-              @warnings << "Failed to inject deferred tool: #{e.message}"
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_deferred_tool')
+              inject_tool_class(session, tool_class, injected_names, operation: 'llm.pipeline.inject_deferred_tool') do |adapter|
+                requested.include?(adapter.name)
+              end
             end
           end
 
@@ -149,6 +128,7 @@ module Legion
             "[llm][tools] inject request_id=#{@request.id} " \
             "always=#{::Legion::Tools::Registry.tools.size} " \
             "triggered=#{@triggered_tools.size} " \
+            "limit=#{inject_limit || 'none'} " \
             "deferred_available=#{deferred.size} " \
             "requested_deferred=#{requested.size} " \
             "injected=#{injected_names.size} names=#{injected_names.first(25).join(',')}"
@@ -156,6 +136,31 @@ module Legion
         rescue StandardError => e
           @warnings << "Tool injection error: #{e.message}"
           handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_tools')
+        end
+
+        def inject_tool_class(session, tool_class, injected_names, operation:)
+          adapter = ToolAdapter.new(tool_class)
+          return if injected_names.include?(adapter.name)
+          return if block_given? && !yield(adapter)
+
+          @injected_tool_map[adapter.name] = tool_class
+          session.with_tool(adapter)
+          injected_names << adapter.name
+        rescue StandardError => e
+          @warnings << "Failed to inject tool: #{e.message}"
+          handle_exception(e, level: :warn, operation: operation)
+        end
+
+        def registry_tool_limit
+          return nil unless local_provider?
+
+          raw_limit = (Legion::LLM.settings[:tool_trigger] || {})[:local_tool_limit]
+          limit = raw_limit.to_i
+          limit.positive? ? limit : nil
+        end
+
+        def local_provider?
+          %i[ollama vllm].include?(@resolved_provider&.to_sym)
         end
 
         # Backwards compatibility alias
