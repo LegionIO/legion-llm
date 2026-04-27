@@ -10,12 +10,14 @@ module Legion
     module API
       module Native
         module ClientToolMethods
+          include Legion::Logging::Helper
+
           private
 
           def log_tool(level, ref, status, **details)
             parts = ["[tool][#{ref}] #{status}"]
             details.each { |k, v| parts << "#{k}=#{v}" }
-            Legion::Logging.send(level, parts.join(' '))
+            log.public_send(level, parts.join(' '))
           end
 
           def summarize_tool_arg_keys(kwargs)
@@ -37,7 +39,7 @@ module Legion
             end
           end
 
-          def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength,Metrics/PerceivedComplexity
             case ref
             when 'sh'
               cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s
@@ -45,7 +47,7 @@ module Legion
               "exit=#{status.exitstatus}\n#{output}"
             when 'file_read'
               path = kwargs[:path] || kwargs[:file_path] || kwargs.values.first.to_s
-              ::File.exist?(path) ? ::File.read(path, encoding: 'utf-8') : "File not found: #{path}"
+              read_client_file(path)
             when 'file_write'
               path = kwargs[:path] || kwargs[:file_path]
               content = kwargs[:content] || kwargs[:contents]
@@ -82,6 +84,7 @@ module Legion
                 max_length ? content[0, max_length] : content
               rescue LoadError => e
                 missing = e.respond_to?(:path) && e.path ? e.path : 'legion/cli/chat/web_fetch'
+                handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.web_fetch', missing: missing)
                 "web_fetch is unavailable: missing optional dependency #{missing}"
               end
             when 'web_search'
@@ -93,11 +96,57 @@ module Legion
                 results[:results].map { |r| "### #{r[:title]}\n#{r[:url]}\n#{r[:snippet]}" }.join("\n\n")
               rescue LoadError => e
                 missing = e.respond_to?(:path) && e.path ? e.path : 'legion/cli/chat/web_search'
+                handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.web_search', missing: missing)
                 "web_search is unavailable: missing optional dependency #{missing}"
               end
             else
               "Tool #{ref} is not executable server-side. Use a legion_ prefixed tool instead."
             end
+          end
+
+          def read_client_file(path)
+            return "File not found: #{path}" unless ::File.exist?(path)
+
+            return read_pdf_text(path) if pdf_file?(path)
+
+            content = ::File.binread(path)
+            return 'Binary file detected, cannot read as text.' if binary_content?(content)
+
+            content.force_encoding('UTF-8')
+            content
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.file_read', path: path)
+            "file_read error: #{e.message}"
+          end
+
+          def pdf_file?(path)
+            ::File.extname(path).casecmp('.pdf').zero? || ::File.binread(path, 5) == '%PDF-'
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.pdf_sniff', path: path)
+            false
+          end
+
+          def read_pdf_text(path)
+            require 'pdf-reader' unless defined?(::PDF::Reader)
+
+            reader = ::PDF::Reader.new(path)
+            text = reader.pages.map(&:text).join("\n\n").strip
+            text.empty? ? 'PDF contained no extractable text.' : text
+          rescue LoadError => e
+            missing = e.respond_to?(:path) && e.path ? e.path : 'pdf-reader'
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.pdf_extract', missing: missing)
+            'PDF text extraction unavailable: missing pdf-reader gem.'
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.pdf_extract', path: path)
+            "PDF text extraction failed: #{e.message}"
+          end
+
+          def binary_content?(content)
+            return true if content.include?("\x00")
+
+            sample = content.byteslice(0, 4096).to_s
+            sample.force_encoding('UTF-8')
+            !sample.valid_encoding?
           end
 
           def notify_tool_event(type, ref, **data)
@@ -257,13 +306,14 @@ module Legion
                   rescue StandardError => e
                     ms = begin
                       ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round(1)
-                    rescue StandardError
+                    rescue StandardError => e
+                      handle_exception(e, level: :warn, handled: true,
+                                          operation: 'llm.api.client_tool.duration_measurement', tool_ref: tool_ref)
                       nil
                     end
                     log_tool(:error, tool_ref, 'failed', duration_ms: ms, error: e.message)
                     notify_tool_event(:tool_error, tool_ref, error: e.message)
-                    Legion::Logging.log_exception(e, payload_summary: "client tool #{tool_ref} failed",
-                                                     component_type:  :api)
+                    handle_exception(e, level: :error, handled: true, operation: "llm.api.client_tool.#{tool_ref}")
                     "Tool error: #{e.message}"
                   end
                 end
@@ -284,6 +334,25 @@ module Legion
                     name:      tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'] || tc.to_s),
                     arguments: tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
                   }
+                end
+              end
+
+              define_method(:extract_text_content) do |content|
+                case content
+                when nil
+                  ''
+                when String
+                  content
+                when Array
+                  content.filter_map { |entry| extract_text_content(entry) }.join
+                when Hash
+                  type = content[:type] || content['type']
+                  return '' unless type.nil? || type.to_s == 'text'
+
+                  text = content.key?(:text) || content.key?('text') ? (content[:text] || content['text']) : (content[:content] || content['content'])
+                  extract_text_content(text)
+                else
+                  content.to_s
                 end
               end
 
@@ -333,7 +402,8 @@ module Legion
 
                 kerb = begin
                   Legion::Settings.dig(:kerberos, :username)
-                rescue StandardError
+                rescue StandardError => e
+                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.kerberos_username')
                   nil
                 end
                 return "user:#{kerb}" if kerb.is_a?(String) && !kerb.empty?
@@ -354,14 +424,16 @@ module Legion
               define_method(:resolve_requested_by) do |rack_env, identity_string|
                 hostname = begin
                   Legion::Settings[:client][:hostname]
-                rescue StandardError
+                rescue StandardError => e
+                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.client_hostname')
                   Socket.gethostname
                 end
                 username = identity_string.delete_prefix('user:')
 
                 kerb = begin
                   Legion::Settings.dig(:kerberos, :username)
-                rescue StandardError
+                rescue StandardError => e
+                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.requested_by_kerberos')
                   nil
                 end
                 if kerb.is_a?(String) && !kerb.empty?

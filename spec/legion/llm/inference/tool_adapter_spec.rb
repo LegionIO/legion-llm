@@ -82,6 +82,23 @@ RSpec.describe Legion::LLM::Inference::ToolAdapter do
       expect(adapter.execute).to eq('hello world')
     end
 
+    it 'symbolizes string-keyed LLM arguments before calling the tool class' do
+      received = nil
+      keyword_tool = Class.new do
+        define_singleton_method(:tool_name) { 'keyword_tool' }
+        define_singleton_method(:description) { '' }
+        define_singleton_method(:call) do |intent:, params: {}, **_args|
+          received = { intent: intent, params: params }
+          'ok'
+        end
+      end
+
+      adapter = described_class.new(keyword_tool)
+
+      expect(adapter.execute('intent' => 'list running tasks', 'params' => { 'conditions' => ['open'] })).to eq('ok')
+      expect(received).to eq(intent: 'list running tasks', params: { conditions: ['open'] })
+    end
+
     it 'returns error string on exception without re-raising' do
       failing_tool = Class.new do
         define_singleton_method(:tool_name) { 'bad_tool' }

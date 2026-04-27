@@ -35,6 +35,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'lex-gemini'
   spec.add_dependency 'lex-knowledge'
   spec.add_dependency 'lex-openai'
+  spec.add_dependency 'pdf-reader'
   spec.add_dependency 'ruby_llm', '~> 1.13'
   spec.add_dependency 'tzinfo', '>= 2.0'
 end
