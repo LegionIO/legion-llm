@@ -14,6 +14,7 @@ module Legion
             return { vector: nil, model: model, provider: provider, error: 'LLM not started' } unless LLM.started?
 
             provider ||= resolve_provider
+            return embedding_unavailable_result(model, provider) unless provider
             return { vector: nil, model: model, provider: provider, error: "provider #{provider} is disabled" } if provider_disabled?(provider)
 
             model ||= resolve_model(provider)
@@ -41,6 +42,8 @@ module Legion
             return texts.map { |_| { vector: nil, error: 'LLM not started' } } unless LLM.started?
 
             provider ||= resolve_provider
+            return unavailable_batch_result(texts, provider, model) unless provider
+
             disabled_result = disabled_batch_result(texts, provider, model)
             return disabled_result if disabled_result
 
@@ -71,6 +74,16 @@ module Legion
             model ||= resolve_model(provider)
             texts.each_with_index.map do |_, i|
               { vector: nil, model: model, provider: provider, dimensions: 0, index: i, error: "provider #{provider} is disabled" }
+            end
+          end
+
+          def embedding_unavailable_result(model, provider)
+            { vector: nil, model: model, provider: provider, error: 'No embedding provider configured' }
+          end
+
+          def unavailable_batch_result(texts, provider, model)
+            texts.each_with_index.map do |_, i|
+              embedding_unavailable_result(model, provider).merge(dimensions: 0, index: i)
             end
           end
 

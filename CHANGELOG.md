@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.32] - 2026-04-27
+
+### Fixed
+- Embedding calls now return a clear unavailable-provider error when no embedding provider is configured or detected, preventing RubyLLM from implicitly selecting a chat/default provider.
+
 ## [0.8.31] - 2026-04-27
 
 ### Fixed
