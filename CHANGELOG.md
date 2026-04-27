@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.31] - 2026-04-27
+
+### Fixed
+- Embedding calls no longer inherit the chat `llm.default_provider`, preventing vLLM or other chat defaults from receiving embedding traffic unless explicitly configured for embeddings. Fixes #104
+
 ## [0.8.30] - 2026-04-27
 
 ### Fixed
