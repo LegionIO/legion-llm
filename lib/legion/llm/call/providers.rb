@@ -429,7 +429,8 @@ module Legion
           return :ok if model_ids.any? { |id| id.include?(target_model) || target_model.include?(id) }
 
           :model_missing
-        rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError
+        rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError => e
+          log.debug "[llm][providers] probe_via_model_list auth_error provider=#{provider} error=#{e.class}: #{e.message}"
           :auth_error
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.providers.probe_via_model_list', provider: provider)
@@ -439,9 +440,11 @@ module Legion
         def probe_via_chat(provider, model)
           RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
           :ok
-        rescue RubyLLM::ModelNotFoundError
+        rescue RubyLLM::ModelNotFoundError => e
+          log.debug "[llm][providers] probe_via_chat model_missing provider=#{provider} model=#{model} error=#{e.class}: #{e.message}"
           :model_missing
-        rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError
+        rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError => e
+          log.debug "[llm][providers] probe_via_chat auth_error provider=#{provider} model=#{model} error=#{e.class}: #{e.message}"
           :auth_error
         end
 
