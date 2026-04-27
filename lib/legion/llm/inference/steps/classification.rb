@@ -157,14 +157,18 @@ module Legion
           def default_classification_level
             level = settings_value(:compliance, :default_level)
             level ? level.to_sym : :public
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.default_level')
             :public
           end
 
           def classification_enabled?(_classification)
             enabled = settings_value(:compliance, :classification_scan)
             enabled.nil? || enabled
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.enabled')
             true
           end
 
@@ -181,20 +185,26 @@ module Legion
           def redaction_enabled?
             setting = settings_value(:compliance, :redact_pii)
             setting == true
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.redaction_enabled')
             false
           end
 
           def strict_hipaa_mode?
             setting = settings_value(:compliance, :strict_hipaa)
             setting == true
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.strict_hipaa')
             false
           end
 
           def redaction_placeholder
             settings_value(:compliance, :redaction_placeholder) || '[REDACTED]'
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.redaction_placeholder')
             '[REDACTED]'
           end
 
@@ -222,7 +232,9 @@ module Legion
           def phi_block_cloud?
             setting = settings_value(:compliance, :phi_block_cloud)
             setting == true
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.phi_block_cloud')
             false
           end
 
@@ -232,7 +244,9 @@ module Legion
             cloud_providers = settings_value(:compliance, :cloud_providers) ||
                               %i[anthropic openai gemini bedrock azure]
             cloud_providers.map(&:to_sym).include?(provider.to_sym)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.cloud_provider', provider: provider)
             false
           end
 
@@ -241,7 +255,9 @@ module Legion
             provider = config_value(routing, :provider) if routing.is_a?(Hash)
             provider ||= settings_value(:default_provider)
             provider&.to_sym
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.resolve_provider')
             nil
           end
 

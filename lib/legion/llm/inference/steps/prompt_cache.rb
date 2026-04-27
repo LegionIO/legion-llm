@@ -68,7 +68,8 @@ module Legion
 
           def prompt_caching_settings
             Legion::LLM::Settings.value(:prompt_caching, default: {})
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.prompt_cache.settings')
             {}
           end
 

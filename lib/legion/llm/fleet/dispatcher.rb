@@ -90,7 +90,7 @@ module Legion
             Legion::LLM::Settings.value(:routing, :fleet, :routing_style) ||
             :shared_lane
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.default_routing_style')
+          handle_exception(e, level: :warn, operation: 'llm.fleet.dispatcher.default_routing_style')
           :shared_lane
         end
 
@@ -153,7 +153,7 @@ module Legion
           timeouts = fetch_option(fleet, :timeouts) || {}
           fetch_option(timeouts, request_type.to_sym) || fetch_option(fleet, :timeout_seconds) || 30
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.fleet.dispatcher.resolve_timeout')
+          handle_exception(e, level: :warn, operation: 'llm.fleet.dispatcher.resolve_timeout')
           30
         end
 

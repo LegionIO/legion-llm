@@ -34,7 +34,7 @@ module Legion
       def llm_settings
         Legion::LLM::Settings.current_settings
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.settings')
+        handle_exception(e, level: :warn, operation: 'llm.inference.settings')
         {}
       end
 
@@ -221,7 +221,7 @@ module Legion
         parts << 'stream=true' if kwargs[:stream]
         log.info(parts.join(' '))
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.log_request')
+        handle_exception(e, level: :warn, operation: 'llm.inference.log_request')
       end
 
       def log_inference_response(request_type:, requested_model:, requested_provider:, result:, duration_ms:)
@@ -243,7 +243,7 @@ module Legion
         parts << "tool_calls=#{details[:tool_calls]}" unless details[:tool_calls].nil?
         log.info(parts.join(' '))
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.log_response')
+        handle_exception(e, level: :warn, operation: 'llm.inference.log_response')
       end
 
       def log_inference_error(request_type:, requested_model:, requested_provider:, error:, duration_ms:)
@@ -259,7 +259,7 @@ module Legion
         parts << "requested_model=#{requested_model}" if requested_model
         log.error(parts.join(' '))
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.log_error')
+        handle_exception(e, level: :warn, operation: 'llm.inference.log_error')
       end
 
       def elapsed_ms_since(started_at)
@@ -342,7 +342,7 @@ module Legion
 
         object.public_send(method_name)
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.safe_value', method_name: method_name)
+        handle_exception(e, level: :warn, operation: 'llm.inference.safe_value', method_name: method_name)
         nil
       end
 
@@ -418,7 +418,7 @@ module Legion
       def pipeline_enabled?
         llm_setting(:pipeline_enabled) == true
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.pipeline_enabled')
+        handle_exception(e, level: :warn, operation: 'llm.inference.pipeline_enabled')
         false
       end
 
@@ -590,7 +590,7 @@ module Legion
             messages:         messages
           )
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.inference.shadow_eval')
+          handle_exception(e, level: :warn, operation: 'llm.inference.shadow_eval')
         end
       end
 

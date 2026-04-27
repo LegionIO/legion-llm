@@ -99,7 +99,8 @@ module Legion
 
           def settings_value(*keys, default: nil)
             Legion::LLM::Settings.value(*keys, default: default)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.trigger_match.settings', keys: keys)
             default
           end
 

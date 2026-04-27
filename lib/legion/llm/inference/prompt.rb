@@ -1,14 +1,19 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+
 module Legion
   module LLM
     module Inference
       module Prompt
+        extend Legion::Logging::Helper
+
         module_function
 
         def llm_setting(key, default = nil)
           Legion::LLM::Settings.value(key, default: default)
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.prompt.llm_setting', key: key)
           default
         end
 

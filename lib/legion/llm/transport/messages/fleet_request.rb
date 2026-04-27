@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
 require_relative '../message'
 
 module Legion
@@ -7,6 +8,8 @@ module Legion
     module Transport
       module Messages
         class FleetRequest < Legion::LLM::Transport::Message
+          include Legion::Logging::Helper
+
           PRIORITY_MAP = { critical: 9, high: 7, normal: 5, low: 2 }.freeze
 
           def type        = 'llm.fleet.request'
@@ -20,7 +23,8 @@ module Legion
             return super unless ttl_seconds.positive?
 
             (ttl_seconds * 1000).ceil.to_s
-          rescue ArgumentError, TypeError
+          rescue ArgumentError, TypeError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.fleet_request.expiration', ttl: @options[:ttl])
             super
           end
 
@@ -52,7 +56,8 @@ module Legion
             Legion::LLM::Settings.value(:routing, :tiers, :fleet, :publish_confirm_timeout_ms) ||
               Legion::LLM::Settings.value(:routing, :fleet, :publish_confirm_timeout_ms) ||
               500
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.fleet_request.publish_confirm_timeout')
             500
           end
 
