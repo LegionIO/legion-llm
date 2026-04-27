@@ -122,7 +122,7 @@ module Legion
           def pdf_file?(path)
             ::File.extname(path).casecmp('.pdf').zero? || ::File.binread(path, 5) == '%PDF-'
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.api.client_tool.pdf_sniff', path: path)
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.client_tool.pdf_sniff', path: path)
             false
           end
 
@@ -307,7 +307,7 @@ module Legion
                     ms = begin
                       ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round(1)
                     rescue StandardError => e
-                      handle_exception(e, level: :debug, handled: true,
+                      handle_exception(e, level: :warn, handled: true,
                                           operation: 'llm.api.client_tool.duration_measurement', tool_ref: tool_ref)
                       nil
                     end
@@ -403,7 +403,7 @@ module Legion
                 kerb = begin
                   Legion::Settings.dig(:kerberos, :username)
                 rescue StandardError => e
-                  handle_exception(e, level: :debug, handled: true, operation: 'llm.api.identity.kerberos_username')
+                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.kerberos_username')
                   nil
                 end
                 return "user:#{kerb}" if kerb.is_a?(String) && !kerb.empty?
@@ -425,7 +425,7 @@ module Legion
                 hostname = begin
                   Legion::Settings[:client][:hostname]
                 rescue StandardError => e
-                  handle_exception(e, level: :debug, handled: true, operation: 'llm.api.identity.client_hostname')
+                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.client_hostname')
                   Socket.gethostname
                 end
                 username = identity_string.delete_prefix('user:')
@@ -433,7 +433,7 @@ module Legion
                 kerb = begin
                   Legion::Settings.dig(:kerberos, :username)
                 rescue StandardError => e
-                  handle_exception(e, level: :debug, handled: true, operation: 'llm.api.identity.requested_by_kerberos')
+                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.requested_by_kerberos')
                   nil
                 end
                 if kerb.is_a?(String) && !kerb.empty?
