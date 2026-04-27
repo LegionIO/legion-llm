@@ -1,8 +1,26 @@
 # frozen_string_literal: true
 
-require 'legion/extensions/llm'
+begin
+  require 'legion/extensions/llm'
+  require 'legion/extensions/llm/provider' unless defined?(::Legion::Extensions::Llm::Provider)
+rescue LoadError
+  nil
+end
+
+begin
+  require 'lex_llm' unless defined?(::Legion::Extensions::Llm::Provider)
+rescue LoadError
+  nil
+end
 
 RSpec.describe Legion::LLM::Providers do
+  def lex_llm_test_namespace
+    return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)
+    return ::LexLLM if defined?(::LexLLM::Provider)
+
+    raise NameError, 'lex-llm provider namespace is not loaded'
+  end
+
   let(:host) do
     Class.new do
       include Legion::LLM::Providers
@@ -125,16 +143,17 @@ RSpec.describe Legion::LLM::Providers do
 
   describe '#auto_register_lex_llm_providers' do
     before do
+      namespace = lex_llm_test_namespace
       Legion::LLM::Call::Registry.reset!
-      Legion::Extensions::Llm::Provider.providers.clear
-      provider_class = Class.new(Legion::Extensions::Llm::Provider) { def api_base = 'https://provider.invalid' }
-      Legion::Extensions::Llm::Provider.register(:anthropic, provider_class)
+      namespace::Provider.providers.clear
+      provider_class = Class.new(namespace::Provider) { def api_base = 'https://provider.invalid' }
+      namespace::Provider.register(:anthropic, provider_class)
 
       allow(host).to receive(:load_optional_feature).and_return(true)
     end
 
     after do
-      Legion::Extensions::Llm::Provider.providers.clear
+      lex_llm_test_namespace::Provider.providers.clear
       Legion::LLM::Call::Registry.reset!
     end
 

@@ -1,20 +1,42 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/extensions/llm'
+
+begin
+  require 'legion/extensions/llm'
+  require 'legion/extensions/llm/provider' unless defined?(::Legion::Extensions::Llm::Provider)
+rescue LoadError
+  nil
+end
+
+begin
+  require 'lex_llm' unless defined?(::Legion::Extensions::Llm::Provider)
+rescue LoadError
+  nil
+end
 
 RSpec.describe Legion::LLM::Call::LexLLMAdapter do
+  def lex_llm_test_namespace
+    return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)
+    return ::LexLLM if defined?(::LexLLM::Provider)
+
+    raise NameError, 'lex-llm provider namespace is not loaded'
+  end
+
   let(:provider_class) do
-    Class.new(Legion::Extensions::Llm::Provider) do
+    namespace = lex_llm_test_namespace
+    Class.new(namespace::Provider) do
+      define_method(:llm_namespace) { namespace }
+
       def api_base = 'https://adapter.invalid'
 
       def complete(_messages, model:, **)
-        Legion::Extensions::Llm::Message.new(role: :assistant, content: "hello #{model.id}", model_id: model.id,
-                                             input_tokens: 7, output_tokens: 3)
+        llm_namespace::Message.new(role: :assistant, content: "hello #{model.id}", model_id: model.id,
+                                   input_tokens: 7, output_tokens: 3)
       end
 
       def embed(_text, model:, dimensions:)
-        Legion::Extensions::Llm::Embedding.new(vectors: Array.new(dimensions || 2, 0.5), model: model, input_tokens: 4)
+        llm_namespace::Embedding.new(vectors: Array.new(dimensions || 2, 0.5), model: model, input_tokens: 4)
       end
     end
   end
