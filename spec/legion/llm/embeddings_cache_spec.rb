@@ -86,7 +86,7 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
 
     it 'returns the entry after the failed provider' do
       result = Legion::LLM::Call::Embeddings.send(:find_fallback_provider, :ollama)
-      expect(result).to eq({ provider: :openai, model: 'text-embedding-3-small' })
+      expect(result).to eq({ provider: :bedrock, model: 'amazon.titan-embed-text-v2:0' })
     end
 
     it 'skips the failed provider and returns the next one in the chain' do
