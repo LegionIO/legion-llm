@@ -7,8 +7,8 @@ Gem::Specification.new do |spec|
   spec.version       = Legion::LLM::VERSION
   spec.authors       = ['Esity']
   spec.email         = ['matthewdiverson@gmail.com']
-  spec.summary       = 'LLM integration for the LegionIO framework via ruby_llm'
-  spec.description   = 'Provides LLM capabilities (chat, embeddings, tool use, agents) to LegionIO extensions'
+  spec.summary       = 'LLM routing and provider orchestration for the LegionIO framework'
+  spec.description   = 'Routes LLM chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata for LegionIO extensions'
   spec.homepage      = 'https://github.com/LegionIO/legion-llm'
   spec.license       = 'Apache-2.0'
   spec.require_paths = ['lib']
