@@ -18,6 +18,14 @@
 - Shared settings helpers now normalize string and symbol keys across router, fleet, scheduling, response cache, API auth/defaults, metering, quality, guards, skills, discovery, inventory, daemon, config loaders, and audit checks.
 - LLM transport messages now promote tracing metadata into W3C `traceparent`, `baggage`, and Legion trace headers for fleet/audit/metering correlation.
 - Fleet lane sanitization and vLLM health URL normalization now avoid regex patterns flagged by CodeQL for uncontrolled input.
+- Structured output parsing now strips markdown code fences before JSON parse, including retry responses from models that keep returning fenced JSON.
+- LLM tool adapter dispatch now symbolizes JSON/string-keyed tool arguments before invoking Ruby keyword-argument tool classes.
+- Default routing chains now honor explicit `default_provider` / `default_model` before auto-enabled local providers, preventing Ollama defaults from overriding a configured Bedrock default.
+- Provider credential setup now resolves `env://` placeholders consistently for Bedrock SigV4, Anthropic, OpenAI, Gemini, Azure, and vLLM, and unresolved placeholder arrays no longer auto-enable hosted providers.
+- Native `/api/llm/inference` responses now flatten structured provider content blocks into plain text for both streaming SSE deltas and non-streaming JSON responses, preventing Anthropic/Bedrock-style block arrays from being stored and replayed as nested JSON-looking assistant replies.
+- Native `/api/llm/inference` streaming now emits `thinking-delta` SSE events for provider reasoning chunks without appending those chunks to final assistant content.
+- Native `file_read` client tools now extract text from PDFs via `pdf-reader` and return a clear unsupported-binary message for non-text binary files.
+- Local providers now cap automatically injected registry tools with `llm.tool_trigger.local_tool_limit`, prioritizing trigger-matched tools before always-loaded tools for Ollama/vLLM requests.
 
 ## [0.8.29] - 2026-04-27
 

@@ -53,6 +53,19 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
       expect(result[:model]).to eq('qwen3.6:27b-q4_K_M')
     end
 
+    it 'strips markdown code fences before parsing JSON' do
+      fenced = "```json\n{\"name\":\"Alice\"}\n```"
+      allow(Legion::LLM::Inference).to receive(:send).with(:chat_single, anything).and_return({ content: fenced, model: 'qwen3.6' })
+      allow(Legion::JSON).to receive(:load).with('{"name":"Alice"}').and_return({ name: 'Alice' })
+      allow(Legion::JSON).to receive(:dump).and_return('{}')
+
+      result = described_class.generate(messages: messages, schema: schema, model: 'qwen3.6')
+
+      expect(result[:valid]).to be true
+      expect(result[:raw]).to eq('{"name":"Alice"}')
+      expect(result[:data]).to eq({ name: 'Alice' })
+    end
+
     it 'passes provider through to chat_single' do
       json_string = '{"name":"Alice"}'
       allow(Legion::LLM::Inference).to receive(:send).with(
@@ -90,6 +103,29 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
 
       result = described_class.generate(messages: messages, schema: schema, model: 'gpt-4o')
       expect(result[:valid]).to be true
+      expect(result[:retried]).to be true
+    end
+
+    it 'strips markdown code fences from retry responses before parsing JSON' do
+      bad_result = { content: 'not json', model: 'gpt-4o' }
+      good_result = { content: "```\n{\"name\":\"Bob\"}\n```", model: 'gpt-4o' }
+
+      call_count = 0
+      allow(Legion::LLM::Inference).to receive(:send).with(:chat_single, anything) do
+        call_count += 1
+        call_count == 1 ? bad_result : good_result
+      end
+
+      allow(Legion::JSON).to receive(:dump).and_return('{}')
+      allow(Legion::JSON).to receive(:load).with('not json').and_raise(JSON::ParserError, 'unexpected token')
+      allow(Legion::JSON).to receive(:load).with('{"name":"Bob"}').and_return({ name: 'Bob' })
+      allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :retry_on_parse_failure).and_return(true)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :max_retries).and_return(2)
+
+      result = described_class.generate(messages: messages, schema: schema, model: 'gpt-4o')
+
+      expect(result[:valid]).to be true
+      expect(result[:raw]).to eq('{"name":"Bob"}')
       expect(result[:retried]).to be true
     end
 

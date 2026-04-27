@@ -150,7 +150,10 @@ module Legion
                   }
 
                   pipeline_response = executor.call_stream do |chunk|
-                    text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
+                    thinking = extract_text_content(chunk.thinking) if chunk.respond_to?(:thinking)
+                    emit_sse_event(out, 'thinking-delta', { delta: thinking }) unless thinking.to_s.empty?
+
+                    text = extract_text_content(chunk.respond_to?(:content) ? chunk.content : chunk)
                     next if text.empty?
 
                     full_text << text
@@ -195,7 +198,7 @@ module Legion
                 exec_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - exec_t0) * 1000).round
                 log.debug("[llm][api][inference] action=executor_call duration_ms=#{exec_ms} request_id=#{request_id}")
                 raw_msg = pipeline_response.message
-                content = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s
+                content = extract_text_content(raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg)
                 routing = pipeline_response.routing || {}
                 tokens = pipeline_response.tokens || {}
                 tool_calls = extract_tool_calls(pipeline_response)

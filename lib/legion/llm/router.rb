@@ -347,7 +347,7 @@ module Legion
         end
 
         def chain_from_defaults(model, provider, max)
-          if provider || model
+          if provider || model || default_settings_provider || default_settings_model
             p = (provider || default_settings_provider)&.to_sym
             res = Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                  provider: p || :anthropic,
