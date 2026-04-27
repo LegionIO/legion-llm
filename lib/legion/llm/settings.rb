@@ -68,10 +68,21 @@ module Legion
       end
 
       def self.current_settings
+        if defined?(Legion::Settings)
+          settings = Legion::Settings[:llm]
+          return settings if settings.is_a?(Hash)
+        end
+
         Legion::LLM.settings || {}
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.current_settings')
         defined?(Legion::Settings) ? Legion::Settings[:llm] : {}
+      end
+
+      def self.register_defaults!
+        return unless defined?(Legion::Settings) && Legion::Settings.respond_to?(:merge_settings)
+
+        Legion::Settings.merge_settings(:llm, default)
       end
 
       def self.claude_cli_defaults
@@ -427,4 +438,4 @@ module Legion
   end
 end
 
-Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+Legion::LLM::Settings.register_defaults!

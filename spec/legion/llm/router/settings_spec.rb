@@ -24,8 +24,41 @@ RSpec.describe Legion::LLM::Settings do
       expect(described_class.value(:routing, :fleet, :timeout_seconds)).to eq(60)
     end
 
+    it 'reads the canonical Legion::Settings llm store directly' do
+      Legion::Settings[:llm] = { prompt_caching: { response_cache: { spool_dir: '/tmp/legion-file-override' } } }
+      allow(Legion::LLM).to receive(:settings).and_return({})
+
+      expect(described_class.value(:prompt_caching, :response_cache, :spool_dir)).to eq('/tmp/legion-file-override')
+    end
+
+    it 'preserves JSON-loaded settings overrides' do
+      Legion::Settings[:llm] = Legion::JSON.load(<<~JSON)
+        {
+          "prompt_caching": {
+            "response_cache": {
+              "spool_dir": "/tmp/legion-json-override",
+              "enabled": false
+            }
+          }
+        }
+      JSON
+
+      expect(described_class.value(:prompt_caching, :response_cache, :spool_dir)).to eq('/tmp/legion-json-override')
+      expect(described_class.value(:prompt_caching, :response_cache, :enabled, default: true)).to be false
+    end
+
     it 'returns the default when a path is missing' do
       expect(described_class.value(:missing, :path, default: 'fallback')).to eq('fallback')
+    end
+  end
+
+  describe '.register_defaults!' do
+    it 'merges LLM defaults when Legion::Settings can merge settings' do
+      allow(Legion::Settings).to receive(:merge_settings)
+
+      described_class.register_defaults!
+
+      expect(Legion::Settings).to have_received(:merge_settings).with(:llm, hash_including(enabled: true, providers: kind_of(Hash)))
     end
   end
 

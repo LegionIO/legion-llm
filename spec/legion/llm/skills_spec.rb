@@ -9,8 +9,7 @@ RSpec.describe Legion::LLM::Skills do
   describe '.start' do
     it 'calls DiskLoader with configured + discovered directories' do
       allow(Legion::LLM::Skills::ExternalDiscovery).to receive(:discover).and_return(['/extra/dir'])
-      allow(Legion::LLM).to receive(:settings)
-        .and_return({ skills: { directories: ['.legion/skills'] } })
+      Legion::Settings[:llm][:skills] = { directories: ['.legion/skills'] }
       expect(Legion::LLM::Skills::DiskLoader).to receive(:load_from_directories)
         .with(['.legion/skills', '/extra/dir'])
       described_class.start
@@ -18,7 +17,7 @@ RSpec.describe Legion::LLM::Skills do
 
     it 'calls DiskLoader with only discovered directories when settings has none' do
       allow(Legion::LLM::Skills::ExternalDiscovery).to receive(:discover).and_return(['/auto/dir'])
-      allow(Legion::LLM).to receive(:settings).and_return({ skills: { directories: [] } })
+      Legion::Settings[:llm][:skills] = { directories: [] }
       expect(Legion::LLM::Skills::DiskLoader).to receive(:load_from_directories)
         .with(['/auto/dir'])
       described_class.start
