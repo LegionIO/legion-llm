@@ -328,7 +328,9 @@ module Legion
             end
           end
 
-          @resolved_provider = provider || Legion::LLM.settings[:default_provider]
+          @resolved_provider = provider ||
+                               (model && Router.infer_provider_for_model(model)) ||
+                               Legion::LLM.settings[:default_provider]
           @resolved_model = model || Legion::LLM.settings[:default_model]
 
           log.info "[llm][inference] resolved provider=#{@resolved_provider} model=#{@resolved_model}"
@@ -846,6 +848,8 @@ module Legion
           duration_ms = started_at ? ((finished_at - started_at) * 1000).round : nil
 
           result_str = (raw.is_a?(String) ? raw : raw.to_s)
+          result_str = result_str.encode('UTF-8', invalid: :replace, undef: :replace, replace: '�') unless result_str.valid_encoding?
+          result_str = result_str.delete("\x00")
           is_error = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
 
           @pending_tool_history_mutex.synchronize do

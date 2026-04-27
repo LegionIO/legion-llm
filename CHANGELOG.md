@@ -1,6 +1,6 @@
 # Legion LLM Changelog
 
-## [0.8.28] - 2026-04-24
+## [0.8.29] - 2026-04-27
 
 ### Added
 - Bedrock embedding support via `call/bedrock_embeddings.rb` — a `RubyLLM::Providers::Bedrock` monkey-patch (same pattern as `bedrock_auth.rb`) that implements `render_embedding_payload`, `embedding_url`, `parse_embedding_response`, and overrides `embed` for signed transport. Covers Amazon Titan v1, Titan v2 (selectable 256/512/1024 dimensions), and Cohere Embed v3 (English + multilingual).
@@ -11,6 +11,15 @@
 
 ### Fixed
 - `Legion::LLM::Discovery.find_embedding_provider` can now actually resolve Bedrock when it is the configured fallback. Previously, the discovery probe (`klass.instance_method(:render_embedding_payload)`) raised `NameError` for Bedrock and the fallback chain skipped past it with `[llm][discovery] no embedding provider available` — even when Bedrock was the only reachable embedding provider.
+
+## [0.8.28] - 2026-04-24
+
+### Fixed
+- Model/provider mismatch when clients send a model name (e.g., `qwen3.5:latest`) without an explicit provider. The fallback paths blindly paired it with `default_provider` (typically `bedrock`), causing `RubyLLM::ModelNotFoundError`. Now infers the correct provider from model naming patterns before falling back to the global default.
+- `arbitrage_fallback` hardcoded `:cloud` tier and `:bedrock` provider when inference failed. Now uses `PROVIDER_TIER` to resolve the correct tier for the inferred provider.
+
+### Added
+- `Router.infer_provider_for_model(model)` — public method that maps model naming patterns to providers. Recognizes Ollama-style models (`:` or `/` in name), Bedrock (`us.*`), OpenAI (`gpt-*`, `o1-*`/`o3-*`/`o4-*`), Anthropic (`claude-*`), and Gemini (`gemini-*`).
 
 ## [0.8.27] - 2026-04-24
 
