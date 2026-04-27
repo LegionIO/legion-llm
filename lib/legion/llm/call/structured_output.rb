@@ -15,7 +15,7 @@ module Legion
             result = call_with_schema(messages, schema, model, provider: provider, **)
             log.info "[llm][structured_output] model=#{model} provider=#{provider} valid=true"
 
-            content = result.respond_to?(:content) ? result.content : result[:content]
+            content = strip_markdown_fences(result.respond_to?(:content) ? result.content : result[:content])
             raw_model = result.respond_to?(:model_id) ? result.model_id : result[:model]
 
             parsed = Legion::JSON.load(content)
@@ -52,7 +52,7 @@ module Legion
             if retry_enabled? && attempt < max_retries
               retry_with_instruction(messages, schema, model, provider: provider, attempt: attempt + 1, **opts)
             else
-              raw = result.respond_to?(:content) ? result&.content : result&.dig(:content)
+              raw = strip_markdown_fences(result.respond_to?(:content) ? result&.content : result&.dig(:content))
               { data: nil, error: "JSON parse failed: #{error.message}", raw: raw, valid: false }
             end
           end
@@ -64,7 +64,7 @@ module Legion
                                                  model: model, provider: provider, intent: nil, tier: nil,
                                                  message: user_content, **opts.except(:attempt))
 
-            retry_content = result.respond_to?(:content) ? result.content : result[:content]
+            retry_content = strip_markdown_fences(result.respond_to?(:content) ? result.content : result[:content])
             retry_model = result.respond_to?(:model_id) ? result.model_id : result[:model]
 
             parsed = Legion::JSON.load(retry_content)
@@ -81,6 +81,18 @@ module Legion
               parts << content.to_s unless content.to_s.empty?
             end
             parts.join("\n\n")
+          end
+
+          def strip_markdown_fences(text)
+            return text unless text.is_a?(String)
+
+            stripped = text.strip
+            return stripped unless stripped.start_with?('```')
+
+            stripped
+              .sub(/\A`{3,}[[:space:]]*(?:json)?[[:space:]]*\n?/i, '')
+              .sub(/\n?[[:space:]]*`{3,}\z/, '')
+              .strip
           end
 
           def supports_response_format?(model)

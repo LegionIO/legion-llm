@@ -2,7 +2,7 @@
 
 LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension. Exposes OpenAI- and Anthropic-compatible API endpoints so external tools can point at the Legion daemon and just work.
 
-**Version**: 0.8.0
+**Version**: 0.8.30
 
 ## Installation
 
@@ -60,6 +60,7 @@ Requests flow through the full Inference pipeline — routing, metering, audit, 
 Both formats supported with correct SSE shapes:
 - **OpenAI**: `data: {"choices":[{"delta":{"content":"..."}}]}` chunks, terminated by `data: [DONE]`
 - **Anthropic**: Typed events — `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`
+- **Native**: `/api/llm/inference` streams `text-delta`, `thinking-delta`, tool lifecycle events, and a final `done` event. Structured provider content blocks are flattened to plain text in both streaming and non-streaming native responses so `content` remains a string for daemon clients.
 
 ### API Authentication
 
@@ -850,6 +851,8 @@ No code changes are needed in consumers immediately. The aliases will be maintai
 | Google Gemini | `gemini` | `vault://`, `env://`, or direct | Gemini models |
 | Azure AI | `azure` | `vault://`, `env://`, or direct | Azure OpenAI endpoint; `api_base` + `api_key` or `auth_token` |
 | Ollama | `ollama` | Local, no credentials needed | Local inference |
+
+`env://NAME` credential placeholders resolve at provider configuration time, including array fallbacks such as `["env://OPENAI_API_KEY", "env://CODEX_API_KEY"]`. Unresolved placeholders do not auto-enable hosted providers.
 
 ## Integration with LegionIO
 

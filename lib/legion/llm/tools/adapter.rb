@@ -36,6 +36,7 @@ module Legion
         end
 
         def execute(**args)
+          args = symbolize_keys(args)
           args = Interceptor.intercept(@tool_name, **args)
           log.info("[llm][tools] adapter.execute name=#{@tool_name} arguments=#{summarize_payload(args)}")
           result = @tool_class.call(**args)
@@ -55,6 +56,20 @@ module Legion
         end
 
         private
+
+        def symbolize_keys(value)
+          case value
+          when Hash
+            value.to_h do |key, nested|
+              normalized_key = key.respond_to?(:to_sym) ? key.to_sym : key
+              [normalized_key, symbolize_keys(nested)]
+            end
+          when Array
+            value.map { |entry| symbolize_keys(entry) }
+          else
+            value
+          end
+        end
 
         def extract_content(result)
           if result.respond_to?(:content) && result.content.is_a?(Array)
