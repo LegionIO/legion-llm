@@ -82,7 +82,7 @@ module Legion
             usable_setting?(config[:api_key])
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.providers.credential_available_for', provider: provider)
+          handle_exception(e, level: :warn, operation: 'llm.providers.credential_available_for', provider: provider)
           false
         end
 
@@ -108,7 +108,7 @@ module Legion
           Socket.tcp(addr, port, connect_timeout: 1).close
           true
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.providers.ollama_running', base_url: url)
+          handle_exception(e, level: :warn, operation: 'llm.providers.ollama_running', base_url: url)
           false
         end
 
@@ -124,7 +124,7 @@ module Legion
           end.get('/health')
           response.success?
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.providers.vllm_running', base_url: url)
+          handle_exception(e, level: :warn, operation: 'llm.providers.vllm_running', base_url: url)
           false
         end
 
@@ -337,7 +337,7 @@ module Legion
             []
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.providers.collect_credential_candidates', provider: provider)
+          handle_exception(e, level: :warn, operation: 'llm.providers.collect_credential_candidates', provider: provider)
           []
         end
 
@@ -396,7 +396,7 @@ module Legion
           end
         rescue StandardError => e
           log.warn "[llm][providers] health_check failed provider=#{provider} error=#{e.class}"
-          handle_exception(e, level: :debug, operation: 'llm.providers.attempt_provider_call', provider: provider, model: model)
+          handle_exception(e, level: :warn, operation: 'llm.providers.attempt_provider_call', provider: provider, model: model)
           false
         end
 
@@ -412,11 +412,11 @@ module Legion
 
           :model_missing
         rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError => e
-          handle_exception(e, level: :debug, handled: true,
+          handle_exception(e, level: :warn, handled: true,
                               operation: 'llm.providers.probe_via_model_list.auth', provider: provider)
           :auth_error
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.providers.probe_via_model_list', provider: provider)
+          handle_exception(e, level: :warn, operation: 'llm.providers.probe_via_model_list', provider: provider)
           probe_via_chat(provider, target_model)
         end
 
@@ -424,11 +424,11 @@ module Legion
           RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
           :ok
         rescue RubyLLM::ModelNotFoundError => e
-          handle_exception(e, level: :debug, handled: true,
+          handle_exception(e, level: :warn, handled: true,
                               operation: 'llm.providers.probe_via_chat.model_missing', provider: provider, model: model)
           :model_missing
         rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError => e
-          handle_exception(e, level: :debug, handled: true,
+          handle_exception(e, level: :warn, handled: true,
                               operation: 'llm.providers.probe_via_chat.auth', provider: provider, model: model)
           :auth_error
         end
@@ -452,7 +452,7 @@ module Legion
           ok = attempt_provider_call(:openai, openai_config[:default_model])
           openai_config[:enabled] = false unless ok
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.providers.recover_openai_with_codex')
+          handle_exception(e, level: :warn, operation: 'llm.providers.recover_openai_with_codex')
         end
 
         def auto_register_providers
@@ -504,7 +504,7 @@ module Legion
 
           Legion::Identity::Broker.token_for(provider_name)
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: "llm.providers.broker_resolve.#{provider_name}")
+          handle_exception(e, level: :warn, operation: "llm.providers.broker_resolve.#{provider_name}")
           nil
         end
 
@@ -516,7 +516,7 @@ module Legion
 
           nil
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.providers.broker_resolve.aws')
+          handle_exception(e, level: :warn, operation: 'llm.providers.broker_resolve.aws')
           nil
         end
 
@@ -531,7 +531,7 @@ module Legion
             !Legion::Identity::Broker.token_for(provider).nil?
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.providers.broker_credential_available', provider: provider)
+          handle_exception(e, level: :warn, operation: 'llm.providers.broker_credential_available', provider: provider)
           false
         end
 
