@@ -41,7 +41,7 @@ module Legion
         @store&.delete(key)
       end
 
-      def enforce_phi_ttl(ttl, _phi: false)
+      def enforce_phi_ttl(ttl, **)
         ttl
       end
     end
@@ -264,8 +264,8 @@ RSpec.describe Legion::LLM::Cache do
       stored = { content: 'Cached answer', meta: { model: 'claude-sonnet-4-6' } }
       messages_arr = [{ role: 'user', content: 'hello' }]
       # Build the key exactly as chat_direct does (resolves defaults from settings)
-      effective_model    = Legion::LLM.settings[:default_model]
-      effective_provider = Legion::LLM.settings[:default_provider]
+      effective_model    = Legion::LLM::Settings.value(:default_model)
+      effective_provider = Legion::LLM::Settings.value(:default_provider)
       cache_key = described_class.key(
         model:       effective_model,
         provider:    effective_provider,
