@@ -3,14 +3,18 @@
 require 'fileutils'
 require 'json'
 
+require 'legion/cache/helper'
 require 'legion/logging/helper'
 module Legion
   module LLM
     module Cache
       module Response
         extend Legion::Logging::Helper
+        extend ::Legion::Cache::Helper
 
         module_function
+
+        def cache_namespace = ''
 
         def init_request(request_id, ttl: default_ttl)
           cache_write(status_key(request_id), 'pending', ttl)
@@ -112,28 +116,27 @@ module Legion
         end
 
         private_class_method def self.cache_write(key, value, ttl)
-          return Legion::Cache::Local.set(key, value, ttl: ttl) if local_cache_backend?
+          return local_cache_set(key, value, ttl: ttl) if local_cache_backend?
 
-          Legion::Cache.set(key, value, ttl)
+          cache_set(key, value, ttl: ttl)
         end
 
         private_class_method def self.cache_read(key)
-          return Legion::Cache::Local.get(key) if local_cache_backend?
+          return local_cache_get(key) if local_cache_backend?
 
-          Legion::Cache.get(key)
+          cache_get(key)
         end
 
         private_class_method def self.cache_remove(key)
-          return Legion::Cache::Local.delete(key, async: false) if local_cache_backend?
+          return local_cache_delete(key) if local_cache_backend?
 
-          Legion::Cache.delete(key)
+          cache_delete(key)
         end
 
         private_class_method def self.local_cache_backend?
-          defined?(Legion::Cache::Local) &&
-            Legion::Cache::Local.respond_to?(:connected?) &&
-            Legion::Cache::Local.connected? &&
-            Legion::Cache::Local.respond_to?(:get)
+          respond_to?(:local_cache_connected?) && local_cache_connected?
+        rescue StandardError
+          false
         end
 
         private_class_method def self.default_ttl

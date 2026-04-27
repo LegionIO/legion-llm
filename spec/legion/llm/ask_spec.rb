@@ -30,7 +30,7 @@ unless defined?(Legion::Cache)
           @store&.delete(key)
         end
 
-        def enforce_phi_ttl(ttl, _phi: false)
+        def enforce_phi_ttl(ttl, **)
           ttl
         end
       end
@@ -42,6 +42,8 @@ require 'legion/llm/cache/response'
 require 'legion/llm/call/daemon_client'
 
 RSpec.describe 'Legion::LLM.ask' do
+  let(:cache_store) { {} }
+
   # Build a mock response object with the interface of RubyLLM::Message
   def mock_response(content: 'hello world', input_tokens: 10, output_tokens: 20)
     resp = double('Response', content: content)
@@ -63,11 +65,15 @@ RSpec.describe 'Legion::LLM.ask' do
   before(:each) do
     Legion::LLM::DaemonClient.reset!
     Legion::Cache.reset! if defined?(Legion::Cache) && Legion::Cache.respond_to?(:reset!)
-    allow(Legion::Cache).to receive(:enforce_phi_ttl) { |ttl, _phi: false| ttl } if defined?(Legion::Cache)
+    allow(Legion::Cache).to receive(:enforce_phi_ttl) { |ttl, **| ttl } if defined?(Legion::Cache)
+    allow(Legion::Cache).to receive(:connected?).and_return(false) if defined?(Legion::Cache) && Legion::Cache.respond_to?(:connected?)
     allow(Legion::Cache::Local).to receive(:connected?).and_return(true)
-    allow(Legion::Cache::Local).to receive(:get) { |key| Legion::Cache.get(key) }
-    allow(Legion::Cache::Local).to receive(:set) { |key, value, ttl: nil, **| Legion::Cache.set(key, value, ttl || 300) }
-    allow(Legion::Cache::Local).to receive(:delete) { |key, **| Legion::Cache.delete(key) }
+    allow(Legion::Cache::Local).to receive(:get) { |key| cache_store[key] }
+    allow(Legion::Cache::Local).to receive(:set) { |key, value, _ttl: nil, **|
+      cache_store[key] = value
+      true
+    }
+    allow(Legion::Cache::Local).to receive(:delete) { |key, **| cache_store.delete(key) }
   end
 
   # ─────────────────────────────────────────────

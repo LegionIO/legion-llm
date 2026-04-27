@@ -2,15 +2,19 @@
 
 require 'digest'
 
+require 'legion/cache/helper'
 require 'legion/logging/helper'
 module Legion
   module LLM
     module Cache
       extend Legion::Logging::Helper
+      extend ::Legion::Cache::Helper
 
       DEFAULT_TTL = 300
 
       module_function
+
+      def cache_namespace = ''
 
       # Generates a deterministic SHA256 cache key from request parameters.
       def key(model:, provider:, messages:, temperature: nil, tools: nil, schema: nil)
@@ -72,26 +76,27 @@ module Legion
       end
 
       private_class_method def self.cache_backend_get(key)
-        return Legion::Cache::Local.get(key) if local_cache_backend?
+        return local_cache_get(key) if local_cache_backend?
 
-        Legion::Cache.get(key)
+        cache_get(key)
       end
 
       private_class_method def self.cache_backend_set(key, value, ttl:)
-        return Legion::Cache::Local.set(key, value, ttl: ttl) if local_cache_backend?
+        return local_cache_set(key, value, ttl: ttl) if local_cache_backend?
 
-        Legion::Cache.set(key, value, ttl)
+        cache_set(key, value, ttl: ttl)
       end
 
       private_class_method def self.local_cache_backend?
-        defined?(Legion::Cache::Local) &&
-          Legion::Cache::Local.respond_to?(:connected?) &&
-          Legion::Cache::Local.connected? &&
-          Legion::Cache::Local.respond_to?(:get)
+        respond_to?(:local_cache_connected?) && local_cache_connected?
+      rescue StandardError
+        false
       end
 
       private_class_method def self.shared_cache_backend?
-        defined?(Legion::Cache) && Legion::Cache.respond_to?(:get)
+        respond_to?(:cache_connected?) && cache_connected?
+      rescue StandardError
+        false
       end
     end
   end

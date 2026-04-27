@@ -26,16 +26,16 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.reset!' do
     it 'clears cached url' do
-      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+      Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
       described_class.daemon_url # populate cache
       described_class.reset!
-      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://other:9000' } })
+      Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://other:9000' })
       expect(described_class.daemon_url).to eq('http://other:9000')
     end
 
     it 'clears healthy state' do
       allow(described_class).to receive(:check_health).and_return(true)
-      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+      Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
       described_class.available? # populate health cache
       described_class.reset!
       # After reset, available? should re-call check_health
@@ -52,9 +52,9 @@ RSpec.describe Legion::LLM::DaemonClient do
   # daemon_url
   # ──────────────────────────────────────────────
   describe '.daemon_url' do
-    context 'when Legion::LLM.settings returns a daemon url' do
+    context 'when LLM settings include a daemon url' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://daemon:4000' } })
+        Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://daemon:4000' })
       end
 
       it 'returns the url from settings' do
@@ -62,7 +62,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       end
 
       it 'caches the url on subsequent calls' do
-        expect(Legion::LLM).to receive(:settings).once.and_return({ daemon: { url: 'http://daemon:4000' } })
+        expect(Legion::LLM::Settings).to receive(:current_settings).once.and_call_original
         described_class.daemon_url
         described_class.daemon_url
       end
@@ -70,7 +70,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon url is nil in settings' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: nil } })
+        Legion::LLM::Settings.set_value(:daemon, value: { url: nil })
       end
 
       it 'returns nil' do
@@ -80,7 +80,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon is disabled in settings' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_return({ daemon: { enabled: false, url: 'http://daemon:4000' } })
+        Legion::LLM::Settings.set_value(:daemon, value: { enabled: false, url: 'http://daemon:4000' })
       end
 
       it 'returns nil even when a url is configured' do
@@ -90,7 +90,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon key is missing from settings' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_return({})
+        Legion::LLM::Settings.set_value(:daemon, value: nil)
       end
 
       it 'returns nil' do
@@ -100,7 +100,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when settings raises an exception' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_raise(StandardError, 'settings unavailable')
+        allow(Legion::LLM::Settings).to receive(:current_settings).and_raise(StandardError, 'settings unavailable')
       end
 
       it 'returns nil' do
@@ -115,7 +115,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   describe '.available?' do
     context 'when daemon_url is nil' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_return({})
+        Legion::LLM::Settings.set_value(:daemon, value: nil)
       end
 
       it 'returns false without calling check_health' do
@@ -126,7 +126,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon is disabled' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_return({ daemon: { enabled: false, url: 'http://localhost:4000' } })
+        Legion::LLM::Settings.set_value(:daemon, value: { enabled: false, url: 'http://localhost:4000' })
       end
 
       it 'returns false without calling check_health' do
@@ -137,7 +137,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon_url is present and health check passes' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+        Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
         allow(described_class).to receive(:check_health).and_return(true)
       end
 
@@ -148,7 +148,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon_url is present and health check fails' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+        Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
         allow(described_class).to receive(:check_health).and_return(false)
       end
 
@@ -159,7 +159,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'caching behavior' do
       before do
-        allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+        Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
       end
 
       it 'caches healthy result for HEALTH_CACHE_TTL seconds' do
@@ -220,7 +220,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.check_health' do
     before do
-      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+      Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
     end
 
     context 'when daemon returns 200' do
@@ -263,7 +263,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.http_post' do
     before do
-      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+      Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
     end
 
     it 'makes a POST request to the daemon URL with JSON body' do
@@ -385,7 +385,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.chat' do
     before do
-      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+      Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
       allow(described_class).to receive(:available?).and_return(true)
     end
 
@@ -530,7 +530,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.http_post timeout override' do
     before do
-      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+      Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
     end
 
     it 'uses DEFAULT_TIMEOUT when no timeout argument is given' do
@@ -559,7 +559,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.inference' do
     before do
-      allow(Legion::LLM).to receive(:settings).and_return({ daemon: { url: 'http://localhost:4000' } })
+      Legion::LLM::Settings.set_value(:daemon, value: { url: 'http://localhost:4000' })
     end
 
     context 'when daemon returns 200 with content' do

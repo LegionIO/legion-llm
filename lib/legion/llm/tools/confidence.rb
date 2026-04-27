@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/cache/helper'
 require 'legion/logging/helper'
 module Legion
   module LLM
     module Tools
       module Confidence
         extend Legion::Logging::Helper
+        extend ::Legion::Cache::Helper
 
         OVERRIDE_THRESHOLD = 0.8
         SHADOW_THRESHOLD = 0.5
@@ -16,6 +18,8 @@ module Legion
         @mutex = Mutex.new
 
         module_function
+
+        def cache_namespace = ''
 
         def record(tool:, lex:, confidence:)
           @mutex.synchronize do
@@ -168,26 +172,27 @@ module Legion
           end
 
           def l1_cache_get(key)
-            return Legion::Cache::Local.get(key) if local_cache_backend?
+            return local_cache_get(key) if local_cache_backend?
 
-            Legion::Cache.get(key)
+            cache_get(key)
           end
 
           def l1_cache_set(key, value, ttl:)
-            return Legion::Cache::Local.set(key, value, ttl: ttl) if local_cache_backend?
+            return local_cache_set(key, value, ttl: ttl) if local_cache_backend?
 
-            Legion::Cache.set(key, value, ttl)
+            cache_set(key, value, ttl: ttl)
           end
 
           def local_cache_backend?
-            defined?(Legion::Cache::Local) &&
-              Legion::Cache::Local.respond_to?(:connected?) &&
-              Legion::Cache::Local.connected? &&
-              Legion::Cache::Local.respond_to?(:get)
+            respond_to?(:local_cache_connected?) && local_cache_connected?
+          rescue StandardError
+            false
           end
 
           def shared_cache_backend?
-            defined?(Legion::Cache) && Legion::Cache.respond_to?(:get)
+            respond_to?(:cache_connected?) && cache_connected?
+          rescue StandardError
+            false
           end
 
           def lookup_l2(tool)

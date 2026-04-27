@@ -172,7 +172,7 @@ module Legion
         # ── private helpers ────────────────────────────────────────────────
 
         def fetch_daemon_url
-          settings = Legion::LLM.settings
+          settings = Legion::LLM::Settings.current_settings
           return nil unless settings.is_a?(Hash)
 
           daemon = Legion::LLM::Settings.config_value(settings, :daemon, {})

@@ -50,7 +50,7 @@ unless defined?(Legion::Cache)
           @store&.delete(key)
         end
 
-        def enforce_phi_ttl(ttl, _phi: false)
+        def enforce_phi_ttl(ttl, **)
           ttl
         end
       end
@@ -63,14 +63,19 @@ require 'legion/llm/cache/response'
 RSpec.describe Legion::LLM::Cache::Response do
   let(:request_id) { 'test-req-001' }
   let(:spool_dir) { Dir.mktmpdir('llm-response-cache') }
+  let(:cache_store) { {} }
 
   before(:each) do
-    Legion::Cache.reset!
-    allow(Legion::Cache).to receive(:enforce_phi_ttl) { |ttl, _phi: false| ttl }
+    Legion::Cache.reset! if Legion::Cache.respond_to?(:reset!)
+    allow(Legion::Cache).to receive(:connected?).and_return(false) if Legion::Cache.respond_to?(:connected?)
+    allow(Legion::Cache).to receive(:enforce_phi_ttl) { |ttl, **| ttl }
     allow(Legion::Cache::Local).to receive(:connected?).and_return(true)
-    allow(Legion::Cache::Local).to receive(:get) { |key| Legion::Cache.get(key) }
-    allow(Legion::Cache::Local).to receive(:set) { |key, value, ttl: nil, **| Legion::Cache.set(key, value, ttl || 300) }
-    allow(Legion::Cache::Local).to receive(:delete) { |key, **| Legion::Cache.delete(key) }
+    allow(Legion::Cache::Local).to receive(:get) { |key| cache_store[key] }
+    allow(Legion::Cache::Local).to receive(:set) { |key, value, _ttl: nil, **|
+      cache_store[key] = value
+      true
+    }
+    allow(Legion::Cache::Local).to receive(:delete) { |key, **| cache_store.delete(key) }
     Legion::Settings[:llm][:prompt_caching][:response_cache][:spool_dir] = spool_dir
   end
 
@@ -303,7 +308,7 @@ RSpec.describe Legion::LLM::Cache::Response do
 
     it 'stores spool pointer in cache' do
       described_class.complete(request_id, response: large_response, meta: {}, ttl: 300)
-      raw = Legion::Cache::Local.get("llm:#{request_id}:response")
+      raw = cache_store["llm:#{request_id}:response"]
       expect(raw).to start_with('spool:')
     end
 
