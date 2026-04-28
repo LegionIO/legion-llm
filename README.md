@@ -2,7 +2,7 @@
 
 LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension. Exposes OpenAI- and Anthropic-compatible API endpoints so external tools can point at the Legion daemon and just work.
 
-**Version**: 0.8.31
+**Version**: 0.8.39
 
 ## Installation
 
