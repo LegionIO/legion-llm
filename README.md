@@ -557,7 +557,7 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 | `cloud` | API providers (Bedrock, Azure, Gemini) | Managed cloud inference |
 | `frontier` | API providers (Anthropic, OpenAI) | Frontier models, full-capability inference |
 
-Fleet dispatch is built into legion-llm. The `Fleet::Dispatcher` publishes shared-lane requests to keys such as `llm.fleet.inference.qwen3-6-27b.ctx32000` or `llm.fleet.embed.nomic-embed-text`; `Fleet::Handler` processes them on GPU worker nodes and replies through correlated live responses. Set `routing.tiers.fleet.routing_style` away from `shared_lane` only when you need the legacy `llm.request.{provider}.{type}.{model}` keys.
+Fleet dispatch is built into legion-llm. The `Fleet::Dispatcher` publishes shared-lane requests to keys such as `llm.fleet.inference.qwen3-6-27b.ctx32000` or `llm.fleet.embed.nomic-embed-text`; `Fleet::Handler` processes them on GPU worker nodes and replies through correlated live responses. Keep `routing.tiers.fleet.routing_style` set to `shared_lane` for the default pooled model lanes, set it to `offering_lane` for exact provider-instance lanes such as `llm.fleet.offering.vllm-gpu-01.qwen3-6.inference`, or use any other value only for the legacy `llm.request.{provider}.{type}.{model}` keys.
 
 #### Intent-Based Dispatch
 
