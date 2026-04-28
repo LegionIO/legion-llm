@@ -48,6 +48,9 @@ module Legion
           list.concat(discovery_offerings)
           list = dedupe_offerings(list)
           filter_offerings(list, normalized_filters)
+        rescue NameError, ArgumentError, TypeError => e
+          handle_exception(e, level: :error, handled: false, operation: 'llm.inventory.offerings')
+          raise
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.offerings')
           []

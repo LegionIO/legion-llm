@@ -41,7 +41,7 @@ module RubyLLM
           return true unless defined?(Legion::LLM::Settings)
 
           Legion::LLM::Settings.value(:providers, :vllm, :enable_thinking, default: true) != false
-        rescue StandardError => e
+        rescue NoMethodError, KeyError, TypeError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.vllm_patch.thinking_default')
           true
         end
