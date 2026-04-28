@@ -2,7 +2,7 @@
 
 LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension. Exposes OpenAI- and Anthropic-compatible API endpoints so external tools can point at the Legion daemon and just work.
 
-**Version**: 0.8.40
+**Version**: 0.8.41
 
 ## Installation
 
@@ -924,10 +924,17 @@ bundle exec rubocop -A
 
 | Gem | Purpose |
 |-----|---------|
-| `ruby_llm` (>= 1.0) | Multi-provider LLM client |
+| `concurrent-ruby` | Thread-safe primitives for routing and fleet coordination |
+| `faraday` | HTTP client for provider and API calls |
+| `legion-cache` | Shared and local cache integration |
+| `legion-json` | Legion JSON serialization |
+| `legion-logging` | Logging |
+| `legion-settings` | Configuration defaults and file overrides |
+| `lex-knowledge` | Optional knowledge chunking integration when loaded |
+| `lex-llm` (>= 0.1.6) | Provider-neutral model offering and adapter base |
+| `pdf-reader` | PDF extraction support |
+| `ruby_llm` (~> 1.13) | Compatibility client for legacy provider dispatch |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
-| `legion-logging` | Logging (hard dependency) |
-| `legion-settings` | Configuration (hard dependency) |
 
 ## License
 

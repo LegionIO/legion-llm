@@ -18,7 +18,7 @@ Gem::Specification.new do |spec|
   spec.metadata = {
     'bug_tracker_uri'       => 'https://github.com/LegionIO/legion-llm/issues',
     'changelog_uri'         => 'https://github.com/LegionIO/legion-llm/blob/main/CHANGELOG.md',
-    'documentation_uri'     => 'https://github.com/LegionIO/legion-llm',
+    'documentation_uri'     => 'https://github.com/LegionIO/legion-llm#readme',
     'homepage_uri'          => 'https://github.com/LegionIO/LegionIO',
     'source_code_uri'       => 'https://github.com/LegionIO/legion-llm',
     'wiki_uri'              => 'https://github.com/LegionIO/legion-llm/wiki',
