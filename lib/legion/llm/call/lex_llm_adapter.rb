@@ -16,7 +16,7 @@ module Legion
 
         def chat(model:, messages:, **opts)
           response = provider.complete(
-            normalize_messages(messages),
+            normalize_messages(messages, system: opts[:system]),
             tools:       normalize_tools(opts[:tools]),
             temperature: opts[:temperature],
             model:       model_info(model),
@@ -33,7 +33,7 @@ module Legion
         def stream(model:, messages:, **opts, &block)
           chunks = []
           provider.complete(
-            normalize_messages(messages),
+            normalize_messages(messages, system: opts[:system]),
             tools:       normalize_tools(opts[:tools]),
             temperature: opts[:temperature],
             model:       model_info(model),
@@ -80,9 +80,12 @@ module Legion
           lex_llm_namespace::Model::Info.new(id: model, provider: provider_name)
         end
 
-        def normalize_messages(messages)
+        def normalize_messages(messages, system: nil)
           message_class = lex_llm_namespace::Message
-          Array(messages).map do |message|
+          raw_messages = Array(messages)
+          raw_messages = [{ role: :system, content: system }] + raw_messages if present_system?(system)
+
+          raw_messages.map do |message|
             next message if message.is_a?(message_class)
 
             message_hash = normalize_hash(message)
@@ -92,6 +95,13 @@ module Legion
               tool_call_id: message_hash[:tool_call_id]
             )
           end
+        end
+
+        def present_system?(system)
+          return false if system.nil?
+          return false if system.respond_to?(:empty?) && system.empty?
+
+          true
         end
 
         def lex_llm_namespace

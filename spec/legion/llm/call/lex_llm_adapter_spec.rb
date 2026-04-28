@@ -43,6 +43,20 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
   end
 
+  it 'prepends system instructions to native chat messages' do
+    provider_class.define_singleton_method(:last_messages) { @last_messages }
+    provider_class.define_singleton_method(:last_messages=) { |messages| @last_messages = messages }
+    provider_class.define_method(:complete) do |messages, model:, **|
+      self.class.last_messages = messages
+      llm_namespace::Message.new(role: :assistant, content: "hello #{model.id}", model_id: model.id)
+    end
+
+    adapter.chat(model: 'model-a', messages: [{ role: 'user', content: 'hi' }], system: 'keep it short')
+
+    expect(provider_class.last_messages.map(&:role)).to eq(%i[system user])
+    expect(provider_class.last_messages.first.content).to eq('keep it short')
+  end
+
   it 'maps embedding dispatch to lex-llm provider embeddings' do
     result = adapter.embed(model: 'embed-a', text: 'hello', dimensions: 3)
 

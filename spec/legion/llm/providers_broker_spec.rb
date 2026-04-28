@@ -158,6 +158,30 @@ RSpec.describe Legion::LLM::Providers do
     end
   end
 
+  describe '#lex_llm_provider_config_value' do
+    it 'normalizes OpenAI-compatible /v1 base URLs for lex-llm providers' do
+      value = host.send(
+        :lex_llm_provider_config_value,
+        :vllm,
+        :vllm_api_base,
+        { base_url: 'http://gpu:8000/v1' }
+      )
+
+      expect(value).to eq('http://gpu:8000')
+    end
+
+    it 'preserves versioned non-OpenAI-compatible provider base URLs' do
+      value = host.send(
+        :lex_llm_provider_config_value,
+        :gemini,
+        :gemini_api_base,
+        { base_url: 'https://generativelanguage.googleapis.com/v1beta' }
+      )
+
+      expect(value).to eq('https://generativelanguage.googleapis.com/v1beta')
+    end
+  end
+
   describe '#resolve_credential_value' do
     before do
       hide_const('Legion::Identity::Broker')
