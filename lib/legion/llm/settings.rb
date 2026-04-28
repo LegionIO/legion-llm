@@ -396,7 +396,7 @@ module Legion
             ollama vllm anthropic openai gemini mlx
             bedrock azure_foundry vertex claude
           ],
-          fallback_to_ruby_llm: true
+          fallback_to_ruby_llm: false
         }
       end
 

@@ -1,8 +1,8 @@
 # Legion LLM
 
-LLM integration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Wraps [ruby_llm](https://github.com/crmne/ruby_llm) to provide chat, embeddings, tool use, and agent capabilities to any Legion extension. Exposes OpenAI- and Anthropic-compatible API endpoints so external tools can point at the Legion daemon and just work.
+LLM routing and provider orchestration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Routes chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata through Legion-native `lex-llm-*` provider extensions. RubyLLM compatibility remains optional for legacy callers, but native dispatch is the default path.
 
-**Version**: 0.8.42
+**Version**: 0.8.43
 
 ## Installation
 
@@ -197,7 +197,7 @@ Legion::LLM.settings     # -> Hash (current LLM settings)
 
 ### One-Shot Ask
 
-`Legion::LLM.ask` is a convenience method for single-turn requests. It routes daemon-first (via the LegionIO REST API if running and configured) and falls back to direct RubyLLM:
+`Legion::LLM.ask` is a convenience method for single-turn requests. It routes daemon-first via the LegionIO REST API when configured, otherwise it uses the native provider router:
 
 ```ruby
 # Synchronous response
@@ -205,7 +205,7 @@ result = Legion::LLM.ask(message: "What is the capital of France?")
 puts(result[:response] || result[:content])
 
 # Daemon immediate/created responses return the daemon body hash.
-# Direct fallback and async poll completion return:
+# Native direct routing and async poll completion return:
 #   { status: :done, response: "...", meta: { ... } }
 # HTTP 403 raises DaemonDeniedError; HTTP 429 raises DaemonRateLimitedError.
 ```

@@ -586,7 +586,7 @@ module Legion
           @raw_response = Call::NativeResponseAdapter.new(result)
         rescue Legion::LLM::ProviderError => e
           layer_settings = llm_setting(:provider_layer, {})
-          raise unless config_value(layer_settings, :fallback_to_ruby_llm, true)
+          raise unless ruby_llm_fallback_enabled?(layer_settings)
 
           handle_exception(
             e,
@@ -619,7 +619,7 @@ module Legion
           return false unless defined?(Call::Dispatch)
 
           layer_settings = llm_setting(:provider_layer, {})
-          mode = config_value(layer_settings, :mode, 'ruby_llm').to_s
+          mode = config_value(layer_settings, :mode, 'auto').to_s
 
           case mode
           when 'native'
@@ -629,6 +629,12 @@ module Legion
           else
             false
           end
+        end
+
+        def ruby_llm_fallback_enabled?(layer_settings = llm_setting(:provider_layer, {}))
+          return false unless Legion::LLM.respond_to?(:ruby_llm_available?) && Legion::LLM.ruby_llm_available?
+
+          config_value(layer_settings, :fallback_to_ruby_llm, false) == true
         end
 
         def merge_response_offering_metadata(metadata)
@@ -822,7 +828,7 @@ module Legion
           @raw_response = Call::NativeResponseAdapter.new(result)
         rescue Legion::LLM::ProviderError => e
           layer_settings = llm_setting(:provider_layer, {})
-          raise unless config_value(layer_settings, :fallback_to_ruby_llm, true)
+          raise unless ruby_llm_fallback_enabled?(layer_settings)
 
           handle_exception(
             e,

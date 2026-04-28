@@ -21,7 +21,7 @@ RSpec.describe 'Provider layer mode switching' do
         ollama vllm anthropic openai gemini mlx
         bedrock azure_foundry vertex claude
       ],
-      fallback_to_ruby_llm: true
+      fallback_to_ruby_llm: false
     }
   end
 
@@ -51,9 +51,9 @@ RSpec.describe 'Provider layer mode switching' do
       )
     end
 
-    it 'enables fallback_to_ruby_llm by default' do
+    it 'disables fallback_to_ruby_llm by default' do
       layer = Legion::LLM.settings[:provider_layer]
-      expect(layer[:fallback_to_ruby_llm]).to be true
+      expect(layer[:fallback_to_ruby_llm]).to be false
     end
   end
 
@@ -115,9 +115,9 @@ RSpec.describe 'Provider layer mode switching' do
   end
 
   describe 'fallback_to_ruby_llm behavior' do
-    it 'is true in default settings' do
+    it 'is false in default settings' do
       defaults = Legion::LLM::Settings.default
-      expect(defaults.dig(:provider_layer, :fallback_to_ruby_llm)).to be true
+      expect(defaults.dig(:provider_layer, :fallback_to_ruby_llm)).to be false
     end
 
     it 'can be disabled in settings' do
