@@ -10,7 +10,7 @@ module Legion
         module ChatCompletions
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength
+          def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
             log.debug('[llm][api][openai][chat_completions] registering POST /v1/chat/completions')
 
             app.post '/v1/chat/completions' do # rubocop:disable Metrics/BlockLength
@@ -30,7 +30,9 @@ module Legion
 
               log.info("[llm][api][openai][chat_completions] action=accepted request_id=#{request_id} model=#{model} stream=#{streaming}")
 
-              tool_declarations = build_openai_tool_classes(normalized[:tools])
+              tool_declarations = Legion::LLM::API::OpenAI::ChatCompletions.build_openai_tool_classes(normalized[:tools])
+
+              effective_caller = build_server_caller(source: 'openai_compat', path: request.path, env: env)
 
               inference_request = Legion::LLM::Inference::Request.build(
                 id:       request_id,
@@ -38,7 +40,7 @@ module Legion
                 system:   normalized[:system],
                 routing:  { model: model },
                 tools:    tool_declarations,
-                caller:   { source: 'openai_compat', path: '/v1/chat/completions' },
+                caller:   effective_caller,
                 stream:   streaming,
                 cache:    { strategy: :default, cacheable: true }
               )

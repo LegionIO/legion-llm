@@ -74,14 +74,8 @@ module Legion
               log.debug("[llm][api][inference] action=tools_built client_tools=#{tool_declarations.size}")
 
               streaming = body[:stream] == true && request.preferred_type.to_s.include?('text/event-stream')
-              normalized_caller = caller_context.respond_to?(:transform_keys) ? caller_context.transform_keys(&:to_sym) : {}
-              safe_caller_fields = normalized_caller.slice(:context, :session_id, :trace_id)
-              server_caller_fields = {
-                source:       'api',
-                path:         request.path,
-                requested_by: resolve_requested_by(env, caller_identity)
-              }
-              effective_caller = server_caller_fields.merge(safe_caller_fields)
+              effective_caller = build_server_caller(source: 'api', path: request.path, env: env,
+                                                     caller_context: caller_context)
               caller_summary = [effective_caller[:source], effective_caller[:path]].compact.join(':')
               log.info(
                 "[llm][api][inference] action=accepted request_id=#{request_id} " \

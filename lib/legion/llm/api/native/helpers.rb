@@ -437,6 +437,18 @@ module Legion
                   username: username, hostname: hostname }
               end
 
+              define_method(:build_server_caller) do |source:, path:, env:, caller_context: nil|
+                normalized_caller = caller_context.respond_to?(:transform_keys) ? caller_context.transform_keys(&:to_sym) : {}
+                safe_caller_fields = normalized_caller.slice(:context, :session_id, :trace_id)
+                caller_identity = resolve_caller_identity(env)
+
+                {
+                  source:       source,
+                  path:         path,
+                  requested_by: resolve_requested_by(env, caller_identity)
+                }.merge(safe_caller_fields)
+              end
+
               define_method(:token_value) do |tokens, key|
                 return nil if tokens.nil?
                 return tokens[key] || tokens[key.to_s] if tokens.is_a?(Hash)
