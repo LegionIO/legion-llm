@@ -10,7 +10,7 @@ require 'legion/llm/transport/messages/fleet_error'
 RSpec.describe Legion::LLM::Transport::Messages::FleetRequest do
   let(:base_opts) do
     {
-      routing_key:          'llm.request.ollama.chat.llama3.2',
+      routing_key:          'llm.fleet.inference.llama3-2',
       reply_to:             'llm.fleet.reply.abc123',
       fleet_correlation_id: 'req_abc',
       provider:             'ollama',
@@ -33,7 +33,7 @@ RSpec.describe Legion::LLM::Transport::Messages::FleetRequest do
 
   describe '#routing_key' do
     it 'reads from options' do
-      expect(build.routing_key).to eq('llm.request.ollama.chat.llama3.2')
+      expect(build.routing_key).to eq('llm.fleet.inference.llama3-2')
     end
   end
 
@@ -108,9 +108,13 @@ RSpec.describe Legion::LLM::Transport::Messages::FleetRequest do
     it 'excludes envelope keys' do
       body = build.message
       expect(body).not_to have_key(:fleet_correlation_id)
-      expect(body).not_to have_key(:provider)
-      expect(body).not_to have_key(:model)
       expect(body).not_to have_key(:ttl)
+    end
+
+    it 'includes provider and model in the worker payload' do
+      body = build.message
+      expect(body[:provider]).to eq('ollama')
+      expect(body[:model]).to eq('llama3.2')
     end
 
     it 'includes message_context in body' do

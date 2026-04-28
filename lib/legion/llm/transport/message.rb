@@ -12,7 +12,7 @@ module Legion
         # Do NOT add :request_type — metering/audit need it in the body.
         # Do NOT add :message_context — it MUST appear in the body of all 6 messages.
         LLM_ENVELOPE_KEYS = %i[
-          fleet_correlation_id provider model ttl
+          fleet_correlation_id ttl
         ].freeze
 
         def message_context

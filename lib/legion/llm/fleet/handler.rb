@@ -80,8 +80,16 @@ module Legion
         def publish_reply(reply_to, correlation_id, response_hash)
           return unless defined?(Legion::Transport)
 
-          payload = Legion::JSON.dump(response_hash)
+          if defined?(Legion::LLM::Transport::Messages::FleetResponse)
+            publish_result = Legion::LLM::Transport::Messages::FleetResponse.new(
+              **response_hash, reply_to: reply_to, fleet_correlation_id: correlation_id
+            ).publish
+            log.warn("[llm][fleet][handler] action=reply_publish_failed correlation_id=#{correlation_id} status=#{publish_result[:status]}") if
+              publish_result.is_a?(Hash) && publish_result[:accepted] == false
+            return publish_result
+          end
 
+          payload = Legion::JSON.dump(response_hash)
           channel = Legion::Transport.connection.create_channel
           channel.default_exchange.publish(
             payload,

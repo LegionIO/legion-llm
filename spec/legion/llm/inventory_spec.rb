@@ -32,6 +32,7 @@ RSpec.describe Legion::LLM::Inventory do
 
     expect(offering[:limits][:context_window]).to eq(65_536)
     expect(offering[:fleet_lane]).to eq('llm.fleet.inference.qwen3-6-27b.ctx65536')
+    expect(offering[:fleet_offering_lane]).to eq('llm.fleet.offering.vllm.qwen3-6-27b.inference')
   end
 
   it 'filters embedding and inference offerings independently' do
@@ -97,6 +98,7 @@ RSpec.describe Legion::LLM::Inventory do
               'type'         => 'inference',
               'limits'       => { 'context_window' => '200000', 'max_output_tokens' => '8192' },
               'policy_tags'  => ['phi_allowed'],
+              'metadata'     => { 'network_boundary' => 'corp_lan' },
               'capabilities' => %w[chat tools thinking]
             }
           ]
@@ -109,6 +111,7 @@ RSpec.describe Legion::LLM::Inventory do
     expect(offering[:model]).to eq('claude-sonnet-4-6')
     expect(offering[:limits]).to include(context_window: 200_000, max_output_tokens: 8192)
     expect(offering[:capabilities]).to contain_exactly('chat', 'thinking', 'tools')
+    expect(offering[:metadata]).to eq(network_boundary: 'corp_lan')
   end
 
   it 'reads top-level string-keyed provider and embedding settings' do

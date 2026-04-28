@@ -7,8 +7,8 @@ require 'legion/llm/transport/exchanges/fleet'
 RSpec.describe Legion::LLM::Transport::Exchanges::Fleet do
   subject(:exchange) { described_class.new }
 
-  it 'returns llm.request as the exchange name' do
-    expect(exchange.exchange_name).to eq('llm.request')
+  it 'returns llm.fleet as the exchange name' do
+    expect(exchange.exchange_name).to eq('llm.fleet')
   end
 
   it 'returns topic as the exchange type' do
