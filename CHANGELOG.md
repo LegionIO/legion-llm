@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.41] - 2026-04-28
+
+### Fixed
+- The router gemspec now depends on the provider-neutral `lex-llm` base instead of installing legacy provider gems (`lex-bedrock`, `lex-claude`, `lex-gemini`, and `lex-openai`) as runtime dependencies.
+
 ## [0.8.40] - 2026-04-28
 
 ### Fixed
