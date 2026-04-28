@@ -348,23 +348,9 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
     expect(described_class.pending_count).to eq(0)
   end
 
-  describe '.fulfill_return' do
-    it 'fulfills with no_fleet_queue error' do
-      future = described_class.register('corr-ret')
-      described_class.fulfill_return('corr-ret')
-      result = future.value!
-      expect(result[:error]).to eq('no_fleet_queue')
-      expect(result[:correlation_id]).to eq('corr-ret')
-    end
-  end
+  it 'keeps pending requests until a matching response arrives or the caller times out' do
+    described_class.register('corr-waiting')
 
-  describe '.fulfill_nack' do
-    it 'fulfills with fleet_backpressure error' do
-      future = described_class.register('corr-nack')
-      described_class.fulfill_nack('corr-nack')
-      result = future.value!
-      expect(result[:error]).to eq('fleet_backpressure')
-      expect(result[:correlation_id]).to eq('corr-nack')
-    end
+    expect(described_class.pending_count).to eq(1)
   end
 end

@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.8.35] - 2026-04-28
+
+### Fixed
+- Fleet lane routing now rejects sensitive or oversized public boundary, eligibility, and offering-instance segments before they can enter routing keys.
+- Lex-llm native provider adapters now memoize provider instances and cover streaming, token-count estimation, provider failures, missing namespaces, and non-hash message inputs.
+- Local Ollama/vLLM health probes now distinguish malformed base URL configuration from ordinary unreachable services.
+- Inventory failures now re-raise programmer/config-shape errors instead of silently returning an empty model list.
+- Fleet reply dispatch logging now includes operation tags, JSON parse failures are logged at warning level, and unwired broker return/nack helpers were removed so pending replies rely on the documented timeout path.
+- The vLLM thinking patch now rescues only expected settings-shape errors instead of swallowing all runtime failures.
+
 ## [0.8.34] - 2026-04-28
 
 ### Fixed

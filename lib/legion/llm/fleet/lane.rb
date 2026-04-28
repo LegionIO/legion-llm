@@ -12,14 +12,22 @@ module Legion
           api_key authorization caller credential credentials endpoint endpoint_url
           filesystem identity messages path prompt reply_to secret secrets token url
         ].freeze
+        FORBIDDEN_DIGEST_KEY_PATTERN = /
+          (?:^|[^a-z0-9])
+          (?:api[-_]?key|key|token|secret|credential|password|passphrase|auth|authorization|
+             cookie|bearer|session|private[-_]?key|client[-_]?secret|refresh[-_]?token|
+             access[-_]?token|signature|jwt|pat)
+          (?:$|[^a-z0-9])
+        /ix
+        MAX_PUBLIC_SEGMENT_LENGTH = 64
 
         module_function
 
         def routing_key(operation:, model:, context_window: nil, boundary: nil, eligibility_fingerprint: nil)
           parts = ['llm', 'fleet', operation_slug(operation), sanitize_model(model)]
           parts << "ctx#{Integer(context_window)}" if inference?(operation) && context_window
-          parts.push('boundary', sanitize_segment(boundary)) if boundary
-          parts.push('elig', sanitize_segment(eligibility_fingerprint)) if eligibility_fingerprint
+          parts.push('boundary', public_segment(:boundary, boundary)) if boundary
+          parts.push('elig', public_segment(:eligibility_fingerprint, eligibility_fingerprint)) if eligibility_fingerprint
           parts.join('.')
         end
 
@@ -28,7 +36,7 @@ module Legion
             'llm',
             'fleet',
             'offering',
-            sanitize_segment(instance_id),
+            public_segment(:instance_id, instance_id),
             sanitize_model(model),
             operation_slug(operation)
           ].join('.')
@@ -75,6 +83,20 @@ module Legion
           output
         end
 
+        def public_segment(label, value)
+          raise ArgumentError, "#{label} contains sensitive content" if sensitive_segment?(value)
+
+          segment = sanitize_segment(value)
+          raise ArgumentError, "#{label} is empty after sanitization" if segment.empty?
+          raise ArgumentError, "#{label} exceeds #{MAX_PUBLIC_SEGMENT_LENGTH} characters" if segment.length > MAX_PUBLIC_SEGMENT_LENGTH
+
+          segment
+        end
+
+        def sensitive_segment?(value)
+          value.to_s.match?(FORBIDDEN_DIGEST_KEY_PATTERN)
+        end
+
         def normalize_facts(value)
           case value
           when Hash
@@ -95,9 +117,14 @@ module Legion
 
           value.flat_map do |key, val|
             key_path = path + [key]
-            matches = FORBIDDEN_DIGEST_KEYS.include?(key.to_s.to_sym) ? [key_path.join('.')] : []
+            matches = forbidden_digest_key?(key) ? [key_path.join('.')] : []
             matches + forbidden_keys(val, key_path)
           end
+        end
+
+        def forbidden_digest_key?(key)
+          FORBIDDEN_DIGEST_KEYS.include?(key.to_s.downcase.to_sym) ||
+            key.to_s.match?(FORBIDDEN_DIGEST_KEY_PATTERN)
         end
       end
     end

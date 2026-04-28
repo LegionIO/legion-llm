@@ -111,12 +111,13 @@ module Legion
         def ollama_running?(config)
           require 'socket'
           url = config_value(config, :base_url) || 'http://localhost:11434'
-          host_part = url.gsub(%r{^https?://}, '').split(':')
-          addr = host_part[0]
-          port = (host_part[1] || '11434').to_i
-          log.debug "[llm][providers] ollama_running? addr=#{addr} port=#{port}"
-          Socket.tcp(addr, port, connect_timeout: 1).close
+          uri = http_uri!(url, default_port: 11_434)
+          log.debug "[llm][providers] ollama_running? addr=#{uri.host} port=#{uri.port}"
+          Socket.tcp(uri.host, uri.port, connect_timeout: 1).close
           true
+        rescue URI::InvalidURIError, ArgumentError => e
+          handle_exception(e, level: :error, operation: 'llm.providers.ollama_running.config', base_url: url)
+          false
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.ollama_running', base_url: url)
           false
@@ -126,6 +127,7 @@ module Legion
           require 'faraday'
           url = config_value(config, :base_url) || 'http://localhost:8000/v1'
           base = normalize_vllm_base_url(url)
+          http_uri!(base, default_port: 8000)
           log.debug "[llm][providers] vllm_running? url=#{base}/health"
           response = Faraday.new(url: base) do |f|
             f.options.timeout = 2
@@ -133,6 +135,9 @@ module Legion
             f.adapter Faraday.default_adapter
           end.get('/health')
           response.success?
+        rescue URI::InvalidURIError, ArgumentError => e
+          handle_exception(e, level: :error, operation: 'llm.providers.vllm_running.config', base_url: url)
+          false
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.vllm_running', base_url: url)
           false
@@ -143,6 +148,17 @@ module Legion
           base.chop! while base.end_with?('/')
           base = base[0...-3] if base.end_with?('/v1')
           base.empty? ? 'http://localhost:8000' : base
+        end
+
+        def http_uri!(url, default_port:)
+          require 'uri'
+
+          uri = URI.parse(url.to_s)
+          raise ArgumentError, "unsupported URL scheme #{uri.scheme.inspect}" unless %w[http https].include?(uri.scheme)
+          raise ArgumentError, 'missing URL host' unless uri.host
+
+          uri.port ||= default_port
+          uri
         end
 
         def apply_provider_config(provider, config)

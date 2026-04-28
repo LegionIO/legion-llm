@@ -129,4 +129,12 @@ RSpec.describe Legion::LLM::Inventory do
       ['amazon.titan-embed-text-v2:0', :embed]
     )
   end
+
+  it 'raises programmer errors instead of returning an empty inventory' do
+    allow(described_class).to receive(:normalize_filter_hash).and_raise(NoMethodError, 'broken')
+
+    expect do
+      described_class.offerings(provider: 'bedrock')
+    end.to raise_error(NoMethodError, /broken/)
+  end
 end

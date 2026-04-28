@@ -128,6 +128,24 @@ RSpec.describe 'vLLM provider integration' do
     end
   end
 
+  describe 'local provider health probes' do
+    it 'rejects invalid vllm base URLs before opening a connection' do
+      expect(Faraday).not_to receive(:new)
+
+      result = Legion::LLM::Call::Providers.send(:vllm_running?, { base_url: 'not a url' })
+
+      expect(result).to eq(false)
+    end
+
+    it 'rejects invalid ollama base URLs before opening a socket' do
+      expect(Socket).not_to receive(:tcp)
+
+      result = Legion::LLM::Call::Providers.send(:ollama_running?, { base_url: 'not a url' })
+
+      expect(result).to eq(false)
+    end
+  end
+
   describe 'escalation chain' do
     it 'includes vllm in enabled_provider_chain when enabled' do
       Legion::Settings[:llm][:providers][:vllm] = { enabled: true, default_model: 'qwen3.6-27b' }

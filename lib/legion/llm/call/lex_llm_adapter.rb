@@ -12,6 +12,7 @@ module Legion
         def initialize(provider_name, provider_class)
           @provider_name = provider_name.to_sym
           @provider_class = provider_class
+          @lex_llm_namespace = resolve_lex_llm_namespace
         end
 
         def chat(model:, messages:, **opts)
@@ -70,10 +71,10 @@ module Legion
 
         private
 
-        attr_reader :provider_name, :provider_class
+        attr_reader :provider_name, :provider_class, :lex_llm_namespace
 
         def provider
-          provider_class.new(lex_llm_namespace.config)
+          @provider ||= provider_class.new(lex_llm_namespace.config)
         end
 
         def model_info(model)
@@ -104,7 +105,7 @@ module Legion
           true
         end
 
-        def lex_llm_namespace
+        def resolve_lex_llm_namespace
           return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)
 
           raise NameError, 'lex-llm provider namespace is not loaded'

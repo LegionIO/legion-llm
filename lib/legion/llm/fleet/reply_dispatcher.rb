@@ -46,25 +46,7 @@ module Legion
             future.fulfill(payload)
           end
         rescue StandardError => e
-          handle_exception(e, level: :warn)
-        end
-
-        def fulfill_return(correlation_id)
-          entry = @pending.delete(correlation_id)
-          return unless entry
-
-          entry[:future].fulfill({ success: false, error: 'no_fleet_queue', correlation_id: correlation_id })
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.fulfill_return')
-        end
-
-        def fulfill_nack(correlation_id)
-          entry = @pending.delete(correlation_id)
-          return unless entry
-
-          entry[:future].fulfill({ success: false, error: 'fleet_backpressure', correlation_id: correlation_id })
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.fulfill_nack')
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.handle_delivery')
         end
 
         def agent_queue_name
@@ -98,14 +80,14 @@ module Legion
             end
           end
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.ensure_consumer')
         end
 
         def cancel_consumer
           @consumer&.cancel
           @consumer = nil
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.cancel_consumer')
         end
 
         def transport_available?
@@ -124,7 +106,7 @@ module Legion
             ::JSON.parse(raw, symbolize_names: true)
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.parse_payload')
           {}
         end
 

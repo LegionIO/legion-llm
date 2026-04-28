@@ -63,4 +63,61 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result[:result]).to eq([0.5, 0.5, 0.5])
     expect(result[:usage]).to include(input_tokens: 4, output_tokens: 0)
   end
+
+  it 'streams provider chunks through the callback and response accumulator' do
+    provider_class.define_method(:complete) do |_messages, model:, **, &block|
+      block.call(llm_namespace::Chunk.new(role: :assistant, content: 'hel', model_id: model.id))
+      block.call(llm_namespace::Chunk.new(role: :assistant, content: 'lo', model_id: model.id,
+                                          input_tokens: 7, output_tokens: 3))
+    end
+
+    yielded = []
+    result = adapter.stream(model: 'model-a', messages: [{ role: 'user', content: 'hi' }]) do |chunk|
+      yielded << chunk.content
+    end
+
+    expect(yielded).to eq(%w[hel lo])
+    expect(result[:result]).to eq('hello')
+    expect(result[:model]).to eq('model-a')
+    expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
+  end
+
+  it 'estimates token count for non-hash message inputs' do
+    result = adapter.count_tokens(model: 'model-a', messages: ['hello world'])
+
+    expect(result[:result]).to eq(3)
+    expect(result[:usage]).to eq({})
+  end
+
+  it 'memoizes the lex-llm provider instance' do
+    instantiations = 0
+    provider_class.define_singleton_method(:instantiations) { instantiations }
+    provider_class.define_method(:initialize) do |config|
+      instantiations += 1
+      super(config)
+    end
+
+    adapter.chat(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
+    adapter.embed(model: 'embed-a', text: 'hello', dimensions: 3)
+
+    expect(provider_class.instantiations).to eq(1)
+  end
+
+  it 'raises provider failures for the caller to classify' do
+    provider_class.define_method(:complete) do |_messages, **|
+      raise 'provider failed'
+    end
+
+    expect do
+      adapter.chat(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
+    end.to raise_error(RuntimeError, 'provider failed')
+  end
+
+  it 'raises when the lex-llm namespace has not been loaded' do
+    hide_const('Legion::Extensions::Llm')
+
+    expect do
+      described_class.new(:fake_llm, Class.new)
+    end.to raise_error(NameError, /lex-llm provider namespace/)
+  end
 end
