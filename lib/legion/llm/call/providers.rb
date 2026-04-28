@@ -583,12 +583,20 @@ module Legion
           when /_api_key\z/
             env_api_key(provider)
           when /_api_base\z/
-            config_value(provider_config, :api_base) ||
-              config_value(provider_config, :base_url) ||
-              config_value(provider_config, :endpoint)
+            api_base = config_value(provider_config, :api_base) ||
+                       config_value(provider_config, :base_url) ||
+                       config_value(provider_config, :endpoint)
+            normalize_lex_llm_api_base(provider, api_base)
           when /_version\z/
             config_value(provider_config, :version)
           end
+        end
+
+        def normalize_lex_llm_api_base(provider, value)
+          return value if value.nil?
+          return value unless %i[openai vllm].include?(provider.to_sym)
+
+          value.to_s.sub(%r{/v1/?\z}, '')
         end
 
         def credential_option?(option)

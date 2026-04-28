@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.8.34] - 2026-04-28
+
+### Fixed
+- Native lex-llm provider dispatch now preserves injected system instructions when routing through `LexLLMAdapter`.
+- Lex-llm bridge configuration now normalizes OpenAI-compatible `/v1` base URLs for `vllm` and `openai` providers while preserving versioned non-OpenAI-compatible endpoints.
+
 ## [0.8.33] - 2026-04-27
 
 ### Fixed
