@@ -24,10 +24,10 @@ module Legion
 
         def run
           log.debug '[llm][discovery] run.enter'
+          System.refresh! if discovery_enabled?
 
           if provider_enabled?(:ollama)
             Ollama.refresh!
-            System.refresh!
             names = Ollama.model_names
             log.info "[llm][discovery] ollama model_count=#{names.size} models=#{names.join(', ')}"
             log.info "[llm][discovery] system total_mb=#{System.total_memory_mb} available_mb=#{System.available_memory_mb}"
@@ -206,6 +206,10 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.discovery.settings')
           {}
+        end
+
+        def discovery_enabled?
+          config_value(config_value(llm_settings, :discovery, {}), :enabled) != false
         end
 
         def config_value(config, key, default = nil)

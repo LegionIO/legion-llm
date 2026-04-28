@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.8.40] - 2026-04-28
+
+### Fixed
+- Streaming inference now uses native lex-llm provider dispatch when the provider layer selects native mode, while preserving RubyLLM streaming fallback for compatibility.
+- Startup discovery now refreshes local system facts independently of Ollama model refresh, and metering publish now loads its transport message class when connected instead of depending on prior boot order.
+
 ## [0.8.39] - 2026-04-28
 
 ### Fixed

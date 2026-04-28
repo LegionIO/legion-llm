@@ -21,8 +21,10 @@ module Legion
       module_function
 
       def emit(event)
-        if transport_connected? && defined?(Legion::LLM::Transport::Messages::MeteringEvent)
-          Legion::LLM::Transport::Messages::MeteringEvent.new(**event).publish
+        event_class = metering_event_class if transport_connected?
+
+        if event_class
+          event_class.new(**event).publish
           log.info("[llm][metering] published provider=#{event[:provider]} model=#{event[:model_id]}")
           :published
         elsif spool_available?
@@ -79,6 +81,18 @@ module Legion
 
       def transport_connected?
         Legion::LLM::Settings.transport_connected?
+      end
+
+      def metering_event_class
+        return Legion::LLM::Transport::Messages::MeteringEvent if defined?(Legion::LLM::Transport::Messages::MeteringEvent)
+
+        load_transport
+        return Legion::LLM::Transport::Messages::MeteringEvent if defined?(Legion::LLM::Transport::Messages::MeteringEvent)
+
+        Legion::LLM::Metering::Event
+      rescue NameError, LoadError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.metering.event_class')
+        nil
       end
 
       def spool_available?

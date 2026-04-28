@@ -23,12 +23,15 @@ module Legion
         end
 
         LEX_LLM_PROVIDER_REQUIRES = {
-          ollama:    'legion/extensions/llm/ollama',
-          vllm:      'legion/extensions/llm/vllm',
-          anthropic: 'legion/extensions/llm/anthropic',
-          openai:    'legion/extensions/llm/openai',
-          gemini:    'legion/extensions/llm/gemini',
-          mlx:       'legion/extensions/llm/mlx'
+          ollama:        'legion/extensions/llm/ollama',
+          vllm:          'legion/extensions/llm/vllm',
+          anthropic:     'legion/extensions/llm/anthropic',
+          openai:        'legion/extensions/llm/openai',
+          gemini:        'legion/extensions/llm/gemini',
+          mlx:           'legion/extensions/llm/mlx',
+          bedrock:       'legion/extensions/llm/bedrock',
+          azure_foundry: 'legion/extensions/llm/azure_foundry',
+          vertex:        'legion/extensions/llm/vertex'
         }.freeze
 
         def resolve_llm_secrets
@@ -547,13 +550,47 @@ module Legion
         end
 
         def load_optional_feature(feature)
+          llm_settings = snapshot_llm_settings
           require feature
+          restore_llm_settings(llm_settings) if llm_settings_lost?(llm_settings)
           true
         rescue LoadError => e
           handle_exception(e, level: :warn, handled: true,
                               operation: 'llm.providers.optional_feature',
                               feature: feature)
           false
+        end
+
+        def snapshot_llm_settings
+          settings = Legion::LLM::Settings.current_settings
+          return nil unless settings.is_a?(Hash) && settings.any?
+
+          Marshal.load(Marshal.dump(settings))
+        rescue TypeError
+          settings.dup
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true,
+                              operation: 'llm.providers.snapshot_llm_settings')
+          nil
+        end
+
+        def llm_settings_lost?(snapshot)
+          return false unless snapshot.is_a?(Hash) && (snapshot.key?(:providers) || snapshot.key?('providers'))
+
+          current = Legion::LLM::Settings.current_settings
+          !current.is_a?(Hash) || !(current.key?(:providers) || current.key?('providers'))
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true,
+                              operation: 'llm.providers.llm_settings_lost')
+          false
+        end
+
+        def restore_llm_settings(snapshot)
+          Legion::Settings[:llm] = snapshot if defined?(Legion::Settings) && snapshot.is_a?(Hash)
+          log.warn '[llm][providers] restored LLM settings after optional provider load changed settings backend'
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true,
+                              operation: 'llm.providers.restore_llm_settings')
         end
 
         def lex_llm_provider_ready?(namespace, provider_name, provider_class)
