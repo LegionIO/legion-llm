@@ -9,27 +9,18 @@ module Legion
         module Models
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength
+          def self.registered(app)
             log.debug('[llm][api][models] registering model inventory routes')
 
             app.get '/api/llm/models' do
               log.debug('[llm][api][models] action=list_models')
               require_llm!
 
-              filters = {
-                provider:    params[:provider],
-                instance_id: params[:instance_id] || params[:instance],
-                type:        params[:type] || params[:purpose],
-                model:       params[:model],
-                capability:  params[:capability]
-              }
+              filters = Legion::LLM::API::Native::Models.request_filters(params)
               offerings = Legion::LLM::Inventory.offerings(filters)
-              models = offerings.group_by { |offering| offering[:model] }.map do |model, rows|
-                Legion::LLM::API::Native::Models.summarize_model(model, rows)
-              end
 
               json_response({
-                              models:    models.sort_by { |model| model[:id] },
+                              models:    Legion::LLM::API::Native::Models.model_summaries(offerings),
                               offerings: offerings,
                               summary:   Legion::LLM::API::Native::Models.summary(offerings)
                             })
@@ -60,19 +51,12 @@ module Legion
               log.debug("[llm][api][models] action=list_provider_models provider=#{provider}")
               require_llm!
 
-              offerings = Legion::LLM::Inventory.offerings(
-                provider:    provider,
-                instance_id: params[:instance_id] || params[:instance],
-                type:        params[:type] || params[:purpose],
-                capability:  params[:capability]
-              )
-              models = offerings.group_by { |offering| offering[:model] }.map do |model, rows|
-                Legion::LLM::API::Native::Models.summarize_model(model, rows)
-              end
+              filters = Legion::LLM::API::Native::Models.request_filters(params).merge(provider: provider)
+              offerings = Legion::LLM::Inventory.offerings(filters)
 
               json_response({
                               provider:  provider,
-                              models:    models.sort_by { |model| model[:id] },
+                              models:    Legion::LLM::API::Native::Models.model_summaries(offerings),
                               offerings: offerings,
                               summary:   Legion::LLM::API::Native::Models.summary(offerings)
                             })
@@ -84,15 +68,36 @@ module Legion
             log.debug('[llm][api][models] model inventory routes registered')
           end
 
+          def self.request_filters(params)
+            {
+              provider:     params[:provider],
+              instance_id:  params[:instance_id] || params[:instance],
+              type:         params[:type] || params[:purpose],
+              model:        params[:model],
+              offering_id:  params[:offering_id],
+              model_family: params[:model_family],
+              capability:   params[:capability]
+            }
+          end
+
+          def self.model_summaries(offerings)
+            summaries = offerings.group_by { |offering| offering[:model] }.map do |model, rows|
+              summarize_model(model, rows)
+            end
+            summaries.sort_by { |model| model[:id] }
+          end
+
           def self.summarize_model(model, offerings)
             {
-              id:           model.to_s,
-              types:        offerings.map { |offering| offering[:type].to_s }.uniq.sort,
-              providers:    offerings.map { |offering| offering[:provider_family] }.uniq.sort,
-              instances:    offerings.map { |offering| offering[:instance_id] }.uniq.sort,
-              capabilities: offerings.flat_map { |offering| offering[:capabilities] }.uniq.sort,
-              max_context:  offerings.filter_map { |offering| offering.dig(:limits, :context_window) }.max,
-              enabled:      offerings.any? { |offering| offering[:enabled] != false }
+              id:             model.to_s,
+              types:          offerings.map { |offering| offering[:type].to_s }.uniq.sort,
+              providers:      offerings.map { |offering| offering[:provider_family] }.uniq.sort,
+              model_families: offerings.filter_map { |offering| offering[:model_family] }.uniq.sort,
+              offering_ids:   offerings.filter_map { |offering| offering[:offering_id] }.uniq.sort,
+              instances:      offerings.map { |offering| offering[:instance_id] }.uniq.sort,
+              capabilities:   offerings.flat_map { |offering| offering[:capabilities] }.uniq.sort,
+              max_context:    offerings.filter_map { |offering| offering.dig(:limits, :context_window) }.max,
+              enabled:        offerings.any? { |offering| offering[:enabled] != false }
             }
           end
 

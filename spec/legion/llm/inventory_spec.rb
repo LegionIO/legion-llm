@@ -114,6 +114,70 @@ RSpec.describe Legion::LLM::Inventory do
     expect(offering[:metadata]).to eq(network_boundary: 'corp_lan')
   end
 
+  it 'exposes expanded offering routing metadata from configured offerings' do
+    Legion::Settings[:llm][:providers][:vllm] = {
+      enabled:   true,
+      offerings: [
+        {
+          model:                 'Qwen/Qwen3-32B',
+          offering_id:           'vllm:macbook-m4:inference:qwen3-32b',
+          model_family:          :qwen,
+          canonical_model_alias: 'qwen3.32b',
+          provider_instance:     :macbook_m4,
+          routing_metadata:      { accelerator: 'mps', boundary: 'local' },
+          capabilities:          %i[chat tools],
+          limits:                { context_window: 65_536 }
+        }
+      ]
+    }
+
+    offering = described_class.offerings(offering_id: 'vllm:macbook-m4:inference:qwen3-32b').first
+
+    expect(offering).to include(
+      id:                    'vllm:macbook-m4:inference:qwen3-32b',
+      offering_id:           'vllm:macbook-m4:inference:qwen3-32b',
+      model_family:          'qwen',
+      canonical_model_alias: 'qwen3.32b',
+      provider_instance:     'macbook_m4',
+      routing_metadata:      { accelerator: 'mps', boundary: 'local' }
+    )
+    expect(offering).not_to have_key(:credentials)
+  end
+
+  it 'consumes lex-llm native provider offerings when adapters expose them' do
+    adapter = double(
+      'Adapter',
+      offerings: [
+        {
+          offering_id:           'azure:default:inference:gpt-4o',
+          provider_family:       :azure_foundry,
+          model_family:          :openai,
+          provider_instance:     :eastus,
+          model:                 'gpt4o-prod',
+          canonical_model_alias: 'gpt-4o',
+          usage_type:            :inference,
+          routing_metadata:      { deployment: 'gpt4o-prod' },
+          credentials:           { api_key: 'secret' },
+          capabilities:          %i[chat tools]
+        }
+      ]
+    )
+    allow(Legion::LLM::Call::Registry).to receive(:available).and_return([:azure_foundry])
+    allow(Legion::LLM::Call::Registry).to receive(:for).with(:azure_foundry).and_return(adapter)
+
+    offering = described_class.offerings(provider: 'azure_foundry').first
+
+    expect(offering).to include(
+      offering_id:           'azure:default:inference:gpt-4o',
+      provider_family:       'azure_foundry',
+      model_family:          'openai',
+      provider_instance:     'eastus',
+      canonical_model_alias: 'gpt-4o',
+      routing_metadata:      { deployment: 'gpt4o-prod' }
+    )
+    expect(offering).not_to have_key(:credentials)
+  end
+
   it 'reads top-level string-keyed provider and embedding settings' do
     Legion::Settings[:llm]['providers'] = {
       'bedrock-json' => {

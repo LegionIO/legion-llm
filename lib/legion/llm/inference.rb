@@ -651,8 +651,11 @@ module Legion
       end
 
       def build_attempt(resolution, outcome, failures, duration_ms)
-        { model: resolution.model, provider: resolution.provider, tier: resolution.tier,
-          outcome: outcome, failures: failures, duration_ms: duration_ms }
+        attempt = { model: resolution.model, provider: resolution.provider, tier: resolution.tier,
+                    outcome: outcome, failures: failures, duration_ms: duration_ms }
+        attempt[:offering_id] = resolution.offering_id if resolution.offering_id
+        attempt[:offering_metadata] = resolution.offering_metadata unless resolution.offering_metadata.empty?
+        attempt
       end
 
       def attach_escalation_history(response, history, resolution, chain)
@@ -669,8 +672,10 @@ module Legion
 
         metadata = { duration_ms: duration_ms }
         metadata[:failures] = failures if failures
-        Router.health_tracker.report(provider: resolution.provider, signal: signal, value: 1, metadata: metadata)
-        Router.health_tracker.report(provider: resolution.provider, signal: :latency, value: duration_ms, metadata: {})
+        Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+                                     signal: signal, value: 1, metadata: metadata)
+        Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+                                     signal: :latency, value: duration_ms, metadata: {})
       end
 
       def publish_escalation_event(history, final_outcome)

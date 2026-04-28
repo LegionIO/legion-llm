@@ -43,6 +43,33 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
   end
 
+  it 'passes offering metadata through lex-llm model info when present' do
+    provider_class.define_singleton_method(:last_model) { @last_model }
+    provider_class.define_singleton_method(:last_model=) { |model| @last_model = model }
+    provider_class.define_method(:complete) do |_messages, model:, **|
+      self.class.last_model = model
+      llm_namespace::Message.new(role: :assistant, content: "hello #{model.id}", model_id: model.id)
+    end
+
+    result = adapter.chat(
+      model:             'deployment-a',
+      messages:          [{ role: 'user', content: 'hi' }],
+      offering_metadata: {
+        offering_id:           'azure:default:inference:gpt-4o',
+        model_family:          :openai,
+        canonical_model_alias: 'gpt-4o',
+        routing_metadata:      { deployment: 'deployment-a' }
+      }
+    )
+
+    expect(provider_class.last_model.metadata).to include(
+      offering_id:           'azure:default:inference:gpt-4o',
+      model_family:          :openai,
+      canonical_model_alias: 'gpt-4o'
+    )
+    expect(result[:metadata]).to include(offering: hash_including(offering_id: 'azure:default:inference:gpt-4o'))
+  end
+
   it 'prepends system instructions to native chat messages' do
     provider_class.define_singleton_method(:last_messages) { @last_messages }
     provider_class.define_singleton_method(:last_messages=) { |messages| @last_messages = messages }
@@ -101,6 +128,17 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     adapter.embed(model: 'embed-a', text: 'hello', dimensions: 3)
 
     expect(provider_class.instantiations).to eq(1)
+  end
+
+  it 'exposes provider-discovered offerings when supported' do
+    provider_class.define_method(:discover_offerings) do |live: false, **|
+      [{ offering_id: 'fake:default:inference:model-a', model: 'model-a', live: live }]
+    end
+
+    expect(adapter.offerings(live: true)).to eq([
+                                                  { offering_id: 'fake:default:inference:model-a',
+                                                    model: 'model-a', live: true }
+                                                ])
   end
 
   it 'raises provider failures for the caller to classify' do

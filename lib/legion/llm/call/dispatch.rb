@@ -10,10 +10,11 @@ module Legion
       # ConversationStore after a provider call).
       class NativeResponseAdapter
         attr_reader :content, :input_tokens, :output_tokens,
-                    :cache_read_tokens, :cache_write_tokens, :usage
+                    :cache_read_tokens, :cache_write_tokens, :usage, :metadata
 
         def initialize(result_hash)
           @content             = result_hash[:result].to_s
+          @metadata            = result_hash[:metadata] || {}
           usage                = result_hash[:usage] || Usage.new
           @usage               = usage
           @input_tokens        = usage.input_tokens
@@ -134,7 +135,9 @@ module Legion
                   end
 
           log.debug("[llm][native] normalized_response usage_class=#{usage.class}")
-          { result: result, usage: usage }
+          metadata = raw[:metadata] || raw[:offering_metadata] || {}
+
+          { result: result, usage: usage, metadata: metadata }
         end
       end
     end

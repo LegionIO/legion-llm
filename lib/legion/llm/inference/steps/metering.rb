@@ -34,8 +34,9 @@ module Legion
               request_type: opts[:request_type],
               tier:         opts[:tier],
               provider:     opts[:provider],
-              model_id:     opts[:model_id]
-            }
+              model_id:     opts[:model_id],
+              offering_id:  opts[:offering_id]
+            }.compact
           end
 
           def token_fields(opts)
@@ -48,11 +49,12 @@ module Legion
 
           def timing_and_context(opts)
             {
-              latency_ms:     opts.fetch(:latency_ms, 0),
-              wall_clock_ms:  opts.fetch(:wall_clock_ms, 0),
-              routing_reason: opts[:routing_reason],
-              recorded_at:    Time.now.utc.iso8601
-            }
+              latency_ms:        opts.fetch(:latency_ms, 0),
+              wall_clock_ms:     opts.fetch(:wall_clock_ms, 0),
+              routing_reason:    opts[:routing_reason],
+              offering_metadata: opts[:offering_metadata],
+              recorded_at:       Time.now.utc.iso8601
+            }.compact
           end
 
           def publish_event(event)
