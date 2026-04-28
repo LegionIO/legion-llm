@@ -156,6 +156,20 @@ RSpec.describe Legion::LLM::Providers do
       expect(Legion::LLM::Call::Registry.for(:anthropic)).to be_a(Legion::LLM::Call::LexLLMAdapter)
       expect(Legion::LLM::Call::Registry.for(:claude)).to be_a(Legion::LLM::Call::LexLLMAdapter)
     end
+
+    it 'loads every provider gem wired by the LegionIO LLM setup pack' do
+      host.send(:auto_register_lex_llm_providers)
+
+      expect(host).to have_received(:load_optional_feature).with('legion/extensions/llm/ollama')
+      expect(host).to have_received(:load_optional_feature).with('legion/extensions/llm/vllm')
+      expect(host).to have_received(:load_optional_feature).with('legion/extensions/llm/anthropic')
+      expect(host).to have_received(:load_optional_feature).with('legion/extensions/llm/openai')
+      expect(host).to have_received(:load_optional_feature).with('legion/extensions/llm/gemini')
+      expect(host).to have_received(:load_optional_feature).with('legion/extensions/llm/mlx')
+      expect(host).to have_received(:load_optional_feature).with('legion/extensions/llm/bedrock')
+      expect(host).to have_received(:load_optional_feature).with('legion/extensions/llm/azure_foundry')
+      expect(host).to have_received(:load_optional_feature).with('legion/extensions/llm/vertex')
+    end
   end
 
   describe '#lex_llm_provider_config_value' do

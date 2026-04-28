@@ -576,38 +576,43 @@ module Legion
         end
 
         def execute_provider_request_native
+          result = Call::Dispatch.dispatch_chat(
+            provider: @resolved_provider,
+            model:    @resolved_model,
+            messages: native_dispatch_messages,
+            **native_dispatch_options
+          )
+          merge_response_offering_metadata(result[:metadata])
+          @raw_response = Call::NativeResponseAdapter.new(result)
+        rescue Legion::LLM::ProviderError => e
+          layer_settings = llm_setting(:provider_layer, {})
+          raise unless config_value(layer_settings, :fallback_to_ruby_llm, true)
+
+          handle_exception(
+            e,
+            level:     :warn,
+            operation: 'llm.pipeline.native_dispatch',
+            provider:  @resolved_provider,
+            fallback:  'ruby_llm'
+          )
+          execute_provider_request_ruby_llm
+        end
+
+        def native_dispatch_messages
+          apply_conversation_breakpoint(@request.messages)
+        end
+
+        def native_dispatch_options
           injected_system = EnrichmentInjector.inject(
             system:      @request.system,
             enrichments: @enrichments
           )
 
-          messages = apply_conversation_breakpoint(@request.messages)
-
-          opts = { system: injected_system, offering_id: @resolved_offering_id,
-                   offering_metadata: @resolved_offering_metadata }.compact
-
-          begin
-            result = Call::Dispatch.dispatch_chat(
-              provider: @resolved_provider,
-              model:    @resolved_model,
-              messages: messages,
-              **opts
-            )
-            merge_response_offering_metadata(result[:metadata])
-            @raw_response = Call::NativeResponseAdapter.new(result)
-          rescue Legion::LLM::ProviderError => e
-            layer_settings = llm_setting(:provider_layer, {})
-            raise unless config_value(layer_settings, :fallback_to_ruby_llm, true)
-
-            handle_exception(
-              e,
-              level:     :warn,
-              operation: 'llm.pipeline.native_dispatch',
-              provider:  @resolved_provider,
-              fallback:  'ruby_llm'
-            )
-            execute_provider_request_ruby_llm
-          end
+          {
+            system:            injected_system,
+            offering_id:       @resolved_offering_id,
+            offering_metadata: @resolved_offering_metadata
+          }.compact
         end
 
         def use_native_dispatch?(provider)
@@ -795,6 +800,41 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
+          if use_native_dispatch?(@resolved_provider)
+            execute_provider_request_stream_native(&)
+          else
+            execute_provider_request_stream_ruby_llm(&)
+          end
+
+          @timestamps[:provider_end] = Time.now
+          record_provider_response
+        end
+
+        def execute_provider_request_stream_native(&)
+          result = Call::Dispatch.dispatch_stream(
+            provider: @resolved_provider,
+            model:    @resolved_model,
+            messages: native_dispatch_messages,
+            **native_dispatch_options,
+            &
+          )
+          merge_response_offering_metadata(result[:metadata])
+          @raw_response = Call::NativeResponseAdapter.new(result)
+        rescue Legion::LLM::ProviderError => e
+          layer_settings = llm_setting(:provider_layer, {})
+          raise unless config_value(layer_settings, :fallback_to_ruby_llm, true)
+
+          handle_exception(
+            e,
+            level:     :warn,
+            operation: 'llm.pipeline.native_stream_dispatch',
+            provider:  @resolved_provider,
+            fallback:  'ruby_llm'
+          )
+          execute_provider_request_stream_ruby_llm(&)
+        end
+
+        def execute_provider_request_stream_ruby_llm(&)
           session, message_content = build_ruby_llm_session
           install_tool_loop_guard(session)
 
@@ -807,9 +847,6 @@ module Legion
             Thread.current[:legion_current_tool_name] = nil
             Thread.current[:legion_current_tool_started_at] = nil
           end
-
-          @timestamps[:provider_end] = Time.now
-          record_provider_response
         end
 
         def build_ruby_llm_session

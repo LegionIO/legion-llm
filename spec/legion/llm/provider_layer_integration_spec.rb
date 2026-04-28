@@ -17,7 +17,10 @@ RSpec.describe 'Provider layer mode switching' do
     Legion::LLM::Call::Registry.reset!
     Legion::Settings[:llm][:provider_layer] = {
       mode:                 'auto',
-      native_providers:     %w[ollama vllm anthropic openai gemini mlx claude bedrock],
+      native_providers:     %w[
+        ollama vllm anthropic openai gemini mlx
+        bedrock azure_foundry vertex claude
+      ],
       fallback_to_ruby_llm: true
     }
   end
@@ -42,7 +45,10 @@ RSpec.describe 'Provider layer mode switching' do
 
     it 'lists new lex-llm providers as default native_providers' do
       layer = Legion::LLM.settings[:provider_layer]
-      expect(layer[:native_providers]).to include('ollama', 'vllm', 'anthropic', 'openai', 'gemini', 'mlx')
+      expect(layer[:native_providers]).to include(
+        'ollama', 'vllm', 'anthropic', 'openai', 'gemini', 'mlx',
+        'bedrock', 'azure_foundry', 'vertex'
+      )
     end
 
     it 'enables fallback_to_ruby_llm by default' do

@@ -19,6 +19,9 @@ group :test do
     lex-llm-openai
     lex-llm-gemini
     lex-llm-mlx
+    lex-llm-bedrock
+    lex-llm-azure-foundry
+    lex-llm-vertex
   ].each do |provider_gem|
     provider_path = File.expand_path("../extensions-ai/#{provider_gem}", __dir__)
     gem provider_gem, path: provider_path if Dir.exist?(provider_path)

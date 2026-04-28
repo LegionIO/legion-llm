@@ -105,6 +105,59 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
     )
   end
 
+  it 'uses native dispatch for streaming when the provider layer selects native mode' do
+    Legion::Settings[:llm][:provider_layer] = {
+      mode:                 'native',
+      fallback_to_ruby_llm: false
+    }
+    Legion::LLM::Call::Registry.register(:anthropic, Module.new do
+      define_singleton_method(:stream) do |model:, messages:, **, &block|
+        block&.call('native ')
+        block&.call('stream')
+        {
+          content:  "native stream #{model} #{messages.size}",
+          usage:    { input_tokens: 8, output_tokens: 4 },
+          metadata: { offering: { offering_id: 'anthropic:test:chat:claude-opus-4-6' } }
+        }
+      end
+    end)
+
+    executor = described_class.new(request)
+    chunks = []
+
+    response = executor.call_stream { |chunk| chunks << chunk }
+
+    expect(chunks).to eq(['native ', 'stream'])
+    expect(response.message[:content]).to eq('native stream claude-opus-4-6 1')
+    expect(response.tokens.input_tokens).to eq(8)
+    expect(response.routing[:offering_id]).to eq('anthropic:test:chat:claude-opus-4-6')
+  end
+
+  it 'falls back to RubyLLM streaming when native dispatch fails and fallback is enabled' do
+    Legion::Settings[:llm][:provider_layer] = {
+      mode:                 'native',
+      fallback_to_ruby_llm: true
+    }
+    Legion::LLM::Call::Registry.register(:anthropic, Module.new do
+      define_singleton_method(:stream) do |**|
+        raise Legion::LLM::ProviderError, 'native stream unavailable'
+      end
+    end)
+
+    executor = described_class.new(request)
+    mock_session = double('session', with_tool: nil)
+    mock_response = double('response', content: 'fallback', input_tokens: 5, output_tokens: 3)
+    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
+    allow(mock_session).to receive(:add_message)
+    allow(mock_session).to receive(:ask).and_return(mock_response)
+
+    response = executor.call_stream { |_chunk| nil }
+
+    expect(response.message[:content]).to eq('fallback')
+    expect(RubyLLM).to have_received(:chat)
+  end
+
   it 'falls back to blocking call when no block given' do
     executor = described_class.new(request)
     allow(executor).to receive(:step_provider_call)

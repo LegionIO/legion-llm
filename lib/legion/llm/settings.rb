@@ -110,7 +110,10 @@ module Legion
       end
 
       def self.transport_connected?
-        global_value(:transport, :connected) == true
+        return true if global_value(:transport, :connected) == true
+
+        transport = namespace(:transport)
+        config_value(transport, :connected) == true
       end
 
       def self.enterprise_privacy?
@@ -389,7 +392,10 @@ module Legion
       def self.provider_layer_defaults
         {
           mode:                 'auto',
-          native_providers:     %w[ollama vllm anthropic openai gemini mlx claude bedrock],
+          native_providers:     %w[
+            ollama vllm anthropic openai gemini mlx
+            bedrock azure_foundry vertex claude
+          ],
           fallback_to_ruby_llm: true
         }
       end
