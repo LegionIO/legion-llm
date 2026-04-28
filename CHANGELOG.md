@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.38] - 2026-04-28
+
+### Fixed
+- `require 'legion/llm'` now loads `legion-settings` when the host has not already loaded `Legion::Settings`, preserving standalone settings defaults and override behavior during LegionIO load-phase initialization.
+
 ## [0.8.37] - 2026-04-28
 
 ### Fixed

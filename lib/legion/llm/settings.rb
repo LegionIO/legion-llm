@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/settings' unless defined?(Legion::Settings)
 
 module Legion
   module LLM
