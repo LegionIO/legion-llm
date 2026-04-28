@@ -14,8 +14,10 @@ module Legion
         default_model = Legion::LLM::Settings.value(:default_model)
         default_provider = Legion::LLM::Settings.value(:default_provider)
 
-        RubyLLM.configure do |c|
-          c.default_model = default_model if default_model
+        if Legion::LLM.ruby_llm_available?
+          RubyLLM.configure do |c|
+            c.default_model = default_model if default_model
+          end
         end
 
         if default_model.nil? && default_provider.nil?
