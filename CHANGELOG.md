@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.43] - 2026-04-28
+
+### Changed
+- RubyLLM is now loaded as an optional compatibility layer instead of a router runtime dependency, and native provider dispatch no longer falls back to RubyLLM by default.
+
 ## [0.8.42] - 2026-04-28
 
 ### Fixed
