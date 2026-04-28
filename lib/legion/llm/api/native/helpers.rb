@@ -287,6 +287,11 @@ module Legion
 
               define_method(:build_client_tool_class) do |tname, tdesc, tschema|
                 log.debug("[llm][api][helpers] build_client_tool_class name=#{tname}")
+                unless Legion::LLM.ruby_llm_available?
+                  log.debug("[llm][api][helpers] build_client_tool_class skipped name=#{tname} reason=ruby_llm_unavailable")
+                  next nil
+                end
+
                 tool_ref = tname
                 klass = Class.new(RubyLLM::Tool) do
                   include Legion::LLM::API::Native::ClientToolMethods

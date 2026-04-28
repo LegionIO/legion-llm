@@ -535,6 +535,11 @@ module Legion
         Call::Providers.inject_anthropic_cache_control!(opts, provider)
 
         log.debug "[llm][inference] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
+        unless ruby_llm_available?
+          return chat_single_native(model: opts[:model], provider: opts[:provider], message: message,
+                                    caller: kwargs[:caller], **opts.except(:model, :provider), &block)
+        end
+
         session = RubyLLM.chat(**opts)
         tools&.each { |tool| session.with_tool(tool) }
         return session unless message
@@ -552,7 +557,34 @@ module Legion
         response
       end
 
+      def ruby_llm_available?
+        Legion::LLM.respond_to?(:ruby_llm_available?) && Legion::LLM.ruby_llm_available?
+      end
+
+      def chat_single_native(model:, provider:, message:, caller: nil, **, &block)
+        raise ruby_llm_unavailable_error('session-style chat') unless message
+        raise ruby_llm_unavailable_error('chat without a native provider') unless provider && Call::Dispatch.available?(provider)
+
+        messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
+        result = if block
+                   Call::Dispatch.dispatch_stream(provider: provider, model: model, messages: messages, **, &block)
+                 else
+                   Call::Dispatch.dispatch_chat(provider: provider, model: model, messages: messages, **)
+                 end
+        response = Call::NativeResponseAdapter.new(result)
+        emit_non_pipeline_metering(response, model: model, provider: provider, caller: caller)
+        response
+      end
+
+      def ruby_llm_unavailable_error(operation)
+        Legion::LLM::ProviderError.new(
+          "RubyLLM is unavailable for #{operation}. Install ruby_llm or configure a registered native provider."
+        )
+      end
+
       def adapted_registry_tools
+        return [] unless ruby_llm_available?
+
         tool_classes = if defined?(::Legion::Tools::Registry)
                          ::Legion::Tools::Registry.tools
                        else
@@ -603,51 +635,86 @@ module Legion
 
         threshold = escalation_quality_threshold
         history = []
+        last_error = nil
 
         chain.each do |resolution|
-          start_time = Time.now
-          begin
-            assert_external_allowed! if resolution.respond_to?(:external?) && resolution.external?
-            opts = { model: resolution.model, provider: resolution.provider }
-            opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
-            chat_obj = RubyLLM.chat(**opts)
-            response = chat_obj.ask(message)
-
-            duration_ms = ((Time.now - start_time) * 1000).round
-            result = Quality::Checker.check(response, quality_threshold: threshold, quality_check: quality_check)
-
-            if result.passed
-              report_health(:success, resolution, duration_ms)
-              history << build_attempt(resolution, :success, [], duration_ms)
-              attach_escalation_history(response, history, resolution, chain)
-              publish_escalation_event(history, :success) if history.size > 1
-              log.debug "[llm][inference] chat_with_escalation success attempts=#{history.size}"
-              return response
-            else
-              report_health(:quality_failure, resolution, duration_ms, failures: result.failures)
-              history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
-              log.debug "[llm][inference] chat_with_escalation quality_failure attempt=#{history.size} failures=#{result.failures}"
-            end
-          rescue Legion::LLM::PrivacyModeError
-            raise
-          rescue StandardError => e
-            duration_ms = ((Time.now - start_time) * 1000).round
-            handle_exception(
-              e,
-              level:     :warn,
-              handled:   true,
-              operation: 'llm.inference.escalation_attempt',
-              model:     resolution&.model,
-              provider:  resolution&.provider,
-              tier:      resolution&.tier
-            )
-            report_health(:error, resolution, duration_ms) if resolution
-            history << build_attempt(resolution, :error, [e.class.name], duration_ms) if resolution
-          end
+          response, error = run_escalation_attempt(
+            resolution, message: message, kwargs: kwargs, threshold: threshold,
+            quality_check: quality_check, history: history, chain: chain
+          )
+          last_error = error if error
+          return response if response
         end
 
         publish_escalation_event(history, :exhausted) if history.size > 1
+        if !ruby_llm_available? && last_error
+          providers = history.filter_map { |attempt| attempt[:provider] }.uniq.join(', ')
+          raise Legion::LLM::ProviderError,
+                'All escalation attempts failed without RubyLLM; no usable native provider handled the request. ' \
+                "providers=#{providers} last_error=#{last_error.class}: #{last_error.message}"
+        end
+
         raise Legion::LLM::EscalationExhausted, "All #{history.size} escalation attempts failed"
+      end
+
+      def run_escalation_attempt(resolution, message:, kwargs:, threshold:, quality_check:, history:, chain:)
+        start_time = Time.now
+        assert_external_allowed! if resolution.respond_to?(:external?) && resolution.external?
+
+        response = escalation_attempt_response(resolution, message, kwargs)
+        duration_ms = ((Time.now - start_time) * 1000).round
+        result = Quality::Checker.check(response, quality_threshold: threshold, quality_check: quality_check)
+
+        return [response, nil] if escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain)
+
+        report_health(:quality_failure, resolution, duration_ms, failures: result.failures)
+        history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
+        log.debug "[llm][inference] chat_with_escalation quality_failure attempt=#{history.size} failures=#{result.failures}"
+        [nil, nil]
+      rescue Legion::LLM::PrivacyModeError
+        raise
+      rescue StandardError => e
+        duration_ms = ((Time.now - start_time) * 1000).round
+        record_escalation_error(e, resolution, duration_ms, history)
+        [nil, e]
+      end
+
+      def escalation_attempt_response(resolution, message, kwargs)
+        opts = { model: resolution.model, provider: resolution.provider }
+        opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
+        if ruby_llm_available?
+          chat_obj = RubyLLM.chat(**opts)
+          chat_obj.ask(message)
+        else
+          chat_single_native(model: opts[:model], provider: opts[:provider],
+                             message: message, caller: kwargs[:caller],
+                             **opts.except(:model, :provider))
+        end
+      end
+
+      def escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain)
+        return false unless result.passed
+
+        report_health(:success, resolution, duration_ms)
+        history << build_attempt(resolution, :success, [], duration_ms)
+        attach_escalation_history(response, history, resolution, chain)
+        publish_escalation_event(history, :success) if history.size > 1
+        log.debug "[llm][inference] chat_with_escalation success attempts=#{history.size}"
+        true
+      end
+
+      def record_escalation_error(error, resolution, duration_ms, history)
+        handle_exception(
+          error,
+          level:     :warn,
+          handled:   true,
+          operation: 'llm.inference.escalation_attempt',
+          model:     resolution&.model,
+          provider:  resolution&.provider,
+          tier:      resolution&.tier
+        )
+        report_health(:error, resolution, duration_ms) if resolution
+        history << build_attempt(resolution, :error, [error.class.name], duration_ms) if resolution
       end
 
       def build_attempt(resolution, outcome, failures, duration_ms)

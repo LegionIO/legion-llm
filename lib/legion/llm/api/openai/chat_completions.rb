@@ -112,6 +112,7 @@ module Legion
 
           def self.build_openai_tool_classes(tools)
             return [] if tools.nil? || !tools.is_a?(Array) || tools.empty?
+            return [] unless Legion::LLM.ruby_llm_available?
 
             tools.filter_map do |tool|
               t = nil

@@ -202,6 +202,7 @@ module Legion
           end
 
           return unless has_sigv4 || has_bearer
+          return skip_ruby_llm_config(:bedrock) unless ruby_llm_available?
 
           require 'legion/llm/call/bedrock_auth' if has_bearer
 
@@ -225,6 +226,7 @@ module Legion
                     resolve_credential_value(config_value(config, :api_key)) ||
                     ENV.fetch('ANTHROPIC_API_KEY', nil)
           return unless api_key
+          return skip_ruby_llm_config(:anthropic) unless ruby_llm_available?
 
           RubyLLM.configure do |c|
             c.anthropic_api_key = api_key
@@ -239,6 +241,7 @@ module Legion
                     ENV.fetch('OPENAI_API_KEY', nil) ||
                     ENV.fetch('CODEX_API_KEY', nil)
           return unless api_key
+          return skip_ruby_llm_config(:openai) unless ruby_llm_available?
 
           RubyLLM.configure do |c|
             c.openai_api_key = api_key
@@ -252,6 +255,7 @@ module Legion
                     resolve_credential_value(config_value(config, :api_key)) ||
                     ENV.fetch('GEMINI_API_KEY', nil)
           return unless api_key
+          return skip_ruby_llm_config(:gemini) unless ruby_llm_available?
 
           RubyLLM.configure do |c|
             c.gemini_api_key = api_key
@@ -265,6 +269,7 @@ module Legion
           api_key = resolve_broker_credential(:azure) || resolve_credential_value(config_value(config, :api_key))
           auth_token = resolve_credential_value(config_value(config, :auth_token))
           return unless api_base && (api_key || auth_token)
+          return skip_ruby_llm_config(:azure) unless ruby_llm_available?
 
           RubyLLM.configure do |c|
             c.azure_api_base = api_base
@@ -275,6 +280,8 @@ module Legion
         end
 
         def configure_ollama(config)
+          return skip_ruby_llm_config(:ollama) unless ruby_llm_available?
+
           RubyLLM.configure do |c|
             c.ollama_api_base = config_value(config, :base_url) if config_value(config, :base_url)
           end
@@ -284,6 +291,8 @@ module Legion
         def configure_vllm(config)
           base_url = config_value(config, :base_url) || 'http://localhost:8000/v1'
           api_key = resolve_credential_value(config_value(config, :api_key))
+          return skip_ruby_llm_config(:vllm) unless ruby_llm_available?
+
           RubyLLM.configure do |c|
             c.vllm_api_base = base_url
             c.vllm_api_key = api_key if api_key
@@ -295,6 +304,12 @@ module Legion
 
         def verify_providers
           log.debug '[llm][providers] verify_providers.enter'
+          unless ruby_llm_available?
+            log.info '[llm][providers] skipping RubyLLM provider probes because ruby_llm is unavailable'
+            log_available_providers
+            return
+          end
+
           providers_settings.each do |provider, config|
             provider_key = provider.to_sym
             next unless config_enabled?(config)
@@ -308,13 +323,7 @@ module Legion
 
           recover_with_alternative_credentials
 
-          enabled = providers_settings.select { |_, c| c.is_a?(Hash) && config_enabled?(c) }
-          if enabled.empty?
-            log.error '[llm][providers] no providers available — all failed health checks or disabled'
-          else
-            names = enabled.map { |name, c| "#{name}/#{config_value(c, :default_model) || 'auto'}" }
-            log.info "[llm][providers] available providers=#{names.join(', ')}"
-          end
+          log_available_providers
         end
 
         def probe_provider_credentials(provider, model, config)
@@ -379,6 +388,8 @@ module Legion
         end
 
         def apply_credential_to_rubyllm(provider, creds, config)
+          return false unless ruby_llm_available?
+
           case provider
           when :bedrock
             region = config_value(config, :region) || 'us-east-2'
@@ -427,6 +438,9 @@ module Legion
           when :model_missing
             log.warn "[llm][providers] health_check model_missing provider=#{provider} model=#{model} — provider ok, model unavailable"
             false
+          when :unavailable
+            log.info "[llm][providers] health_check skipped provider=#{provider} reason=ruby_llm_unavailable"
+            true
           else
             log.info "[llm][providers] health_check ok provider=#{provider} model=#{model} elapsed_ms=#{elapsed}"
             true
@@ -438,6 +452,8 @@ module Legion
         end
 
         def probe_via_model_list(provider, target_model)
+          return :unavailable unless ruby_llm_available?
+
           provider_class = RubyLLM::Provider.providers[provider.to_sym]
           return probe_via_chat(provider, target_model) unless provider_class
 
@@ -458,6 +474,8 @@ module Legion
         end
 
         def probe_via_chat(provider, model)
+          return :unavailable unless ruby_llm_available?
+
           RubyLLM.chat(model: model, provider: provider).ask('Respond with only the word: pong')
           :ok
         rescue RubyLLM::ModelNotFoundError => e
@@ -476,6 +494,8 @@ module Legion
         end
 
         def recover_openai_with_codex
+          return unless ruby_llm_available?
+
           openai_config = config_value(providers_settings, :openai)
           return unless openai_config.is_a?(Hash) && !config_enabled?(openai_config)
 
@@ -517,6 +537,25 @@ module Legion
           end
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.auto_register')
+        end
+
+        def ruby_llm_available?
+          Legion::LLM.respond_to?(:ruby_llm_available?) && Legion::LLM.ruby_llm_available?
+        end
+
+        def skip_ruby_llm_config(provider)
+          log.debug "[llm][providers] skipped RubyLLM config provider=#{provider} reason=ruby_llm_unavailable"
+          nil
+        end
+
+        def log_available_providers
+          enabled = providers_settings.select { |_, c| c.is_a?(Hash) && config_enabled?(c) }
+          if enabled.empty?
+            log.error '[llm][providers] no providers available — all failed health checks or disabled'
+          else
+            names = enabled.map { |name, c| "#{name}/#{config_value(c, :default_model) || 'auto'}" }
+            log.info "[llm][providers] available providers=#{names.join(', ')}"
+          end
         end
 
         def auto_register_lex_llm_providers

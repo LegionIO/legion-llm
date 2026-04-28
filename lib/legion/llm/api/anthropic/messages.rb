@@ -135,6 +135,7 @@ module Legion
 
           def self.build_tool_classes(tool_specs)
             return [] if tool_specs.empty?
+            return [] unless Legion::LLM.ruby_llm_available?
 
             tool_specs.filter_map do |spec|
               next unless spec.is_a?(Hash) && spec[:name].to_s.length.positive?

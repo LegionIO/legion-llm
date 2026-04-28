@@ -856,6 +856,11 @@ module Legion
         end
 
         def build_ruby_llm_session
+          unless Legion::LLM.respond_to?(:ruby_llm_available?) && Legion::LLM.ruby_llm_available?
+            raise Legion::LLM::ProviderError,
+                  'RubyLLM is unavailable for RubyLLM provider dispatch. Configure native provider dispatch or install ruby_llm.'
+          end
+
           session = RubyLLM.chat(**ruby_llm_chat_options)
 
           inject_ruby_llm_tools(session)

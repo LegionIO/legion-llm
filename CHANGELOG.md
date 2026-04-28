@@ -4,6 +4,7 @@
 
 ### Changed
 - RubyLLM is now loaded as an optional compatibility layer instead of a router runtime dependency, and native provider dispatch no longer falls back to RubyLLM by default.
+- Non-pipeline chat, escalation, provider probes, startup defaults, discovery checks, and compatibility API tool builders now degrade cleanly when RubyLLM is unavailable, routing native direct calls where a registered native provider exists and raising `ProviderError` instead of `NameError` for RubyLLM-only paths.
 
 ## [0.8.42] - 2026-04-28
 

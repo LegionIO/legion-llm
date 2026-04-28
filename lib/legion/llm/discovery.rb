@@ -103,6 +103,7 @@ module Legion
           return true if provider == :azure
           return false unless provider_supports_embeddings?(provider)
           return true unless model
+          return false unless Legion::LLM.ruby_llm_available?
 
           start_time = Time.now
           RubyLLM.embed('health check', model: model, provider: provider)
@@ -175,6 +176,7 @@ module Legion
           return false unless provider
           return true if %i[ollama azure].include?(provider)
           return false if provider == :anthropic
+          return false unless Legion::LLM.ruby_llm_available?
 
           klass = RubyLLM::Provider.resolve(provider)
           return false unless klass
