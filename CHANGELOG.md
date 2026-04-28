@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.42] - 2026-04-28
+
+### Fixed
+- LLM provider settings snapshots now initialize their fallback source before deep-copying settings, preventing an uninitialized local fallback when snapshot duplication raises.
+
 ## [0.8.41] - 2026-04-28
 
 ### Fixed

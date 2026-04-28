@@ -562,12 +562,13 @@ module Legion
         end
 
         def snapshot_llm_settings
+          settings = nil
           settings = Legion::LLM::Settings.current_settings
           return nil unless settings.is_a?(Hash) && settings.any?
 
           Marshal.load(Marshal.dump(settings))
         rescue TypeError
-          settings.dup
+          settings&.dup
         rescue StandardError => e
           handle_exception(e, level: :debug, handled: true,
                               operation: 'llm.providers.snapshot_llm_settings')
