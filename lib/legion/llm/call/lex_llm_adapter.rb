@@ -96,7 +96,6 @@ module Legion
 
         def lex_llm_namespace
           return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)
-          return ::LexLLM if defined?(::LexLLM::Provider)
 
           raise NameError, 'lex-llm provider namespace is not loaded'
         end

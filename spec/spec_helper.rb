@@ -74,6 +74,11 @@ RSpec.configure do |config|
   config.before(:each) do
     Legion::Settings.reset!
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+    Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
+    # Keep the full suite deterministic even when local/provider gems are present
+    # and services like Ollama are running on the developer machine. Native-mode
+    # specs opt back in explicitly.
+    Legion::Settings[:llm][:provider_layer][:mode] = 'ruby_llm'
     # Disable system_baseline by default so existing pipeline mocks are unaffected.
     # Specs that test baseline behavior set it explicitly.
     Legion::Settings[:llm][:system_baseline] = nil

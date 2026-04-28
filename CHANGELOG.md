@@ -22,6 +22,7 @@
 - LLM transport messages now promote tracing metadata into W3C `traceparent`, `baggage`, and Legion trace headers for fleet/audit/metering correlation.
 - Fleet dispatch replies now avoid request-side metadata gates by default and expose both `model` and `model_id` so downstream metering and metadata readers can resolve the model consistently.
 - Fleet lane sanitization and vLLM health URL normalization now avoid regex patterns flagged by CodeQL for uncontrolled input.
+- The lex-llm provider bridge now loads only the Legion-native `Legion::Extensions::Llm` namespace and no longer probes removed fork-era entrypoints.
 
 ## [0.8.32] - 2026-04-27
 
