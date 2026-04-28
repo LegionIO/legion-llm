@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.8.37] - 2026-04-28
+
+### Fixed
+- Router resolutions, health tracking, inventory, native dispatch, inference responses, audit, and metering now preserve optional lex-llm model offering metadata while keeping provider/model fallback behavior compatible with older callers.
+- Inventory now consumes lex-llm 0.1.5 `ModelOffering`-style fields from configured settings or native provider adapters when available, exposing offering IDs, model families, canonical aliases, provider instances, and routing metadata without credentials.
+
 ## [0.8.36] - 2026-04-28
 
 ### Fixed

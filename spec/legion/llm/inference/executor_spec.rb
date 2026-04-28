@@ -499,6 +499,31 @@ confidence: 0.9 }],
     end
   end
 
+  describe 'offering-aware routing metadata' do
+    it 'preserves explicit offering metadata in response routing' do
+      offering_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  {
+          provider:          :azure_foundry,
+          model:             'gpt4o-prod',
+          offering_id:       'azure:default:inference:gpt-4o',
+          offering_metadata: { provider_instance: :eastus, canonical_model_alias: 'gpt-4o' }
+        }
+      )
+      executor = described_class.new(offering_request)
+
+      executor.send(:step_routing)
+      routing = executor.send(:build_response_routing)
+
+      expect(routing).to include(
+        provider:          :azure_foundry,
+        model:             'gpt4o-prod',
+        offering_id:       'azure:default:inference:gpt-4o',
+        offering_metadata: { provider_instance: :eastus, canonical_model_alias: 'gpt-4o' }
+      )
+    end
+  end
+
   describe 'tool_event_handler events' do
     let(:events) { [] }
     let(:executor) do

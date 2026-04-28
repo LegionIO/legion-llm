@@ -273,9 +273,10 @@ module Legion
         end
 
         def effective_priority(rule)
-          provider   = (rule.target[:provider] || rule.target['provider'])&.to_sym
+          provider = (rule.target[:provider] || rule.target['provider'])&.to_sym
+          offering_id = rule.target[:offering_id] || rule.target['offering_id']
           cost_bonus = (1.0 - rule.cost_multiplier) * 10
-          rule.priority + health_tracker.adjustment(provider) + cost_bonus
+          rule.priority + health_tracker.adjustment(provider, offering_id: offering_id) + cost_bonus
         end
 
         def routing_settings

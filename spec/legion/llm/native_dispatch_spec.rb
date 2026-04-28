@@ -61,6 +61,33 @@ RSpec.describe Legion::LLM::Call::Dispatch do
         expect(result[:usage].output_tokens).to eq(5)
       end
 
+      it 'passes offering metadata through registered native providers' do
+        seen = nil
+        ext = Module.new do
+          define_singleton_method(:chat) do |model:, messages:, **opts|
+            seen = { model: model, messages: messages, opts: opts }
+            { content: 'ok', usage: {}, metadata: { offering: opts[:offering_metadata] } }
+          end
+        end
+        Legion::LLM::Call::Registry.register(:offering_provider, ext)
+
+        result = described_class.dispatch_chat(
+          provider:          :offering_provider,
+          model:             'deployment-a',
+          messages:          [{ role: 'user', content: 'hi' }],
+          offering_id:       'azure:default:inference:gpt-4o',
+          offering_metadata: { offering_id: 'azure:default:inference:gpt-4o', provider_instance: :eastus }
+        )
+
+        expect(seen[:opts]).to include(
+          offering_id:       'azure:default:inference:gpt-4o',
+          offering_metadata: { offering_id: 'azure:default:inference:gpt-4o', provider_instance: :eastus }
+        )
+        expect(result[:metadata]).to include(
+          offering: { offering_id: 'azure:default:inference:gpt-4o', provider_instance: :eastus }
+        )
+      end
+
       it 'accepts string provider name' do
         result = described_class.dispatch_chat(
           provider: 'claude',
@@ -219,5 +246,10 @@ RSpec.describe Legion::LLM::Call::NativeResponseAdapter do
     adapter = described_class.new({ result: 'hi', usage: nil })
     expect(adapter.input_tokens).to eq(0)
     expect(adapter.output_tokens).to eq(0)
+  end
+
+  it 'exposes response metadata' do
+    adapter = described_class.new({ result: 'hi', usage: nil, metadata: { offering: { offering_id: 'x' } } })
+    expect(adapter.metadata).to eq(offering: { offering_id: 'x' })
   end
 end

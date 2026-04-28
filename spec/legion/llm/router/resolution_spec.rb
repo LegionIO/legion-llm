@@ -49,6 +49,19 @@ RSpec.describe Legion::LLM::Router::Resolution do
       expect(r.compress_level).to eq(2)
     end
 
+    it 'stores optional offering identifiers and metadata' do
+      r = described_class.new(
+        tier:              :fleet,
+        provider:          :vllm,
+        model:             'qwen3.6',
+        offering_id:       'vllm:macbook:inference:qwen3-6',
+        offering_metadata: { provider_instance: :macbook, canonical_model_alias: 'qwen3.6' }
+      )
+
+      expect(r.offering_id).to eq('vllm:macbook:inference:qwen3-6')
+      expect(r.offering_metadata).to include(provider_instance: :macbook, canonical_model_alias: 'qwen3.6')
+    end
+
     it 'coerces string tier to symbol' do
       r = described_class.new(tier: 'cloud', provider: :anthropic, model: 'claude-sonnet-4-6')
       expect(r.tier).to eq(:cloud)
@@ -168,6 +181,21 @@ RSpec.describe Legion::LLM::Router::Resolution do
         rule:           :default_cloud,
         metadata:       { latency_ms: 120 },
         compress_level: 0
+      )
+    end
+
+    it 'includes optional offering fields when present' do
+      r = described_class.new(
+        tier:              :fleet,
+        provider:          :vllm,
+        model:             'qwen3.6',
+        offering_id:       'vllm:macbook:inference:qwen3-6',
+        offering_metadata: { provider_instance: :macbook }
+      )
+
+      expect(r.to_h).to include(
+        offering_id:       'vllm:macbook:inference:qwen3-6',
+        offering_metadata: { provider_instance: :macbook }
       )
     end
   end

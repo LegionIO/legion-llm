@@ -20,15 +20,15 @@ module Legion
             normalize_messages(messages, system: opts[:system]),
             tools:       normalize_tools(opts[:tools]),
             temperature: opts[:temperature],
-            model:       model_info(model),
             params:      opts[:params] || {},
             headers:     opts[:headers] || {},
             schema:      opts[:schema],
             thinking:    opts[:thinking],
-            tool_prefs:  opts[:tool_prefs]
+            tool_prefs:  opts[:tool_prefs],
+            model:       model_info(model, offering_metadata: opts[:offering_metadata])
           )
 
-          message_response(response)
+          message_response(response, offering_metadata: opts[:offering_metadata])
         end
 
         def stream(model:, messages:, **opts, &block)
@@ -37,27 +37,28 @@ module Legion
             normalize_messages(messages, system: opts[:system]),
             tools:       normalize_tools(opts[:tools]),
             temperature: opts[:temperature],
-            model:       model_info(model),
             params:      opts[:params] || {},
             headers:     opts[:headers] || {},
             schema:      opts[:schema],
             thinking:    opts[:thinking],
-            tool_prefs:  opts[:tool_prefs]
+            tool_prefs:  opts[:tool_prefs],
+            model:       model_info(model, offering_metadata: opts[:offering_metadata])
           ) do |chunk|
             chunks << chunk
             block&.call(chunk)
           end
 
-          chunk_response(chunks)
+          chunk_response(chunks, offering_metadata: opts[:offering_metadata])
         end
 
-        def embed(model:, text:, dimensions: nil, **)
+        def embed(model:, text:, dimensions: nil, **opts)
           response = provider.embed(text, model: model, dimensions: dimensions)
 
           {
-            result: response.vectors,
-            model:  response.model,
-            usage:  { input_tokens: response.input_tokens.to_i, output_tokens: 0 }
+            result:   response.vectors,
+            model:    response.model,
+            usage:    { input_tokens: response.input_tokens.to_i, output_tokens: 0 },
+            metadata: response_metadata(offering_metadata: opts[:offering_metadata])
           }
         end
 
@@ -69,6 +70,12 @@ module Legion
           }
         end
 
+        def offerings(live: false, **filters)
+          return [] unless provider.respond_to?(:discover_offerings)
+
+          provider.discover_offerings(live: live, **filters)
+        end
+
         private
 
         attr_reader :provider_name, :provider_class, :lex_llm_namespace
@@ -77,8 +84,18 @@ module Legion
           @provider ||= provider_class.new(lex_llm_namespace.config)
         end
 
-        def model_info(model)
-          lex_llm_namespace::Model::Info.new(id: model, provider: provider_name)
+        def model_info(model, offering_metadata: nil)
+          offering = normalize_offering_metadata(offering_metadata)
+          lex_llm_namespace::Model::Info.new(
+            id:                model,
+            name:              offering[:canonical_model_alias] || model,
+            provider:          provider_name,
+            family:            offering[:model_family],
+            context_window:    offering.dig(:limits, :context_window),
+            max_output_tokens: offering.dig(:limits, :max_output_tokens),
+            capabilities:      Array(offering[:capabilities]).map(&:to_s),
+            metadata:          offering
+          )
         end
 
         def normalize_messages(messages, system: nil)
@@ -125,20 +142,22 @@ module Legion
           { role: :user, content: value }
         end
 
-        def message_response(response)
+        def message_response(response, offering_metadata: nil)
           {
-            result: response.content,
-            model:  response.model_id,
-            usage:  usage_hash(response)
+            result:   response.content,
+            model:    response.model_id,
+            usage:    usage_hash(response),
+            metadata: response_metadata(response, offering_metadata: offering_metadata)
           }
         end
 
-        def chunk_response(chunks)
+        def chunk_response(chunks, offering_metadata: nil)
           last = chunks.reverse.find { |chunk| chunk.respond_to?(:input_tokens) }
           {
-            result: chunks.filter_map(&:content).join,
-            model:  last&.model_id,
-            usage:  last ? usage_hash(last) : {}
+            result:   chunks.filter_map(&:content).join,
+            model:    last&.model_id,
+            usage:    last ? usage_hash(last) : {},
+            metadata: response_metadata(last, offering_metadata: offering_metadata)
           }
         end
 
@@ -153,6 +172,21 @@ module Legion
 
         def estimate_tokens(messages)
           normalize_messages(messages).sum { |message| (message.content.to_s.length / 4.0).ceil }
+        end
+
+        def response_metadata(response = nil, offering_metadata: nil)
+          metadata = normalize_offering_metadata(offering_metadata)
+          raw = response.respond_to?(:raw) ? response.raw : nil
+          metadata[:raw_model] = raw['model'] if raw.is_a?(Hash) && raw['model']
+          metadata.empty? ? {} : { offering: metadata }
+        end
+
+        def normalize_offering_metadata(value)
+          return {} unless value.is_a?(Hash)
+
+          value.each_with_object({}) do |(key, metadata_value), normalized|
+            normalized[key.respond_to?(:to_sym) ? key.to_sym : key] = metadata_value
+          end
         end
       end
     end

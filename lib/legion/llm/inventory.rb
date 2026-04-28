@@ -46,6 +46,7 @@ module Legion
           end
 
           list.concat(discovery_offerings)
+          list.concat(native_provider_offerings)
           list = dedupe_offerings(list)
           filter_offerings(list, normalized_filters)
         rescue NameError, ArgumentError, TypeError => e
@@ -138,29 +139,44 @@ module Legion
           model = (option(entry, :model) || option(entry, :id) || option(entry, :name)).to_s
           return nil if model.empty?
 
-          type = normalize_type(option(entry, :type) || option(entry, :purpose) || option(entry, :kind) || infer_model_type(model))
+          type = normalize_type(option(entry, :usage_type) || option(entry, :type) || option(entry, :purpose) ||
+                                option(entry, :kind) || infer_model_type(model))
           limits = normalize_limits(option(entry, :limits) || entry)
           source = (option(entry, :source) || :settings).to_sym
+          metadata = normalize_hash(option(entry, :metadata) || option(config, :metadata) || {})
+          model_family = normalize_symbol(option(entry, :model_family) || metadata[:model_family] || provider_family)
+          canonical_model_alias = option(entry, :canonical_model_alias) || metadata[:canonical_model_alias] ||
+                                  metadata[:alias] || model
+          routing_metadata = normalize_hash(option(entry, :routing_metadata) || metadata[:routing_metadata] || {})
+          provider_instance = (option(entry, :provider_instance) || option(entry, :instance_id) ||
+                               option(config, :provider_instance) || option(config, :instance_id) ||
+                               provider_family).to_s
+          resolved_offering_id = (option(entry, :offering_id) ||
+                                  offering_id(provider_family, provider_instance, canonical_model_alias || model, type)).to_s
 
           offering = {
-            id:                offering_id(provider_family, option(entry, :instance_id), model, type),
-            model:             model,
-            type:              type,
-            provider_family:   provider_family.to_s,
-            provider_instance: (option(entry, :instance_id) || option(config, :instance_id) || provider_family).to_s,
-            instance_id:       (option(entry, :instance_id) || option(config, :instance_id) || provider_family).to_s,
-            tier:              normalize_symbol(option(entry, :tier) || option(config, :tier) || DEFAULT_PROVIDER_TIERS[provider_family]),
-            transport:         normalize_symbol(option(entry, :transport) || option(config, :transport) ||
+            id:                    resolved_offering_id,
+            offering_id:           resolved_offering_id,
+            model:                 model,
+            model_family:          model_family&.to_s,
+            canonical_model_alias: canonical_model_alias&.to_s,
+            type:                  type,
+            provider_family:       provider_family.to_s,
+            provider_instance:     provider_instance,
+            instance_id:           provider_instance,
+            tier:                  normalize_symbol(option(entry, :tier) || option(config, :tier) || DEFAULT_PROVIDER_TIERS[provider_family]),
+            transport:             normalize_symbol(option(entry, :transport) || option(config, :transport) ||
                                                 DEFAULT_PROVIDER_TRANSPORTS[provider_family]),
-            enabled:           option(entry, :enabled, true),
-            capabilities:      normalize_capabilities(option(entry, :capabilities), type),
-            limits:            limits,
-            health:            provider_health(provider_family),
-            cost:              option(entry, :cost) || {},
-            policy_tags:       Array(option(entry, :policy_tags) || option(config, :policy_tags)).map(&:to_s),
-            metadata:          normalize_hash(option(entry, :metadata) || option(config, :metadata) || {}),
-            source:            source.to_s
-          }
+            enabled:               option(entry, :enabled, true),
+            capabilities:          normalize_capabilities(option(entry, :capabilities), type),
+            limits:                limits,
+            health:                provider_health(provider_family, resolved_offering_id),
+            cost:                  option(entry, :cost) || {},
+            policy_tags:           Array(option(entry, :policy_tags) || option(config, :policy_tags)).map(&:to_s),
+            metadata:              metadata,
+            routing_metadata:      routing_metadata,
+            source:                source.to_s
+          }.compact
 
           add_fleet_lane(offering)
         end
@@ -211,12 +227,12 @@ module Legion
           nil
         end
 
-        def provider_health(provider_family)
+        def provider_health(provider_family, offering_id = nil)
           if defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:routing_enabled?) &&
              Legion::LLM::Router.routing_enabled?
             tracker = Legion::LLM::Router.health_tracker
-            { circuit_state: tracker.circuit_state(provider_family).to_s,
-              adjustment:    tracker.adjustment(provider_family) }
+            { circuit_state: tracker.circuit_state(provider_family, offering_id: offering_id).to_s,
+              adjustment:    tracker.adjustment(provider_family, offering_id: offering_id) }
           else
             { circuit_state: 'unknown' }
           end
@@ -239,6 +255,36 @@ module Legion
 
         def discovery_offerings
           ollama_discovery_offerings + vllm_discovery_offerings
+        end
+
+        def native_provider_offerings
+          return [] unless defined?(Legion::LLM::Call::Registry)
+
+          Legion::LLM::Call::Registry.available.flat_map do |provider_name|
+            adapter = Legion::LLM::Call::Registry.for(provider_name)
+            next [] unless adapter.respond_to?(:offerings)
+
+            Array(adapter.offerings).filter_map do |offering|
+              normalize_native_offering(provider_name, offering)
+            end
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.native_provider',
+                                provider: provider_name)
+            []
+          end
+        end
+
+        def normalize_native_offering(provider_name, offering)
+          data = normalize_hash(offering.respond_to?(:to_h) ? offering.to_h : offering)
+          provider_family = normalize_symbol(option(data, :provider_family) || option(data, :provider) || provider_name)
+          usage_type = option(data, :usage_type)
+          entry = data.merge(
+            model:    option(data, :model),
+            type:     normalize_type(usage_type || option(data, :type)),
+            source:   :native_provider,
+            metadata: normalize_hash(option(data, :metadata))
+          )
+          build_offering(provider_family, {}, entry)
         end
 
         def ollama_discovery_offerings
@@ -332,7 +378,12 @@ module Legion
             when :instance, :instance_id
               offering[:instance_id] == value.to_s || offering[:provider_instance] == value.to_s
             when :model, :id
-              offering[:model] == value.to_s || offering[:id] == value.to_s
+              offering[:model] == value.to_s || offering[:id] == value.to_s ||
+                offering[:offering_id] == value.to_s || offering[:canonical_model_alias] == value.to_s
+            when :offering_id
+              offering[:offering_id] == value.to_s || offering[:id] == value.to_s
+            when :model_family
+              offering[:model_family] == value.to_s
             when :type, :purpose
               offering[:type].to_s == normalize_type(value).to_s
             when :capability

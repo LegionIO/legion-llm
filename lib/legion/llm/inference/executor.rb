@@ -69,6 +69,8 @@ module Legion
           @triggered_tools = []
           @resolved_provider = nil
           @resolved_model = nil
+          @resolved_offering_id = nil
+          @resolved_offering_metadata = {}
           @confidence_score = nil
           @escalation_chain = nil
           @escalation_history = []
@@ -118,6 +120,14 @@ module Legion
           return config[symbol_key] if symbol_key && config.key?(symbol_key)
 
           default
+        end
+
+        def normalize_offering_metadata(value)
+          return {} unless value.is_a?(Hash)
+
+          value.each_with_object({}) do |(key, metadata_value), normalized|
+            normalized[key.respond_to?(:to_sym) ? key.to_sym : key] = metadata_value
+          end
         end
 
         def inject_registry_tools(session)
@@ -322,6 +332,9 @@ module Legion
           @timestamps[:routing_start] = Time.now
           provider = @request.routing[:provider]
           model = @request.routing[:model]
+          offering_id = @request.routing[:offering_id] || @request.routing[:id]
+          offering_metadata = normalize_offering_metadata(@request.routing[:offering_metadata] ||
+                                                          @request.routing[:offering])
           intent = @request.extra[:intent]
           tier = @request.extra[:tier]
 
@@ -347,10 +360,13 @@ module Legion
             if resolution
               provider = resolution.provider
               model = resolution.model
+              offering_id = resolution.offering_id || offering_id
+              offering_metadata = resolution.offering_metadata unless resolution.offering_metadata.empty?
               @audit[:'routing:provider_selection'] = {
                 outcome: :success,
                 detail: "selected #{provider}:#{model} via #{resolution.rule}",
-                data: { strategy: resolution.rule, tier: resolution.tier },
+                data: { strategy: resolution.rule, tier: resolution.tier, offering_id: offering_id,
+                        offering_metadata: offering_metadata }.compact,
                 duration_ms: 0, timestamp: Time.now
               }
             end
@@ -360,8 +376,10 @@ module Legion
                                (model && Router.infer_provider_for_model(model)) ||
                                llm_setting(:default_provider)
           @resolved_model = model || llm_setting(:default_model)
+          @resolved_offering_id = offering_id
+          @resolved_offering_metadata = offering_metadata
 
-          log.info "[llm][inference] resolved provider=#{@resolved_provider} model=#{@resolved_model}"
+          log.info "[llm][inference] resolved provider=#{@resolved_provider} model=#{@resolved_model} offering_id=#{@resolved_offering_id}"
           @timeline.record(
             category: :audit, key: 'routing:provider_selection',
             direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
@@ -432,6 +450,8 @@ module Legion
             start_time = Time.now
             @resolved_provider = resolution.provider
             @resolved_model = resolution.model
+            @resolved_offering_id = resolution.offering_id
+            @resolved_offering_metadata = resolution.offering_metadata
             succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
             break if succeeded
           rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
@@ -465,9 +485,12 @@ module Legion
             detail: "attempt #{@escalation_history.size + 1}: #{resolution.provider}:#{resolution.model} => #{outcome}",
             from: 'pipeline', to: "provider:#{resolution.provider}"
           )
-          @escalation_history << { model: resolution.model, provider: resolution.provider,
-                                   tier: resolution.tier, outcome: outcome,
-                                   failures: result.passed ? [] : result.failures, duration_ms: duration_ms }
+          @escalation_history << escalation_attempt_hash(
+            resolution,
+            outcome:     outcome,
+            failures:    result.passed ? [] : result.failures,
+            duration_ms: duration_ms
+          )
           result.passed
         end
 
@@ -475,11 +498,15 @@ module Legion
           duration_ms = ((Time.now - start_time) * 1000).round
           handle_exception(err, level: :warn, handled: handled, operation: operation,
                                provider: resolution.provider, model: resolution.model, duration_ms: duration_ms)
-          Router.health_tracker.report(provider: resolution.provider, signal: :error, value: 1,
+          Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+                                       signal: :error, value: 1,
                                        metadata: { reason: err.class.name, message: err.message })
-          @escalation_history << { model: resolution.model, provider: resolution.provider,
-                                   tier: resolution.tier, outcome: outcome,
-                                   failures: [err.class.name], duration_ms: duration_ms }
+          @escalation_history << escalation_attempt_hash(
+            resolution,
+            outcome:     outcome,
+            failures:    [err.class.name],
+            duration_ms: duration_ms
+          )
           @timeline.record(
             category: :provider, key: 'escalation:attempt', direction: :internal,
             detail: "attempt #{@escalation_history.size}: #{resolution.provider}:#{resolution.model} => #{outcome}",
@@ -489,6 +516,14 @@ module Legion
 
         def build_default_escalation_chain
           Router.resolve_chain(max_escalations: pipeline_escalation_max_attempts)
+        end
+
+        def escalation_attempt_hash(resolution, outcome:, failures:, duration_ms:)
+          attempt = { model: resolution.model, provider: resolution.provider, tier: resolution.tier,
+                      outcome: outcome, failures: failures, duration_ms: duration_ms }
+          attempt[:offering_id] = resolution.offering_id if resolution.offering_id
+          attempt[:offering_metadata] = resolution.offering_metadata unless resolution.offering_metadata.empty?
+          attempt
         end
 
         def pipeline_escalation_enabled?
@@ -548,7 +583,8 @@ module Legion
 
           messages = apply_conversation_breakpoint(@request.messages)
 
-          opts = { system: injected_system }.compact
+          opts = { system: injected_system, offering_id: @resolved_offering_id,
+                   offering_metadata: @resolved_offering_metadata }.compact
 
           begin
             result = Call::Dispatch.dispatch_chat(
@@ -557,6 +593,7 @@ module Legion
               messages: messages,
               **opts
             )
+            merge_response_offering_metadata(result[:metadata])
             @raw_response = Call::NativeResponseAdapter.new(result)
           rescue Legion::LLM::ProviderError => e
             layer_settings = llm_setting(:provider_layer, {})
@@ -589,8 +626,19 @@ module Legion
           end
         end
 
+        def merge_response_offering_metadata(metadata)
+          return unless metadata.is_a?(Hash)
+
+          offering = normalize_offering_metadata(metadata[:offering] || metadata['offering'] || metadata)
+          return if offering.empty?
+
+          @resolved_offering_metadata = @resolved_offering_metadata.merge(offering)
+          @resolved_offering_id = @resolved_offering_metadata[:offering_id] if @resolved_offering_id.nil?
+        end
+
         def record_provider_response
           duration_ms = ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).to_i
+          report_provider_health(:success, duration_ms) if @resolved_offering_id
           log.debug("[pipeline][provider] action=response_received provider=#{@resolved_provider} model=#{@resolved_model} duration_ms=#{duration_ms}")
           @timeline.record(
             category: :provider, key: 'provider:response_received',
@@ -601,6 +649,17 @@ module Legion
           )
         end
 
+        def report_provider_health(signal, duration_ms, metadata: {})
+          return unless defined?(Router) && Router.routing_enabled?
+
+          Router.health_tracker.report(provider: @resolved_provider, offering_id: @resolved_offering_id,
+                                       signal: signal, value: 1, metadata: metadata.merge(duration_ms: duration_ms))
+          Router.health_tracker.report(provider: @resolved_provider, offering_id: @resolved_offering_id,
+                                       signal: :latency, value: duration_ms, metadata: {})
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.report_provider_health')
+        end
+
         def extract_retry_after(error)
           return nil unless error.respond_to?(:response) && error.response.is_a?(Hash)
 
@@ -608,11 +667,15 @@ module Legion
         end
 
         def emit_error_audit(error, status:, provider: @resolved_provider, model: @resolved_model)
+          routing = { provider: provider, model: model }
+          routing[:offering_id] = @resolved_offering_id if @resolved_offering_id
+          routing[:offering_metadata] = @resolved_offering_metadata if @resolved_offering_metadata&.any?
+
           Legion::LLM::Audit.emit_prompt(
             request_id:      @request.id,
             conversation_id: @request.conversation_id,
             caller:          @request.caller,
-            routing:         { provider: provider, model: model },
+            routing:         routing,
             tokens:          {},
             status:          status,
             error:           { class: error.class.name, message: error.message },
@@ -1095,15 +1158,17 @@ module Legion
                        end
           log.debug("[pipeline][metering] action=build provider=#{@resolved_provider} model=#{@resolved_model} input=#{input_tokens} output=#{output_tokens}")
           event = Steps::Metering.build_event(
-            provider:      @resolved_provider,
-            model_id:      @resolved_model,
-            tier:          tier,
-            request_type:  'chat',
-            input_tokens:  input_tokens,
-            output_tokens: output_tokens,
-            latency_ms:    latency_ms,
-            request_id:    @request.id,
-            caller:        @request.caller
+            provider:          @resolved_provider,
+            model_id:          @resolved_model,
+            offering_id:       @resolved_offering_id,
+            offering_metadata: @resolved_offering_metadata,
+            tier:              tier,
+            request_type:      'chat',
+            input_tokens:      input_tokens,
+            output_tokens:     output_tokens,
+            latency_ms:        latency_ms,
+            request_id:        @request.id,
+            caller:            @request.caller
           )
           Steps::Metering.publish_or_spool(event)
         rescue StandardError => e
@@ -1233,6 +1298,8 @@ module Legion
 
         def build_response_routing
           routing = { provider: @resolved_provider, model: @resolved_model }
+          routing[:offering_id] = @resolved_offering_id if @resolved_offering_id
+          routing[:offering_metadata] = @resolved_offering_metadata if @resolved_offering_metadata&.any?
 
           routing_audit = @audit[:'routing:provider_selection']
           if routing_audit.is_a?(Hash) && routing_audit[:data].is_a?(Hash)
