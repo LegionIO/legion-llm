@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.39] - 2026-04-28
+
+### Fixed
+- OpenAI-compatible, Anthropic-compatible, and native chat API routes now use the same server-resolved caller identity metadata as native inference, preserving audit and metering identity fields across compatibility routes.
+
 ## [0.8.38] - 2026-04-28
 
 ### Fixed

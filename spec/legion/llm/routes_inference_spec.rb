@@ -191,6 +191,39 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       allow(Legion::LLM).to receive(:started?).and_return(true)
     end
 
+    it 'uses server-resolved caller metadata for OpenAI-compatible chat completions' do
+      captured = nil
+      response = make_pipeline_response
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+      principal = instance_double(
+        'Legion::Identity::Principal',
+        canonical_name: 'matt@example.com',
+        kind:           :user,
+        source:         :session
+      )
+
+      allow(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        captured = kwargs
+        :req
+      end
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+
+      response = post_json(
+        '/v1/chat/completions',
+        { model: 'gpt-test', messages: [{ role: 'user', content: 'hello' }] },
+        'legion.principal' => principal
+      )
+
+      expect(response.status).to eq(200)
+      expect(captured[:caller]).to include(source: 'openai_compat', path: '/v1/chat/completions')
+      expect(captured[:caller][:requested_by]).to include(
+        identity:   'user:matt@example.com',
+        type:       :user,
+        credential: :session,
+        username:   'matt@example.com'
+      )
+    end
+
     it 'passes requested deferred tools through request metadata' do
       captured = nil
       response = make_pipeline_response
