@@ -9,16 +9,9 @@ rescue LoadError
   nil
 end
 
-begin
-  require 'lex_llm' unless defined?(::Legion::Extensions::Llm::Provider)
-rescue LoadError
-  nil
-end
-
 RSpec.describe Legion::LLM::Call::LexLLMAdapter do
   def lex_llm_test_namespace
     return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)
-    return ::LexLLM if defined?(::LexLLM::Provider)
 
     raise NameError, 'lex-llm provider namespace is not loaded'
   end

@@ -508,6 +508,8 @@ module Legion
           return unless namespace
 
           namespace::Provider.providers.each do |provider_name, provider_class|
+            next unless lex_llm_provider_ready?(namespace, provider_name, provider_class)
+
             adapter = Call::LexLLMAdapter.new(provider_name, provider_class)
             Call::Registry.register(provider_name, adapter)
             Call::Registry.register(:claude, adapter) if provider_name.to_sym == :anthropic
@@ -519,15 +521,11 @@ module Legion
         def load_lex_llm_base
           load_optional_feature('legion/extensions/llm')
           load_optional_feature('legion/extensions/llm/provider') unless lex_llm_namespace
-          return true if lex_llm_namespace
-
-          load_optional_feature('lex_llm')
           !lex_llm_namespace.nil?
         end
 
         def lex_llm_namespace
           return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)
-          return ::LexLLM if defined?(::LexLLM::Provider)
 
           nil
         end
@@ -540,6 +538,73 @@ module Legion
                               operation: 'llm.providers.optional_feature',
                               feature: feature)
           false
+        end
+
+        def lex_llm_provider_ready?(namespace, provider_name, provider_class)
+          provider_config = config_value(providers_settings, provider_name.to_sym, {}) || {}
+          configure_lex_llm_provider(namespace, provider_name, provider_class, provider_config)
+
+          return true if config_enabled?(provider_config)
+          return credential_available_for?(provider_name.to_sym, provider_config) if lex_llm_runtime_probe_required?(provider_name)
+
+          provider_class.configured?(namespace.config)
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true,
+                              operation: 'llm.providers.lex_llm_provider_ready',
+                              provider: provider_name)
+          false
+        end
+
+        def lex_llm_runtime_probe_required?(provider_name)
+          %i[ollama vllm mlx].include?(provider_name.to_sym)
+        end
+
+        def configure_lex_llm_provider(namespace, provider_name, provider_class, provider_config)
+          Array(provider_class.configuration_options).each do |option|
+            next unless namespace.config.respond_to?("#{option}=")
+
+            value = lex_llm_provider_config_value(provider_name, option, provider_config)
+            namespace.config.public_send("#{option}=", value) unless value.nil?
+          end
+        end
+
+        def lex_llm_provider_config_value(provider_name, option, provider_config)
+          provider = provider_name.to_sym
+          direct = config_value(provider_config, option)
+          return resolve_credential_value(direct) if credential_option?(option) && !direct.nil?
+          return direct unless direct.nil?
+
+          short_key = option.to_s.delete_prefix("#{provider}_").to_sym
+          short_value = config_value(provider_config, short_key)
+          return resolve_credential_value(short_value) if credential_option?(option) && !short_value.nil?
+          return short_value unless short_value.nil?
+
+          case option.to_s
+          when /_api_key\z/
+            env_api_key(provider)
+          when /_api_base\z/
+            config_value(provider_config, :api_base) ||
+              config_value(provider_config, :base_url) ||
+              config_value(provider_config, :endpoint)
+          when /_version\z/
+            config_value(provider_config, :version)
+          end
+        end
+
+        def credential_option?(option)
+          option.to_s.match?(/(_api_key|_token|_secret)\z/)
+        end
+
+        def env_api_key(provider)
+          env_keys = {
+            anthropic: %w[ANTHROPIC_API_KEY],
+            gemini:    %w[GEMINI_API_KEY],
+            mlx:       %w[MLX_API_KEY],
+            openai:    %w[OPENAI_API_KEY CODEX_API_KEY],
+            vllm:      %w[VLLM_API_KEY]
+          }.fetch(provider, [])
+
+          env_keys.filter_map { |key| ENV.fetch(key, nil).to_s.strip }.find { |value| value != '' }
         end
 
         def inject_anthropic_cache_control!(opts, provider)
