@@ -203,6 +203,18 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       expect(key).to eq('llm.fleet.inference.qwen3-6-27b.ctx32768')
     end
 
+    it 'can build exact offering lane keys for provider instances' do
+      key = described_class.build_routing_key(
+        provider:          'vllm',
+        provider_instance: 'macbook-m4',
+        request_type:      'chat',
+        model:             'qwen3.6:27b',
+        routing_style:     :offering_lane
+      )
+
+      expect(key).to eq('llm.fleet.offering.macbook-m4.qwen3-6-27b.inference')
+    end
+
     it 'reads legacy routing style from string-keyed settings' do
       Legion::Settings[:llm]['routing'] = {
         'tiers' => { 'fleet' => { 'routing_style' => 'legacy_provider_model' } }

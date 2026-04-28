@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.8.36] - 2026-04-28
+
+### Fixed
+- Fleet transport now publishes requests through the `llm.fleet` exchange, keeps provider/model in fleet message bodies for workers, and publishes handler replies through the mandatory confirmed fleet response message path.
+- Inventory now exposes exact offering lanes and non-secret offering metadata so provider instances can opt into offering-level routing without losing shared fleet lane compatibility.
+
 ## [0.8.35] - 2026-04-28
 
 ### Fixed

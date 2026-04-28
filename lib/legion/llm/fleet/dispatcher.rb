@@ -19,6 +19,7 @@ module Legion
             provider = opts[:provider] || 'ollama'
             request_type = opts[:request_type] || 'chat'
             routing_key ||= build_routing_key(provider: provider, request_type: request_type, model: model,
+                                              provider_instance: opts[:provider_instance],
                                               context_window: context_window_from(opts),
                                               boundary: opts[:network_boundary],
                                               eligibility_fingerprint: opts[:eligibility_fingerprint],
@@ -52,6 +53,7 @@ module Legion
           request_type = request_opts[:request_type] || 'chat'
           model = request_opts[:model]
           routing_key ||= build_routing_key(provider: provider, request_type: request_type, model: model,
+                                            provider_instance: request_opts[:provider_instance],
                                             context_window: context_window_from(request_opts),
                                             boundary: request_opts[:network_boundary],
                                             eligibility_fingerprint: request_opts[:eligibility_fingerprint],
@@ -72,9 +74,11 @@ module Legion
           wait_for_response(correlation_id, timeout: timeout, message_context: message_context, future: future)
         end
 
-        def build_routing_key(provider:, request_type:, model:, context_window: nil, boundary: nil,
+        def build_routing_key(provider:, request_type:, model:, provider_instance: nil, context_window: nil, boundary: nil,
                               eligibility_fingerprint: nil, routing_style: nil)
           style = routing_style || default_routing_style
+          return Lane.offering_key(instance_id: provider_instance || provider, model: model, operation: request_type) if style.to_s == 'offering_lane'
+
           if style.to_s == 'shared_lane'
             return Lane.routing_key(operation: request_type, model: model, context_window: context_window,
                                     boundary: boundary, eligibility_fingerprint: eligibility_fingerprint)

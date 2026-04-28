@@ -5,7 +5,7 @@ module Legion
     module Transport
       module Exchanges
         class Fleet < ::Legion::Transport::Exchange
-          def exchange_name = 'llm.request'
+          def exchange_name = 'llm.fleet'
           def default_type  = 'topic'
         end
       end

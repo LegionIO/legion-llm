@@ -158,6 +158,7 @@ module Legion
             health:            provider_health(provider_family),
             cost:              option(entry, :cost) || {},
             policy_tags:       Array(option(entry, :policy_tags) || option(config, :policy_tags)).map(&:to_s),
+            metadata:          normalize_hash(option(entry, :metadata) || option(config, :metadata) || {}),
             source:            source.to_s
           }
 
@@ -229,6 +230,10 @@ module Legion
             operation:      offering[:type],
             model:          offering[:model],
             context_window: context_window
+          ), fleet_offering_lane: Legion::LLM::Fleet::Lane.offering_key(
+            instance_id: offering[:provider_instance],
+            model:       offering[:model],
+            operation:   offering[:type]
           ))
         end
 

@@ -34,12 +34,10 @@ RSpec.describe Legion::LLM::Transport::Message do
       )
       body = msg.message
       expect(body).not_to have_key(:fleet_correlation_id)
-      expect(body).not_to have_key(:provider)
-      expect(body).not_to have_key(:model)
       expect(body).not_to have_key(:ttl)
     end
 
-    it 'keeps body fields' do
+    it 'keeps semantic LLM body fields' do
       msg = build(
         system:          'You are helpful',
         messages:        [{ role: 'user', content: 'hi' }],
@@ -49,6 +47,8 @@ RSpec.describe Legion::LLM::Transport::Message do
       body = msg.message
       expect(body[:system]).to eq('You are helpful')
       expect(body[:messages]).to eq([{ role: 'user', content: 'hi' }])
+      expect(body[:provider]).to eq('ollama')
+      expect(body[:model]).to eq('qwen3.5:27b')
       expect(body[:request_type]).to eq('chat')
       expect(body[:message_context]).to eq({ conversation_id: 'conv_1' })
     end
