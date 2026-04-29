@@ -4,7 +4,7 @@ require 'spec_helper'
 
 RSpec.describe 'Pipeline pre-rollout integration' do
   let(:mock_session) do
-    session = double('RubyLLM::Chat')
+    session = double('NativeChat')
     allow(session).to receive(:with_tool).and_return(session)
     allow(session).to receive(:with_instructions).and_return(session)
     allow(session).to receive(:ask).and_return(mock_response)
@@ -12,7 +12,7 @@ RSpec.describe 'Pipeline pre-rollout integration' do
   end
 
   let(:mock_response) do
-    double('RubyLLM::Message',
+    double('ProviderMessage',
            content:       'pipeline response',
            role:          'assistant',
            input_tokens:  15,
@@ -26,7 +26,7 @@ RSpec.describe 'Pipeline pre-rollout integration' do
     Legion::Settings[:llm][:default_model] = 'test-model'
     Legion::Settings[:llm][:default_provider] = :test
     allow(Legion::LLM).to receive(:started?).and_return(true)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
   end
 
   describe 'caller identity propagation' do
@@ -162,7 +162,7 @@ RSpec.describe 'Pipeline pre-rollout integration' do
       chunks = []
       result = Legion::LLM.chat(message: 'hello') { |chunk| chunks << chunk.content }
 
-      expect(chunks).to eq(%w[hel lo])
+      expect(chunks).to eq(['pipeline response'])
       expect(result).to be_a(Legion::LLM::Inference::Response)
     end
 
@@ -180,12 +180,11 @@ RSpec.describe 'Pipeline pre-rollout integration' do
   describe 'pipeline disabled falls back cleanly' do
     before { Legion::Settings[:llm][:pipeline_enabled] = false }
 
-    it 'returns RubyLLM session (not Inference::Response) for session-style calls' do
-      result = Legion::LLM.chat(model: 'test-model', provider: :test)
-      expect(result).not_to be_a(Legion::LLM::Inference::Response)
+    it 'rejects session-style calls without a message' do
+      expect { Legion::LLM.chat(model: 'test-model', provider: :test) }.to raise_error(Legion::LLM::ProviderError)
     end
 
-    it 'returns RubyLLM message for message-style calls via non-pipeline path' do
+    it 'returns provider message for message-style calls via non-pipeline path' do
       allow(mock_session).to receive(:ask).and_return(mock_response)
       result = Legion::LLM.chat(message: 'hello')
       # Non-pipeline path returns the raw response
@@ -219,17 +218,17 @@ RSpec.describe 'Pipeline pre-rollout integration' do
     end
 
     it 'raises typed AuthError for 401' do
-      allow(RubyLLM).to receive(:chat).and_raise(Faraday::UnauthorizedError.new(nil, { status: 401 }))
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_raise(Faraday::UnauthorizedError.new(nil, { status: 401 }))
       expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::AuthError)
     end
 
     it 'raises typed RateLimitError for 429' do
-      allow(RubyLLM).to receive(:chat).and_raise(Faraday::TooManyRequestsError.new(nil, { status: 429 }))
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_raise(Faraday::TooManyRequestsError.new(nil, { status: 429 }))
       expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::RateLimitError)
     end
 
     it 'raises typed ProviderDown for connection failures' do
-      allow(RubyLLM).to receive(:chat).and_raise(Faraday::ConnectionFailed.new('connection refused'))
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_raise(Faraday::ConnectionFailed.new('connection refused'))
       expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::ProviderDown)
     end
   end

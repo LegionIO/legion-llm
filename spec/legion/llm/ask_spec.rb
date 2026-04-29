@@ -44,7 +44,7 @@ require 'legion/llm/call/daemon_client'
 RSpec.describe 'Legion::LLM.ask' do
   let(:cache_store) { {} }
 
-  # Build a mock response object with the interface of RubyLLM::Message
+  # Build a mock response object with the interface of ProviderMessage
   def mock_response(content: 'hello world', input_tokens: 10, output_tokens: 20)
     resp = double('Response', content: content)
     allow(resp).to receive(:respond_to?).with(:input_tokens).and_return(true)

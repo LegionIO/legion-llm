@@ -2,6 +2,7 @@
 
 require 'securerandom'
 require 'legion/logging/helper'
+require 'legion/llm/types'
 require_relative '../translators/anthropic_request'
 require_relative '../translators/anthropic_response'
 
@@ -135,7 +136,6 @@ module Legion
 
           def self.build_tool_classes(tool_specs)
             return [] if tool_specs.empty?
-            return [] unless Legion::LLM.ruby_llm_available?
 
             tool_specs.filter_map do |spec|
               next unless spec.is_a?(Hash) && spec[:name].to_s.length.positive?
@@ -145,13 +145,12 @@ module Legion
               tschema = spec[:parameters] || {}
 
               begin
-                klass = Class.new(RubyLLM::Tool) do
-                  description tdesc
-                  define_method(:name) { tname }
-                  define_method(:execute) { |**_| "Tool #{tname} is declared but not executable server-side." }
-                end
-                klass.params(tschema) if tschema.is_a?(Hash) && tschema[:properties]
-                klass
+                Legion::LLM::Types::ToolDefinition.build(
+                  name:        tname,
+                  description: tdesc,
+                  parameters:  tschema,
+                  source:      { type: :client, executable: false }
+                )
               rescue StandardError => e
                 log.warn("[llm][api][anthropic][messages] build_tool_classes failed name=#{tname} error=#{e.message}")
                 nil

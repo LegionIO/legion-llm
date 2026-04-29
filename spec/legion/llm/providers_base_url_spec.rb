@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Providers, 'base_url forwarding' do
+RSpec.describe Legion::LLM::Providers, 'native provider config preparation' do
   let(:host) do
     Class.new do
       include Legion::LLM::Providers
@@ -14,76 +14,34 @@ RSpec.describe Legion::LLM::Providers, 'base_url forwarding' do
     end.new
   end
 
-  let(:ruby_llm_config) { double('config') }
-
   before do
-    allow(RubyLLM).to receive(:configure).and_yield(ruby_llm_config)
     hide_const('Legion::Identity::Broker')
   end
 
-  describe '#configure_anthropic' do
-    before do
-      allow(ruby_llm_config).to receive(:anthropic_api_key=)
-      allow(ruby_llm_config).to receive(:anthropic_api_base=)
-    end
+  it 'resolves and stores Anthropic API keys without provider-global config writes' do
+    config = { api_key: 'sk-ant', base_url: 'https://gateway.example.com' }
 
-    it 'sets anthropic_api_base when base_url is present' do
-      host.send(:configure_anthropic, { api_key: 'sk-ant', base_url: 'https://gateway.example.com' })
-      expect(ruby_llm_config).to have_received(:anthropic_api_base=).with('https://gateway.example.com')
-    end
+    host.send(:configure_anthropic, config)
 
-    it 'sets anthropic_api_base from string-keyed config' do
-      host.send(:configure_anthropic, { 'api_key' => 'sk-ant', 'base_url' => 'https://gateway.example.com' })
-      expect(ruby_llm_config).to have_received(:anthropic_api_base=).with('https://gateway.example.com')
-    end
-
-    it 'does not set anthropic_api_base when base_url is absent' do
-      host.send(:configure_anthropic, { api_key: 'sk-ant' })
-      expect(ruby_llm_config).not_to have_received(:anthropic_api_base=)
-    end
+    expect(config[:api_key]).to eq('sk-ant')
+    expect(config[:base_url]).to eq('https://gateway.example.com')
   end
 
-  describe '#configure_openai' do
-    before do
-      allow(ruby_llm_config).to receive(:openai_api_key=)
-      allow(ruby_llm_config).to receive(:openai_api_base=)
-    end
+  it 'resolves and stores OpenAI API keys from string-keyed config' do
+    config = { 'api_key' => 'sk-oai', 'base_url' => 'https://gateway.example.com' }
 
-    it 'sets openai_api_base when base_url is present' do
-      host.send(:configure_openai, { api_key: 'sk-oai', base_url: 'https://gateway.example.com' })
-      expect(ruby_llm_config).to have_received(:openai_api_base=).with('https://gateway.example.com')
-    end
+    host.send(:configure_openai, config)
 
-    it 'sets openai_api_base from string-keyed config' do
-      host.send(:configure_openai, { 'api_key' => 'sk-oai', 'base_url' => 'https://gateway.example.com' })
-      expect(ruby_llm_config).to have_received(:openai_api_base=).with('https://gateway.example.com')
-    end
-
-    it 'does not set openai_api_base when base_url is absent' do
-      host.send(:configure_openai, { api_key: 'sk-oai' })
-      expect(ruby_llm_config).not_to have_received(:openai_api_base=)
-    end
+    expect(config['api_key']).to eq('sk-oai')
+    expect(config['base_url']).to eq('https://gateway.example.com')
   end
 
-  describe '#configure_gemini' do
-    before do
-      allow(ruby_llm_config).to receive(:gemini_api_key=)
-      allow(ruby_llm_config).to receive(:gemini_api_base=)
-    end
+  it 'resolves and stores Gemini API keys without touching provider-global state' do
+    config = { api_key: 'gem-key', base_url: 'https://gateway.example.com' }
 
-    it 'sets gemini_api_base when base_url is present' do
-      host.send(:configure_gemini, { api_key: 'gem-key', base_url: 'https://gateway.example.com' })
-      expect(ruby_llm_config).to have_received(:gemini_api_base=).with('https://gateway.example.com')
-    end
+    host.send(:configure_gemini, config)
 
-    it 'sets gemini_api_base from string-keyed config' do
-      host.send(:configure_gemini, { 'api_key' => 'gem-key', 'base_url' => 'https://gateway.example.com' })
-      expect(ruby_llm_config).to have_received(:gemini_api_base=).with('https://gateway.example.com')
-    end
-
-    it 'does not set gemini_api_base when base_url is absent' do
-      host.send(:configure_gemini, { api_key: 'gem-key' })
-      expect(ruby_llm_config).not_to have_received(:gemini_api_base=)
-    end
+    expect(config[:api_key]).to eq('gem-key')
+    expect(config[:base_url]).to eq('https://gateway.example.com')
   end
 end

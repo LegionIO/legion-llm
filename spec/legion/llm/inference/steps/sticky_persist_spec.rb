@@ -175,7 +175,7 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
       end
     end
 
-    it 'resolves tool class via Registry snapshot when @injected_tool_map misses (native dispatch path)' do
+    it 'resolves tool class via Registry snapshot when @injected_tool_map misses (Legion::LLM::Call::Dispatch path)' do
       tc = deferred_tool('legion-github-issues-list_issues', 'github', 'issues')
       allow(Legion::Tools::Registry).to receive(:all_tools).and_return([tc])
       instance.pending_tool_history << {

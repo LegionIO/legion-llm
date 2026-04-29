@@ -22,7 +22,7 @@ end
 
 require 'legion/llm/call/structured_output'
 
-RubyLLMMessage = Struct.new(:content, :model_id, keyword_init: true)
+ProviderMessage = Struct.new(:content, :model_id, keyword_init: true)
 
 RSpec.describe Legion::LLM::Call::StructuredOutput do
   let(:schema) { { type: 'object', properties: { name: { type: 'string' } } } }
@@ -40,9 +40,9 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
       expect(result[:data]).to eq({ name: 'Alice' })
     end
 
-    it 'handles RubyLLM::Message objects returned by chat_single' do
+    it 'handles ProviderMessage objects returned by chat_single' do
       json_string = '{"name":"Alice"}'
-      msg = RubyLLMMessage.new(content: json_string, model_id: 'qwen3.6:27b-q4_K_M')
+      msg = ProviderMessage.new(content: json_string, model_id: 'qwen3.6:27b-q4_K_M')
       allow(Legion::LLM::Inference).to receive(:send).with(:chat_single, anything).and_return(msg)
       allow(Legion::JSON).to receive(:load).with(json_string).and_return({ name: 'Alice' })
       allow(Legion::JSON).to receive(:dump).and_return('{}')

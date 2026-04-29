@@ -15,7 +15,7 @@ end
 # through the pipeline when pipeline_enabled? is true.
 RSpec.describe 'Inference endpoint pipeline routing' do
   let(:mock_session) do
-    dbl = double('RubyLLM::Chat')
+    dbl = double('NativeChat')
     allow(dbl).to receive(:with_tool)
     allow(dbl).to receive(:with_instructions)
     allow(dbl).to receive(:add_message)
@@ -23,7 +23,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
   end
 
   let(:mock_response) do
-    double('RubyLLM::Message',
+    double('ProviderMessage',
            content:       'pipeline response',
            role:          'assistant',
            input_tokens:  8,
@@ -37,7 +37,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
     Legion::Settings[:llm][:default_model] = 'test-model'
     Legion::Settings[:llm][:default_provider] = :test
     allow(Legion::LLM).to receive(:started?).and_return(true)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     allow(mock_session).to receive(:ask).and_return(mock_response)
   end
 
@@ -82,8 +82,8 @@ RSpec.describe 'Inference endpoint pipeline routing' do
       end
 
       it 'injects prior messages before the final ask' do
-        expect(mock_session).to receive(:add_message).exactly(2).times
-        expect(mock_session).to receive(:ask).with('tell me more about ruby').and_return(mock_response)
+        expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+          .and_return(native_dispatch_result(content: 'pipeline response'))
 
         Legion::LLM.chat(messages: multi_turn_messages)
       end
@@ -107,7 +107,9 @@ RSpec.describe 'Inference endpoint pipeline routing' do
       end
 
       it 'passes tool classes to the pipeline' do
-        expect(mock_session).to receive(:with_tool).with(tool_class)
+        expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+          .with(hash_including(tools: hash_including(test_tool: hash_including(name: 'test_tool'))))
+          .and_return(native_dispatch_result(content: 'pipeline response'))
         Legion::LLM.chat(
           messages: [{ role: :user, content: 'use a tool' }],
           tools:    [tool_class]
@@ -121,7 +123,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
       it 'does not return a Inference::Response' do
         allow(mock_session).to receive(:with_instructions)
         result = Legion::LLM.chat(
-          messages: [{ role: :user, content: 'no pipeline' }]
+          message: 'no pipeline'
         )
         expect(result).not_to be_a(Legion::LLM::Inference::Response)
       end

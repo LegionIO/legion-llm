@@ -83,13 +83,6 @@ RSpec.describe Legion::LLM::Providers do
   end
 
   describe '#configure_openai with Broker' do
-    let(:ruby_llm_config) { double('config') }
-
-    before do
-      allow(RubyLLM).to receive(:configure).and_yield(ruby_llm_config)
-      allow(ruby_llm_config).to receive(:openai_api_key=)
-    end
-
     context 'when Broker has a credential' do
       before do
         broker = Module.new do
@@ -101,8 +94,11 @@ RSpec.describe Legion::LLM::Providers do
       end
 
       it 'uses the Broker credential over config' do
-        host.send(:configure_openai, { api_key: 'sk-settings-key' })
-        expect(ruby_llm_config).to have_received(:openai_api_key=).with('sk-broker-key')
+        config = { api_key: 'sk-settings-key' }
+
+        host.send(:configure_openai, config)
+
+        expect(config[:api_key]).to eq('sk-broker-key')
       end
     end
 
@@ -115,13 +111,19 @@ RSpec.describe Legion::LLM::Providers do
       end
 
       it 'falls back to config api_key' do
-        host.send(:configure_openai, { api_key: 'sk-settings-key' })
-        expect(ruby_llm_config).to have_received(:openai_api_key=).with('sk-settings-key')
+        config = { api_key: 'sk-settings-key' }
+
+        host.send(:configure_openai, config)
+
+        expect(config[:api_key]).to eq('sk-settings-key')
       end
 
       it 'falls back to string-keyed config api_key' do
-        host.send(:configure_openai, { 'api_key' => 'sk-settings-key' })
-        expect(ruby_llm_config).to have_received(:openai_api_key=).with('sk-settings-key')
+        config = { 'api_key' => 'sk-settings-key' }
+
+        host.send(:configure_openai, config)
+
+        expect(config['api_key']).to eq('sk-settings-key')
       end
     end
   end
@@ -250,17 +252,8 @@ RSpec.describe Legion::LLM::Providers do
   end
 
   describe '#configure providers with env placeholders' do
-    let(:ruby_llm_config) { double('config') }
-
     before do
       hide_const('Legion::Identity::Broker')
-      allow(RubyLLM).to receive(:configure).and_yield(ruby_llm_config)
-      allow(ruby_llm_config).to receive(:gemini_api_key=)
-      allow(ruby_llm_config).to receive(:azure_api_base=)
-      allow(ruby_llm_config).to receive(:azure_api_key=)
-      allow(ruby_llm_config).to receive(:azure_ai_auth_token=)
-      allow(ruby_llm_config).to receive(:vllm_api_base=)
-      allow(ruby_llm_config).to receive(:vllm_api_key=)
     end
 
     around do |example|
@@ -277,22 +270,28 @@ RSpec.describe Legion::LLM::Providers do
       old_vllm.nil? ? ENV.delete('LEGION_TEST_VLLM') : ENV['LEGION_TEST_VLLM'] = old_vllm
     end
 
-    it 'resolves gemini env placeholders before configuring RubyLLM' do
-      host.send(:configure_gemini, { api_key: 'env://LEGION_TEST_GEMINI' })
+    it 'resolves gemini env placeholders before native provider registration' do
+      config = { api_key: 'env://LEGION_TEST_GEMINI' }
 
-      expect(ruby_llm_config).to have_received(:gemini_api_key=).with('gemini-key')
+      host.send(:configure_gemini, config)
+
+      expect(config[:api_key]).to eq('gemini-key')
     end
 
-    it 'resolves azure env placeholders before configuring RubyLLM' do
-      host.send(:configure_azure, { api_base: 'https://azure.example.com', api_key: 'env://LEGION_TEST_AZURE' })
+    it 'resolves azure env placeholders before native provider registration' do
+      config = { api_base: 'https://azure.example.com', api_key: 'env://LEGION_TEST_AZURE' }
 
-      expect(ruby_llm_config).to have_received(:azure_api_key=).with('azure-key')
+      host.send(:configure_azure, config)
+
+      expect(config[:api_key]).to eq('azure-key')
     end
 
-    it 'resolves vllm env placeholders before configuring RubyLLM' do
-      host.send(:configure_vllm, { base_url: 'http://gpu:8000/v1', api_key: 'env://LEGION_TEST_VLLM' })
+    it 'resolves vllm env placeholders before native provider registration' do
+      config = { base_url: 'http://gpu:8000/v1', api_key: 'env://LEGION_TEST_VLLM' }
 
-      expect(ruby_llm_config).to have_received(:vllm_api_key=).with('vllm-key')
+      host.send(:configure_vllm, config)
+
+      expect(config[:api_key]).to eq('vllm-key')
     end
   end
 

@@ -8,12 +8,10 @@ require_relative 'inference/profile'
 require_relative 'inference/timeline'
 require_relative 'inference/tracing'
 require_relative 'inference/steps'
-require_relative 'inference/tool_adapter'
 require_relative 'inference/tool_dispatcher'
 require_relative 'inference/audit_publisher'
 require_relative 'inference/enrichment_injector'
 require_relative 'inference/gaia_caller'
-require_relative 'inference/mcp_tool_adapter'
 require_relative 'inference/executor'
 
 module Legion
@@ -505,10 +503,10 @@ module Legion
         }
       end
 
-      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &block)
+      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &)
         explicit_tools = kwargs.delete(:tools)
-        tools = explicit_tools || adapted_registry_tools
-        tools = nil if tools.empty?
+        tools = explicit_tools
+        tools = nil if tools.respond_to?(:empty?) && tools.empty?
 
         if (intent || tier) && Router.routing_enabled?
           resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
@@ -533,37 +531,16 @@ module Legion
         opts.delete(:temperature) if opts[:temperature].nil?
 
         Call::Providers.inject_anthropic_cache_control!(opts, provider)
+        opts[:tools] = tools if tools
 
         log.debug "[llm][inference] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
-        unless ruby_llm_available?
-          return chat_single_native(model: opts[:model], provider: opts[:provider], message: message,
-                                    caller: kwargs[:caller], **opts.except(:model, :provider), &block)
-        end
-
-        session = RubyLLM.chat(**opts)
-        tools&.each { |tool| session.with_tool(tool) }
-        return session unless message
-
-        log.debug '[llm][inference] chat_single asking session'
-        response = block ? session.ask(message, &block) : session.ask(message)
-        log.debug "[llm][inference] chat_single response_class=#{response.class} response_nil=#{response.nil?}"
-        emit_non_pipeline_metering(response, model: opts[:model], provider: opts[:provider], caller: kwargs[:caller])
-
-        if response && !block && defined?(Quality::ShadowEval) && Quality::ShadowEval.enabled?
-          msgs = session.respond_to?(:messages) ? session.messages : nil
-          maybe_shadow_evaluate(response, msgs, opts[:model])
-        end
-
-        response
-      end
-
-      def ruby_llm_available?
-        Legion::LLM.respond_to?(:ruby_llm_available?) && Legion::LLM.ruby_llm_available?
+        chat_single_native(model: opts[:model], provider: opts[:provider], message: message,
+                           caller: kwargs[:caller], **opts.except(:model, :provider), &)
       end
 
       def chat_single_native(model:, provider:, message:, caller: nil, **, &block)
-        raise ruby_llm_unavailable_error('session-style chat') unless message
-        raise ruby_llm_unavailable_error('chat without a native provider') unless provider && Call::Dispatch.available?(provider)
+        raise native_provider_error('session-style chat requires message or messages') unless message
+        raise native_provider_error('chat without a native provider') unless provider
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         result = if block
@@ -576,30 +553,10 @@ module Legion
         response
       end
 
-      def ruby_llm_unavailable_error(operation)
+      def native_provider_error(operation)
         Legion::LLM::ProviderError.new(
-          "RubyLLM is unavailable for #{operation}. Install ruby_llm or configure a registered native provider."
+          "Native provider dispatch is required for #{operation}. Configure a registered lex-llm provider."
         )
-      end
-
-      def adapted_registry_tools
-        return [] unless ruby_llm_available?
-
-        tool_classes = if defined?(::Legion::Tools::Registry)
-                         ::Legion::Tools::Registry.tools
-                       else
-                         return []
-                       end
-
-        tool_classes.map do |tool_class|
-          ToolAdapter.new(tool_class)
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.inference.adapted_registry_tools', tool_class: tool_class.to_s)
-          nil
-        end.compact
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'llm.inference.adapted_registry_tools')
-        []
       end
 
       def try_defer(intent:, urgency:, model:, provider:, message:, **)
@@ -648,9 +605,9 @@ module Legion
 
         publish_escalation_event(history, :exhausted) if history.size > 1
         message = "All #{history.size} escalation attempts failed"
-        if !ruby_llm_available? && last_error
+        if last_error
           providers = history.filter_map { |attempt| attempt[:provider] }.uniq.join(', ')
-          message = "#{message} without RubyLLM; no usable native provider handled the request. " \
+          message = "#{message}; no usable native provider handled the request. " \
                     "providers=#{providers} last_error=#{last_error.class}: #{last_error.message}"
         end
 
@@ -682,14 +639,9 @@ module Legion
       def escalation_attempt_response(resolution, message, kwargs)
         opts = { model: resolution.model, provider: resolution.provider }
         opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
-        if ruby_llm_available?
-          chat_obj = RubyLLM.chat(**opts)
-          chat_obj.ask(message)
-        else
-          chat_single_native(model: opts[:model], provider: opts[:provider],
-                             message: message, caller: kwargs[:caller],
-                             **opts.except(:model, :provider))
-        end
+        chat_single_native(model: opts[:model], provider: opts[:provider],
+                           message: message, caller: kwargs[:caller],
+                           **opts.except(:model, :provider))
       end
 
       def escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain)

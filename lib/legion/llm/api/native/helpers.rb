@@ -5,6 +5,7 @@ require 'open3'
 require 'time'
 require 'legion/cache/helper'
 require 'legion/logging/helper'
+require 'legion/llm/types'
 
 begin
   require 'legion/identity/request'
@@ -294,43 +295,12 @@ module Legion
 
               define_method(:build_client_tool_class) do |tname, tdesc, tschema|
                 log.debug("[llm][api][helpers] build_client_tool_class name=#{tname}")
-                unless Legion::LLM.ruby_llm_available?
-                  log.debug("[llm][api][helpers] build_client_tool_class skipped name=#{tname} reason=ruby_llm_unavailable")
-                  next nil
-                end
-
-                tool_ref = tname
-                klass = Class.new(RubyLLM::Tool) do
-                  include Legion::LLM::API::Native::ClientToolMethods
-
-                  description tdesc
-                  define_method(:name) { tool_ref }
-
-                  define_method(:execute) do |**kwargs|
-                    summary = summarize_tool_args(tool_ref, kwargs)
-                    log_tool(:info, tool_ref, 'executing', **summary)
-                    t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-                    result = dispatch_client_tool(tool_ref, **kwargs)
-                    ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round(1)
-                    log_tool(:info, tool_ref, 'completed', duration_ms: ms, result_size: result.to_s.bytesize)
-                    notify_tool_event(:tool_result, tool_ref, result: result.to_s[0, 4096])
-                    result
-                  rescue StandardError => e
-                    ms = begin
-                      ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round(1)
-                    rescue StandardError => e
-                      handle_exception(e, level: :warn, handled: true,
-                                          operation: 'llm.api.client_tool.duration_measurement', tool_ref: tool_ref)
-                      nil
-                    end
-                    log_tool(:error, tool_ref, 'failed', duration_ms: ms, error: e.message)
-                    notify_tool_event(:tool_error, tool_ref, error: e.message)
-                    handle_exception(e, level: :error, handled: true, operation: "llm.api.client_tool.#{tool_ref}")
-                    "Tool error: #{e.message}"
-                  end
-                end
-                klass.params(tschema) if tschema.is_a?(Hash) && tschema[:properties]
-                klass
+                Legion::LLM::Types::ToolDefinition.build(
+                  name:        tname,
+                  description: tdesc,
+                  parameters:  tschema || {},
+                  source:      { type: :client, executable: true }
+                )
               rescue StandardError => e
                 handle_exception(e, level: :warn, handled: true, operation: "llm.api.build_client_tool_class.#{tname}")
                 nil

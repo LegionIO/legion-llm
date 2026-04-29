@@ -26,7 +26,7 @@ RSpec.describe 'Legion::LLM backward compatibility via Prompt' do
     Legion::Settings[:llm][:default_provider] = :anthropic
     Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
     Legion::Settings[:llm][:pipeline_enabled] = true
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
   end
 
   describe 'Legion::LLM.chat delegates to Prompt.dispatch' do

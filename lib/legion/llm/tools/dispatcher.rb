@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/tools/interceptor'
 
 module Legion
   module LLM
@@ -28,6 +29,10 @@ module Legion
                      mcp_result
                    when :extension
                      dispatch_extension(tool_call, source)
+                   when :registry
+                     dispatch_registry(tool_call, source)
+                   when :client
+                     dispatch_client(tool_call, source)
                    when :builtin
                      dispatch_builtin(tool_call, source)
                    else
@@ -100,8 +105,60 @@ module Legion
           { status: :success, result: result }
         end
 
+        def dispatch_registry(tool_call, source)
+          tool_class = source[:tool_class]
+          raise "No registry tool class for #{tool_call[:name]}" unless tool_class.respond_to?(:call)
+
+          args = symbolize_keys(tool_call[:arguments] || {})
+          args = Interceptor.intercept(tool_call[:name], **args)
+          result = tool_class.call(**args)
+          { status: result_error?(result) ? :error : :success, result: extract_content(result) }
+        end
+
+        def dispatch_client(tool_call, source)
+          return { status: :error, result: "Tool #{tool_call[:name]} is not executable server-side." } unless source[:executable]
+
+          require 'legion/llm/api/native/helpers'
+
+          helper = Object.new.extend(Legion::LLM::API::Native::ClientToolMethods)
+          result = helper.send(:dispatch_client_tool, tool_call[:name].to_s, **symbolize_keys(tool_call[:arguments] || {}))
+          { status: :success, result: result }
+        end
+
         def dispatch_builtin(_tool_call, _source)
           { status: :passthrough, result: nil }
+        end
+
+        def symbolize_keys(value)
+          case value
+          when Hash
+            value.to_h do |key, nested|
+              normalized_key = key.respond_to?(:to_sym) ? key.to_sym : key
+              [normalized_key, symbolize_keys(nested)]
+            end
+          when Array
+            value.map { |entry| symbolize_keys(entry) }
+          else
+            value
+          end
+        end
+
+        def extract_content(result)
+          if result.respond_to?(:content) && result.content.is_a?(Array)
+            result.content.filter_map { |c| c[:text] || c['text'] || c.to_s }.join("\n")
+          elsif result.is_a?(Hash) && result[:content].is_a?(Array)
+            result[:content].filter_map { |c| c[:text] || c['text'] }.join("\n")
+          elsif result.is_a?(Hash)
+            Legion::JSON.dump(result)
+          elsif result.is_a?(String)
+            result
+          else
+            result.to_s
+          end
+        end
+
+        def result_error?(result)
+          result.is_a?(Hash) && (result[:error] || result['error'])
         end
 
         def run_shadow(tool_call, _source, mcp_result)

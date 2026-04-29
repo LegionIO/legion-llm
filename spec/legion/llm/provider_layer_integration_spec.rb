@@ -16,12 +16,11 @@ RSpec.describe 'Provider layer mode switching' do
   before do
     Legion::LLM::Call::Registry.reset!
     Legion::Settings[:llm][:provider_layer] = {
-      mode:                 'auto',
-      native_providers:     %w[
+      mode:             'auto',
+      native_providers: %w[
         ollama vllm anthropic openai gemini mlx
         bedrock azure_foundry vertex claude
-      ],
-      fallback_to_ruby_llm: false
+      ]
     }
   end
 
@@ -31,7 +30,7 @@ RSpec.describe 'Provider layer mode switching' do
       expect(layer[:mode]).to eq('auto')
     end
 
-    it 'uses native dispatch when provider is registered in auto mode' do
+    it 'uses Legion::LLM::Call::Dispatch when provider is registered in auto mode' do
       Legion::LLM::Call::Registry.register(:anthropic, fake_ext)
       expect(Legion::LLM::Call::Dispatch.available?(:anthropic)).to be true
     end
@@ -40,7 +39,6 @@ RSpec.describe 'Provider layer mode switching' do
       layer = Legion::LLM.settings[:provider_layer]
       expect(layer).to have_key(:mode)
       expect(layer).to have_key(:native_providers)
-      expect(layer).to have_key(:fallback_to_ruby_llm)
     end
 
     it 'lists new lex-llm providers as default native_providers' do
@@ -50,19 +48,13 @@ RSpec.describe 'Provider layer mode switching' do
         'bedrock', 'azure_foundry', 'vertex'
       )
     end
-
-    it 'disables fallback_to_ruby_llm by default' do
-      layer = Legion::LLM.settings[:provider_layer]
-      expect(layer[:fallback_to_ruby_llm]).to be false
-    end
   end
 
   describe 'auto mode' do
     before do
       Legion::Settings[:llm][:provider_layer] = {
-        mode:                 'auto',
-        native_providers:     %w[claude bedrock],
-        fallback_to_ruby_llm: true
+        mode:             'auto',
+        native_providers: %w[claude bedrock]
       }
     end
 
@@ -83,9 +75,8 @@ RSpec.describe 'Provider layer mode switching' do
   describe 'native mode' do
     before do
       Legion::Settings[:llm][:provider_layer] = {
-        mode:                 'native',
-        native_providers:     %w[claude bedrock],
-        fallback_to_ruby_llm: false
+        mode:             'native',
+        native_providers: %w[claude bedrock]
       }
     end
 
@@ -93,7 +84,7 @@ RSpec.describe 'Provider layer mode switching' do
       expect(Legion::LLM.settings.dig(:provider_layer, :mode)).to eq('native')
     end
 
-    it 'allows native dispatch when provider is registered' do
+    it 'allows Legion::LLM::Call::Dispatch when provider is registered' do
       Legion::LLM::Call::Registry.register(:claude, fake_ext)
       result = Legion::LLM::Call::Dispatch.dispatch_chat(
         provider: :claude,
@@ -111,22 +102,6 @@ RSpec.describe 'Provider layer mode switching' do
           messages: []
         )
       end.to raise_error(Legion::LLM::ProviderError)
-    end
-  end
-
-  describe 'fallback_to_ruby_llm behavior' do
-    it 'is false in default settings' do
-      defaults = Legion::LLM::Settings.default
-      expect(defaults.dig(:provider_layer, :fallback_to_ruby_llm)).to be false
-    end
-
-    it 'can be disabled in settings' do
-      Legion::Settings[:llm][:provider_layer] = {
-        mode:                 'native',
-        native_providers:     %w[claude],
-        fallback_to_ruby_llm: false
-      }
-      expect(Legion::LLM.settings.dig(:provider_layer, :fallback_to_ruby_llm)).to be false
     end
   end
 

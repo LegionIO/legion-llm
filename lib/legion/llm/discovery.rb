@@ -103,10 +103,9 @@ module Legion
           return true if provider == :azure
           return false unless provider_supports_embeddings?(provider)
           return true unless model
-          return false unless Legion::LLM.ruby_llm_available?
 
           start_time = Time.now
-          RubyLLM.embed('health check', model: model, provider: provider)
+          Call::Dispatch.dispatch_embed(provider: provider, model: model, text: 'health check')
           elapsed = ((Time.now - start_time) * 1000).round
           log.info "[llm][discovery] embedding health check ok provider=#{provider} model=#{model} elapsed_ms=#{elapsed}"
           true
@@ -176,15 +175,11 @@ module Legion
           return false unless provider
           return true if %i[ollama azure].include?(provider)
           return false if provider == :anthropic
-          return false unless Legion::LLM.ruby_llm_available?
 
-          klass = RubyLLM::Provider.resolve(provider)
-          return false unless klass
+          adapter = Call::Registry.for(provider)
+          return true if adapter.respond_to?(:embed)
 
-          klass.instance_method(:render_embedding_payload)
-          true
-        rescue NameError
-          false
+          %i[openai bedrock gemini vertex azure_foundry vllm mlx].include?(provider)
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.discovery.provider_supports_embeddings', provider: provider)
           false

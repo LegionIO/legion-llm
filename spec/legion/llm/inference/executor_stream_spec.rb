@@ -11,15 +11,22 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
     )
   end
 
+  def register_native_stream(provider = :anthropic, &handler)
+    Legion::LLM::Call::Registry.register(provider, Module.new do
+      define_singleton_method(:stream) do |model:, messages:, **opts, &block|
+        handler.call(model: model, messages: messages, block: block, **opts)
+      end
+    end)
+  end
+
   it 'yields chunks to the block' do
+    register_native_stream do |block:, **|
+      block&.call('hello ')
+      block&.call('world')
+      { content: 'hello world', usage: { input_tokens: 10, output_tokens: 5 } }
+    end
     executor = described_class.new(request)
     chunks = []
-
-    mock_session = double('session', with_tool: nil)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
-
-    mock_response = double('response', content: 'hello world', input_tokens: 10, output_tokens: 5)
-    allow(mock_session).to receive(:ask).and_yield('hello ').and_yield('world').and_return(mock_response)
 
     response = executor.call_stream { |chunk| chunks << chunk }
 
@@ -38,11 +45,8 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
   end
 
   it 'runs post-provider steps after stream completes' do
+    register_native_stream { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }
     executor = described_class.new(request)
-    mock_session = double('session', with_tool: nil)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
-    mock_response = double('response', content: 'done', input_tokens: 5, output_tokens: 3)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
 
     response = executor.call_stream { |_chunk| nil }
 
@@ -60,19 +64,15 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
     executor = described_class.new(req)
     executor.enrichments['gaia:system_prompt'] = { content: 'Injected streaming guidance' }
 
-    mock_session = double('session')
-    mock_response = double('response', content: 'done', input_tokens: 5, output_tokens: 3)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
-    allow(mock_session).to receive(:with_tool).and_return(mock_session)
-    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
-    allow(mock_session).to receive(:add_message)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
-
-    expect(mock_session).to receive(:with_instructions).with(
-      a_string_including('Base system prompt', 'Injected streaming guidance')
-    ).and_return(mock_session)
+    seen_system = nil
+    register_native_stream do |system:, **|
+      seen_system = system
+      { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+    end
 
     executor.call_stream { |_chunk| nil }
+
+    expect(seen_system).to include('Base system prompt', 'Injected streaming guidance')
   end
 
   it 'applies conversation breakpoints before streaming the provider call' do
@@ -90,25 +90,20 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
     )
 
     executor = described_class.new(req)
-    mock_session = double('session')
-    mock_response = double('response', content: 'done', input_tokens: 5, output_tokens: 3)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
-    allow(mock_session).to receive(:with_tool).and_return(mock_session)
-    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
-    allow(mock_session).to receive(:add_message)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
+    seen_messages = nil
+    register_native_stream do |messages:, **|
+      seen_messages = messages
+      { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+    end
 
     executor.call_stream { |_chunk| nil }
 
-    expect(mock_session).to have_received(:add_message).with(
-      hash_including(role: :assistant, cache_control: { type: 'ephemeral' })
-    )
+    expect(seen_messages).to include(hash_including(role: :assistant, cache_control: { type: 'ephemeral' }))
   end
 
-  it 'uses native dispatch for streaming when the provider layer selects native mode' do
+  it 'uses Legion::LLM::Call::Dispatch for streaming when the provider layer selects native mode' do
     Legion::Settings[:llm][:provider_layer] = {
-      mode:                 'native',
-      fallback_to_ruby_llm: false
+      mode: 'native'
     }
     Legion::LLM::Call::Registry.register(:anthropic, Module.new do
       define_singleton_method(:stream) do |model:, messages:, **, &block|
@@ -133,10 +128,9 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
     expect(response.routing[:offering_id]).to eq('anthropic:test:chat:claude-opus-4-6')
   end
 
-  it 'falls back to RubyLLM streaming when native dispatch fails and fallback is enabled' do
+  it 'raises when native streaming dispatch fails' do
     Legion::Settings[:llm][:provider_layer] = {
-      mode:                 'native',
-      fallback_to_ruby_llm: true
+      mode: 'native'
     }
     Legion::LLM::Call::Registry.register(:anthropic, Module.new do
       define_singleton_method(:stream) do |**|
@@ -145,17 +139,8 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
     end)
 
     executor = described_class.new(request)
-    mock_session = double('session', with_tool: nil)
-    mock_response = double('response', content: 'fallback', input_tokens: 5, output_tokens: 3)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
-    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
-    allow(mock_session).to receive(:add_message)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
 
-    response = executor.call_stream { |_chunk| nil }
-
-    expect(response.message[:content]).to eq('fallback')
-    expect(RubyLLM).to have_received(:chat)
+    expect { executor.call_stream { |_chunk| nil } }.to raise_error(Legion::LLM::ProviderError, /native stream unavailable/)
   end
 
   it 'falls back to blocking call when no block given' do

@@ -51,7 +51,7 @@ module Legion
           )
         end
 
-        def self.from_ruby_llm(msg, request_id:, conversation_id:, provider: nil, model: nil, **extra)
+        def self.from_provider_message(msg, request_id:, conversation_id:, provider: nil, model: nil, **extra)
           input  = msg.respond_to?(:input_tokens) ? msg.input_tokens.to_i : 0
           output = msg.respond_to?(:output_tokens) ? msg.output_tokens.to_i : 0
 
