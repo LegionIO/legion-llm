@@ -479,6 +479,62 @@ confidence: 0.9 }],
       expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end
 
+    it 'uses the RubyLLM tool loop for explicit tool-bearing requests' do
+      tool_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'use the tool' }],
+        routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
+        tools:    [Class.new]
+      )
+      tool_executor = described_class.new(tool_request)
+      Legion::Settings[:llm] = {
+        'provider_layer' => {
+          'mode' => 'native'
+        }
+      }
+
+      expect(tool_executor.send(:use_native_dispatch?, :bedrock)).to be(false)
+    end
+
+    it 'uses the RubyLLM tool loop when registry tools would be injected by default' do
+      registry_tool = Class.new
+      registry_mod = Module.new do
+        define_singleton_method(:tools) { [registry_tool] }
+        define_singleton_method(:deferred_tools) { [] }
+      end
+      stub_const('Legion::Tools::Registry', registry_mod)
+      Legion::Settings[:llm] = {
+        'provider_layer' => {
+          'mode' => 'auto'
+        }
+      }
+      allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
+
+      expect(executor.send(:use_native_dispatch?, :bedrock)).to be(false)
+    end
+
+    it 'allows native dispatch when tools were explicitly disabled' do
+      registry_tool = Class.new
+      registry_mod = Module.new do
+        define_singleton_method(:tools) { [registry_tool] }
+        define_singleton_method(:deferred_tools) { [] }
+      end
+      stub_const('Legion::Tools::Registry', registry_mod)
+      toolless_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'no tools' }],
+        routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
+        tools:    []
+      )
+      toolless_executor = described_class.new(toolless_request)
+      Legion::Settings[:llm] = {
+        'provider_layer' => {
+          'mode' => 'auto'
+        }
+      }
+      allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
+
+      expect(toolless_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
+    end
+
     it 'finds string-keyed fallback provider configs' do
       Legion::Settings[:llm] = {
         'providers' => {

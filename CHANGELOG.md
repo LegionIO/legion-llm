@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.8.46] - 2026-04-29
+
+### Fixed
+- Pipeline native dispatch now yields to the RubyLLM tool-loop path whenever client, triggered, or registry tools would otherwise be injected, preventing tool-bearing requests from silently dropping tools while native tool-loop execution remains unimplemented.
+- Escalation exhaustion now raises `EscalationExhausted` consistently when RubyLLM is unavailable, preserving the RubyLLM-absent native failure details in the error message.
+
 ## [0.8.45] - 2026-04-29
 
 ### Added
