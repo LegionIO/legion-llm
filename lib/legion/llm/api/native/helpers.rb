@@ -434,7 +434,10 @@ module Legion
                 request_identity = identity_request_from_env(rack_env)
                 if request_identity.respond_to?(:to_caller_hash)
                   caller_hash = request_identity.to_caller_hash
-                  return caller_hash if caller_hash.is_a?(Hash) && caller_hash.key?(:requested_by)
+                  if caller_hash.is_a?(Hash)
+                    requested_by = caller_hash[:requested_by] || caller_hash['requested_by']
+                    return { requested_by: requested_by } if requested_by
+                  end
                 end
 
                 {
@@ -453,7 +456,7 @@ module Legion
                 {
                   source:       source,
                   path:         path,
-                  requested_by: identity_caller_hash(env)[:requested_by]
+                  requested_by: identity_caller_hash(env).fetch(:requested_by)
                 }.merge(safe_caller_fields)
               end
 

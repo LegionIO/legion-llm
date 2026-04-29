@@ -5,6 +5,7 @@
 ### Fixed
 - Native LLM API caller metadata now uses the unified `Legion::Identity::Request`/`Process` identity path instead of ad-hoc request waterfalls.
 - Identity broker credential lookups now include `purpose:` and `context:` metadata so credential grants are auditable.
+- Fleet request expiration no longer logs warnings for omitted or blank TTL values, and unified identity caller metadata accepts string-keyed `requested_by` hashes.
 
 ## [0.8.43] - 2026-04-28
 

@@ -232,6 +232,46 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       )
     end
 
+    it 'accepts string-keyed unified identity caller metadata' do
+      captured = nil
+      response = make_pipeline_response
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+      principal = instance_double(
+        'Legion::Identity::Request',
+        canonical_name: 'matt@example.com',
+        to_caller_hash: {
+          'requested_by' => {
+            'id'         => 'principal-456',
+            'identity'   => 'matt@example.com',
+            'type'       => 'user',
+            'credential' => 'session'
+          }
+        }
+      )
+
+      allow(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        captured = kwargs
+        :req
+      end
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      stub_const('Legion::Identity', Module.new) unless defined?(Legion::Identity)
+      stub_const('Legion::Identity::Request', Class.new) unless defined?(Legion::Identity::Request)
+      allow(Legion::Identity::Request).to receive(:from_env).and_return(principal)
+
+      response = post_json(
+        '/v1/chat/completions',
+        { model: 'gpt-test', messages: [{ role: 'user', content: 'hello' }] }
+      )
+
+      expect(response.status).to eq(200)
+      expect(captured[:caller][:requested_by]).to include(
+        'id'         => 'principal-456',
+        'identity'   => 'matt@example.com',
+        'type'       => 'user',
+        'credential' => 'session'
+      )
+    end
+
     it 'passes requested deferred tools through request metadata' do
       captured = nil
       response = make_pipeline_response
