@@ -617,6 +617,7 @@ module Legion
 
         def use_native_dispatch?(provider)
           return false unless defined?(Call::Dispatch)
+          return false if ruby_llm_tool_loop_required?
 
           layer_settings = llm_setting(:provider_layer, {})
           mode = config_value(layer_settings, :mode, 'auto').to_s
@@ -635,6 +636,20 @@ module Legion
           return false unless Legion::LLM.respond_to?(:ruby_llm_available?) && Legion::LLM.ruby_llm_available?
 
           config_value(layer_settings, :fallback_to_ruby_llm, false) == true
+        end
+
+        def ruby_llm_tool_loop_required?
+          return true if Array(@request.tools).any?
+          return false if @request.tools.is_a?(Array) && @request.tools.empty?
+          return true if @triggered_tools.any?
+          return false unless defined?(::Legion::Tools::Registry)
+          return true if Array(::Legion::Tools::Registry.tools).any?
+
+          requested_deferred_tool_names.any? &&
+            Array(::Legion::Tools::Registry.respond_to?(:deferred_tools) ? ::Legion::Tools::Registry.deferred_tools : []).any?
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.native_tool_check')
+          false
         end
 
         def merge_response_offering_metadata(metadata)

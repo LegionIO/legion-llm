@@ -647,14 +647,14 @@ module Legion
         end
 
         publish_escalation_event(history, :exhausted) if history.size > 1
+        message = "All #{history.size} escalation attempts failed"
         if !ruby_llm_available? && last_error
           providers = history.filter_map { |attempt| attempt[:provider] }.uniq.join(', ')
-          raise Legion::LLM::ProviderError,
-                'All escalation attempts failed without RubyLLM; no usable native provider handled the request. ' \
-                "providers=#{providers} last_error=#{last_error.class}: #{last_error.message}"
+          message = "#{message} without RubyLLM; no usable native provider handled the request. " \
+                    "providers=#{providers} last_error=#{last_error.class}: #{last_error.message}"
         end
 
-        raise Legion::LLM::EscalationExhausted, "All #{history.size} escalation attempts failed"
+        raise Legion::LLM::EscalationExhausted, message
       end
 
       def run_escalation_attempt(resolution, message:, kwargs:, threshold:, quality_check:, history:, chain:)
