@@ -6,6 +6,13 @@ require 'time'
 require 'legion/cache/helper'
 require 'legion/logging/helper'
 
+begin
+  require 'legion/identity/request'
+  require 'legion/identity/process'
+rescue LoadError
+  # legion-llm can still be loaded outside a full LegionIO runtime.
+end
+
 module Legion
   module LLM
     module API
@@ -402,55 +409,51 @@ module Legion
                 end
               end
 
-              define_method(:resolve_caller_identity) do |rack_env|
-                return rack_env['legion.tenant_id'] if rack_env['legion.tenant_id']
+              define_method(:identity_request_from_env) do |rack_env|
+                return nil unless defined?(Legion::Identity::Request)
+                return nil unless Legion::Identity::Request.respond_to?(:from_env)
 
-                kerb = Legion::LLM::Settings.global_value(:kerberos, :username)
-                return "user:#{kerb}" if kerb.is_a?(String) && !kerb.empty?
+                Legion::Identity::Request.from_env(rack_env)
+              end
 
-                principal = rack_env['legion.principal']
-                return "user:#{principal.canonical_name}" if principal.respond_to?(:canonical_name) && principal.canonical_name != 'system'
+              define_method(:identity_canonical_name) do |rack_env|
+                request_identity = identity_request_from_env(rack_env)
+                name = request_identity&.canonical_name if request_identity.respond_to?(:canonical_name)
+                return name if name && name.to_s != ''
 
-                if defined?(Legion::Identity::Process)
-                  name = Legion::Identity::Process.canonical_name
-                  return "user:#{name}" if name && name != 'anonymous'
+                if defined?(Legion::Identity::Process) && Legion::Identity::Process.respond_to?(:canonical_name)
+                  process_name = Legion::Identity::Process.canonical_name
+                  return process_name if process_name && process_name.to_s != ''
                 end
 
                 raw = ENV.fetch('USER', nil) || ENV.fetch('LOGNAME', nil) || 'anonymous'
-                username = raw.include?('@') ? raw.split('@').first : raw
-                "user:#{username}"
+                raw.to_s.include?('@') ? raw.to_s.split('@').first : raw.to_s
               end
 
-              define_method(:resolve_requested_by) do |rack_env, identity_string|
-                hostname = Legion::LLM::Settings.global_value(:client, :hostname) || Socket.gethostname
-                username = identity_string.delete_prefix('user:')
-
-                kerb = Legion::LLM::Settings.global_value(:kerberos, :username)
-                if kerb.is_a?(String) && !kerb.empty?
-                  return { identity: identity_string, type: :user, credential: :kerberos,
-                           username: kerb, hostname: hostname }
+              define_method(:identity_caller_hash) do |rack_env|
+                request_identity = identity_request_from_env(rack_env)
+                if request_identity.respond_to?(:to_caller_hash)
+                  caller_hash = request_identity.to_caller_hash
+                  return caller_hash if caller_hash.is_a?(Hash) && caller_hash.key?(:requested_by)
                 end
 
-                principal = rack_env['legion.principal']
-                if principal.respond_to?(:canonical_name) && principal.canonical_name != 'system'
-                  return { identity: identity_string, type: principal.kind || :user,
-                           credential: principal.source || :local,
-                           username: principal.canonical_name, hostname: hostname }
-                end
-
-                { identity: identity_string, type: :user, credential: :local,
-                  username: username, hostname: hostname }
+                {
+                  requested_by: {
+                    identity:   identity_canonical_name(rack_env),
+                    type:       :process,
+                    credential: :system
+                  }
+                }
               end
 
               define_method(:build_server_caller) do |source:, path:, env:, caller_context: nil|
                 normalized_caller = caller_context.respond_to?(:transform_keys) ? caller_context.transform_keys(&:to_sym) : {}
                 safe_caller_fields = normalized_caller.slice(:context, :session_id, :trace_id)
-                caller_identity = resolve_caller_identity(env)
 
                 {
                   source:       source,
                   path:         path,
-                  requested_by: resolve_requested_by(env, caller_identity)
+                  requested_by: identity_caller_hash(env)[:requested_by]
                 }.merge(safe_caller_fields)
               end
 

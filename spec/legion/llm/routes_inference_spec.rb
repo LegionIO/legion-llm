@@ -196,10 +196,16 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       response = make_pipeline_response
       executor = instance_double('Legion::LLM::Inference::Executor', call: response)
       principal = instance_double(
-        'Legion::Identity::Principal',
+        'Legion::Identity::Request',
         canonical_name: 'matt@example.com',
-        kind:           :user,
-        source:         :session
+        to_caller_hash: {
+          requested_by: {
+            id:         'principal-123',
+            identity:   'matt@example.com',
+            type:       :user,
+            credential: :session
+          }
+        }
       )
 
       allow(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
@@ -207,20 +213,22 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
         :req
       end
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      stub_const('Legion::Identity', Module.new) unless defined?(Legion::Identity)
+      stub_const('Legion::Identity::Request', Class.new) unless defined?(Legion::Identity::Request)
+      allow(Legion::Identity::Request).to receive(:from_env).and_return(principal)
 
       response = post_json(
         '/v1/chat/completions',
-        { model: 'gpt-test', messages: [{ role: 'user', content: 'hello' }] },
-        'legion.principal' => principal
+        { model: 'gpt-test', messages: [{ role: 'user', content: 'hello' }] }
       )
 
       expect(response.status).to eq(200)
       expect(captured[:caller]).to include(source: 'openai_compat', path: '/v1/chat/completions')
       expect(captured[:caller][:requested_by]).to include(
-        identity:   'user:matt@example.com',
+        id:         'principal-123',
+        identity:   'matt@example.com',
         type:       :user,
-        credential: :session,
-        username:   'matt@example.com'
+        credential: :session
       )
     end
 
