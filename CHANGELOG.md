@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.8.44] - 2026-04-28
+
+### Fixed
+- Native LLM API caller metadata now uses the unified `Legion::Identity::Request`/`Process` identity path instead of ad-hoc request waterfalls.
+- Identity broker credential lookups now include `purpose:` and `context:` metadata so credential grants are auditable.
+
 ## [0.8.43] - 2026-04-28
 
 ### Changed

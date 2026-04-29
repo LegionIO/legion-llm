@@ -29,7 +29,7 @@ RSpec.describe Legion::LLM::Providers do
     context 'when Broker has a valid token' do
       before do
         broker = Module.new do
-          def self.token_for(name)
+          def self.token_for(name, **_kwargs)
             name == :openai ? 'sk-broker-key' : nil
           end
         end
@@ -42,6 +42,19 @@ RSpec.describe Legion::LLM::Providers do
 
       it 'returns nil for unregistered providers' do
         expect(host.send(:resolve_broker_credential, :unknown)).to be_nil
+      end
+
+      it 'includes audit purpose and context when resolving Broker credentials' do
+        broker = Legion::Identity::Broker
+        allow(broker).to receive(:token_for).and_call_original
+
+        host.send(:resolve_broker_credential, :openai)
+
+        expect(broker).to have_received(:token_for).with(
+          :openai,
+          purpose: 'llm.provider.credential',
+          context: { provider: :openai }
+        )
       end
     end
 
@@ -56,7 +69,7 @@ RSpec.describe Legion::LLM::Providers do
     context 'when Broker raises an error' do
       before do
         broker = Module.new do
-          def self.token_for(_name)
+          def self.token_for(_name, **_kwargs)
             raise StandardError, 'Broker unavailable'
           end
         end
@@ -80,7 +93,7 @@ RSpec.describe Legion::LLM::Providers do
     context 'when Broker has a credential' do
       before do
         broker = Module.new do
-          def self.token_for(name)
+          def self.token_for(name, **_kwargs)
             name == :openai ? 'sk-broker-key' : nil
           end
         end
@@ -96,7 +109,7 @@ RSpec.describe Legion::LLM::Providers do
     context 'when Broker returns nil' do
       before do
         broker = Module.new do
-          def self.token_for(_name) = nil
+          def self.token_for(_name, **_kwargs) = nil
         end
         stub_const('Legion::Identity::Broker', broker)
       end
@@ -287,7 +300,7 @@ RSpec.describe Legion::LLM::Providers do
     context 'when Broker has an API key provider' do
       before do
         broker = Module.new do
-          def self.token_for(name)
+          def self.token_for(name, **_kwargs)
             name == :openai ? 'sk-key' : nil
           end
 
@@ -303,6 +316,19 @@ RSpec.describe Legion::LLM::Providers do
       it 'returns false for unregistered provider' do
         expect(host.send(:broker_has_credential?, :gemini)).to be false
       end
+
+      it 'includes audit purpose and context when probing Broker availability' do
+        broker = Legion::Identity::Broker
+        allow(broker).to receive(:token_for).and_call_original
+
+        host.send(:broker_has_credential?, :openai)
+
+        expect(broker).to have_received(:token_for).with(
+          :openai,
+          purpose: 'llm.provider.credential_available',
+          context: { provider: :openai }
+        )
+      end
     end
 
     context 'when Broker has AWS credentials for bedrock' do
@@ -311,7 +337,7 @@ RSpec.describe Legion::LLM::Providers do
         provider = double('provider', current_credentials: creds)
         renewer = double('renewer', provider: provider)
         broker = Module.new
-        broker.define_singleton_method(:token_for) { |_| nil }
+        broker.define_singleton_method(:token_for) { |_, **_kwargs| nil }
         broker.define_singleton_method(:renewer_for) { |name| name == :aws ? renewer : nil }
         stub_const('Legion::Identity::Broker', broker)
       end

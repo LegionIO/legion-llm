@@ -729,7 +729,11 @@ module Legion
         def resolve_broker_credential(provider_name)
           return nil unless defined?(Legion::Identity::Broker)
 
-          Legion::Identity::Broker.token_for(provider_name)
+          Legion::Identity::Broker.token_for(
+            provider_name,
+            purpose: 'llm.provider.credential',
+            context: { provider: provider_name }
+          )
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: "llm.providers.broker_resolve.#{provider_name}")
           nil
@@ -755,7 +759,11 @@ module Legion
             renewer = Legion::Identity::Broker.renewer_for(:aws)
             renewer&.provider.respond_to?(:current_credentials) && !renewer.provider.current_credentials.nil?
           else
-            !Legion::Identity::Broker.token_for(provider).nil?
+            !Legion::Identity::Broker.token_for(
+              provider,
+              purpose: 'llm.provider.credential_available',
+              context: { provider: provider }
+            ).nil?
           end
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.broker_credential_available', provider: provider)

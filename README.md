@@ -2,7 +2,7 @@
 
 LLM routing and provider orchestration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Routes chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata through Legion-native `lex-llm-*` provider extensions. RubyLLM compatibility remains optional for legacy callers, but native dispatch is the default path.
 
-**Version**: 0.8.43
+**Version**: 0.8.44
 
 ## Installation
 

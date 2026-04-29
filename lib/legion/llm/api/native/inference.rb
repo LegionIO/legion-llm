@@ -42,7 +42,7 @@ module Legion
               tools = raw_tools || []
               validate_tools!(tools) unless tools.empty?
 
-              caller_identity = resolve_caller_identity(env)
+              caller_identity = identity_canonical_name(env)
               last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
               prompt    = (last_user || {})[:content] || (last_user || {})['content'] || ''
 
