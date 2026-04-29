@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.45] - 2026-04-29
+
+### Added
+- Native LLM API now exposes model-offering inventory at `/api/llm/offerings` and provider-instance inventory at `/api/llm/instances`, matching the routing redesign metadata surface.
+
 ## [0.8.44] - 2026-04-28
 
 ### Fixed

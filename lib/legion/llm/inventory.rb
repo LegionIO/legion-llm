@@ -382,8 +382,12 @@ module Legion
                 offering[:offering_id] == value.to_s || offering[:canonical_model_alias] == value.to_s
             when :offering_id
               offering[:offering_id] == value.to_s || offering[:id] == value.to_s
-            when :model_family
+            when :model_family, :family
               offering[:model_family] == value.to_s
+            when :tier
+              offering[:tier].to_s == value.to_s
+            when :healthy
+              healthy_filter_matches?(offering, value)
             when :type, :purpose
               offering[:type].to_s == normalize_type(value).to_s
             when :capability
@@ -392,6 +396,12 @@ module Legion
               true
             end
           end
+        end
+
+        def healthy_filter_matches?(offering, value)
+          expected = %w[1 true yes].include?(value.to_s.downcase)
+          unhealthy = %w[open tripped unhealthy down unavailable].include?(offering.dig(:health, :circuit_state).to_s)
+          expected ? !unhealthy : unhealthy
         end
       end
     end
