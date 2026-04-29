@@ -19,12 +19,15 @@ module Legion
           def priority    = map_priority(@options[:priority])
 
           def expiration
-            ttl_seconds = Float(@options[:ttl])
+            ttl = @options[:ttl]
+            return super if ttl.nil? || ttl.to_s.strip.empty?
+
+            ttl_seconds = Float(ttl)
             return super unless ttl_seconds.positive?
 
             (ttl_seconds * 1000).ceil.to_s
           rescue ArgumentError, TypeError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.fleet_request.expiration', ttl: @options[:ttl])
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.fleet_request.expiration', ttl: ttl)
             super
           end
 
@@ -59,23 +62,6 @@ module Legion
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.fleet_request.publish_confirm_timeout')
             500
-          end
-
-          def fetch_option(hash, key)
-            return nil unless hash.respond_to?(:key?)
-
-            string_key = key.to_s
-            return hash[string_key] if hash.key?(string_key)
-
-            hash[key] if hash.key?(key)
-          end
-
-          def nested_fetch(hash, *keys)
-            keys.reduce(hash) do |current, key|
-              return nil unless current.respond_to?(:key?)
-
-              fetch_option(current, key)
-            end
           end
 
           def map_priority(val)

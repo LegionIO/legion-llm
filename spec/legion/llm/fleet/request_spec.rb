@@ -83,8 +83,18 @@ RSpec.describe Legion::LLM::Transport::Messages::FleetRequest do
       expect(build(ttl: 'nope').expiration).to be_nil
     end
 
-    it 'returns nil when no TTL' do
-      expect(build.expiration).to be_nil
+    it 'returns nil without warning when no TTL is supplied' do
+      message = build
+      expect(message).not_to receive(:handle_exception)
+
+      expect(message.expiration).to be_nil
+    end
+
+    it 'returns nil without warning when TTL is blank' do
+      message = build(ttl: ' ')
+      expect(message).not_to receive(:handle_exception)
+
+      expect(message.expiration).to be_nil
     end
   end
 
