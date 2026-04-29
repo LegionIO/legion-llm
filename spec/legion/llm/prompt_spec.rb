@@ -26,7 +26,7 @@ RSpec.describe Legion::LLM::Prompt do
     Legion::Settings[:llm][:default_provider] = :anthropic
     Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
     Legion::Settings[:llm][:pipeline_enabled] = true
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
   end
 
   describe '.dispatch' do
@@ -282,7 +282,7 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     it 'allows tools override' do
-      tool = double('tool')
+      tool = Legion::LLM::Types::ToolDefinition.build(name: 'test_tool', description: 'Test tool')
       allow(described_class).to receive(:dispatch).and_call_original
       described_class.summarize('Text', tools: [tool])
       expect(described_class).to have_received(:dispatch).with(anything, hash_including(tools: [tool]))

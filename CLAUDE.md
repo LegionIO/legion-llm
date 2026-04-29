@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Core LegionIO gem providing LLM capabilities to all extensions. Wraps ruby_llm to provide a consistent interface for chat, embeddings, tool use, and agents across multiple providers (Bedrock, Anthropic, OpenAI, Gemini, Ollama). Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
+Core LegionIO gem providing LLM capabilities to all extensions through Legion-native provider dispatch. Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
 
 **GitHub**: https://github.com/LegionIO/legion-llm
 **Version**: 0.8.0
@@ -37,8 +37,6 @@ Legion::LLM.start
 
 ```
 Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inference, Call, Discovery
-├── Patches                              # Monkey-patches for upstream gems
-│   └── RubyLLMParallelTools            # Parallel tool execution patch for RubyLLM
 ├── Errors                               # Typed error hierarchy (LLMError base + subtypes, retryable?)
 │   └── EscalationExhausted / DaemonDeniedError / DaemonRateLimitedError / AuthError /
 │       RateLimitError / ContextOverflow / ProviderError / ProviderDown /
@@ -57,7 +55,6 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   ├── Embeddings       # generate, generate_batch, default_model, fallback chain
 │   ├── StructuredOutput # JSON schema enforcement with native response_format and prompt fallback
 │   ├── DaemonClient     # HTTP routing to LegionIO daemon with 30s health cache
-│   ├── BedrockAuth      # Monkey-patch for Bedrock Bearer Token auth (required lazily)
 │   ├── ClaudeConfigLoader # Import Claude CLI config from ~/.claude/settings.json
 │   └── CodexConfigLoader  # Import OpenAI bearer token from ~/.codex/auth.json
 ├── Context                              # Prompt and conversation context management
@@ -86,12 +83,10 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   ├── Executor     # 18-step skeleton with profile-aware execution and call_stream
 │   ├── Conversation # In-memory LRU (256 slots) + optional Sequel DB persistence (was ConversationStore)
 │   ├── Prompt       # Clean dispatch API: dispatch, request, summarize, extract, decide
-│   ├── ToolAdapter  # Wraps Tools::Base for RubyLLM sessions (McpToolAdapter kept as alias)
-│   ├── ToolDispatcher # Routes tool calls: MCP client / LEX runner / RubyLLM builtin
+│   ├── ToolDispatcher # Routes tool calls: MCP client / LEX runner / native execution
 │   ├── AuditPublisher # Publishes audit events to llm.audit exchange
 │   ├── EnrichmentInjector # Converts RAG/GAIA enrichments into system prompt
 │   ├── GaiaCaller   # Gaia-specific chat dispatch with phase/tick tracing
-│   ├── McpToolAdapter # Backward-compat alias for ToolAdapter
 │   └── Steps/       # All 18+ pipeline step modules
 │       ├── Metering, Billing, TokenBudget, PromptCache, Classification, Rbac
 │       ├── GaiaAdvisory, TierAssigner, TriggerMatch, ToolDiscovery, McpDiscovery, RagContext
@@ -148,9 +143,8 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   └── OffPeak      # Peak-hour deferral (delegates to Scheduling)
 ├── Tools                                # Tool call layer
 │   ├── Confidence   # 4-tier degrading confidence storage (was OverrideConfidence)
-│   ├── Dispatcher   # Routes tool calls to MCP/LEX/RubyLLM
+│   ├── Dispatcher   # Routes tool calls to MCP/LEX/native execution
 │   ├── Interceptor  # Extensible pre-dispatch intercept registry
-│   ├── Adapter      # Wraps lex-* extension tool as RubyLLM::Tool
 │   └── Interceptors/
 │       └── PythonVenv # Redirects python3/pip3 tool calls to isolated venv
 ├── Hooks                                # before/after chat interceptor registry
@@ -286,7 +280,6 @@ All compatibility routes normalize requests through `API::Translators` (OpenAIRe
 
 | Gem | Purpose |
 |-----|---------|
-| `ruby_llm` (>= 1.0) | Multi-provider LLM client |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 | `legion-logging` | Logging |
 | `legion-settings` | Configuration |
@@ -377,7 +370,7 @@ Vault credential resolution: When `vault_path` is set and Legion::Crypt::Vault i
 
 Bedrock supports two auth modes:
 - **SigV4** (default): `api_key` + `secret_key` (+ optional `session_token`)
-- **Bearer token**: `bearer_token` for AWS Identity Center/SSO. When set, `bedrock_bearer_auth.rb` is required lazily to monkey-patch RubyLLM's Bedrock provider.
+- **Bearer token**: `bearer_token` for AWS Identity Center/SSO. Native Bedrock providers consume it through lex-llm configuration.
 
 ### Auto-Detection Priority
 
@@ -485,7 +478,6 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | Path | Purpose |
 |------|---------|
 | `lib/legion/llm.rb` | Thin facade: start, shutdown, delegates to Inference/Call/Discovery |
-| `lib/legion/llm/patches/ruby_llm_parallel_tools.rb` | Monkey-patch for RubyLLM parallel tool execution |
 | `lib/legion/llm/compat.rb` | Backward-compat aliases via const_missing with deprecation warnings |
 | `lib/legion/llm/errors.rb` | Typed error hierarchy: LLMError base + all subtypes, retryable? predicate |
 | `lib/legion/llm/version.rb` | Version constant |
@@ -503,7 +495,6 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/call/embeddings.rb` | generate, generate_batch, fallback chain, dimension enforcement |
 | `lib/legion/llm/call/structured_output.rb` | JSON schema enforcement with native response_format and prompt fallback |
 | `lib/legion/llm/call/daemon_client.rb` | HTTP routing to LegionIO daemon with 30s health cache |
-| `lib/legion/llm/call/bedrock_auth.rb` | Monkey-patch for Bedrock Bearer Token auth — required lazily |
 | `lib/legion/llm/call/claude_config_loader.rb` | Import Claude CLI config from ~/.claude/settings.json |
 | `lib/legion/llm/call/codex_config_loader.rb` | Import OpenAI bearer token from ~/.codex/auth.json |
 | `lib/legion/llm/context.rb` | Context entry point |
@@ -524,19 +515,17 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/metering/tokens.rb` | Thread-safe per-session token budget accumulator (was TokenTracker) |
 | `lib/legion/llm/inference.rb` | Inference entry point: requires all pipeline components |
 | `lib/legion/llm/inference/request.rb` | Inference::Request Data.define struct with .build and .from_chat_args |
-| `lib/legion/llm/inference/response.rb` | Inference::Response Data.define struct with .build, .from_ruby_llm, #with |
+| `lib/legion/llm/inference/response.rb` | Inference::Response Data.define struct with .build, .from_provider_message, #with |
 | `lib/legion/llm/inference/profile.rb` | Inference::Profile: caller-derived profiles for step skipping |
 | `lib/legion/llm/inference/tracing.rb` | Inference::Tracing: trace_id, span_id, exchange_id generation |
 | `lib/legion/llm/inference/timeline.rb` | Inference::Timeline: ordered event recording with participant tracking |
 | `lib/legion/llm/inference/executor.rb` | Inference::Executor: 18-step skeleton with profile-aware execution and call_stream |
 | `lib/legion/llm/inference/conversation.rb` | In-memory LRU (256 slots) + optional Sequel DB persistence (was ConversationStore) |
 | `lib/legion/llm/inference/prompt.rb` | Prompt dispatch API: dispatch, request, summarize, extract, decide |
-| `lib/legion/llm/inference/tool_adapter.rb` | Wraps Tools::Base for RubyLLM sessions (McpToolAdapter kept as alias) |
-| `lib/legion/llm/inference/tool_dispatcher.rb` | Routes tool calls to MCP client / LEX runner / RubyLLM builtin |
+| `lib/legion/llm/inference/tool_dispatcher.rb` | Routes tool calls to MCP client / LEX runner / native execution |
 | `lib/legion/llm/inference/audit_publisher.rb` | Publishes audit events to llm.audit exchange |
 | `lib/legion/llm/inference/enrichment_injector.rb` | Converts RAG/GAIA enrichments into system prompt |
 | `lib/legion/llm/inference/gaia_caller.rb` | Gaia-specific chat dispatch with phase/tick tracing |
-| `lib/legion/llm/inference/mcp_tool_adapter.rb` | Backward-compat alias for ToolAdapter |
 | `lib/legion/llm/inference/steps.rb` | Steps aggregator: requires all step modules |
 | `lib/legion/llm/inference/steps/*.rb` | All 18+ pipeline step modules (metering, billing, rbac, classification, etc.) |
 | `lib/legion/llm/router.rb` | Router: resolve, health_tracker, resolve_chain, select_candidates |
@@ -586,9 +575,8 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/scheduling/batch.rb` | Non-urgent request batching with priority queue and auto-flush |
 | `lib/legion/llm/scheduling/off_peak.rb` | Peak-hour deferral (delegates to Scheduling) |
 | `lib/legion/llm/tools/confidence.rb` | 4-tier degrading confidence storage (was OverrideConfidence) |
-| `lib/legion/llm/tools/dispatcher.rb` | Routes tool calls: MCP client / LEX runner / RubyLLM builtin |
+| `lib/legion/llm/tools/dispatcher.rb` | Routes tool calls: MCP client / LEX runner / native execution |
 | `lib/legion/llm/tools/interceptor.rb` | Extensible pre-dispatch intercept registry |
-| `lib/legion/llm/tools/adapter.rb` | Wraps lex-* extension tool as RubyLLM::Tool (McpToolAdapter kept as alias) |
 | `lib/legion/llm/tools/interceptors/python_venv.rb` | Redirects python3/pip3 tool calls to isolated venv |
 | `lib/legion/llm/hooks.rb` | Hooks: before/after chat registry, run_before, run_after, install_defaults |
 | `lib/legion/llm/hooks/rag_guard.rb` | Post-generation RAG faithfulness check via lex-eval |
@@ -643,7 +631,7 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `spec/legion/llm/gateway_integration_spec.rb` | Tests: gateway teardown — verifies no delegation |
 | `spec/legion/llm/metering/estimator_spec.rb` | Tests: cost estimation, fuzzy matching, pricing table (was cost_estimator_spec.rb) |
 | `spec/legion/llm/inference/request_spec.rb` | Tests: Request struct builder, legacy adapter |
-| `spec/legion/llm/inference/response_spec.rb` | Tests: Response struct builder, RubyLLM adapter, #with |
+| `spec/legion/llm/inference/response_spec.rb` | Tests: Response struct builder, provider message adapter, #with |
 | `spec/legion/llm/inference/profile_spec.rb` | Tests: Profile derivation and step skipping |
 | `spec/legion/llm/inference/tracing_spec.rb` | Tests: Tracing init, exchange_id generation |
 | `spec/legion/llm/inference/timeline_spec.rb` | Tests: Timeline event recording, participants |

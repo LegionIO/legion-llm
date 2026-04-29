@@ -2,22 +2,9 @@
 
 require 'legion/logging/helper'
 
-begin
-  require 'ruby_llm'
-  ruby_llm_available = true
-rescue LoadError
-  ruby_llm_available = false
-end
-
 Object.const_set(:Legion, Module.new) unless Object.const_defined?(:Legion, false)
 Legion.const_set(:LLM, Module.new) unless Legion.const_defined?(:LLM, false)
-Legion::LLM.const_set(:RUBY_LLM_AVAILABLE, ruby_llm_available) unless Legion::LLM.const_defined?(:RUBY_LLM_AVAILABLE, false)
-Legion::LLM.define_singleton_method(:ruby_llm_available?) { const_get(:RUBY_LLM_AVAILABLE) }
 
-if Legion::LLM.ruby_llm_available?
-  require_relative 'llm/patches/ruby_llm_parallel_tools'
-  require_relative 'llm/patches/ruby_llm_vllm'
-end
 require_relative 'llm/version'
 require_relative 'llm/errors'
 require_relative 'llm/settings'
@@ -28,10 +15,6 @@ require_relative 'llm/call/dispatch'
 require_relative 'llm/call/embeddings'
 require_relative 'llm/call/structured_output'
 require_relative 'llm/call/daemon_client'
-if Legion::LLM.ruby_llm_available?
-  require_relative 'llm/call/bedrock_auth'
-  require_relative 'llm/call/bedrock_embeddings'
-end
 require_relative 'llm/call/claude_config_loader'
 require_relative 'llm/call/codex_config_loader'
 require_relative 'llm/router'
@@ -62,7 +45,6 @@ require_relative 'llm/scheduling/off_peak'
 require_relative 'llm/tools/confidence'
 require_relative 'llm/tools/dispatcher'
 require_relative 'llm/tools/interceptor'
-require_relative 'llm/tools/adapter' if Legion::LLM.ruby_llm_available?
 require_relative 'llm/inference/prompt'
 require_relative 'llm/helper'
 require_relative 'llm/config'

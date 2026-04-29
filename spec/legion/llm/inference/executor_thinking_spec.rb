@@ -3,7 +3,7 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inference::Executor do
-  describe '#ruby_llm_chat_options' do
+  describe '#native_dispatch_chat_options' do
     context 'when @request.thinking is nil' do
       let(:request) do
         Legion::LLM::Inference::Request.build(
@@ -16,7 +16,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         executor = described_class.new(request)
         executor.instance_variable_set(:@resolved_provider, :anthropic)
         executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
-        opts = executor.send(:ruby_llm_chat_options)
+        opts = executor.send(:native_dispatch_chat_options)
         expect(opts).not_to have_key(:thinking)
       end
     end
@@ -36,7 +36,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         executor = described_class.new(request)
         executor.instance_variable_set(:@resolved_provider, :anthropic)
         executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
-        opts = executor.send(:ruby_llm_chat_options)
+        opts = executor.send(:native_dispatch_chat_options)
         expect(opts[:thinking]).to eq(thinking_config)
       end
     end

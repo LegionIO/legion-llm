@@ -110,6 +110,7 @@ module Legion
             message_class.new(
               role:         message_hash[:role] || :user,
               content:      message_hash[:content].to_s,
+              tool_calls:   message_hash[:tool_calls],
               tool_call_id: message_hash[:tool_call_id]
             )
           end
@@ -144,21 +145,28 @@ module Legion
 
         def message_response(response, offering_metadata: nil)
           {
-            result:   response.content,
-            model:    response.model_id,
-            usage:    usage_hash(response),
-            metadata: response_metadata(response, offering_metadata: offering_metadata)
-          }
+            result:      response.content,
+            model:       response.model_id,
+            tool_calls:  response.respond_to?(:tool_calls) ? response.tool_calls : nil,
+            stop_reason: response.respond_to?(:tool_call?) && response.tool_call? ? :tool_use : nil,
+            usage:       usage_hash(response),
+            metadata:    response_metadata(response, offering_metadata: offering_metadata)
+          }.compact
         end
 
         def chunk_response(chunks, offering_metadata: nil)
           last = chunks.reverse.find { |chunk| chunk.respond_to?(:input_tokens) }
+          tool_calls = chunks.filter_map { |chunk| chunk.tool_calls if chunk.respond_to?(:tool_calls) }.reduce({}) do |memo, calls|
+            memo.merge(calls || {})
+          end
           {
-            result:   chunks.filter_map(&:content).join,
-            model:    last&.model_id,
-            usage:    last ? usage_hash(last) : {},
-            metadata: response_metadata(last, offering_metadata: offering_metadata)
-          }
+            result:      chunks.filter_map(&:content).join,
+            model:       last&.model_id,
+            tool_calls:  tool_calls.empty? ? nil : tool_calls,
+            stop_reason: tool_calls.empty? ? nil : :tool_use,
+            usage:       last ? usage_hash(last) : {},
+            metadata:    response_metadata(last, offering_metadata: offering_metadata)
+          }.compact
         end
 
         def usage_hash(response)

@@ -3,6 +3,15 @@
 require 'spec_helper'
 require 'legion/llm/call/embeddings'
 
+def native_embed_response(response = nil, vectors: nil, input_tokens: nil)
+  vectors ||= response.vectors if response.respond_to?(:vectors)
+  input_tokens ||= response.input_tokens if response.respond_to?(:input_tokens)
+  {
+    result: vectors || [Array.new(1024, 0.1)],
+    usage:  Legion::LLM::Usage.new(input_tokens: input_tokens || 5)
+  }
+end
+
 RSpec.describe 'Legion::LLM::Embeddings provider gating' do
   before do
     Legion::LLM.instance_variable_set(:@started, true)
@@ -27,8 +36,8 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       expect(result[:error]).to match(/disabled/)
     end
 
-    it 'does not call RubyLLM.embed' do
-      expect(RubyLLM).not_to receive(:embed)
+    it 'does not dispatch native embeddings' do
+      expect(Legion::LLM::Call::Dispatch).not_to receive(:dispatch_embed)
       Legion::LLM::Embeddings.generate(text: 'hello', provider: :azure)
     end
 
@@ -63,8 +72,8 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       end
     end
 
-    it 'does not call RubyLLM.embed' do
-      expect(RubyLLM).not_to receive(:embed)
+    it 'does not dispatch native embeddings' do
+      expect(Legion::LLM::Call::Dispatch).not_to receive(:dispatch_embed)
       Legion::LLM::Embeddings.generate_batch(texts: %w[foo], provider: :openai)
     end
   end
@@ -78,7 +87,7 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       Legion::Settings[:llm][:providers][:openai] = { enabled: true }
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
-      allow(RubyLLM).to receive(:embed).and_return(mock_response)
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_return(native_embed_response(mock_response))
       allow(Legion::LLM::Embeddings).to receive(:provider_supports_embeddings?).with(:openai).and_return(true)
     end
 
@@ -98,7 +107,7 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       Legion::Settings[:llm][:providers][:openai] = { enabled: true }
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
-      allow(RubyLLM).to receive(:embed).and_return(mock_response)
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_return(native_embed_response(mock_response))
       allow(Legion::LLM::Embeddings).to receive(:provider_supports_embeddings?).with(:openai).and_return(true)
     end
 
@@ -154,8 +163,8 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
       allow(Legion::LLM::Embeddings).to receive(:provider_supports_embeddings?).with(:bedrock).and_return(false)
     end
 
-    it 'returns an error hash without calling RubyLLM.embed' do
-      expect(RubyLLM).not_to receive(:embed)
+    it 'returns an error hash without dispatching native embeddings' do
+      expect(Legion::LLM::Call::Dispatch).not_to receive(:dispatch_embed)
       result = Legion::LLM::Embeddings.generate(text: 'hello', provider: :bedrock)
       expect(result[:vector]).to be_nil
       expect(result[:error]).to match(/does not support embeddings/)

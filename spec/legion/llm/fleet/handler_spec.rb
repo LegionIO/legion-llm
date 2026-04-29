@@ -144,7 +144,7 @@ RSpec.describe Legion::LLM::Fleet::Handler do
     end
 
     it 'replays prior messages before asking the final prompt' do
-      session = instance_double('RubyLLM::Chat')
+      session = instance_double('NativeChat')
       allow(Legion::LLM).to receive(:send).with(
         :chat_single,
         model:    'claude-sonnet-4-6',

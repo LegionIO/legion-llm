@@ -26,13 +26,14 @@ module Legion
             return { vector: nil, model: model, provider: provider, error: "provider #{provider} does not support embeddings" } \
               if provider && !provider_supports_embeddings?(provider)
 
-            response = RubyLLM.embed(text, **build_opts(model, provider, dimensions))
-            emit_embedding_metering(provider: provider, model: model, tokens: response.input_tokens)
-            vector = normalize_vectors_first(response.vectors)
+            response = dispatch_native_embedding(text: text, model: model, provider: provider, dimensions: dimensions)
+            tokens = extract_input_tokens(response)
+            emit_embedding_metering(provider: provider, model: model, tokens: tokens)
+            vector = normalize_vectors_first(response[:result])
             vector = apply_dimension_enforcement(vector, provider)
             return dimension_error(model, provider, vector) if vector.is_a?(String)
 
-            { vector: vector, model: model, provider: provider, dimensions: vector&.size || 0, tokens: response.input_tokens }
+            { vector: vector, model: model, provider: provider, dimensions: vector&.size || 0, tokens: tokens }
           rescue StandardError => e
             handle_exception(e, level: :warn)
             handle_embed_failure(e, text: text, failed_provider: provider, failed_model: model)
@@ -53,8 +54,15 @@ module Legion
             return generate_ollama_batch(texts: texts, model: model) if provider&.to_sym == :ollama
             return generate_azure_batch(texts: texts, model: model, dimensions: dimensions) if provider&.to_sym == :azure
 
-            response = RubyLLM.embed(texts, **build_opts(model, provider, dimensions))
-            response.vectors.each_with_index.map do |vec, i|
+            unless !provider || provider_supports_embeddings?(provider)
+              return texts.each_with_index.map do |_, i|
+                { vector: nil, model: model, provider: provider, dimensions: 0, index: i,
+                  error: "provider #{provider} does not support embeddings" }
+              end
+            end
+
+            response = dispatch_native_embedding(text: texts, model: model, provider: provider, dimensions: dimensions)
+            normalize_vectors(response[:result]).each_with_index.map do |vec, i|
               build_batch_entry(vec, model, provider, i)
             end
           rescue StandardError => e
@@ -107,12 +115,37 @@ module Legion
             false
           end
 
-          def build_opts(model, provider, dimensions)
+          def native_embed_options(_provider, dimensions)
             target_dim = enforce_dimension? ? target_dimension : dimensions
-            opts = { model: model }
-            opts[:provider]   = provider if provider
-            opts[:dimensions] = target_dim if target_dim && provider&.to_sym == :openai
+            opts = {}
+            opts[:dimensions] = target_dim if target_dim
             opts
+          end
+
+          def dispatch_native_embedding(text:, model:, provider:, dimensions:)
+            Dispatch.dispatch_embed(
+              provider: provider,
+              model:    model,
+              text:     text,
+              **native_embed_options(provider, dimensions)
+            )
+          end
+
+          def extract_input_tokens(response)
+            usage = response[:usage]
+            return usage.input_tokens.to_i if usage.respond_to?(:input_tokens)
+            return usage[:input_tokens].to_i if usage.is_a?(Hash) && usage.key?(:input_tokens)
+            return usage['input_tokens'].to_i if usage.is_a?(Hash) && usage.key?('input_tokens')
+
+            0
+          end
+
+          def normalize_vectors(vectors)
+            return [] if vectors.nil?
+            return vectors if vectors.is_a?(Array) && vectors.first.is_a?(Array)
+            return [vectors] if vectors.is_a?(Array) && vectors.first.is_a?(Numeric)
+
+            Array(vectors)
           end
 
           def normalize_vectors_first(vectors)
@@ -369,7 +402,7 @@ module Legion
             config_value(context, base) || config_value(embedding_settings, :ollama_default_context_chars, 1400)
           end
 
-          # ── Azure OpenAI (direct HTTP with SNI, bypasses ruby_llm) ──
+          # ── Azure OpenAI direct HTTP with SNI ──
 
           def generate_azure(text:, model:, dimensions: nil)
             result = azure_embed_request(model: model, input: text, dimensions: dimensions)
@@ -441,7 +474,7 @@ module Legion
             }
           end
 
-          # ── Ollama (direct HTTP, bypasses ruby_llm) ──
+          # ── Ollama direct HTTP ──
 
           def ollama_embed_request(model:, input:)
             base_url = config_value(config_value(providers_settings, :ollama, {}), :base_url, 'http://localhost:11434')

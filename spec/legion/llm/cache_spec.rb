@@ -232,12 +232,11 @@ RSpec.describe Legion::LLM::Cache do
   # skip conditions via chat_direct
   # ──────────────────────────────────────────────
   describe 'skip conditions in Legion::LLM.chat_direct' do
-    let(:mock_response) { double('RubyLLM::Chat') }
+    let(:mock_response) { double('NativeChat') }
     let(:response_double) { double('response', content: 'hello', input_tokens: 1, output_tokens: 1) }
 
     before do
-      allow(RubyLLM).to receive(:chat).and_return(mock_response)
-      allow(mock_response).to receive(:ask).and_return(response_double)
+      stub_native_provider(content: 'pipeline response')
     end
 
     it 'skips cache when cache: false is passed' do
@@ -252,7 +251,7 @@ RSpec.describe Legion::LLM::Cache do
 
     it 'skips cache when message is nil' do
       expect(described_class).not_to receive(:get)
-      Legion::LLM.chat_direct(message: nil)
+      expect { Legion::LLM.chat_direct(message: nil) }.to raise_error(Legion::LLM::ProviderError)
     end
   end
 

@@ -2,6 +2,7 @@
 
 require 'securerandom'
 require 'legion/logging/helper'
+require 'legion/llm/types'
 
 module Legion
   module LLM
@@ -112,21 +113,18 @@ module Legion
 
           def self.build_openai_tool_classes(tools)
             return [] if tools.nil? || !tools.is_a?(Array) || tools.empty?
-            return [] unless Legion::LLM.ruby_llm_available?
 
             tools.filter_map do |tool|
               t = nil
               t = tool.respond_to?(:transform_keys) ? tool.transform_keys(&:to_sym) : tool
               next unless t[:name].to_s.length.positive?
 
-              klass = Class.new(RubyLLM::Tool) do
-                tool_ref = t[:name].to_s
-                description t[:description].to_s
-                define_method(:name) { tool_ref }
-                define_method(:execute) { |**_kwargs| "Tool #{tool_ref} is not executable server-side." }
-              end
-              klass.params(t[:parameters]) if t[:parameters].is_a?(Hash) && t[:parameters][:properties]
-              klass
+              Legion::LLM::Types::ToolDefinition.build(
+                name:        t[:name].to_s,
+                description: t[:description].to_s,
+                parameters:  t[:parameters] || {},
+                source:      { type: :client, executable: false }
+              )
             rescue StandardError => e
               tool_name = t.is_a?(Hash) ? t[:name] : nil
               handle_exception(e, level: :warn, handled: true, operation: "llm.api.openai.build_tool.#{tool_name || 'unknown'}")

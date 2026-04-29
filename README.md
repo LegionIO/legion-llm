@@ -1,8 +1,8 @@
 # Legion LLM
 
-LLM routing and provider orchestration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Routes chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata through Legion-native `lex-llm-*` provider extensions. RubyLLM compatibility remains optional for legacy callers, but native dispatch is the default path.
+LLM routing and provider orchestration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Routes chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata through Legion-native `lex-llm-*` provider extensions.
 
-**Version**: 0.8.44
+**Version**: 0.8.47
 
 ## Installation
 
@@ -229,17 +229,9 @@ Large async responses that overflow the cache spool to disk under
 
 ### Chat
 
-`Legion::LLM.chat` has two public modes:
-
-- Call it without `message:` or `messages:` to create a `RubyLLM::Chat` session for multi-turn conversation.
-- Call it with `message:` or `messages:` to execute immediately. These request-shaped calls run through the Inference pipeline and return a pipeline response object.
+`Legion::LLM.chat` executes request-shaped calls through native provider dispatch. Provide `message:` or `messages:` so the request can be routed through the Inference pipeline.
 
 ```ruby
-# Session creation for multi-turn conversation
-chat = Legion::LLM.chat
-chat.ask("Remember: my name is Matt")
-chat.ask("What's my name?")  # -> "Matt"
-
 # Immediate execution through the request path
 result = Legion::LLM.chat(message: "What is the capital of France?")
 
@@ -252,8 +244,6 @@ result = Legion::LLM.chat(
   ]
 )
 
-# Session creation with overrides still returns RubyLLM::Chat
-chat = Legion::LLM.chat(model: 'gpt-4o', provider: :openai)
 ```
 
 ### Embeddings
@@ -268,68 +258,45 @@ embedding = Legion::LLM.embed("text", model: "text-embedding-3-small")
 
 ### Tool Use
 
-Define tools as Ruby classes and attach them to a chat session. RubyLLM handles the tool-use loop automatically — when the model calls a tool, ruby_llm executes it and feeds the result back:
+Define tools as native tool definitions or registered Legion tool classes. The inference executor forwards tool definitions to native providers and dispatches tool calls through `Inference::ToolDispatcher`:
 
 ```ruby
-class WeatherLookup < RubyLLM::Tool
-  description "Look up current weather for a location"
-
-  param :location, desc: "City name or zip code"
-  param :units, desc: "celsius or fahrenheit", required: false
-
-  def execute(location:, units: "fahrenheit")
-    # Your weather API call here
-    { temperature: 72, conditions: "sunny", location: location }
-  end
-end
-
-chat = Legion::LLM.chat
-chat.with_tools(WeatherLookup)
-response = chat.ask("What's the weather in Minneapolis?")
-# Model calls WeatherLookup, gets result, responds with natural language
+response = Legion::LLM.chat(
+  message: "What's the weather in Minneapolis?",
+  tools: [
+    {
+      name: "weather_lookup",
+      description: "Look up current weather for a location",
+      parameters: {
+        type: "object",
+        properties: {
+          location: { type: "string" },
+          units: { type: "string", enum: %w[celsius fahrenheit] }
+        },
+        required: ["location"]
+      }
+    }
+  ]
+)
 ```
 
 ### Structured Output
 
-Use `RubyLLM::Schema` to get typed, validated responses:
+Use structured output with a JSON schema:
 
 ```ruby
-class SentimentResult < RubyLLM::Schema
-  string :sentiment, enum: %w[positive negative neutral]
-  number :confidence
-  string :reasoning
-end
-
-chat = Legion::LLM.chat
-result = chat.with_output_schema(SentimentResult).ask("Analyze: 'I love this product!'")
-result.sentiment    # -> "positive"
-result.confidence   # -> 0.95
-result.reasoning    # -> "Strong positive language..."
-```
-
-### Agents
-
-Define reusable agents as `RubyLLM::Agent` subclasses with declarative configuration:
-
-```ruby
-class CodeReviewer < RubyLLM::Agent
-  model "us.anthropic.claude-sonnet-4-6-v1", provider: :bedrock
-  instructions "You review code for bugs, security issues, and style"
-  tools CodeAnalyzer, SecurityScanner
-  temperature 0.1
-
-  schema do
-    string :verdict, enum: %w[approve request_changes]
-    array :issues do
-      string
-    end
-  end
-end
-
-reviewer = Legion::LLM.agent(CodeReviewer)
-result = reviewer.ask(diff_content)
-result.verdict  # -> "approve" or "request_changes"
-result.issues   # -> ["Line 42: potential SQL injection", ...]
+result = Legion::LLM.structured(
+  messages: [{ role: :user, content: "Analyze: 'I love this product!'" }],
+  schema: {
+    type: "object",
+    properties: {
+      sentiment: { type: "string", enum: %w[positive negative neutral] },
+      confidence: { type: "number" },
+      reasoning: { type: "string" }
+    },
+    required: %w[sentiment confidence reasoning]
+  }
+)
 ```
 
 ## Types
@@ -357,14 +324,13 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   └── Chunk        # Streaming delta: content_delta / thinking_delta / tool_call_delta / done
 ├── Config                               # Settings and defaults
 │   └── Settings     # Default config, provider settings, routing defaults, API auth defaults
-├── Call                                 # Provider call layer (wraps RubyLLM)
+├── Call                                 # Native provider call layer
 │   ├── Providers        # Provider configuration, auto-detect, verify
 │   ├── Registry         # Thread-safe lex-* provider extension registry
 │   ├── Dispatch         # Native provider dispatch to registered lex-* extensions
 │   ├── Embeddings       # generate, generate_batch, default_model, fallback chain
 │   ├── StructuredOutput # JSON schema enforcement with native response_format and prompt fallback
 │   ├── DaemonClient     # HTTP routing to LegionIO daemon with 30s health cache
-│   ├── BedrockAuth      # Monkey-patch for Bedrock Bearer Token auth (required lazily)
 │   ├── ClaudeConfigLoader # Import Claude CLI config from ~/.claude/settings.json
 │   └── CodexConfigLoader  # Import OpenAI bearer token from ~/.codex/auth.json
 ├── Context                              # Prompt and conversation context management
@@ -394,8 +360,7 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   ├── Executor     # 18-step skeleton with profile-aware execution and call_stream
 │   ├── Conversation # In-memory LRU (256 slots) + optional Sequel DB persistence
 │   ├── Prompt       # Clean dispatch API: dispatch, request, summarize, extract, decide
-│   ├── ToolAdapter  # Wraps Tools::Base for RubyLLM sessions
-│   ├── ToolDispatcher # Routes tool calls: MCP client / LEX runner / RubyLLM builtin
+│   ├── ToolDispatcher # Routes tool calls: MCP client / LEX runner / native tool execution
 │   ├── AuditPublisher # Publishes audit events to llm.audit exchange
 │   ├── EnrichmentInjector # Converts RAG/GAIA enrichments into system prompt
 │   └── Steps/       # All 18+ pipeline step modules
@@ -438,9 +403,8 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   └── OffPeak      # Peak-hour deferral
 ├── Tools                                # Tool call layer
 │   ├── Confidence   # 4-tier degrading confidence storage
-│   ├── Dispatcher   # Routes tool calls to MCP/LEX/RubyLLM
+│   ├── Dispatcher   # Routes tool calls to MCP/LEX/native execution
 │   ├── Interceptor  # Extensible pre-dispatch intercept registry
-│   └── Adapter      # Wraps lex-* extension tool as RubyLLM::Tool
 ├── Hooks                                # Before/after chat interceptor registry
 │   ├── RagGuard, ResponseGuard, BudgetGuard, Reflection
 ├── Cache                                # Application-level response caching
@@ -485,7 +449,7 @@ end
 Include the LLM helper for convenience methods in any runner:
 
 ```ruby
-# One-shot chat (returns RubyLLM::Response)
+# One-shot chat
 result = llm_chat("Summarize this text", instructions: "Be concise")
 
 # Chat with tools
@@ -497,16 +461,11 @@ result = llm_chat("Summarize the data", instructions: "Be concise", compress: 2)
 # Embeddings
 embedding = llm_embed("some text to embed")
 
-# Multi-turn session (returns RubyLLM::Chat for continued conversation)
-session = llm_session
-session.with_instructions("You are a code reviewer")
-session.with_tools(CodeAnalyzer, SecurityScanner)
-response = session.ask("Review this PR: #{diff}")
 ```
 
 ### Inference Pipeline
 
-`Legion::LLM.chat` calls that include `message:` or `messages:` flow through `Legion::LLM::Inference`, an 18-step request/response pipeline. Session-construction calls such as `Legion::LLM.chat(model: ..., provider: ...)` return a raw `RubyLLM::Chat` and do not enter the pipeline. The pipeline handles RBAC, classification, RAG context retrieval, MCP tool discovery, metering, billing, audit, and GAIA advisory in a consistent sequence. Steps are skipped based on the caller profile (`:external`, `:gaia`, `:system`).
+`Legion::LLM.chat` calls that include `message:` or `messages:` flow through `Legion::LLM::Inference`, an 18-step request/response pipeline. The pipeline handles RBAC, classification, RAG context retrieval, MCP tool discovery, metering, billing, audit, and GAIA advisory in a consistent sequence. Steps are skipped based on the caller profile (`:external`, `:gaia`, `:system`).
 
 ```ruby
 # Request-shaped calls enter the pipeline
@@ -933,7 +892,6 @@ bundle exec rubocop -A
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
 | `lex-llm` (>= 0.1.6) | Provider-neutral model offering and adapter base |
 | `pdf-reader` | PDF extraction support |
-| `ruby_llm` (~> 1.13) | Compatibility client for legacy provider dispatch |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 
 ## License

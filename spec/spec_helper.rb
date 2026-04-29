@@ -70,15 +70,56 @@ require 'legion/json'
 require_relative 'support/transport_stub'
 require 'legion/llm'
 
+def native_dispatch_result(content: 'test response', input_tokens: 10, output_tokens: 5, tool_calls: [])
+  {
+    result:     content,
+    usage:      {
+      input_tokens:  input_tokens,
+      output_tokens: output_tokens
+    },
+    tool_calls: tool_calls
+  }
+end
+
+def stub_native_provider(content: 'test response', input_tokens: 10, output_tokens: 5, tool_calls: [], available: true)
+  result = native_dispatch_result(
+    content:       content,
+    input_tokens:  input_tokens,
+    output_tokens: output_tokens,
+    tool_calls:    tool_calls
+  )
+
+  allow(Legion::LLM::Call::Dispatch).to receive(:available?).and_return(available)
+  allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(result)
+  allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_stream) do |**_, &block|
+    block&.call(double('NativeChunk', content: content))
+    result
+  end
+  if defined?(Legion::LLM::Call::Registry)
+    %i[anthropic test bedrock openai ollama].each do |provider|
+      Legion::LLM::Call::Registry.register(provider, Module.new do
+        define_singleton_method(:chat) { |**| result }
+        define_singleton_method(:stream) do |**, &block|
+          block&.call(double('NativeChunk', content: content))
+          result
+        end
+        define_singleton_method(:embed) do |**|
+          { result: [Array.new(1024, 0.1)], usage: Legion::LLM::Usage.new(input_tokens: input_tokens) }
+        end
+      end)
+    end
+  end
+  result
+end
+
 RSpec.configure do |config|
   config.before(:each) do
     Legion::Settings.reset!
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
     # Keep the full suite deterministic even when local/provider gems are present
-    # and services like Ollama are running on the developer machine. Native-mode
-    # specs opt back in explicitly.
-    Legion::Settings[:llm][:provider_layer][:mode] = 'ruby_llm'
+    # and services like Ollama are running on the developer machine.
+    Legion::Settings[:llm][:provider_layer][:mode] = 'auto'
     # Disable system_baseline by default so existing pipeline mocks are unaffected.
     # Specs that test baseline behavior set it explicitly.
     Legion::Settings[:llm][:system_baseline] = nil

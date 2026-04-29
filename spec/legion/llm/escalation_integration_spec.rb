@@ -27,73 +27,49 @@ RSpec.describe 'Legion::LLM.chat escalation' do
   end
 
   describe 'with escalate: false' do
-    it 'behaves like original chat (no retry, returns chat object)' do
-      mock_chat = double('RubyLLM::Chat')
-      expect(RubyLLM).to receive(:chat).once.and_return(mock_chat)
-      result = Legion::LLM.chat(escalate: false)
-      expect(result).to eq(mock_chat)
+    it 'dispatches once through the native provider' do
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(native_dispatch_result(content: good_content))
+      result = Legion::LLM.chat(escalate: false, message: 'test')
+      expect(result.content).to eq(good_content)
     end
   end
 
   describe 'with escalate: true and hard failure then success' do
     it 'retries on exception and returns successful response' do
-      good_response = double('Response', content: good_content, role: :assistant)
-      allow(good_response).to receive(:respond_to?).with(:extend).and_return(true)
-      allow(good_response).to receive(:extend).with(Legion::LLM::EscalationHistory)
-      allow(good_response).to receive(:record_escalation_attempt)
-      allow(good_response).to receive(:final_resolution=)
-      allow(good_response).to receive(:escalation_chain=)
-
       call_count = 0
-      allow(RubyLLM).to receive(:chat) do
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
         call_count += 1
-        chat = double("Chat#{call_count}")
-        if call_count == 1
-          allow(chat).to receive(:ask).and_raise(StandardError, 'API timeout')
-        else
-          allow(chat).to receive(:ask).and_return(good_response)
-        end
-        chat
+        raise Legion::LLM::ProviderError, 'API timeout' if call_count == 1
+
+        native_dispatch_result(content: good_content)
       end
 
       response = Legion::LLM.chat(escalate: true, message: 'test')
-      expect(response).to eq(good_response)
+      expect(response.content).to eq(good_content)
     end
   end
 
   describe 'with escalate: true and quality failure then success' do
     it 'retries on quality failure and returns good response' do
-      bad_response = double('BadResponse', content: short_content, role: :assistant)
-      good_response = double('GoodResponse', content: good_content, role: :assistant)
-      allow(good_response).to receive(:respond_to?).with(:extend).and_return(true)
-      allow(good_response).to receive(:extend).with(Legion::LLM::EscalationHistory)
-      allow(good_response).to receive(:record_escalation_attempt)
-      allow(good_response).to receive(:final_resolution=)
-      allow(good_response).to receive(:escalation_chain=)
-
       call_count = 0
-      allow(RubyLLM).to receive(:chat) do
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
         call_count += 1
-        chat = double("Chat#{call_count}")
         if call_count == 1
-          allow(chat).to receive(:ask).and_return(bad_response)
+          native_dispatch_result(content: short_content)
         else
-          allow(chat).to receive(:ask).and_return(good_response)
+          native_dispatch_result(content: good_content)
         end
-        chat
       end
 
       response = Legion::LLM.chat(escalate: true, message: 'test')
-      expect(response).to eq(good_response)
+      expect(response.content).to eq(good_content)
     end
   end
 
   describe 'with escalate: true and all failures' do
     it 'raises EscalationExhausted after exhausting chain' do
-      allow(RubyLLM).to receive(:chat) do
-        chat = double('Chat')
-        allow(chat).to receive(:ask).and_raise(StandardError, 'fail')
-        chat
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
+        raise Legion::LLM::ProviderError, 'fail'
       end
 
       expect do
@@ -105,22 +81,13 @@ RSpec.describe 'Legion::LLM.chat escalation' do
   describe 'with custom quality_check' do
     it 'uses custom check for quality assessment' do
       call_count = 0
-      allow(RubyLLM).to receive(:chat) do
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
         call_count += 1
-        chat = double("Chat#{call_count}")
         if call_count == 1
-          resp = double('BadResp', content: 'no sql here but long enough to pass basic checks yeah', role: :assistant)
-          allow(chat).to receive(:ask).and_return(resp)
+          native_dispatch_result(content: 'no sql here but long enough to pass basic checks yeah')
         else
-          good = double('GoodResp', content: 'SELECT * FROM users WHERE active = true padding text here', role: :assistant)
-          allow(good).to receive(:respond_to?).with(:extend).and_return(true)
-          allow(good).to receive(:extend).with(Legion::LLM::EscalationHistory)
-          allow(good).to receive(:record_escalation_attempt)
-          allow(good).to receive(:final_resolution=)
-          allow(good).to receive(:escalation_chain=)
-          allow(chat).to receive(:ask).and_return(good)
+          native_dispatch_result(content: 'SELECT * FROM users WHERE active = true padding text here')
         end
-        chat
       end
 
       custom = ->(r) { r.content.include?('SELECT') }
@@ -134,11 +101,10 @@ RSpec.describe 'Legion::LLM.chat escalation' do
       Legion::Settings[:llm][:routing][:escalation][:enabled] = false
     end
 
-    it 'defaults escalate to false and returns chat object' do
-      mock_chat = double('RubyLLM::Chat')
-      expect(RubyLLM).to receive(:chat).once.and_return(mock_chat)
-      result = Legion::LLM.chat
-      expect(result).to eq(mock_chat)
+    it 'defaults escalate to false and returns a native response' do
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(native_dispatch_result(content: good_content))
+      result = Legion::LLM.chat(message: 'test')
+      expect(result.content).to eq(good_content)
     end
   end
 end

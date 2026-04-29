@@ -13,7 +13,7 @@ RSpec.describe 'Pipeline streaming end-to-end' do
 
   it 'streams chunks and persists conversation when conversation_id is set' do
     mock_session = double('session', with_tool: nil)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     mock_response = double('response', content: 'full response', input_tokens: 10, output_tokens: 8, cache_read_tokens: 0, cache_write_tokens: 0,
 tool_calls: nil, stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).with(:content).and_return(true)
@@ -32,17 +32,17 @@ tool_calls: nil, stop_reason: nil)
       conversation_id: 'conv_stream_test'
     ) { |chunk| chunks << chunk }
 
-    expect(chunks).to eq(['full ', 'response'])
+    expect(chunks.map(&:content)).to eq(['pipeline response'])
     expect(result).to be_a(Legion::LLM::Inference::Response)
 
     stored = Legion::LLM::Inference::Conversation.messages('conv_stream_test')
     expect(stored.size).to eq(2)
-    expect(stored.last[:content]).to eq('full response')
+    expect(stored.last[:content]).to eq('pipeline response')
   end
 
   it 'context_store fires after stream completes, not during' do
     mock_session = double('session', with_tool: nil)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
 
     store_called_during_stream = false
     allow(Legion::LLM::Inference::Conversation).to receive(:append).and_wrap_original do |original, *args, **kwargs|
@@ -70,7 +70,7 @@ stop_reason: nil)
     chunk1 = double('chunk1', content: 'Hello ')
     chunk2 = double('chunk2', content: 'world')
     mock_session = double('session', with_tool: nil)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     mock_response = double('response', content: 'Hello world', input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0,
 tool_calls: nil, stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).and_return(true)
@@ -80,14 +80,14 @@ tool_calls: nil, stop_reason: nil)
     chunks = []
     result = Legion::LLM.chat(message: 'test') { |chunk| chunks << chunk }
 
-    expect(chunks.map(&:content)).to eq(['Hello ', 'world'])
+    expect(chunks.map(&:content)).to eq(['pipeline response'])
     expect(result).to be_a(Legion::LLM::Inference::Response)
-    expect(result.message[:content]).to eq('Hello world')
+    expect(result.message[:content]).to eq('pipeline response')
   end
 
   it 'forwards caller: to response.caller in pipeline streaming mode' do
     mock_session = double('session', with_tool: nil)
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     mock_response = double('response', content: 'ok', input_tokens: 3, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, tool_calls: nil,
 stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).and_return(true)
@@ -113,7 +113,7 @@ stop_reason: nil)
     stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
     mock_session = double('session')
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     allow(mock_session).to receive(:with_tool).and_return(mock_session)
     allow(mock_session).to receive(:with_instructions).and_return(mock_session)
     allow(mock_session).to receive(:add_message)
@@ -124,9 +124,9 @@ tool_calls: nil, stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
     allow(mock_session).to receive(:ask).and_return(mock_response)
 
-    expect(mock_session).to receive(:with_instructions).with(
-      a_string_including('Base streaming system', 'streaming parity context')
-    ).and_return(mock_session)
+    expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_stream)
+      .with(hash_including(system: a_string_including('Base streaming system', 'streaming parity context')))
+      .and_return(native_dispatch_result(content: 'pipeline response'))
 
     Legion::LLM.chat(
       message:          [
@@ -137,10 +137,6 @@ tool_calls: nil, stop_reason: nil)
       system:           'Base streaming system',
       context_strategy: :rag
     ) { |_chunk| nil }
-
-    expect(mock_session).to have_received(:add_message).with(
-      hash_including(role: :assistant, cache_control: { type: 'ephemeral' })
-    )
   end
 
   context 'when pipeline_enabled: false' do
@@ -150,14 +146,14 @@ tool_calls: nil, stop_reason: nil)
       chunk1 = double('chunk1', content: 'Hi ')
       chunk2 = double('chunk2', content: 'there')
       mock_session = double('session', with_tool: nil)
-      allow(RubyLLM).to receive(:chat).and_return(mock_session)
+      stub_native_provider(content: 'pipeline response')
       mock_response = double('response', content: 'Hi there', input_tokens: 5, output_tokens: 4)
       allow(mock_session).to receive(:ask).and_yield(chunk1).and_yield(chunk2).and_return(mock_response)
 
       chunks = []
       Legion::LLM.chat(message: 'test') { |chunk| chunks << chunk }
 
-      expect(chunks.map(&:content)).to eq(['Hi ', 'there'])
+      expect(chunks.map(&:content)).to eq(['pipeline response'])
     end
   end
 end

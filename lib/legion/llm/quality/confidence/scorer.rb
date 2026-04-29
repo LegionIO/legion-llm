@@ -56,7 +56,7 @@ module Legion
           class << self
             # Compute a Score for the given raw_response.
             #
-            # raw_response - the RubyLLM response object (must respond to #content)
+            # raw_response - the provider response object (must respond to #content)
             # options      - Hash:
             #   :confidence_score  - Float  caller-provided score (bypasses heuristics)
             #   :confidence_bands  - Hash   per-call band overrides
@@ -107,8 +107,7 @@ module Legion
             end
 
             # Attempt to derive a score from logprobs attached to the response.
-            # RubyLLM does not currently expose logprobs in its standard interface,
-            # but some providers return them in extra metadata.  We probe the response
+            # Some providers return token logprobs in extra metadata. We probe the response
             # object defensively to avoid unexpected-message errors from test doubles.
             def extract_logprobs(raw_response)
               lp = probe_logprobs(raw_response)

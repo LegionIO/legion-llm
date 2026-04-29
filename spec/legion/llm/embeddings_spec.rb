@@ -3,6 +3,15 @@
 require 'spec_helper'
 require 'legion/llm/call/embeddings'
 
+def native_embed_response(response = nil, vectors: nil, input_tokens: nil)
+  vectors ||= response.vectors if response.respond_to?(:vectors)
+  input_tokens ||= response.input_tokens if response.respond_to?(:input_tokens)
+  {
+    result: vectors || [Array.new(1024, 0.1)],
+    usage:  Legion::LLM::Usage.new(input_tokens: input_tokens || 5)
+  }
+end
+
 RSpec.describe 'Legion::LLM embedding capability' do
   before do
     Legion::LLM::Discovery.instance_variable_set(:@can_embed, nil)
@@ -165,7 +174,7 @@ RSpec.describe 'Legion::LLM::Embeddings' do
     end
 
     before do
-      allow(RubyLLM).to receive(:embed).and_return(mock_response)
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_return(native_embed_response(mock_response))
       Legion::LLM.instance_variable_set(:@started, true)
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
@@ -208,7 +217,7 @@ RSpec.describe 'Legion::LLM::Embeddings' do
   describe '.generate when LLM not started' do
     before { allow(Legion::LLM).to receive(:started?).and_return(false) }
 
-    it 'returns error without calling RubyLLM' do
+    it 'returns error without dispatching native embeddings' do
       result = Legion::LLM::Embeddings.generate(text: 'test')
       expect(result[:error]).to eq('LLM not started')
       expect(result[:vector]).to be_nil
@@ -224,9 +233,12 @@ RSpec.describe 'Legion::LLM::Embeddings' do
     end
 
     it 'uses cached provider when no explicit provider given' do
-      expect(RubyLLM).to receive(:embed).with('test', hash_including(
-                                                        model: 'text-embedding-3-small', provider: :openai
-                                                      )).and_return(double(vectors: [Array.new(1024, 0.1)], input_tokens: 5))
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).with(
+        provider:   :openai,
+        model:      'text-embedding-3-small',
+        text:       'test',
+        dimensions: 1024
+      ).and_return(native_embed_response)
 
       Legion::LLM::Embeddings.generate(text: 'test')
     end
@@ -271,7 +283,7 @@ RSpec.describe Legion::LLM::Embeddings do
   describe '.generate' do
     it 'returns vector hash structure' do
       mock_response = double(vectors: [Array.new(1024, 0.1)], input_tokens: 5)
-      allow(RubyLLM).to receive(:embed).and_return(mock_response)
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_return(native_embed_response(mock_response))
 
       result = described_class.generate(text: 'hello world')
       expect(result[:vector].size).to eq(1024)
@@ -280,7 +292,7 @@ RSpec.describe Legion::LLM::Embeddings do
     end
 
     it 'handles errors gracefully' do
-      allow(RubyLLM).to receive(:embed).and_raise(StandardError.new('provider down'))
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_raise(StandardError.new('provider down'))
       result = described_class.generate(text: 'test')
       expect(result[:vector]).to be_nil
       expect(result[:error]).to include('provider down')
@@ -288,7 +300,13 @@ RSpec.describe Legion::LLM::Embeddings do
 
     it 'passes custom model and provider' do
       mock_response = double(vectors: [Array.new(1024, 0.1)], input_tokens: 1)
-      allow(RubyLLM).to receive(:embed).with('text', hash_including(model: 'custom-model', provider: :bedrock)).and_return(mock_response)
+      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).with(
+        provider:   :bedrock,
+        model:      'custom-model',
+        text:       'text',
+        dimensions: 1024
+      ).and_return(native_embed_response(mock_response))
 
       result = described_class.generate(text: 'text', model: 'custom-model', provider: :bedrock)
       expect(result[:model]).to eq('custom-model')
@@ -297,10 +315,12 @@ RSpec.describe Legion::LLM::Embeddings do
 
     it 'flattens structured text blocks before embedding' do
       mock_response = double(vectors: [Array.new(1024, 0.1)], input_tokens: 1)
-      allow(RubyLLM).to receive(:embed).with(
-        'what tools are available to you?',
-        hash_including(model: 'text-embedding-3-small', provider: :openai)
-      ).and_return(mock_response)
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).with(
+        provider:   :openai,
+        model:      'text-embedding-3-small',
+        text:       'what tools are available to you?',
+        dimensions: 1024
+      ).and_return(native_embed_response(mock_response))
 
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
@@ -311,7 +331,7 @@ RSpec.describe Legion::LLM::Embeddings do
 
     it 'handles unwrapped vectors from providers that flatten single-input results' do
       flat_response = double(vectors: Array.new(1024, 0.1), input_tokens: 5)
-      allow(RubyLLM).to receive(:embed).and_return(flat_response)
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_return(native_embed_response(flat_response))
 
       result = described_class.generate(text: 'test')
       expect(result[:vector]).to be_a(Array)
@@ -324,7 +344,7 @@ RSpec.describe Legion::LLM::Embeddings do
       Legion::LLM.instance_variable_set(:@embedding_provider, nil)
       Legion::LLM.instance_variable_set(:@embedding_model, nil)
 
-      expect(RubyLLM).not_to receive(:embed)
+      expect(Legion::LLM::Call::Dispatch).not_to receive(:dispatch_embed)
 
       result = described_class.generate(text: 'test')
       expect(result[:provider]).to be_nil
@@ -336,7 +356,7 @@ RSpec.describe Legion::LLM::Embeddings do
       Legion::LLM.instance_variable_set(:@embedding_provider, nil)
       Legion::LLM.instance_variable_set(:@embedding_model, nil)
 
-      expect(RubyLLM).not_to receive(:embed)
+      expect(Legion::LLM::Call::Dispatch).not_to receive(:dispatch_embed)
 
       result = described_class.generate(text: 'test')
       expect(result[:provider]).to be_nil
@@ -347,7 +367,7 @@ RSpec.describe Legion::LLM::Embeddings do
   describe '.generate_batch' do
     it 'returns array of vectors' do
       mock_response = double(vectors: [Array.new(1024, 0.1), Array.new(1024, 0.2)])
-      allow(RubyLLM).to receive(:embed).and_return(mock_response)
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_return(native_embed_response(mock_response))
 
       results = described_class.generate_batch(texts: %w[hello world])
       expect(results.size).to eq(2)
@@ -356,7 +376,7 @@ RSpec.describe Legion::LLM::Embeddings do
     end
 
     it 'handles batch errors gracefully' do
-      allow(RubyLLM).to receive(:embed).and_raise(StandardError.new('batch fail'))
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_raise(StandardError.new('batch fail'))
       results = described_class.generate_batch(texts: %w[a b])
       expect(results.size).to eq(2)
       expect(results.all? { |r| r[:vector].nil? }).to be true

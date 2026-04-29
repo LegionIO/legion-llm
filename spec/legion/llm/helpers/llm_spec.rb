@@ -16,7 +16,7 @@ RSpec.describe Legion::LLM::Helper do
   let(:test_class) { Class.new { include Legion::LLM::Helper } }
   let(:instance) { test_class.new }
 
-  let(:mock_chat) { instance_double('RubyLLM::Chat') }
+  let(:mock_chat) { instance_double('NativeChat') }
   let(:mock_response) { double('response', content: 'ok') }
 
   before do
@@ -171,7 +171,7 @@ RSpec.describe Legion::LLM::Helper do
     end
 
     it 'does not pass message: when escalate is not set' do
-      mock_chat2 = double('RubyLLM::Chat')
+      mock_chat2 = double('NativeChat')
       expect(Legion::LLM).to receive(:chat).with(
         hash_including(escalate: false)
       ).and_return(mock_chat2)

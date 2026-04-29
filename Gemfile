@@ -32,7 +32,6 @@ group :test do
   gem 'rspec_junit_formatter'
   gem 'rubocop'
   gem 'rubocop-legion'
-  gem 'ruby_llm', '~> 1.13'
   gem 'simplecov'
   gem 'sinatra'
   gem 'webmock'
