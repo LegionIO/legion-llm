@@ -152,9 +152,6 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
     end
 
     context 'with the real chat_direct path' do
-      let(:session) { double('session') }
-      let(:response) { double('response', content: 'batched response') }
-
       before do
         allow(Legion::LLM).to receive(:chat_direct).and_call_original
         Legion::Settings[:llm][:scheduling] = {
@@ -163,8 +160,7 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
           defer_intents:   %w[batch background],
           max_defer_hours: 8
         }
-        allow(RubyLLM).to receive(:chat).and_return(session)
-        allow(session).to receive(:ask).and_return(response)
+        stub_native_provider(content: 'batched response')
       end
 
       it 'executes the queued request and preserves provider and model' do
@@ -176,10 +172,9 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
 
         results = described_class.flush
 
-        expect(RubyLLM).to have_received(:chat).with(hash_including(model: 'gpt-4o', provider: :openai))
-        expect(session).to have_received(:ask).with('batched hello')
+        expect(Legion::LLM::Call::Dispatch).to have_received(:dispatch_chat).with(hash_including(model: 'gpt-4o', provider: :openai))
         expect(results.first[:status]).to eq(:completed)
-        expect(results.first[:result][:response]).to eq(response)
+        expect(results.first[:result][:response].content).to eq('batched response')
       end
     end
   end

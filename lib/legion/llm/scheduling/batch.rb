@@ -127,10 +127,7 @@ module Legion
           end
 
           def settings
-            llm = Legion::Settings[:llm]
-            return {} unless llm.is_a?(Hash)
-
-            b = llm[:batch] || llm['batch'] || {}
+            b = Legion::LLM::Settings.value(:batch, default: {})
             b.is_a?(Hash) ? b.transform_keys(&:to_sym) : {}
           rescue StandardError => e
             handle_exception(e, level: :warn)

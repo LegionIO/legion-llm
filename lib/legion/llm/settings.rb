@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/settings' unless defined?(Legion::Settings)
 
 module Legion
   module LLM
@@ -43,6 +44,119 @@ module Legion
           claude_cli:                claude_cli_defaults
         }
       end
+
+      def self.value(*keys, default: nil)
+        missing = Object.new
+        keys.reduce(current_settings) do |current, key|
+          return default unless current.respond_to?(:key?)
+
+          value = config_value(current, key, missing)
+          return default if value.equal?(missing)
+
+          value
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.settings.value')
+        default
+      end
+
+      def self.config_value(config, key, default = nil)
+        return default unless config.respond_to?(:key?)
+
+        string_key = key.to_s
+        return config[string_key] if config.key?(string_key)
+
+        symbol_key = key.to_sym if key.respond_to?(:to_sym)
+        return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+        default
+      end
+
+      def self.namespace(namespace)
+        return {} unless defined?(Legion::Settings)
+
+        settings = Legion::Settings[namespace]
+        settings.is_a?(Hash) ? settings : {}
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.namespace', namespace: namespace)
+        {}
+      end
+
+      def self.global_value(namespace, *keys, default: nil)
+        if defined?(Legion::Settings) && Legion::Settings.respond_to?(:dig) && keys.any?
+          direct = Legion::Settings.dig(namespace, *keys)
+          return direct unless direct.nil?
+        end
+
+        keys.reduce(self.namespace(namespace)) do |current, key|
+          return default unless current.respond_to?(:key?)
+
+          config_value(current, key)
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.global_value', namespace: namespace, keys: keys)
+        default
+      end
+
+      def self.set_value(*keys, value:)
+        target = current_settings
+        return value unless target.is_a?(Hash)
+
+        assign_value(target, keys, value)
+        value
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.set_value', keys: keys)
+        value
+      end
+
+      def self.transport_connected?
+        return true if global_value(:transport, :connected) == true
+
+        transport = namespace(:transport)
+        config_value(transport, :connected) == true
+      end
+
+      def self.enterprise_privacy?
+        if defined?(Legion::Settings) && Legion::Settings.respond_to?(:enterprise_privacy?)
+          Legion::Settings.enterprise_privacy?
+        else
+          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.enterprise_privacy')
+        ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+      end
+
+      def self.current_settings
+        if defined?(Legion::Settings)
+          settings = Legion::Settings[:llm]
+          return settings if settings.is_a?(Hash)
+        end
+
+        {}
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.current_settings')
+        defined?(Legion::Settings) ? Legion::Settings[:llm] : {}
+      end
+
+      def self.register_defaults!
+        return unless defined?(Legion::Settings) && Legion::Settings.respond_to?(:merge_settings)
+
+        Legion::Settings.merge_settings(:llm, default)
+      end
+
+      def self.assign_value(target, keys, value)
+        leaf = keys[0...-1].reduce(target) do |current, key|
+          existing = config_value(current, key)
+          unless existing.is_a?(Hash)
+            existing = {}
+            current[key] = existing
+          end
+          existing
+        end
+        leaf[keys.last] = value
+      end
+      private_class_method :assign_value
 
       def self.claude_cli_defaults
         {
@@ -127,7 +241,8 @@ module Legion
           tiers:          {
             local:         { provider: 'ollama' },
             fleet:         {
-              queue:           'llm.request',
+              queue:           'llm.fleet',
+              routing_style:   :shared_lane,
               timeout_seconds: 30,
               timeouts:        { embed: 10, chat: 30, generate: 30, default: 30 }
             },
@@ -276,9 +391,11 @@ module Legion
 
       def self.provider_layer_defaults
         {
-          mode:                 'ruby_llm',
-          native_providers:     %w[claude bedrock],
-          fallback_to_ruby_llm: true
+          mode:             'auto',
+          native_providers: %w[
+            ollama vllm anthropic openai gemini mlx
+            bedrock azure_foundry vertex claude
+          ]
         }
       end
 
@@ -383,6 +500,12 @@ module Legion
             base_url:        'http://localhost:8000/v1',
             api_key:         nil,
             enable_thinking: true
+          },
+          mlx:       {
+            enabled:       false,
+            default_model: nil,
+            base_url:      'http://localhost:8000',
+            api_key:       nil
           }
         }
       end
@@ -390,4 +513,4 @@ module Legion
   end
 end
 
-Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+Legion::LLM::Settings.register_defaults!

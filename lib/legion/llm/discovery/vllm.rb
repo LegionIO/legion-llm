@@ -18,7 +18,7 @@ module Legion
           end
 
           def model_names
-            models.map { |m| m[:id] }
+            models.map { |m| config_value(m, :id) }
           end
 
           def model_available?(name)
@@ -26,8 +26,8 @@ module Legion
           end
 
           def max_context(name)
-            model = models.find { |m| m[:id] == name }
-            model&.dig(:max_model_len)
+            model = models.find { |m| config_value(m, :id) == name }
+            config_value(model, :max_model_len)
           end
 
           def healthy?
@@ -63,7 +63,7 @@ module Legion
           def stale?
             return true if @last_refreshed_at.nil?
 
-            ttl = discovery_settings[:refresh_seconds] || 60
+            ttl = config_value(discovery_settings, :refresh_seconds, 60)
             Time.now - @last_refreshed_at > ttl
           end
 
@@ -93,7 +93,7 @@ module Legion
           def vllm_base_url
             return 'http://localhost:8000/v1' unless Legion.const_defined?('Settings', false)
 
-            Legion::Settings[:llm].dig(:providers, :vllm, :base_url) || 'http://localhost:8000/v1'
+            config_value(config_value(providers_settings, :vllm, {}), :base_url, 'http://localhost:8000/v1')
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.discovery.vllm.base_url')
             'http://localhost:8000/v1'
@@ -102,10 +102,30 @@ module Legion
           def discovery_settings
             return {} unless Legion.const_defined?('Settings', false)
 
-            Legion::Settings[:llm][:discovery] || {}
+            config_value(llm_settings, :discovery, {})
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.discovery.vllm.settings')
             {}
+          end
+
+          def providers_settings
+            config_value(llm_settings, :providers, {})
+          end
+
+          def llm_settings
+            Legion::LLM::Settings.current_settings
+          end
+
+          def config_value(config, key, default = nil)
+            return default unless config.respond_to?(:key?)
+
+            string_key = key.to_s
+            return config[string_key] if config.key?(string_key)
+
+            symbol_key = key.to_sym if key.respond_to?(:to_sym)
+            return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+            default
           end
         end
       end

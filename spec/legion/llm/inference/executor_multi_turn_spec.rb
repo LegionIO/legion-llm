@@ -3,30 +3,12 @@
 require 'spec_helper'
 
 RSpec.describe 'Inference::Executor multi-turn message injection' do
-  let(:mock_session) do
-    dbl = double('RubyLLM::Chat')
-    allow(dbl).to receive(:with_tool)
-    allow(dbl).to receive(:with_instructions)
-    allow(dbl).to receive(:add_message)
-    dbl
-  end
-
-  let(:mock_response) do
-    double('RubyLLM::Message',
-           content:       'reply',
-           role:          'assistant',
-           input_tokens:  5,
-           output_tokens: 3,
-           model_id:      'test-model')
-  end
-
   before do
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
     Legion::Settings[:llm][:pipeline_enabled] = true
     Legion::Settings[:llm][:default_model] = 'test-model'
     Legion::Settings[:llm][:default_provider] = :test
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
+    stub_native_provider(content: 'reply')
   end
 
   context 'with a single message' do
@@ -36,8 +18,9 @@ RSpec.describe 'Inference::Executor multi-turn message injection' do
       )
       executor = Legion::LLM::Inference::Executor.new(request)
 
-      expect(mock_session).not_to receive(:add_message)
-      expect(mock_session).to receive(:ask).with('hello').and_return(mock_response)
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).with(hash_including(
+                                                                            messages: [{ role: :user, content: 'hello' }]
+                                                                          )).and_return(native_dispatch_result(content: 'reply'))
 
       executor.call
     end
@@ -56,16 +39,14 @@ RSpec.describe 'Inference::Executor multi-turn message injection' do
       request = Legion::LLM::Inference::Request.build(messages: messages)
       executor = Legion::LLM::Inference::Executor.new(request)
 
-      expect(mock_session).to receive(:add_message).with(hash_including(role: :user,      content: 'what is ruby?')).ordered
-      expect(mock_session).to receive(:add_message).with(hash_including(role: :assistant, content: 'Ruby is a language.')).ordered
-      expect(mock_session).to receive(:ask).with('tell me more').ordered.and_return(mock_response)
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+        .and_return(native_dispatch_result(content: 'reply'))
 
       executor.call
     end
 
     it 'returns a Inference::Response with the reply content' do
       request = Legion::LLM::Inference::Request.build(messages: messages)
-      allow(mock_session).to receive(:add_message)
       result = Legion::LLM::Inference::Executor.new(request).call
       expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(result.message[:content]).to eq('reply')
@@ -81,9 +62,8 @@ RSpec.describe 'Inference::Executor multi-turn message injection' do
         ]
       )
       executor = Legion::LLM::Inference::Executor.new(request)
-
-      expect(mock_session).to receive(:add_message).with(hash_including(role: :user, content: 'first')).once
-      expect(mock_session).to receive(:ask).with('second').and_return(mock_response)
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+        .and_return(native_dispatch_result(content: 'reply'))
 
       executor.call
     end
@@ -99,9 +79,8 @@ RSpec.describe 'Inference::Executor multi-turn message injection' do
       request = Legion::LLM::Inference::Request.build(messages: messages)
       executor = Legion::LLM::Inference::Executor.new(request)
 
-      expect(mock_session).to receive(:add_message).with(hash_including(role: :user,      content: 'first message')).ordered
-      expect(mock_session).to receive(:add_message).with(hash_including(role: :assistant, content: 'first reply')).ordered
-      expect(mock_session).to receive(:ask).with('follow up').ordered.and_return(mock_response)
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_stream)
+        .and_return(native_dispatch_result(content: 'reply'))
 
       chunks = []
       executor.call_stream { |chunk| chunks << chunk }

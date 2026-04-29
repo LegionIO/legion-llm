@@ -30,15 +30,34 @@ module Legion
           private
 
           def rag_settings
-            @rag_settings ||= if defined?(Legion::Settings) && !Legion::Settings[:llm].nil?
-                                Legion::Settings[:llm][:rag] || {}
-                              else
-                                {}
-                              end
+            @rag_settings ||= settings_value(:rag, default: {})
+          end
+
+          def rag_setting(key, default = nil)
+            config_value(rag_settings, key, default)
+          end
+
+          def settings_value(*keys, default: nil)
+            Legion::LLM::Settings.value(*keys, default: default)
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.rag_context.settings', keys: keys)
+            default
+          end
+
+          def config_value(config, key, default = nil)
+            return default unless config.respond_to?(:key?)
+
+            string_key = key.to_s
+            return config[string_key] if config.key?(string_key)
+
+            symbol_key = key.to_sym if key.respond_to?(:to_sym)
+            return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+            default
           end
 
           def rag_enabled?
-            rag_settings.fetch(:enabled, true)
+            rag_setting(:enabled, true)
           end
 
           def substantive_query?
@@ -59,20 +78,22 @@ module Legion
           end
 
           def record_rag_enrichment(result, strategy)
-            return unless result && result[:success] && result[:entries]&.any?
+            entries = config_value(result, :entries, [])
+            return unless result && config_value(result, :success) && entries.any?
 
             @enrichments['rag:context_retrieval'] = {
-              content:   "#{result[:count]} entries retrieved via #{strategy}",
-              data:      { entries: result[:entries], strategy: strategy, count: result[:count] },
+              content:   "#{config_value(result, :count)} entries retrieved via #{strategy}",
+              data:      { entries: entries, strategy: strategy, count: config_value(result, :count) },
               timestamp: Time.now
             }
           end
 
           def record_rag_timeline(result, strategy, start_time)
+            count = config_value(result, :count, 0)
             @timeline.record(
               category: :enrichment, key: 'rag:context_retrieval',
               direction: :inbound,
-              detail: "#{result&.dig(:count) || 0} entries via #{strategy}",
+              detail: "#{count} entries via #{strategy}",
               from: 'apollo', to: 'pipeline',
               duration_ms: ((Time.now - start_time) * 1000).to_i
             )
@@ -82,8 +103,8 @@ module Legion
             explicit = @request.context_strategy
             return explicit if explicit && explicit != :auto
 
-            skip_threshold    = rag_settings.fetch(:utilization_skip_threshold, 0.9)
-            compact_threshold = rag_settings.fetch(:utilization_compact_threshold, 0.7)
+            skip_threshold    = rag_setting(:utilization_skip_threshold, 0.9)
+            compact_threshold = rag_setting(:utilization_compact_threshold, 0.7)
 
             if utilization >= skip_threshold
               :none
@@ -102,8 +123,8 @@ module Legion
           end
 
           def trivial_query?(query)
-            max_chars = rag_settings.fetch(:trivial_max_chars, 20)
-            patterns  = rag_settings.fetch(:trivial_patterns, [])
+            max_chars = rag_setting(:trivial_max_chars, 20)
+            patterns  = rag_setting(:trivial_patterns, [])
 
             return false if query.length > max_chars
 
@@ -116,14 +137,14 @@ module Legion
 
             defined?(::Legion::Apollo) && ::Legion::Apollo.started?
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.rag_context.apollo_available')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_context.apollo_available')
             false
           end
 
           def apollo_retrieve(query:, strategy:)
-            full_limit    = rag_settings.fetch(:full_limit, 10)
-            compact_limit = rag_settings.fetch(:compact_limit, 5)
-            confidence    = rag_settings.fetch(:min_confidence, 0.5)
+            full_limit    = rag_setting(:full_limit, 10)
+            compact_limit = rag_setting(:compact_limit, 5)
+            confidence    = rag_setting(:min_confidence, 0.5)
             limit = strategy == :rag_compact ? compact_limit : full_limit
 
             if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
@@ -138,7 +159,7 @@ module Legion
                   []
                 end
               rescue StandardError => e
-                handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.rag_context.apollo_retrieve')
+                handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_context.apollo_retrieve')
                 []
               end
             else
@@ -147,8 +168,8 @@ module Legion
           end
 
           def extract_query
-            @request.messages.select { |m| m[:role] == :user }
-                             .last&.dig(:content)
+            @request.messages.select { |m| config_value(m, :role).to_s == 'user' }
+                             .then { |messages| config_value(messages.last, :content) }
           end
         end
       end

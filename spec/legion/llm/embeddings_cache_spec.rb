@@ -116,6 +116,18 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
       expect(result).to be_nil
     end
 
+    it 'normalizes string-keyed fallback entries from JSON settings' do
+      allow(Legion::LLM).to receive(:embedding_fallback_chain).and_return([
+                                                                            { 'provider' => 'ollama',
+                                                                              'model'    => 'mxbai-embed-large' },
+                                                                            { 'provider' => 'openai',
+                                                                              'model'    => 'text-embedding-3-small' }
+                                                                          ])
+
+      result = Legion::LLM::Call::Embeddings.send(:find_fallback_provider, :ollama)
+      expect(result).to eq({ provider: :openai, model: 'text-embedding-3-small' })
+    end
+
     it 'does not re-probe providers (uses cached chain)' do
       expect(Legion::LLM::Discovery).not_to receive(:send).with(:detect_ollama_embedding, anything)
       expect(Legion::LLM::Discovery).not_to receive(:send).with(:detect_cloud_embedding, anything)

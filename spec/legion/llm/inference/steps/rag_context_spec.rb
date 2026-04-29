@@ -82,6 +82,23 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       # 0.65 is above skip (0.6)
       expect(step.send(:select_context_strategy, utilization: 0.65)).to eq(:none)
     end
+
+    it 'uses string-keyed threshold settings' do
+      Legion::Settings[:llm] = {
+        'rag' => {
+          'utilization_compact_threshold' => 0.4,
+          'utilization_skip_threshold'    => 0.8
+        }
+      }
+
+      request = Legion::LLM::Inference::Request.build(
+        messages:         [{ role: :user, content: 'query' }],
+        context_strategy: :auto
+      )
+      step = klass.new(request)
+      expect(step.send(:select_context_strategy, utilization: 0.5)).to eq(:rag_compact)
+      expect(step.send(:select_context_strategy, utilization: 0.85)).to eq(:none)
+    end
   end
 
   describe '#trivial_query?' do
@@ -110,6 +127,20 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
     it 'uses custom trivial patterns from settings' do
       Legion::Settings[:llm][:rag][:trivial_patterns] = %w[foo bar]
       Legion::Settings[:llm][:rag][:trivial_max_chars] = 10
+
+      request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'foo' }])
+      step = klass.new(request)
+      expect(step.send(:trivial_query?, 'foo')).to be true
+      expect(step.send(:trivial_query?, 'hello')).to be false
+    end
+
+    it 'uses string-keyed trivial pattern settings' do
+      Legion::Settings[:llm] = {
+        'rag' => {
+          'trivial_patterns'  => %w[foo bar],
+          'trivial_max_chars' => 10
+        }
+      }
 
       request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'foo' }])
       step = klass.new(request)
@@ -163,6 +194,18 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
 
     it 'skips when rag is disabled in settings' do
       Legion::Settings[:llm][:rag][:enabled] = false
+
+      request = Legion::LLM::Inference::Request.build(
+        messages:         [{ role: :user, content: 'what is pgvector?' }],
+        context_strategy: :auto
+      )
+      step = klass.new(request)
+      step.step_rag_context
+      expect(step.enrichments).not_to have_key('rag:context_retrieval')
+    end
+
+    it 'skips when rag is disabled in string-keyed settings' do
+      allow(Legion::LLM).to receive(:settings).and_return({ 'rag' => { 'enabled' => false } })
 
       request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],

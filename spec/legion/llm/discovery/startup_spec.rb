@@ -8,8 +8,6 @@ RSpec.describe 'LLM startup discovery' do
   before do
     Legion::LLM::Discovery::Ollama.reset!
     Legion::LLM::Discovery::System.reset!
-    allow(RubyLLM).to receive(:configure)
-    allow(RubyLLM).to receive(:chat).and_return(double(ask: 'pong'))
     # Prevent actual embedding verification from making real network calls
     allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
     # Prevent auto-enabling of providers with unresolved env:// credentials

@@ -22,17 +22,17 @@ RSpec.describe Legion::LLM::Inference::Response do
     end
   end
 
-  describe '.from_ruby_llm' do
-    it 'converts a RubyLLM::Message-like hash to Response' do
-      ruby_llm_msg = double(
+  describe '.from_provider_message' do
+    it 'converts a provider message-like object to Response' do
+      provider_msg = double(
         content:       'Hello world',
         role:          'assistant',
         input_tokens:  100,
         output_tokens: 20,
         model_id:      'claude-opus-4-6'
       )
-      resp = described_class.from_ruby_llm(
-        ruby_llm_msg,
+      resp = described_class.from_provider_message(
+        provider_msg,
         request_id:      'req_abc',
         conversation_id: 'conv_xyz',
         provider:        :anthropic,

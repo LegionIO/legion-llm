@@ -61,8 +61,7 @@ module Legion
       end
 
       def transport_connected?
-        !!(defined?(Legion::Settings) &&
-          Legion::Settings[:transport][:connected] == true)
+        Legion::LLM::Settings.transport_connected?
       end
 
       # Backward-compat: resolve old Legion::LLM::Audit::Exchange, ::PromptEvent, etc.

@@ -2,20 +2,19 @@
 
 require 'legion/logging/helper'
 
-require 'ruby_llm'
-require_relative 'llm/patches/ruby_llm_parallel_tools'
-require_relative 'llm/patches/ruby_llm_vllm'
+Object.const_set(:Legion, Module.new) unless Object.const_defined?(:Legion, false)
+Legion.const_set(:LLM, Module.new) unless Legion.const_defined?(:LLM, false)
+
 require_relative 'llm/version'
 require_relative 'llm/errors'
 require_relative 'llm/settings'
 require_relative 'llm/call/providers'
 require_relative 'llm/call/registry'
+require_relative 'llm/call/lex_llm_adapter'
 require_relative 'llm/call/dispatch'
 require_relative 'llm/call/embeddings'
 require_relative 'llm/call/structured_output'
 require_relative 'llm/call/daemon_client'
-require_relative 'llm/call/bedrock_auth'
-require_relative 'llm/call/bedrock_embeddings'
 require_relative 'llm/call/claude_config_loader'
 require_relative 'llm/call/codex_config_loader'
 require_relative 'llm/router'
@@ -37,6 +36,7 @@ require_relative 'llm/cache'
 require_relative 'llm/cache/response'
 require_relative 'llm/inference'
 require_relative 'llm/fleet'
+require_relative 'llm/inventory'
 require_relative 'llm/metering'
 require_relative 'llm/audit'
 require_relative 'llm/scheduling'
@@ -45,23 +45,24 @@ require_relative 'llm/scheduling/off_peak'
 require_relative 'llm/tools/confidence'
 require_relative 'llm/tools/dispatcher'
 require_relative 'llm/tools/interceptor'
-require_relative 'llm/tools/adapter'
 require_relative 'llm/inference/prompt'
 require_relative 'llm/helper'
 require_relative 'llm/config'
 require_relative 'llm/discovery'
 require_relative 'llm/transport'
 
+boot_logger = Object.new.extend(Legion::Logging::Helper)
+
 begin
   require_relative 'llm/skills'
 rescue LoadError => e
-  Legion::Logging.debug "LLM: skills not loadable: #{e.message}"
+  boot_logger.handle_exception(e, level: :debug, handled: true, operation: 'llm.boot.require_skills')
 end
 
 begin
   require_relative 'llm/api'
 rescue LoadError => e
-  Legion::Logging.debug "LLM: api routes not loadable (Sinatra not available): #{e.message}"
+  boot_logger.handle_exception(e, level: :debug, handled: true, operation: 'llm.boot.require_api')
 end
 
 require_relative 'llm/compat'
@@ -87,7 +88,7 @@ module Legion
         Hooks.install_defaults
         Tools::Interceptor.load_defaults
 
-        Legion::LLM::Skills.start if defined?(Legion::LLM::Skills) && settings.dig(:skills, :enabled) != false
+        Legion::LLM::Skills.start if defined?(Legion::LLM::Skills) && Settings.value(:skills, :enabled) != false
 
         LLM::Transport.load_all
         LLM::Fleet.load_transport
@@ -95,7 +96,7 @@ module Legion
         LLM::Metering.load_transport
 
         @started = true
-        Legion::Settings[:llm][:connected] = true
+        Settings.set_value(:connected, value: true)
         log.info '[llm] started'
         API.register_routes if defined?(API)
       rescue StandardError => e
@@ -105,7 +106,7 @@ module Legion
 
       def shutdown
         log.debug '[llm] shutdown.enter'
-        Legion::Settings[:llm][:connected] = false
+        Settings.set_value(:connected, value: false)
         @started = false
         Discovery.reset!
         Call::Registry.reset!
@@ -122,7 +123,7 @@ module Legion
       end
 
       def settings
-        Legion::Settings[:llm]
+        Settings.current_settings
       end
 
       def chat(...) = Inference.chat(...)
@@ -132,7 +133,7 @@ module Legion
       def embed(text, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.embedding_span(
-            model: (settings[:default_model] || 'unknown').to_s
+            model: (Settings.value(:default_model) || 'unknown').to_s
           ) { |_span| Call::Embeddings.generate(text: text, **) }
         else
           Call::Embeddings.generate(text: text, **)
@@ -145,7 +146,7 @@ module Legion
       def structured(messages:, schema:, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.llm_span(
-            model: (settings[:default_model] || 'unknown').to_s, input: messages.to_s
+            model: (Settings.value(:default_model) || 'unknown').to_s, input: messages.to_s
           ) { |_span| Call::StructuredOutput.generate(messages: messages, schema: schema, **) }
         else
           Call::StructuredOutput.generate(messages: messages, schema: schema, **)

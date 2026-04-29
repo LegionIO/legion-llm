@@ -10,15 +10,6 @@ module Legion
         module Models
           extend Legion::Logging::Helper
 
-          PROVIDER_DEFAULT_MODELS = {
-            bedrock:   'us.anthropic.claude-sonnet-4-6-v1',
-            anthropic: 'claude-sonnet-4-6',
-            openai:    'gpt-4o',
-            gemini:    'gemini-2.0-flash',
-            azure:     nil,
-            ollama:    'llama3'
-          }.freeze
-
           def self.registered(app)
             log.debug('[llm][api][openai][models] registering GET /v1/models and GET /v1/models/:id')
 
@@ -65,41 +56,16 @@ module Legion
           end
 
           def self.build_model_list
-            models = []
-
-            models.concat(models_from_discovery)
-            models.concat(models_from_providers)
-
-            seen = {}
-            models.select { |m| seen[m[:id]] ? false : (seen[m[:id]] = true) }
-          end
-
-          def self.models_from_discovery
-            return [] unless defined?(Legion::LLM::Discovery::Ollama) &&
-                             Legion::LLM::Discovery::Ollama.respond_to?(:available_models)
-
-            Legion::LLM::Discovery::Ollama.available_models.map do |model_id|
-              Legion::LLM::API::Translators::OpenAIResponse.format_model_object(model_id, owned_by: 'ollama')
-            end
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.openai.models.discovery')
-            []
-          end
-
-          def self.models_from_providers
-            providers_config = Legion::LLM.settings.fetch(:providers, {})
-            providers_config.filter_map do |name, config|
-              next unless config.is_a?(Hash) && config[:enabled] != false
-
-              model_id = config[:default_model] || PROVIDER_DEFAULT_MODELS[name.to_sym]
-              next unless model_id
-
+            models = Legion::LLM::Inventory.offerings(type: :inference).map do |offering|
               Legion::LLM::API::Translators::OpenAIResponse.format_model_object(
-                model_id, owned_by: name.to_s
+                offering[:model],
+                owned_by: offering[:provider_family]
               )
             end
+            seen = {}
+            models.select { |m| seen[m[:id]] ? false : (seen[m[:id]] = true) }
           rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.openai.models.providers')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.openai.models.inventory')
             []
           end
         end

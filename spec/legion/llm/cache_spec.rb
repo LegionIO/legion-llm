@@ -5,6 +5,22 @@ require 'spec_helper'
 # Stub Legion::Cache with an in-memory hash for testing
 module Legion
   module Cache
+    unless const_defined?(:Local, false)
+      module Local
+        class << self
+          def connected?
+            false
+          end
+
+          def get(_key); end
+
+          def set(*)
+            true
+          end
+        end
+      end
+    end
+
     class << self
       def reset!
         @store = {}
@@ -24,6 +40,10 @@ module Legion
       def delete(key)
         @store&.delete(key)
       end
+
+      def enforce_phi_ttl(ttl, **)
+        ttl
+      end
     end
   end
 end
@@ -33,12 +53,29 @@ require 'legion/llm/cache'
 RSpec.describe Legion::LLM::Cache do
   before(:each) do
     Legion::Cache.reset!
+    allow(Legion::Cache::Local).to receive(:respond_to?).and_call_original
+    allow(Legion::Cache::Local).to receive(:respond_to?).with(:get).and_return(true)
+    allow(Legion::Cache::Local).to receive(:connected?).and_return(true)
+    allow(Legion::Cache::Local).to receive(:get) { |key| Legion::Cache.get(key) }
+    allow(Legion::Cache::Local).to receive(:set) { |key, value, ttl: nil, **| Legion::Cache.set(key, value, ttl || 300) }
     # Ensure prompt_caching is enabled in settings
     Legion::Settings[:llm][:prompt_caching] = {
       enabled:        true,
       min_tokens:     1024,
       response_cache: { enabled: true, ttl_seconds: 300 }
     }
+  end
+
+  describe '.enabled?' do
+    it 'reads string-keyed response cache settings' do
+      Legion::Settings[:llm] = {
+        'prompt_caching' => {
+          'response_cache' => { 'enabled' => false }
+        }
+      }
+
+      expect(described_class.enabled?).to be false
+    end
   end
 
   # ──────────────────────────────────────────────
@@ -174,6 +211,7 @@ RSpec.describe Legion::LLM::Cache do
   describe 'when Legion::Cache is unavailable' do
     before do
       # Hide Legion::Cache by making respond_to?(:get) return false
+      allow(Legion::Cache::Local).to receive(:connected?).and_return(false)
       allow(Legion::Cache).to receive(:respond_to?).with(:get).and_return(false)
     end
 
@@ -194,12 +232,11 @@ RSpec.describe Legion::LLM::Cache do
   # skip conditions via chat_direct
   # ──────────────────────────────────────────────
   describe 'skip conditions in Legion::LLM.chat_direct' do
-    let(:mock_response) { double('RubyLLM::Chat') }
+    let(:mock_response) { double('NativeChat') }
     let(:response_double) { double('response', content: 'hello', input_tokens: 1, output_tokens: 1) }
 
     before do
-      allow(RubyLLM).to receive(:chat).and_return(mock_response)
-      allow(mock_response).to receive(:ask).and_return(response_double)
+      stub_native_provider(content: 'pipeline response')
     end
 
     it 'skips cache when cache: false is passed' do
@@ -214,7 +251,7 @@ RSpec.describe Legion::LLM::Cache do
 
     it 'skips cache when message is nil' do
       expect(described_class).not_to receive(:get)
-      Legion::LLM.chat_direct(message: nil)
+      expect { Legion::LLM.chat_direct(message: nil) }.to raise_error(Legion::LLM::ProviderError)
     end
   end
 
@@ -226,8 +263,8 @@ RSpec.describe Legion::LLM::Cache do
       stored = { content: 'Cached answer', meta: { model: 'claude-sonnet-4-6' } }
       messages_arr = [{ role: 'user', content: 'hello' }]
       # Build the key exactly as chat_direct does (resolves defaults from settings)
-      effective_model    = Legion::LLM.settings[:default_model]
-      effective_provider = Legion::LLM.settings[:default_provider]
+      effective_model    = Legion::LLM::Settings.value(:default_model)
+      effective_provider = Legion::LLM::Settings.value(:default_provider)
       cache_key = described_class.key(
         model:       effective_model,
         provider:    effective_provider,

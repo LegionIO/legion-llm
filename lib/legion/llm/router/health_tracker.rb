@@ -30,30 +30,42 @@ module Legion
         end
 
         # Thread-safe signal intake. Dispatches to the registered handler if one exists.
-        def report(provider:, signal:, value:, metadata: {})
+        def report(provider:, signal:, value:, metadata: {}, offering_id: nil)
           sym     = signal.to_sym
           handler = @handlers[sym]
           return nil unless handler
 
-          payload = { provider: provider, signal: sym, value: value, metadata: metadata, at: Time.now }
+          payload = {
+            provider:    health_key(provider, offering_id),
+            provider_id: provider,
+            offering_id: offering_id,
+            signal:      sym,
+            value:       value,
+            metadata:    metadata,
+            at:          Time.now
+          }
           @mutex.synchronize { handler.call(payload) }
         end
 
         # Returns total priority adjustment for a provider.
         # Combines circuit-breaker penalty and latency penalty.
-        def adjustment(provider)
-          circuit_adjustment(provider) + latency_adjustment(provider)
+        def adjustment(provider, offering_id: nil)
+          key = health_key(provider, offering_id)
+          key = provider if offering_id && !tracked?(key) && tracked?(provider)
+          circuit_adjustment(key) + latency_adjustment(key)
         end
 
         # Returns :closed, :open, or :half_open.
-        def circuit_state(provider)
-          circuit = @circuits[provider]
+        def circuit_state(provider, offering_id: nil)
+          key = health_key(provider, offering_id)
+          key = provider if offering_id && !tracked?(key) && tracked?(provider)
+          circuit = @circuits[key]
           return :closed if circuit.nil?
 
           if circuit[:state] == :open
             elapsed = Time.now - circuit[:opened_at]
             if elapsed >= @cooldown_seconds
-              log.warn("Circuit open->half_open for provider=#{provider} (cooldown elapsed)")
+              log.warn("Circuit open->half_open for provider=#{key} (cooldown elapsed)")
               return :half_open
             end
           end
@@ -62,10 +74,11 @@ module Legion
         end
 
         # Clears circuit and latency data for a single provider.
-        def reset(provider)
+        def reset(provider, offering_id: nil)
+          key = health_key(provider, offering_id)
           @mutex.synchronize do
-            @circuits.delete(provider)
-            @latency_window.delete(provider)
+            @circuits.delete(key)
+            @latency_window.delete(key)
           end
         end
 
@@ -78,6 +91,14 @@ module Legion
         end
 
         private
+
+        def health_key(provider, offering_id = nil)
+          offering_id.nil? || offering_id.to_s.empty? ? provider : offering_id.to_s
+        end
+
+        def tracked?(key)
+          @circuits.key?(key) || @latency_window.key?(key)
+        end
 
         def register_default_handlers
           register_handler(:error) do |payload|

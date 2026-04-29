@@ -13,6 +13,79 @@ RSpec.describe Legion::LLM::Settings do
     end
   end
 
+  describe '.value' do
+    it 'reads nested symbol-keyed settings' do
+      Legion::Settings[:llm][:routing] = { fleet: { timeout_seconds: 45 } }
+      expect(described_class.value(:routing, :fleet, :timeout_seconds)).to eq(45)
+    end
+
+    it 'reads nested string-keyed settings' do
+      Legion::Settings[:llm] = { 'routing' => { 'fleet' => { 'timeout_seconds' => 60 } } }
+      expect(described_class.value(:routing, :fleet, :timeout_seconds)).to eq(60)
+    end
+
+    it 'reads the canonical Legion::Settings llm store directly' do
+      Legion::Settings[:llm] = { prompt_caching: { response_cache: { spool_dir: '/tmp/legion-file-override' } } }
+      allow(Legion::LLM).to receive(:settings).and_return({})
+
+      expect(described_class.value(:prompt_caching, :response_cache, :spool_dir)).to eq('/tmp/legion-file-override')
+    end
+
+    it 'preserves JSON-loaded settings overrides' do
+      Legion::Settings[:llm] = Legion::JSON.load(<<~JSON)
+        {
+          "prompt_caching": {
+            "response_cache": {
+              "spool_dir": "/tmp/legion-json-override",
+              "enabled": false
+            }
+          }
+        }
+      JSON
+
+      expect(described_class.value(:prompt_caching, :response_cache, :spool_dir)).to eq('/tmp/legion-json-override')
+      expect(described_class.value(:prompt_caching, :response_cache, :enabled, default: true)).to be false
+    end
+
+    it 'returns the default when a path is missing' do
+      expect(described_class.value(:missing, :path, default: 'fallback')).to eq('fallback')
+    end
+  end
+
+  describe '.register_defaults!' do
+    it 'merges LLM defaults when Legion::Settings can merge settings' do
+      allow(Legion::Settings).to receive(:merge_settings)
+
+      described_class.register_defaults!
+
+      expect(Legion::Settings).to have_received(:merge_settings).with(:llm, hash_including(enabled: true, providers: kind_of(Hash)))
+    end
+  end
+
+  describe '.global_value' do
+    it 'reads non-LLM settings with string and symbol keys' do
+      Legion::Settings[:transport] = { 'connected' => true }
+
+      expect(described_class.global_value(:transport, :connected)).to be true
+    end
+  end
+
+  describe '.set_value' do
+    it 'writes through the canonical LLM settings store' do
+      described_class.set_value(:connected, value: true)
+
+      expect(Legion::Settings[:llm][:connected]).to be true
+    end
+  end
+
+  describe '.transport_connected?' do
+    it 'uses the shared settings helper path' do
+      Legion::Settings[:transport] = { connected: true }
+
+      expect(described_class.transport_connected?).to be true
+    end
+  end
+
   # ─── 2. Routing defaults to disabled ─────────────────────────────────────────
 
   describe '.routing_defaults' do
@@ -63,7 +136,8 @@ RSpec.describe Legion::LLM::Settings do
 
       it 'defines a fleet tier with queue and timeout' do
         expect(tiers).to have_key(:fleet)
-        expect(tiers[:fleet][:queue]).to eq('llm.request')
+        expect(tiers[:fleet][:queue]).to eq('llm.fleet')
+        expect(tiers[:fleet][:routing_style]).to eq(:shared_lane)
         expect(tiers[:fleet][:timeout_seconds]).to eq(30)
       end
 

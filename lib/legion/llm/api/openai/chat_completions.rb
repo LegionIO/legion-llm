@@ -2,6 +2,7 @@
 
 require 'securerandom'
 require 'legion/logging/helper'
+require 'legion/llm/types'
 
 module Legion
   module LLM
@@ -10,7 +11,7 @@ module Legion
         module ChatCompletions
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength
+          def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
             log.debug('[llm][api][openai][chat_completions] registering POST /v1/chat/completions')
 
             app.post '/v1/chat/completions' do # rubocop:disable Metrics/BlockLength
@@ -25,12 +26,14 @@ module Legion
 
               request_id = SecureRandom.uuid
               normalized = Legion::LLM::API::Translators::OpenAIRequest.normalize(body)
-              model = normalized[:model] || Legion::LLM.settings[:default_model] || 'default'
+              model = normalized[:model] || Legion::LLM::Settings.value(:default_model) || 'default'
               streaming = normalized[:stream] == true
 
               log.info("[llm][api][openai][chat_completions] action=accepted request_id=#{request_id} model=#{model} stream=#{streaming}")
 
-              tool_declarations = build_openai_tool_classes(normalized[:tools])
+              tool_declarations = Legion::LLM::API::OpenAI::ChatCompletions.build_openai_tool_classes(normalized[:tools])
+
+              effective_caller = build_server_caller(source: 'openai_compat', path: request.path, env: env)
 
               inference_request = Legion::LLM::Inference::Request.build(
                 id:       request_id,
@@ -38,7 +41,7 @@ module Legion
                 system:   normalized[:system],
                 routing:  { model: model },
                 tools:    tool_declarations,
-                caller:   { source: 'openai_compat', path: '/v1/chat/completions' },
+                caller:   effective_caller,
                 stream:   streaming,
                 cache:    { strategy: :default, cacheable: true }
               )
@@ -116,14 +119,12 @@ module Legion
               t = tool.respond_to?(:transform_keys) ? tool.transform_keys(&:to_sym) : tool
               next unless t[:name].to_s.length.positive?
 
-              klass = Class.new(RubyLLM::Tool) do
-                tool_ref = t[:name].to_s
-                description t[:description].to_s
-                define_method(:name) { tool_ref }
-                define_method(:execute) { |**_kwargs| "Tool #{tool_ref} is not executable server-side." }
-              end
-              klass.params(t[:parameters]) if t[:parameters].is_a?(Hash) && t[:parameters][:properties]
-              klass
+              Legion::LLM::Types::ToolDefinition.build(
+                name:        t[:name].to_s,
+                description: t[:description].to_s,
+                parameters:  t[:parameters] || {},
+                source:      { type: :client, executable: false }
+              )
             rescue StandardError => e
               tool_name = t.is_a?(Hash) ? t[:name] : nil
               handle_exception(e, level: :warn, handled: true, operation: "llm.api.openai.build_tool.#{tool_name || 'unknown'}")

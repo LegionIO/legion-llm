@@ -129,6 +129,67 @@ unless defined?(Legion::Transport::Message) && Legion::Transport::Message.instan
 
           validate_payload_size
         end
+
+        def publish_envelope_options(options)
+          {
+            routing_key:      options[:routing_key] || routing_key || '',
+            content_type:     options[:content_type] || content_type,
+            content_encoding: options[:content_encoding] || content_encoding,
+            headers:          headers,
+            type:             options[:type] || type,
+            priority:         options[:priority] || priority,
+            expiration:       options[:expiration] || expiration,
+            message_id:       message_id,
+            correlation_id:   correlation_id,
+            reply_to:         @options[:reply_to],
+            app_id:           app_id,
+            timestamp:        timestamp
+          }.tap do |envelope|
+            envelope[:mandatory] = true if options[:mandatory] == true
+          end
+        end
+
+        def install_return_listener(exchange_dest, options, return_state)
+          return unless options[:mandatory] == true
+          return unless exchange_dest.channel.respond_to?(:on_return)
+
+          exchange_dest.channel.on_return { return_state[:returned] = true }
+        end
+
+        def prepare_publisher_confirms(exchange_dest, options)
+          return unless options[:publisher_confirm] == true
+
+          exchange_dest.channel.confirm_select if exchange_dest.channel.respond_to?(:confirm_select)
+        end
+
+        def publish_result(exchange_dest, options, return_state)
+          status = return_state[:returned] ? :unroutable : :accepted
+          if options[:publisher_confirm] == true && exchange_dest.channel.respond_to?(:wait_for_confirms)
+            confirmed = exchange_dest.channel.wait_for_confirms(options[:publish_confirm_timeout_ms].to_f / 1000.0)
+            status = :nacked if confirmed == false
+          end
+
+          {
+            status:         status,
+            accepted:       status == :accepted,
+            exchange:       exchange_dest.name,
+            routing_key:    options[:routing_key] || routing_key || '',
+            message_id:     message_id,
+            correlation_id: correlation_id
+          }
+        end
+
+        def publish_failure_result(status, error)
+          {
+            status:         status,
+            accepted:       false,
+            error_class:    error.class.name,
+            error:          error.message,
+            routing_key:    routing_key || '',
+            message_id:     message_id,
+            correlation_id: correlation_id
+          }
+        end
       end
     end
   end

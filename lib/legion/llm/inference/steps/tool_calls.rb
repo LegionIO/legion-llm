@@ -26,7 +26,7 @@ module Legion
               source = find_tool_source(tool_name)
               next unless source
 
-              # Skip builtin tools - RubyLLM handles those
+              # Skip builtin tools; native providers handle provider-owned tools.
               if source[:type] == :builtin
                 log.info(
                   "[llm][tools] builtin_passthrough request_id=#{@request.id} " \
@@ -106,10 +106,23 @@ module Legion
           private
 
           def find_tool_source(tool_name)
-            mcp_tool = @discovered_tools&.find { |t| t[:name] == tool_name }
+            tool_key = tool_name.to_s
+
+            native_source = @native_tool_source_map&.[](tool_key) || @native_tool_source_map&.[](tool_name)
+            if native_source
+              registry_tool = @injected_tool_map&.[](tool_key) || @injected_tool_map&.[](tool_name)
+              return native_source.merge(tool_class: registry_tool) if native_source[:type] == :registry && registry_tool
+
+              return native_source
+            end
+
+            mcp_tool = @discovered_tools&.find { |t| t[:name].to_s == tool_key }
             return mcp_tool[:source] if mcp_tool
 
-            override = ToolDispatcher.check_override(tool_name)
+            registry_tool = @injected_tool_map&.[](tool_key) || @injected_tool_map&.[](tool_name)
+            return { type: :registry, tool_class: registry_tool } if registry_tool
+
+            override = ToolDispatcher.check_override(tool_key)
             return override if override
 
             { type: :builtin }

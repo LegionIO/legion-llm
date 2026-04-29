@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'securerandom'
+require 'uri'
 
 module Legion
   module LLM
@@ -11,7 +12,7 @@ module Legion
         # Do NOT add :request_type — metering/audit need it in the body.
         # Do NOT add :message_context — it MUST appear in the body of all 6 messages.
         LLM_ENVELOPE_KEYS = %i[
-          fleet_correlation_id provider model ttl
+          fleet_correlation_id ttl
         ].freeze
 
         def message_context
@@ -23,7 +24,7 @@ module Legion
         end
 
         def message_id
-          @options[:message_id] || "#{message_id_prefix}_#{SecureRandom.uuid}"
+          @message_id ||= @options[:message_id] || "#{message_id_prefix}_#{SecureRandom.uuid}"
         end
 
         # Fleet messages use :fleet_correlation_id to avoid collision with the
@@ -40,10 +41,24 @@ module Legion
           super.merge(llm_headers).merge(context_headers).merge(tracing_headers)
         end
 
-        # Subclasses override to inject OpenTelemetry span context.
-        # Stub returns empty hash until tracing integration is implemented.
         def tracing_headers
-          {}
+          tracing = @options[:tracing] || context_value(message_context, :tracing)
+          return {} unless tracing.is_a?(Hash)
+
+          trace_id = context_value(tracing, :trace_id)
+          span_id = context_value(tracing, :span_id)
+          parent_span_id = context_value(tracing, :parent_span_id)
+          correlation_id = context_value(tracing, :correlation_id)
+          baggage = baggage_header(context_value(tracing, :baggage))
+
+          h = {}
+          h['traceparent'] = "00-#{trace_id}-#{span_id}-01" if w3c_trace_id?(trace_id) && w3c_span_id?(span_id)
+          h['baggage'] = baggage if baggage
+          h['x-legion-trace-id']       = trace_id.to_s       if trace_id
+          h['x-legion-span-id']        = span_id.to_s        if span_id
+          h['x-legion-parent-span-id'] = parent_span_id.to_s if parent_span_id
+          h['x-legion-correlation-id'] = correlation_id.to_s if correlation_id
+          h
         end
 
         private
@@ -84,10 +99,40 @@ module Legion
         def context_headers
           ctx = message_context
           h = {}
-          h['x-legion-llm-conversation-id'] = ctx[:conversation_id].to_s if ctx[:conversation_id]
-          h['x-legion-llm-message-id']      = ctx[:message_id].to_s      if ctx[:message_id]
-          h['x-legion-llm-request-id']      = ctx[:request_id].to_s      if ctx[:request_id]
+          conversation_id = context_value(ctx, :conversation_id)
+          message_id = context_value(ctx, :message_id)
+          request_id = context_value(ctx, :request_id)
+          h['x-legion-llm-conversation-id'] = conversation_id.to_s if conversation_id
+          h['x-legion-llm-message-id']      = message_id.to_s      if message_id
+          h['x-legion-llm-request-id']      = request_id.to_s      if request_id
           h
+        end
+
+        def context_value(context, key)
+          return nil unless context.respond_to?(:key?)
+          return context[key] if context.key?(key)
+
+          string_key = key.to_s
+          context[string_key] if context.key?(string_key)
+        end
+
+        def w3c_trace_id?(value)
+          value.to_s.match?(/\A[0-9a-f]{32}\z/) && value.to_s != ('0' * 32)
+        end
+
+        def w3c_span_id?(value)
+          value.to_s.match?(/\A[0-9a-f]{16}\z/) && value.to_s != ('0' * 16)
+        end
+
+        def baggage_header(baggage)
+          return nil unless baggage.is_a?(Hash) && !baggage.empty?
+
+          header = baggage.filter_map do |key, value|
+            next if value.nil?
+
+            "#{URI.encode_www_form_component(key.to_s)}=#{URI.encode_www_form_component(value.to_s)}"
+          end.join(',')
+          header.empty? ? nil : header
         end
       end
     end

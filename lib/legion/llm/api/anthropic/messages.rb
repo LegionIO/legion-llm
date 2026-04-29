@@ -2,6 +2,7 @@
 
 require 'securerandom'
 require 'legion/logging/helper'
+require 'legion/llm/types'
 require_relative '../translators/anthropic_request'
 require_relative '../translators/anthropic_response'
 
@@ -31,15 +32,13 @@ module Legion
               require 'legion/llm/inference/request'  unless defined?(Legion::LLM::Inference::Request)
               require 'legion/llm/inference/executor' unless defined?(Legion::LLM::Inference::Executor)
 
-              caller_identity = env['legion.tenant_id'] || 'api:anthropic'
-
               pipeline_request = Legion::LLM::Inference::Request.build(
                 id:       request_id,
                 messages: normalized[:messages],
                 system:   normalized[:system],
                 routing:  normalized[:routing],
                 tools:    build_tool_classes(normalized[:tools] || []),
-                caller:   { source: 'api', path: '/v1/messages', requested_by: { identity: caller_identity } },
+                caller:   build_server_caller(source: 'anthropic_compat', path: request.path, env: env),
                 stream:   streaming,
                 cache:    { strategy: :default, cacheable: true }
               )
@@ -146,13 +145,12 @@ module Legion
               tschema = spec[:parameters] || {}
 
               begin
-                klass = Class.new(RubyLLM::Tool) do
-                  description tdesc
-                  define_method(:name) { tname }
-                  define_method(:execute) { |**_| "Tool #{tname} is declared but not executable server-side." }
-                end
-                klass.params(tschema) if tschema.is_a?(Hash) && tschema[:properties]
-                klass
+                Legion::LLM::Types::ToolDefinition.build(
+                  name:        tname,
+                  description: tdesc,
+                  parameters:  tschema,
+                  source:      { type: :client, executable: false }
+                )
               rescue StandardError => e
                 log.warn("[llm][api][anthropic][messages] build_tool_classes failed name=#{tname} error=#{e.message}")
                 nil

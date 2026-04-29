@@ -55,7 +55,7 @@ RSpec.describe Legion::LLM::Inference::Steps::SkillInjector do
                 disabled_skills: [], enabled_skills: [] }
     )
     stub_const('Legion::Events', Module.new { def self.emit(*); end }) unless defined?(Legion::Events)
-    stub_const('Legion::LLM::Metering', Module.new { def self.emit(**); end }) unless Legion::LLM.const_defined?(:Metering)
+    stub_const('Legion::LLM::Metering', Module.new { def self.emit(**); end }) unless Legion::LLM.const_defined?(:Metering, false)
     allow(Legion::Events).to receive(:emit)
     allow(Legion::LLM::Metering).to receive(:emit)
     allow(Legion::LLM::Audit).to receive(:emit_skill)
@@ -85,6 +85,12 @@ RSpec.describe Legion::LLM::Inference::Steps::SkillInjector do
   describe 'no-op when skills disabled' do
     it 'does nothing when skills.enabled is false' do
       allow(Legion::LLM).to receive(:settings).and_return({ skills: { enabled: false } })
+      executor.step_skill_injector
+      expect(executor.enrichments).to be_empty
+    end
+
+    it 'does nothing when skills.enabled is string-keyed false' do
+      allow(Legion::LLM).to receive(:settings).and_return({ 'skills' => { 'enabled' => false } })
       executor.step_skill_injector
       expect(executor.enrichments).to be_empty
     end

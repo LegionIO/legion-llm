@@ -10,14 +10,18 @@ module Legion
         module_function
 
         def handle_fleet_request(payload)
+          payload = normalize_payload(payload)
+          message_context = payload[:message_context] || {}
+
           if Dispatcher.fleet_enabled? && !valid_token?(payload[:signed_token])
-            error_response = { success: false, error: 'invalid_token' }
+            error_response = { success: false, error: 'invalid_token',
+                               message_context: optional_message_context(message_context) }.compact
             publish_reply(payload[:reply_to], payload[:correlation_id], error_response) if payload[:reply_to]
             return error_response
           end
 
           response = call_local_llm(payload)
-          response_hash = build_response(payload[:correlation_id], response)
+          response_hash = build_response(payload[:correlation_id], response, message_context: message_context)
           publish_reply(payload[:reply_to], payload[:correlation_id], response_hash) if payload[:reply_to]
           response_hash
         end
@@ -34,20 +38,7 @@ module Legion
         end
 
         def require_auth?
-          return false unless defined?(Legion::Settings)
-
-          settings = begin
-            Legion::Settings[:llm]
-          rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.fleet.handler.require_auth')
-            nil
-          end
-          return false unless settings.is_a?(Hash)
-
-          fleet = settings.dig(:routing, :fleet)
-          return false unless fleet.is_a?(Hash)
-
-          fleet.fetch(:require_auth, false)
+          Legion::LLM::Settings.value(:routing, :fleet, :require_auth) == true
         end
 
         def call_local_llm(payload)
@@ -69,7 +60,8 @@ module Legion
           end
         end
 
-        def build_response(correlation_id, response)
+        def build_response(correlation_id, response, message_context: {})
+          model = extract_field(response, :model)
           {
             correlation_id:  correlation_id,
             success:         extract_success(response),
@@ -79,15 +71,25 @@ module Legion
             output_tokens:   extract_token(response, :output_tokens),
             thinking_tokens: extract_token(response, :thinking_tokens),
             provider:        extract_field(response, :provider),
-            model_id:        extract_field(response, :model)
+            model:           model,
+            model_id:        model,
+            message_context: optional_message_context(message_context)
           }.compact
         end
 
         def publish_reply(reply_to, correlation_id, response_hash)
           return unless defined?(Legion::Transport)
 
-          payload = Legion::JSON.dump(response_hash)
+          if defined?(Legion::LLM::Transport::Messages::FleetResponse)
+            publish_result = Legion::LLM::Transport::Messages::FleetResponse.new(
+              **response_hash, reply_to: reply_to, fleet_correlation_id: correlation_id
+            ).publish
+            log.warn("[llm][fleet][handler] action=reply_publish_failed correlation_id=#{correlation_id} status=#{publish_result[:status]}") if
+              publish_result.is_a?(Hash) && publish_result[:accepted] == false
+            return publish_result
+          end
 
+          payload = Legion::JSON.dump(response_hash)
           channel = Legion::Transport.connection.create_channel
           channel.default_exchange.publish(
             payload,
@@ -112,6 +114,33 @@ module Legion
           return 0 unless response.respond_to?(field)
 
           response.public_send(field).to_i
+        end
+
+        def normalize_payload(payload)
+          return {} unless payload.is_a?(Hash)
+
+          payload.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+        end
+
+        def fetch_option(hash, key)
+          return nil unless hash.respond_to?(:key?)
+
+          string_key = key.to_s
+          return hash[string_key] if hash.key?(string_key)
+
+          hash[key] if hash.key?(key)
+        end
+
+        def nested_fetch(hash, *keys)
+          keys.reduce(hash) do |current, key|
+            return nil unless current.respond_to?(:key?)
+
+            fetch_option(current, key)
+          end
+        end
+
+        def optional_message_context(message_context)
+          message_context.nil? || message_context.empty? ? nil : message_context
         end
 
         def extract_field(response, field)

@@ -20,11 +20,11 @@ module Legion
             return system_blocks if system_blocks.nil? || system_blocks.empty?
 
             total_chars = system_blocks.sum { |b| b[:content].to_s.length }
-            min_chars   = prompt_caching_settings.fetch(:min_tokens, 1024) * 4
+            min_chars   = prompt_caching_value(:min_tokens, 1024) * 4
 
             return system_blocks if total_chars < min_chars
 
-            scope = prompt_caching_settings.fetch(:scope, 'ephemeral')
+            scope = prompt_caching_value(:scope, 'ephemeral')
             log.info("[llm][prompt_cache] cache_control scope=#{scope} total_chars=#{total_chars}")
             system_blocks[0..-2] + [system_blocks.last.merge(cache_control: { type: scope })]
           end
@@ -51,7 +51,7 @@ module Legion
             return messages unless caching_enabled? && cache_conversation?
             return messages if messages.nil? || messages.size < 2
 
-            scope   = prompt_caching_settings.fetch(:scope, 'ephemeral')
+            scope   = prompt_caching_value(:scope, 'ephemeral')
             prior   = messages[0..-2]
             current = messages.last
 
@@ -67,27 +67,42 @@ module Legion
           private
 
           def prompt_caching_settings
-            if defined?(Legion::Settings) && !Legion::Settings[:llm].nil?
-              Legion::Settings[:llm][:prompt_caching] || {}
-            else
-              {}
-            end
+            Legion::LLM::Settings.value(:prompt_caching, default: {})
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.prompt_cache.settings')
+            {}
+          end
+
+          def prompt_caching_value(key, default = nil)
+            config_value(prompt_caching_settings, key, default)
           end
 
           def caching_enabled?
-            prompt_caching_settings.fetch(:enabled, false)
+            prompt_caching_value(:enabled, false)
           end
 
           def cache_system_prompt?
-            prompt_caching_settings.fetch(:cache_system_prompt, true)
+            prompt_caching_value(:cache_system_prompt, true)
           end
 
           def cache_conversation?
-            prompt_caching_settings.fetch(:cache_conversation, true)
+            prompt_caching_value(:cache_conversation, true)
           end
 
           def sort_tools?
-            prompt_caching_settings.fetch(:sort_tools, true)
+            prompt_caching_value(:sort_tools, true)
+          end
+
+          def config_value(config, key, default = nil)
+            return default unless config.respond_to?(:key?)
+
+            string_key = key.to_s
+            return config[string_key] if config.key?(string_key)
+
+            symbol_key = key.to_sym if key.respond_to?(:to_sym)
+            return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+            default
           end
         end
       end

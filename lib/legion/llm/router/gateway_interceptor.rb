@@ -38,7 +38,8 @@ module Legion
         def model_allowed?(model, risk_tier)
           return true unless risk_tier
 
-          allowlist = gateway_settings.dig(:model_policy, risk_tier)
+          policy = Legion::LLM::Settings.config_value(gateway_settings, :model_policy, {})
+          allowlist = Legion::LLM::Settings.config_value(policy, risk_tier)
           return true unless allowlist.is_a?(Array) && !allowlist.empty?
 
           allowlist.any? { |pattern| File.fnmatch?(pattern, model.to_s) }
@@ -55,10 +56,8 @@ module Legion
         end
 
         def gateway_settings
-          llm = Legion::Settings[:llm]
-          return {} unless llm.is_a?(Hash)
-
-          (llm[:gateway] || {}).transform_keys(&:to_sym)
+          gateway = Legion::LLM::Settings.value(:gateway, default: {})
+          gateway.is_a?(Hash) ? gateway.transform_keys(&:to_sym) : {}
         rescue StandardError => e
           handle_exception(e, level: :warn)
           {}

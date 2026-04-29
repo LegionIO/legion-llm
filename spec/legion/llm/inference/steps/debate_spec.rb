@@ -106,6 +106,16 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
         step = host_class.new(base_request)
         expect(step.debate_enabled?(base_request)).to be true
       end
+
+      it 'returns true when debate.enabled is string-keyed' do
+        Legion::Settings[:llm] = {
+          'debate' => {
+            'enabled' => true
+          }
+        }
+        step = host_class.new(base_request)
+        expect(step.debate_enabled?(base_request)).to be true
+      end
     end
   end
 
@@ -285,6 +295,37 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       Legion::Settings[:llm][:debate][:judge_model]      = 'anthropic:claude-sonnet-4-5'
 
       step = host_class.new(debate_request, raw_response)
+      step.step_debate
+      metadata = step.enrichments['debate:result'][:data]
+      expect(metadata[:advocate_model]).to eq('anthropic:claude-sonnet-4-6')
+      expect(metadata[:challenger_model]).to eq('openai:gpt-4o')
+      expect(metadata[:judge_model]).to eq('anthropic:claude-sonnet-4-5')
+    end
+
+    it 'uses string-keyed debate and provider settings' do
+      Legion::Settings[:llm] = {
+        'default_provider' => 'anthropic',
+        'default_model'    => 'claude-sonnet-4-6',
+        'debate'           => {
+          'enabled'          => true,
+          'default_rounds'   => 1,
+          'max_rounds'       => 2,
+          'challenger_model' => 'openai:gpt-4o',
+          'judge_model'      => 'anthropic:claude-sonnet-4-5'
+        },
+        'providers'        => {
+          'anthropic' => {
+            'enabled'       => true,
+            'default_model' => 'claude-sonnet-4-6'
+          },
+          'openai'    => {
+            'enabled'       => true,
+            'default_model' => 'gpt-4o'
+          }
+        }
+      }
+
+      step = host_class.new(base_request, raw_response)
       step.step_debate
       metadata = step.enrichments['debate:result'][:data]
       expect(metadata[:advocate_model]).to eq('anthropic:claude-sonnet-4-6')
