@@ -26,7 +26,7 @@ RSpec.describe Legion::LLM::Prompt do
     Legion::Settings[:llm][:default_provider] = :anthropic
     Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
     Legion::Settings[:llm][:pipeline_enabled] = true
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
   end
 
   describe '.dispatch' do
@@ -63,6 +63,23 @@ RSpec.describe Legion::LLM::Prompt do
         result = described_class.dispatch('Hello')
         expect(result).to be_a(Legion::LLM::Inference::Response)
         expect(result.routing[:provider]).to eq(:anthropic)
+        expect(result.routing[:model]).to eq('claude-sonnet-4-6')
+      end
+    end
+
+    context 'when defaults are string-keyed' do
+      before do
+        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+        Legion::Settings[:llm] = {
+          'default_provider' => 'anthropic',
+          'default_model'    => 'claude-sonnet-4-6'
+        }
+      end
+
+      it 'falls back to string-keyed default_provider and default_model' do
+        result = described_class.dispatch('Hello')
+        expect(result).to be_a(Legion::LLM::Inference::Response)
+        expect(result.routing[:provider]).to eq('anthropic')
         expect(result.routing[:model]).to eq('claude-sonnet-4-6')
       end
     end
@@ -265,7 +282,7 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     it 'allows tools override' do
-      tool = double('tool')
+      tool = Legion::LLM::Types::ToolDefinition.build(name: 'test_tool', description: 'Test tool')
       allow(described_class).to receive(:dispatch).and_call_original
       described_class.summarize('Text', tools: [tool])
       expect(described_class).to have_received(:dispatch).with(anything, hash_including(tools: [tool]))

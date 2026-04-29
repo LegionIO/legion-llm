@@ -8,12 +8,10 @@ require_relative 'inference/profile'
 require_relative 'inference/timeline'
 require_relative 'inference/tracing'
 require_relative 'inference/steps'
-require_relative 'inference/tool_adapter'
 require_relative 'inference/tool_dispatcher'
 require_relative 'inference/audit_publisher'
 require_relative 'inference/enrichment_injector'
 require_relative 'inference/gaia_caller'
-require_relative 'inference/mcp_tool_adapter'
 require_relative 'inference/executor'
 
 module Legion
@@ -26,6 +24,33 @@ module Legion
                           principal_type caller].freeze
 
       module_function
+
+      def llm_setting(key, default = nil)
+        config_value(llm_settings, key, default)
+      end
+
+      def llm_settings
+        Legion::LLM::Settings.current_settings
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.inference.settings')
+        {}
+      end
+
+      def settings_value(*keys, default: nil)
+        Legion::LLM::Settings.value(*keys, default: default)
+      end
+
+      def config_value(config, key, default = nil)
+        return default unless config.respond_to?(:key?)
+
+        string_key = key.to_s
+        return config[string_key] if config.key?(string_key)
+
+        symbol_key = key.to_sym if key.respond_to?(:to_sym)
+        return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+        default
+      end
 
       # Public inference entry points — these are the methods delegated from Legion::LLM
 
@@ -44,7 +69,7 @@ module Legion
 
         result = if defined?(Legion::Telemetry::OpenInference)
                    Legion::Telemetry::OpenInference.llm_span(
-                     model:    (model || Legion::LLM.settings[:default_model]).to_s,
+                     model:    (model || llm_setting(:default_model)).to_s,
                      provider: provider&.to_s,
                      input:    message
                    ) do |_span|
@@ -168,7 +193,7 @@ module Legion
         log.debug("[llm][inference] chat_direct.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
-          ttl = Legion::LLM.settings.dig(:prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
+          ttl = settings_value(:prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
           Cache.set(cache_key, result, ttl: ttl)
         end
 
@@ -194,7 +219,7 @@ module Legion
         parts << 'stream=true' if kwargs[:stream]
         log.info(parts.join(' '))
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.log_request')
+        handle_exception(e, level: :warn, operation: 'llm.inference.log_request')
       end
 
       def log_inference_response(request_type:, requested_model:, requested_provider:, result:, duration_ms:)
@@ -216,7 +241,7 @@ module Legion
         parts << "tool_calls=#{details[:tool_calls]}" unless details[:tool_calls].nil?
         log.info(parts.join(' '))
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.log_response')
+        handle_exception(e, level: :warn, operation: 'llm.inference.log_response')
       end
 
       def log_inference_error(request_type:, requested_model:, requested_provider:, error:, duration_ms:)
@@ -232,7 +257,7 @@ module Legion
         parts << "requested_model=#{requested_model}" if requested_model
         log.error(parts.join(' '))
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.log_error')
+        handle_exception(e, level: :warn, operation: 'llm.inference.log_error')
       end
 
       def elapsed_ms_since(started_at)
@@ -315,7 +340,7 @@ module Legion
 
         object.public_send(method_name)
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.safe_value', method_name: method_name)
+        handle_exception(e, level: :warn, operation: 'llm.inference.safe_value', method_name: method_name)
         nil
       end
 
@@ -367,7 +392,7 @@ module Legion
         end
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
-        resolved_model = model || Legion::LLM.settings[:default_model]
+        resolved_model = model || llm_setting(:default_model)
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_before(messages: messages, model: resolved_model)
@@ -389,9 +414,9 @@ module Legion
       end
 
       def pipeline_enabled?
-        Legion::LLM.settings[:pipeline_enabled] == true
+        llm_setting(:pipeline_enabled) == true
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'llm.inference.pipeline_enabled')
+        handle_exception(e, level: :warn, operation: 'llm.inference.pipeline_enabled')
         false
       end
 
@@ -430,7 +455,7 @@ module Legion
           &
         )
         return result if result.is_a?(Hash) && result[:deferred]
-        return normalize_ask_direct_hash(result, fallback_model: model || Legion::LLM.settings[:default_model]) if result.is_a?(Hash)
+        return normalize_ask_direct_hash(result, fallback_model: model || llm_setting(:default_model)) if result.is_a?(Hash)
 
         response, resolved_model = resolve_ask_direct_response(result, message, model, &)
 
@@ -459,7 +484,7 @@ module Legion
         resolved_model = if result.respond_to?(:model_id) && result.model_id
                            result.model_id.to_s
                          else
-                           (requested_model || Legion::LLM.settings[:default_model]).to_s
+                           (requested_model || llm_setting(:default_model)).to_s
                          end
         [result, resolved_model]
       end
@@ -478,10 +503,10 @@ module Legion
         }
       end
 
-      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &block)
+      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &)
         explicit_tools = kwargs.delete(:tools)
-        tools = explicit_tools || adapted_registry_tools
-        tools = nil if tools.empty?
+        tools = explicit_tools
+        tools = nil if tools.respond_to?(:empty?) && tools.empty?
 
         if (intent || tier) && Router.routing_enabled?
           resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
@@ -495,9 +520,9 @@ module Legion
           assert_external_allowed! if external_tier?(tier.to_sym)
         end
 
-        model ||= Legion::LLM.settings[:default_model]
+        model ||= llm_setting(:default_model)
         provider ||= (model && Router.infer_provider_for_model(model)) ||
-                     Legion::LLM.settings[:default_provider]
+                     llm_setting(:default_provider)
 
         opts = {}
         opts[:model] = model if model
@@ -506,41 +531,32 @@ module Legion
         opts.delete(:temperature) if opts[:temperature].nil?
 
         Call::Providers.inject_anthropic_cache_control!(opts, provider)
+        opts[:tools] = tools if tools
 
         log.debug "[llm][inference] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
-        session = RubyLLM.chat(**opts)
-        tools&.each { |tool| session.with_tool(tool) }
-        return session unless message
+        chat_single_native(model: opts[:model], provider: opts[:provider], message: message,
+                           caller: kwargs[:caller], **opts.except(:model, :provider), &)
+      end
 
-        log.debug '[llm][inference] chat_single asking session'
-        response = block ? session.ask(message, &block) : session.ask(message)
-        log.debug "[llm][inference] chat_single response_class=#{response.class} response_nil=#{response.nil?}"
-        emit_non_pipeline_metering(response, model: opts[:model], provider: opts[:provider], caller: kwargs[:caller])
+      def chat_single_native(model:, provider:, message:, caller: nil, **, &block)
+        raise native_provider_error('session-style chat requires message or messages') unless message
+        raise native_provider_error('chat without a native provider') unless provider
 
-        if response && !block && defined?(Quality::ShadowEval) && Quality::ShadowEval.enabled?
-          msgs = session.respond_to?(:messages) ? session.messages : nil
-          maybe_shadow_evaluate(response, msgs, opts[:model])
-        end
-
+        messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
+        result = if block
+                   Call::Dispatch.dispatch_stream(provider: provider, model: model, messages: messages, **, &block)
+                 else
+                   Call::Dispatch.dispatch_chat(provider: provider, model: model, messages: messages, **)
+                 end
+        response = Call::NativeResponseAdapter.new(result)
+        emit_non_pipeline_metering(response, model: model, provider: provider, caller: caller)
         response
       end
 
-      def adapted_registry_tools
-        tool_classes = if defined?(::Legion::Tools::Registry)
-                         ::Legion::Tools::Registry.tools
-                       else
-                         return []
-                       end
-
-        tool_classes.map do |tool_class|
-          ToolAdapter.new(tool_class)
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.inference.adapted_registry_tools', tool_class: tool_class.to_s)
-          nil
-        end.compact
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'llm.inference.adapted_registry_tools')
-        []
+      def native_provider_error(operation)
+        Legion::LLM::ProviderError.new(
+          "Native provider dispatch is required for #{operation}. Configure a registered lex-llm provider."
+        )
       end
 
       def try_defer(intent:, urgency:, model:, provider:, message:, **)
@@ -563,7 +579,7 @@ module Legion
             messages:         messages
           )
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.inference.shadow_eval')
+          handle_exception(e, level: :warn, operation: 'llm.inference.shadow_eval')
         end
       end
 
@@ -576,56 +592,89 @@ module Legion
 
         threshold = escalation_quality_threshold
         history = []
+        last_error = nil
 
         chain.each do |resolution|
-          start_time = Time.now
-          begin
-            assert_external_allowed! if resolution.respond_to?(:external?) && resolution.external?
-            opts = { model: resolution.model, provider: resolution.provider }
-            opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
-            chat_obj = RubyLLM.chat(**opts)
-            response = chat_obj.ask(message)
-
-            duration_ms = ((Time.now - start_time) * 1000).round
-            result = Quality::Checker.check(response, quality_threshold: threshold, quality_check: quality_check)
-
-            if result.passed
-              report_health(:success, resolution, duration_ms)
-              history << build_attempt(resolution, :success, [], duration_ms)
-              attach_escalation_history(response, history, resolution, chain)
-              publish_escalation_event(history, :success) if history.size > 1
-              log.debug "[llm][inference] chat_with_escalation success attempts=#{history.size}"
-              return response
-            else
-              report_health(:quality_failure, resolution, duration_ms, failures: result.failures)
-              history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
-              log.debug "[llm][inference] chat_with_escalation quality_failure attempt=#{history.size} failures=#{result.failures}"
-            end
-          rescue Legion::LLM::PrivacyModeError
-            raise
-          rescue StandardError => e
-            duration_ms = ((Time.now - start_time) * 1000).round
-            handle_exception(
-              e,
-              level:     :warn,
-              handled:   true,
-              operation: 'llm.inference.escalation_attempt',
-              model:     resolution&.model,
-              provider:  resolution&.provider,
-              tier:      resolution&.tier
-            )
-            report_health(:error, resolution, duration_ms) if resolution
-            history << build_attempt(resolution, :error, [e.class.name], duration_ms) if resolution
-          end
+          response, error = run_escalation_attempt(
+            resolution, message: message, kwargs: kwargs, threshold: threshold,
+            quality_check: quality_check, history: history, chain: chain
+          )
+          last_error = error if error
+          return response if response
         end
 
         publish_escalation_event(history, :exhausted) if history.size > 1
-        raise Legion::LLM::EscalationExhausted, "All #{history.size} escalation attempts failed"
+        message = "All #{history.size} escalation attempts failed"
+        if last_error
+          providers = history.filter_map { |attempt| attempt[:provider] }.uniq.join(', ')
+          message = "#{message}; no usable native provider handled the request. " \
+                    "providers=#{providers} last_error=#{last_error.class}: #{last_error.message}"
+        end
+
+        raise Legion::LLM::EscalationExhausted, message
+      end
+
+      def run_escalation_attempt(resolution, message:, kwargs:, threshold:, quality_check:, history:, chain:)
+        start_time = Time.now
+        assert_external_allowed! if resolution.respond_to?(:external?) && resolution.external?
+
+        response = escalation_attempt_response(resolution, message, kwargs)
+        duration_ms = ((Time.now - start_time) * 1000).round
+        result = Quality::Checker.check(response, quality_threshold: threshold, quality_check: quality_check)
+
+        return [response, nil] if escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain)
+
+        report_health(:quality_failure, resolution, duration_ms, failures: result.failures)
+        history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
+        log.debug "[llm][inference] chat_with_escalation quality_failure attempt=#{history.size} failures=#{result.failures}"
+        [nil, nil]
+      rescue Legion::LLM::PrivacyModeError
+        raise
+      rescue StandardError => e
+        duration_ms = ((Time.now - start_time) * 1000).round
+        record_escalation_error(e, resolution, duration_ms, history)
+        [nil, e]
+      end
+
+      def escalation_attempt_response(resolution, message, kwargs)
+        opts = { model: resolution.model, provider: resolution.provider }
+        opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
+        chat_single_native(model: opts[:model], provider: opts[:provider],
+                           message: message, caller: kwargs[:caller],
+                           **opts.except(:model, :provider))
+      end
+
+      def escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain)
+        return false unless result.passed
+
+        report_health(:success, resolution, duration_ms)
+        history << build_attempt(resolution, :success, [], duration_ms)
+        attach_escalation_history(response, history, resolution, chain)
+        publish_escalation_event(history, :success) if history.size > 1
+        log.debug "[llm][inference] chat_with_escalation success attempts=#{history.size}"
+        true
+      end
+
+      def record_escalation_error(error, resolution, duration_ms, history)
+        handle_exception(
+          error,
+          level:     :warn,
+          handled:   true,
+          operation: 'llm.inference.escalation_attempt',
+          model:     resolution&.model,
+          provider:  resolution&.provider,
+          tier:      resolution&.tier
+        )
+        report_health(:error, resolution, duration_ms) if resolution
+        history << build_attempt(resolution, :error, [error.class.name], duration_ms) if resolution
       end
 
       def build_attempt(resolution, outcome, failures, duration_ms)
-        { model: resolution.model, provider: resolution.provider, tier: resolution.tier,
-          outcome: outcome, failures: failures, duration_ms: duration_ms }
+        attempt = { model: resolution.model, provider: resolution.provider, tier: resolution.tier,
+                    outcome: outcome, failures: failures, duration_ms: duration_ms }
+        attempt[:offering_id] = resolution.offering_id if resolution.offering_id
+        attempt[:offering_metadata] = resolution.offering_metadata unless resolution.offering_metadata.empty?
+        attempt
       end
 
       def attach_escalation_history(response, history, resolution, chain)
@@ -642,8 +691,10 @@ module Legion
 
         metadata = { duration_ms: duration_ms }
         metadata[:failures] = failures if failures
-        Router.health_tracker.report(provider: resolution.provider, signal: signal, value: 1, metadata: metadata)
-        Router.health_tracker.report(provider: resolution.provider, signal: :latency, value: duration_ms, metadata: {})
+        Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+                                     signal: signal, value: 1, metadata: metadata)
+        Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+                                     signal: :latency, value: duration_ms, metadata: {})
       end
 
       def publish_escalation_event(history, final_outcome)
@@ -658,14 +709,14 @@ module Legion
 
         log.info "[llm][inference] escalation_event outcome=#{final_outcome} attempts=#{history.size}"
 
-        Transport::Messages::EscalationEvent.new(payload).publish if defined?(Legion::Settings) && Legion::Settings[:transport][:connected] == true
+        Transport::Messages::EscalationEvent.new(payload).publish if Legion::LLM::Settings.transport_connected?
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.publish_escalation_event', outcome: final_outcome)
         nil
       end
 
       def response_guards_enabled?
-        Legion::LLM.settings.dig(:response_guards, :enabled) == true
+        settings_value(:response_guards, :enabled) == true
       end
 
       def apply_response_guards(result, kwargs)
@@ -690,27 +741,27 @@ module Legion
       def build_cache_key(model, provider, message, temperature)
         messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         Cache.key(
-          model:       model || Legion::LLM.settings[:default_model],
-          provider:    provider || Legion::LLM.settings[:default_provider],
+          model:       model || llm_setting(:default_model),
+          provider:    provider || llm_setting(:default_provider),
           messages:    messages_arr,
           temperature: temperature
         )
       end
 
       def escalation_enabled?
-        routing = Legion::LLM.settings[:routing]
+        routing = llm_setting(:routing)
         return false unless routing.is_a?(Hash)
 
-        esc = routing[:escalation] || {}
-        esc[:enabled] == true
+        esc = config_value(routing, :escalation, {})
+        config_value(esc, :enabled) == true
       end
 
       def escalation_quality_threshold
-        routing = Legion::LLM.settings[:routing]
+        routing = llm_setting(:routing)
         return 50 unless routing.is_a?(Hash)
 
-        esc = routing[:escalation] || {}
-        esc.fetch(:quality_threshold, 50)
+        esc = config_value(routing, :escalation, {})
+        config_value(esc, :quality_threshold, 50)
       end
 
       def emit_non_pipeline_metering(response, model:, provider:, caller: nil)
@@ -728,11 +779,7 @@ module Legion
       end
 
       def enterprise_privacy?
-        if Legion.const_defined?('Settings', false) && Legion::Settings.respond_to?(:enterprise_privacy?)
-          Legion::Settings.enterprise_privacy?
-        else
-          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
-        end
+        Legion::LLM::Settings.enterprise_privacy?
       end
 
       def emit_privacy_blocked_audit
@@ -761,7 +808,7 @@ module Legion
         return external_tier?(tier.to_sym) if tier
         return false unless enterprise_privacy?
 
-        resolved = provider || Legion::LLM.settings[:default_provider]
+        resolved = provider || llm_setting(:default_provider)
         external_providers = %i[anthropic bedrock openai gemini azure]
         external_providers.include?(resolved&.to_sym)
       end

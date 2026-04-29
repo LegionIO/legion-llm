@@ -36,8 +36,8 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
 
   describe '.chat_direct with tier: :local' do
     it 'does not raise PrivacyModeError for local tier' do
-      session_double = double('session', ask: double('response', content: 'pong'))
-      allow(RubyLLM).to receive(:chat).and_return(session_double)
+      double('session', ask: double('response', content: 'pong'))
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(native_dispatch_result(content: 'pipeline response'))
       expect do
         Legion::LLM.chat_direct(tier: :local, message: 'hello')
       end.not_to raise_error

@@ -26,13 +26,14 @@ module Legion
             return { vector: nil, model: model, provider: provider, error: "provider #{provider} does not support embeddings" } \
               if provider && !provider_supports_embeddings?(provider)
 
-            response = RubyLLM.embed(text, **build_opts(model, provider, dimensions))
-            emit_embedding_metering(provider: provider, model: model, tokens: response.input_tokens)
-            vector = normalize_vectors_first(response.vectors)
+            response = dispatch_native_embedding(text: text, model: model, provider: provider, dimensions: dimensions)
+            tokens = extract_input_tokens(response)
+            emit_embedding_metering(provider: provider, model: model, tokens: tokens)
+            vector = normalize_vectors_first(response[:result])
             vector = apply_dimension_enforcement(vector, provider)
             return dimension_error(model, provider, vector) if vector.is_a?(String)
 
-            { vector: vector, model: model, provider: provider, dimensions: vector&.size || 0, tokens: response.input_tokens }
+            { vector: vector, model: model, provider: provider, dimensions: vector&.size || 0, tokens: tokens }
           rescue StandardError => e
             handle_exception(e, level: :warn)
             handle_embed_failure(e, text: text, failed_provider: provider, failed_model: model)
@@ -53,8 +54,15 @@ module Legion
             return generate_ollama_batch(texts: texts, model: model) if provider&.to_sym == :ollama
             return generate_azure_batch(texts: texts, model: model, dimensions: dimensions) if provider&.to_sym == :azure
 
-            response = RubyLLM.embed(texts, **build_opts(model, provider, dimensions))
-            response.vectors.each_with_index.map do |vec, i|
+            unless !provider || provider_supports_embeddings?(provider)
+              return texts.each_with_index.map do |_, i|
+                { vector: nil, model: model, provider: provider, dimensions: 0, index: i,
+                  error: "provider #{provider} does not support embeddings" }
+              end
+            end
+
+            response = dispatch_native_embedding(text: texts, model: model, provider: provider, dimensions: dimensions)
+            normalize_vectors(response[:result]).each_with_index.map do |vec, i|
               build_batch_entry(vec, model, provider, i)
             end
           rescue StandardError => e
@@ -90,8 +98,8 @@ module Legion
           def provider_disabled?(provider)
             return false unless provider
 
-            config = Legion::Settings.dig(:llm, :providers, provider.to_sym)
-            config.is_a?(Hash) && config[:enabled] == false
+            config = config_value(providers_settings, provider)
+            config.is_a?(Hash) && config_value(config, :enabled) == false
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.embeddings.provider_disabled', provider: provider)
             false
@@ -107,12 +115,37 @@ module Legion
             false
           end
 
-          def build_opts(model, provider, dimensions)
+          def native_embed_options(_provider, dimensions)
             target_dim = enforce_dimension? ? target_dimension : dimensions
-            opts = { model: model }
-            opts[:provider]   = provider if provider
-            opts[:dimensions] = target_dim if target_dim && provider&.to_sym == :openai
+            opts = {}
+            opts[:dimensions] = target_dim if target_dim
             opts
+          end
+
+          def dispatch_native_embedding(text:, model:, provider:, dimensions:)
+            Dispatch.dispatch_embed(
+              provider: provider,
+              model:    model,
+              text:     text,
+              **native_embed_options(provider, dimensions)
+            )
+          end
+
+          def extract_input_tokens(response)
+            usage = response[:usage]
+            return usage.input_tokens.to_i if usage.respond_to?(:input_tokens)
+            return usage[:input_tokens].to_i if usage.is_a?(Hash) && usage.key?(:input_tokens)
+            return usage['input_tokens'].to_i if usage.is_a?(Hash) && usage.key?('input_tokens')
+
+            0
+          end
+
+          def normalize_vectors(vectors)
+            return [] if vectors.nil?
+            return vectors if vectors.is_a?(Array) && vectors.first.is_a?(Array)
+            return [vectors] if vectors.is_a?(Array) && vectors.first.is_a?(Numeric)
+
+            Array(vectors)
           end
 
           def normalize_vectors_first(vectors)
@@ -142,7 +175,7 @@ module Legion
           end
 
           def enforce_dimension?
-            embedding_settings[:enforce_dimension] != false
+            config_value(embedding_settings, :enforce_dimension) != false
           end
 
           def enforce_dimensions(vector, _provider)
@@ -168,17 +201,18 @@ module Legion
 
             started = false
             chain.each do |entry|
-              if entry[:provider] == failed_provider&.to_sym
+              entry_provider = fallback_entry_provider(entry)
+              if entry_provider == failed_provider&.to_sym
                 started = true
                 next
               end
               next unless started
               # Skip providers that are explicitly disabled in the fallback chain
-              next if provider_disabled?(entry[:provider])
-              next unless provider_supports_embeddings?(entry[:provider])
+              next if provider_disabled?(entry_provider)
+              next unless provider_supports_embeddings?(entry_provider)
 
-              log.info "Embedding failover: #{failed_provider} -> #{entry[:provider]}"
-              return entry
+              log.info "Embedding failover: #{failed_provider} -> #{entry_provider}"
+              return fallback_entry(entry)
             end
             nil
           end
@@ -186,7 +220,7 @@ module Legion
           def resolve_provider
             return LLM.embedding_provider if LLM.embedding_provider
 
-            configured = embedding_settings[:provider]
+            configured = config_value(embedding_settings, :provider)
             return configured&.to_sym if configured
 
             nil
@@ -198,7 +232,7 @@ module Legion
           def resolve_model(provider)
             return LLM.embedding_model if LLM.embedding_model && provider == LLM.embedding_provider
 
-            configured = embedding_settings[:default_model]
+            configured = config_value(embedding_settings, :default_model)
             return configured if configured
 
             resolve_model_from_settings(provider)
@@ -208,8 +242,8 @@ module Legion
           end
 
           def resolve_model_from_settings(provider)
-            models = embedding_settings[:provider_models] || {}
-            pm = models[provider&.to_sym] || models[provider.to_s]
+            models = config_value(embedding_settings, :provider_models, {})
+            pm = config_value(models, provider)
             return pm.to_s if pm
 
             'text-embedding-3-small'
@@ -219,11 +253,11 @@ module Legion
             return text unless prefix_injection_enabled?
 
             base_model = model.to_s.split(':').first
-            registry   = embedding_settings[:prefix_registry] || {}
-            prefixes   = registry[base_model]
+            registry   = config_value(embedding_settings, :prefix_registry, {})
+            prefixes   = config_value(registry, base_model)
             return text unless prefixes
 
-            prefix = prefixes[task.to_sym]
+            prefix = config_value(prefixes, task)
             return text unless prefix
 
             "#{prefix}#{text}"
@@ -271,7 +305,7 @@ module Legion
           end
 
           def prefix_injection_enabled?
-            value = (Legion::Settings.dig(:llm, :embedding) || {})[:prefix_injection]
+            value = config_value(embedding_settings, :prefix_injection)
             value.nil? || value
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.embeddings.prefix_injection_enabled')
@@ -279,14 +313,14 @@ module Legion
           end
 
           def embedding_settings
-            Legion::LLM.settings[:embedding] || {}
+            config_value(llm_settings, :embedding, {})
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.embeddings.embedding_settings')
             {}
           end
 
           def target_dimension
-            embedding_settings[:dimension] || 1024
+            config_value(embedding_settings, :dimension, 1024)
           end
 
           def generate_ollama(text:, model:)
@@ -364,11 +398,11 @@ module Legion
 
           def ollama_context_chars(model)
             base     = model.to_s.split(':').first
-            context  = embedding_settings[:ollama_context_chars] || {}
-            context[base] || embedding_settings[:ollama_default_context_chars] || 1400
+            context  = config_value(embedding_settings, :ollama_context_chars, {})
+            config_value(context, base) || config_value(embedding_settings, :ollama_default_context_chars, 1400)
           end
 
-          # ── Azure OpenAI (direct HTTP with SNI, bypasses ruby_llm) ──
+          # ── Azure OpenAI direct HTTP with SNI ──
 
           def generate_azure(text:, model:, dimensions: nil)
             result = azure_embed_request(model: model, input: text, dimensions: dimensions)
@@ -431,19 +465,19 @@ module Legion
           end
 
           def azure_embedding_settings
-            base = Legion::Settings.dig(:llm, :providers, :azure) || {}
-            embed = Legion::Settings.dig(:llm, :embedding, :azure) || {}
+            base = config_value(providers_settings, :azure, {})
+            embed = config_value(embedding_settings, :azure, {})
             {
-              api_base: embed[:api_base] || base[:api_base],
-              api_key:  embed[:api_key] || base[:api_key] || base[:auth_token],
-              ip:       embed[:ip]
+              api_base: config_value(embed, :api_base) || config_value(base, :api_base),
+              api_key:  config_value(embed, :api_key) || config_value(base, :api_key) || config_value(base, :auth_token),
+              ip:       config_value(embed, :ip)
             }
           end
 
-          # ── Ollama (direct HTTP, bypasses ruby_llm) ──
+          # ── Ollama direct HTTP ──
 
           def ollama_embed_request(model:, input:)
-            base_url = Legion::Settings.dig(:llm, :providers, :ollama, :base_url) || 'http://localhost:11434'
+            base_url = config_value(config_value(providers_settings, :ollama, {}), :base_url, 'http://localhost:11434')
             conn = Faraday.new(url: base_url) do |f|
               f.options.timeout = 30
               f.options.open_timeout = 5
@@ -487,7 +521,7 @@ module Legion
 
           def emit_embedding_metering(provider:, model:, tokens:)
             caller = begin
-              Legion::LLM.settings[:caller]
+              config_value(llm_settings, :caller)
             rescue StandardError => e
               handle_exception(e, level: :debug, operation: 'llm.embeddings.metering.caller')
               nil
@@ -499,6 +533,36 @@ module Legion
             )
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.embeddings.metering')
+          end
+
+          def fallback_entry_provider(entry)
+            config_value(entry, :provider)&.to_sym
+          end
+
+          def fallback_entry(entry)
+            return entry if entry.key?(:provider)
+
+            { provider: fallback_entry_provider(entry), model: config_value(entry, :model) }
+          end
+
+          def providers_settings
+            config_value(llm_settings, :providers, {})
+          end
+
+          def llm_settings
+            Legion::LLM::Settings.current_settings
+          end
+
+          def config_value(config, key, default = nil)
+            return default unless config.respond_to?(:key?)
+
+            string_key = key.to_s
+            return config[string_key] if config.key?(string_key)
+
+            symbol_key = key.to_sym if key.respond_to?(:to_sym)
+            return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+            default
           end
         end
       end

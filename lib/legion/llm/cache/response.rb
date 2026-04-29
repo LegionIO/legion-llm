@@ -3,41 +3,45 @@
 require 'fileutils'
 require 'json'
 
+require 'legion/cache/helper'
 require 'legion/logging/helper'
 module Legion
   module LLM
     module Cache
       module Response
         extend Legion::Logging::Helper
+        extend ::Legion::Cache::Helper
 
         module_function
 
+        def cache_namespace = ''
+
         def init_request(request_id, ttl: default_ttl)
-          cache_set(status_key(request_id), 'pending', ttl)
+          cache_write(status_key(request_id), 'pending', ttl)
         end
 
         def complete(request_id, response:, meta:, ttl: default_ttl)
           write_response(request_id, response, ttl)
-          cache_set(meta_key(request_id), Legion::JSON.dump(meta), ttl)
-          cache_set(status_key(request_id), 'done', ttl)
+          cache_write(meta_key(request_id), Legion::JSON.dump(meta), ttl)
+          cache_write(status_key(request_id), 'done', ttl)
         end
 
         def fail_request(request_id, code:, message:, ttl: default_ttl)
           log.warn("ResponseCache fail_request request_id=#{request_id} code=#{code} message=#{message}")
           payload = Legion::JSON.dump({ code: code, message: message })
-          cache_set(error_key(request_id), payload, ttl)
-          cache_set(status_key(request_id), 'error', ttl)
+          cache_write(error_key(request_id), payload, ttl)
+          cache_write(status_key(request_id), 'error', ttl)
         end
 
         # Returns :pending, :done, :error, or nil.
         def status(request_id)
-          raw = Legion::Cache.get(status_key(request_id))
+          raw = cache_read(status_key(request_id))
           raw&.to_sym
         end
 
         # Returns the response string (handles spool overflow transparently).
         def response(request_id)
-          raw = Legion::Cache.get(response_key(request_id))
+          raw = cache_read(response_key(request_id))
           return nil if raw.nil?
           return File.read(raw.delete_prefix('spool:')) if raw.start_with?('spool:')
 
@@ -46,18 +50,18 @@ module Legion
 
         # Returns meta hash with symbolized keys, or nil.
         def meta(request_id)
-          raw = Legion::Cache.get(meta_key(request_id))
+          raw = cache_read(meta_key(request_id))
           return nil if raw.nil?
 
-          ::JSON.parse(raw, symbolize_names: true)
+          Legion::JSON.load(raw)
         end
 
         # Returns { code:, message: } hash, or nil.
         def error(request_id)
-          raw = Legion::Cache.get(error_key(request_id))
+          raw = cache_read(error_key(request_id))
           return nil if raw.nil?
 
-          ::JSON.parse(raw, symbolize_names: true)
+          Legion::JSON.load(raw)
         end
 
         def poll(request_id, timeout: default_ttl, interval: 0.1)
@@ -82,16 +86,16 @@ module Legion
 
         # Removes all cache keys for a request (and any spool file).
         def cleanup(request_id)
-          raw = Legion::Cache.get(response_key(request_id))
+          raw = cache_read(response_key(request_id))
           if raw&.start_with?('spool:')
             path = raw.delete_prefix('spool:')
             FileUtils.rm_f(path)
           end
 
-          Legion::Cache.delete(status_key(request_id))
-          Legion::Cache.delete(response_key(request_id))
-          Legion::Cache.delete(meta_key(request_id))
-          Legion::Cache.delete(error_key(request_id))
+          cache_remove(status_key(request_id))
+          cache_remove(response_key(request_id))
+          cache_remove(meta_key(request_id))
+          cache_remove(error_key(request_id))
         end
 
         # ── private helpers ────────────────────────────────────────────────
@@ -111,20 +115,40 @@ module Legion
           "llm:#{request_id}:error"
         end
 
-        private_class_method def self.cache_set(key, value, ttl)
-          Legion::Cache.set(key, value, ttl)
+        private_class_method def self.cache_write(key, value, ttl)
+          return local_cache_set(key, value, ttl: ttl) if local_cache_backend?
+
+          cache_set(key, value, ttl: ttl)
+        end
+
+        private_class_method def self.cache_read(key)
+          return local_cache_get(key) if local_cache_backend?
+
+          cache_get(key)
+        end
+
+        private_class_method def self.cache_remove(key)
+          return local_cache_delete(key) if local_cache_backend?
+
+          cache_delete(key)
+        end
+
+        private_class_method def self.local_cache_backend?
+          respond_to?(:local_cache_connected?) && local_cache_connected?
+        rescue StandardError
+          false
         end
 
         private_class_method def self.default_ttl
-          Legion::LLM.settings.dig(:prompt_caching, :response_cache, :ttl_seconds) || 300
+          Legion::LLM::Settings.value(:prompt_caching, :response_cache, :ttl_seconds, default: 300)
         end
 
         private_class_method def self.spool_threshold
-          Legion::LLM.settings.dig(:prompt_caching, :response_cache, :spool_threshold_bytes) || (8 * 1024 * 1024)
+          Legion::LLM::Settings.value(:prompt_caching, :response_cache, :spool_threshold_bytes, default: 8 * 1024 * 1024)
         end
 
         private_class_method def self.spool_dir
-          configured = Legion::LLM.settings.dig(:prompt_caching, :response_cache, :spool_dir).to_s.strip
+          configured = Legion::LLM::Settings.value(:prompt_caching, :response_cache, :spool_dir).to_s.strip
           configured.empty? ? File.expand_path('~/.legionio/data/spool/llm_responses') : File.expand_path(configured)
         end
 
@@ -134,9 +158,9 @@ module Legion
             FileUtils.mkdir_p(spool_dir)
             path = File.join(spool_dir, "#{request_id}.txt")
             File.write(path, response_text)
-            cache_set(response_key(request_id), "spool:#{path}", ttl)
+            cache_write(response_key(request_id), "spool:#{path}", ttl)
           else
-            cache_set(response_key(request_id), response_text, ttl)
+            cache_write(response_key(request_id), response_text, ttl)
           end
         end
       end

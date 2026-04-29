@@ -144,14 +144,14 @@ module Legion
         end
 
         def curation_settings
-          Legion::Settings.dig(:llm, :context_curation) || {}
+          Legion::LLM::Settings.value(:context_curation, default: {})
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.context_curator.curation_settings')
           {}
         end
 
         def setting(key, default)
-          val = curation_settings[key]
+          val = Legion::LLM::Settings.config_value(curation_settings, key)
           val.nil? ? default : val
         end
 
@@ -316,10 +316,12 @@ module Legion
         end
 
         def detect_small_model
-          providers = Legion::Settings.dig(:llm, :providers) || {}
+          providers = Legion::LLM::Settings.value(:providers, default: {})
           %w[ollama].each do |provider|
-            config = providers[provider.to_sym] || providers[provider]
-            return config[:default_model] if config.is_a?(Hash) && config[:enabled] && config[:default_model]
+            config = Legion::LLM::Settings.config_value(providers, provider, {})
+            enabled = Legion::LLM::Settings.config_value(config, :enabled)
+            model = Legion::LLM::Settings.config_value(config, :default_model)
+            return model if config.is_a?(Hash) && enabled && model
           end
           nil
         rescue StandardError => e

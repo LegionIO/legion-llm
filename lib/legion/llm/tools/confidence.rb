@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/cache/helper'
 require 'legion/logging/helper'
 module Legion
   module LLM
     module Tools
       module Confidence
         extend Legion::Logging::Helper
+        extend ::Legion::Cache::Helper
 
         OVERRIDE_THRESHOLD = 0.8
         SHADOW_THRESHOLD = 0.5
@@ -16,6 +18,8 @@ module Legion
         @mutex = Mutex.new
 
         module_function
+
+        def cache_namespace = ''
 
         def record(tool:, lex:, confidence:)
           @mutex.synchronize do
@@ -128,14 +132,14 @@ module Legion
           private
 
           def sync_to_l1(tool)
-            return unless defined?(Legion::Cache)
+            return unless local_cache_available?
 
             entry = @mutex.synchronize { @overrides_l0[tool] }
             return unless entry
 
-            Legion::Cache.set("override:#{tool}", Legion::JSON.dump(entry), ttl: 3600)
+            l1_cache_set("override:#{tool}", Legion::JSON.dump(entry), ttl: 3600)
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.sync_l1', tool: tool)
             nil
           end
 
@@ -152,15 +156,43 @@ module Legion
           end
 
           def lookup_l1(tool)
-            return nil unless defined?(Legion::Cache)
+            return nil unless local_cache_available?
 
-            raw = Legion::Cache.get("override:#{tool}")
+            raw = l1_cache_get("override:#{tool}")
             return nil unless raw
 
             Legion::JSON.load(raw)
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.lookup_l1', tool: tool)
             nil
+          end
+
+          def local_cache_available?
+            local_cache_backend? || shared_cache_backend?
+          end
+
+          def l1_cache_get(key)
+            return local_cache_get(key) if local_cache_backend?
+
+            cache_get(key)
+          end
+
+          def l1_cache_set(key, value, ttl:)
+            return local_cache_set(key, value, ttl: ttl) if local_cache_backend?
+
+            cache_set(key, value, ttl: ttl)
+          end
+
+          def local_cache_backend?
+            respond_to?(:local_cache_connected?) && local_cache_connected?
+          rescue StandardError
+            false
+          end
+
+          def shared_cache_backend?
+            respond_to?(:cache_connected?) && cache_connected?
+          rescue StandardError
+            false
           end
 
           def lookup_l2(tool)

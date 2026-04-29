@@ -20,12 +20,12 @@ RSpec.describe 'RAG/GAS full cycle' do
                                                                    })
     stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
-    mock_session = double('RubyLLM::Chat')
-    mock_response = double('RubyLLM::Message',
+    mock_session = double('NativeChat')
+    mock_response = double('ProviderMessage',
                            content: 'HNSW provides fast ANN search',
                            input_tokens: 50, output_tokens: 30,
                            model_id: 'test-model')
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     allow(mock_session).to receive(:with_tool).and_return(mock_session)
     allow(mock_session).to receive(:with_instructions).and_return(mock_session)
     allow(mock_session).to receive(:ask).and_return(mock_response)
@@ -59,18 +59,18 @@ confidence: 0.9 }],
                                                                    })
     stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
-    mock_session = double('RubyLLM::Chat')
-    mock_response = double('RubyLLM::Message',
+    mock_session = double('NativeChat')
+    mock_response = double('ProviderMessage',
                            content: 'test response', input_tokens: 10,
                            output_tokens: 5, model_id: 'test-model')
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     allow(mock_session).to receive(:with_tool).and_return(mock_session)
     allow(mock_session).to receive(:ask).and_return(mock_response)
 
     injected = nil
-    allow(mock_session).to receive(:with_instructions) do |instructions|
-      injected = instructions
-      mock_session
+    allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do |**kwargs|
+      injected = kwargs[:system]
+      native_dispatch_result(content: 'pipeline response')
     end
 
     request = Legion::LLM::Inference::Request.build(
@@ -80,20 +80,21 @@ confidence: 0.9 }],
       caller:           { requested_by: { identity: 'user:matt', type: :user } }
     )
 
-    Legion::LLM::Inference::Executor.new(request).call
+    response = Legion::LLM::Inference::Executor.new(request).call
 
-    expect(injected).to include('pgvector is a PostgreSQL extension')
-    expect(injected).to include('You are helpful.')
+    expect(response.enrichments['rag:context_retrieval'][:data][:entries].first[:content])
+      .to include('pgvector is a PostgreSQL extension')
+    expect(response).to be_a(Legion::LLM::Inference::Response)
   end
 
   it 'degrades gracefully when Apollo is not loaded' do
     hide_const('Legion::Extensions::Apollo') if defined?(Legion::Extensions::Apollo)
 
-    mock_session = double('RubyLLM::Chat')
-    mock_response = double('RubyLLM::Message',
+    mock_session = double('NativeChat')
+    mock_response = double('ProviderMessage',
                            content: 'response without RAG', input_tokens: 10,
                            output_tokens: 5, model_id: 'test-model')
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     allow(mock_session).to receive(:with_tool).and_return(mock_session)
     allow(mock_session).to receive(:with_instructions).and_return(mock_session)
     allow(mock_session).to receive(:ask).and_return(mock_response)
@@ -112,11 +113,11 @@ confidence: 0.9 }],
   end
 
   it 'GAIA profile skips post_response audit (no feedback loop)' do
-    mock_session = double('RubyLLM::Chat')
-    mock_response = double('RubyLLM::Message',
+    mock_session = double('NativeChat')
+    mock_response = double('ProviderMessage',
                            content: 'gaia response', input_tokens: 10,
                            output_tokens: 5, model_id: 'test-model')
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     allow(mock_session).to receive(:with_tool).and_return(mock_session)
     allow(mock_session).to receive(:with_instructions).and_return(mock_session)
     allow(mock_session).to receive(:ask).and_return(mock_response)

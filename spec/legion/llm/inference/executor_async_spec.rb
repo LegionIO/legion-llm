@@ -57,6 +57,14 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
     end
 
+    context 'when pipeline_async_post_steps is string-keyed' do
+      before { allow(Legion::LLM).to receive(:settings).and_return({ 'pipeline_async_post_steps' => true }) }
+
+      it 'returns true' do
+        expect(executor.send(:async_post_enabled?)).to be(true)
+      end
+    end
+
     context 'when pipeline_async_post_steps is false' do
       before { Legion::Settings[:llm][:pipeline_async_post_steps] = false }
 

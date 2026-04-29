@@ -86,11 +86,34 @@ module Legion
           end
 
           def trigger_scan_depth
-            Legion::Settings.dig(:llm, :tool_trigger, :scan_depth) || 10
+            tool_trigger_setting(:scan_depth, 10)
           end
 
           def trigger_tool_limit
-            Legion::Settings.dig(:llm, :tool_trigger, :tool_limit) || 50
+            tool_trigger_setting(:tool_limit, 50)
+          end
+
+          def tool_trigger_setting(key, default = nil)
+            config_value(settings_value(:tool_trigger, default: {}), key, default)
+          end
+
+          def settings_value(*keys, default: nil)
+            Legion::LLM::Settings.value(*keys, default: default)
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.trigger_match.settings', keys: keys)
+            default
+          end
+
+          def config_value(config, key, default = nil)
+            return default unless config.respond_to?(:key?)
+
+            string_key = key.to_s
+            return config[string_key] if config.key?(string_key)
+
+            symbol_key = key.to_sym if key.respond_to?(:to_sym)
+            return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+            default
           end
 
           def record_trigger_match_timeline(count, start_time = nil)

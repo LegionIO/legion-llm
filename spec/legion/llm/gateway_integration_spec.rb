@@ -13,7 +13,7 @@ RSpec.describe 'Legion::LLM gateway teardown' do
     Legion::Settings[:llm][:default_model] = 'claude-opus-4-6'
 
     mock_session = double('session', with_tool: nil, model: 'claude-opus-4-6')
-    allow(RubyLLM).to receive(:chat).and_return(mock_session)
+    stub_native_provider(content: 'pipeline response')
     mock_response = double('response', content: 'direct', input_tokens: 5, output_tokens: 3)
     allow(mock_session).to receive(:ask).and_return(mock_response)
 

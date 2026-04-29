@@ -80,8 +80,12 @@ module Legion
                               status_code: 202)
               else
                 log.debug("[llm][api][chat] action=sync_dispatch request_id=#{request_id}")
-                result = Legion::LLM.chat(message: message, model: model, provider: provider,
-                                          caller: { source: 'api', path: request.path })
+                result = Legion::LLM.chat(
+                  message:  message,
+                  model:    model,
+                  provider: provider,
+                  caller:   build_server_caller(source: 'api', path: request.path, env: env)
+                )
                 if result.is_a?(Legion::LLM::Inference::Response)
                   raw_msg  = result.message
                   content  = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s

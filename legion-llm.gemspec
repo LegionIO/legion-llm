@@ -7,8 +7,8 @@ Gem::Specification.new do |spec|
   spec.version       = Legion::LLM::VERSION
   spec.authors       = ['Esity']
   spec.email         = ['matthewdiverson@gmail.com']
-  spec.summary       = 'LLM integration for the LegionIO framework via ruby_llm'
-  spec.description   = 'Provides LLM capabilities (chat, embeddings, tool use, agents) to LegionIO extensions'
+  spec.summary       = 'LLM routing and provider orchestration for the LegionIO framework'
+  spec.description   = 'Routes LLM chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata for LegionIO extensions'
   spec.homepage      = 'https://github.com/LegionIO/legion-llm'
   spec.license       = 'Apache-2.0'
   spec.require_paths = ['lib']
@@ -18,7 +18,7 @@ Gem::Specification.new do |spec|
   spec.metadata = {
     'bug_tracker_uri'       => 'https://github.com/LegionIO/legion-llm/issues',
     'changelog_uri'         => 'https://github.com/LegionIO/legion-llm/blob/main/CHANGELOG.md',
-    'documentation_uri'     => 'https://github.com/LegionIO/legion-llm',
+    'documentation_uri'     => 'https://github.com/LegionIO/legion-llm#readme',
     'homepage_uri'          => 'https://github.com/LegionIO/LegionIO',
     'source_code_uri'       => 'https://github.com/LegionIO/legion-llm',
     'wiki_uri'              => 'https://github.com/LegionIO/legion-llm/wiki',
@@ -27,15 +27,12 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency 'concurrent-ruby'
   spec.add_dependency 'faraday'
+  spec.add_dependency 'legion-cache', '>= 1.4.2'
   spec.add_dependency 'legion-json', '>= 1.2.0'
   spec.add_dependency 'legion-logging', '>= 1.2.8'
   spec.add_dependency 'legion-settings', '>= 1.3.12'
-  spec.add_dependency 'lex-bedrock'
-  spec.add_dependency 'lex-claude'
-  spec.add_dependency 'lex-gemini'
   spec.add_dependency 'lex-knowledge'
-  spec.add_dependency 'lex-openai'
+  spec.add_dependency 'lex-llm', '>= 0.1.6'
   spec.add_dependency 'pdf-reader'
-  spec.add_dependency 'ruby_llm', '~> 1.13'
   spec.add_dependency 'tzinfo', '>= 2.0'
 end

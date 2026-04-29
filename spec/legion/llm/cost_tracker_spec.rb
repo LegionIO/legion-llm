@@ -156,5 +156,16 @@ RSpec.describe Legion::LLM::Metering::Recorder do
       pricing = described_class.pricing_for('gpt-4o-mini')
       expect(pricing[:input]).to eq(0.15)
     end
+
+    it 'reads string-keyed pricing overrides' do
+      Legion::Settings[:llm] = {
+        'pricing' => {
+          'custom-model' => { 'input' => 1.25, 'output' => 2.5 }
+        }
+      }
+
+      pricing = described_class.pricing_for('custom-model')
+      expect(pricing).to eq({ input: 1.25, output: 2.5 })
+    end
   end
 end

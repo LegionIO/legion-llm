@@ -77,10 +77,7 @@ module Legion
         private
 
         def settings
-          llm = Legion::Settings[:llm]
-          return {} unless llm.is_a?(Hash)
-
-          s = llm[:scheduling] || llm['scheduling'] || {}
+          s = Legion::LLM::Settings.value(:scheduling, default: {})
           s.is_a?(Hash) ? s.transform_keys(&:to_sym) : {}
         rescue StandardError => e
           handle_exception(e, level: :warn)

@@ -99,18 +99,14 @@ module Legion
           end
 
           def session_max_tokens
-            return nil unless defined?(Legion::Settings)
-
-            Legion::Settings.dig(:llm, :budget, :session_max_tokens)
+            Legion::LLM::Settings.value(:budget, :session_max_tokens)
           rescue StandardError => e
             handle_exception(e, level: :debug)
             nil
           end
 
           def session_warn_tokens
-            return nil unless defined?(Legion::Settings)
-
-            Legion::Settings.dig(:llm, :budget, :session_warn_tokens)
+            Legion::LLM::Settings.value(:budget, :session_warn_tokens)
           rescue StandardError => e
             handle_exception(e, level: :debug)
             nil

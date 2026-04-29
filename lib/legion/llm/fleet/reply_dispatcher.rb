@@ -15,9 +15,9 @@ module Legion
 
         module_function
 
-        def register(correlation_id)
+        def register(correlation_id, expected: {})
           future = Concurrent::Promises.resolvable_future
-          @pending[correlation_id] = future
+          @pending[correlation_id] = { future: future, expected: expected || {} }
           ensure_consumer
           future
         end
@@ -28,40 +28,25 @@ module Legion
 
         def handle_delivery(raw_payload, properties = {})
           payload = parse_payload(raw_payload)
-          cid = properties[:correlation_id] || payload[:correlation_id]
+          cid = delivery_value(:correlation_id, payload, properties)
           return unless cid
 
-          future = @pending.delete(cid)
-          return unless future
+          entry = @pending[cid]
+          return unless entry
+          return unless expected_delivery?(entry[:expected], payload, properties)
+
+          future = @pending.delete(cid)[:future]
 
           # Type-aware dispatch (new protocol) with fallback to legacy (no type)
-          case properties[:type]
+          case delivery_value(:type, payload, properties)
           when 'llm.fleet.error'
-            future.fulfill(normalize_error(payload))
+            future.fulfill(normalize_error(payload, correlation_id: cid))
           else
             # 'llm.fleet.response' or legacy (no type)
             future.fulfill(payload)
           end
         rescue StandardError => e
-          handle_exception(e, level: :warn)
-        end
-
-        def fulfill_return(correlation_id)
-          future = @pending.delete(correlation_id)
-          return unless future
-
-          future.fulfill({ success: false, error: 'no_fleet_queue' })
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.fulfill_return')
-        end
-
-        def fulfill_nack(correlation_id)
-          future = @pending.delete(correlation_id)
-          return unless future
-
-          future.fulfill({ success: false, error: 'fleet_backpressure' })
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.fulfill_nack')
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.handle_delivery')
         end
 
         def agent_queue_name
@@ -95,14 +80,14 @@ module Legion
             end
           end
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.ensure_consumer')
         end
 
         def cancel_consumer
           @consumer&.cancel
           @consumer = nil
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.cancel_consumer')
         end
 
         def transport_available?
@@ -121,18 +106,50 @@ module Legion
             ::JSON.parse(raw, symbolize_names: true)
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.parse_payload')
           {}
         end
 
-        def normalize_error(payload)
-          error = payload[:error] || {}
+        def normalize_error(payload, correlation_id: nil)
+          error = payload_value(payload, :error) || {}
           {
             success:         false,
-            error:           error.is_a?(Hash) ? error[:code] || error[:message] || 'fleet_error' : error.to_s,
-            message_context: payload[:message_context] || {},
+            error:           normalized_error_code(error),
+            correlation_id:  payload_value(payload, :correlation_id) || correlation_id,
+            message_context: payload_value(payload, :message_context) || {},
             raw_error:       error
           }
+        end
+
+        def normalized_error_code(error)
+          return error.to_s unless error.is_a?(Hash)
+
+          payload_value(error, :code) || payload_value(error, :message) || 'fleet_error'
+        end
+
+        def expected_delivery?(expected, payload, properties)
+          return true unless expected.is_a?(Hash)
+
+          expected.all? do |key, expected_value|
+            next true if expected_value.nil?
+
+            actual = delivery_value(key, payload, properties)
+            actual && actual.to_s == expected_value.to_s
+          end
+        end
+
+        def delivery_value(key, payload, properties)
+          return properties[key] if properties.is_a?(Hash) && properties.key?(key)
+          return properties[key.to_s] if properties.is_a?(Hash) && properties.key?(key.to_s)
+
+          payload_value(payload, key)
+        end
+
+        def payload_value(payload, key)
+          return payload[key] if payload.is_a?(Hash) && payload.key?(key)
+          return payload[key.to_s] if payload.is_a?(Hash) && payload.key?(key.to_s)
+
+          nil
         end
       end
     end

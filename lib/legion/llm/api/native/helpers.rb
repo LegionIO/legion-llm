@@ -3,7 +3,16 @@
 require 'securerandom'
 require 'open3'
 require 'time'
+require 'legion/cache/helper'
 require 'legion/logging/helper'
+require 'legion/llm/types'
+
+begin
+  require 'legion/identity/request'
+  require 'legion/identity/process'
+rescue LoadError
+  # legion-llm can still be loaded outside a full LegionIO runtime.
+end
 
 module Legion
   module LLM
@@ -170,6 +179,7 @@ module Legion
 
             app.helpers do # rubocop:disable Metrics/BlockLength
               include Legion::Logging::Helper
+              include ::Legion::Cache::Helper
 
               unless method_defined?(:parse_request_body)
                 define_method(:parse_request_body) do
@@ -238,9 +248,7 @@ module Legion
 
               unless method_defined?(:cache_available?)
                 define_method(:cache_available?) do
-                  defined?(Legion::Cache) &&
-                    Legion::Cache.respond_to?(:connected?) &&
-                    Legion::Cache.connected?
+                  cache_connected? || local_cache_connected?
                 end
               end
 
@@ -287,38 +295,12 @@ module Legion
 
               define_method(:build_client_tool_class) do |tname, tdesc, tschema|
                 log.debug("[llm][api][helpers] build_client_tool_class name=#{tname}")
-                tool_ref = tname
-                klass = Class.new(RubyLLM::Tool) do
-                  include Legion::LLM::API::Native::ClientToolMethods
-
-                  description tdesc
-                  define_method(:name) { tool_ref }
-
-                  define_method(:execute) do |**kwargs|
-                    summary = summarize_tool_args(tool_ref, kwargs)
-                    log_tool(:info, tool_ref, 'executing', **summary)
-                    t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-                    result = dispatch_client_tool(tool_ref, **kwargs)
-                    ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round(1)
-                    log_tool(:info, tool_ref, 'completed', duration_ms: ms, result_size: result.to_s.bytesize)
-                    notify_tool_event(:tool_result, tool_ref, result: result.to_s[0, 4096])
-                    result
-                  rescue StandardError => e
-                    ms = begin
-                      ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round(1)
-                    rescue StandardError => e
-                      handle_exception(e, level: :warn, handled: true,
-                                          operation: 'llm.api.client_tool.duration_measurement', tool_ref: tool_ref)
-                      nil
-                    end
-                    log_tool(:error, tool_ref, 'failed', duration_ms: ms, error: e.message)
-                    notify_tool_event(:tool_error, tool_ref, error: e.message)
-                    handle_exception(e, level: :error, handled: true, operation: "llm.api.client_tool.#{tool_ref}")
-                    "Tool error: #{e.message}"
-                  end
-                end
-                klass.params(tschema) if tschema.is_a?(Hash) && tschema[:properties]
-                klass
+                Legion::LLM::Types::ToolDefinition.build(
+                  name:        tname,
+                  description: tdesc,
+                  parameters:  tschema || {},
+                  source:      { type: :client, executable: true }
+                )
               rescue StandardError => e
                 handle_exception(e, level: :warn, handled: true, operation: "llm.api.build_client_tool_class.#{tname}")
                 nil
@@ -397,59 +379,55 @@ module Legion
                 end
               end
 
-              define_method(:resolve_caller_identity) do |rack_env|
-                return rack_env['legion.tenant_id'] if rack_env['legion.tenant_id']
+              define_method(:identity_request_from_env) do |rack_env|
+                return nil unless defined?(Legion::Identity::Request)
+                return nil unless Legion::Identity::Request.respond_to?(:from_env)
 
-                kerb = begin
-                  Legion::Settings.dig(:kerberos, :username)
-                rescue StandardError => e
-                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.kerberos_username')
-                  nil
-                end
-                return "user:#{kerb}" if kerb.is_a?(String) && !kerb.empty?
+                Legion::Identity::Request.from_env(rack_env)
+              end
 
-                principal = rack_env['legion.principal']
-                return "user:#{principal.canonical_name}" if principal.respond_to?(:canonical_name) && principal.canonical_name != 'system'
+              define_method(:identity_canonical_name) do |rack_env|
+                request_identity = identity_request_from_env(rack_env)
+                name = request_identity&.canonical_name if request_identity.respond_to?(:canonical_name)
+                return name if name && name.to_s != ''
 
-                if defined?(Legion::Identity::Process)
-                  name = Legion::Identity::Process.canonical_name
-                  return "user:#{name}" if name && name != 'anonymous'
+                if defined?(Legion::Identity::Process) && Legion::Identity::Process.respond_to?(:canonical_name)
+                  process_name = Legion::Identity::Process.canonical_name
+                  return process_name if process_name && process_name.to_s != ''
                 end
 
                 raw = ENV.fetch('USER', nil) || ENV.fetch('LOGNAME', nil) || 'anonymous'
-                username = raw.include?('@') ? raw.split('@').first : raw
-                "user:#{username}"
+                raw.to_s.include?('@') ? raw.to_s.split('@').first : raw.to_s
               end
 
-              define_method(:resolve_requested_by) do |rack_env, identity_string|
-                hostname = begin
-                  Legion::Settings[:client][:hostname]
-                rescue StandardError => e
-                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.client_hostname')
-                  Socket.gethostname
-                end
-                username = identity_string.delete_prefix('user:')
-
-                kerb = begin
-                  Legion::Settings.dig(:kerberos, :username)
-                rescue StandardError => e
-                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.identity.requested_by_kerberos')
-                  nil
-                end
-                if kerb.is_a?(String) && !kerb.empty?
-                  return { identity: identity_string, type: :user, credential: :kerberos,
-                           username: kerb, hostname: hostname }
+              define_method(:identity_caller_hash) do |rack_env|
+                request_identity = identity_request_from_env(rack_env)
+                if request_identity.respond_to?(:to_caller_hash)
+                  caller_hash = request_identity.to_caller_hash
+                  if caller_hash.is_a?(Hash)
+                    requested_by = caller_hash[:requested_by] || caller_hash['requested_by']
+                    return { requested_by: requested_by } if requested_by
+                  end
                 end
 
-                principal = rack_env['legion.principal']
-                if principal.respond_to?(:canonical_name) && principal.canonical_name != 'system'
-                  return { identity: identity_string, type: principal.kind || :user,
-                           credential: principal.source || :local,
-                           username: principal.canonical_name, hostname: hostname }
-                end
+                {
+                  requested_by: {
+                    identity:   identity_canonical_name(rack_env),
+                    type:       :process,
+                    credential: :system
+                  }
+                }
+              end
 
-                { identity: identity_string, type: :user, credential: :local,
-                  username: username, hostname: hostname }
+              define_method(:build_server_caller) do |source:, path:, env:, caller_context: nil|
+                normalized_caller = caller_context.respond_to?(:transform_keys) ? caller_context.transform_keys(&:to_sym) : {}
+                safe_caller_fields = normalized_caller.slice(:context, :session_id, :trace_id)
+
+                {
+                  source:       source,
+                  path:         path,
+                  requested_by: identity_caller_hash(env).fetch(:requested_by)
+                }.merge(safe_caller_fields)
               end
 
               define_method(:token_value) do |tokens, key|

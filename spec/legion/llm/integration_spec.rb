@@ -36,27 +36,35 @@ RSpec.describe 'Legion::LLM.chat router integration' do
       enabled: true,
       rules:   sample_rules
     }
+    Legion::Settings[:llm][:default_provider] = :ollama
+    Legion::Settings[:llm][:default_model] = 'qwen3:7b'
   end
 
   describe 'intent-based routing' do
     it 'routes to resolved provider/model when intent matches a rule' do
-      expect(RubyLLM).to receive(:chat).with(model: 'qwen3:7b', provider: :ollama)
-      Legion::LLM.chat(intent: { capability: :basic })
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+        .with(hash_including(model: 'qwen3:7b', provider: :ollama))
+        .and_return(native_dispatch_result(content: 'pipeline response'))
+      Legion::LLM.chat(intent: { capability: :basic }, message: 'hello')
     end
   end
 
   describe 'pass-through when no routing params given' do
-    it 'calls RubyLLM.chat with explicit model and provider unchanged' do
-      expect(RubyLLM).to receive(:chat).with(model: 'gpt-4o', provider: :openai)
-      Legion::LLM.chat(model: 'gpt-4o', provider: :openai)
+    it 'calls native dispatch with explicit model and provider unchanged' do
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+        .with(hash_including(model: 'gpt-4o', provider: :openai))
+        .and_return(native_dispatch_result(content: 'pipeline response'))
+      Legion::LLM.chat(model: 'gpt-4o', provider: :openai, message: 'hello')
     end
   end
 
   describe 'tier override' do
     it 'forces tier and maps to cloud provider when tier: :cloud is given with explicit model/provider' do
       # tier: :cloud triggers explicit_resolution, provider/model come from the call
-      expect(RubyLLM).to receive(:chat).with(model: 'gpt-4o', provider: :openai)
-      Legion::LLM.chat(tier: :cloud, model: 'gpt-4o', provider: :openai)
+      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+        .with(hash_including(model: 'gpt-4o', provider: :openai))
+        .and_return(native_dispatch_result(content: 'pipeline response'))
+      Legion::LLM.chat(tier: :cloud, model: 'gpt-4o', provider: :openai, message: 'hello')
     end
   end
 
@@ -67,18 +75,17 @@ RSpec.describe 'Legion::LLM.chat router integration' do
 
     it 'ignores intent and falls through to defaults without routing the call' do
       # With routing disabled, intent is ignored and Router.resolve is never called
-      allow(RubyLLM).to receive(:chat).and_return(double('chat'))
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(native_dispatch_result(content: 'pipeline response'))
       expect(Legion::LLM::Router).not_to receive(:resolve)
-      Legion::LLM.chat(intent: { capability: :basic })
+      Legion::LLM.chat(intent: { capability: :basic }, message: 'hello')
     end
   end
 
   describe 'when Router.resolve returns nil' do
     it 'falls through to defaults when no rule matches intent' do
       # Use an intent that matches no rules
-      result_double = double('chat')
-      allow(RubyLLM).to receive(:chat).and_return(result_double)
-      expect { Legion::LLM.chat(intent: { capability: :unknown_capability }) }.not_to raise_error
+      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(native_dispatch_result(content: 'pipeline response'))
+      expect { Legion::LLM.chat(intent: { capability: :unknown_capability }, message: 'hello') }.not_to raise_error
     end
   end
 end

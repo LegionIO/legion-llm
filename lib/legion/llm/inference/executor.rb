@@ -50,7 +50,8 @@ module Legion
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
-        MAX_RUBY_LLM_TOOL_ROUNDS = 200
+        MAX_NATIVE_TOOL_ROUNDS = 200
+        ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, keyword_init: true)
 
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
@@ -69,6 +70,8 @@ module Legion
           @triggered_tools = []
           @resolved_provider = nil
           @resolved_model = nil
+          @resolved_offering_id = nil
+          @resolved_offering_metadata = {}
           @confidence_score = nil
           @escalation_chain = nil
           @escalation_history = []
@@ -78,6 +81,7 @@ module Legion
           @pending_tool_history = Concurrent::Array.new
           @pending_tool_history_mutex = Mutex.new
           @injected_tool_map = {}
+          @native_tool_source_map = {}
           @freshly_triggered_keys = []
         end
 
@@ -96,6 +100,37 @@ module Legion
         end
 
         private
+
+        def llm_setting(key, default = nil)
+          config_value(llm_settings, key, default)
+        end
+
+        def llm_settings
+          Legion::LLM::Settings.current_settings
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.settings')
+          {}
+        end
+
+        def config_value(config, key, default = nil)
+          return default unless config.respond_to?(:key?)
+
+          string_key = key.to_s
+          return config[string_key] if config.key?(string_key)
+
+          symbol_key = key.to_sym if key.respond_to?(:to_sym)
+          return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+          default
+        end
+
+        def normalize_offering_metadata(value)
+          return {} unless value.is_a?(Hash)
+
+          value.each_with_object({}) do |(key, metadata_value), normalized|
+            normalized[key.respond_to?(:to_sym) ? key.to_sym : key] = metadata_value
+          end
+        end
 
         def inject_registry_tools(session)
           return unless defined?(::Legion::Tools::Registry)
@@ -138,14 +173,14 @@ module Legion
           handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_tools')
         end
 
-        def inject_tool_class(session, tool_class, injected_names, operation:)
-          adapter = ToolAdapter.new(tool_class)
-          return if injected_names.include?(adapter.name)
-          return if block_given? && !yield(adapter)
+        def inject_tool_class(_session, tool_class, injected_names, operation:)
+          definition = Types::ToolDefinition.from_tool_class(tool_class)
+          return if injected_names.include?(definition.name)
+          return if block_given? && !yield(definition)
 
-          @injected_tool_map[adapter.name] = tool_class
-          session.with_tool(adapter)
-          injected_names << adapter.name
+          @injected_tool_map[definition.name] = tool_class
+          @native_tool_source_map[definition.name] = definition.source
+          injected_names << definition.name
         rescue StandardError => e
           @warnings << "Failed to inject tool: #{e.message}"
           handle_exception(e, level: :warn, operation: operation)
@@ -154,7 +189,7 @@ module Legion
         def registry_tool_limit
           return nil unless local_provider?
 
-          raw_limit = (Legion::LLM.settings[:tool_trigger] || {})[:local_tool_limit]
+          raw_limit = Legion::LLM::Settings.value(:tool_trigger, :local_tool_limit)
           limit = raw_limit.to_i
           limit.positive? ? limit : nil
         end
@@ -235,12 +270,12 @@ module Legion
         end
 
         def maybe_compact_history(conv_id, history)
-          conv_settings = Legion::LLM.settings[:conversation] || {}
-          return history unless conv_settings[:auto_compact]
+          conv_settings = llm_setting(:conversation, {})
+          return history unless config_value(conv_settings, :auto_compact)
 
-          threshold = conv_settings[:summarize_threshold] || 50_000
-          target_tokens = conv_settings[:target_tokens] || 20_000
-          preserve_recent = conv_settings[:preserve_recent] || 10
+          threshold = config_value(conv_settings, :summarize_threshold, 50_000)
+          target_tokens = config_value(conv_settings, :target_tokens, 20_000)
+          preserve_recent = config_value(conv_settings, :preserve_recent, 10)
 
           estimated = Context::Compressor.estimate_tokens(history)
           return history unless estimated >= threshold
@@ -299,6 +334,9 @@ module Legion
           @timestamps[:routing_start] = Time.now
           provider = @request.routing[:provider]
           model = @request.routing[:model]
+          offering_id = @request.routing[:offering_id] || @request.routing[:id]
+          offering_metadata = normalize_offering_metadata(@request.routing[:offering_metadata] ||
+                                                          @request.routing[:offering])
           intent = @request.extra[:intent]
           tier = @request.extra[:tier]
 
@@ -324,10 +362,13 @@ module Legion
             if resolution
               provider = resolution.provider
               model = resolution.model
+              offering_id = resolution.offering_id || offering_id
+              offering_metadata = resolution.offering_metadata unless resolution.offering_metadata.empty?
               @audit[:'routing:provider_selection'] = {
                 outcome: :success,
                 detail: "selected #{provider}:#{model} via #{resolution.rule}",
-                data: { strategy: resolution.rule, tier: resolution.tier },
+                data: { strategy: resolution.rule, tier: resolution.tier, offering_id: offering_id,
+                        offering_metadata: offering_metadata }.compact,
                 duration_ms: 0, timestamp: Time.now
               }
             end
@@ -335,10 +376,12 @@ module Legion
 
           @resolved_provider = provider ||
                                (model && Router.infer_provider_for_model(model)) ||
-                               Legion::LLM.settings[:default_provider]
-          @resolved_model = model || Legion::LLM.settings[:default_model]
+                               llm_setting(:default_provider)
+          @resolved_model = model || llm_setting(:default_model)
+          @resolved_offering_id = offering_id
+          @resolved_offering_metadata = offering_metadata
 
-          log.info "[llm][inference] resolved provider=#{@resolved_provider} model=#{@resolved_model}"
+          log.info "[llm][inference] resolved provider=#{@resolved_provider} model=#{@resolved_model} offering_id=#{@resolved_offering_id}"
           @timeline.record(
             category: :audit, key: 'routing:provider_selection',
             direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
@@ -362,26 +405,24 @@ module Legion
           providers_tried = []
           begin
             execute_provider_request
-          rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError,
-                 Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+          rescue Legion::LLM::AuthError, Faraday::UnauthorizedError, Faraday::ForbiddenError => e
             try_fallback_or_raise(e, providers_tried, operation: 'provider_call.auth',
                                                       reason: 'auth_failed', error_class: Legion::LLM::AuthError)
             retry
-          rescue RubyLLM::ContextLengthExceededError => e
+          rescue Legion::LLM::ContextOverflow => e
             try_fallback_or_raise(e, providers_tried, operation: 'provider_call.context_overflow',
                                                       reason: 'context_overflow', error_class: Legion::LLM::ContextOverflow)
             retry
-          rescue RubyLLM::BadRequestError => e
+          rescue Legion::LLM::ProviderError => e
             try_fallback_or_raise(e, providers_tried, operation: 'provider_call.bad_request',
                                                       reason: 'bad_request', error_class: Legion::LLM::ProviderError)
             retry
-          rescue RubyLLM::RateLimitError => e
+          rescue Legion::LLM::RateLimitError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.rate_limit',
                               provider: @resolved_provider, model: @resolved_model)
             emit_error_audit(e, status: 'rate_limited')
             raise Legion::LLM::RateLimitError, e.message
-          rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
-                 Faraday::ServerError => e
+          rescue Legion::LLM::ProviderDown, Faraday::ServerError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_error',
                               provider: @resolved_provider, model: @resolved_model)
             emit_error_audit(e, status: 'provider_error')
@@ -409,6 +450,8 @@ module Legion
             start_time = Time.now
             @resolved_provider = resolution.provider
             @resolved_model = resolution.model
+            @resolved_offering_id = resolution.offering_id
+            @resolved_offering_metadata = resolution.offering_metadata
             succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
             break if succeeded
           rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
@@ -442,9 +485,12 @@ module Legion
             detail: "attempt #{@escalation_history.size + 1}: #{resolution.provider}:#{resolution.model} => #{outcome}",
             from: 'pipeline', to: "provider:#{resolution.provider}"
           )
-          @escalation_history << { model: resolution.model, provider: resolution.provider,
-                                   tier: resolution.tier, outcome: outcome,
-                                   failures: result.passed ? [] : result.failures, duration_ms: duration_ms }
+          @escalation_history << escalation_attempt_hash(
+            resolution,
+            outcome:     outcome,
+            failures:    result.passed ? [] : result.failures,
+            duration_ms: duration_ms
+          )
           result.passed
         end
 
@@ -452,11 +498,15 @@ module Legion
           duration_ms = ((Time.now - start_time) * 1000).round
           handle_exception(err, level: :warn, handled: handled, operation: operation,
                                provider: resolution.provider, model: resolution.model, duration_ms: duration_ms)
-          Router.health_tracker.report(provider: resolution.provider, signal: :error, value: 1,
+          Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+                                       signal: :error, value: 1,
                                        metadata: { reason: err.class.name, message: err.message })
-          @escalation_history << { model: resolution.model, provider: resolution.provider,
-                                   tier: resolution.tier, outcome: outcome,
-                                   failures: [err.class.name], duration_ms: duration_ms }
+          @escalation_history << escalation_attempt_hash(
+            resolution,
+            outcome:     outcome,
+            failures:    [err.class.name],
+            duration_ms: duration_ms
+          )
           @timeline.record(
             category: :provider, key: 'escalation:attempt', direction: :internal,
             detail: "attempt #{@escalation_history.size}: #{resolution.provider}:#{resolution.model} => #{outcome}",
@@ -468,28 +518,36 @@ module Legion
           Router.resolve_chain(max_escalations: pipeline_escalation_max_attempts)
         end
 
+        def escalation_attempt_hash(resolution, outcome:, failures:, duration_ms:)
+          attempt = { model: resolution.model, provider: resolution.provider, tier: resolution.tier,
+                      outcome: outcome, failures: failures, duration_ms: duration_ms }
+          attempt[:offering_id] = resolution.offering_id if resolution.offering_id
+          attempt[:offering_metadata] = resolution.offering_metadata unless resolution.offering_metadata.empty?
+          attempt
+        end
+
         def pipeline_escalation_enabled?
-          routing = Legion::LLM.settings[:routing]
+          routing = llm_setting(:routing)
           return false unless routing.is_a?(Hash)
 
-          esc = routing[:escalation] || {}
-          esc[:enabled] == true && esc[:pipeline_enabled] == true
+          esc = config_value(routing, :escalation, {})
+          config_value(esc, :enabled) == true && config_value(esc, :pipeline_enabled) == true
         end
 
         def pipeline_escalation_max_attempts
-          routing = Legion::LLM.settings[:routing]
+          routing = llm_setting(:routing)
           return 3 unless routing.is_a?(Hash)
 
-          esc = routing[:escalation] || {}
-          esc.fetch(:max_attempts, 3)
+          esc = config_value(routing, :escalation, {})
+          config_value(esc, :max_attempts, 3)
         end
 
         def pipeline_escalation_quality_threshold
-          routing = Legion::LLM.settings[:routing]
+          routing = llm_setting(:routing)
           return 50 unless routing.is_a?(Hash)
 
-          esc = routing[:escalation] || {}
-          esc.fetch(:quality_threshold, 50)
+          esc = config_value(routing, :escalation, {})
+          config_value(esc, :quality_threshold, 50)
         end
 
         def execute_provider_request
@@ -501,73 +559,234 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
-          if use_native_dispatch?(@resolved_provider)
-            execute_provider_request_native
-          else
-            execute_provider_request_ruby_llm
-          end
+          raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless use_native_dispatch?(@resolved_provider)
+
+          execute_provider_request_native
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
         end
 
-        def execute_provider_request_ruby_llm
-          session, message_content = build_ruby_llm_session
-          install_tool_loop_guard(session)
-          @raw_response = message_content ? session.ask(message_content) : session
+        def execute_provider_request_native
+          result = execute_native_tool_loop
+          merge_response_offering_metadata(result[:metadata])
+          @raw_response = Call::NativeResponseAdapter.new(result)
         end
 
-        def execute_provider_request_native
+        def native_dispatch_messages
+          apply_conversation_breakpoint(@request.messages)
+        end
+
+        def native_dispatch_options
           injected_system = EnrichmentInjector.inject(
             system:      @request.system,
             enrichments: @enrichments
           )
 
-          messages = apply_conversation_breakpoint(@request.messages)
+          options = {
+            system:            injected_system,
+            offering_id:       @resolved_offering_id,
+            offering_metadata: @resolved_offering_metadata
+          }
+          options[:tools] = native_dispatch_tools if native_dispatch_tools.any?
+          options.compact
+        end
 
-          opts = { system: injected_system }.compact
+        def native_dispatch_chat_options
+          opts = {
+            model:    @resolved_model,
+            provider: @resolved_provider
+          }
+          opts[:thinking] = @request.thinking if @request.thinking
+          opts.compact
+        end
 
-          begin
+        def execute_native_tool_loop
+          messages = native_dispatch_messages.dup
+          max_rounds = llm_setting(:max_tool_rounds, MAX_NATIVE_TOOL_ROUNDS).to_i
+          max_rounds = MAX_NATIVE_TOOL_ROUNDS unless max_rounds.positive?
+          round = 0
+
+          loop do
             result = Call::Dispatch.dispatch_chat(
               provider: @resolved_provider,
               model:    @resolved_model,
               messages: messages,
-              **opts
+              **native_dispatch_options
             )
-            @raw_response = Call::NativeResponseAdapter.new(result)
-          rescue Legion::LLM::ProviderError => e
-            layer_settings = Legion::LLM.settings[:provider_layer] || {}
-            raise unless layer_settings.fetch(:fallback_to_ruby_llm, true)
+            result = Call::NativeResponseAdapter.coerce_result(result)
+            tool_calls = Array(result[:tool_calls]).map { |tool_call| normalize_native_tool_call(tool_call) }
+            return result if tool_calls.empty?
 
-            handle_exception(
-              e,
-              level:     :warn,
-              operation: 'llm.pipeline.native_dispatch',
-              provider:  @resolved_provider,
-              fallback:  'ruby_llm'
-            )
-            execute_provider_request_ruby_llm
+            round += 1
+            raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds" if round > max_rounds
+
+            messages << native_assistant_tool_message(result, tool_calls)
+            tool_calls.each do |tool_call|
+              messages << native_tool_result_message(tool_call, dispatch_native_tool_call(tool_call, round))
+            end
           end
+        end
+
+        def native_dispatch_tools
+          @native_dispatch_tools ||= native_tool_definitions.to_h { |tool| [tool.name.to_sym, tool.to_h] }
+        end
+
+        def native_tool_definitions
+          @native_tool_definitions ||= begin
+            definitions = []
+            Array(@request.tools).each { |tool| add_native_tool_definition(definitions, tool) }
+            add_registry_tool_definitions(definitions) unless @request.tools.is_a?(Array) && @request.tools.empty?
+            definitions
+          end
+        end
+
+        def add_native_tool_definition(definitions, tool)
+          definition = case tool
+                       when Types::ToolDefinition
+                         tool
+                       when Hash
+                         Types::ToolDefinition.from_hash(tool, source: tool[:source] || tool['source'] || { type: :client, executable: false })
+                       else
+                         Types::ToolDefinition.from_tool_class(tool)
+                       end
+          return if definitions.any? { |existing| existing.name == definition.name }
+
+          @injected_tool_map[definition.name] = definition.source[:tool_class] if definition.source[:tool_class]
+          @native_tool_source_map[definition.name] = definition.source
+          definitions << definition
+        rescue StandardError => e
+          @warnings << "Failed to define tool: #{e.message}"
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.native_tool_definition')
+        end
+
+        def add_registry_tool_definitions(definitions)
+          return unless defined?(::Legion::Tools::Registry)
+
+          injected_names = definitions.map(&:name)
+          always_tools = Array(::Legion::Tools::Registry.tools)
+          triggered_tools = @triggered_tools.any? ? Array(@triggered_tools) : []
+          inject_limit = registry_tool_limit
+          prioritized_tools = local_provider? ? triggered_tools + always_tools : always_tools + triggered_tools
+
+          prioritized_tools.each do |tool_class|
+            break if inject_limit && injected_names.size >= inject_limit
+
+            definition = Types::ToolDefinition.from_tool_class(tool_class)
+            next if injected_names.include?(definition.name)
+
+            @injected_tool_map[definition.name] = tool_class
+            @native_tool_source_map[definition.name] = definition.source
+            definitions << definition
+            injected_names << definition.name
+          end
+
+          add_requested_deferred_tool_definitions(definitions, injected_names)
+        rescue StandardError => e
+          @warnings << "Tool definition error: #{e.message}"
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.native_registry_tools')
+        end
+
+        def add_requested_deferred_tool_definitions(definitions, injected_names)
+          deferred = ::Legion::Tools::Registry.respond_to?(:deferred_tools) ? ::Legion::Tools::Registry.deferred_tools : []
+          requested = requested_deferred_tool_names
+          return if requested.empty?
+
+          deferred.each do |tool_class|
+            definition = Types::ToolDefinition.from_tool_class(tool_class)
+            next unless requested.include?(definition.name)
+            next if injected_names.include?(definition.name)
+
+            @injected_tool_map[definition.name] = tool_class
+            @native_tool_source_map[definition.name] = definition.source
+            definitions << definition
+            injected_names << definition.name
+          end
+        end
+
+        def native_assistant_tool_message(result, tool_calls)
+          { role: :assistant, content: result[:result].to_s, tool_calls: tool_calls }
+        end
+
+        def native_tool_result_message(tool_call, dispatch_result)
+          {
+            role:         :tool,
+            content:      native_tool_result_content(dispatch_result),
+            tool_call_id: tool_call[:id],
+            name:         tool_call[:name]
+          }.compact
+        end
+
+        def dispatch_native_tool_call(tool_call, round)
+          normalized_call = normalize_native_tool_call(tool_call)
+          source = find_tool_source(normalized_call[:name])
+          emit_tool_call_event(normalized_call, round)
+          result = ToolDispatcher.dispatch(
+            tool_call:   normalized_call,
+            source:      source,
+            exchange_id: Tracing.exchange_id
+          )
+          emit_tool_result_event(
+            ToolResultEvent.new(
+              result:       native_tool_result_content(result),
+              tool_call_id: normalized_call[:id],
+              tool_name:    normalized_call[:name],
+              started_at:   Thread.current[:legion_current_tool_started_at]
+            )
+          )
+          result
+        ensure
+          Thread.current[:legion_current_tool_call_id] = nil
+          Thread.current[:legion_current_tool_name] = nil
+          Thread.current[:legion_current_tool_started_at] = nil
+          Thread.current[:legion_current_tool_history_index] = nil
+        end
+
+        def normalize_native_tool_call(tool_call)
+          normalized = if tool_call.respond_to?(:transform_keys)
+                         tool_call.transform_keys(&:to_sym)
+                       elsif tool_call.respond_to?(:name)
+                         {
+                           id:        tool_call.respond_to?(:id) ? tool_call.id : nil,
+                           name:      tool_call.name,
+                           arguments: tool_call.respond_to?(:arguments) ? tool_call.arguments : {}
+                         }
+                       else
+                         {}
+                       end
+          normalized[:arguments] ||= {}
+          normalized[:id] ||= "call_#{SecureRandom.hex(12)}"
+          normalized
+        end
+
+        def native_tool_result_content(result)
+          raw = result[:result] || result[:content] || result['result'] || result['content']
+          raw.is_a?(String) ? raw : Legion::JSON.dump(raw || {})
         end
 
         def use_native_dispatch?(provider)
           return false unless defined?(Call::Dispatch)
+          return false unless provider
 
-          layer_settings = Legion::LLM.settings[:provider_layer] || {}
-          mode = layer_settings.fetch(:mode, 'ruby_llm').to_s
+          layer_settings = llm_setting(:provider_layer, {})
+          mode = config_value(layer_settings, :mode, 'auto').to_s
 
-          case mode
-          when 'native'
-            true
-          when 'auto'
-            Call::Dispatch.available?(provider)
-          else
-            false
-          end
+          %w[native auto].include?(mode)
+        end
+
+        def merge_response_offering_metadata(metadata)
+          return unless metadata.is_a?(Hash)
+
+          offering = normalize_offering_metadata(metadata[:offering] || metadata['offering'] || metadata)
+          return if offering.empty?
+
+          @resolved_offering_metadata = @resolved_offering_metadata.merge(offering)
+          @resolved_offering_id = @resolved_offering_metadata[:offering_id] if @resolved_offering_id.nil?
         end
 
         def record_provider_response
           duration_ms = ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).to_i
+          report_provider_health(:success, duration_ms) if @resolved_offering_id
           log.debug("[pipeline][provider] action=response_received provider=#{@resolved_provider} model=#{@resolved_model} duration_ms=#{duration_ms}")
           @timeline.record(
             category: :provider, key: 'provider:response_received',
@@ -578,6 +797,17 @@ module Legion
           )
         end
 
+        def report_provider_health(signal, duration_ms, metadata: {})
+          return unless defined?(Router) && Router.routing_enabled?
+
+          Router.health_tracker.report(provider: @resolved_provider, offering_id: @resolved_offering_id,
+                                       signal: signal, value: 1, metadata: metadata.merge(duration_ms: duration_ms))
+          Router.health_tracker.report(provider: @resolved_provider, offering_id: @resolved_offering_id,
+                                       signal: :latency, value: duration_ms, metadata: {})
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.report_provider_health')
+        end
+
         def extract_retry_after(error)
           return nil unless error.respond_to?(:response) && error.response.is_a?(Hash)
 
@@ -585,11 +815,15 @@ module Legion
         end
 
         def emit_error_audit(error, status:, provider: @resolved_provider, model: @resolved_model)
+          routing = { provider: provider, model: model }
+          routing[:offering_id] = @resolved_offering_id if @resolved_offering_id
+          routing[:offering_metadata] = @resolved_offering_metadata if @resolved_offering_metadata&.any?
+
           Legion::LLM::Audit.emit_prompt(
             request_id:      @request.id,
             conversation_id: @request.conversation_id,
             caller:          @request.caller,
-            routing:         { provider: provider, model: model },
+            routing:         routing,
             tokens:          {},
             status:          status,
             error:           { class: error.class.name, message: error.message },
@@ -654,7 +888,7 @@ module Legion
         private :execute_post_provider_steps_mixed
 
         def async_post_enabled?
-          Legion::LLM.settings[:pipeline_async_post_steps] == true
+          llm_setting(:pipeline_async_post_steps) == true
         end
 
         private :async_post_enabled?
@@ -663,26 +897,24 @@ module Legion
           providers_tried = []
           begin
             execute_provider_request_stream(&)
-          rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError,
-                 Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+          rescue Legion::LLM::AuthError, Faraday::UnauthorizedError, Faraday::ForbiddenError => e
             try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.auth',
                                                       reason: 'auth_failed', error_class: Legion::LLM::AuthError)
             retry
-          rescue RubyLLM::ContextLengthExceededError => e
+          rescue Legion::LLM::ContextOverflow => e
             try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.context_overflow',
                                                       reason: 'context_overflow', error_class: Legion::LLM::ContextOverflow)
             retry
-          rescue RubyLLM::BadRequestError => e
+          rescue Legion::LLM::ProviderError => e
             try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.bad_request',
                                                       reason: 'bad_request', error_class: Legion::LLM::ProviderError)
             retry
-          rescue RubyLLM::RateLimitError => e
+          rescue Legion::LLM::RateLimitError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.rate_limit',
                               provider: @resolved_provider, model: @resolved_model)
             emit_error_audit(e, status: 'rate_limited')
             raise Legion::LLM::RateLimitError, e.message
-          rescue RubyLLM::ServerError, RubyLLM::ServiceUnavailableError, RubyLLM::OverloadedError,
-                 Faraday::ServerError => e
+          rescue Legion::LLM::ProviderDown, Faraday::ServerError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_error',
                               provider: @resolved_provider, model: @resolved_model)
             emit_error_audit(e, status: 'provider_error')
@@ -709,40 +941,24 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
-          session, message_content = build_ruby_llm_session
-          install_tool_loop_guard(session)
+          raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless use_native_dispatch?(@resolved_provider)
 
-          Thread.current[:legion_tool_event_handler] = @tool_event_handler
-          begin
-            @raw_response = message_content ? session.ask(message_content, &) : session
-          ensure
-            Thread.current[:legion_tool_event_handler] = nil
-            Thread.current[:legion_current_tool_call_id] = nil
-            Thread.current[:legion_current_tool_name] = nil
-            Thread.current[:legion_current_tool_started_at] = nil
-          end
+          execute_provider_request_stream_native(&)
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
         end
 
-        def build_ruby_llm_session
-          session = RubyLLM.chat(**ruby_llm_chat_options)
-
-          inject_ruby_llm_tools(session)
-          system_prompt = apply_ruby_llm_instructions(session)
-
-          @audit[:provider_payload] = {
-            system_prompt:  system_prompt,
-            injected_tools: @injected_tool_map.keys,
-            tool_count:     @injected_tool_map.size,
-            timestamp:      Time.now
-          }
-
-          messages = apply_conversation_breakpoint(@request.messages)
-          add_ruby_llm_prior_messages(session, messages)
-
-          [session, normalize_message_content(messages.last&.dig(:content))]
+        def execute_provider_request_stream_native(&)
+          result = Call::Dispatch.dispatch_stream(
+            provider: @resolved_provider,
+            model:    @resolved_model,
+            messages: native_dispatch_messages,
+            **native_dispatch_options,
+            &
+          )
+          merge_response_offering_metadata(result[:metadata])
+          @raw_response = Call::NativeResponseAdapter.new(result)
         end
 
         def normalize_message_content(content)
@@ -755,54 +971,6 @@ module Legion
             b[:text] || b['text']
           end
           text_parts.empty? ? nil : text_parts.join("\n\n")
-        end
-
-        def ruby_llm_chat_options
-          opts = {
-            model:    @resolved_model,
-            provider: @resolved_provider
-          }
-          opts[:thinking] = @request.thinking if @request.thinking
-          opts.compact
-        end
-
-        def inject_ruby_llm_tools(session)
-          (@request.tools || []).each do |tool|
-            session.with_tool(tool)
-          end
-
-          # nil means caller did not specify tools — inject registry tools as normal.
-          # An explicit empty array [] means caller opted out of registry injection.
-          return if @request.tools.is_a?(Array) && @request.tools.empty?
-
-          inject_registry_tools(session)
-        end
-
-        def install_tool_loop_guard(session)
-          unless session.respond_to?(:on_tool_call)
-            log.warn('[pipeline] tool loop guard unavailable: ruby_llm session does not respond to on_tool_call')
-            return
-          end
-
-          max_rounds = Legion::LLM.settings[:max_tool_rounds] || MAX_RUBY_LLM_TOOL_ROUNDS
-          tool_round = 0
-          session.on_tool_call do |tool_call|
-            tool_round += 1
-            if tool_round > max_rounds
-              log.warn("[pipeline] tool loop cap hit: #{tool_round} rounds, halting")
-              raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds"
-            end
-
-            emit_tool_call_event(tool_call, tool_round)
-          end
-
-          # Wire up tool-result events so the API SSE stream can notify the
-          # frontend when each tool finishes (clears the RUNNING state in the UI).
-          return unless session.respond_to?(:on_tool_result)
-
-          session.on_tool_result do |tool_result|
-            emit_tool_result_event(tool_result)
-          end
         end
 
         def emit_tool_call_event(tool_call, round)
@@ -916,26 +1084,8 @@ module Legion
 
           tool_call[field]
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.tool_call_field', field: field)
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.tool_call_field', field: field)
           nil
-        end
-
-        def apply_ruby_llm_instructions(session)
-          injected_system = EnrichmentInjector.inject(
-            system:      @request.system,
-            enrichments: @enrichments
-          )
-          return nil unless injected_system
-
-          system_blocks = apply_cache_control([{ type: :text, content: injected_system }])
-          final = system_blocks.last[:content]
-          session.with_instructions(final)
-          final
-        end
-
-        def add_ruby_llm_prior_messages(session, messages)
-          prior = messages.size > 1 ? messages[0..-2] : []
-          prior.each { |message| session.add_message(message) }
         end
 
         def execute_step(name, &block)
@@ -950,7 +1100,7 @@ module Legion
               result
             end
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.with_step_span', step: name, block_called: block_called)
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.with_step_span', step: name, block_called: block_called)
             raise if block_called
 
             block.call
@@ -966,10 +1116,10 @@ module Legion
         def pipeline_spans_enabled?
           return false unless telemetry_enabled?
 
-          settings = Legion::LLM.settings[:telemetry]
+          settings = llm_setting(:telemetry)
           return true unless settings.is_a?(Hash)
 
-          settings.fetch(:pipeline_spans, true)
+          config_value(settings, :pipeline_spans, true)
         end
 
         def annotate_span(span, step_name)
@@ -1035,14 +1185,18 @@ module Legion
         end
 
         def find_fallback_provider(exclude: [])
-          providers = Legion::LLM.settings[:providers] || {}
+          providers = llm_setting(:providers, {})
           providers.each do |name, config|
-            next unless config.is_a?(Hash) && config[:enabled]
+            normalized_name = name.to_sym
+            next unless config.is_a?(Hash) && config_value(config, :enabled)
             next if exclude.include?(name) || exclude.include?(name.to_s)
-            next if %i[ollama vllm].include?(name)
-            next unless config[:default_model]
+            next if exclude.include?(normalized_name)
+            next if %i[ollama vllm].include?(normalized_name)
 
-            return { provider: name, model: config[:default_model] }
+            default_model = config_value(config, :default_model)
+            next unless default_model
+
+            return { provider: normalized_name, model: default_model }
           end
           nil
         end
@@ -1068,15 +1222,17 @@ module Legion
                        end
           log.debug("[pipeline][metering] action=build provider=#{@resolved_provider} model=#{@resolved_model} input=#{input_tokens} output=#{output_tokens}")
           event = Steps::Metering.build_event(
-            provider:      @resolved_provider,
-            model_id:      @resolved_model,
-            tier:          tier,
-            request_type:  'chat',
-            input_tokens:  input_tokens,
-            output_tokens: output_tokens,
-            latency_ms:    latency_ms,
-            request_id:    @request.id,
-            caller:        @request.caller
+            provider:          @resolved_provider,
+            model_id:          @resolved_model,
+            offering_id:       @resolved_offering_id,
+            offering_metadata: @resolved_offering_metadata,
+            tier:              tier,
+            request_type:      'chat',
+            input_tokens:      input_tokens,
+            output_tokens:     output_tokens,
+            latency_ms:        latency_ms,
+            request_id:        @request.id,
+            caller:            @request.caller
           )
           Steps::Metering.publish_or_spool(event)
         rescue StandardError => e
@@ -1199,6 +1355,8 @@ module Legion
         end
 
         def requested_deferred_tool_names
+          return [] unless @request.respond_to?(:metadata)
+
           metadata = @request.metadata || {}
           requested = metadata[:requested_tools] || metadata['requested_tools'] || []
           Array(requested).map { |name| name.to_s.tr('.', '_') }.reject(&:empty?)
@@ -1206,6 +1364,8 @@ module Legion
 
         def build_response_routing
           routing = { provider: @resolved_provider, model: @resolved_model }
+          routing[:offering_id] = @resolved_offering_id if @resolved_offering_id
+          routing[:offering_metadata] = @resolved_offering_metadata if @resolved_offering_metadata&.any?
 
           routing_audit = @audit[:'routing:provider_selection']
           if routing_audit.is_a?(Hash) && routing_audit[:data].is_a?(Hash)
@@ -1231,7 +1391,7 @@ module Legion
                    end
           { reason: reason || :end_turn }
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.extract_stop_reason')
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.extract_stop_reason')
           { reason: :end_turn }
         end
 
@@ -1248,17 +1408,17 @@ module Legion
           )
           { estimated_usd: estimated, provider: @resolved_provider, model: @resolved_model }
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.pipeline.estimate_response_cost')
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.estimate_response_cost')
           {}
         end
 
         def response_tool_calls
-          return [] unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls
-
           # Prefer typed ToolCall objects from pending history (already built during execution)
           typed_from_history = @pending_tool_history
                                .filter_map { |entry| entry[:typed_call] }
           return typed_from_history if typed_from_history.any?
+
+          return [] unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls
 
           tool_timeline = build_tool_timeline_index
 

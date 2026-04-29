@@ -2,26 +2,30 @@
 
 require 'digest'
 
+require 'legion/cache/helper'
 require 'legion/logging/helper'
 module Legion
   module LLM
     module Cache
       extend Legion::Logging::Helper
+      extend ::Legion::Cache::Helper
 
       DEFAULT_TTL = 300
 
       module_function
 
+      def cache_namespace = ''
+
       # Generates a deterministic SHA256 cache key from request parameters.
       def key(model:, provider:, messages:, temperature: nil, tools: nil, schema: nil)
-        payload = ::JSON.dump({
-                                model:       model.to_s,
-                                provider:    provider.to_s,
-                                messages:    messages,
-                                temperature: temperature,
-                                tools:       tools,
-                                schema:      schema
-                              })
+        payload = Legion::JSON.dump({
+                                      model:       model.to_s,
+                                      provider:    provider.to_s,
+                                      messages:    messages,
+                                      temperature: temperature,
+                                      tools:       tools,
+                                      schema:      schema
+                                    })
         Digest::SHA256.hexdigest(payload)
       end
 
@@ -29,15 +33,15 @@ module Legion
       def get(cache_key)
         return nil unless available?
 
-        raw = Legion::Cache.get(cache_key)
+        raw = cache_backend_get(cache_key)
         if raw.nil?
           log.debug("LLM cache miss key=#{cache_key}")
           return nil
         end
 
-        ::JSON.parse(raw, symbolize_names: true)
+        Legion::JSON.load(raw)
       rescue StandardError => e
-        handle_exception(e, level: :warn)
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.cache.get', key: cache_key)
         nil
       end
 
@@ -45,11 +49,11 @@ module Legion
       def set(cache_key, response, ttl: DEFAULT_TTL)
         return false unless available?
 
-        Legion::Cache.set(cache_key, ::JSON.dump(response), ttl)
+        cache_backend_set(cache_key, Legion::JSON.dump(response), ttl: ttl)
         log.debug("LLM cache write key=#{cache_key} ttl=#{ttl}")
         true
       rescue StandardError => e
-        handle_exception(e, level: :warn)
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.cache.set', key: cache_key)
         false
       end
 
@@ -57,23 +61,42 @@ module Legion
       def enabled?
         return false unless available?
 
-        settings = llm_settings
-        settings.dig(:prompt_caching, :response_cache, :enabled) != false
+        Legion::LLM::Settings.value(:prompt_caching, :response_cache, :enabled, default: true) != false
       end
 
       private_class_method def self.available?
-        defined?(Legion::Cache) && Legion::Cache.respond_to?(:get)
+        local_cache_backend? || shared_cache_backend?
       end
 
       private_class_method def self.llm_settings
-        if Legion.const_defined?('Settings', false)
-          Legion::Settings[:llm]
-        else
-          Legion::LLM::Settings.default
-        end
+        Legion::LLM::Settings.current_settings
       rescue StandardError => e
-        handle_exception(e, level: :warn)
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.cache.settings')
         {}
+      end
+
+      private_class_method def self.cache_backend_get(key)
+        return local_cache_get(key) if local_cache_backend?
+
+        cache_get(key)
+      end
+
+      private_class_method def self.cache_backend_set(key, value, ttl:)
+        return local_cache_set(key, value, ttl: ttl) if local_cache_backend?
+
+        cache_set(key, value, ttl: ttl)
+      end
+
+      private_class_method def self.local_cache_backend?
+        respond_to?(:local_cache_connected?) && local_cache_connected?
+      rescue StandardError
+        false
+      end
+
+      private_class_method def self.shared_cache_backend?
+        respond_to?(:cache_connected?) && cache_connected?
+      rescue StandardError
+        false
       end
     end
   end

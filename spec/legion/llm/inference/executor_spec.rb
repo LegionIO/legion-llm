@@ -10,6 +10,18 @@ RSpec.describe Legion::LLM::Inference::Executor do
     )
   end
 
+  def register_native_chat(provider = :anthropic, &handler)
+    Legion::LLM::Call::Registry.register(provider, Module.new do
+      define_singleton_method(:chat) do |model:, messages:, **opts|
+        if handler
+          handler.call(model: model, messages: messages, **opts)
+        else
+          { content: 'hi there', usage: { input_tokens: 10, output_tokens: 5 } }
+        end
+      end
+    end)
+  end
+
   describe '#call' do
     it 'executes the pipeline and returns a Response' do
       executor = described_class.new(request)
@@ -131,19 +143,16 @@ confidence: 0.9 }],
                                                                        })
         stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
-        mock_session = double('RubyLLM::Chat')
-        mock_response = double(content: 'test', input_tokens: 10, output_tokens: 5, model_id: 'test')
-        allow(RubyLLM).to receive(:chat).and_return(mock_session)
-        allow(mock_session).to receive(:with_tool).and_return(mock_session)
-        allow(mock_session).to receive(:ask).and_return(mock_response)
-
-        expect(mock_session).to receive(:with_instructions) do |instructions|
-          expect(instructions).to include('pgvector is a PostgreSQL extension')
-          mock_session
-        end.at_least(:once)
+        seen_system = nil
+        register_native_chat do |**opts|
+          seen_system = opts[:system]
+          { content: 'test', usage: { input_tokens: 10, output_tokens: 5 } }
+        end
 
         executor = described_class.new(rag_request)
         executor.call
+
+        expect(seen_system).to include('pgvector is a PostgreSQL extension')
       end
     end
 
@@ -218,16 +227,7 @@ confidence: 0.9 }],
           metadata: { requested_tools: ['legion.test.extra'] }
         )
         executor = described_class.new(req)
-        session = double('RubyLLM::Chat')
-        allow(session).to receive(:with_tool)
-
-        executor.send(:inject_registry_tools, session)
-
-        expect(session).to have_received(:with_tool).twice
-        names = []
-        expect(session).to have_received(:with_tool).at_least(:once) do |tool|
-          names << tool.name
-        end
+        names = executor.send(:native_tool_definitions).map(&:name)
         expect(names).to include('legion_query_knowledge', 'legion_test_extra')
         expect(names).not_to include('legion_test_skipped')
       end
@@ -259,13 +259,8 @@ confidence: 0.9 }],
         executor = described_class.new(req)
         executor.instance_variable_set(:@resolved_provider, :vllm)
         executor.instance_variable_set(:@triggered_tools, triggered_tools)
-        session = double('RubyLLM::Chat')
-        names = []
-        allow(session).to receive(:with_tool) { |tool| names << tool.name }
+        names = executor.send(:native_tool_definitions).map(&:name)
 
-        executor.send(:inject_registry_tools, session)
-
-        expect(session).to have_received(:with_tool).twice
         expect(names).to eq(%w[legion_triggered_0 legion_triggered_1])
       end
     end
@@ -309,8 +304,7 @@ confidence: 0.9 }],
       )
       executor = described_class.new(req)
 
-      mock_response = double('response', content: 'hi there', input_tokens: 10, output_tokens: 5)
-      allow(RubyLLM).to receive(:chat).and_return(double('session', with_tool: nil, ask: mock_response))
+      register_native_chat { { content: 'hi there', usage: { input_tokens: 10, output_tokens: 5 } } }
       allow(executor).to receive(:step_response_normalization)
 
       executor.call
@@ -337,27 +331,21 @@ confidence: 0.9 }],
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
     end
 
-    it 'wraps RubyLLM 429 as RateLimitError' do
+    it 'wraps native HTTP 429 as RateLimitError' do
       executor = described_class.new(request)
-      allow(RubyLLM).to receive(:chat).and_raise(
-        Faraday::TooManyRequestsError.new(nil, { status: 429 })
-      )
+      register_native_chat { raise Faraday::TooManyRequestsError.new(nil, { status: 429 }) }
       expect { executor.call }.to raise_error(Legion::LLM::RateLimitError)
     end
 
-    it 'wraps RubyLLM 401 as AuthError' do
+    it 'wraps native HTTP 401 as AuthError' do
       executor = described_class.new(request)
-      allow(RubyLLM).to receive(:chat).and_raise(
-        Faraday::UnauthorizedError.new(nil, { status: 401 })
-      )
+      register_native_chat { raise Faraday::UnauthorizedError.new(nil, { status: 401 }) }
       expect { executor.call }.to raise_error(Legion::LLM::AuthError)
     end
 
     it 'wraps generic provider errors as ProviderError' do
       executor = described_class.new(request)
-      allow(RubyLLM).to receive(:chat).and_raise(
-        Faraday::ServerError.new(nil, { status: 500 })
-      )
+      register_native_chat { raise Faraday::ServerError.new(nil, { status: 500 }) }
       expect { executor.call }.to raise_error(Legion::LLM::ProviderError)
     end
   end
@@ -378,48 +366,180 @@ confidence: 0.9 }],
   end
 
   describe 'tool loop cap (max_tool_rounds)' do
+    let(:tool_request) do
+      Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'use tool' }],
+        routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+        tools:    [{ name: 'lookup', description: 'Lookup', parameters: { type: 'object', properties: {} } }]
+      )
+    end
+
     it 'halts and raises PipelineError when tool rounds exceed max_tool_rounds setting' do
-      allow(Legion::LLM).to receive(:settings).and_return({ max_tool_rounds: 2 })
+      Legion::Settings[:llm][:max_tool_rounds] = 2
+      Legion::Settings[:llm][:routing][:escalation][:enabled] = false
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
 
-      executor = described_class.new(request)
-      session = double('RubyLLM::Chat')
-      tool_call_block = nil
-
-      allow(session).to receive(:on_tool_call) { |&blk| tool_call_block = blk }
-      allow(session).to receive(:respond_to?).with(:on_tool_result).and_return(false)
-      allow(session).to receive(:respond_to?).with(:on_tool_call).and_return(true)
-      allow(session).to receive(:with_tool)
-      allow(session).to receive(:with_instructions)
-      allow(RubyLLM).to receive(:chat).and_return(session)
-      allow(session).to receive(:ask) do
-        tool_call = double('ToolCall', id: 'tc_1', name: 'test_tool', arguments: {})
-        3.times { tool_call_block.call(tool_call) }
-        double(content: 'done', input_tokens: 5, output_tokens: 3, model_id: 'test')
+      register_native_chat do
+        { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
       end
-
+      executor = described_class.new(tool_request)
       allow(executor).to receive(:step_response_normalization)
 
       expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
     end
 
-    it 'uses MAX_RUBY_LLM_TOOL_ROUNDS as default when max_tool_rounds not in settings' do
-      allow(Legion::LLM).to receive(:settings).and_return({})
+    it 'honors string-keyed max_tool_rounds settings' do
+      Legion::Settings[:llm] = { 'max_tool_rounds' => 2, 'routing' => { 'escalation' => { 'pipeline_enabled' => false } } }
 
-      executor = described_class.new(request)
-      session = double('RubyLLM::Chat')
-      allow(session).to receive(:on_tool_call).and_return(nil)
-      allow(session).to receive(:respond_to?).with(:on_tool_result).and_return(false)
-      allow(session).to receive(:respond_to?).with(:on_tool_call).and_return(true)
-      allow(session).to receive(:with_tool)
-      allow(session).to receive(:with_instructions)
-      allow(RubyLLM).to receive(:chat).and_return(session)
-      allow(session).to receive(:ask).and_return(
-        double(content: 'done', input_tokens: 5, output_tokens: 3, model_id: 'test')
-      )
+      register_native_chat do
+        { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
+      end
+      executor = described_class.new(tool_request)
       allow(executor).to receive(:step_response_normalization)
 
-      # Should not raise — no tool calls fired, just verifying guard installs without crash
+      expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
+    end
+
+    it 'uses MAX_NATIVE_TOOL_ROUNDS as default when max_tool_rounds not in settings' do
+      Legion::Settings[:llm] = { routing: { escalation: { pipeline_enabled: false } } }
+
+      register_native_chat { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }
+      executor = described_class.new(request)
+      allow(executor).to receive(:step_response_normalization)
+
       expect { executor.call }.not_to raise_error
+    end
+  end
+
+  describe 'string-keyed routing settings' do
+    subject(:executor) { described_class.new(request) }
+
+    it 'honors string-keyed pipeline escalation settings' do
+      Legion::Settings[:llm] = {
+        'routing' => {
+          'escalation' => {
+            'enabled'           => true,
+            'pipeline_enabled'  => true,
+            'max_attempts'      => 7,
+            'quality_threshold' => 85
+          }
+        }
+      }
+
+      expect(executor.send(:pipeline_escalation_enabled?)).to be(true)
+      expect(executor.send(:pipeline_escalation_max_attempts)).to eq(7)
+      expect(executor.send(:pipeline_escalation_quality_threshold)).to eq(85)
+    end
+
+    it 'honors string-keyed native provider layer settings' do
+      Legion::Settings[:llm] = {
+        'provider_layer' => {
+          'mode' => 'auto'
+        }
+      }
+      allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
+
+      expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
+    end
+
+    it 'uses Legion::LLM::Call::Dispatch for explicit tool-bearing requests' do
+      tool_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'use the tool' }],
+        routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
+        tools:    [Class.new]
+      )
+      tool_executor = described_class.new(tool_request)
+      Legion::Settings[:llm] = {
+        'provider_layer' => {
+          'mode' => 'native'
+        }
+      }
+
+      expect(tool_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
+    end
+
+    it 'uses Legion::LLM::Call::Dispatch when registry tools would be injected by default' do
+      registry_tool = Class.new
+      registry_mod = Module.new do
+        define_singleton_method(:tools) { [registry_tool] }
+        define_singleton_method(:deferred_tools) { [] }
+      end
+      stub_const('Legion::Tools::Registry', registry_mod)
+      Legion::Settings[:llm] = {
+        'provider_layer' => {
+          'mode' => 'auto'
+        }
+      }
+      allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
+
+      expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
+    end
+
+    it 'allows Legion::LLM::Call::Dispatch when tools were explicitly disabled' do
+      registry_tool = Class.new
+      registry_mod = Module.new do
+        define_singleton_method(:tools) { [registry_tool] }
+        define_singleton_method(:deferred_tools) { [] }
+      end
+      stub_const('Legion::Tools::Registry', registry_mod)
+      toolless_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'no tools' }],
+        routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
+        tools:    []
+      )
+      toolless_executor = described_class.new(toolless_request)
+      Legion::Settings[:llm] = {
+        'provider_layer' => {
+          'mode' => 'auto'
+        }
+      }
+      allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
+
+      expect(toolless_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
+    end
+
+    it 'finds string-keyed fallback provider configs' do
+      Legion::Settings[:llm] = {
+        'providers' => {
+          'ollama'  => {
+            'enabled'       => true,
+            'default_model' => 'qwen3.6:27b'
+          },
+          'bedrock' => {
+            'enabled'       => true,
+            'default_model' => 'claude-sonnet-4-6'
+          }
+        }
+      }
+
+      expect(executor.send(:find_fallback_provider, exclude: [])).to eq(
+        { provider: :bedrock, model: 'claude-sonnet-4-6' }
+      )
+    end
+  end
+
+  describe 'offering-aware routing metadata' do
+    it 'preserves explicit offering metadata in response routing' do
+      offering_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  {
+          provider:          :azure_foundry,
+          model:             'gpt4o-prod',
+          offering_id:       'azure:default:inference:gpt-4o',
+          offering_metadata: { provider_instance: :eastus, canonical_model_alias: 'gpt-4o' }
+        }
+      )
+      executor = described_class.new(offering_request)
+
+      executor.send(:step_routing)
+      routing = executor.send(:build_response_routing)
+
+      expect(routing).to include(
+        provider:          :azure_foundry,
+        model:             'gpt4o-prod',
+        offering_id:       'azure:default:inference:gpt-4o',
+        offering_metadata: { provider_instance: :eastus, canonical_model_alias: 'gpt-4o' }
+      )
     end
   end
 
@@ -435,27 +555,32 @@ confidence: 0.9 }],
       ex
     end
 
+    before do
+      Legion::Settings[:llm][:routing][:escalation][:enabled] = false
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+    end
+
     describe ':tool_result event' do
       it 'fires :tool_result event with tool_call_id, tool_name, result, duration_ms, result_size' do
-        session = double('RubyLLM::Chat')
-        tool_result_block = nil
-        tool_call_block = nil
-
-        allow(session).to receive(:on_tool_call) { |&blk| tool_call_block = blk }
-        allow(session).to receive(:on_tool_result) { |&blk| tool_result_block = blk }
-        allow(session).to receive(:respond_to?).with(:on_tool_result).and_return(true)
-        allow(session).to receive(:respond_to?).with(:on_tool_call).and_return(true)
-        allow(session).to receive(:with_tool)
-        allow(session).to receive(:with_instructions)
-        allow(RubyLLM).to receive(:chat).and_return(session)
-        allow(session).to receive(:ask) do
-          tool_call = double('ToolCall', id: 'tc_abc', name: 'my_tool', arguments: {})
-          tool_call_block&.call(tool_call)
-          wrapper = Legion::LLM::Patches::ToolResultWrapper.new(
-            'result text', 'result text', 'tc_abc', 'tc_abc', 'my_tool'
-          )
-          tool_result_block&.call(wrapper)
-          double(content: 'done', input_tokens: 5, output_tokens: 3, model_id: 'test')
+        tool_class = Class.new do
+          define_singleton_method(:tool_name) { 'my_tool' }
+          define_singleton_method(:description) { 'My tool' }
+          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+          define_singleton_method(:call) { |**| 'result text' }
+        end
+        registry_mod = Module.new do
+          define_singleton_method(:tools) { [tool_class] }
+          define_singleton_method(:deferred_tools) { [] }
+        end
+        stub_const('Legion::Tools::Registry', registry_mod)
+        call_count = 0
+        register_native_chat do
+          call_count += 1
+          if call_count == 1
+            { content: '', tool_calls: [{ id: 'tc_abc', name: 'my_tool', arguments: {} }], usage: {} }
+          else
+            { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+          end
         end
         allow(executor).to receive(:step_response_normalization)
 
@@ -475,20 +600,25 @@ confidence: 0.9 }],
 
       it 'truncates result to 4096 bytes in :tool_result event' do
         large_result = 'x' * 8000
-        session = double('RubyLLM::Chat')
-        tool_result_block = nil
-
-        allow(session).to receive(:on_tool_call).and_return(nil)
-        allow(session).to receive(:on_tool_result) { |&blk| tool_result_block = blk }
-        allow(session).to receive(:respond_to?).with(:on_tool_result).and_return(true)
-        allow(session).to receive(:respond_to?).with(:on_tool_call).and_return(true)
-        allow(session).to receive(:with_tool)
-        allow(session).to receive(:with_instructions)
-        allow(RubyLLM).to receive(:chat).and_return(session)
-        allow(session).to receive(:ask) do
-          raw_result = double('ToolResult', tool_call_id: 'tc_big', tool_name: 'big_tool', result: large_result)
-          tool_result_block&.call(raw_result)
-          double(content: 'done', input_tokens: 5, output_tokens: 3, model_id: 'test')
+        tool_class = Class.new do
+          define_singleton_method(:tool_name) { 'big_tool' }
+          define_singleton_method(:description) { 'Big tool' }
+          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+          define_singleton_method(:call) { |**| large_result }
+        end
+        registry_mod = Module.new do
+          define_singleton_method(:tools) { [tool_class] }
+          define_singleton_method(:deferred_tools) { [] }
+        end
+        stub_const('Legion::Tools::Registry', registry_mod)
+        call_count = 0
+        register_native_chat do
+          call_count += 1
+          if call_count == 1
+            { content: '', tool_calls: [{ id: 'tc_big', name: 'big_tool', arguments: {} }], usage: {} }
+          else
+            { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+          end
         end
         allow(executor).to receive(:step_response_normalization)
 
@@ -504,38 +634,23 @@ confidence: 0.9 }],
 
     describe ':model_fallback event' do
       it 'fires :model_fallback with from_provider, to_provider, from_model, to_model on auth failure' do
-        call_count = 0
-        allow(RubyLLM).to receive(:chat) do
-          call_count += 1
-          raise Faraday::UnauthorizedError.new(nil, { status: 401 }) if call_count == 1
+        Legion::LLM::Call::Registry.register(:anthropic, Module.new do
+          define_singleton_method(:chat) { |**| raise Faraday::UnauthorizedError.new(nil, { status: 401 }) }
+        end)
+        Legion::LLM::Call::Registry.register(:openai, Module.new do
+          define_singleton_method(:chat) do |**|
+            { content: 'provider response', usage: { input_tokens: 5, output_tokens: 3 } }
+          end
+        end)
 
-          session = double('RubyLLM::Chat')
-          allow(session).to receive(:on_tool_call).and_return(nil)
-          allow(session).to receive(:respond_to?).with(:on_tool_result).and_return(false)
-          allow(session).to receive(:respond_to?).with(:on_tool_call).and_return(true)
-          allow(session).to receive(:with_tool)
-          allow(session).to receive(:with_instructions)
-          allow(session).to receive(:ask).and_return(
-            double(content: 'fallback response', input_tokens: 5, output_tokens: 3, model_id: 'fallback-model')
-          )
-          session
-        end
-
-        fallback_providers = [{ provider: :openai, model: 'gpt-4o', tier: :cloud }]
-        allow(executor).to receive(:find_fallback_provider).and_return(nil, *fallback_providers)
         allow(executor).to receive(:find_fallback_provider).with(exclude: [:anthropic]).and_return(
           { provider: :openai, model: 'gpt-4o' }
         )
         allow(executor).to receive(:step_response_normalization)
 
-        begin
-          executor.call
-        rescue Legion::LLM::AuthError
-          # expected if no real fallback wired
-        end
+        executor.call
 
         fallback_events = events.select { |e| e[:type] == :model_fallback }
-        next if fallback_events.empty? # skip assertion if auth error raised before fallback fires
 
         ev = fallback_events.first
         expect(ev).to have_key(:from_provider)

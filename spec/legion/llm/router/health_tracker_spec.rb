@@ -35,6 +35,26 @@ RSpec.describe Legion::LLM::Router::HealthTracker do
     end
   end
 
+  describe 'offering-aware keys' do
+    it 'tracks offering health separately from provider health' do
+      3.times do
+        tracker.report(provider: provider, offering_id: 'anthropic:west:chat:sonnet',
+                       signal: :error, value: nil)
+      end
+
+      expect(tracker.circuit_state(provider)).to eq(:closed)
+      expect(tracker.circuit_state(provider, offering_id: 'anthropic:west:chat:sonnet')).to eq(:open)
+      expect(tracker.adjustment(provider, offering_id: 'anthropic:west:chat:sonnet')).to eq(-50)
+    end
+
+    it 'falls back to provider health when no offering-specific state exists' do
+      3.times { tracker.report(provider: provider, signal: :error, value: nil) }
+
+      expect(tracker.circuit_state(provider, offering_id: 'anthropic:east:chat:sonnet')).to eq(:open)
+      expect(tracker.adjustment(provider, offering_id: 'anthropic:east:chat:sonnet')).to eq(-50)
+    end
+  end
+
   # ─── 3. report ignores unknown signals without error ─────────────────────────
 
   describe '#report with unknown signal' do

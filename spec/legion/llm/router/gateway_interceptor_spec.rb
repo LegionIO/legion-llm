@@ -64,6 +64,13 @@ RSpec.describe Legion::LLM::Router::GatewayInterceptor do
       expect(described_class.model_allowed?('claude-sonnet-4-6', :high)).to be true
     end
 
+    it 'reads string-keyed model policies' do
+      Legion::Settings[:llm] = Legion::LLM::Settings.default.merge(
+        'gateway' => { 'model_policy' => { 'high' => ['claude-*'] } }
+      )
+      expect(described_class.model_allowed?('claude-sonnet-4-6', :high)).to be true
+    end
+
     it 'blocks when model does not match any pattern' do
       Legion::Settings[:llm] = Legion::LLM::Settings.default.merge(
         gateway: { model_policy: { critical: ['claude-sonnet-4-6'] } }

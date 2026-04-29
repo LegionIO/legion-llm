@@ -89,22 +89,22 @@ module Legion
           end
 
           def debate_enabled?(request)
-            explicit = request.extra[:debate]
+            explicit = config_value(request.extra, :debate)
             return explicit unless explicit.nil?
 
             gaia_trigger = gaia_debate_trigger?(@enrichments)
             return true if gaia_trigger
 
-            Legion::Settings.dig(:llm, :debate, :enabled) == true
+            settings_value(:debate, :enabled) == true
           end
 
           def gaia_debate_trigger?(enrichments)
-            return false unless debate_settings[:gaia_auto_trigger] == true
+            return false unless debate_setting(:gaia_auto_trigger) == true
 
-            advisory = enrichments&.dig('gaia:advisory', :data)
+            advisory = config_value(enrichments&.fetch('gaia:advisory', nil), :data)
             return false unless advisory.is_a?(Hash)
 
-            advisory[:high_stakes] == true || advisory[:debate_recommended] == true
+            config_value(advisory, :high_stakes) == true || config_value(advisory, :debate_recommended) == true
           end
 
           def run_debate(advocate_response, request)
@@ -173,17 +173,36 @@ module Legion
           private
 
           def debate_settings
-            @debate_settings ||= if defined?(Legion::Settings) && Legion::Settings[:llm].is_a?(Hash)
-                                   Legion::Settings[:llm][:debate] || {}
-                                 else
-                                   {}
-                                 end
+            @debate_settings ||= settings_value(:debate) || {}
+          end
+
+          def debate_setting(key, default = nil)
+            config_value(debate_settings, key, default)
+          end
+
+          def settings_value(*keys, default: nil)
+            Legion::LLM::Settings.value(*keys, default: default)
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.debate.settings', keys: keys)
+            default
+          end
+
+          def config_value(config, key, default = nil)
+            return default unless config.respond_to?(:key?)
+
+            string_key = key.to_s
+            return config[string_key] if config.key?(string_key)
+
+            symbol_key = key.to_sym if key.respond_to?(:to_sym)
+            return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+            default
           end
 
           def resolve_debate_rounds(request)
-            requested = request.extra[:debate_rounds]
-            default   = debate_settings.fetch(:default_rounds, 1)
-            max       = debate_settings.fetch(:max_rounds, 3)
+            requested = config_value(request.extra, :debate_rounds)
+            default   = debate_setting(:default_rounds, 1)
+            max       = debate_setting(:max_rounds, 3)
 
             rounds = requested ? requested.to_i : default.to_i
             rounds = 1 if rounds < 1
@@ -206,12 +225,12 @@ module Legion
           end
 
           def select_debate_models(request)
-            explicit_advocate   = debate_settings[:advocate_model]
-            explicit_challenger = debate_settings[:challenger_model]
-            explicit_judge      = debate_settings[:judge_model]
+            explicit_advocate   = debate_setting(:advocate_model)
+            explicit_challenger = debate_setting(:challenger_model)
+            explicit_judge      = debate_setting(:judge_model)
 
-            request_model    = @resolved_model || request.routing[:model] || Legion::LLM.settings[:default_model]
-            request_provider = @resolved_provider || request.routing[:provider] || Legion::LLM.settings[:default_provider]
+            request_model    = @resolved_model || config_value(request.routing, :model) || settings_value(:default_model)
+            request_provider = @resolved_provider || config_value(request.routing, :provider) || settings_value(:default_provider)
 
             advocate_model = explicit_advocate || "#{request_provider}:#{request_model}"
 
@@ -248,13 +267,15 @@ module Legion
           end
 
           def available_models
-            providers = Legion::LLM.settings[:providers] || {}
+            providers = settings_value(:providers) || {}
             models = []
             providers.each do |provider_name, config|
-              next unless config.is_a?(Hash) && config[:enabled]
-              next unless config[:default_model]
+              next unless config.is_a?(Hash) && config_value(config, :enabled)
 
-              models << "#{provider_name}:#{config[:default_model]}"
+              default_model = config_value(config, :default_model)
+              next unless default_model
+
+              models << "#{provider_name}:#{default_model}"
             end
             models
           end
@@ -275,7 +296,7 @@ module Legion
             response = Legion::LLM.chat_direct(**opts)
             extract_content(response)
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.debate.role')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.debate.role')
             "[debate role error: #{e.message}]"
           end
 

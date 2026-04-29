@@ -44,7 +44,7 @@ module Legion
             classification = @request.classification || compliance_classification_default || default_classification
             return unless classification_enabled?(classification)
 
-            declared_level  = classification[:level]
+            declared_level  = config_value(classification, :level)
             scan            = scan_content_for_sensitive_data
             effective_level = upgrade_if_needed(declared_level, scan)
             upgraded        = effective_level != declared_level
@@ -111,17 +111,20 @@ module Legion
             active_patterns = strict_hipaa_mode? ? PII_PATTERNS : PII_PATTERNS_CORE
 
             @request.messages.each do |message|
-              next unless message[:content].is_a?(String)
+              content = message_content(message)
+              next unless content.is_a?(String)
 
               active_patterns.each_value do |regex|
-                message[:content] = message[:content].gsub(regex, placeholder)
+                content = content.gsub(regex, placeholder)
               end
 
-              next unless scan[:contains_phi]
-
-              PHI_KEYWORDS.each do |kw|
-                message[:content] = message[:content].gsub(/\b#{Regexp.escape(kw)}\b/i, placeholder)
+              if scan[:contains_phi]
+                PHI_KEYWORDS.each do |kw|
+                  content = content.gsub(/\b#{Regexp.escape(kw)}\b/i, placeholder)
+                end
               end
+
+              write_message_content(message, content)
             end
 
             @enrichments['classification:redaction'] = {
@@ -133,7 +136,7 @@ module Legion
           end
 
           def extract_text_content
-            @request.messages.map { |m| m[:content].to_s }.join(' ')
+            @request.messages.map { |m| message_content(m).to_s }.join(' ')
           end
 
           def upgrade_if_needed(declared_level, scan)
@@ -152,21 +155,25 @@ module Legion
           end
 
           def default_classification_level
-            level = Legion::LLM.settings.dig(:compliance, :default_level)
+            level = settings_value(:compliance, :default_level)
             level ? level.to_sym : :public
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.default_level')
             :public
           end
 
           def classification_enabled?(_classification)
-            enabled = Legion::LLM.settings.dig(:compliance, :classification_scan)
+            enabled = settings_value(:compliance, :classification_scan)
             enabled.nil? || enabled
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.enabled')
             true
           end
 
           def compliance_classification_default
-            level = Legion::LLM.settings.dig(:compliance, :classification_level)
+            level = settings_value(:compliance, :classification_level)
             return nil unless level
 
             { level: level.to_sym }
@@ -176,22 +183,28 @@ module Legion
           end
 
           def redaction_enabled?
-            setting = Legion::LLM.settings.dig(:compliance, :redact_pii)
+            setting = settings_value(:compliance, :redact_pii)
             setting == true
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.redaction_enabled')
             false
           end
 
           def strict_hipaa_mode?
-            setting = Legion::LLM.settings.dig(:compliance, :strict_hipaa)
+            setting = settings_value(:compliance, :strict_hipaa)
             setting == true
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.strict_hipaa')
             false
           end
 
           def redaction_placeholder
-            Legion::LLM.settings.dig(:compliance, :redaction_placeholder) || '[REDACTED]'
-          rescue StandardError
+            settings_value(:compliance, :redaction_placeholder) || '[REDACTED]'
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.redaction_placeholder')
             '[REDACTED]'
           end
 
@@ -217,29 +230,67 @@ module Legion
           end
 
           def phi_block_cloud?
-            setting = Legion::LLM.settings.dig(:compliance, :phi_block_cloud)
+            setting = settings_value(:compliance, :phi_block_cloud)
             setting == true
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.phi_block_cloud')
             false
           end
 
           def cloud_provider?(provider)
             return false unless provider
 
-            cloud_providers = Legion::LLM.settings.dig(:compliance, :cloud_providers) ||
+            cloud_providers = settings_value(:compliance, :cloud_providers) ||
                               %i[anthropic openai gemini bedrock azure]
             cloud_providers.map(&:to_sym).include?(provider.to_sym)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.cloud_provider', provider: provider)
             false
           end
 
           def resolve_current_provider
             routing = @request.respond_to?(:routing) ? @request.routing : nil
-            provider = routing[:provider] if routing.is_a?(Hash)
-            provider ||= Legion::Settings.dig(:llm, :default_provider)
+            provider = config_value(routing, :provider) if routing.is_a?(Hash)
+            provider ||= settings_value(:default_provider)
             provider&.to_sym
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.resolve_provider')
             nil
+          end
+
+          def settings_value(*keys)
+            Legion::LLM::Settings.value(*keys)
+          end
+
+          def nested_value(hash, *keys)
+            keys.reduce(hash) do |current, key|
+              return nil unless current.respond_to?(:key?)
+
+              config_value(current, key)
+            end
+          end
+
+          def config_value(hash, key)
+            return nil unless hash.respond_to?(:key?)
+
+            string_key = key.to_s
+            return hash[string_key] if hash.key?(string_key)
+
+            hash[key] if hash.key?(key)
+          end
+
+          def message_content(message)
+            return nil unless message.is_a?(Hash)
+
+            config_value(message, :content)
+          end
+
+          def write_message_content(message, content)
+            key = message.key?('content') ? 'content' : :content
+            message[key] = content
           end
         end
       end

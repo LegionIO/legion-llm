@@ -16,7 +16,7 @@ RSpec.describe Legion::LLM::Helper do
   let(:test_class) { Class.new { include Legion::LLM::Helper } }
   let(:instance) { test_class.new }
 
-  let(:mock_chat) { instance_double('RubyLLM::Chat') }
+  let(:mock_chat) { instance_double('NativeChat') }
   let(:mock_response) { double('response', content: 'ok') }
 
   before do
@@ -28,12 +28,12 @@ RSpec.describe Legion::LLM::Helper do
 
   describe '#llm_default_model' do
     it 'returns the settings value' do
-      allow(Legion::Settings).to receive(:dig).with(:llm, :default_model).and_return('claude-sonnet-4-6')
+      Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
       expect(instance.llm_default_model).to eq('claude-sonnet-4-6')
     end
 
     it 'returns nil when not configured' do
-      allow(Legion::Settings).to receive(:dig).with(:llm, :default_model).and_return(nil)
+      Legion::Settings[:llm][:default_model] = nil
       expect(instance.llm_default_model).to be_nil
     end
 
@@ -51,7 +51,7 @@ RSpec.describe Legion::LLM::Helper do
 
   describe '#llm_default_provider' do
     it 'returns the settings value' do
-      allow(Legion::Settings).to receive(:dig).with(:llm, :default_provider).and_return(:bedrock)
+      Legion::Settings[:llm][:default_provider] = :bedrock
       expect(instance.llm_default_provider).to eq(:bedrock)
     end
 
@@ -171,7 +171,7 @@ RSpec.describe Legion::LLM::Helper do
     end
 
     it 'does not pass message: when escalate is not set' do
-      mock_chat2 = double('RubyLLM::Chat')
+      mock_chat2 = double('NativeChat')
       expect(Legion::LLM).to receive(:chat).with(
         hash_including(escalate: false)
       ).and_return(mock_chat2)

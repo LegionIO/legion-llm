@@ -48,56 +48,36 @@ RSpec.describe 'vLLM provider integration' do
     end
   end
 
-  describe 'default_model_for_tier(:fleet)' do
-    it 'returns vllm default_model when vllm is enabled' do
-      Legion::Settings[:llm][:providers][:vllm] = { enabled: true, default_model: 'qwen3.6-27b' }
-      result = Legion::LLM::Router.send(:default_model_for_tier, :fleet)
-      expect(result).to eq('qwen3.6-27b')
-    end
-  end
-
-  describe 'settings defaults' do
-    it 'includes vllm provider with correct defaults' do
-      vllm = Legion::Settings[:llm][:providers][:vllm]
-      expect(vllm).to be_a(Hash)
-      expect(vllm[:enabled]).to be false
-      expect(vllm[:default_model]).to eq('qwen3.6-27b')
-      expect(vllm[:base_url]).to eq('http://localhost:8000/v1')
-    end
-  end
-
   describe 'provider configuration' do
-    let(:ruby_llm_config) { double('config') }
+    it 'stores vllm base_url and resolved api_key in settings config' do
+      config = { base_url: 'http://gpu:8000/v1', api_key: 'test-key' }
 
-    before do
-      allow(RubyLLM).to receive(:configure).and_yield(ruby_llm_config)
-      allow(ruby_llm_config).to receive(:vllm_api_base=)
-      allow(ruby_llm_config).to receive(:vllm_api_key=)
-      hide_const('Legion::Identity::Broker')
+      Legion::LLM::Call::Providers.send(:configure_vllm, config)
+
+      expect(config[:base_url]).to eq('http://gpu:8000/v1')
+      expect(config[:api_key]).to eq('test-key')
     end
 
-    it 'sets vllm_api_base from config' do
-      Legion::LLM::Call::Providers.send(:configure_vllm, { base_url: 'http://10.11.164.92:8000/v1' })
-      expect(ruby_llm_config).to have_received(:vllm_api_base=).with('http://10.11.164.92:8000/v1')
-    end
+    it 'stores default vllm base_url when absent' do
+      config = {}
 
-    it 'sets vllm_api_key when present' do
-      Legion::LLM::Call::Providers.send(:configure_vllm, { base_url: 'http://gpu:8000/v1', api_key: 'test-key' })
-      expect(ruby_llm_config).to have_received(:vllm_api_key=).with('test-key')
-    end
+      Legion::LLM::Call::Providers.send(:configure_vllm, config)
 
-    it 'does not set vllm_api_key when absent' do
-      Legion::LLM::Call::Providers.send(:configure_vllm, { base_url: 'http://gpu:8000/v1' })
-      expect(ruby_llm_config).not_to have_received(:vllm_api_key=)
+      expect(config[:base_url]).to eq('http://localhost:8000/v1')
     end
   end
 
-  describe 'escalation chain' do
-    it 'includes vllm in enabled_provider_chain when enabled' do
-      Legion::Settings[:llm][:providers][:vllm] = { enabled: true, default_model: 'qwen3.6-27b' }
-      chain = Legion::LLM::Router.send(:enabled_provider_chain)
-      providers = chain.map(&:provider)
-      expect(providers).to include(:vllm)
+  describe '.normalize_vllm_base_url' do
+    it 'strips trailing slashes and a v1 suffix without regex backtracking' do
+      normalized = Legion::LLM::Call::Providers.send(:normalize_vllm_base_url, 'http://gpu:8000/v1////')
+
+      expect(normalized).to eq('http://gpu:8000')
+    end
+
+    it 'keeps non-v1 paths' do
+      normalized = Legion::LLM::Call::Providers.send(:normalize_vllm_base_url, 'http://gpu:8000/api////')
+
+      expect(normalized).to eq('http://gpu:8000/api')
     end
   end
 end

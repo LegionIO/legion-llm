@@ -40,7 +40,7 @@ module Legion
             defined?(Legion::LLM::Skills::Registry) &&
               defined?(Legion::LLM) &&
               Legion::LLM.respond_to?(:settings) &&
-              Legion::LLM.settings.dig(:skills, :enabled) != false
+              settings_value(:skills, :enabled) != false
           end
 
           def resume_active_skill(conv_id, state)
@@ -100,7 +100,7 @@ module Legion
 
           def check_auto_skills(conv_id)
             return if at_max_active_skills?(conv_id)
-            return if Legion::LLM.settings.dig(:skills, :auto_inject) == false
+            return if settings_value(:skills, :auto_inject) == false
 
             Legion::LLM::Skills::Registry.by_trigger(:auto).each do |skill_class|
               key = "#{skill_class.namespace}:#{skill_class.skill_name}"
@@ -140,20 +140,23 @@ module Legion
           def deep_subset_match?(actual, expected)
             return actual == expected unless expected.is_a?(Hash)
 
+            missing = Object.new
             expected.all? do |k, v|
-              actual.is_a?(Hash) && actual.key?(k) && deep_subset_match?(actual[k], v)
+              actual.is_a?(Hash) &&
+                (actual_value = config_value(actual, k, missing)) != missing &&
+                deep_subset_match?(actual_value, v)
             end
           end
 
           def at_max_active_skills?(conv_id)
-            max    = Legion::LLM.settings.dig(:skills, :max_active_skills) || 1
+            max    = settings_value(:skills, :max_active_skills) || 1
             active = Inference::Conversation.skill_state(conv_id) ? 1 : 0
             active >= max
           end
 
           def skill_disabled?(key)
-            disabled = Array(Legion::LLM.settings.dig(:skills, :disabled_skills) || [])
-            enabled  = Array(Legion::LLM.settings.dig(:skills, :enabled_skills)  || [])
+            disabled = Array(settings_value(:skills, :disabled_skills) || [])
+            enabled  = Array(settings_value(:skills, :enabled_skills) || [])
             return true if disabled.include?(key)
             return false if enabled.empty?
 
@@ -173,6 +176,25 @@ module Legion
               metadata:        @request.metadata,
               intent:          @request.extra&.dig(:intent)
             }
+          end
+
+          def settings_value(*keys, default: nil)
+            Legion::LLM::Settings.value(*keys, default: default)
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.skill_injector.settings', keys: keys)
+            default
+          end
+
+          def config_value(config, key, default = nil)
+            return default unless config.respond_to?(:key?)
+
+            string_key = key.to_s
+            return config[string_key] if config.key?(string_key)
+
+            symbol_key = key.to_sym if key.respond_to?(:to_sym)
+            return config[symbol_key] if symbol_key && config.key?(symbol_key)
+
+            default
           end
         end
       end

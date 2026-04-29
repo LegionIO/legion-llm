@@ -1,5 +1,114 @@
 # Legion LLM Changelog
 
+## [0.8.47] - 2026-04-29
+
+### Fixed
+- Tool-bearing native inference now forwards native tool definitions and runs a bounded native tool loop through `Call::Dispatch` and `Inference::ToolDispatcher`.
+- OpenAI-compatible, Anthropic-compatible, and native API tool declarations now use provider-neutral native tool definitions.
+- Embedding generation and discovery health checks now route through native `Call::Dispatch.dispatch_embed`.
+
+## [0.8.46] - 2026-04-29
+
+### Fixed
+- Pipeline native dispatch now rejects tool-bearing requests that lack native tool-loop support instead of silently dropping tools.
+- Escalation exhaustion now raises `EscalationExhausted` consistently when RubyLLM is unavailable, preserving the RubyLLM-absent native failure details in the error message.
+
+## [0.8.45] - 2026-04-29
+
+### Added
+- Native LLM API now exposes model-offering inventory at `/api/llm/offerings` and provider-instance inventory at `/api/llm/instances`, matching the routing redesign metadata surface.
+
+## [0.8.44] - 2026-04-28
+
+### Fixed
+- Native LLM API caller metadata now uses the unified `Legion::Identity::Request`/`Process` identity path instead of ad-hoc request waterfalls.
+- Identity broker credential lookups now include `purpose:` and `context:` metadata so credential grants are auditable.
+- Fleet request expiration no longer logs warnings for omitted or blank TTL values, and unified identity caller metadata accepts string-keyed `requested_by` hashes.
+
+## [0.8.43] - 2026-04-28
+
+### Changed
+- RubyLLM is now loaded as an optional compatibility layer instead of a router runtime dependency, and native provider dispatch no longer falls back to RubyLLM by default.
+- Non-pipeline chat, escalation, provider probes, startup defaults, discovery checks, and compatibility API tool builders now degrade cleanly when RubyLLM is unavailable, routing native direct calls where a registered native provider exists and raising `ProviderError` instead of `NameError` for RubyLLM-only paths.
+
+## [0.8.42] - 2026-04-28
+
+### Fixed
+- LLM provider settings snapshots now initialize their fallback source before deep-copying settings, preventing an uninitialized local fallback when snapshot duplication raises.
+
+## [0.8.41] - 2026-04-28
+
+### Fixed
+- The router gemspec now depends on the provider-neutral `lex-llm` base instead of installing legacy provider gems (`lex-bedrock`, `lex-claude`, `lex-gemini`, and `lex-openai`) as runtime dependencies.
+
+## [0.8.40] - 2026-04-28
+
+### Fixed
+- Streaming inference now uses native lex-llm provider dispatch when the provider layer selects native mode.
+- Startup discovery now refreshes local system facts independently of Ollama model refresh, and metering publish now loads its transport message class when connected instead of depending on prior boot order.
+
+## [0.8.39] - 2026-04-28
+
+### Fixed
+- OpenAI-compatible, Anthropic-compatible, and native chat API routes now use the same server-resolved caller identity metadata as native inference, preserving audit and metering identity fields across compatibility routes.
+
+## [0.8.38] - 2026-04-28
+
+### Fixed
+- `require 'legion/llm'` now loads `legion-settings` when the host has not already loaded `Legion::Settings`, preserving standalone settings defaults and override behavior during LegionIO load-phase initialization.
+
+## [0.8.37] - 2026-04-28
+
+### Fixed
+- Router resolutions, health tracking, inventory, native dispatch, inference responses, audit, and metering now preserve optional lex-llm model offering metadata while keeping provider/model fallback behavior compatible with older callers.
+- Inventory now consumes lex-llm 0.1.5 `ModelOffering`-style fields from configured settings or native provider adapters when available, exposing offering IDs, model families, canonical aliases, provider instances, and routing metadata without credentials.
+
+## [0.8.36] - 2026-04-28
+
+### Fixed
+- Fleet transport now publishes requests through the `llm.fleet` exchange, keeps provider/model in fleet message bodies for workers, and publishes handler replies through the mandatory confirmed fleet response message path.
+- Inventory now exposes exact offering lanes and non-secret offering metadata so provider instances can opt into offering-level routing without losing shared fleet lane compatibility.
+
+## [0.8.35] - 2026-04-28
+
+### Fixed
+- Fleet lane routing now rejects sensitive or oversized public boundary, eligibility, and offering-instance segments before they can enter routing keys.
+- Lex-llm native provider adapters now memoize provider instances and cover streaming, token-count estimation, provider failures, missing namespaces, and non-hash message inputs.
+- Local Ollama/vLLM health probes now distinguish malformed base URL configuration from ordinary unreachable services.
+- Inventory failures now re-raise programmer/config-shape errors instead of silently returning an empty model list.
+- Fleet reply dispatch logging now includes operation tags, JSON parse failures are logged at warning level, and unwired broker return/nack helpers were removed so pending replies rely on the documented timeout path.
+- The vLLM thinking patch now rescues only expected settings-shape errors instead of swallowing all runtime failures.
+
+## [0.8.34] - 2026-04-28
+
+### Fixed
+- Native lex-llm provider dispatch now preserves injected system instructions when routing through `LexLLMAdapter`.
+- Lex-llm bridge configuration now normalizes OpenAI-compatible `/v1` base URLs for `vllm` and `openai` providers while preserving versioned non-OpenAI-compatible endpoints.
+
+## [0.8.33] - 2026-04-27
+
+### Fixed
+- `legion-llm` can now bridge loaded `lex-llm-*` provider classes into native dispatch through a `LexLLMAdapter`, allowing the new provider-gem split to participate without duplicating old `lex-*` runner constants.
+- Provider-layer defaults now prefer `auto` dispatch and include the new `ollama`, `vllm`, `anthropic`, `openai`, `gemini`, and `mlx` native provider names.
+- Inventory now recognizes `mlx` as a local HTTP provider.
+- Fleet dispatch now registers reply futures before publishing requests, consumes structured publish results, fails fast on unroutable/nacked/confirm-timeout publishes, and validates reply metadata before fulfilling pending requests.
+- `FleetRequest` now opts out of live-request spooling, requires mandatory publish and publisher confirms by default, and includes reply routing fields in the worker payload.
+- `FleetResponse` and `FleetError` now publish live replies with mandatory routing, publisher confirms, and no spool/replay.
+- LLM transport message IDs are memoized per message instance so AMQP return/confirm correlation sees the same `message_id` that was published.
+- Embedding provider/model resolution, provider disable gates, prefix injection, fallback chains, Azure settings, Ollama base URLs, and metering caller context now honor JSON/string-keyed settings in addition to symbol-keyed runtime settings.
+- Discovery for Ollama, vLLM, and embedding fallback chains now honors JSON/string-keyed provider, embedding, base URL, model metadata, and refresh TTL settings.
+- Inference executor routing defaults, conversation compaction, pipeline escalation, native dispatch, async post-step, telemetry span, tool-loop, and fallback-provider settings now honor JSON/string-keyed settings.
+- Module-level inference, prompt dispatch, prompt-cache, debate, and skill-injector settings now honor JSON/string-keyed settings.
+- Sticky tool history, trigger matching, and RAG context settings now honor JSON/string-keyed settings.
+- Shared settings helpers now normalize string and symbol keys across router, fleet, scheduling, response cache, API auth/defaults, metering, quality, guards, skills, discovery, inventory, daemon, config loaders, and audit checks.
+- Shared settings helpers now register defaults through `Legion::Settings.merge_settings(:llm, ...)` and read directly from the canonical `Legion::Settings[:llm]` store so JSON-loaded settings files and runtime overrides remain authoritative.
+- LLM cache, response-cache, and tool-confidence paths now prefer connected local cache backends while preserving shared cache fallback behavior.
+- Boot, compatibility, Bedrock embedding, transport-connected, identity, RBAC, and API helper paths now use shared LLM settings/logging helpers instead of direct `Legion::Settings`, `Legion::Logging`, and `Legion::Cache` calls.
+- LLM transport messages now promote tracing metadata into W3C `traceparent`, `baggage`, and Legion trace headers for fleet/audit/metering correlation.
+- Fleet dispatch replies now avoid request-side metadata gates by default and expose both `model` and `model_id` so downstream metering and metadata readers can resolve the model consistently.
+- Fleet lane sanitization and vLLM health URL normalization now avoid regex patterns flagged by CodeQL for uncontrolled input.
+- The lex-llm provider bridge now loads only the Legion-native `Legion::Extensions::Llm` namespace and no longer probes removed fork-era entrypoints.
+
 ## [0.8.32] - 2026-04-27
 
 ### Fixed
@@ -37,7 +146,7 @@
 ## [0.8.28] - 2026-04-24
 
 ### Fixed
-- Model/provider mismatch when clients send a model name (e.g., `qwen3.5:latest`) without an explicit provider. The fallback paths blindly paired it with `default_provider` (typically `bedrock`), causing `RubyLLM::ModelNotFoundError`. Now infers the correct provider from model naming patterns before falling back to the global default.
+- Model/provider mismatch when clients send a model name (e.g., `qwen3.5:latest`) without an explicit provider. The routing paths blindly paired it with `default_provider` (typically `bedrock`), causing provider model lookup failures. Now infers the correct provider from model naming patterns before using the global default.
 - `arbitrage_fallback` hardcoded `:cloud` tier and `:bedrock` provider when inference failed. Now uses `PROVIDER_TIER` to resolve the correct tier for the inferred provider.
 
 ### Added
@@ -82,7 +191,7 @@
 ## [0.8.23] - 2026-04-23
 
 ### Fixed
-- `Call::StructuredOutput` prompt-fallback path passed `messages:` (plural) to `chat_single` which only accepts `message:` (singular), leaking the unknown kwarg into `RubyLLM::Chat.new`. Visible as repeated "unknown keyword: :messages" warnings during dream cycle contradiction detection. Flattened instruction + messages into a single string via `extract_user_content`.
+- `Call::StructuredOutput` parse-retry path passed `messages:` (plural) to `chat_single` which only accepts `message:` (singular), leaking the unknown kwarg into the provider chat call. Visible as repeated "unknown keyword: :messages" warnings during dream cycle contradiction detection. Flattened instruction + messages into a single string via `extract_user_content`.
 
 ## [0.8.22] - 2026-04-22
 
@@ -132,7 +241,7 @@
 ## [0.8.16] - 2026-04-22
 
 ### Fixed
-- `RubyLLM::BadRequestError` (HTTP 400) and `RubyLLM::ContextLengthExceededError` now trigger the provider fallback-retry chain instead of bubbling up as unhandled 500s. Both `run_provider_call_single` and `step_provider_call_stream` retry on the next available provider before giving up.
+- Provider bad-request and context-length errors now trigger the provider retry chain instead of bubbling up as unhandled 500s. Both `run_provider_call_single` and `step_provider_call_stream` retry on the next available provider before giving up.
 - Resolved provider/model is now logged (`log.info`) in `step_routing` so provider errors can be diagnosed from daemon logs without relying on SSE done events.
 
 ### Changed
@@ -448,7 +557,7 @@
 - `started_at` timestamp stored in `Thread.current[:legion_current_tool_started_at]` for accurate per-call wall-clock duration even across parallel threads
 
 ### Changed
-- `MAX_RUBY_LLM_TOOL_ROUNDS` constant raised from `25` to `200` (now serves as a fallback default for the configurable `max_tool_rounds` setting)
+- Tool-loop round cap raised from `25` to `200` for the configurable `max_tool_rounds` setting.
 
 ### Fixed
 - `ConversationStore#db_append_message` now serializes non-String `content` values (e.g., tool-call arrays) to JSON before writing to the database, preventing Sequel type errors when tool-use messages are persisted
@@ -493,7 +602,7 @@
 ### Added
 - Per-step pipeline timing diagnostics: `[pipeline][timing]` log line with duration per step
 - Pre-pipeline timing in inference route: `gaia_ingest`, `pre_pipeline_setup`, `executor_call` durations
-- `MAX_RUBY_LLM_TOOL_ROUNDS` (25) — caps RubyLLM's unbounded tool-use loop to prevent infinite cycling
+- Tool-loop round cap (25) to prevent infinite cycling
 - `install_tool_loop_guard` applied to both streaming and non-streaming provider paths
 
 ### Fixed
@@ -639,9 +748,9 @@
 - `Legion::LLM::ProviderRegistry` — thread-safe registry for native lex-* provider extensions: `register(name, ext)`, `for(name)`, `available`, `registered?(name)`, `reset!`; cleared automatically on `Legion::LLM.shutdown` (closes #37)
 - `Legion::LLM::NativeDispatch` — native provider dispatch layer: `dispatch_chat`, `dispatch_embed`, `dispatch_stream`, `dispatch_count_tokens` route calls to registered lex-* extension modules and return standardized `{ result:, usage: Usage }` hashes; raises `ProviderError` when provider is not registered (closes #37)
 - `Legion::LLM::NativeResponseAdapter` — adapter wrapping native dispatch result hash to expose the same `.content`, `.input_tokens`, `.output_tokens`, `.usage` interface as a RubyLLM response object (closes #37)
-- `provider_layer` settings section: `mode` (`'ruby_llm'` default / `'native'` / `'auto'`), `native_providers` (default `['claude', 'bedrock']`), `fallback_to_ruby_llm` (default `true`); `ruby_llm` mode preserves all existing behavior unchanged (closes #37)
+- `provider_layer` settings section: `mode` (`'native'` / `'auto'`) and `native_providers` (default `['claude', 'bedrock']`) for native provider dispatch (closes #37)
 - Auto-registration in `Legion::LLM.start`: detects loaded lex-* extensions via `Object.const_defined?` and registers them — `lex-claude` → `:claude`/`:anthropic`, `lex-bedrock` → `:bedrock`, `lex-openai` → `:openai`, `lex-gemini` → `:gemini`; no hard dependencies added (closes #37)
-- `Pipeline::Executor` provider layer integration: `use_native_dispatch?` checks `provider_layer.mode`; `execute_provider_request_native` calls `NativeDispatch.dispatch_chat` and wraps result in `NativeResponseAdapter`, falls back to RubyLLM when `fallback_to_ruby_llm: true`; `execute_provider_request_ruby_llm` is the extracted RubyLLM path (default, no behavior change) (closes #37)
+- `Pipeline::Executor` provider layer integration: `use_native_dispatch?` checks `provider_layer.mode`; `execute_provider_request_native` calls `NativeDispatch.dispatch_chat` and wraps result in `NativeResponseAdapter` (closes #37)
 - Optional adversarial debate pipeline step for high-stakes decisions (closes #28): `Pipeline::Steps::Debate` runs a multi-round advocate/challenger/judge debate after `provider_call`; the initial response is the advocate, a challenger model critiques it, the advocate rebuts, and a judge model synthesizes all sides into the final response; activation via `debate: true` in `chat()` kwargs, or `Legion::Settings[:llm][:debate][:enabled]`, or GAIA auto-trigger when `gaia_auto_trigger: true` and `high_stakes`/`debate_recommended` are set in the advisory enrichment; debate is disabled by default; GAIA auto-trigger defaults to false in v0.6.0; different models are required for each role (advocate, challenger, judge) to avoid training bias — model rotation picks from enabled providers automatically when not explicitly configured; model strings use `provider:model` format; all LLM calls use `chat_direct` to avoid pipeline recursion; configurable via `debate.default_rounds` (default 1), `debate.max_rounds` (cap, default 3), `debate.advocate_model`, `debate.challenger_model`, `debate.judge_model`, `debate.model_selection_strategy` (default `'rotate'`); debate metadata (`enabled`, `rounds`, `advocate_model`, `challenger_model`, `judge_model`, `advocate_summary`, `challenger_summary`, `judge_confidence`) stored in `enrichments['debate:result']`; gracefully degrades to single-model mode with a warning when fewer than 2 models are available
 - Async context curation (`Legion::LLM::ContextCurator`): keeps LLM context lean without compaction (closes #38). Heuristic curation runs async in `Thread.new` after each `step_context_store` — zero latency impact. Curated messages are used in `step_context_load` when available, falling back to raw history. Heuristic pipeline: `strip_thinking` removes `<thinking>` blocks; `distill_tool_result` summarizes large tool outputs by tool type (`read_file` → line count + first/last, `search`/`grep` → match counts, `bash` → exit code + last lines, default → char count + preview); `fold_resolved_exchanges` detects multi-turn clarification reaching agreement and folds to a system note; `evict_superseded` keeps only the latest read of each file path; `dedup_similar` removes near-duplicate messages via Jaccard similarity (delegates to `Compressor.deduplicate_messages`). LLM-assisted mode is built but off by default (`llm_assisted: false`); when enabled with `mode: 'llm_assisted'`, a configurable small/fast model produces better summaries with automatic fallback to heuristic on any error. All behavior gated by `Legion::Settings[:llm][:context_curation]`: `enabled` (default `true`), `mode` (`'heuristic'`), `llm_assisted` (`false`), `llm_model` (`nil`), `tool_result_max_chars` (2000), `thinking_eviction` (`true`), `exchange_folding` (`true`), `superseded_eviction` (`true`), `dedup_enabled` (`true`), `dedup_threshold` (0.85), `target_context_tokens` (40000).
 - Message chain architecture with parent links and sidechain support in `ConversationStore` (closes #39): every message now carries `id` (UUID), `parent_id`, `sidechain` (default `false`), `message_group_id`, and `agent_id` fields; `build_chain(conversation_id, include_sidechains: false)` reconstructs ordered message history from parent links with rooted-leaf selection, parallel sibling recovery via `message_group_id`, and orphan appending; `sidechain_messages(conversation_id, agent_id: nil)` queries background/subagent messages with optional agent filter; `branch(conversation_id, from_message_id:)` creates a new conversation by copying history up to the given message; `store_metadata` / `read_metadata` provide tail-window session metadata storage; `migrate_parent_links!` backfills parent links on pre-migration sequential data; `messages()` backward-compatible flat array uses chain reconstruction when parent links are present, seq ordering otherwise; DB persistence adds `message_id`, `parent_id`, `sidechain`, `message_group_id`, `agent_id` columns when present (graceful degradation without migration)
@@ -1188,7 +1297,7 @@
 ### Added
 - `ResponseCache` module for async response delivery via memcached with spool overflow at 8MB
 - `DaemonClient` module for HTTP routing to LegionIO daemon with health caching (30s TTL)
-- `Legion::LLM.ask` one-shot method: daemon-first routing with direct RubyLLM fallback
+- `Legion::LLM.ask` one-shot method: daemon-first routing with direct provider execution
 - `DaemonDeniedError` and `DaemonRateLimitedError` error classes
 - Daemon settings: `daemon.url` and `daemon.enabled` in defaults
 - HTTP status code contract: 200 (cached), 201 (sync), 202 (async poll), 403, 429, 503

@@ -11,18 +11,18 @@ module Legion
 
         class << self
           def enabled?
-            Legion::Settings.dig(:llm, :shadow, :enabled) == true
+            shadow_setting(:enabled) == true
           end
 
           def should_sample?
             return false unless enabled?
 
-            rate = Legion::Settings.dig(:llm, :shadow, :sample_rate) || 0.1
+            rate = shadow_setting(:sample_rate, 0.1)
             rand < rate
           end
 
           def evaluate(primary_response:, messages: nil, shadow_model: nil)
-            shadow_model ||= Legion::Settings.dig(:llm, :shadow, :model) || 'gpt-4o-mini'
+            shadow_model ||= shadow_setting(:model, 'gpt-4o-mini')
             log.info(
               "[llm][shadow] evaluate primary_model=#{primary_response[:model]} shadow_model=#{shadow_model}"
             )
@@ -89,6 +89,10 @@ module Legion
           end
 
           private
+
+          def shadow_setting(key, default = nil)
+            Legion::LLM::Settings.value(:shadow, key, default: default)
+          end
 
           def record(comparison)
             history << comparison

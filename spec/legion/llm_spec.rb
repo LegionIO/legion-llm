@@ -81,15 +81,6 @@ RSpec.describe Legion::LLM do
     end
   end
 
-  describe '.chat' do
-    it 'returns a RubyLLM::Chat instance' do
-      fake_chat = instance_double(RubyLLM::Chat)
-      allow(RubyLLM).to receive(:chat).with(model: 'gpt-4o', provider: :openai).and_return(fake_chat)
-      chat = described_class.chat(model: 'gpt-4o', provider: :openai)
-      expect(chat).to be(fake_chat)
-    end
-  end
-
   describe 'auto_configure_defaults' do
     before do
       allow(Legion::LLM::Call::Providers).to receive(:verify_providers)
@@ -142,85 +133,66 @@ RSpec.describe Legion::LLM do
 
   describe Legion::LLM::Call::Providers do
     describe '#configure_bedrock' do
-      it 'configures with SigV4 when api_key and secret_key are present' do
-        described_class.send(:configure_bedrock, {
-                               api_key: 'AKID', secret_key: 'SECRET', region: 'us-east-2'
-                             })
-        expect(RubyLLM.config.bedrock_api_key).to eq('AKID')
-        expect(RubyLLM.config.bedrock_secret_key).to eq('SECRET')
+      it 'resolves and stores SigV4 credentials in provider config' do
+        config = { api_key: 'AKID', secret_key: 'SECRET', region: 'us-east-2' }
+
+        described_class.send(:configure_bedrock, config)
+
+        expect(config[:api_key]).to eq('AKID')
+        expect(config[:secret_key]).to eq('SECRET')
+        expect(config[:region]).to eq('us-east-2')
       end
 
-      it 'configures with bearer token when bearer_token is present' do
-        described_class.send(:configure_bedrock, {
-                               bearer_token: 'my-bearer-token', region: 'us-east-2'
-                             })
-        expect(RubyLLM.config.bedrock_bearer_token).to eq('my-bearer-token')
-        expect(RubyLLM.config.bedrock_region).to eq('us-east-2')
+      it 'resolves and stores bearer token credentials in provider config' do
+        config = { bearer_token: 'my-bearer-token', region: 'us-east-2' }
+
+        described_class.send(:configure_bedrock, config)
+
+        expect(config[:bearer_token]).to eq('my-bearer-token')
+        expect(config[:region]).to eq('us-east-2')
       end
 
-      it 'skips config when no credentials are provided' do
-        RubyLLM.config.bedrock_api_key = nil
-        RubyLLM.config.bedrock_bearer_token = nil
-        described_class.send(:configure_bedrock, { region: 'us-east-2' })
-        expect(RubyLLM.config.bedrock_api_key).to be_nil
-        expect(RubyLLM.config.bedrock_bearer_token).to be_nil
+      it 'still applies the default region when no credentials are provided' do
+        config = {}
+
+        described_class.send(:configure_bedrock, config)
+
+        expect(config[:region]).to eq('us-east-2')
       end
     end
 
     describe '#configure_azure' do
-      it 'configures with api_key when api_base and api_key are present' do
-        described_class.send(:configure_azure, {
-                               api_base: 'https://my-resource.openai.azure.com', api_key: 'az-key-123'
-                             })
-        expect(RubyLLM.config.azure_api_base).to eq('https://my-resource.openai.azure.com')
-        expect(RubyLLM.config.azure_api_key).to eq('az-key-123')
+      it 'resolves and stores api_key when api_base and api_key are present' do
+        config = { api_base: 'https://my-resource.openai.azure.com', api_key: 'az-key-123' }
+
+        described_class.send(:configure_azure, config)
+
+        expect(config[:api_key]).to eq('az-key-123')
       end
 
-      it 'configures with auth_token when api_base and auth_token are present' do
-        described_class.send(:configure_azure, {
-                               api_base: 'https://my-resource.openai.azure.com', auth_token: 'bearer-tok'
-                             })
-        expect(RubyLLM.config.azure_api_base).to eq('https://my-resource.openai.azure.com')
-        expect(RubyLLM.config.azure_ai_auth_token).to eq('bearer-tok')
+      it 'resolves and stores auth_token when api_base and auth_token are present' do
+        config = { api_base: 'https://my-resource.openai.azure.com', auth_token: 'bearer-tok' }
+
+        described_class.send(:configure_azure, config)
+
+        expect(config[:auth_token]).to eq('bearer-tok')
       end
 
       it 'skips config when api_base is missing' do
-        RubyLLM.config.azure_api_base = nil
-        described_class.send(:configure_azure, { api_key: 'az-key-123' })
-        expect(RubyLLM.config.azure_api_base).to be_nil
+        config = { api_key: 'az-key-123' }
+
+        described_class.send(:configure_azure, config)
+
+        expect(config[:api_key]).to eq('az-key-123')
       end
 
       it 'skips config when both api_key and auth_token are missing' do
-        RubyLLM.config.azure_api_base = nil
-        described_class.send(:configure_azure, { api_base: 'https://test.openai.azure.com' })
-        expect(RubyLLM.config.azure_api_base).to be_nil
+        config = { api_base: 'https://test.openai.azure.com' }
+
+        described_class.send(:configure_azure, config)
+
+        expect(config).to eq(api_base: 'https://test.openai.azure.com')
       end
-    end
-  end
-
-  describe 'Bedrock bearer auth monkey patch' do
-    before do
-      require 'legion/llm/bedrock_bearer_auth'
-    end
-
-    it 'adds bedrock_bearer_token accessor to Configuration' do
-      expect(RubyLLM::Configuration.instance_methods).to include(:bedrock_bearer_token, :bedrock_bearer_token=)
-    end
-
-    it 'changes configuration_requirements when bearer token is set' do
-      RubyLLM.config.bedrock_bearer_token = 'test-token'
-      reqs = RubyLLM::Providers::Bedrock.configuration_requirements
-      expect(reqs).to eq(%i[bedrock_bearer_token bedrock_region])
-    end
-
-    it 'keeps SigV4 requirements when no bearer token is set' do
-      RubyLLM.config.bedrock_bearer_token = nil
-      reqs = RubyLLM::Providers::Bedrock.configuration_requirements
-      expect(reqs).to eq(%i[bedrock_api_key bedrock_secret_key bedrock_region])
-    end
-
-    after do
-      RubyLLM.config.bedrock_bearer_token = nil
     end
   end
 end

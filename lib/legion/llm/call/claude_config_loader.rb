@@ -14,11 +14,11 @@ module Legion
         module_function
 
         def claude_settings_path
-          File.expand_path(Legion::LLM.settings.dig(:claude_cli, :settings_path) || '~/.claude/settings.json')
+          File.expand_path(Legion::LLM::Settings.value(:claude_cli, :settings_path, default: '~/.claude/settings.json'))
         end
 
         def claude_config_path
-          File.expand_path(Legion::LLM.settings.dig(:claude_cli, :config_path) || '~/.claude.json')
+          File.expand_path(Legion::LLM::Settings.value(:claude_cli, :config_path, default: '~/.claude.json'))
         end
 
         def load
@@ -88,25 +88,29 @@ module Legion
         end
 
         def apply_api_keys(config)
-          llm = Legion::LLM.settings
-          providers = llm[:providers]
+          llm = Legion::LLM::Settings.current_settings
+          providers = Legion::LLM::Settings.config_value(llm, :providers, {})
+          providers = llm[:providers] = {} unless providers.is_a?(Hash)
 
           anthropic_key = first_present(config[:anthropicApiKey], config.dig(:env, :ANTHROPIC_API_KEY))
-          if anthropic_key && !setting_has_usable_credential?(providers.dig(:anthropic, :api_key))
-            providers[:anthropic][:api_key] = anthropic_key
+          anthropic = provider_config(providers, :anthropic)
+          if anthropic_key && !setting_has_usable_credential?(Legion::LLM::Settings.config_value(anthropic, :api_key))
+            anthropic[:api_key] = anthropic_key
             log.debug 'Imported Anthropic API key from Claude CLI config'
           end
 
           openai_key = first_present(config[:openaiApiKey], config.dig(:env, :OPENAI_API_KEY), config.dig(:env, :CODEX_API_KEY))
-          if openai_key && !setting_has_usable_credential?(providers.dig(:openai, :api_key))
-            providers[:openai][:api_key] = openai_key
+          openai = provider_config(providers, :openai)
+          if openai_key && !setting_has_usable_credential?(Legion::LLM::Settings.config_value(openai, :api_key))
+            openai[:api_key] = openai_key
             log.debug 'Imported OpenAI API key from Claude CLI config'
           end
 
           bedrock_token = bedrock_bearer_token
-          return unless bedrock_token && !setting_has_usable_credential?(providers.dig(:bedrock, :bearer_token))
+          bedrock = provider_config(providers, :bedrock)
+          return unless bedrock_token && !setting_has_usable_credential?(Legion::LLM::Settings.config_value(bedrock, :bearer_token))
 
-          providers[:bedrock][:bearer_token] = bedrock_token
+          bedrock[:bearer_token] = bedrock_token
           log.debug 'Imported Bedrock bearer token from Claude settings.json env section'
         end
 
@@ -114,11 +118,17 @@ module Legion
           return unless config[:preferredModel] || config[:model]
 
           model = config[:preferredModel] || config[:model]
-          llm = Legion::LLM.settings
-          return if llm[:default_model]
+          return if Legion::LLM::Settings.value(:default_model)
 
-          llm[:default_model] = model
+          Legion::LLM::Settings.set_value(:default_model, value: model)
           log.debug "Imported model preference from Claude CLI config: #{model}"
+        end
+
+        def provider_config(providers, provider)
+          config = Legion::LLM::Settings.config_value(providers, provider, {})
+          return config if config.is_a?(Hash)
+
+          providers[provider] = {}
         end
 
         def setting_has_usable_credential?(value)
