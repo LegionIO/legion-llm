@@ -42,6 +42,7 @@ module Legion
         # @param provider [Symbol, nil] explicit provider override
         # @return [Resolution, nil]
         def resolve(intent: nil, tier: nil, model: nil, provider: nil, exclude: {})
+          log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider}"
           return explicit_resolution(tier, provider, model) if tier
 
           return nil unless routing_enabled? && intent
@@ -62,6 +63,7 @@ module Legion
         end
 
         def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil, exclude: {})
+          log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations}"
           max = max_escalations || escalation_max_attempts
           return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model)], max_attempts: max) if tier
           return chain_from_defaults(model, provider, max) unless routing_enabled? && intent
@@ -94,9 +96,20 @@ module Legion
         # :frontier       — available unless privacy mode
         def tier_available?(tier)
           sym = tier.to_sym
-          return false if external_tier?(sym) && privacy_mode?
-          return Legion.const_defined?('Transport', false) if sym == :fleet
-          return openai_compat_available? if sym == :openai_compat
+          if external_tier?(sym) && privacy_mode?
+            log.debug "[llm][router] action=tier_available tier=#{sym} available=false reason=privacy_mode"
+            return false
+          end
+          if sym == :fleet
+            available = Legion.const_defined?('Transport', false)
+            log.debug "[llm][router] action=tier_available tier=fleet available=#{available}"
+            return available
+          end
+          if sym == :openai_compat
+            available = openai_compat_available?
+            log.debug "[llm][router] action=tier_available tier=openai_compat available=#{available}"
+            return available
+          end
 
           true
         end

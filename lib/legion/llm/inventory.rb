@@ -37,6 +37,7 @@ module Legion
 
       class << self
         def offerings(filters = {})
+          log.debug "[llm][inventory] action=offerings.enter filters=#{filters.keys}"
           normalized_filters = normalize_filter_hash(filters)
           list = []
           providers_config.each do |provider_family, config|
@@ -48,7 +49,9 @@ module Legion
           list.concat(discovery_offerings)
           list.concat(native_provider_offerings)
           list = dedupe_offerings(list)
-          filter_offerings(list, normalized_filters)
+          result = filter_offerings(list, normalized_filters)
+          log.debug "[llm][inventory] action=offerings.complete total=#{result.size}"
+          result
         rescue NameError, ArgumentError, TypeError => e
           handle_exception(e, level: :error, handled: false, operation: 'llm.inventory.offerings')
           raise

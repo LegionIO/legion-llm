@@ -11,6 +11,7 @@ module Legion
 
         class << self
           def generate(text:, model: nil, provider: nil, dimensions: nil, task: :document)
+            log.debug "[llm][embeddings] action=generate.enter provider=#{provider} model=#{model} task=#{task}"
             return { vector: nil, model: model, provider: provider, error: 'LLM not started' } unless LLM.started?
 
             provider ||= resolve_provider
@@ -33,6 +34,7 @@ module Legion
             vector = apply_dimension_enforcement(vector, provider)
             return dimension_error(model, provider, vector) if vector.is_a?(String)
 
+            log.debug "[llm][embeddings] action=generate.complete provider=#{provider} model=#{model} dimensions=#{vector&.size || 0}"
             { vector: vector, model: model, provider: provider, dimensions: vector&.size || 0, tokens: tokens }
           rescue StandardError => e
             handle_exception(e, level: :warn)
@@ -40,6 +42,7 @@ module Legion
           end
 
           def generate_batch(texts:, model: nil, provider: nil, dimensions: nil, task: :document)
+            log.debug "[llm][embeddings] action=generate_batch.enter count=#{texts.size} provider=#{provider} model=#{model}"
             return texts.map { |_| { vector: nil, error: 'LLM not started' } } unless LLM.started?
 
             provider ||= resolve_provider
@@ -187,6 +190,7 @@ module Legion
           end
 
           def handle_embed_failure(error, text:, failed_provider:, failed_model:)
+            log.debug "[llm][embeddings] action=handle_embed_failure failed_provider=#{failed_provider} failed_model=#{failed_model} error=#{error.class}"
             fallback = find_fallback_provider(failed_provider)
             if fallback
               generate(text: text, model: fallback[:model], provider: fallback[:provider])

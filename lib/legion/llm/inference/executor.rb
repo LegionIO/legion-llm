@@ -86,6 +86,7 @@ module Legion
         end
 
         def call
+          log.debug "[llm][executor] action=call request_id=#{@request.id} profile=#{@profile}"
           execute_steps
           build_response
         end
@@ -93,6 +94,7 @@ module Legion
         def call_stream(&block)
           return call unless block
 
+          log.debug "[llm][executor] action=call_stream request_id=#{@request.id} profile=#{@profile}"
           execute_pre_provider_steps
           step_provider_call_stream(&block)
           execute_post_provider_steps
@@ -167,6 +169,7 @@ module Legion
         end
 
         def step_tracing_init
+          log.debug "[llm][executor] action=step_tracing_init existing=#{!@request.tracing.nil?}"
           @tracing = Tracing.init(existing: @request.tracing)
           @timeline.record(
             category: :internal, key: 'tracing:init',
@@ -178,17 +181,29 @@ module Legion
         def step_idempotency; end
 
         def step_conversation_uuid
-          return if @request.conversation_id
+          if @request.conversation_id
+            log.debug "[llm][executor] action=step_conversation_uuid existing=#{@request.conversation_id}"
+            return
+          end
 
-          @request = @request.with(conversation_id: "conv_#{SecureRandom.hex(8)}")
+          new_id = "conv_#{SecureRandom.hex(8)}"
+          log.debug "[llm][executor] action=step_conversation_uuid generated=#{new_id}"
+          @request = @request.with(conversation_id: new_id)
         end
 
         def step_context_load
           conv_id = @request.conversation_id
-          return unless conv_id
+          unless conv_id
+            log.debug '[llm][executor] action=step_context_load skipped=no_conversation_id'
+            return
+          end
 
           history = Conversation.messages(conv_id)
-          return if history.empty?
+          if history.empty?
+            log.debug "[llm][executor] action=step_context_load conversation_id=#{conv_id} history=empty"
+            return
+          end
+          log.debug "[llm][executor] action=step_context_load conversation_id=#{conv_id} history_size=#{history.size}"
 
           curator = Context::Curator.new(conversation_id: conv_id)
           curated = curator.curated_messages
@@ -274,6 +289,7 @@ module Legion
         end
 
         def step_routing
+          log.debug "[llm][executor] action=step_routing.enter requested_provider=#{@request.routing[:provider]} requested_model=#{@request.routing[:model]}"
           @timestamps[:routing_start] = Time.now
           provider = @request.routing[:provider]
           model = @request.routing[:model]
@@ -337,7 +353,9 @@ module Legion
         end
 
         def step_provider_call
-          if pipeline_escalation_enabled?
+          escalation = pipeline_escalation_enabled?
+          log.debug "[llm][executor] action=step_provider_call provider=#{@resolved_provider} model=#{@resolved_model} escalation=#{escalation}"
+          if escalation
             run_provider_call_with_escalation
           else
             run_provider_call_single
@@ -388,6 +406,7 @@ module Legion
           threshold = pipeline_escalation_quality_threshold
           quality_check = @request.extra[:quality_check]
           succeeded = false
+          log.debug "[llm][executor] action=escalation.enter chain_size=#{chain.size} threshold=#{threshold}"
 
           chain.each do |resolution|
             start_time = Time.now
@@ -549,6 +568,7 @@ module Legion
           max_rounds = llm_setting(:max_tool_rounds, MAX_NATIVE_TOOL_ROUNDS).to_i
           max_rounds = MAX_NATIVE_TOOL_ROUNDS unless max_rounds.positive?
           round = 0
+          log.debug "[llm][executor] action=native_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
 
           loop do
             result = Call::Dispatch.dispatch_chat(
@@ -559,9 +579,14 @@ module Legion
             )
             result = Call::NativeResponseAdapter.coerce_result(result)
             tool_calls = Array(result[:tool_calls]).map { |tool_call| normalize_native_tool_call(tool_call) }
-            return result if tool_calls.empty?
+            if tool_calls.empty?
+              log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=no_tool_calls"
+              return result
+            end
 
             round += 1
+            tool_names = tool_calls.map { |tc| tc[:name] }.join(',')
+            log.debug "[llm][executor] action=native_tool_loop.round round=#{round} tool_count=#{tool_calls.size} tools=#{tool_names}"
             raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds" if round > max_rounds
 
             messages << native_assistant_tool_message(result, tool_calls)
@@ -580,6 +605,7 @@ module Legion
             definitions = []
             Array(@request.tools).each { |tool| add_native_tool_definition(definitions, tool) }
             add_registry_tool_definitions(definitions) unless @request.tools.is_a?(Array) && @request.tools.empty?
+            log.debug "[llm][executor] action=native_tool_definitions.built count=#{definitions.size}"
             definitions
           end
         end
@@ -676,6 +702,7 @@ module Legion
         def dispatch_native_tool_call(tool_call, round)
           normalized_call = normalize_native_tool_call(tool_call)
           source = find_tool_source(normalized_call[:name])
+          log.debug "[llm][executor] action=dispatch_native_tool_call round=#{round} tool=#{normalized_call[:name]} source_type=#{source[:type]}"
           emit_tool_call_event(normalized_call, round)
           result = ToolDispatcher.dispatch(
             tool_call:   normalized_call,
@@ -792,15 +819,19 @@ module Legion
         end
 
         def execute_pre_provider_steps
+          log.debug "[llm][executor] action=pre_provider_steps.enter step_count=#{PRE_PROVIDER_STEPS.size}"
           PRE_PROVIDER_STEPS.each do |step|
             next if Profile.skip?(@profile, step)
 
             execute_step(step) { send(:"step_#{step}") }
           end
+          log.debug '[llm][executor] action=pre_provider_steps.complete'
         end
 
         def execute_post_provider_steps
-          if async_post_enabled?
+          async = async_post_enabled?
+          log.debug "[llm][executor] action=post_provider_steps.enter async=#{async} step_count=#{POST_PROVIDER_STEPS.size}"
+          if async
             execute_post_provider_steps_mixed
           else
             POST_PROVIDER_STEPS.each do |step|
@@ -809,6 +840,7 @@ module Legion
               execute_step(step) { send(:"step_#{step}") }
             end
           end
+          log.debug '[llm][executor] action=post_provider_steps.complete'
         end
 
         def execute_post_provider_steps_mixed
