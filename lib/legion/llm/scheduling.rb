@@ -80,7 +80,7 @@ module Legion
           s = Legion::LLM::Settings.value(:scheduling, default: {})
           s.is_a?(Hash) ? s.transform_keys(&:to_sym) : {}
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.scheduling.settings')
           {}
         end
 
@@ -95,7 +95,7 @@ module Legion
           end_h   = Integer(parts[1], 10)
           (start_h..end_h)
         rescue ArgumentError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.scheduling.peak_range')
           DEFAULT_PEAK_RANGE
         end
 
