@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.8.48] - 2026-04-29
+
+### Added
+- `ToolDefinition.from_registry_entry` builds tool definitions from `Legion::Settings::Extensions` registry entries.
+- `Dispatcher` checks `Settings::Extensions` for tool resolution before falling back to `Tools::Registry` and `Catalog::Registry`.
+- `Executor#add_registry_tool_definitions` reads from `Settings::Extensions` when available, falling back to `Legion::Tools::Registry` for backward compatibility.
+- `Steps::ToolDiscovery` discovers tools from `Settings::Extensions` when available, falling back to `Legion::Tools::Registry`.
+
+### Changed
+- Bumped `legion-settings` dependency floor to `>= 1.3.20` (requires `Settings::Extensions` module).
+
 ## [0.8.47] - 2026-04-29
 
 ### Fixed

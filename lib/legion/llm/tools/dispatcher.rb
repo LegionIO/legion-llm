@@ -50,10 +50,30 @@ module Legion
         end
 
         def check_override(tool_name)
+          registry_override = check_registry_override(tool_name)
+          return registry_override if registry_override
+
           settings_override = check_settings_override(tool_name)
           return settings_override if settings_override
 
           check_catalog_override(tool_name)
+        end
+
+        def check_registry_override(tool_name)
+          return nil unless defined?(Legion::Settings::Extensions) &&
+                            Legion::Settings::Extensions.respond_to?(:find_tool)
+
+          entry = Legion::Settings::Extensions.find_tool(tool_name)
+          return nil unless entry
+
+          if entry[:tool_class]
+            { type: :registry, tool_class: entry[:tool_class] }
+          elsif entry[:extension] && entry[:runner] && entry[:function]
+            { type: :extension, lex: entry[:extension], runner: entry[:runner], function: entry[:function] }
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.tools.dispatcher.check_registry_override', tool_name: tool_name)
+          nil
         end
 
         def check_settings_override(tool_name)

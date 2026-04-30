@@ -39,8 +39,36 @@ module Legion
           private
 
           def discover_registry_tools
-            return unless defined?(::Legion::Tools::Registry)
+            if defined?(Legion::Settings::Extensions) &&
+               Legion::Settings::Extensions.respond_to?(:tools) &&
+               Legion::Settings::Extensions.tools.any?
+              discover_settings_extensions_tools
+            elsif defined?(::Legion::Tools::Registry)
+              discover_legacy_registry_tools
+            end
+          rescue StandardError => e
+            @warnings << "Registry tool discovery error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.tool_discovery.registry')
+          end
 
+          def discover_settings_extensions_tools
+            entries = Legion::Settings::Extensions.filter_tools(deferred: false)
+            entries.each do |entry|
+              @discovered_tools << {
+                name:        entry[:name],
+                description: entry[:description] || '',
+                parameters:  entry[:input_schema] || entry[:parameters] || {},
+                source:      { type: :registry, server: 'legion' }
+              }
+            end
+
+            log.info(
+              "[llm][tools] discover request_id=#{@request.id} " \
+              "settings_extensions_tools=#{entries.size}"
+            )
+          end
+
+          def discover_legacy_registry_tools
             ::Legion::Tools::Registry.tools.each do |tool_class|
               name = tool_class.respond_to?(:tool_name) ? tool_class.tool_name : tool_class.name
               desc = tool_class.respond_to?(:description) ? tool_class.description : ''
@@ -57,9 +85,6 @@ module Legion
               "[llm][tools] discover request_id=#{@request.id} " \
               "registry_tools=#{::Legion::Tools::Registry.tools.size}"
             )
-          rescue StandardError => e
-            @warnings << "Registry tool discovery error: #{e.message}"
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.tool_discovery.registry')
           end
 
           def discover_client_tools
