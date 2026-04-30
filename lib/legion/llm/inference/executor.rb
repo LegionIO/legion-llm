@@ -132,60 +132,6 @@ module Legion
           end
         end
 
-        def inject_registry_tools(session)
-          return unless defined?(::Legion::Tools::Registry)
-
-          injected_names = []
-
-          always_tools = Array(::Legion::Tools::Registry.tools)
-          triggered_tools = @triggered_tools.any? ? Array(@triggered_tools) : []
-          inject_limit = registry_tool_limit
-          prioritized_tools = local_provider? ? triggered_tools + always_tools : always_tools + triggered_tools
-
-          prioritized_tools.each do |tool_class|
-            break if inject_limit && injected_names.size >= inject_limit
-
-            inject_tool_class(session, tool_class, injected_names, operation: 'llm.pipeline.inject_registry_tool')
-          end
-
-          # Requested deferred tools — inject only if explicitly requested
-          deferred = ::Legion::Tools::Registry.respond_to?(:deferred_tools) ? ::Legion::Tools::Registry.deferred_tools : []
-          requested = requested_deferred_tool_names
-          if requested.any?
-            deferred.each do |tool_class|
-              inject_tool_class(session, tool_class, injected_names, operation: 'llm.pipeline.inject_deferred_tool') do |adapter|
-                requested.include?(adapter.name)
-              end
-            end
-          end
-
-          log.info(
-            "[llm][tools] inject request_id=#{@request.id} " \
-            "always=#{::Legion::Tools::Registry.tools.size} " \
-            "triggered=#{@triggered_tools.size} " \
-            "limit=#{inject_limit || 'none'} " \
-            "deferred_available=#{deferred.size} " \
-            "requested_deferred=#{requested.size} " \
-            "injected=#{injected_names.size} names=#{injected_names.first(25).join(',')}"
-          )
-        rescue StandardError => e
-          @warnings << "Tool injection error: #{e.message}"
-          handle_exception(e, level: :warn, operation: 'llm.pipeline.inject_tools')
-        end
-
-        def inject_tool_class(_session, tool_class, injected_names, operation:)
-          definition = Types::ToolDefinition.from_tool_class(tool_class)
-          return if injected_names.include?(definition.name)
-          return if block_given? && !yield(definition)
-
-          @injected_tool_map[definition.name] = tool_class
-          @native_tool_source_map[definition.name] = definition.source
-          injected_names << definition.name
-        rescue StandardError => e
-          @warnings << "Failed to inject tool: #{e.message}"
-          handle_exception(e, level: :warn, operation: operation)
-        end
-
         def registry_tool_limit
           return nil unless local_provider?
 
@@ -197,9 +143,6 @@ module Legion
         def local_provider?
           %i[ollama vllm].include?(@resolved_provider&.to_sym)
         end
-
-        # Backwards compatibility alias
-        alias inject_discovered_tools inject_registry_tools
 
         def execute_steps
           executed = 0
@@ -661,14 +604,12 @@ module Legion
         end
 
         def add_registry_tool_definitions(definitions)
-          if defined?(Legion::Settings::Extensions) &&
-             Legion::Settings::Extensions.respond_to?(:tools) &&
-             Legion::Settings::Extensions.respond_to?(:filter_tools) &&
-             Array(Legion::Settings::Extensions.tools).any?
-            add_settings_extensions_tool_definitions(definitions)
-          elsif defined?(::Legion::Tools::Registry)
-            add_legacy_registry_tool_definitions(definitions)
-          end
+          return unless defined?(Legion::Settings::Extensions) &&
+                        Legion::Settings::Extensions.respond_to?(:tools) &&
+                        Legion::Settings::Extensions.respond_to?(:filter_tools) &&
+                        Array(Legion::Settings::Extensions.tools).any?
+
+          add_settings_extensions_tool_definitions(definitions)
         rescue StandardError => e
           @warnings << "Tool definition error: #{e.message}"
           handle_exception(e, level: :warn, operation: 'llm.pipeline.native_registry_tools')
@@ -713,45 +654,6 @@ module Legion
             next if injected_names.include?(definition.name)
 
             @injected_tool_map[definition.name] = entry[:tool_class] if entry[:tool_class]
-            @native_tool_source_map[definition.name] = definition.source
-            definitions << definition
-            injected_names << definition.name
-          end
-        end
-
-        def add_legacy_registry_tool_definitions(definitions)
-          injected_names = definitions.map(&:name)
-          always_tools = Array(::Legion::Tools::Registry.tools)
-          triggered_tools = @triggered_tools.any? ? Array(@triggered_tools) : []
-          inject_limit = registry_tool_limit
-          prioritized_tools = local_provider? ? triggered_tools + always_tools : always_tools + triggered_tools
-
-          prioritized_tools.each do |tool_class|
-            break if inject_limit && injected_names.size >= inject_limit
-
-            definition = Types::ToolDefinition.from_tool_class(tool_class)
-            next if injected_names.include?(definition.name)
-
-            @injected_tool_map[definition.name] = tool_class
-            @native_tool_source_map[definition.name] = definition.source
-            definitions << definition
-            injected_names << definition.name
-          end
-
-          add_requested_deferred_tool_definitions(definitions, injected_names)
-        end
-
-        def add_requested_deferred_tool_definitions(definitions, injected_names)
-          deferred = ::Legion::Tools::Registry.respond_to?(:deferred_tools) ? ::Legion::Tools::Registry.deferred_tools : []
-          requested = requested_deferred_tool_names
-          return if requested.empty?
-
-          deferred.each do |tool_class|
-            definition = Types::ToolDefinition.from_tool_class(tool_class)
-            next unless requested.include?(definition.name)
-            next if injected_names.include?(definition.name)
-
-            @injected_tool_map[definition.name] = tool_class
             @native_tool_source_map[definition.name] = definition.source
             definitions << definition
             injected_names << definition.name

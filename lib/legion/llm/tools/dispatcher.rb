@@ -24,9 +24,7 @@ module Legion
 
           result = case source[:type]
                    when :mcp
-                     mcp_result = dispatch_mcp(tool_call, source)
-                     run_shadow(tool_call, source, mcp_result)
-                     mcp_result
+                     dispatch_mcp(tool_call, source)
                    when :extension
                      dispatch_extension(tool_call, source)
                    when :registry
@@ -53,10 +51,7 @@ module Legion
           registry_override = check_registry_override(tool_name)
           return registry_override if registry_override
 
-          settings_override = check_settings_override(tool_name)
-          return settings_override if settings_override
-
-          check_catalog_override(tool_name)
+          check_settings_override(tool_name)
         end
 
         def check_registry_override(tool_name)
@@ -88,21 +83,6 @@ module Legion
             lex:      override[:lex] || override['lex'],
             runner:   override[:runner] || override['runner'],
             function: override[:function] || override['function']
-          }
-        end
-
-        def check_catalog_override(tool_name)
-          return nil unless defined?(Legion::Extensions::Catalog::Registry)
-          return nil unless Legion::LLM::Tools::Confidence.should_override?(tool_name)
-
-          cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
-          return nil unless cap
-
-          {
-            type:     :extension,
-            lex:      cap.extension,
-            runner:   cap.runner,
-            function: cap.function
           }
         end
 
@@ -179,27 +159,6 @@ module Legion
 
         def result_error?(result)
           result.is_a?(Hash) && (result[:error] || result['error'])
-        end
-
-        def run_shadow(tool_call, _source, mcp_result)
-          tool_name = tool_call[:name]
-          return unless Legion::LLM::Tools::Confidence.should_shadow?(tool_name)
-          return unless defined?(Legion::Extensions::Catalog::Registry)
-
-          cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
-          return unless cap
-
-          shadow_source = { type: :extension, lex: cap.extension, runner: cap.runner, function: cap.function }
-          shadow_result = dispatch_extension(tool_call, shadow_source)
-
-          if shadow_result[:status] == :success && mcp_result[:status] == :success
-            Legion::LLM::Tools::Confidence.record_success(tool_name)
-          else
-            Legion::LLM::Tools::Confidence.record_failure(tool_name)
-          end
-        rescue StandardError => e
-          Legion::LLM::Tools::Confidence.record_failure(tool_name) if tool_name
-          handle_exception(e, level: :debug, operation: 'llm.tools.dispatcher.shadow_execution', tool_name: tool_name)
         end
       end
     end

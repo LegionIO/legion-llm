@@ -109,26 +109,15 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
   end
 
-  describe '#add_registry_tool_definitions (legacy Tools::Registry fallback)' do
-    it 'falls back to Tools::Registry when Settings::Extensions is not defined' do
+  describe '#add_registry_tool_definitions when Settings::Extensions is not defined' do
+    it 'does not add any tools' do
       hide_const('Legion::Settings::Extensions') if defined?(Legion::Settings::Extensions)
-
-      registry_tool = Class.new do
-        define_singleton_method(:tool_name) { 'legacy_tool' }
-        define_singleton_method(:description) { 'Legacy' }
-        define_singleton_method(:input_schema) { {} }
-      end
-      registry_mod = Module.new do
-        define_singleton_method(:tools) { [registry_tool] }
-        define_singleton_method(:deferred_tools) { [] }
-      end
-      stub_const('Legion::Tools::Registry', registry_mod)
 
       executor = described_class.new(base_request)
       definitions = []
       executor.send(:add_registry_tool_definitions, definitions)
 
-      expect(definitions.map(&:name)).to include('legacy_tool')
+      expect(definitions).to be_empty
     end
   end
 end

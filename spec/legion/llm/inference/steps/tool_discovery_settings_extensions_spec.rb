@@ -48,31 +48,19 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolDiscovery do
     end
 
     context 'when Settings::Extensions is not available' do
-      it 'falls back to Legion::Tools::Registry' do
+      it 'does not discover any tools' do
         hide_const('Legion::Settings::Extensions') if defined?(Legion::Settings::Extensions)
-
-        registry_tool = Class.new do
-          define_singleton_method(:tool_name) { 'legacy_discover_tool' }
-          define_singleton_method(:description) { 'Legacy' }
-          define_singleton_method(:input_schema) { {} }
-        end
-        registry_mod = Module.new do
-          define_singleton_method(:tools) { [registry_tool] }
-        end
-        stub_const('Legion::Tools::Registry', registry_mod)
 
         executor.send(:discover_registry_tools)
         discovered = executor.instance_variable_get(:@discovered_tools)
 
-        expect(discovered.size).to eq(1)
-        expect(discovered.first[:name]).to eq('legacy_discover_tool')
+        expect(discovered).to be_empty
       end
     end
 
     context 'when neither registry is available' do
       it 'does not discover any tools' do
         hide_const('Legion::Settings::Extensions') if defined?(Legion::Settings::Extensions)
-        hide_const('Legion::Tools::Registry') if defined?(Legion::Tools::Registry)
 
         executor.send(:discover_registry_tools)
         discovered = executor.instance_variable_get(:@discovered_tools)

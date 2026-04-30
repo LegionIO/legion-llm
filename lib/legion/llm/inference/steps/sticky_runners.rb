@@ -31,14 +31,15 @@ module Legion
                 (v[:tier] == :executed && deferred_count < v[:expires_after_deferred_call])
             end.keys
 
-            if defined?(::Legion::Tools::Registry)
-              ::Legion::Tools::Registry.deferred_tools.each do |tool_class|
-                key = "#{tool_class.extension}_#{tool_class.runner}"
+            if defined?(Legion::Settings::Extensions) &&
+               Legion::Settings::Extensions.respond_to?(:filter_tools)
+              Legion::Settings::Extensions.filter_tools(deferred: true).each do |entry|
+                key = "#{entry[:extension]}_#{entry[:runner]}"
                 next unless live_keys.include?(key)
-                next if tool_class.respond_to?(:sticky) && tool_class.sticky == false
-                next if @triggered_tools.any? { |t| t.tool_name == tool_class.tool_name }
+                next if entry[:sticky] == false
+                next if @triggered_tools.any? { |t| t.is_a?(Hash) ? t[:name] == entry[:name] : t.tool_name == entry[:name] }
 
-                @triggered_tools << tool_class
+                @triggered_tools << entry
               end
             end
 
