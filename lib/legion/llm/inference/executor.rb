@@ -1323,9 +1323,12 @@ module Legion
             conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
             message:         msg.to_h,
             routing:         build_response_routing,
-            tokens:          @extracted_tokens,
+            tokens:          build_response_tokens,
+            thinking:        extract_thinking,
             stop:            extract_stop_reason,
             tools:           response_tool_calls,
+            stream:          @request.stream == true,
+            cache:           build_response_cache,
             cost:            estimate_response_cost,
             timestamps:      @timestamps,
             enrichments:     @enrichments,
@@ -1338,7 +1341,8 @@ module Legion
             classification:  @request.classification,
             billing:         @request.billing,
             test:            @request.test,
-            quality:         @confidence_score&.to_h
+            quality:         @confidence_score&.to_h,
+            features:        build_response_features
           )
         end
 
@@ -1369,6 +1373,85 @@ module Legion
           end
 
           routing
+        end
+
+        def build_response_tokens
+          tokens = @extracted_tokens
+          return tokens unless tokens.respond_to?(:input_tokens)
+
+          result = {
+            input_tokens:       tokens.input_tokens.to_i,
+            output_tokens:      tokens.output_tokens.to_i,
+            cache_read_tokens:  tokens.respond_to?(:cache_read_tokens) ? tokens.cache_read_tokens.to_i : 0,
+            cache_write_tokens: tokens.respond_to?(:cache_write_tokens) ? tokens.cache_write_tokens.to_i : 0,
+            total:              tokens.input_tokens.to_i + tokens.output_tokens.to_i
+          }
+
+          context_window = @resolved_offering_metadata&.dig(:limits, :context_window) ||
+                           @resolved_offering_metadata&.dig(:context_window)
+          if context_window&.to_i&.positive?
+            result[:context_window] = context_window.to_i
+            result[:utilization]    = (result[:input_tokens].to_f / context_window.to_i).round(4)
+            result[:headroom]       = context_window.to_i - result[:input_tokens]
+          end
+
+          result
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.build_response_tokens')
+          @extracted_tokens
+        end
+
+        def extract_thinking
+          return nil unless @raw_response
+
+          thinking_content = if @raw_response.respond_to?(:thinking) && @raw_response.thinking
+                               @raw_response.thinking
+                             elsif @raw_response.respond_to?(:metadata) && @raw_response.metadata.is_a?(Hash)
+                               @raw_response.metadata[:thinking] || @raw_response.metadata['thinking']
+                             end
+          return nil unless thinking_content
+
+          {
+            content: thinking_content,
+            enabled: true,
+            config:  @request.thinking
+          }
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.extract_thinking')
+          nil
+        end
+
+        def build_response_cache
+          return {} unless @extracted_tokens
+
+          cache_read  = @extracted_tokens.respond_to?(:cache_read_tokens) ? @extracted_tokens.cache_read_tokens.to_i : 0
+          cache_write = @extracted_tokens.respond_to?(:cache_write_tokens) ? @extracted_tokens.cache_write_tokens.to_i : 0
+          return {} if cache_read.zero? && cache_write.zero?
+
+          {
+            read_tokens:  cache_read,
+            write_tokens: cache_write,
+            hit:          cache_read.positive?,
+            strategy:     @request.respond_to?(:cache) ? @request.cache : nil
+          }
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.build_response_cache')
+          {}
+        end
+
+        def build_response_features
+          features = {}
+          features[:thinking]       = true if @request.thinking
+          features[:streaming]      = true if @request.stream == true
+          features[:tools]          = true if response_tool_calls&.any?
+          features[:prompt_caching] = true if @extracted_tokens.respond_to?(:cache_read_tokens) &&
+                                              (@extracted_tokens.cache_read_tokens.to_i.positive? ||
+                                               @extracted_tokens.cache_write_tokens.to_i.positive?)
+          features[:enrichments]    = true if @enrichments&.any?
+          features.empty? ? nil : features
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.build_response_features')
+          nil
         end
 
         def extract_stop_reason

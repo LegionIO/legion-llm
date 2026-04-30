@@ -124,7 +124,7 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
 
     expect(chunks).to eq(['native ', 'stream'])
     expect(response.message[:content]).to eq('native stream claude-opus-4-6 1')
-    expect(response.tokens.input_tokens).to eq(8)
+    expect(response.tokens[:input_tokens]).to eq(8)
     expect(response.routing[:offering_id]).to eq('anthropic:test:chat:claude-opus-4-6')
   end
 
