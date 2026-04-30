@@ -35,20 +35,13 @@ module Legion
         end
 
         def self.from_registry_entry(entry)
-          source =
-            if entry[:tool_class]
-              {
-                type:       :registry,
-                tool_class: entry[:tool_class]
-              }
-            else
-              {
-                type:      :extension,
-                extension: entry[:extension],
-                runner:    entry[:runner],
-                function:  entry[:function]
-              }
-            end
+          source = {
+            type:       entry[:tool_class] ? :registry : :extension,
+            tool_class: entry[:tool_class],
+            extension:  entry[:extension],
+            runner:     entry[:runner],
+            function:   entry[:function]
+          }.compact
 
           build(
             name:        entry[:name],
