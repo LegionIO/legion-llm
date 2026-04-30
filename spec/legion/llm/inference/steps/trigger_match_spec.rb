@@ -151,9 +151,16 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
             [matched, per_word]
           end
         end)
-        stub_const('Legion::Tools::Registry', Module.new do
-          define_singleton_method(:always_loaded_names) { ['always_tool'] }
-        end)
+        extensions_mod = Module.new do
+          define_singleton_method(:filter_tools) do |**criteria|
+            if criteria[:deferred] == false
+              [{ name: 'always_tool' }]
+            else
+              []
+            end
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
       end
 
       it 'excludes always-loaded tools from triggered_tools' do

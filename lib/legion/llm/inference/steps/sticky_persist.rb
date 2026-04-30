@@ -15,7 +15,7 @@ module Legion
             access_token private_key secret_key auth_token credential
           ].freeze
 
-          def step_sticky_persist # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+          def step_sticky_persist # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength,Metrics/PerceivedComplexity
             return unless @sticky_turn_snapshot
             return unless sticky_enabled? && @request.conversation_id
 
@@ -24,10 +24,12 @@ module Legion
             runners        = (state[:sticky_runners] || {}).dup
             deferred_count = state[:deferred_tool_calls] || 0
 
-            # Single Registry snapshot — one mutex acquisition for all lookups
-            tool_snapshot = if defined?(::Legion::Tools::Registry)
-                              ::Legion::Tools::Registry.all_tools
-                                                       .to_h { |t| [t.tool_name, t] }
+            # Single Settings::Extensions snapshot for all lookups
+            tool_snapshot = if defined?(Legion::Settings::Extensions) &&
+                               Legion::Settings::Extensions.respond_to?(:tools)
+                              Array(Legion::Settings::Extensions.tools)
+                                .select { |t| t.is_a?(Hash) && t[:name] }
+                                .to_h { |t| [t[:name], t] }
                             else
                               {}
                             end
@@ -40,9 +42,9 @@ module Legion
 
             completed.each do |entry|
               tc = @injected_tool_map[entry[:tool_name]] || tool_snapshot[entry[:tool_name]]
-              next unless tc&.deferred?
+              next unless tool_entry_deferred?(tc)
 
-              key = entry[:runner_key] || "#{tc.extension}_#{tc.runner}"
+              key = entry[:runner_key] || tool_entry_runner_key(tc)
               executed_runner_keys << key
               deferred_call_count  += 1
             end
@@ -84,7 +86,7 @@ module Legion
                 next unless entry[:result]
 
                 tc         = @injected_tool_map[entry[:tool_name]] || tool_snapshot[entry[:tool_name]]
-                runner_key = entry[:runner_key] || (tc ? "#{tc.extension}_#{tc.runner}" : 'unknown')
+                runner_key = entry[:runner_key] || (tc ? tool_entry_runner_key(tc) : 'unknown')
 
                 history << {
                   tool:   entry[:tool_name],
@@ -106,6 +108,26 @@ module Legion
           end
 
           private
+
+          def tool_entry_deferred?(entry)
+            return false unless entry
+
+            if entry.is_a?(Hash)
+              entry[:deferred] == true
+            elsif entry.respond_to?(:deferred?)
+              entry.deferred?
+            else
+              false
+            end
+          end
+
+          def tool_entry_runner_key(entry)
+            if entry.is_a?(Hash)
+              "#{entry[:extension]}_#{entry[:runner]}"
+            else
+              "#{entry.extension}_#{entry.runner}"
+            end
+          end
 
           def sanitize_args(args)
             args.each_with_object({}) do |(k, v), h|

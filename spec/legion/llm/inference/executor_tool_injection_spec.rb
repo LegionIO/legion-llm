@@ -33,16 +33,15 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
     context 'when @request.tools is an empty array []' do
       it 'does not add registry tools' do
-        registry_tool = Class.new do
-          define_singleton_method(:tool_name) { 'registry_tool' }
-          define_singleton_method(:description) { 'Registry tool' }
-          define_singleton_method(:input_schema) { {} }
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
+          end
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == false ? tools : []
+          end
         end
-        registry_mod = Module.new do
-          define_singleton_method(:tools) { [registry_tool] }
-          define_singleton_method(:deferred_tools) { [] }
-        end
-        stub_const('Legion::Tools::Registry', registry_mod)
+        stub_const('Legion::Settings::Extensions', extensions_mod)
 
         executor = described_class.new(request_empty_tools)
         expect(executor.send(:native_tool_definitions)).to eq([])
@@ -50,17 +49,17 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     context 'when @request.tools is a non-Array (nil via direct construction)' do
-      it 'adds registry tools' do
-        registry_tool = Class.new do
-          define_singleton_method(:tool_name) { 'registry_tool' }
-          define_singleton_method(:description) { 'Registry tool' }
-          define_singleton_method(:input_schema) { {} }
+      it 'adds Settings::Extensions tools' do
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
+          end
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == false ? tools : []
+          end
         end
-        registry_mod = Module.new do
-          define_singleton_method(:tools) { [registry_tool] }
-          define_singleton_method(:deferred_tools) { [] }
-        end
-        stub_const('Legion::Tools::Registry', registry_mod)
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+
         executor = described_class.new(request_with_tools)
         stub_req = double('request',
                           tools:  nil,
