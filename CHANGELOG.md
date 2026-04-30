@@ -16,7 +16,7 @@
 - `Steps::ToolDiscovery` discovers tools from `Settings::Extensions` when available, falling back to `Legion::Tools::Registry`.
 
 ### Changed
-- Bumped `legion-settings` dependency floor to `>= 1.3.20` (requires `Settings::Extensions` module).
+- Bumped `legion-settings` dependency floor to `>= 1.4.0` (requires `Settings::Extensions` module).
 
 ## [0.8.47] - 2026-04-29
 
