@@ -99,12 +99,7 @@ module Legion
         def parse_payload(raw)
           return raw if raw.is_a?(Hash)
 
-          if defined?(Legion::JSON)
-            Legion::JSON.load(raw)
-          else
-            require 'json'
-            ::JSON.parse(raw, symbolize_names: true)
-          end
+          Legion::JSON.load(raw)
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.fleet.reply_dispatcher.parse_payload')
           {}
