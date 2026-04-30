@@ -73,8 +73,6 @@ module Legion
       end
 
       def self.namespace(namespace)
-        return {} unless defined?(Legion::Settings)
-
         settings = Legion::Settings[namespace]
         settings.is_a?(Hash) ? settings : {}
       rescue StandardError => e
@@ -83,7 +81,7 @@ module Legion
       end
 
       def self.global_value(namespace, *keys, default: nil)
-        if defined?(Legion::Settings) && Legion::Settings.respond_to?(:dig) && keys.any?
+        if Legion::Settings.respond_to?(:dig) && keys.any?
           direct = Legion::Settings.dig(namespace, *keys)
           return direct unless direct.nil?
         end
@@ -117,7 +115,7 @@ module Legion
       end
 
       def self.enterprise_privacy?
-        if defined?(Legion::Settings) && Legion::Settings.respond_to?(:enterprise_privacy?)
+        if Legion::Settings.respond_to?(:enterprise_privacy?)
           Legion::Settings.enterprise_privacy?
         else
           ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
@@ -128,19 +126,17 @@ module Legion
       end
 
       def self.current_settings
-        if defined?(Legion::Settings)
-          settings = Legion::Settings[:llm]
-          return settings if settings.is_a?(Hash)
-        end
+        settings = Legion::Settings[:llm]
+        return settings if settings.is_a?(Hash)
 
         {}
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.current_settings')
-        defined?(Legion::Settings) ? Legion::Settings[:llm] : {}
+        Legion::Settings[:llm] || {}
       end
 
       def self.register_defaults!
-        return unless defined?(Legion::Settings) && Legion::Settings.respond_to?(:register_library)
+        return unless Legion::Settings.respond_to?(:register_library)
 
         Legion::Settings.register_library(:llm, default)
       end

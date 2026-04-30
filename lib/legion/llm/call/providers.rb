@@ -545,7 +545,7 @@ module Legion
         end
 
         def restore_llm_settings(snapshot)
-          Legion::Settings[:llm] = snapshot if defined?(Legion::Settings) && snapshot.is_a?(Hash)
+          Legion::Settings[:llm] = snapshot if snapshot.is_a?(Hash)
           log.warn '[llm][providers] restored LLM settings after optional provider load changed settings backend'
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true,
