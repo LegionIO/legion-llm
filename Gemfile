@@ -4,6 +4,9 @@ source 'https://rubygems.org'
 
 gemspec
 
+legion_settings_path = File.expand_path('../legion-settings', __dir__)
+gem 'legion-settings', path: legion_settings_path if Dir.exist?(legion_settings_path)
+
 group :test do
   lex_llm_path = File.expand_path('../extensions-ai/lex-llm', __dir__)
   if Dir.exist?(lex_llm_path)
