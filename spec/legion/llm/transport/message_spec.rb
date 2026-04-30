@@ -200,4 +200,58 @@ RSpec.describe Legion::LLM::Transport::Message do
       expect(msg.message_id).to match(/\Areq_[0-9a-f-]{36}\z/)
     end
   end
+
+  describe '#encode_message' do
+    it 'returns JSON string for cleartext messages' do
+      msg = build(system: 'test', messages: [{ role: 'user', content: 'hi' }])
+      payload = msg.encode_message
+      parsed = Legion::JSON.load(payload)
+      expect(parsed[:provider]).to eq('ollama')
+    end
+
+    it 'sets content_encoding to identity when not encrypted' do
+      msg = build
+      msg.encode_message
+      envelope = msg.publish_envelope_options(base_opts)
+      expect(envelope[:content_encoding]).to eq('identity')
+    end
+
+    context 'with encryption enabled' do
+      let(:fake_iv) { Base64.strict_encode64(SecureRandom.random_bytes(12)) }
+      let(:fake_ciphertext) { "gcm:#{Base64.strict_encode64('encrypted')}:#{Base64.strict_encode64('tag')}" }
+
+      let(:encrypting_subclass) do
+        Class.new(described_class) do
+          define_method(:encrypt?) { true }
+        end
+      end
+
+      before do
+        stub_const('Legion::Crypt', Module.new)
+        allow(Legion::Crypt).to receive(:encrypt).and_return(
+          enciphered_message: fake_ciphertext,
+          iv:                 fake_iv
+        )
+      end
+
+      it 'returns encrypted payload' do
+        msg = encrypting_subclass.new(**base_opts)
+        payload = msg.encode_message
+        expect(payload).to eq(fake_ciphertext)
+      end
+
+      it 'propagates iv into headers' do
+        msg = encrypting_subclass.new(**base_opts)
+        msg.encode_message
+        expect(msg.headers['iv']).to eq(fake_iv)
+      end
+
+      it 'sets content_encoding to encrypted/cs' do
+        msg = encrypting_subclass.new(**base_opts)
+        msg.encode_message
+        envelope = msg.publish_envelope_options(base_opts)
+        expect(envelope[:content_encoding]).to eq('encrypted/cs')
+      end
+    end
+  end
 end
