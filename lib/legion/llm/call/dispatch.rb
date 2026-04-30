@@ -69,8 +69,10 @@ module Legion
         # @raise [Legion::LLM::ProviderError] if provider is not registered
         def dispatch_chat(provider:, model:, messages:, **)
           ext = fetch_extension!(provider)
+          log.debug("[llm][dispatch] action=dispatch_chat.enter provider=#{provider} model=#{model} messages=#{messages.size}")
           log.info("[llm][native] dispatch_chat provider=#{provider} model=#{model} messages=#{messages.size}")
           raw = ext.chat(model: model, messages: messages, **)
+          log.debug("[llm][dispatch] action=dispatch_chat.complete provider=#{provider} model=#{model}")
           normalize_response(raw)
         end
 
@@ -83,8 +85,10 @@ module Legion
         # @raise [Legion::LLM::ProviderError] if provider is not registered
         def dispatch_embed(provider:, model:, text:, **)
           ext = fetch_extension!(provider)
+          log.debug("[llm][dispatch] action=dispatch_embed.enter provider=#{provider} model=#{model} text_chars=#{text.to_s.length}")
           log.info("[llm][native] dispatch_embed provider=#{provider} model=#{model} text_chars=#{text.to_s.length}")
           raw = ext.embed(model: model, text: text, **)
+          log.debug("[llm][dispatch] action=dispatch_embed.complete provider=#{provider} model=#{model}")
           normalize_response(raw)
         end
 
@@ -98,8 +102,10 @@ module Legion
         # @raise [Legion::LLM::ProviderError] if provider is not registered
         def dispatch_stream(provider:, model:, messages:, **, &)
           ext = fetch_extension!(provider)
+          log.debug("[llm][dispatch] action=dispatch_stream.enter provider=#{provider} model=#{model} messages=#{messages.size}")
           log.info("[llm][native] dispatch_stream provider=#{provider} model=#{model} messages=#{messages.size}")
           raw = ext.stream(model: model, messages: messages, **, &)
+          log.debug("[llm][dispatch] action=dispatch_stream.complete provider=#{provider} model=#{model}")
           normalize_response(raw)
         end
 

@@ -138,6 +138,7 @@ module Legion
       def self.register_defaults!
         return unless Legion::Settings.respond_to?(:register_library)
 
+        log.debug '[llm][settings] action=register_defaults'
         Legion::Settings.register_library(:llm, default)
       end
 

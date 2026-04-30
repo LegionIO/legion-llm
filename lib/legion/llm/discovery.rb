@@ -44,7 +44,7 @@ module Legion
         end
 
         def detect_embedding_capability
-          log.debug '[llm][discovery] detect_embedding_capability.enter'
+          log.debug '[llm][discovery] action=detect_embedding_capability.enter'
           embedding_settings = self.embedding_settings
           found = find_embedding_provider(embedding_settings)
           if found
