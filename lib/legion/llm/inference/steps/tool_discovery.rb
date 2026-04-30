@@ -41,7 +41,8 @@ module Legion
           def discover_registry_tools
             if defined?(Legion::Settings::Extensions) &&
                Legion::Settings::Extensions.respond_to?(:tools) &&
-               Legion::Settings::Extensions.tools.any?
+               Legion::Settings::Extensions.respond_to?(:filter_tools) &&
+               Array(Legion::Settings::Extensions.tools).any?
               discover_settings_extensions_tools
             elsif defined?(::Legion::Tools::Registry)
               discover_legacy_registry_tools

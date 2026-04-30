@@ -663,7 +663,8 @@ module Legion
         def add_registry_tool_definitions(definitions)
           if defined?(Legion::Settings::Extensions) &&
              Legion::Settings::Extensions.respond_to?(:tools) &&
-             Legion::Settings::Extensions.tools.any?
+             Legion::Settings::Extensions.respond_to?(:filter_tools) &&
+             Array(Legion::Settings::Extensions.tools).any?
             add_settings_extensions_tool_definitions(definitions)
           elsif defined?(::Legion::Tools::Registry)
             add_legacy_registry_tool_definitions(definitions)
