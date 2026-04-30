@@ -661,8 +661,64 @@ module Legion
         end
 
         def add_registry_tool_definitions(definitions)
-          return unless defined?(::Legion::Tools::Registry)
+          if defined?(Legion::Settings::Extensions) &&
+             Legion::Settings::Extensions.respond_to?(:tools) &&
+             Legion::Settings::Extensions.tools.any?
+            add_settings_extensions_tool_definitions(definitions)
+          elsif defined?(::Legion::Tools::Registry)
+            add_legacy_registry_tool_definitions(definitions)
+          end
+        rescue StandardError => e
+          @warnings << "Tool definition error: #{e.message}"
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.native_registry_tools')
+        end
 
+        def add_settings_extensions_tool_definitions(definitions)
+          injected_names = definitions.map(&:name)
+          inject_limit = registry_tool_limit
+
+          always_entries = Legion::Settings::Extensions.filter_tools(deferred: false)
+          triggered_entries = @triggered_tools.any? ? Array(@triggered_tools) : []
+          prioritized = local_provider? ? triggered_entries + always_entries : always_entries + triggered_entries
+
+          prioritized.each do |entry|
+            break if inject_limit && injected_names.size >= inject_limit
+
+            definition = if entry.is_a?(Hash) && entry[:name]
+                           Types::ToolDefinition.from_registry_entry(entry)
+                         else
+                           Types::ToolDefinition.from_tool_class(entry)
+                         end
+            next if injected_names.include?(definition.name)
+
+            tool_class = entry.is_a?(Hash) ? entry[:tool_class] : entry
+            @injected_tool_map[definition.name] = tool_class if tool_class
+            @native_tool_source_map[definition.name] = definition.source
+            definitions << definition
+            injected_names << definition.name
+          end
+
+          add_requested_deferred_tool_definitions_from_settings(definitions, injected_names)
+        end
+
+        def add_requested_deferred_tool_definitions_from_settings(definitions, injected_names)
+          requested = requested_deferred_tool_names
+          return if requested.empty?
+
+          deferred_entries = Legion::Settings::Extensions.filter_tools(deferred: true)
+          deferred_entries.each do |entry|
+            definition = Types::ToolDefinition.from_registry_entry(entry)
+            next unless requested.include?(definition.name)
+            next if injected_names.include?(definition.name)
+
+            @injected_tool_map[definition.name] = entry[:tool_class] if entry[:tool_class]
+            @native_tool_source_map[definition.name] = definition.source
+            definitions << definition
+            injected_names << definition.name
+          end
+        end
+
+        def add_legacy_registry_tool_definitions(definitions)
           injected_names = definitions.map(&:name)
           always_tools = Array(::Legion::Tools::Registry.tools)
           triggered_tools = @triggered_tools.any? ? Array(@triggered_tools) : []
@@ -682,9 +738,6 @@ module Legion
           end
 
           add_requested_deferred_tool_definitions(definitions, injected_names)
-        rescue StandardError => e
-          @warnings << "Tool definition error: #{e.message}"
-          handle_exception(e, level: :warn, operation: 'llm.pipeline.native_registry_tools')
         end
 
         def add_requested_deferred_tool_definitions(definitions, injected_names)
