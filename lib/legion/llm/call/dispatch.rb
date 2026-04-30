@@ -223,7 +223,8 @@ module Legion
           return arguments unless arguments.is_a?(String)
 
           Legion::JSON.parse(arguments)
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.dispatch.parse_arguments')
           arguments
         end
       end

@@ -89,13 +89,15 @@ module Legion
 
       private_class_method def self.local_cache_backend?
         respond_to?(:local_cache_connected?) && local_cache_connected?
-      rescue StandardError
+      rescue StandardError => e
+        log.debug("[llm][cache] action=local_cache_backend error=#{e.class}")
         false
       end
 
       private_class_method def self.shared_cache_backend?
         respond_to?(:cache_connected?) && cache_connected?
-      rescue StandardError
+      rescue StandardError => e
+        log.debug("[llm][cache] action=shared_cache_backend error=#{e.class}")
         false
       end
     end

@@ -525,7 +525,8 @@ module Legion
           return nil unless settings.is_a?(Hash) && settings.any?
 
           Marshal.load(Marshal.dump(settings))
-        rescue TypeError
+        rescue TypeError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.providers.snapshot_marshal_fallback')
           settings&.dup
         rescue StandardError => e
           handle_exception(e, level: :debug, handled: true,

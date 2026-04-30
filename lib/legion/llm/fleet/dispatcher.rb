@@ -209,7 +209,8 @@ module Legion
           future ||= ReplyDispatcher.register(correlation_id)
           result = future.value!(timeout)
           result || timeout_result(correlation_id, timeout, message_context: message_context)
-        rescue Concurrent::CancelledOperationError
+        rescue Concurrent::CancelledOperationError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.fleet.dispatcher.wait_cancelled')
           timeout_result(correlation_id, timeout, message_context: message_context)
         ensure
           ReplyDispatcher.deregister(correlation_id)

@@ -35,7 +35,7 @@ module Legion
 
           !Legion::Crypt.validate_jwt(token).nil?
         rescue StandardError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.fleet.handler.valid_token')
           false
         end
 
@@ -103,7 +103,7 @@ module Legion
           )
           channel.close
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.fleet.handler.publish_reply')
         end
 
         def extract_token(response, field)

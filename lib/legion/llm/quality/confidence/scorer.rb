@@ -218,7 +218,8 @@ module Legion
             def valid_json?(content)
               ::JSON.parse(content)
               true
-            rescue ::JSON::ParserError
+            rescue ::JSON::ParserError => e
+              handle_exception(e, level: :debug, handled: true, operation: 'llm.confidence.valid_json')
               false
             end
 

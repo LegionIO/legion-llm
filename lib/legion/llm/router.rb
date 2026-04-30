@@ -238,7 +238,7 @@ module Legion
           discovery = Legion::LLM::Settings.value(:discovery, default: {})
           discovery.is_a?(Hash) ? discovery.transform_keys(&:to_sym) : {}
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.router.discovery_settings')
           {}
         end
 
