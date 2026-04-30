@@ -53,12 +53,12 @@ RSpec.describe Legion::LLM::Settings do
   end
 
   describe '.register_defaults!' do
-    it 'merges LLM defaults when Legion::Settings can merge settings' do
-      allow(Legion::Settings).to receive(:merge_settings)
+    it 'registers LLM defaults via register_library' do
+      allow(Legion::Settings).to receive(:register_library)
 
       described_class.register_defaults!
 
-      expect(Legion::Settings).to have_received(:merge_settings).with(:llm, hash_including(enabled: true, providers: kind_of(Hash)))
+      expect(Legion::Settings).to have_received(:register_library).with(:llm, hash_including(enabled: true, providers: kind_of(Hash)))
     end
   end
 

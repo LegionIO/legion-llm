@@ -59,8 +59,17 @@ module Legion
         @store[key.to_sym] = defaults.merge(current)
       end
 
+      def register_library(key, defaults)
+        sym = key.to_sym
+        return if @registered_libraries&.include?(sym)
+
+        merge_settings(sym, defaults)
+        (@registered_libraries ||= []) << sym
+      end
+
       def reset!
         @store = {}
+        @registered_libraries = []
       end
     end
   end

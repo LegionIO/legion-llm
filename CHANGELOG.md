@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.8.49] - 2026-04-29
+
+### Changed
+- `Settings.register_defaults!` now calls `Legion::Settings.register_library` instead of `merge_settings`, using the idempotent legion-settings 1.4.0 API that prevents double-registration.
+- Bumped `legion-settings` dependency floor to `>= 1.4.0`.
+- Test stub `Legion::Settings` now exposes `register_library` matching the real 1.4.0 API.
+
 ## [0.8.48] - 2026-04-29
 
 ### Added

@@ -140,9 +140,9 @@ module Legion
       end
 
       def self.register_defaults!
-        return unless defined?(Legion::Settings) && Legion::Settings.respond_to?(:merge_settings)
+        return unless defined?(Legion::Settings) && Legion::Settings.respond_to?(:register_library)
 
-        Legion::Settings.merge_settings(:llm, default)
+        Legion::Settings.register_library(:llm, default)
       end
 
       def self.assign_value(target, keys, value)
