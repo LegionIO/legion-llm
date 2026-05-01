@@ -106,35 +106,35 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
 
   describe '.embedding_model?' do
     it 'recognizes mxbai-embed as embedding' do
-      expect(described_class.embedding_model?(:ollama, 'mxbai-embed-large')).to be true
+      expect(described_class.embedding_model?('mxbai-embed-large')).to be true
     end
 
     it 'recognizes nomic-embed as embedding' do
-      expect(described_class.embedding_model?(:ollama, 'nomic-embed-text')).to be true
+      expect(described_class.embedding_model?('nomic-embed-text')).to be true
     end
 
     it 'recognizes bge- as embedding' do
-      expect(described_class.embedding_model?(:ollama, 'bge-large-en')).to be true
+      expect(described_class.embedding_model?('bge-large-en')).to be true
     end
 
     it 'recognizes snowflake-arctic-embed as embedding' do
-      expect(described_class.embedding_model?(:ollama, 'snowflake-arctic-embed')).to be true
+      expect(described_class.embedding_model?('snowflake-arctic-embed')).to be true
     end
 
     it 'recognizes text-embedding as embedding' do
-      expect(described_class.embedding_model?(:ollama, 'text-embedding-ada-002')).to be true
+      expect(described_class.embedding_model?('text-embedding-ada-002')).to be true
     end
 
     it 'recognizes titan-embed as embedding' do
-      expect(described_class.embedding_model?(:bedrock, 'titan-embed-text-v2')).to be true
+      expect(described_class.embedding_model?('titan-embed-text-v2')).to be true
     end
 
     it 'does not flag llama3 as embedding' do
-      expect(described_class.embedding_model?(:ollama, 'llama3:8b')).to be false
+      expect(described_class.embedding_model?('llama3:8b')).to be false
     end
 
     it 'does not flag qwen as embedding' do
-      expect(described_class.embedding_model?(:ollama, 'qwen2.5:32b')).to be false
+      expect(described_class.embedding_model?('qwen2.5:32b')).to be false
     end
   end
 
