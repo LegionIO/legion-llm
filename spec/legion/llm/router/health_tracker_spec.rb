@@ -55,6 +55,102 @@ RSpec.describe Legion::LLM::Router::HealthTracker do
     end
   end
 
+  # ─── Per-instance tracking ───────────────────────────────────────────────────
+
+  describe 'per-instance tracking' do
+    it 'tracks under "provider/instance" when instance is given' do
+      tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1)
+      circuits = tracker.instance_variable_get(:@circuits)
+      expect(circuits).to have_key('ollama/local')
+      expect(circuits).not_to have_key(:ollama)
+    end
+
+    it 'tracks under "provider" when no instance is given (backward compat)' do
+      tracker.report(provider: :ollama, signal: :error, value: 1)
+      circuits = tracker.instance_variable_get(:@circuits)
+      expect(circuits).to have_key(:ollama)
+      expect(circuits).not_to have_key('ollama/local')
+    end
+
+    it 'returns specific instance adjustment' do
+      3.times { tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1) }
+      expect(tracker.adjustment(:ollama, instance: :local)).to eq(-50)
+    end
+
+    it 'returns 0 adjustment for a healthy instance even when another is down' do
+      3.times { tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1) }
+      tracker.report(provider: :ollama, instance: :remote, signal: :success, value: nil)
+      expect(tracker.adjustment(:ollama, instance: :remote)).to eq(0)
+    end
+
+    it 'returns worst-of adjustment across all instances when no instance specified' do
+      3.times { tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1) }
+      tracker.report(provider: :ollama, instance: :remote, signal: :success, value: nil)
+      expect(tracker.adjustment(:ollama)).to eq(-50)
+    end
+
+    it 'returns specific instance circuit_state' do
+      3.times { tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1) }
+      expect(tracker.circuit_state(:ollama, instance: :local)).to eq(:open)
+    end
+
+    it 'returns :closed for a healthy instance even when another is open' do
+      3.times { tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1) }
+      tracker.report(provider: :ollama, instance: :remote, signal: :success, value: nil)
+      expect(tracker.circuit_state(:ollama, instance: :remote)).to eq(:closed)
+    end
+
+    it 'returns worst circuit_state across all instances when no instance specified' do
+      3.times { tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1) }
+      tracker.report(provider: :ollama, instance: :remote, signal: :success, value: nil)
+      expect(tracker.circuit_state(:ollama)).to eq(:open)
+    end
+
+    it 'returns :half_open as worst state when one instance is half_open and others closed' do
+      3.times { tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1) }
+      tracker.report(provider: :ollama, instance: :remote, signal: :success, value: nil)
+
+      # Simulate cooldown elapsed for :local instance
+      circuit = tracker.instance_variable_get(:@circuits)['ollama/local']
+      circuit[:opened_at] = Time.now - 61
+
+      expect(tracker.circuit_state(:ollama, instance: :local)).to eq(:half_open)
+      expect(tracker.circuit_state(:ollama)).to eq(:half_open)
+    end
+
+    it 'broadcasts provider-level report to all known instances' do
+      # First, establish instances by reporting with instance:
+      tracker.report(provider: :ollama, instance: :local, signal: :success, value: nil)
+      tracker.report(provider: :ollama, instance: :remote, signal: :success, value: nil)
+
+      # Now report errors without instance: — should broadcast to both
+      3.times { tracker.report(provider: :ollama, signal: :error, value: 1) }
+
+      expect(tracker.circuit_state(:ollama, instance: :local)).to eq(:open)
+      expect(tracker.circuit_state(:ollama, instance: :remote)).to eq(:open)
+    end
+
+    it 'resets a specific instance without affecting others' do
+      3.times { tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1) }
+      3.times { tracker.report(provider: :ollama, instance: :remote, signal: :error, value: 1) }
+
+      tracker.reset(:ollama, instance: :local)
+
+      expect(tracker.circuit_state(:ollama, instance: :local)).to eq(:closed)
+      expect(tracker.circuit_state(:ollama, instance: :remote)).to eq(:open)
+    end
+
+    it 'tracks latency per instance' do
+      3.times { tracker.report(provider: :ollama, instance: :local, signal: :latency, value: 10_000) }
+      tracker.report(provider: :ollama, instance: :remote, signal: :latency, value: 1000)
+
+      expect(tracker.adjustment(:ollama, instance: :local)).to eq(-20)
+      expect(tracker.adjustment(:ollama, instance: :remote)).to eq(0)
+      # Worst-of: local has -20
+      expect(tracker.adjustment(:ollama)).to eq(-20)
+    end
+  end
+
   # ─── 3. report ignores unknown signals without error ─────────────────────────
 
   describe '#report with unknown signal' do
