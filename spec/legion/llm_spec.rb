@@ -9,18 +9,17 @@ RSpec.describe Legion::LLM do
       expect(settings).to be_a(Hash)
       expect(settings[:enabled]).to be true
       expect(settings[:connected]).to be false
-      expect(settings[:providers]).to be_a(Hash)
     end
 
-    it 'starts with an empty providers hash (defaults now live in lex-llm-* extensions)' do
-      providers = described_class.settings[:providers]
-      expect(providers).to eq({})
+    it 'provider defaults now live in Settings[:extensions][:llm] (populated by lex-llm-* extensions)' do
+      ext = Legion::Settings[:extensions][:llm]
+      expect(ext).to be_a(Hash)
     end
   end
 
   describe '.start and .shutdown' do
     before do
-      Legion::Settings[:llm][:providers] = { ollama: { enabled: true, base_url: 'http://localhost:11434' } }
+      Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
       stub_request(:get, 'http://localhost:11434/api/tags')
         .to_return(status: 200, body: { 'models' => [] }.to_json)
@@ -88,7 +87,7 @@ RSpec.describe Legion::LLM do
     end
 
     it 'picks bedrock when bedrock is the first enabled provider' do
-      Legion::Settings[:llm][:providers] = {
+      Legion::Settings[:extensions][:llm] = {
         bedrock: { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1', region: 'us-east-2' }
       }
       described_class.start
@@ -96,7 +95,7 @@ RSpec.describe Legion::LLM do
     end
 
     it 'picks anthropic when only anthropic is enabled' do
-      Legion::Settings[:llm][:providers] = {
+      Legion::Settings[:extensions][:llm] = {
         bedrock:   { enabled: false },
         anthropic: { enabled: true, default_model: 'claude-sonnet-4-6' }
       }
@@ -116,11 +115,11 @@ RSpec.describe Legion::LLM do
     describe '.default' do
       it 'returns a hash with expected keys' do
         defaults = described_class.default
-        expect(defaults).to include(:enabled, :connected, :default_model, :default_provider, :providers)
+        expect(defaults).to include(:enabled, :connected, :default_model, :default_provider)
       end
 
-      it 'defaults providers to an empty hash' do
-        expect(described_class.default[:providers]).to eq({})
+      it 'does not include providers (defaults now live in lex-llm-* extensions via Settings[:extensions][:llm])' do
+        expect(described_class.default).not_to include(:providers)
       end
     end
   end

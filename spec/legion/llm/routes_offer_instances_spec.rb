@@ -31,7 +31,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       allow(Legion::LLM).to receive(:started?).and_return(true)
       allow(Legion::LLM::Discovery::Ollama).to receive(:models).and_return([])
       allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([])
-      Legion::Settings[:llm][:providers][:vllm] = {
+      Legion::Settings[:extensions][:llm][:vllm] = {
         enabled:   true,
         instances: {
           'vllm-gpu-01' => {

@@ -6,7 +6,7 @@ require 'legion/llm/discovery/vllm'
 RSpec.describe Legion::LLM::Discovery::Vllm do
   before do
     described_class.reset!
-    Legion::Settings[:llm][:providers][:vllm] = {
+    Legion::Settings[:extensions][:llm][:vllm] = {
       enabled: true, base_url: 'http://gpu-server:8000/v1'
     }
   end
@@ -167,7 +167,7 @@ RSpec.describe Legion::LLM::Discovery::Vllm do
   describe 'JSON string-keyed provider settings' do
     before do
       described_class.reset!
-      Legion::Settings[:llm]['providers'] = {
+      Legion::Settings[:extensions][:llm] = {
         'vllm' => { 'enabled' => true, 'base_url' => 'http://json-gpu:8000/v1' }
       }
       stub_request(:get, 'http://json-gpu:8000/v1/models')

@@ -25,7 +25,7 @@ RSpec.describe Legion::LLM::Discovery::Vllm, 'per-instance scanning' do
 
   context 'with multi-instance settings' do
     before do
-      Legion::Settings[:llm][:providers][:vllm] = {
+      Legion::Settings[:extensions][:llm][:vllm] = {
         enabled:   true,
         instances: {
           gpu1: { base_url: 'http://gpu1:8000/v1' },
@@ -164,7 +164,7 @@ RSpec.describe Legion::LLM::Discovery::Vllm, 'per-instance scanning' do
 
   context 'with flat config (no instances key)' do
     before do
-      Legion::Settings[:llm][:providers][:vllm] = {
+      Legion::Settings[:extensions][:llm][:vllm] = {
         enabled:  true,
         base_url: 'http://gpu-server:8000/v1'
       }
@@ -195,7 +195,7 @@ RSpec.describe Legion::LLM::Discovery::Vllm, 'per-instance scanning' do
 
   context 'deduplication across instances' do
     before do
-      Legion::Settings[:llm][:providers][:vllm] = {
+      Legion::Settings[:extensions][:llm][:vllm] = {
         enabled:   true,
         instances: {
           gpu1: { base_url: 'http://gpu1:8000/v1' },

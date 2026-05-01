@@ -58,7 +58,7 @@ RSpec.describe Legion::LLM::Settings do
 
       described_class.register_defaults!
 
-      expect(Legion::Settings).to have_received(:register_library).with(:llm, hash_including(enabled: true, providers: kind_of(Hash)))
+      expect(Legion::Settings).to have_received(:register_library).with(:llm, hash_including(enabled: true))
     end
   end
 

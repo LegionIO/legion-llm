@@ -26,7 +26,7 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
 
   context 'with multi-instance settings' do
     before do
-      Legion::Settings[:llm][:providers][:ollama] = {
+      Legion::Settings[:extensions][:llm][:ollama] = {
         enabled:   true,
         instances: {
           local:  { base_url: 'http://127.0.0.1:11434' },
@@ -99,7 +99,7 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
       end
 
       it 'includes per-instance filter config in scan data' do
-        Legion::Settings[:llm][:providers][:ollama][:instances][:local][:model_whitelist] = %w[qwen3.6]
+        Legion::Settings[:extensions][:llm][:ollama][:instances][:local][:model_whitelist] = %w[qwen3.6]
         result = described_class.scan_all_instances
         expect(result[:local][:model_whitelist]).to eq(%w[qwen3.6])
         expect(result[:apollo]).not_to have_key(:model_whitelist)
@@ -199,7 +199,7 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
 
   context 'with flat config (no instances key)' do
     before do
-      Legion::Settings[:llm][:providers][:ollama] = {
+      Legion::Settings[:extensions][:llm][:ollama] = {
         enabled:  true,
         base_url: 'http://localhost:11434'
       }
@@ -231,7 +231,7 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
 
   context 'deduplication across instances' do
     before do
-      Legion::Settings[:llm][:providers][:ollama] = {
+      Legion::Settings[:extensions][:llm][:ollama] = {
         enabled:   true,
         instances: {
           local:  { base_url: 'http://127.0.0.1:11434' },

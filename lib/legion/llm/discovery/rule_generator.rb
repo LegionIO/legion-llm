@@ -73,7 +73,7 @@ module Legion
 
         def generate_configured_provider_rules
           rules = []
-          providers_config = Legion::LLM::Settings.value(:providers, default: {})
+          providers_config = extension_providers
           return rules unless providers_config.is_a?(Hash)
 
           providers_config.each do |provider_name, config|
@@ -131,6 +131,15 @@ module Legion
           return nil unless model_data.is_a?(Hash)
 
           model_data[field] || model_data[field.to_s]
+        end
+
+        def extension_providers
+          ext = Legion::Settings[:extensions]
+          return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash)
+
+          {}
+        rescue StandardError
+          {}
         end
       end
     end

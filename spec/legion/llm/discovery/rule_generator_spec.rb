@@ -233,7 +233,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
 
   describe 'configured provider rules without KNOWN_MODEL_CAPABILITIES' do
     before do
-      Legion::Settings[:llm][:providers][:anthropic] = { enabled: true, default_model: 'claude-sonnet-4-6' }
+      Legion::Settings[:extensions][:llm][:anthropic] = { enabled: true, default_model: 'claude-sonnet-4-6' }
     end
 
     it 'generates chat and stream rules for enabled configured providers' do

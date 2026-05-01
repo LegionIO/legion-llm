@@ -122,7 +122,7 @@ RSpec.describe Legion::LLM::Discovery::Ollama do
   describe 'custom base_url' do
     before do
       described_class.reset!
-      Legion::Settings[:llm][:providers][:ollama] = { enabled: true, base_url: 'http://gpu-server:11434' }
+      Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://gpu-server:11434' }
       stub_request(:get, 'http://gpu-server:11434/api/tags')
         .to_return(status: 200, body: tags_response.to_json, headers: { 'Content-Type' => 'application/json' })
     end

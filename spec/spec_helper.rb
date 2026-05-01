@@ -126,6 +126,9 @@ RSpec.configure do |config|
     Legion::Settings.reset!
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
+    # Seed the extensions[:llm] path so specs can write provider configs there
+    Legion::Settings[:extensions] ||= {}
+    Legion::Settings[:extensions][:llm] ||= {}
     # Keep the full suite deterministic even when local/provider gems are present
     # and services like Ollama are running on the developer machine.
     Legion::Settings[:llm][:provider_layer][:mode] = 'auto'

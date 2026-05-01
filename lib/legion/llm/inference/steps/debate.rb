@@ -255,7 +255,7 @@ module Legion
           end
 
           def available_models
-            providers = settings_value(:providers) || {}
+            providers = extension_providers
             models = []
             providers.each do |provider_name, config|
               next unless config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled)
@@ -266,6 +266,15 @@ module Legion
               models << "#{provider_name}:#{default_model}"
             end
             models
+          end
+
+          def extension_providers
+            ext = Legion::Settings[:extensions]
+            return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash)
+
+            {}
+          rescue StandardError
+            {}
           end
 
           def rotate_away_from(models, exclude_model)

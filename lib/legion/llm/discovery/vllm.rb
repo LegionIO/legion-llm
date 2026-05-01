@@ -214,7 +214,12 @@ module Legion
           end
 
           def providers_settings
-            Legion::LLM::Settings.config_value(llm_settings, :providers, {})
+            ext = Legion::Settings[:extensions]
+            return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash)
+
+            {}
+          rescue StandardError
+            {}
           end
 
           def llm_settings
