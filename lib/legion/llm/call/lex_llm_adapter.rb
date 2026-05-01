@@ -9,6 +9,8 @@ module Legion
       class LexLLMAdapter
         include Legion::Logging::Helper
 
+        METADATA_KEYS = %i[tier capabilities enabled].freeze
+
         def initialize(provider_name, provider_class, instance_config: {})
           @provider_name = provider_name.to_sym
           @provider_class = provider_class
@@ -91,16 +93,7 @@ module Legion
           if @instance_config.empty?
             provider_class.new(lex_llm_namespace.config)
           else
-            config = lex_llm_namespace::Configuration.new
-            @instance_config.each do |key, value|
-              setter = "#{key}="
-              unless config.respond_to?(setter)
-                log.warn("[llm][adapter] unknown config option #{key} for #{@provider_name}, skipping")
-                next
-              end
-              config.public_send(setter, value)
-            end
-            provider_class.new(config)
+            provider_class.new(@instance_config.except(*METADATA_KEYS))
           end
         end
 
