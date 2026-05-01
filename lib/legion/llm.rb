@@ -15,8 +15,6 @@ require_relative 'llm/call/dispatch'
 require_relative 'llm/call/embeddings'
 require_relative 'llm/call/structured_output'
 require_relative 'llm/call/daemon_client'
-require_relative 'llm/call/claude_config_loader'
-require_relative 'llm/call/codex_config_loader'
 require_relative 'llm/router'
 require_relative 'llm/context/compressor'
 require_relative 'llm/context/curator'
@@ -79,8 +77,6 @@ module Legion
     class << self
       def start
         log.debug '[llm] start.enter'
-        Call::ClaudeConfigLoader.load
-        Call::CodexConfigLoader.load
         Call::Providers.setup
         Discovery.run
         Router.populate_auto_rules(Discovery.discovered_instances) if Router.respond_to?(:populate_auto_rules)

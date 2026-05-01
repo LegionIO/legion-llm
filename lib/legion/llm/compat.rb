@@ -66,12 +66,6 @@ module Legion
       when :Compressor
         CompatWarning.warn_once('Legion::LLM::Compressor', 'Legion::LLM::Context::Compressor')
         Context::Compressor
-      when :ClaudeConfigLoader
-        CompatWarning.warn_once('Legion::LLM::ClaudeConfigLoader', 'Legion::LLM::Call::ClaudeConfigLoader')
-        Call::ClaudeConfigLoader
-      when :CodexConfigLoader
-        CompatWarning.warn_once('Legion::LLM::CodexConfigLoader', 'Legion::LLM::Call::CodexConfigLoader')
-        Call::CodexConfigLoader
       when :DaemonClient
         CompatWarning.warn_once('Legion::LLM::DaemonClient', 'Legion::LLM::Call::DaemonClient')
         Call::DaemonClient

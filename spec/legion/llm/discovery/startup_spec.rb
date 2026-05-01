@@ -11,14 +11,13 @@ RSpec.describe 'LLM startup discovery' do
     Legion::LLM::Discovery::Vllm.reset! if defined?(Legion::LLM::Discovery::Vllm)
     # Prevent actual embedding verification from making real network calls
     allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
-    # Prevent auto-enabling of providers with unresolved env:// credentials
-    allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
-    allow(Legion::LLM::Call::Providers).to receive(:vllm_running?).and_return(false)
     # Stub HTTP endpoints so discovered_instances doesn't trigger real calls
     stub_request(:get, 'http://localhost:11434/api/tags')
       .to_return(status: 200, body: { 'models' => [] }.to_json)
     stub_request(:get, 'http://localhost:8000/v1/models')
       .to_return(status: 200, body: { 'data' => [] }.to_json)
+    stub_request(:get, 'http://localhost:8000/health')
+      .to_return(status: 200, body: '{}')
     stub_request(:post, %r{/api/show}).to_return(status: 404)
   end
 
@@ -50,7 +49,6 @@ RSpec.describe 'LLM startup discovery' do
   context 'when Ollama provider is disabled' do
     before do
       Legion::Settings[:llm][:providers][:ollama] = { enabled: false }
-      allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
     end
 
     it 'does not refresh discovery caches' do
@@ -63,8 +61,6 @@ RSpec.describe 'LLM startup discovery' do
     before do
       Legion::LLM::Router.reset!
       Legion::Settings[:llm][:providers][:ollama] = { enabled: false }
-      allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
-      allow(Legion::LLM::Call::Providers).to receive(:vllm_running?).and_return(false)
     end
 
     it 'populates auto_rules during start so routing is ready' do

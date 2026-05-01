@@ -46,37 +46,4 @@ RSpec.describe 'vLLM provider integration' do
       expect(result).to eq(:ollama)
     end
   end
-
-  describe 'provider configuration' do
-    it 'stores vllm base_url and resolved api_key in settings config' do
-      config = { base_url: 'http://gpu:8000/v1', api_key: 'test-key' }
-
-      Legion::LLM::Call::Providers.send(:configure_vllm, config)
-
-      expect(config[:base_url]).to eq('http://gpu:8000/v1')
-      expect(config[:api_key]).to eq('test-key')
-    end
-
-    it 'stores default vllm base_url when absent' do
-      config = {}
-
-      Legion::LLM::Call::Providers.send(:configure_vllm, config)
-
-      expect(config[:base_url]).to eq('http://localhost:8000/v1')
-    end
-  end
-
-  describe '.normalize_vllm_base_url' do
-    it 'strips trailing slashes and a v1 suffix without regex backtracking' do
-      normalized = Legion::LLM::Call::Providers.send(:normalize_vllm_base_url, 'http://gpu:8000/v1////')
-
-      expect(normalized).to eq('http://gpu:8000')
-    end
-
-    it 'keeps non-v1 paths' do
-      normalized = Legion::LLM::Call::Providers.send(:normalize_vllm_base_url, 'http://gpu:8000/api////')
-
-      expect(normalized).to eq('http://gpu:8000/api')
-    end
-  end
 end
