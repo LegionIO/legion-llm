@@ -15,7 +15,7 @@ module Legion
             access_token private_key secret_key auth_token credential
           ].freeze
 
-          def step_sticky_persist # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength,Metrics/PerceivedComplexity
+          def step_sticky_persist # rubocop:disable Metrics/AbcSize,Metrics/MethodLength,Metrics/PerceivedComplexity
             return unless @sticky_turn_snapshot
             return unless sticky_enabled? && @request.conversation_id
 
@@ -25,8 +25,7 @@ module Legion
             deferred_count = state[:deferred_tool_calls] || 0
 
             # Single Settings::Extensions snapshot for all lookups
-            tool_snapshot = if defined?(Legion::Settings::Extensions) &&
-                               Legion::Settings::Extensions.respond_to?(:tools)
+            tool_snapshot = if Legion::Settings::Extensions.respond_to?(:tools)
                               Array(Legion::Settings::Extensions.tools)
                                 .select { |t| t.is_a?(Hash) && t[:name] }
                                 .to_h { |t| [t[:name], t] }

@@ -78,8 +78,7 @@ module Legion
           end
 
           def subtract_always_loaded(matched)
-            return unless defined?(Legion::Settings::Extensions) &&
-                          Legion::Settings::Extensions.respond_to?(:filter_tools)
+            return unless Legion::Settings::Extensions.respond_to?(:filter_tools)
 
             always = Legion::Settings::Extensions.filter_tools(deferred: false).map { |t| t[:name] }
             matched.reject! { |tool| always.include?(tool.tool_name) }

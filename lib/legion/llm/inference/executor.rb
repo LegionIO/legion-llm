@@ -614,8 +614,7 @@ module Legion
         end
 
         def add_registry_tool_definitions(definitions)
-          return unless defined?(Legion::Settings::Extensions) &&
-                        Legion::Settings::Extensions.respond_to?(:tools) &&
+          return unless Legion::Settings::Extensions.respond_to?(:tools) &&
                         Legion::Settings::Extensions.respond_to?(:filter_tools) &&
                         Array(Legion::Settings::Extensions.tools).any?
 

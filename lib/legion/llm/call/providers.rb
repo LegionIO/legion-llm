@@ -36,7 +36,7 @@ module Legion
 
         def resolve_llm_secrets
           log.debug '[llm][providers] resolve_llm_secrets.enter'
-          return unless defined?(Legion::Settings::Resolver)
+          return unless Legion::Settings::Resolver.respond_to?(:resolve_secrets!)
 
           Legion::Settings::Resolver.resolve_secrets!(Legion::LLM::Settings.current_settings)
           log.debug '[llm][providers] resolve_llm_secrets.exit'
@@ -537,7 +537,8 @@ module Legion
 
           providers = begin
             Legion::Extensions::Llm::Provider.providers
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.providers.resolve_lex_llm_provider_class')
             {}
           end
           providers[provider_family.to_sym] || providers[provider_family.to_s]

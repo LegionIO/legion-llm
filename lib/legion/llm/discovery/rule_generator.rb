@@ -58,8 +58,8 @@ module Legion
               caps = prov.class.respond_to?(:capabilities) ? prov.class.capabilities : nil
               return caps.embeddings?(model) if caps.respond_to?(:embeddings?)
             end
-          rescue StandardError
-            # Fall through to pattern matching
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.discovery.rule_generator.embedding_model_check')
           end
 
           name = model.to_s.downcase

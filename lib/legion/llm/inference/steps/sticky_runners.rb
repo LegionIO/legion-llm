@@ -31,8 +31,7 @@ module Legion
                 (v[:tier] == :executed && deferred_count < v[:expires_after_deferred_call])
             end.keys
 
-            if defined?(Legion::Settings::Extensions) &&
-               Legion::Settings::Extensions.respond_to?(:filter_tools)
+            if Legion::Settings::Extensions.respond_to?(:filter_tools)
               Legion::Settings::Extensions.filter_tools(deferred: true).each do |entry|
                 key = "#{entry[:extension]}_#{entry[:runner]}"
                 next unless live_keys.include?(key)

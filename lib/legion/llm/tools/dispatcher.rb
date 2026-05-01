@@ -58,8 +58,7 @@ module Legion
         end
 
         def check_registry_override(tool_name)
-          return nil unless defined?(Legion::Settings::Extensions) &&
-                            Legion::Settings::Extensions.respond_to?(:find_tool)
+          return nil unless Legion::Settings::Extensions.respond_to?(:find_tool)
 
           entry = Legion::Settings::Extensions.find_tool(tool_name)
           return nil unless entry

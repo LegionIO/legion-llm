@@ -39,8 +39,7 @@ module Legion
           private
 
           def discover_registry_tools
-            return unless defined?(Legion::Settings::Extensions) &&
-                          Legion::Settings::Extensions.respond_to?(:tools) &&
+            return unless Legion::Settings::Extensions.respond_to?(:tools) &&
                           Legion::Settings::Extensions.respond_to?(:filter_tools) &&
                           Array(Legion::Settings::Extensions.tools).any?
 

@@ -10,8 +10,10 @@ require 'legion/llm/types'
 begin
   require 'legion/identity/request'
   require 'legion/identity/process'
-rescue LoadError
-  # legion-llm can still be loaded outside a full LegionIO runtime.
+rescue LoadError => e
+  Object.new.extend(Legion::Logging::Helper).handle_exception(
+    e, level: :debug, handled: true, operation: 'llm.api.native.helpers.optional_identity_require'
+  )
 end
 
 module Legion
