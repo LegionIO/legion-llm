@@ -24,7 +24,7 @@ RSpec.describe 'LLM startup discovery' do
 
   context 'when Ollama provider is enabled' do
     before do
-      Legion::Settings[:llm][:providers][:ollama][:enabled] = true
+      Legion::Settings[:llm][:providers][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
       stub_request(:get, 'http://localhost:11434/api/tags')
         .to_return(status: 200, body: { 'models' => [{ 'name' => 'llama3:latest', 'size' => 4_000_000_000 }] }.to_json)
       allow(Legion::LLM::Discovery::System).to receive(:platform).and_return(:macos)
@@ -49,7 +49,7 @@ RSpec.describe 'LLM startup discovery' do
 
   context 'when Ollama provider is disabled' do
     before do
-      Legion::Settings[:llm][:providers][:ollama][:enabled] = false
+      Legion::Settings[:llm][:providers][:ollama] = { enabled: false }
       allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
     end
 
@@ -62,7 +62,7 @@ RSpec.describe 'LLM startup discovery' do
   describe 'boot wiring: Router.populate_auto_rules' do
     before do
       Legion::LLM::Router.reset!
-      Legion::Settings[:llm][:providers][:ollama][:enabled] = false
+      Legion::Settings[:llm][:providers][:ollama] = { enabled: false }
       allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
       allow(Legion::LLM::Call::Providers).to receive(:vllm_running?).and_return(false)
     end

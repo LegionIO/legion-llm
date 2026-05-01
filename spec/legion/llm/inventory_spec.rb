@@ -9,7 +9,9 @@ RSpec.describe Legion::LLM::Inventory do
   end
 
   it 'builds default inference and embedding offerings from settings' do
-    Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+    Legion::Settings[:llm][:providers][:bedrock] = {
+      enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6', region: 'us-east-2'
+    }
 
     offerings = described_class.offerings(provider: 'bedrock')
 
@@ -22,7 +24,7 @@ RSpec.describe Legion::LLM::Inventory do
   end
 
   it 'includes discovered vLLM context windows in the shared fleet lane' do
-    Legion::Settings[:llm][:providers][:vllm][:enabled] = true
+    Legion::Settings[:llm][:providers][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
     allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([
                                                                          { id:            'qwen3.6-27b',
                                                                            max_model_len: 65_536 }
@@ -36,7 +38,7 @@ RSpec.describe Legion::LLM::Inventory do
   end
 
   it 'filters embedding and inference offerings independently' do
-    Legion::Settings[:llm][:providers][:ollama][:enabled] = true
+    Legion::Settings[:llm][:providers][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
     allow(Legion::LLM::Discovery::Ollama).to receive(:models).and_return([
                                                                            { 'name' => 'qwen3.6:27b' },
                                                                            { 'name' => 'nomic-embed-text' }

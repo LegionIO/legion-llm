@@ -61,7 +61,7 @@ RSpec.describe '.detect_embedding_capability' do
 
   context 'when Ollama has a preferred model' do
     before do
-      Legion::Settings[:llm][:providers][:ollama][:enabled] = true
+      Legion::Settings[:llm][:providers][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
         .and_return(false)
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
@@ -103,8 +103,8 @@ RSpec.describe '.detect_embedding_capability' do
     before do
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
         .and_return(false)
-      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
-      Legion::Settings[:llm][:providers][:openai][:enabled] = true
+      Legion::Settings[:llm][:providers][:bedrock] = { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
+      Legion::Settings[:llm][:providers][:openai] = { enabled: true, default_model: 'gpt-4o' }
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(false)
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:openai, 'text-embedding-3-small').and_return(true)
     end
@@ -121,7 +121,7 @@ RSpec.describe '.detect_embedding_capability' do
     before do
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
         .and_return(false)
-      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+      Legion::Settings[:llm][:providers][:bedrock] = { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(true)
     end
 
@@ -137,7 +137,7 @@ RSpec.describe '.detect_embedding_capability' do
     before do
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
         .and_return(false)
-      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+      Legion::Settings[:llm][:providers][:bedrock] = { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(false)
     end
 

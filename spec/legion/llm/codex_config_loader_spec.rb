@@ -9,6 +9,12 @@ RSpec.describe Legion::LLM::CodexConfigLoader do
 
   before do
     allow(File).to receive(:exist?).and_call_original
+    # Provider defaults now live in lex-llm-* extensions; seed the openai
+    # config that CodexConfigLoader expects to find in settings.
+    Legion::Settings[:llm][:providers][:openai] ||= {
+      enabled: false, default_model: 'gpt-4o',
+      api_key: ['env://OPENAI_API_KEY', 'env://CODEX_API_KEY']
+    }
   end
 
   describe '.load' do

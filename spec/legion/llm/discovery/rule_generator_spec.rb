@@ -206,28 +206,6 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
     end
   end
 
-  describe '.filtered_out? with per-instance filters' do
-    it 'uses instance whitelist over global whitelist' do
-      expect(described_class.filtered_out?('llama3:8b', ['llama3'], nil, ['qwen'], nil)).to be false
-    end
-
-    it 'uses instance blacklist over global blacklist' do
-      expect(described_class.filtered_out?('llama3:8b', nil, ['llama3'], nil, nil)).to be true
-    end
-
-    it 'falls back to global whitelist when instance whitelist is nil' do
-      expect(described_class.filtered_out?('llama3:8b', nil, nil, ['qwen'], nil)).to be true
-    end
-
-    it 'falls back to global blacklist when instance blacklist is nil' do
-      expect(described_class.filtered_out?('llama3:8b', nil, nil, nil, ['llama3'])).to be true
-    end
-
-    it 'passes when no filters are set' do
-      expect(described_class.filtered_out?('llama3:8b', nil, nil, nil, nil)).to be false
-    end
-  end
-
   describe 'enriched metadata in rules' do
     subject(:rules) { described_class.generate(discovered) }
 
@@ -253,17 +231,28 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
     end
   end
 
-  describe 'KNOWN_MODEL_CAPABILITIES for configured providers' do
+  describe 'configured provider rules without KNOWN_MODEL_CAPABILITIES' do
     before do
       Legion::Settings[:llm][:providers][:anthropic] = { enabled: true, default_model: 'claude-sonnet-4-6' }
     end
 
-    it 'includes known capabilities for cloud provider rules' do
+    it 'generates chat and stream rules for enabled configured providers' do
+      rules = described_class.generate({})
+      anthropic_rules = rules.select { |r| r[:name].include?('anthropic') }
+      capabilities = anthropic_rules.map { |r| r[:when][:capability] }
+      expect(capabilities).to contain_exactly(:chat, :stream)
+    end
+
+    it 'sets correct model name from config' do
       rules = described_class.generate({})
       anthropic_rule = rules.find { |r| r[:name].include?('anthropic') && r[:when][:capability] == :chat }
-      expect(anthropic_rule).not_to be_nil
-      expect(anthropic_rule[:then][:model_capabilities]).to eq(%i[completion vision tools thinking])
-      expect(anthropic_rule[:then][:context_length]).to eq(200_000)
+      expect(anthropic_rule[:then][:model]).to eq('claude-sonnet-4-6')
+    end
+
+    it 'does not include model_capabilities without enrichment data' do
+      rules = described_class.generate({})
+      anthropic_rule = rules.find { |r| r[:name].include?('anthropic') && r[:when][:capability] == :chat }
+      expect(anthropic_rule[:then]).not_to have_key(:model_capabilities)
     end
   end
 

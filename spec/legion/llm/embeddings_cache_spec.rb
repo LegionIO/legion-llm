@@ -18,7 +18,7 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
   describe 'LLM.embedding_fallback_chain' do
     context 'when detect_embedding_capability finds a provider' do
       before do
-        Legion::Settings[:llm][:providers][:ollama][:enabled] = true
+        Legion::Settings[:llm][:providers][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
         allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(false)
         allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
           .with('mxbai-embed-large').and_return(true)
@@ -70,8 +70,8 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
 
   describe 'LLM.build_embedding_fallback_chain (private)' do
     it 'includes only enabled providers' do
-      Legion::Settings[:llm][:providers][:ollama][:enabled] = true
-      Legion::Settings[:llm][:providers][:bedrock][:enabled] = false
+      Legion::Settings[:llm][:providers][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
+      Legion::Settings[:llm][:providers][:bedrock] = { enabled: false }
       # General stub (false) must come first; specific stub (true) overrides for the target model
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(false)
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
@@ -91,7 +91,7 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
     end
 
     it 'uses model from provider_models when a supported cloud provider is enabled' do
-      Legion::Settings[:llm][:providers][:openai][:enabled] = true
+      Legion::Settings[:llm][:providers][:openai] = { enabled: true, default_model: 'gpt-4o' }
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(true)
 
       chain = Legion::LLM::Discovery.send(:build_embedding_fallback_chain, {

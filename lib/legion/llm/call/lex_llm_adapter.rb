@@ -107,14 +107,15 @@ module Legion
         def model_info(model, offering_metadata: nil)
           offering = normalize_offering_metadata(offering_metadata)
           lex_llm_namespace::Model::Info.new(
-            id:                model,
-            name:              offering[:canonical_model_alias] || model,
-            provider:          provider_name,
-            family:            offering[:model_family],
-            context_window:    offering.dig(:limits, :context_window),
-            max_output_tokens: offering.dig(:limits, :max_output_tokens),
-            capabilities:      Array(offering[:capabilities]).map(&:to_s),
-            metadata:          offering
+            id:             model,
+            name:           offering[:canonical_model_alias] || model,
+            provider:       provider_name,
+            family:         offering[:model_family],
+            context_length: offering.dig(:limits, :context_window),
+            capabilities:   Array(offering[:capabilities]).map(&:to_s),
+            metadata:       offering.merge(
+              max_output_tokens: offering.dig(:limits, :max_output_tokens)
+            ).compact
           )
         end
 

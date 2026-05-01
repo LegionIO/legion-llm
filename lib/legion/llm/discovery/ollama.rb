@@ -280,14 +280,16 @@ module Legion
           def routing_model_whitelist
             value = Legion::LLM::Settings.value(:routing, :model_whitelist)
             value.is_a?(Array) ? value : nil
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.discovery.ollama.routing_model_whitelist')
             nil
           end
 
           def routing_model_blacklist
             value = Legion::LLM::Settings.value(:routing, :model_blacklist)
             value.is_a?(Array) ? value : nil
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.discovery.ollama.routing_model_blacklist')
             nil
           end
 

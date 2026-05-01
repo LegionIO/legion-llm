@@ -34,7 +34,9 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'lists normalized model offerings with type filters' do
-      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+      Legion::Settings[:llm][:providers][:bedrock] = {
+        enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6', region: 'us-east-2'
+      }
 
       response = get_json('/api/llm/models?type=embed')
       body = Legion::JSON.load(response.body)
@@ -45,7 +47,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'returns all provider offerings under the provider scoped route' do
-      Legion::Settings[:llm][:providers][:vllm][:enabled] = true
+      Legion::Settings[:llm][:providers][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
       allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([
                                                                            { id:            'qwen3.6-27b',
                                                                              max_model_len: 32_768 }
@@ -60,7 +62,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'returns a model detail document' do
-      Legion::Settings[:llm][:providers][:anthropic][:enabled] = true
+      Legion::Settings[:llm][:providers][:anthropic] = { enabled: true, default_model: 'claude-sonnet-4-6' }
 
       response = get_json('/api/llm/models/claude-sonnet-4-6')
       body = Legion::JSON.load(response.body)
@@ -79,7 +81,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'backs OpenAI-compatible model listing with the same inference inventory' do
-      Legion::Settings[:llm][:providers][:vllm][:enabled] = true
+      Legion::Settings[:llm][:providers][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
       allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([
                                                                            { id:            'qwen3.6-27b',
                                                                              max_model_len: 32_768 }

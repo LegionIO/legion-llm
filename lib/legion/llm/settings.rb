@@ -19,7 +19,7 @@ module Legion
           default_model:             model_override,
           default_provider:          nil,
           system_baseline:           system_baseline_default,
-          providers:                 providers,
+          providers:                 {},
           routing:                   routing_defaults,
           budget:                    budget_defaults,
           confidence:                confidence_defaults,
@@ -463,59 +463,10 @@ module Legion
         }
       end
 
-      def self.providers
-        {
-          bedrock:   {
-            enabled:       false,
-            default_model: 'us.anthropic.claude-sonnet-4-6',
-            api_key:       nil,
-            secret_key:    nil,
-            session_token: nil,
-            bearer_token:  'env://AWS_BEARER_TOKEN_BEDROCK',
-            region:        'us-east-2'
-          },
-          anthropic: {
-            enabled:       false,
-            default_model: 'claude-sonnet-4-6',
-            api_key:       'env://ANTHROPIC_API_KEY'
-          },
-          openai:    {
-            enabled:       false,
-            default_model: 'gpt-4o',
-            api_key:       ['env://OPENAI_API_KEY', 'env://CODEX_API_KEY']
-          },
-          gemini:    {
-            enabled:       false,
-            default_model: 'gemini-2.0-flash',
-            api_key:       'env://GEMINI_API_KEY'
-          },
-          azure:     {
-            enabled:       false,
-            default_model: nil,
-            api_base:      nil,
-            api_key:       nil,
-            auth_token:    nil
-          },
-          ollama:    {
-            enabled:       false,
-            default_model: 'qwen3.5:latest',
-            base_url:      'http://localhost:11434'
-          },
-          vllm:      {
-            enabled:         false,
-            default_model:   'qwen3.6-27b',
-            base_url:        'http://localhost:8000/v1',
-            api_key:         nil,
-            enable_thinking: true
-          },
-          mlx:       {
-            enabled:       false,
-            default_model: nil,
-            base_url:      'http://localhost:8000',
-            api_key:       nil
-          }
-        }
-      end
+      # Provider defaults now live in each lex-llm-* provider extension's
+      # `default_settings`. The `providers:` key in `self.default` ships as
+      # an empty hash so that user-supplied or extension-supplied config is
+      # never masked by stale built-in values.
     end
   end
 end

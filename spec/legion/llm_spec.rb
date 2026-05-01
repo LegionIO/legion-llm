@@ -12,25 +12,15 @@ RSpec.describe Legion::LLM do
       expect(settings[:providers]).to be_a(Hash)
     end
 
-    it 'includes all provider configs' do
+    it 'starts with an empty providers hash (defaults now live in lex-llm-* extensions)' do
       providers = described_class.settings[:providers]
-      expect(providers.keys).to include(:bedrock, :anthropic, :openai, :gemini, :azure, :ollama)
-    end
-
-    it 'places azure between gemini and ollama in provider order' do
-      keys = described_class.settings[:providers].keys
-      expect(keys.index(:azure)).to be > keys.index(:gemini)
-      expect(keys.index(:azure)).to be < keys.index(:ollama)
-    end
-
-    it 'defaults bedrock region to us-east-2' do
-      expect(described_class.settings[:providers][:bedrock][:region]).to eq('us-east-2')
+      expect(providers).to eq({})
     end
   end
 
   describe '.start and .shutdown' do
     before do
-      Legion::Settings[:llm][:providers][:ollama][:enabled] = true
+      Legion::Settings[:llm][:providers] = { ollama: { enabled: true, base_url: 'http://localhost:11434' } }
       allow(Legion::LLM::Call::Providers).to receive(:verify_providers)
       allow(Legion::LLM::Call::Providers).to receive(:vllm_running?).and_return(false)
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
@@ -100,14 +90,18 @@ RSpec.describe Legion::LLM do
     end
 
     it 'picks bedrock when bedrock is the first enabled provider' do
-      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+      Legion::Settings[:llm][:providers] = {
+        bedrock: { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1', region: 'us-east-2' }
+      }
       described_class.start
       expect(Legion::Settings[:llm][:default_provider]).to eq(:bedrock)
     end
 
     it 'picks anthropic when only anthropic is enabled' do
-      Legion::Settings[:llm][:providers][:bedrock][:enabled] = false
-      Legion::Settings[:llm][:providers][:anthropic][:enabled] = true
+      Legion::Settings[:llm][:providers] = {
+        bedrock:   { enabled: false },
+        anthropic: { enabled: true, default_model: 'claude-sonnet-4-6' }
+      }
       described_class.start
       expect(Legion::Settings[:llm][:default_provider]).to eq(:anthropic)
     end
@@ -126,13 +120,9 @@ RSpec.describe Legion::LLM do
         defaults = described_class.default
         expect(defaults).to include(:enabled, :connected, :default_model, :default_provider, :providers)
       end
-    end
 
-    describe '.providers' do
-      it 'all providers default to disabled' do
-        described_class.providers.each_value do |config|
-          expect(config[:enabled]).to be false
-        end
+      it 'defaults providers to an empty hash' do
+        expect(described_class.default[:providers]).to eq({})
       end
     end
   end

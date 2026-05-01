@@ -10,6 +10,7 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
       Legion::LLM::Settings.default
     )
     allow(Legion::Settings).to receive(:[]).with(:transport).and_return({ connected: false })
+    allow(Legion::Settings).to receive(:[]).with(:extensions).and_return({})
   end
 
   describe 'Legion::LLM::PrivacyModeError' do
