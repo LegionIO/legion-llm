@@ -381,7 +381,7 @@ module Legion
         end
 
         def probe_via_model_list(provider, target_model)
-          return :unavailable unless Call::Registry.available?(provider)
+          return :unavailable unless Call::Registry.registered?(provider)
 
           return :ok if target_model.nil?
           return :ok if native_inventory_model_available?(provider, target_model)
@@ -397,7 +397,7 @@ module Legion
         end
 
         def probe_via_chat(provider, model)
-          return :unavailable unless Call::Registry.available?(provider)
+          return :unavailable unless Call::Registry.registered?(provider)
 
           native_inventory_model_available?(provider, model) ? :ok : :model_missing
         end
@@ -481,18 +481,64 @@ module Legion
           return unless load_lex_llm_base
 
           LEX_LLM_PROVIDER_REQUIRES.each_value { |feature| load_optional_feature(feature) }
-          namespace = lex_llm_namespace
-          return unless namespace
+          return unless lex_llm_namespace
 
-          namespace::Provider.providers.each do |provider_name, provider_class|
-            next unless lex_llm_provider_ready?(namespace, provider_name, provider_class)
+          providers_config = Legion::LLM::Settings.value(:providers, default: {})
+          providers_config.each do |provider_name, provider_config|
+            next unless provider_config.is_a?(Hash)
+            next if config_value(provider_config, :enabled) == false
 
-            adapter = Call::LexLLMAdapter.new(provider_name, provider_class)
-            Call::Registry.register(provider_name, adapter)
-            Call::Registry.register(:claude, adapter) if provider_name.to_sym == :anthropic
+            register_instances(provider_name, provider_config)
           end
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.auto_register_lex_llm')
+        end
+
+        def register_instances(provider_family, provider_config)
+          instances = config_value(provider_config, :instances)
+
+          if instances.is_a?(Hash) && instances.any?
+            instances.each do |instance_id, instance_config|
+              merged = provider_config.except(:instances, 'instances').merge(instance_config)
+              register_single_instance(provider_family, instance_id, merged)
+            end
+          else
+            register_single_instance(provider_family, :default, provider_config)
+          end
+        end
+
+        def register_single_instance(provider_family, instance_id, config)
+          provider_class = resolve_lex_llm_provider_class(provider_family)
+          return unless provider_class
+
+          mapped_config = map_settings_to_config_options(provider_family, provider_class, config)
+          adapter = Call::LexLLMAdapter.new(provider_family, provider_class, instance_config: mapped_config)
+          Call::Registry.register(provider_family, adapter, instance: instance_id)
+          Call::Registry.register(:claude, adapter, instance: instance_id) if provider_family.to_sym == :anthropic
+          log.info("[llm][providers] registered instance provider=#{provider_family} instance=#{instance_id}")
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: "register_instance.#{provider_family}/#{instance_id}")
+        end
+
+        def map_settings_to_config_options(provider_family, provider_class, config)
+          options = Array(provider_class.configuration_options)
+          mapped = {}
+          options.each do |option|
+            value = lex_llm_provider_config_value(provider_family, option, config)
+            mapped[option] = value unless value.nil?
+          end
+          mapped
+        end
+
+        def resolve_lex_llm_provider_class(provider_family)
+          return nil unless defined?(Legion::Extensions::Llm::Provider)
+
+          providers = begin
+            Legion::Extensions::Llm::Provider.providers
+          rescue StandardError
+            {}
+          end
+          providers[provider_family.to_sym] || providers[provider_family.to_s]
         end
 
         def load_lex_llm_base

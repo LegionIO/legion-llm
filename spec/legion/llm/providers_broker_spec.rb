@@ -166,6 +166,9 @@ RSpec.describe Legion::LLM::Providers do
     end
 
     it 'bridges registered lex-llm providers into the native registry' do
+      # Settings-driven registration requires the provider to not be disabled
+      Legion::Settings[:llm][:providers][:anthropic] = { enabled: true }
+
       host.send(:auto_register_lex_llm_providers)
 
       expect(Legion::LLM::Call::Registry.for(:anthropic)).to be_a(Legion::LLM::Call::LexLLMAdapter)
