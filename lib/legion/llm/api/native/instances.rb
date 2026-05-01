@@ -16,14 +16,13 @@ module Legion
               log.debug('[llm][api][instances] action=list_instances')
               require_llm!
 
-              offerings = Legion::LLM::Inventory.offerings
-              instances = Legion::LLM::API::Native::Instances.instances_from_offerings(offerings)
+              instances = Legion::LLM::API::Native::Instances.registry_instances
 
               json_response({
                               instances: instances,
                               summary:   {
                                 total:     instances.size,
-                                providers: instances.map { |instance| instance[:provider_family] }.uniq.size
+                                providers: instances.map { |inst| inst[:provider] }.uniq.size
                               }
                             })
             rescue StandardError => e
@@ -36,8 +35,7 @@ module Legion
               log.debug("[llm][api][instances] action=get_instance id=#{instance_id}")
               require_llm!
 
-              offerings = Legion::LLM::Inventory.offerings(instance_id: instance_id)
-              instance = Legion::LLM::API::Native::Instances.instance_from_offerings(instance_id, offerings)
+              instance = Legion::LLM::API::Native::Instances.find_registry_instance(instance_id)
               halt json_error('instance_not_found', "Instance '#{instance_id}' not found", status_code: 404) unless instance
 
               json_response({ instance: instance })
@@ -49,39 +47,22 @@ module Legion
             log.debug('[llm][api][instances] provider instance inventory routes registered')
           end
 
-          def self.instances_from_offerings(offerings)
-            instances = offerings.group_by { |offering| offering[:instance_id] }.filter_map do |instance_id, rows|
-              instance_from_offerings(instance_id, rows)
+          def self.registry_instances
+            instances = []
+            Legion::LLM::Call::Registry.available.each do |provider_name|
+              Legion::LLM::Call::Registry.instances_for(provider_name).each_key do |inst_id|
+                instances << {
+                  id:       "#{provider_name}/#{inst_id}",
+                  provider: provider_name.to_s,
+                  instance: inst_id.to_s
+                }
+              end
             end
-            instances.sort_by { |instance| instance[:instance_id] }
+            instances.sort_by { |inst| inst[:id] }
           end
 
-          def self.instance_from_offerings(instance_id, offerings)
-            rows = Array(offerings)
-            return nil if rows.empty?
-
-            {
-              instance_id:     instance_id.to_s,
-              provider_family: rows.map { |offering| offering[:provider_family] }.uniq.sort.join(','),
-              tiers:           rows.map { |offering| offering[:tier].to_s }.uniq.sort,
-              transports:      rows.map { |offering| offering[:transport].to_s }.uniq.sort,
-              health:          aggregate_health(rows),
-              capacity:        aggregate_capacity(rows),
-              offerings:       rows.sort_by { |offering| offering[:offering_id].to_s }
-            }
-          end
-
-          def self.aggregate_health(offerings)
-            states = offerings.filter_map { |offering| offering.dig(:health, :circuit_state) }.uniq.sort
-            { circuit_states: states }
-          end
-
-          def self.aggregate_capacity(offerings)
-            {
-              max_context_window: offerings.filter_map { |offering| offering.dig(:limits, :context_window) }.max,
-              max_output_tokens:  offerings.filter_map { |offering| offering.dig(:limits, :max_output_tokens) }.max,
-              offering_count:     offerings.size
-            }.compact
+          def self.find_registry_instance(instance_id)
+            registry_instances.find { |inst| inst[:id] == instance_id || inst[:instance] == instance_id }
           end
         end
       end

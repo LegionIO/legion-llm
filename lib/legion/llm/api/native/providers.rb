@@ -31,6 +31,9 @@ module Legion
                   enabled:       true,
                   default_model: Legion::LLM::API::Native::Providers.config_value(config, :default_model),
                   health:        Legion::LLM::API::Native::Providers.provider_health(provider_name),
+                  instances:     Legion::LLM::Call::Registry.instances_for(provider_name.to_sym).map do |inst_id, _adapter|
+                                   { id: inst_id.to_s }
+                                 end,
                   native:        Legion::LLM::Call::Registry.registered?(provider_name.to_sym)
                 }
               end
@@ -66,6 +69,9 @@ module Legion
                               enabled:       true,
                               default_model: Legion::LLM::API::Native::Providers.config_value(provider_config, :default_model),
                               health:        Legion::LLM::API::Native::Providers.provider_health(provider_name),
+                              instances:     Legion::LLM::Call::Registry.instances_for(provider_name.to_sym).map do |inst_id, _adapter|
+                                               { id: inst_id.to_s }
+                                             end,
                               native:        Legion::LLM::Call::Registry.registered?(provider_name.to_sym),
                               config:        Legion::LLM::API::Native::Providers.safe_config(provider_config)
                             })
