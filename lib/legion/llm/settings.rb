@@ -137,9 +137,7 @@ module Legion
 
       def self.provider_settings
         ext = Legion::Settings[:extensions]
-        if ext.is_a?(Hash) && ext[:llm].is_a?(Hash) && ext[:llm].any?
-          return ext[:llm]
-        end
+        return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash) && ext[:llm].any?
 
         value(:providers, default: {})
       rescue StandardError => e

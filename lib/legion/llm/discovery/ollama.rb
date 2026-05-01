@@ -157,7 +157,7 @@ module Legion
             end
           end
 
-          def enrich_instance_models!(instance_id, base_url, models, whitelist, blacklist) # rubocop:disable Metrics/MethodLength
+          def enrich_instance_models!(instance_id, base_url, models, whitelist, blacklist)
             global_wl = routing_model_whitelist
             global_bl = routing_model_blacklist
             effective_wl = whitelist || global_wl
@@ -188,8 +188,13 @@ module Legion
             model_names.each do |name|
               break if Time.now > deadline
 
-              show_data = fetch_model_show(base_url, name)
-              enriched[name] = show_data if show_data
+              begin
+                show_data = fetch_model_show(base_url, name)
+                enriched[name] = show_data if show_data
+              rescue Exception # rubocop:disable Lint/RescueException
+                # Best-effort: skip any model that fails enrichment
+                next
+              end
             end
 
             log.debug("Discovery::Ollama enriched #{enriched.size}/#{model_names.size} models for instance=#{instance_id}")
@@ -248,11 +253,6 @@ module Legion
             parse_show_response(parsed)
           rescue StandardError => e
             handle_exception(e, level: :debug)
-            nil
-          rescue Exception => e # rubocop:disable Lint/RescueException
-            # Best-effort enrichment must never block discovery; catch non-StandardError exceptions
-            # (e.g., WebMock::NetConnectNotAllowedError in tests) that bypass the normal rescue
-            handle_exception(e, level: :debug) rescue nil # rubocop:disable Style/RescueModifier
             nil
           end
 

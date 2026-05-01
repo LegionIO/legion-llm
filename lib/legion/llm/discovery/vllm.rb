@@ -214,7 +214,7 @@ module Legion
           end
 
           def providers_settings
-            Legion::LLM::Settings.provider_settings
+            Legion::LLM::Settings.config_value(llm_settings, :providers, {})
           end
 
           def llm_settings

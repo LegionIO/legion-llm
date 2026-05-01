@@ -28,11 +28,31 @@ module Legion
 
         TIER_WEIGHT = { local: 100, fleet: 80, cloud: 60, frontier: 40 }.freeze
 
+        KNOWN_MODEL_CAPABILITIES = {
+          # OpenAI
+          'gpt-4o'                              => { capabilities: %i[completion vision tools], context_length: 128_000 },
+          'gpt-4o-mini'                         => { capabilities: %i[completion vision tools], context_length: 128_000 },
+          'gpt-5'                               => { capabilities: %i[completion vision tools thinking], context_length: 1_000_000 },
+          'o3'                                  => { capabilities: %i[completion tools thinking], context_length: 200_000 },
+          'text-embedding-3-small'              => { capabilities: [:embedding], context_length: 8_191 },
+          'text-embedding-3-large'              => { capabilities: [:embedding], context_length: 8_191 },
+          # Anthropic
+          'claude-sonnet-4-6'                   => { capabilities: %i[completion vision tools thinking], context_length: 200_000 },
+          'claude-opus-4-6'                     => { capabilities: %i[completion vision tools thinking], context_length: 200_000 },
+          'claude-haiku-4-5'                    => { capabilities: %i[completion vision tools], context_length: 200_000 },
+          # Bedrock
+          'us.anthropic.claude-sonnet-4-6-v1:0' => { capabilities: %i[completion vision tools thinking], context_length: 200_000 },
+          'amazon.titan-embed-text-v2:0'        => { capabilities: [:embedding], context_length: 8_192 },
+          # Gemini
+          'gemini-2.5-flash'                    => { capabilities: %i[completion vision tools thinking], context_length: 1_000_000 },
+          'gemini-2.5-pro'                      => { capabilities: %i[completion vision tools thinking], context_length: 1_000_000 }
+        }.freeze
+
         module_function
 
         def generate(discovered_instances)
-          whitelist = routing_model_whitelist
-          blacklist = routing_model_blacklist
+          global_whitelist = routing_model_whitelist
+          global_blacklist = routing_model_blacklist
 
           rules = []
           discovered_instances.each do |provider, instances|
@@ -43,15 +63,19 @@ module Legion
             order = 0
             instances.each do |instance_id, data|
               models = data.is_a?(Hash) ? Array(data[:models]) : []
-              models.each do |model|
-                model_name = model.is_a?(Hash) ? (model[:name] || model['name']).to_s : model.to_s
-                next if model_name.empty?
-                next if filtered_out?(model_name, whitelist, blacklist)
+              inst_whitelist = data.is_a?(Hash) ? data[:model_whitelist] : nil
+              inst_blacklist = data.is_a?(Hash) ? data[:model_blacklist] : nil
 
-                capability = embedding_model?(model_name) ? :embed : :chat
+              models.each do |model|
+                model_data = model.is_a?(Hash) ? model : { name: model.to_s }
+                model_name = (model_data[:name] || model_data['name']).to_s
+                next if model_name.empty?
+                next if filtered_out?(model_name, inst_whitelist, inst_blacklist, global_whitelist, global_blacklist)
+
+                capability = embedding_model?(model_data) ? :embed : :chat
                 priority = (TIER_WEIGHT[tier] || 80) - order
-                rules << build_rule(provider, instance_id, model_name, capability, tier, priority)
-                rules << build_rule(provider, instance_id, model_name, :stream, tier, priority) if capability == :chat
+                rules << build_rule(provider, instance_id, model_data, capability, tier, priority)
+                rules << build_rule(provider, instance_id, model_data, :stream, tier, priority) if capability == :chat
                 order += 1
               end
             end
@@ -61,13 +85,22 @@ module Legion
           rules.sort_by { |r| -r[:priority] }
         end
 
-        def embedding_model?(model)
-          name = model.to_s.downcase
+        def embedding_model?(model_data)
+          if model_data.is_a?(Hash)
+            caps = model_data[:capabilities] || model_data['capabilities']
+            return caps.any? { |c| c.to_s == 'embedding' } if caps.is_a?(Array) && caps.any?
+          end
+
+          # Fall back to name pattern matching when no capability data
+          name = model_data.is_a?(Hash) ? (model_data[:name] || model_data['name']).to_s : model_data.to_s
+          name = name.downcase
           EMBEDDING_PATTERNS.any? { |pat| name.include?(pat) }
         end
 
-        def filtered_out?(model_name, whitelist, blacklist)
+        def filtered_out?(model_name, inst_whitelist, inst_blacklist, global_whitelist, global_blacklist)
           name = model_name.to_s.downcase
+          whitelist = inst_whitelist || global_whitelist
+          blacklist = inst_blacklist || global_blacklist
 
           return true if whitelist&.any? && whitelist.none? { |pat| name.include?(pat.downcase) }
 
@@ -92,9 +125,11 @@ module Legion
             default_model = config[:default_model]
             next unless default_model
 
+            known = KNOWN_MODEL_CAPABILITIES[default_model.to_s] || {}
+            model_data = { name: default_model }.merge(known)
             priority = TIER_WEIGHT[tier] || 40
-            rules << build_rule(provider_name, :default, default_model, :chat, tier, priority)
-            rules << build_rule(provider_name, :default, default_model, :stream, tier, priority)
+            rules << build_rule(provider_name, :default, model_data, :chat, tier, priority)
+            rules << build_rule(provider_name, :default, model_data, :stream, tier, priority)
           end
 
           rules
@@ -103,14 +138,38 @@ module Legion
           []
         end
 
-        def build_rule(provider, instance, model, capability, tier, priority)
+        def build_rule(provider, instance, model_data, capability, tier, priority)
+          model_name = model_data.is_a?(Hash) ? (model_data[:name] || model_data['name']).to_s : model_data.to_s
+          target = {
+            provider:           provider.to_sym,
+            instance:           instance.to_sym,
+            model:              model_name,
+            tier:               tier,
+            model_capabilities: extract_capabilities(model_data),
+            context_length:     extract_field(model_data, :context_length),
+            parameter_count:    extract_field(model_data, :parameter_count)
+          }.compact
           {
-            name:     "auto:#{provider}/#{instance}:#{model}:#{capability}",
+            name:     "auto:#{provider}/#{instance}:#{model_name}:#{capability}",
             when:     { capability: capability },
-            then:     { provider: provider.to_sym, instance: instance.to_sym,
-                        model: model.to_s, tier: tier },
+            then:     target,
             priority: priority
           }
+        end
+
+        def extract_capabilities(model_data)
+          return nil unless model_data.is_a?(Hash)
+
+          caps = model_data[:capabilities] || model_data['capabilities']
+          return caps if caps.is_a?(Array) && caps.any?
+
+          nil
+        end
+
+        def extract_field(model_data, field)
+          return nil unless model_data.is_a?(Hash)
+
+          model_data[field] || model_data[field.to_s]
         end
 
         def routing_model_whitelist

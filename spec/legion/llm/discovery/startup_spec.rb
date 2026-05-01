@@ -19,6 +19,7 @@ RSpec.describe 'LLM startup discovery' do
       .to_return(status: 200, body: { 'models' => [] }.to_json)
     stub_request(:get, 'http://localhost:8000/v1/models')
       .to_return(status: 200, body: { 'data' => [] }.to_json)
+    stub_request(:post, %r{/api/show}).to_return(status: 404)
   end
 
   context 'when Ollama provider is enabled' do

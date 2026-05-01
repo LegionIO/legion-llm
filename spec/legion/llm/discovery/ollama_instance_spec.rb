@@ -38,6 +38,8 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
         .to_return(status: 200, body: local_models.to_json)
       stub_request(:get, 'http://10.11.164.92:11434/api/tags')
         .to_return(status: 200, body: apollo_models.to_json)
+      # Stub /api/show for enrichment (returns 404 so no enrichment occurs)
+      stub_request(:post, %r{/api/show}).to_return(status: 404)
     end
 
     describe '.scan_all_instances' do
@@ -56,6 +58,51 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
         apollo_names = result[:apollo][:models].map { |m| m['name'] }
         expect(local_names).to eq(['qwen3.6:27b-q4_K_M', 'llama3.1:8b'])
         expect(apollo_names).to eq(%w[mxbai-embed-large nomic-embed-text])
+      end
+
+      context 'with /api/show enrichment' do
+        let(:show_response) do
+          {
+            'capabilities' => %w[completion vision tools thinking],
+            'details'      => { 'parameter_size' => '27.8B', 'quantization_level' => 'Q4_K_M', 'family' => 'qwen35' },
+            'model_info'   => { 'general.parameter_count' => 27_781_427_952, 'qwen35.context_length' => 262_144 }
+          }
+        end
+
+        before do
+          stub_request(:post, %r{127\.0\.0\.1:11434/api/show})
+            .to_return(status: 200, body: show_response.to_json, headers: { 'Content-Type' => 'application/json' })
+          stub_request(:post, %r{10\.11\.164\.92:11434/api/show})
+            .to_return(status: 200, body: show_response.to_json, headers: { 'Content-Type' => 'application/json' })
+        end
+
+        it 'enriches models with capabilities from /api/show' do
+          result = described_class.scan_all_instances
+          model = result[:local][:models].find { |m| m['name'] == 'qwen3.6:27b-q4_K_M' }
+          expect(model['capabilities']).to eq(%i[completion vision tools thinking])
+        end
+
+        it 'enriches models with context_length from /api/show' do
+          result = described_class.scan_all_instances
+          model = result[:local][:models].find { |m| m['name'] == 'qwen3.6:27b-q4_K_M' }
+          expect(model['context_length']).to eq(262_144)
+        end
+
+        it 'enriches models with parameter metadata from /api/show' do
+          result = described_class.scan_all_instances
+          model = result[:local][:models].find { |m| m['name'] == 'qwen3.6:27b-q4_K_M' }
+          expect(model['parameter_count']).to eq(27_781_427_952)
+          expect(model['parameter_size']).to eq('27.8B')
+          expect(model['quantization']).to eq('Q4_K_M')
+          expect(model['family']).to eq('qwen35')
+        end
+      end
+
+      it 'includes per-instance filter config in scan data' do
+        Legion::Settings[:llm][:providers][:ollama][:instances][:local][:model_whitelist] = %w[qwen3.6]
+        result = described_class.scan_all_instances
+        expect(result[:local][:model_whitelist]).to eq(%w[qwen3.6])
+        expect(result[:apollo]).not_to have_key(:model_whitelist)
       end
     end
 
@@ -158,6 +205,7 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
       }
       stub_request(:get, 'http://localhost:11434/api/tags')
         .to_return(status: 200, body: local_models.to_json)
+      stub_request(:post, %r{/api/show}).to_return(status: 404)
     end
 
     it 'uses synthetic :default instance' do
