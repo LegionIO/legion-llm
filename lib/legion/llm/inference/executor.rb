@@ -1363,12 +1363,17 @@ module Legion
           tokens = @extracted_tokens
           return tokens unless tokens.respond_to?(:input_tokens)
 
+          input  = tokens.input_tokens.to_i
+          output = tokens.output_tokens.to_i
           result = {
-            input_tokens:       tokens.input_tokens.to_i,
-            output_tokens:      tokens.output_tokens.to_i,
+            input_tokens:       input,
+            output_tokens:      output,
+            # Backwards-compatible aliases used by token_value/inference_token_value helpers
+            input:              input,
+            output:             output,
             cache_read_tokens:  tokens.respond_to?(:cache_read_tokens) ? tokens.cache_read_tokens.to_i : 0,
             cache_write_tokens: tokens.respond_to?(:cache_write_tokens) ? tokens.cache_write_tokens.to_i : 0,
-            total:              tokens.input_tokens.to_i + tokens.output_tokens.to_i
+            total:              input + output
           }
 
           context_window = @resolved_offering_metadata&.dig(:limits, :context_window) ||

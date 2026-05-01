@@ -77,6 +77,8 @@ module Legion
           provider.discover_offerings(live: live, **filters)
         end
 
+        ToolShim = Struct.new(:name, :description, :params_schema, keyword_init: true)
+
         private
 
         attr_reader :provider_name, :provider_class, :lex_llm_namespace
@@ -146,8 +148,6 @@ module Legion
 
           raise NameError, 'lex-llm provider namespace is not loaded'
         end
-
-        ToolShim = Struct.new(:name, :description, :params_schema, keyword_init: true)
 
         def normalize_tools(tools)
           hash = case tools

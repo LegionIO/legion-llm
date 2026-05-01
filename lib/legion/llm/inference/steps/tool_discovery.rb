@@ -57,7 +57,7 @@ module Legion
                 name:        entry[:name],
                 description: entry[:description] || '',
                 parameters:  entry[:input_schema] || entry[:parameters] || {},
-                source:      { type: :registry, server: 'legion' }
+                source:      build_entry_source(entry)
               }
             end
 
@@ -65,6 +65,16 @@ module Legion
               "[llm][tools] discover request_id=#{@request.id} " \
               "settings_extensions_tools=#{entries.size}"
             )
+          end
+
+          def build_entry_source(entry)
+            if entry[:tool_class]
+              { type: :registry, tool_class: entry[:tool_class] }
+            elsif entry[:extension] && entry[:runner] && entry[:function]
+              { type: :extension, lex: entry[:extension], runner: entry[:runner], function: entry[:function] }
+            else
+              { type: :registry, server: 'legion' }
+            end
           end
 
           def discover_client_tools
