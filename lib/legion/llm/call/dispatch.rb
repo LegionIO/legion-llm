@@ -8,13 +8,23 @@ module Legion
       # Wraps a native dispatch result hash so Pipeline::Executor and
       # ConversationStore can consume a stable provider response object.
       class NativeResponseAdapter
-        attr_reader :content, :input_tokens, :output_tokens,
+        attr_reader :content, :model, :input_tokens, :output_tokens,
                     :cache_read_tokens, :cache_write_tokens, :usage, :metadata,
                     :tool_calls, :stop_reason
+
+        HASH_KEY_MAP = {
+          result: :content, content: :content,
+          input_tokens: :input_tokens, output_tokens: :output_tokens,
+          cache_read_tokens: :cache_read_tokens, cache_write_tokens: :cache_write_tokens,
+          usage: :usage, metadata: :metadata,
+          tool_calls: :tool_calls, stop_reason: :stop_reason,
+          data: :content, model: :model
+        }.freeze
 
         def initialize(result_hash)
           result_hash = self.class.coerce_result(result_hash)
           @content             = result_hash[:result].to_s
+          @model               = result_hash[:model]
           @metadata            = result_hash[:metadata] || {}
           @tool_calls          = result_hash[:tool_calls] || []
           @stop_reason         = result_hash[:stop_reason]
@@ -24,6 +34,19 @@ module Legion
           @output_tokens       = usage.output_tokens
           @cache_read_tokens   = usage.cache_read_tokens
           @cache_write_tokens  = usage.cache_write_tokens
+        end
+
+        def [](key)
+          attr = HASH_KEY_MAP[key.to_sym]
+          attr ? public_send(attr) : nil
+        end
+
+        def dig(*keys)
+          value = self[keys.first]
+          return value if keys.length == 1
+          return nil unless value.respond_to?(:dig)
+
+          value.dig(*keys[1..])
         end
 
         def self.coerce_result(raw)
@@ -60,67 +83,75 @@ module Legion
         extend self
         extend Legion::Logging::Helper
 
-        # Dispatch a chat request to a registered lex-* extension.
+        # Mapping of supported capability names to extension method names.
+        CAPABILITY_METHODS = {
+          chat:         :chat,
+          stream:       :stream,
+          embed:        :embed,
+          count_tokens: :count_tokens
+        }.freeze
+
+        # Generic dispatch entry point. Routes to the appropriate extension method
+        # based on the capability name.
         #
-        # @param provider [Symbol, String] provider name
-        # @param model    [String, nil]   model identifier forwarded to the extension
-        # @param messages [Array<Hash>]   array of { role:, content: } message hashes
+        # @param provider   [Symbol, String] provider name
+        # @param capability [Symbol, String] one of :chat, :stream, :embed, :count_tokens
+        # @param instance   [Symbol, String, nil] provider instance (nil = default)
+        # @param model      [String, nil] model identifier forwarded to the extension
+        # @param block      [Proc, nil] block forwarded to the extension (e.g. for streaming)
         # @return [Hash] standardized { result:, usage: } hash
-        # @raise [Legion::LLM::ProviderError] if provider is not registered
+        # @raise [Legion::LLM::ProviderError] if provider is not registered or capability is unsupported
+        def call(provider:, capability:, instance: nil, model: nil, **, &)
+          cap_sym = capability.to_sym
+          method_name = CAPABILITY_METHODS[cap_sym]
+          raise Legion::LLM::ProviderError, "unsupported capability: #{capability}" unless method_name
+
+          ext = fetch_extension!(provider, instance: instance)
+
+          log.info("[llm][dispatch] capability=#{cap_sym} provider=#{provider} " \
+                   "instance=#{instance || 'default'} model=#{model}")
+
+          raw = ext.public_send(method_name, model: model, **, &)
+          normalize_response(raw)
+        end
+
+        # --- Deprecated per-type dispatch methods ---
+        # These delegate to #call and emit a one-time deprecation warning.
+
+        # @deprecated Use {#call} with `capability: :chat` instead.
         def dispatch_chat(provider:, model:, messages:, **)
-          ext = fetch_extension!(provider)
-          log.debug("[llm][dispatch] action=dispatch_chat.enter provider=#{provider} model=#{model} messages=#{messages.size}")
-          log.info("[llm][native] dispatch_chat provider=#{provider} model=#{model} messages=#{messages.size}")
-          raw = ext.chat(model: model, messages: messages, **)
-          log.debug("[llm][dispatch] action=dispatch_chat.complete provider=#{provider} model=#{model}")
-          normalize_response(raw)
+          unless @chat_deprecation_warned
+            log.warn('[llm][dispatch] DEPRECATED: dispatch_chat — use Dispatch.call(capability: :chat)')
+            @chat_deprecation_warned = true
+          end
+          call(provider: provider, capability: :chat, model: model, messages: messages, **)
         end
 
-        # Dispatch an embedding request to a registered lex-* extension.
-        #
-        # @param provider [Symbol, String] provider name
-        # @param model    [String, nil]   model identifier
-        # @param text     [String]        text to embed
-        # @return [Hash] standardized { result:, usage: } hash
-        # @raise [Legion::LLM::ProviderError] if provider is not registered
+        # @deprecated Use {#call} with `capability: :embed` instead.
         def dispatch_embed(provider:, model:, text:, **)
-          ext = fetch_extension!(provider)
-          log.debug("[llm][dispatch] action=dispatch_embed.enter provider=#{provider} model=#{model} text_chars=#{text.to_s.length}")
-          log.info("[llm][native] dispatch_embed provider=#{provider} model=#{model} text_chars=#{text.to_s.length}")
-          raw = ext.embed(model: model, text: text, **)
-          log.debug("[llm][dispatch] action=dispatch_embed.complete provider=#{provider} model=#{model}")
-          normalize_response(raw)
+          unless @embed_deprecation_warned
+            log.warn('[llm][dispatch] DEPRECATED: dispatch_embed — use Dispatch.call(capability: :embed)')
+            @embed_deprecation_warned = true
+          end
+          call(provider: provider, capability: :embed, model: model, text: text, **)
         end
 
-        # Dispatch a streaming chat request to a registered lex-* extension.
-        #
-        # @param provider [Symbol, String] provider name
-        # @param model    [String, nil]   model identifier
-        # @param messages [Array<Hash>]   message hashes
-        # @param block    [Proc]          receives each chunk as it arrives
-        # @return [Hash] standardized { result:, usage: } hash
-        # @raise [Legion::LLM::ProviderError] if provider is not registered
+        # @deprecated Use {#call} with `capability: :stream` instead.
         def dispatch_stream(provider:, model:, messages:, **, &)
-          ext = fetch_extension!(provider)
-          log.debug("[llm][dispatch] action=dispatch_stream.enter provider=#{provider} model=#{model} messages=#{messages.size}")
-          log.info("[llm][native] dispatch_stream provider=#{provider} model=#{model} messages=#{messages.size}")
-          raw = ext.stream(model: model, messages: messages, **, &)
-          log.debug("[llm][dispatch] action=dispatch_stream.complete provider=#{provider} model=#{model}")
-          normalize_response(raw)
+          unless @stream_deprecation_warned
+            log.warn('[llm][dispatch] DEPRECATED: dispatch_stream — use Dispatch.call(capability: :stream)')
+            @stream_deprecation_warned = true
+          end
+          call(provider: provider, capability: :stream, model: model, messages: messages, **, &)
         end
 
-        # Dispatch a token count request to a registered lex-* extension.
-        #
-        # @param provider [Symbol, String] provider name
-        # @param model    [String, nil]   model identifier
-        # @param messages [Array<Hash>]   message hashes
-        # @return [Hash] standardized { result:, usage: } hash
-        # @raise [Legion::LLM::ProviderError] if provider is not registered
+        # @deprecated Use {#call} with `capability: :count_tokens` instead.
         def dispatch_count_tokens(provider:, model:, messages:, **)
-          ext = fetch_extension!(provider)
-          log.debug("[llm][native] dispatch_count_tokens provider=#{provider} model=#{model} messages=#{messages.size}")
-          raw = ext.count_tokens(model: model, messages: messages, **)
-          normalize_response(raw)
+          unless @count_tokens_deprecation_warned
+            log.warn('[llm][dispatch] DEPRECATED: dispatch_count_tokens — use Dispatch.call(capability: :count_tokens)')
+            @count_tokens_deprecation_warned = true
+          end
+          call(provider: provider, capability: :count_tokens, model: model, messages: messages, **)
         end
 
         # Returns true when the provider is registered in Registry.
@@ -133,13 +164,14 @@ module Legion
 
         private
 
-        def fetch_extension!(provider)
-          ext = Registry.for(provider)
+        def fetch_extension!(provider, instance: nil)
+          ext = Registry.for(provider, instance: instance)
           return ext if ext
 
-          log.error("[llm][native] provider_not_registered provider=#{provider}")
+          instance_suffix = instance ? "/#{instance}" : ''
+          log.error("[llm][native] provider_not_registered provider=#{provider}#{instance_suffix}")
           raise Legion::LLM::ProviderError,
-                "Native provider not registered: #{provider}. " \
+                "Native provider not registered: #{provider}#{instance_suffix}. " \
                 'Ensure the lex-* extension is loaded before dispatching.'
         end
 
