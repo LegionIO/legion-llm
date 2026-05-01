@@ -14,10 +14,13 @@ module Legion
       @can_embed = nil
       @embedding_provider = nil
       @embedding_model = nil
+      @embedding_instance = nil
       @embedding_fallback_chain = nil
 
+      EMBEDDING_TIER_ORDER = %w[local direct fleet openai_compat cloud frontier].freeze
+
       class << self
-        attr_reader :embedding_provider, :embedding_model, :embedding_fallback_chain
+        attr_reader :embedding_provider, :embedding_model, :embedding_instance, :embedding_fallback_chain
 
         def can_embed?
           @can_embed == true
@@ -46,6 +49,12 @@ module Legion
 
         def detect_embedding_capability
           log.debug '[llm][discovery] action=detect_embedding_capability.enter'
+
+          if detect_embedding_from_registry
+            log.debug '[llm][discovery] action=detect_embedding_capability registry_hit=true'
+            return
+          end
+
           embedding_settings = self.embedding_settings
           found = find_embedding_provider(embedding_settings)
           if found
@@ -77,10 +86,50 @@ module Legion
           @can_embed = nil
           @embedding_provider = nil
           @embedding_model = nil
+          @embedding_instance = nil
           @embedding_fallback_chain = nil
         end
 
         private
+
+        def detect_embedding_from_registry
+          return false unless defined?(Call::Registry)
+
+          embedding_instances = Call::Registry.with_capability(:embedding)
+          return false if embedding_instances.empty?
+
+          log.debug "[llm][discovery] action=detect_embedding_from_registry candidates=#{embedding_instances.size}"
+
+          best = embedding_instances.min_by do |i|
+            EMBEDDING_TIER_ORDER.index(i.dig(:metadata, :tier).to_s) || 99
+          end
+          return false unless best
+
+          @embedding_provider = best[:provider]
+          @embedding_model = best.dig(:metadata, :default_model) ||
+                             Settings.value(:embedding, :default_model)
+          @embedding_instance = best[:instance]
+          @can_embed = true
+          @embedding_fallback_chain = build_registry_embedding_fallback(embedding_instances)
+
+          log.info "[llm][discovery] embedding available provider=#{@embedding_provider} " \
+                   "instance=#{@embedding_instance} model=#{@embedding_model} source=registry"
+          true
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.discovery.detect_embedding_from_registry')
+          false
+        end
+
+        def build_registry_embedding_fallback(instances)
+          instances.sort_by { |i| EMBEDDING_TIER_ORDER.index(i.dig(:metadata, :tier).to_s) || 99 }
+                   .map do |i|
+            {
+              provider: i[:provider],
+              model:    i.dig(:metadata, :default_model),
+              instance: i[:instance]
+            }
+          end
+        end
 
         def find_embedding_provider(embedding_settings)
           fallback = Legion::LLM::Settings.config_value(embedding_settings, :provider_fallback, %w[ollama bedrock openai])
@@ -203,7 +252,13 @@ module Legion
         end
 
         def providers_settings
-          Legion::LLM::Settings.provider_settings
+          ext = Legion::Settings[:extensions]
+          return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash)
+
+          {}
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.discovery.providers_settings')
+          {}
         end
 
         def llm_settings

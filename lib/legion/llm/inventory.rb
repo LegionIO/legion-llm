@@ -67,7 +67,13 @@ module Legion
         private
 
         def providers_config
-          Legion::LLM::Settings.provider_settings
+          ext = Legion::Settings[:extensions]
+          return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash)
+
+          {}
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.providers_config')
+          {}
         end
 
         def embedding_settings

@@ -19,7 +19,6 @@ module Legion
           default_model:             model_override,
           default_provider:          nil,
           system_baseline:           system_baseline_default,
-          providers:                 {},
           routing:                   routing_defaults,
           budget:                    budget_defaults,
           confidence:                confidence_defaults,
@@ -133,16 +132,6 @@ module Legion
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.current_settings')
         {}
-      end
-
-      def self.provider_settings
-        ext = Legion::Settings[:extensions]
-        return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash) && ext[:llm].any?
-
-        value(:providers, default: {})
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.provider_settings')
-        value(:providers, default: {})
       end
 
       def self.register_defaults!
@@ -463,10 +452,8 @@ module Legion
         }
       end
 
-      # Provider defaults now live in each lex-llm-* provider extension's
-      # `default_settings`. The `providers:` key in `self.default` ships as
-      # an empty hash so that user-supplied or extension-supplied config is
-      # never masked by stale built-in values.
+      # Provider defaults live in each lex-llm-* provider extension's
+      # `default_settings` and are accessed via Legion::Settings[:extensions][:llm].
     end
   end
 end
