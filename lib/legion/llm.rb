@@ -111,6 +111,7 @@ module Legion
         @can_embed = nil
         @embedding_provider = nil
         @embedding_model = nil
+        @embedding_instance = nil
         @embedding_fallback_chain = nil
         log.info '[llm] shut down'
       end
@@ -164,6 +165,10 @@ module Legion
 
       def embedding_model
         Discovery.embedding_model || @embedding_model
+      end
+
+      def embedding_instance
+        Discovery.embedding_instance || @embedding_instance
       end
 
       def embedding_fallback_chain

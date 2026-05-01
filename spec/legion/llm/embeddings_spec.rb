@@ -54,9 +54,133 @@ RSpec.describe '.detect_embedding_capability' do
     Legion::LLM::Discovery.instance_variable_set(:@can_embed, nil)
     Legion::LLM::Discovery.instance_variable_set(:@embedding_provider, nil)
     Legion::LLM::Discovery.instance_variable_set(:@embedding_model, nil)
+    Legion::LLM::Discovery.instance_variable_set(:@embedding_instance, nil)
     Legion::LLM.instance_variable_set(:@can_embed, nil)
     Legion::LLM.instance_variable_set(:@embedding_provider, nil)
     Legion::LLM.instance_variable_set(:@embedding_model, nil)
+    Legion::LLM.instance_variable_set(:@embedding_instance, nil)
+  end
+
+  context 'when Registry has instances with embedding capability' do
+    before do
+      Legion::LLM::Call::Registry.register(
+        :ollama,
+        Module.new { define_singleton_method(:embed) { |**| nil } },
+        instance: :gpu_box,
+        metadata: { capabilities: [:embedding], tier: 'local', default_model: 'mxbai-embed-large' }
+      )
+    end
+
+    it 'selects the registry instance as primary embedding provider' do
+      Legion::LLM::Discovery.detect_embedding_capability
+      expect(Legion::LLM::Discovery.can_embed?).to be true
+      expect(Legion::LLM::Discovery.embedding_provider).to eq(:ollama)
+      expect(Legion::LLM::Discovery.embedding_model).to eq('mxbai-embed-large')
+      expect(Legion::LLM::Discovery.embedding_instance).to eq(:gpu_box)
+    end
+
+    it 'exposes embedding_instance through the LLM facade' do
+      Legion::LLM::Discovery.detect_embedding_capability
+      expect(Legion::LLM.embedding_instance).to eq(:gpu_box)
+    end
+
+    it 'builds a fallback chain from registry instances' do
+      Legion::LLM::Discovery.detect_embedding_capability
+      chain = Legion::LLM::Discovery.embedding_fallback_chain
+      expect(chain).to be_an(Array)
+      expect(chain.first[:provider]).to eq(:ollama)
+      expect(chain.first[:instance]).to eq(:gpu_box)
+    end
+
+    it 'does not fall through to ollama model scanning' do
+      expect(Legion::LLM::Discovery).not_to receive(:find_embedding_provider)
+      Legion::LLM::Discovery.detect_embedding_capability
+    end
+  end
+
+  context 'when Registry has multiple embedding instances across tiers' do
+    before do
+      Legion::LLM::Call::Registry.register(
+        :bedrock,
+        Module.new { define_singleton_method(:embed) { |**| nil } },
+        instance: :default,
+        metadata: { capabilities: [:embedding], tier: 'cloud', default_model: 'amazon.titan-embed-text-v2:0' }
+      )
+      Legion::LLM::Call::Registry.register(
+        :ollama,
+        Module.new { define_singleton_method(:embed) { |**| nil } },
+        instance: :local_box,
+        metadata: { capabilities: [:embedding], tier: 'local', default_model: 'mxbai-embed-large' }
+      )
+      Legion::LLM::Call::Registry.register(
+        :vllm,
+        Module.new { define_singleton_method(:embed) { |**| nil } },
+        instance: :fleet_gpu,
+        metadata: { capabilities: [:embedding], tier: 'fleet', default_model: 'bge-large' }
+      )
+    end
+
+    it 'picks the best tier (local) over cloud and fleet' do
+      Legion::LLM::Discovery.detect_embedding_capability
+      expect(Legion::LLM::Discovery.embedding_provider).to eq(:ollama)
+      expect(Legion::LLM::Discovery.embedding_instance).to eq(:local_box)
+      expect(Legion::LLM::Discovery.embedding_model).to eq('mxbai-embed-large')
+    end
+
+    it 'orders the fallback chain by tier priority' do
+      Legion::LLM::Discovery.detect_embedding_capability
+      tiers = Legion::LLM::Discovery.embedding_fallback_chain.map { |e| e[:provider] }
+      expect(tiers).to eq(%i[ollama vllm bedrock])
+    end
+  end
+
+  context 'when Registry has embedding instances but no default_model in metadata' do
+    before do
+      Legion::LLM::Call::Registry.register(
+        :openai,
+        Module.new { define_singleton_method(:embed) { |**| nil } },
+        instance: :default,
+        metadata: { capabilities: [:embedding], tier: 'frontier' }
+      )
+    end
+
+    it 'falls back to Settings embedding default_model' do
+      Legion::Settings[:llm][:embedding][:default_model] = 'text-embedding-3-small'
+      Legion::LLM::Discovery.detect_embedding_capability
+      expect(Legion::LLM::Discovery.embedding_model).to eq('text-embedding-3-small')
+    end
+  end
+
+  context 'when Registry has no embedding-capable instances' do
+    before do
+      Legion::LLM::Call::Registry.register(
+        :anthropic,
+        Module.new { define_singleton_method(:chat) { |**| nil } },
+        instance: :default,
+        metadata: { capabilities: [:chat], tier: 'frontier' }
+      )
+    end
+
+    it 'falls through to the legacy provider fallback detection' do
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(false)
+      Legion::LLM::Discovery.detect_embedding_capability
+      # No embedding instances in registry, no ollama models => can_embed? is false
+      expect(Legion::LLM::Discovery.can_embed?).to be false
+      expect(Legion::LLM::Discovery.embedding_instance).to be_nil
+    end
+  end
+
+  context 'when Registry.with_capability raises an error' do
+    before do
+      allow(Legion::LLM::Call::Registry).to receive(:with_capability)
+        .and_raise(StandardError.new('registry broken'))
+    end
+
+    it 'falls through to legacy detection without raising' do
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(false)
+      Legion::LLM::Discovery.detect_embedding_capability
+      expect(Legion::LLM::Discovery.can_embed?).to be false
+    end
   end
 
   context 'when Ollama has a preferred model' do
