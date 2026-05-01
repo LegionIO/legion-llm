@@ -19,9 +19,9 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
     context 'when detect_embedding_capability finds a provider' do
       before do
         Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
-        allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(false)
-        allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
-          .with('mxbai-embed-large').and_return(true)
+        allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(false)
+        allow(Legion::LLM::Discovery).to receive(:model_available?)
+          .with('mxbai-embed-large', provider: :ollama).and_return(true)
         allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(true)
       end
 
@@ -45,7 +45,7 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
 
     context 'when no provider is available' do
       before do
-        allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(false)
+        allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(false)
         Legion::Settings[:extensions][:llm].each_value { |v| v[:enabled] = false }
       end
 
@@ -73,9 +73,9 @@ RSpec.describe 'Legion::LLM embedding fallback chain cache' do
       Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
       Legion::Settings[:extensions][:llm][:bedrock] = { enabled: false }
       # General stub (false) must come first; specific stub (true) overrides for the target model
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(false)
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
-        .with('mxbai-embed-large').and_return(true)
+      allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(false)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
+        .with('mxbai-embed-large', provider: :ollama).and_return(true)
 
       chain = Legion::LLM::Discovery.send(:build_embedding_fallback_chain,
                                           { provider_fallback: %w[ollama bedrock] })

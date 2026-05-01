@@ -3,7 +3,6 @@
 require 'spec_helper'
 require 'legion/llm/router'
 require 'legion/llm/discovery/memory_gate'
-require 'legion/llm/discovery/ollama'
 require 'legion/llm/discovery/system'
 
 RSpec.describe 'Router memory gate integration' do
@@ -39,8 +38,8 @@ RSpec.describe 'Router memory gate integration' do
   before do
     Legion::LLM::Router.reset!
     allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
-    allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(true)
-    allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).and_return(nil)
+    allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(true)
+    allow(Legion::LLM::Discovery).to receive(:model_size).and_return(nil)
     allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
   end
 

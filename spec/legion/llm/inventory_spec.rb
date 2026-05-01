@@ -4,8 +4,7 @@ require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inventory do
   before do
-    allow(Legion::LLM::Discovery::Ollama).to receive(:models).and_return([])
-    allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([])
+    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
   end
 
   it 'builds default inference and embedding offerings from settings' do
@@ -25,10 +24,14 @@ RSpec.describe Legion::LLM::Inventory do
 
   it 'includes discovered vLLM context windows in the shared fleet lane' do
     Legion::Settings[:extensions][:llm][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
-    allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([
-                                                                         { id:            'qwen3.6-27b',
-                                                                           max_model_len: 65_536 }
-                                                                       ])
+    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([
+                                                                              {
+                                                                                model:          'qwen3.6-27b',
+                                                                                provider:       :vllm,
+                                                                                instance:       :default,
+                                                                                context_length: 65_536
+                                                                              }
+                                                                            ])
 
     offering = described_class.offerings(provider: 'vllm', model: 'qwen3.6-27b').first
 
@@ -39,10 +42,10 @@ RSpec.describe Legion::LLM::Inventory do
 
   it 'filters embedding and inference offerings independently' do
     Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
-    allow(Legion::LLM::Discovery::Ollama).to receive(:models).and_return([
-                                                                           { 'name' => 'qwen3.6:27b' },
-                                                                           { 'name' => 'nomic-embed-text' }
-                                                                         ])
+    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([
+                                                                              { model: 'qwen3.6:27b', provider: :ollama, instance: :default },
+                                                                              { model: 'nomic-embed-text', provider: :ollama, instance: :default }
+                                                                            ])
 
     embed_offerings = described_class.offerings(provider: 'ollama', type: 'embed')
     inference_offerings = described_class.offerings(provider: 'ollama', type: 'inference')

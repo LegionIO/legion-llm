@@ -17,7 +17,7 @@ module Legion
           return true unless LOCAL_PROVIDERS.include?(provider.to_sym)
 
           available = available_memory_mb
-          cost = estimated_model_mb(model, instance: instance)
+          cost = estimated_model_mb(model, provider: provider, instance: instance)
           floor = memory_floor_mb
 
           fits = (cost + floor) <= available
@@ -35,12 +35,9 @@ module Legion
           4096
         end
 
-        def estimated_model_mb(model, instance: nil)
-          file_mb = nil
-          if defined?(Discovery::Ollama)
-            file_mb = Discovery::Ollama.model_size(model.to_s, instance: instance)
-            file_mb = file_mb.to_i / (1024 * 1024) if file_mb && file_mb > 1_000_000
-          end
+        def estimated_model_mb(model, provider: nil, instance: nil)
+          file_mb = Discovery.model_size(model.to_s, provider: provider&.to_sym, instance: instance&.to_sym)
+          file_mb = file_mb.to_i / (1024 * 1024) if file_mb && file_mb > 1_000_000
           return 4096 unless file_mb&.positive?
 
           overhead = Legion::LLM::Settings.value(:discovery, :memory_overhead_factor) || 1.4

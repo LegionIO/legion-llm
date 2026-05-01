@@ -162,7 +162,7 @@ RSpec.describe '.detect_embedding_capability' do
     end
 
     it 'falls through to the legacy provider fallback detection' do
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(false)
+      allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(false)
       Legion::LLM::Discovery.detect_embedding_capability
       # No embedding instances in registry, no ollama models => can_embed? is false
       expect(Legion::LLM::Discovery.can_embed?).to be false
@@ -177,7 +177,7 @@ RSpec.describe '.detect_embedding_capability' do
     end
 
     it 'falls through to legacy detection without raising' do
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(false)
+      allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(false)
       Legion::LLM::Discovery.detect_embedding_capability
       expect(Legion::LLM::Discovery.can_embed?).to be false
     end
@@ -186,10 +186,10 @@ RSpec.describe '.detect_embedding_capability' do
   context 'when Ollama has a preferred model' do
     before do
       Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
         .and_return(false)
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
-        .with('mxbai-embed-large').and_return(true)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
+        .with('mxbai-embed-large', provider: :ollama).and_return(true)
     end
 
     it 'selects Ollama with that model' do
@@ -209,10 +209,10 @@ RSpec.describe '.detect_embedding_capability' do
         'provider_fallback' => %w[ollama],
         'ollama_preferred'  => %w[nomic-embed-text]
       }
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
         .and_return(false)
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
-        .with('nomic-embed-text').and_return(true)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
+        .with('nomic-embed-text', provider: :ollama).and_return(true)
     end
 
     it 'uses string-keyed embedding fallback and model preference settings' do
@@ -225,7 +225,7 @@ RSpec.describe '.detect_embedding_capability' do
 
   context 'when Ollama has no models and bedrock health check fails, falls back to openai' do
     before do
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
         .and_return(false)
       Legion::Settings[:extensions][:llm][:bedrock] = { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
       Legion::Settings[:extensions][:llm][:openai] = { enabled: true, default_model: 'gpt-4o' }
@@ -243,7 +243,7 @@ RSpec.describe '.detect_embedding_capability' do
 
   context 'when only bedrock is configured and its health check passes' do
     before do
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
         .and_return(false)
       Legion::Settings[:extensions][:llm][:bedrock] = { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(true)
@@ -259,7 +259,7 @@ RSpec.describe '.detect_embedding_capability' do
 
   context 'when only bedrock is configured and its health check fails' do
     before do
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
         .and_return(false)
       Legion::Settings[:extensions][:llm][:bedrock] = { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(false)
@@ -274,7 +274,7 @@ RSpec.describe '.detect_embedding_capability' do
 
   context 'when no provider is available' do
     before do
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
         .and_return(false)
       Legion::Settings[:extensions][:llm].each_value { |v| v[:enabled] = false }
     end

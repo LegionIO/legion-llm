@@ -2,17 +2,14 @@
 
 require 'spec_helper'
 require 'legion/llm/router'
-require 'legion/llm/discovery/vllm'
 
 RSpec.describe 'vLLM provider integration' do
   before do
     Legion::LLM::Router.reset!
     allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
-    allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(true)
-    allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).and_return(nil)
+    allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(true)
+    allow(Legion::LLM::Discovery).to receive(:model_size).and_return(nil)
     allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
-    allow(Legion::LLM::Discovery::Vllm).to receive(:model_available?).and_return(true)
-    allow(Legion::LLM::Discovery::Vllm).to receive(:max_context).and_return(32_768)
   end
 
   describe 'PROVIDER_TIER' do

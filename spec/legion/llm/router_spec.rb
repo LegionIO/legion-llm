@@ -5,7 +5,6 @@ require 'legion/llm/router/resolution'
 require 'legion/llm/router/rule'
 require 'legion/llm/router/health_tracker'
 require 'legion/llm/router'
-require 'legion/llm/discovery/ollama'
 require 'legion/llm/discovery/system'
 
 RSpec.describe Legion::LLM::Router do
@@ -49,8 +48,8 @@ RSpec.describe Legion::LLM::Router do
     # Allow all tiers in tests
     allow(described_class).to receive(:tier_available?).and_return(true)
     # Stub discovery so existing tests pass (models always available, plenty of memory)
-    allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(true)
-    allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).and_return(nil)
+    allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(true)
+    allow(Legion::LLM::Discovery).to receive(:model_size).and_return(nil)
     allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
   end
 
@@ -259,8 +258,8 @@ RSpec.describe Legion::LLM::Router do
       described_class.reset!
       configure_routing(rules: rules_with_local_alt)
       allow(described_class).to receive(:tier_available?).and_return(true)
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(true)
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).and_return(nil)
+      allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(true)
+      allow(Legion::LLM::Discovery).to receive(:model_size).and_return(nil)
       allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
 
       tracker = described_class.health_tracker
