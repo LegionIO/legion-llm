@@ -9,9 +9,10 @@ module Legion
       class LexLLMAdapter
         include Legion::Logging::Helper
 
-        def initialize(provider_name, provider_class)
+        def initialize(provider_name, provider_class, instance_config: {})
           @provider_name = provider_name.to_sym
           @provider_class = provider_class
+          @instance_config = instance_config
           @lex_llm_namespace = resolve_lex_llm_namespace
         end
 
@@ -81,7 +82,24 @@ module Legion
         attr_reader :provider_name, :provider_class, :lex_llm_namespace
 
         def provider
-          @provider ||= provider_class.new(lex_llm_namespace.config)
+          @provider ||= build_instance_provider
+        end
+
+        def build_instance_provider
+          if @instance_config.empty?
+            provider_class.new(lex_llm_namespace.config)
+          else
+            config = lex_llm_namespace::Configuration.new
+            @instance_config.each do |key, value|
+              setter = "#{key}="
+              unless config.respond_to?(setter)
+                log.warn("[llm][adapter] unknown config option #{key} for #{@provider_name}, skipping")
+                next
+              end
+              config.public_send(setter, value)
+            end
+            provider_class.new(config)
+          end
         end
 
         def model_info(model, offering_metadata: nil)
@@ -129,12 +147,28 @@ module Legion
           raise NameError, 'lex-llm provider namespace is not loaded'
         end
 
+        ToolShim = Struct.new(:name, :description, :params_schema, keyword_init: true)
+
         def normalize_tools(tools)
-          case tools
-          when Hash then tools
-          when Array then tools.to_h { |tool| [tool.name.to_sym, tool] }
-          else {}
-          end
+          hash = case tools
+                 when Hash then tools
+                 when Array then tools.to_h { |tool| [tool_key(tool), tool] }
+                 else {}
+                 end
+
+          hash.transform_values { |tool| tool.is_a?(Hash) ? shim_tool(tool) : tool }
+        end
+
+        def tool_key(tool)
+          (tool.respond_to?(:name) ? tool.name : tool[:name])&.to_sym
+        end
+
+        def shim_tool(hash)
+          ToolShim.new(
+            name: hash[:name] || hash['name'],
+            description: hash[:description] || hash['description'],
+            params_schema: hash[:parameters] || hash['parameters'] || hash[:input_schema] || hash['input_schema']
+          )
         end
 
         def normalize_hash(value)
