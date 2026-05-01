@@ -40,6 +40,7 @@ RSpec.describe 'Router discovery integration' do
       },
       discovery: { enabled: true, refresh_seconds: 60, memory_floor_mb: 2048 }
     )
+    Legion::LLM::Router.populate_auto_rules({})
   end
 
   describe 'when Ollama model is not pulled' do
@@ -99,6 +100,7 @@ RSpec.describe 'Router discovery integration' do
         },
         discovery: { enabled: false }
       )
+      Legion::LLM::Router.populate_auto_rules({})
     end
 
     it 'does not filter by discovery — local rule passes through' do

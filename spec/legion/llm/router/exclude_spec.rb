@@ -34,6 +34,7 @@ RSpec.describe Legion::LLM::Router do
         default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' }
       }
     )
+    described_class.populate_auto_rules({})
   end
 
   before do

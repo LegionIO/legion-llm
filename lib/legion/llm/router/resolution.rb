@@ -4,14 +4,15 @@ module Legion
   module LLM
     module Router
       class Resolution
-        attr_reader :tier, :provider, :model, :rule, :metadata, :compress_level,
+        attr_reader :tier, :provider, :model, :instance, :rule, :metadata, :compress_level,
                     :offering_id, :offering_metadata
 
-        def initialize(tier:, provider:, model:, rule: nil, metadata: {}, compress_level: 0,
+        def initialize(tier:, provider:, model:, instance: nil, rule: nil, metadata: {}, compress_level: 0,
                        offering_id: nil, offering_metadata: nil)
           @tier              = tier.to_sym
           @provider          = provider.to_sym
           @model             = model
+          @instance          = instance&.to_sym
           @rule              = rule
           @metadata          = metadata
           @compress_level    = compress_level.to_i
@@ -52,6 +53,7 @@ module Legion
             metadata:       @metadata,
             compress_level: @compress_level
           }
+          hash[:instance] = @instance if @instance
           hash[:offering_id] = @offering_id if @offering_id
           hash[:offering_metadata] = @offering_metadata unless @offering_metadata.empty?
           hash

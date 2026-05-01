@@ -54,7 +54,7 @@ RSpec.describe Legion::LLM::Router do
     allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
   end
 
-  def configure_routing(enabled: true, rules: sample_rules, extra: {})
+  def configure_routing(enabled: true, rules: sample_rules, extra: {}, auto_rules_populated: true)
     Legion::Settings[:llm] = Legion::Settings[:llm].merge(
       routing: {
         enabled:        enabled,
@@ -62,6 +62,7 @@ RSpec.describe Legion::LLM::Router do
         default_intent: { privacy: 'normal', capability: 'basic' }
       }.merge(extra)
     )
+    described_class.populate_auto_rules({}) if auto_rules_populated && enabled
   end
 
   # ─── 1. Routes basic capability to local ─────────────────────────────────────
@@ -255,8 +256,8 @@ RSpec.describe Legion::LLM::Router do
           cost_multiplier: 0.1
         }
       ]
-      configure_routing(rules: rules_with_local_alt)
       described_class.reset!
+      configure_routing(rules: rules_with_local_alt)
       allow(described_class).to receive(:tier_available?).and_return(true)
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_available?).and_return(true)
       allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).and_return(nil)
@@ -325,8 +326,13 @@ RSpec.describe Legion::LLM::Router do
   # ─── 11. routing_enabled? true when configured ────────────────────────────────
 
   describe '.routing_enabled?' do
-    it 'returns true when routing is enabled with rules' do
+    it 'returns true when routing is enabled and auto_rules populated' do
       configure_routing
+      expect(described_class.routing_enabled?).to be true
+    end
+
+    it 'returns true even when manual rules array is empty (auto_rules populated)' do
+      configure_routing(rules: [])
       expect(described_class.routing_enabled?).to be true
     end
   end
@@ -339,14 +345,33 @@ RSpec.describe Legion::LLM::Router do
       expect(described_class.routing_enabled?).to be false
     end
 
-    it 'returns false when rules array is empty' do
-      configure_routing(rules: [])
+    it 'returns false when auto_rules not yet populated' do
+      configure_routing(auto_rules_populated: false)
       expect(described_class.routing_enabled?).to be false
     end
 
     it 'returns false when routing settings are absent' do
       Legion::Settings[:llm] = {}
       expect(described_class.routing_enabled?).to be false
+    end
+  end
+
+  # ─── 12a. auto_rules_populated? ─────────────────────────────────────────────
+
+  describe '.auto_rules_populated?' do
+    it 'returns false before populate_auto_rules is called' do
+      expect(described_class.auto_rules_populated?).to be false
+    end
+
+    it 'returns true after populate_auto_rules is called' do
+      described_class.populate_auto_rules({})
+      expect(described_class.auto_rules_populated?).to be true
+    end
+
+    it 'returns false after reset!' do
+      described_class.populate_auto_rules({})
+      described_class.reset!
+      expect(described_class.auto_rules_populated?).to be false
     end
   end
 

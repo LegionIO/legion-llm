@@ -22,6 +22,7 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
         rules:          rules
       }
     }
+    Legion::LLM::Router.populate_auto_rules({})
   end
 
   context 'with explicit fallback chain in rules' do
