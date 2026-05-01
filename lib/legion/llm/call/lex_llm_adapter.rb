@@ -165,8 +165,8 @@ module Legion
 
         def shim_tool(hash)
           ToolShim.new(
-            name: hash[:name] || hash['name'],
-            description: hash[:description] || hash['description'],
+            name:          hash[:name] || hash['name'],
+            description:   hash[:description] || hash['description'],
             params_schema: hash[:parameters] || hash['parameters'] || hash[:input_schema] || hash['input_schema']
           )
         end
