@@ -29,6 +29,26 @@ RSpec.describe Legion::LLM::Call::Registry do
       described_class.register('ollama', adapter_a, instance: 'local')
       expect(described_class.for(:ollama, instance: :local)).to eq(adapter_a)
     end
+
+    it 'stores metadata alongside the adapter' do
+      meta = { capabilities: [:chat], tier: :local }
+      described_class.register(:ollama, adapter_a, metadata: meta)
+      expect(described_class.metadata_for(:ollama)).to eq(meta)
+    end
+
+    it 'stores metadata for named instances' do
+      meta_local = { capabilities: %i[chat embedding], url: 'http://localhost:11434' }
+      meta_remote = { capabilities: [:chat], url: 'http://gpu-1:11434' }
+      described_class.register(:ollama, adapter_a, instance: :local, metadata: meta_local)
+      described_class.register(:ollama, adapter_b, instance: :remote, metadata: meta_remote)
+      expect(described_class.metadata_for(:ollama, :local)).to eq(meta_local)
+      expect(described_class.metadata_for(:ollama, :remote)).to eq(meta_remote)
+    end
+
+    it 'defaults metadata to empty hash when not provided' do
+      described_class.register(:ollama, adapter_a)
+      expect(described_class.metadata_for(:ollama)).to eq({})
+    end
   end
 
   describe '.for' do
@@ -77,10 +97,17 @@ RSpec.describe Legion::LLM::Call::Registry do
     it 'returns nil for an unregistered provider' do
       expect(described_class.for(:nonexistent)).to be_nil
     end
+
+    it 'returns the adapter, not the full entry hash' do
+      described_class.register(:ollama, adapter_a, metadata: { capabilities: [:chat] })
+      result = described_class.for(:ollama)
+      expect(result).to eq(adapter_a)
+      expect(result).not_to be_a(Hash)
+    end
   end
 
   describe '.instances_for' do
-    it 'returns all instances for a provider' do
+    it 'returns all instances for a provider as { instance => adapter }' do
       described_class.register(:ollama, adapter_a, instance: :local)
       described_class.register(:ollama, adapter_b, instance: :apollo)
       instances = described_class.instances_for(:ollama)
@@ -89,6 +116,13 @@ RSpec.describe Legion::LLM::Call::Registry do
 
     it 'returns empty hash for unknown provider' do
       expect(described_class.instances_for(:nonexistent)).to eq({})
+    end
+
+    it 'returns adapters not entry hashes (backward compat)' do
+      described_class.register(:ollama, adapter_a, instance: :local, metadata: { tier: :local })
+      instances = described_class.instances_for(:ollama)
+      expect(instances[:local]).to eq(adapter_a)
+      expect(instances[:local]).not_to be_a(Hash)
     end
 
     it 'returns a defensive copy' do
@@ -134,6 +168,149 @@ RSpec.describe Legion::LLM::Call::Registry do
     end
   end
 
+  describe '.metadata_for' do
+    it 'returns the stored metadata for a default instance' do
+      meta = { capabilities: %i[chat embedding], tier: :local }
+      described_class.register(:ollama, adapter_a, metadata: meta)
+      expect(described_class.metadata_for(:ollama)).to eq(meta)
+    end
+
+    it 'returns the stored metadata for a named instance' do
+      meta = { capabilities: [:chat], url: 'http://gpu-1:11434' }
+      described_class.register(:ollama, adapter_a, instance: :remote, metadata: meta)
+      expect(described_class.metadata_for(:ollama, :remote)).to eq(meta)
+    end
+
+    it 'returns empty hash for unregistered provider' do
+      expect(described_class.metadata_for(:nonexistent)).to eq({})
+    end
+
+    it 'returns empty hash for unregistered instance' do
+      described_class.register(:ollama, adapter_a, instance: :local)
+      expect(described_class.metadata_for(:ollama, :remote)).to eq({})
+    end
+  end
+
+  describe '.deregister_provider' do
+    it 'removes all instances for a provider' do
+      described_class.register(:ollama, adapter_a, instance: :local)
+      described_class.register(:ollama, adapter_b, instance: :remote)
+      described_class.register(:vllm, adapter_c)
+
+      described_class.deregister_provider(:ollama)
+
+      expect(described_class.registered?(:ollama)).to be false
+      expect(described_class.for(:ollama)).to be_nil
+      expect(described_class.available).to eq([:vllm])
+    end
+
+    it 'returns the count of removed instances' do
+      described_class.register(:ollama, adapter_a, instance: :local)
+      described_class.register(:ollama, adapter_b, instance: :remote)
+      count = described_class.deregister_provider(:ollama)
+      expect(count).to eq(2)
+    end
+
+    it 'returns 0 for an unregistered provider' do
+      count = described_class.deregister_provider(:nonexistent)
+      expect(count).to eq(0)
+    end
+
+    it 'does not affect other providers' do
+      described_class.register(:ollama, adapter_a)
+      described_class.register(:vllm, adapter_b)
+      described_class.deregister_provider(:ollama)
+      expect(described_class.for(:vllm)).to eq(adapter_b)
+    end
+  end
+
+  describe '.with_capability' do
+    before do
+      described_class.register(:ollama, adapter_a, instance: :local,
+                                                   metadata: { capabilities: %i[chat embedding] })
+      described_class.register(:ollama, adapter_b, instance: :remote,
+                                                   metadata: { capabilities: [:chat] })
+      described_class.register(:vllm, adapter_c, metadata: { capabilities: %i[chat embedding structured] })
+    end
+
+    it 'returns only instances with the requested capability' do
+      results = described_class.with_capability(:embedding)
+      expect(results.size).to eq(2)
+      providers = results.map { |r| [r[:provider], r[:instance]] }
+      expect(providers).to contain_exactly(%i[ollama local], %i[vllm default])
+    end
+
+    it 'returns entries with provider, instance, adapter, and metadata keys' do
+      results = described_class.with_capability(:chat)
+      expect(results).to all(include(:provider, :instance, :adapter, :metadata))
+    end
+
+    it 'returns the adapter module in each entry' do
+      results = described_class.with_capability(:structured)
+      expect(results.size).to eq(1)
+      expect(results.first[:adapter]).to eq(adapter_c)
+    end
+
+    it 'returns empty array when no instances have the capability' do
+      expect(described_class.with_capability(:vision)).to eq([])
+    end
+
+    it 'handles instances without capabilities metadata' do
+      described_class.register(:bedrock, adapter_a, metadata: { tier: :cloud })
+      expect(described_class.with_capability(:chat)).not_to include(
+        a_hash_including(provider: :bedrock)
+      )
+    end
+
+    it 'coerces string capability to symbol' do
+      results = described_class.with_capability('embedding')
+      expect(results.size).to eq(2)
+    end
+  end
+
+  describe '.all_instances' do
+    it 'returns all registered instances across all providers' do
+      described_class.register(:ollama, adapter_a, instance: :local, metadata: { tier: :local })
+      described_class.register(:ollama, adapter_b, instance: :remote, metadata: { tier: :fleet })
+      described_class.register(:vllm, adapter_c, metadata: { tier: :fleet })
+
+      results = described_class.all_instances
+      expect(results.size).to eq(3)
+    end
+
+    it 'returns entries with provider, instance, adapter, and metadata keys' do
+      described_class.register(:ollama, adapter_a)
+      results = described_class.all_instances
+      expect(results.first).to include(:provider, :instance, :adapter, :metadata)
+    end
+
+    it 'includes correct data in each entry' do
+      meta = { capabilities: [:chat] }
+      described_class.register(:ollama, adapter_a, instance: :local, metadata: meta)
+      results = described_class.all_instances
+      expect(results.first).to eq(provider: :ollama, instance: :local, adapter: adapter_a, metadata: meta)
+    end
+
+    it 'returns empty array when nothing registered' do
+      expect(described_class.all_instances).to eq([])
+    end
+  end
+
+  describe '.all_provider_families' do
+    it 'returns unique provider symbols' do
+      described_class.register(:ollama, adapter_a, instance: :local)
+      described_class.register(:ollama, adapter_b, instance: :remote)
+      described_class.register(:vllm, adapter_c)
+
+      families = described_class.all_provider_families
+      expect(families).to contain_exactly(:ollama, :vllm)
+    end
+
+    it 'returns empty array when nothing registered' do
+      expect(described_class.all_provider_families).to eq([])
+    end
+  end
+
   describe '.reset!' do
     it 'clears all providers and instances' do
       described_class.register(:ollama, adapter_a, instance: :local)
@@ -142,6 +319,12 @@ RSpec.describe Legion::LLM::Call::Registry do
       expect(described_class.available).to eq([])
       expect(described_class.for(:ollama)).to be_nil
       expect(described_class.for(:vllm)).to be_nil
+    end
+
+    it 'clears metadata' do
+      described_class.register(:ollama, adapter_a, metadata: { capabilities: [:chat] })
+      described_class.reset!
+      expect(described_class.metadata_for(:ollama)).to eq({})
     end
   end
 

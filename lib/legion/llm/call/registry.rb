@@ -8,18 +8,18 @@ module Legion
       module Registry
         extend Legion::Logging::Helper
 
-        # @registry structure: { provider_sym => { instance_sym => adapter } }
+        # @registry structure: { provider_sym => { instance_sym => { adapter:, metadata: } } }
         @registry = {}
         @mutex = Mutex.new
 
         module_function
 
-        def register(name, extension_module, instance: :default)
+        def register(name, extension_module, instance: :default, metadata: {})
           provider = name.to_sym
           inst = instance.to_sym
           @mutex.synchronize do
             @registry[provider] ||= {}
-            @registry[provider][inst] = extension_module
+            @registry[provider][inst] = { adapter: extension_module, metadata: metadata }
           end
           log.info("[llm][registry] registered provider=#{provider} instance=#{inst}")
           extension_module
@@ -28,20 +28,24 @@ module Legion
         def for(name, instance: nil)
           provider = name.to_sym
           @mutex.synchronize do
-            instances = @registry[provider]
-            return nil unless instances
+            entries = @registry[provider]
+            return nil unless entries
 
-            if instance
-              instances[instance.to_sym]
-            else
-              instances[:default] || instances.values.first
-            end
+            entry = if instance
+                      entries[instance.to_sym]
+                    else
+                      entries[:default] || entries.values.first
+                    end
+            entry&.[](:adapter)
           end
         end
 
         def instances_for(name)
           provider = name.to_sym
-          @mutex.synchronize { (@registry[provider] || {}).dup }
+          @mutex.synchronize do
+            entries = @registry[provider] || {}
+            entries.each_with_object({}) { |(inst, entry), h| h[inst] = entry[:adapter] }
+          end
         end
 
         def available
@@ -56,6 +60,57 @@ module Legion
 
             @registry[provider].key?(instance.to_sym)
           end
+        end
+
+        def metadata_for(name, instance = :default)
+          provider = name.to_sym
+          inst = instance.to_sym
+          @mutex.synchronize do
+            entry = @registry.dig(provider, inst)
+            entry ? entry[:metadata] : {}
+          end
+        end
+
+        def deregister_provider(name)
+          provider = name.to_sym
+          @mutex.synchronize do
+            removed = @registry.delete(provider)
+            count = removed ? removed.size : 0
+            log.info("[llm][registry] deregister_provider provider=#{provider} count=#{count}")
+            count
+          end
+        end
+
+        def with_capability(capability)
+          cap = capability.to_sym
+          @mutex.synchronize do
+            results = []
+            @registry.each do |provider, entries|
+              entries.each do |inst, entry|
+                caps = entry[:metadata][:capabilities]
+                next unless caps.is_a?(Array) && caps.include?(cap)
+
+                results << { provider: provider, instance: inst, adapter: entry[:adapter], metadata: entry[:metadata] }
+              end
+            end
+            results
+          end
+        end
+
+        def all_instances
+          @mutex.synchronize do
+            results = []
+            @registry.each do |provider, entries|
+              entries.each do |inst, entry|
+                results << { provider: provider, instance: inst, adapter: entry[:adapter], metadata: entry[:metadata] }
+              end
+            end
+            results
+          end
+        end
+
+        def all_provider_families
+          @mutex.synchronize { @registry.keys.dup }
         end
 
         def reset!
