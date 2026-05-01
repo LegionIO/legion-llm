@@ -132,7 +132,7 @@ module Legion
         {}
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.current_settings')
-        Legion::Settings[:llm] || {}
+        {}
       end
 
       def self.register_defaults!

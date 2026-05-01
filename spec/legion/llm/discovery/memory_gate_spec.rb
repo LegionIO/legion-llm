@@ -33,13 +33,13 @@ RSpec.describe Legion::LLM::Discovery::MemoryGate do
 
       it 'returns true when model fits in memory' do
         # Model is 4GB on disk, overhead 1.4x -> ~5600 MB cost + 2048 floor = 7648, available 16384
-        allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).with('llama3:latest').and_return(4_000_000_000)
+        allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).with('llama3:latest', instance: nil).and_return(4_000_000_000)
         expect(described_class.allow?(provider: :ollama, model: 'llama3:latest')).to be true
       end
 
       it 'returns false when model exceeds available memory' do
         # Model is 12GB on disk -> 12000 MB * 1.4 = 16800 cost + 2048 floor = 18848, available 16384
-        allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).with('llama3:70b').and_return(12_000_000_000)
+        allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).with('llama3:70b', instance: nil).and_return(12_000_000_000)
         expect(described_class.allow?(provider: :ollama, model: 'llama3:70b')).to be false
       end
 
@@ -76,7 +76,7 @@ RSpec.describe Legion::LLM::Discovery::MemoryGate do
 
   describe '.estimated_model_mb' do
     it 'applies overhead factor to model size in bytes' do
-      allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).with('llama3:latest').and_return(4_000_000_000)
+      allow(Legion::LLM::Discovery::Ollama).to receive(:model_size).with('llama3:latest', instance: nil).and_return(4_000_000_000)
       # 4_000_000_000 bytes -> 3814 MB (integer division), * 1.4 overhead = 5339.6 -> ceil = 5340
       result = described_class.estimated_model_mb('llama3:latest')
       expect(result).to eq((3814 * 1.4).ceil)

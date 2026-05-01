@@ -11,7 +11,7 @@
 
 ### Added
 - `ToolDefinition.from_registry_entry` builds tool definitions from `Legion::Settings::Extensions` registry entries.
-- `Dispatcher` checks `Settings::Extensions` for tool resolution before falling back to `Tools::Registry` and `Catalog::Registry`.
+- `Dispatcher` checks `Settings::Extensions` for tool override resolution; when no matching entry is found it falls back to settings-based MCP overrides (no `Tools::Registry` or `Catalog::Registry` fallback).
 - `Executor#add_registry_tool_definitions` reads from `Settings::Extensions` when available, falling back to `Legion::Tools::Registry` for backward compatibility.
 - `Steps::ToolDiscovery` discovers tools from `Settings::Extensions` when available, falling back to `Legion::Tools::Registry`.
 

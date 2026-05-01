@@ -13,10 +13,11 @@ module Legion
         module_function
 
         def allow?(provider:, instance: nil, model: nil)
+          return true if provider.nil?
           return true unless LOCAL_PROVIDERS.include?(provider.to_sym)
 
           available = available_memory_mb
-          cost = estimated_model_mb(model)
+          cost = estimated_model_mb(model, instance: instance)
           floor = memory_floor_mb
 
           fits = (cost + floor) <= available
@@ -34,10 +35,10 @@ module Legion
           4096
         end
 
-        def estimated_model_mb(model)
+        def estimated_model_mb(model, instance: nil)
           file_mb = nil
           if defined?(Discovery::Ollama)
-            file_mb = Discovery::Ollama.model_size(model.to_s)
+            file_mb = Discovery::Ollama.model_size(model.to_s, instance: instance)
             file_mb = file_mb.to_i / (1024 * 1024) if file_mb && file_mb > 1_000_000
           end
           return 4096 unless file_mb&.positive?

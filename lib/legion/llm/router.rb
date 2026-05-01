@@ -6,6 +6,7 @@ require_relative 'router/health_tracker'
 require_relative 'router/escalation/chain'
 require_relative 'router/gateway_interceptor'
 require_relative 'discovery/ollama'
+require_relative 'discovery/rule_generator'
 require_relative 'discovery/system'
 require_relative 'discovery/memory_gate'
 
@@ -241,12 +242,13 @@ module Legion
           tier     = (rule.target[:tier] || rule.target['tier'])&.to_sym
           provider = (rule.target[:provider] || rule.target['provider'])&.to_sym
           model    = rule.target[:model] || rule.target['model']
+          instance = rule.target[:instance] || rule.target['instance']
 
           return false unless tier == :local && provider == :ollama && model
 
           return true unless Discovery::Ollama.model_available?(model)
 
-          model_bytes = Discovery::Ollama.model_size(model)
+          model_bytes = Discovery::Ollama.model_size(model, instance: instance)
           available   = Discovery::System.available_memory_mb
           return false if model_bytes.nil? || available.nil?
 

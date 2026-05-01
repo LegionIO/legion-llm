@@ -35,10 +35,16 @@ module Legion
               log.debug("[llm][api][instances] action=get_instance id=#{instance_id}")
               require_llm!
 
-              instance = Legion::LLM::API::Native::Instances.find_registry_instance(instance_id)
-              halt json_error('instance_not_found', "Instance '#{instance_id}' not found", status_code: 404) unless instance
+              result = Legion::LLM::API::Native::Instances.find_registry_instance(instance_id)
+              if result == :ambiguous
+                halt json_error('ambiguous_instance_id',
+                                "Instance id '#{instance_id}' matches multiple providers; " \
+                                'use composite id (provider/instance) to disambiguate',
+                                status_code: 400)
+              end
+              halt json_error('instance_not_found', "Instance '#{instance_id}' not found", status_code: 404) unless result
 
-              json_response({ instance: instance })
+              json_response({ instance: result })
             rescue StandardError => e
               handle_exception(e, level: :error, handled: true, operation: 'llm.api.instances.get')
               json_error('instance_inventory_error', e.message, status_code: 500)
@@ -62,7 +68,17 @@ module Legion
           end
 
           def self.find_registry_instance(instance_id)
-            registry_instances.find { |inst| inst[:id] == instance_id || inst[:instance] == instance_id }
+            # Try exact composite id match first (e.g. "ollama/local")
+            exact = registry_instances.find { |inst| inst[:id] == instance_id }
+            return exact if exact
+
+            # Fall back to bare instance name, but guard against ambiguity
+            matches = registry_instances.select { |inst| inst[:instance] == instance_id }
+            return matches.first if matches.size == 1
+            return :ambiguous if matches.size > 1
+
+            # No match found
+            nil
           end
         end
       end
