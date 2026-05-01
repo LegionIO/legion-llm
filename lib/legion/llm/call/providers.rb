@@ -74,25 +74,27 @@ module Legion
         def credential_available_for?(provider, config)
           case provider.to_sym
           when :bedrock
-            usable_setting?(config_value(config, :bearer_token)) ||
+            usable_setting?(Legion::LLM::Settings.config_value(config, :bearer_token)) ||
               env_present?('AWS_BEARER_TOKEN_BEDROCK') ||
-              (usable_setting?(config_value(config, :api_key)) && usable_setting?(config_value(config, :secret_key)))
+              (usable_setting?(Legion::LLM::Settings.config_value(config,
+                                                                  :api_key)) && usable_setting?(Legion::LLM::Settings.config_value(config, :secret_key)))
           when :anthropic
-            usable_setting?(config_value(config, :api_key)) || env_present?('ANTHROPIC_API_KEY')
+            usable_setting?(Legion::LLM::Settings.config_value(config, :api_key)) || env_present?('ANTHROPIC_API_KEY')
           when :openai
-            usable_setting?(config_value(config, :api_key)) ||
+            usable_setting?(Legion::LLM::Settings.config_value(config, :api_key)) ||
               env_present?('OPENAI_API_KEY') ||
               env_present?('CODEX_API_KEY') ||
               !Call::CodexConfigLoader.read_token.nil?
           when :azure
-            config_value(config, :api_base) &&
-              (usable_setting?(config_value(config, :api_key)) || usable_setting?(config_value(config, :auth_token)))
+            Legion::LLM::Settings.config_value(config, :api_base) &&
+              (usable_setting?(Legion::LLM::Settings.config_value(config,
+                                                                  :api_key)) || usable_setting?(Legion::LLM::Settings.config_value(config, :auth_token)))
           when :ollama
             ollama_running?(config)
           when :vllm
             vllm_running?(config)
           else
-            usable_setting?(config_value(config, :api_key))
+            usable_setting?(Legion::LLM::Settings.config_value(config, :api_key))
           end
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.credential_available_for', provider: provider)
@@ -113,7 +115,7 @@ module Legion
 
         def ollama_running?(config)
           require 'socket'
-          url = config_value(config, :base_url) || 'http://localhost:11434'
+          url = Legion::LLM::Settings.config_value(config, :base_url) || 'http://localhost:11434'
           uri = http_uri!(url, default_port: 11_434)
           log.debug "[llm][providers] ollama_running? addr=#{uri.host} port=#{uri.port}"
           Socket.tcp(uri.host, uri.port, connect_timeout: 1).close
@@ -128,7 +130,7 @@ module Legion
 
         def vllm_running?(config)
           require 'faraday'
-          url = config_value(config, :base_url) || 'http://localhost:8000/v1'
+          url = Legion::LLM::Settings.config_value(config, :base_url) || 'http://localhost:8000/v1'
           base = normalize_vllm_base_url(url)
           http_uri!(base, default_port: 8000)
           log.debug "[llm][providers] vllm_running? url=#{base}/health"
@@ -179,11 +181,11 @@ module Legion
         end
 
         def configure_bedrock(config)
-          resolved_api_key = resolve_credential_value(config_value(config, :api_key))
-          resolved_secret_key = resolve_credential_value(config_value(config, :secret_key))
-          resolved_session_token = resolve_credential_value(config_value(config, :session_token))
+          resolved_api_key = resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key))
+          resolved_secret_key = resolve_credential_value(Legion::LLM::Settings.config_value(config, :secret_key))
+          resolved_session_token = resolve_credential_value(Legion::LLM::Settings.config_value(config, :session_token))
           has_sigv4 = resolved_api_key && resolved_secret_key
-          has_bearer = resolve_credential_value(config_value(config, :bearer_token))
+          has_bearer = resolve_credential_value(Legion::LLM::Settings.config_value(config, :bearer_token))
           set_config_value(config, :bearer_token, has_bearer) if has_bearer
           set_config_value(config, :api_key, resolved_api_key) if resolved_api_key
           set_config_value(config, :secret_key, resolved_secret_key) if resolved_secret_key
@@ -201,48 +203,48 @@ module Legion
             end
           end
 
-          set_config_value(config, :region, config_value(config, :region) || 'us-east-2')
+          set_config_value(config, :region, Legion::LLM::Settings.config_value(config, :region) || 'us-east-2')
           return unless has_sigv4 || has_bearer
 
           auth_mode = has_bearer ? 'bearer token' : 'SigV4'
-          log.info "[llm][providers] prepared native bedrock region=#{config_value(config, :region)} auth=#{auth_mode}"
+          log.info "[llm][providers] prepared native bedrock region=#{Legion::LLM::Settings.config_value(config, :region)} auth=#{auth_mode}"
         end
 
         def configure_anthropic(config)
           api_key = resolve_broker_credential(:anthropic) ||
-                    resolve_credential_value(config_value(config, :api_key)) ||
+                    resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key)) ||
                     ENV.fetch('ANTHROPIC_API_KEY', nil)
           return unless api_key
 
           set_config_value(config, :api_key, api_key)
-          log.info "[llm][providers] prepared native anthropic base_url=#{config_value(config, :base_url).inspect}"
+          log.info "[llm][providers] prepared native anthropic base_url=#{Legion::LLM::Settings.config_value(config, :base_url).inspect}"
         end
 
         def configure_openai(config)
           api_key = resolve_broker_credential(:openai) ||
-                    resolve_credential_value(config_value(config, :api_key)) ||
+                    resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key)) ||
                     ENV.fetch('OPENAI_API_KEY', nil) ||
                     ENV.fetch('CODEX_API_KEY', nil)
           return unless api_key
 
           set_config_value(config, :api_key, api_key)
-          log.info "[llm][providers] prepared native openai base_url=#{config_value(config, :base_url).inspect}"
+          log.info "[llm][providers] prepared native openai base_url=#{Legion::LLM::Settings.config_value(config, :base_url).inspect}"
         end
 
         def configure_gemini(config)
           api_key = resolve_broker_credential(:gemini) ||
-                    resolve_credential_value(config_value(config, :api_key)) ||
+                    resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key)) ||
                     ENV.fetch('GEMINI_API_KEY', nil)
           return unless api_key
 
           set_config_value(config, :api_key, api_key)
-          log.info "[llm][providers] prepared native gemini base_url=#{config_value(config, :base_url).inspect}"
+          log.info "[llm][providers] prepared native gemini base_url=#{Legion::LLM::Settings.config_value(config, :base_url).inspect}"
         end
 
         def configure_azure(config)
-          api_base = config_value(config, :api_base)
-          api_key = resolve_broker_credential(:azure) || resolve_credential_value(config_value(config, :api_key))
-          auth_token = resolve_credential_value(config_value(config, :auth_token))
+          api_base = Legion::LLM::Settings.config_value(config, :api_base)
+          api_key = resolve_broker_credential(:azure) || resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key))
+          auth_token = resolve_credential_value(Legion::LLM::Settings.config_value(config, :auth_token))
           return unless api_base && (api_key || auth_token)
 
           set_config_value(config, :api_key, api_key) if api_key
@@ -251,12 +253,12 @@ module Legion
         end
 
         def configure_ollama(config)
-          log.info "[llm][providers] prepared native ollama base_url=#{config_value(config, :base_url).inspect}"
+          log.info "[llm][providers] prepared native ollama base_url=#{Legion::LLM::Settings.config_value(config, :base_url).inspect}"
         end
 
         def configure_vllm(config)
-          base_url = config_value(config, :base_url) || 'http://localhost:8000/v1'
-          api_key = resolve_credential_value(config_value(config, :api_key))
+          base_url = Legion::LLM::Settings.config_value(config, :base_url) || 'http://localhost:8000/v1'
+          api_key = resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key))
 
           set_config_value(config, :base_url, base_url)
           set_config_value(config, :api_key, api_key) if api_key
@@ -272,7 +274,7 @@ module Legion
             next unless config_enabled?(config)
             next unless SAAS_PROVIDERS.include?(provider_key)
 
-            model = config_value(config, :default_model)
+            model = Legion::LLM::Settings.config_value(config, :default_model)
             next unless model
 
             probe_provider_credentials(provider_key, model, config)
@@ -310,22 +312,22 @@ module Legion
           case provider
           when :bedrock
             candidates = []
-            resolved_bearer = resolve_credential_value(config_value(config, :bearer_token))
+            resolved_bearer = resolve_credential_value(Legion::LLM::Settings.config_value(config, :bearer_token))
             bearer_env = ENV.fetch('AWS_BEARER_TOKEN_BEDROCK', nil)
             claude_bearer = Call::ClaudeConfigLoader.bedrock_bearer_token
             candidates += [resolved_bearer, bearer_env, claude_bearer].compact.uniq.map { |t| { bearer_token: t } }
-            api_key = resolve_credential_value(config_value(config, :api_key))
-            secret = resolve_credential_value(config_value(config, :secret_key))
+            api_key = resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key))
+            secret = resolve_credential_value(Legion::LLM::Settings.config_value(config, :secret_key))
             candidates << { api_key: api_key, secret_key: secret } if api_key && secret
             candidates
           when :anthropic
             [
-              resolve_credential_value(config_value(config, :api_key)),
+              resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key)),
               ENV.fetch('ANTHROPIC_API_KEY', nil)
             ].compact.uniq.map { |k| { api_key: k } }
           when :openai
             keys = [
-              resolve_credential_value(config_value(config, :api_key)),
+              resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key)),
               ENV.fetch('OPENAI_API_KEY', nil),
               ENV.fetch('CODEX_API_KEY', nil),
               Call::CodexConfigLoader.read_token
@@ -333,7 +335,7 @@ module Legion
             keys.map { |k| { api_key: k } }
           when :gemini
             [
-              resolve_credential_value(config_value(config, :api_key)),
+              resolve_credential_value(Legion::LLM::Settings.config_value(config, :api_key)),
               ENV.fetch('GEMINI_API_KEY', nil)
             ].compact.uniq.map { |k| { api_key: k } }
           else
@@ -408,7 +410,7 @@ module Legion
         end
 
         def recover_openai_with_codex
-          openai_config = config_value(providers_settings, :openai)
+          openai_config = Legion::LLM::Settings.config_value(providers_settings, :openai)
           return unless openai_config.is_a?(Hash) && !config_enabled?(openai_config)
 
           token = Call::CodexConfigLoader.read_token
@@ -418,7 +420,7 @@ module Legion
           set_config_value(openai_config, :api_key, token)
           configure_openai(openai_config)
           set_config_value(openai_config, :enabled, true)
-          ok = attempt_provider_call(:openai, config_value(openai_config, :default_model))
+          ok = attempt_provider_call(:openai, Legion::LLM::Settings.config_value(openai_config, :default_model))
           set_config_value(openai_config, :enabled, false) unless ok
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.recover_openai_with_codex')
@@ -456,7 +458,7 @@ module Legion
           if enabled.empty?
             log.error '[llm][providers] no providers available — all failed health checks or disabled'
           else
-            names = enabled.map { |name, c| "#{name}/#{config_value(c, :default_model) || 'auto'}" }
+            names = enabled.map { |name, c| "#{name}/#{Legion::LLM::Settings.config_value(c, :default_model) || 'auto'}" }
             log.info "[llm][providers] available providers=#{names.join(', ')}"
           end
         end
@@ -486,7 +488,7 @@ module Legion
           providers_config = Legion::LLM::Settings.value(:providers, default: {})
           providers_config.each do |provider_name, provider_config|
             next unless provider_config.is_a?(Hash)
-            next if config_value(provider_config, :enabled) == false
+            next if Legion::LLM::Settings.config_value(provider_config, :enabled) == false
 
             register_instances(provider_name, provider_config)
           end
@@ -495,7 +497,7 @@ module Legion
         end
 
         def register_instances(provider_family, provider_config)
-          instances = config_value(provider_config, :instances)
+          instances = Legion::LLM::Settings.config_value(provider_config, :instances)
 
           if instances.is_a?(Hash) && instances.any?
             instances.each do |instance_id, instance_config|
@@ -600,7 +602,7 @@ module Legion
         end
 
         def lex_llm_provider_ready?(namespace, provider_name, provider_class)
-          provider_config = config_value(providers_settings, provider_name.to_sym, {}) || {}
+          provider_config = Legion::LLM::Settings.config_value(providers_settings, provider_name.to_sym, {}) || {}
           configure_lex_llm_provider(namespace, provider_name, provider_class, provider_config)
 
           return true if config_enabled?(provider_config)
@@ -629,12 +631,12 @@ module Legion
 
         def lex_llm_provider_config_value(provider_name, option, provider_config)
           provider = provider_name.to_sym
-          direct = config_value(provider_config, option)
+          direct = Legion::LLM::Settings.config_value(provider_config, option)
           return resolve_credential_value(direct) if credential_option?(option) && !direct.nil?
           return direct unless direct.nil?
 
           short_key = option.to_s.delete_prefix("#{provider}_").to_sym
-          short_value = config_value(provider_config, short_key)
+          short_value = Legion::LLM::Settings.config_value(provider_config, short_key)
           return resolve_credential_value(short_value) if credential_option?(option) && !short_value.nil?
           return short_value unless short_value.nil?
 
@@ -642,12 +644,12 @@ module Legion
           when /_api_key\z/
             env_api_key(provider)
           when /_api_base\z/
-            api_base = config_value(provider_config, :api_base) ||
-                       config_value(provider_config, :base_url) ||
-                       config_value(provider_config, :endpoint)
+            api_base = Legion::LLM::Settings.config_value(provider_config, :api_base) ||
+                       Legion::LLM::Settings.config_value(provider_config, :base_url) ||
+                       Legion::LLM::Settings.config_value(provider_config, :endpoint)
             normalize_lex_llm_api_base(provider, api_base)
           when /_version\z/
-            config_value(provider_config, :version)
+            Legion::LLM::Settings.config_value(provider_config, :version)
           end
         end
 
@@ -679,9 +681,9 @@ module Legion
           return unless resolved_provider == :anthropic
 
           caching_settings = Legion::LLM::Settings.value(:prompt_caching, default: {}) || {}
-          return unless config_value(caching_settings, :enabled, true) != false
+          return unless Legion::LLM::Settings.config_value(caching_settings, :enabled, true) != false
 
-          min_tokens = config_value(caching_settings, :min_tokens) || 1024
+          min_tokens = Legion::LLM::Settings.config_value(caching_settings, :min_tokens) || 1024
           instructions = opts[:instructions]
           return unless instructions.is_a?(String) && instructions.length > min_tokens
 
@@ -767,16 +769,7 @@ module Legion
         end
 
         def config_enabled?(config)
-          config.is_a?(Hash) && config_value(config, :enabled) == true
-        end
-
-        def config_value(config, key, default = nil)
-          return default unless config.respond_to?(:key?)
-
-          string_key = key.to_s
-          return config[string_key] if config.key?(string_key)
-
-          config.key?(key) ? config[key] : default
+          config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled) == true
         end
 
         def set_config_value(config, key, value)

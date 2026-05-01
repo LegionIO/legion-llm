@@ -104,25 +104,9 @@ module Legion
         private
 
         def llm_setting(key, default = nil)
-          config_value(llm_settings, key, default)
-        end
-
-        def llm_settings
-          Legion::LLM::Settings.current_settings
+          Legion::LLM::Settings.config_value(Legion::LLM::Settings.current_settings, key, default)
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.pipeline.settings')
-          {}
-        end
-
-        def config_value(config, key, default = nil)
-          return default unless config.respond_to?(:key?)
-
-          string_key = key.to_s
-          return config[string_key] if config.key?(string_key)
-
-          symbol_key = key.to_sym if key.respond_to?(:to_sym)
-          return config[symbol_key] if symbol_key && config.key?(symbol_key)
-
           default
         end
 
@@ -229,11 +213,11 @@ module Legion
 
         def maybe_compact_history(conv_id, history)
           conv_settings = llm_setting(:conversation, {})
-          return history unless config_value(conv_settings, :auto_compact)
+          return history unless Legion::LLM::Settings.config_value(conv_settings, :auto_compact)
 
-          threshold = config_value(conv_settings, :summarize_threshold, 50_000)
-          target_tokens = config_value(conv_settings, :target_tokens, 20_000)
-          preserve_recent = config_value(conv_settings, :preserve_recent, 10)
+          threshold = Legion::LLM::Settings.config_value(conv_settings, :summarize_threshold, 50_000)
+          target_tokens = Legion::LLM::Settings.config_value(conv_settings, :target_tokens, 20_000)
+          preserve_recent = Legion::LLM::Settings.config_value(conv_settings, :preserve_recent, 10)
 
           estimated = Context::Compressor.estimate_tokens(history)
           return history unless estimated >= threshold
@@ -492,24 +476,24 @@ module Legion
           routing = llm_setting(:routing)
           return false unless routing.is_a?(Hash)
 
-          esc = config_value(routing, :escalation, {})
-          config_value(esc, :enabled) == true && config_value(esc, :pipeline_enabled) == true
+          esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
+          Legion::LLM::Settings.config_value(esc, :enabled) == true && Legion::LLM::Settings.config_value(esc, :pipeline_enabled) == true
         end
 
         def pipeline_escalation_max_attempts
           routing = llm_setting(:routing)
           return 3 unless routing.is_a?(Hash)
 
-          esc = config_value(routing, :escalation, {})
-          config_value(esc, :max_attempts, 3)
+          esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
+          Legion::LLM::Settings.config_value(esc, :max_attempts, 3)
         end
 
         def pipeline_escalation_quality_threshold
           routing = llm_setting(:routing)
           return 50 unless routing.is_a?(Hash)
 
-          esc = config_value(routing, :escalation, {})
-          config_value(esc, :quality_threshold, 50)
+          esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
+          Legion::LLM::Settings.config_value(esc, :quality_threshold, 50)
         end
 
         def execute_provider_request
@@ -752,7 +736,7 @@ module Legion
           return false unless provider
 
           layer_settings = llm_setting(:provider_layer, {})
-          mode = config_value(layer_settings, :mode, 'auto').to_s
+          mode = Legion::LLM::Settings.config_value(layer_settings, :mode, 'auto').to_s
 
           %w[native auto].include?(mode)
         end
@@ -1107,7 +1091,7 @@ module Legion
           settings = llm_setting(:telemetry)
           return true unless settings.is_a?(Hash)
 
-          config_value(settings, :pipeline_spans, true)
+          Legion::LLM::Settings.config_value(settings, :pipeline_spans, true)
         end
 
         def annotate_span(span, step_name)
@@ -1176,12 +1160,12 @@ module Legion
           providers = llm_setting(:providers, {})
           providers.each do |name, config|
             normalized_name = name.to_sym
-            next unless config.is_a?(Hash) && config_value(config, :enabled)
+            next unless config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled)
             next if exclude.include?(name) || exclude.include?(name.to_s)
             next if exclude.include?(normalized_name)
             next if %i[ollama vllm].include?(normalized_name)
 
-            default_model = config_value(config, :default_model)
+            default_model = Legion::LLM::Settings.config_value(config, :default_model)
             next unless default_model
 
             return { provider: normalized_name, model: default_model }

@@ -74,7 +74,7 @@ module Legion
           end
 
           def prompt_caching_value(key, default = nil)
-            config_value(prompt_caching_settings, key, default)
+            Legion::LLM::Settings.config_value(prompt_caching_settings, key, default)
           end
 
           def caching_enabled?
@@ -91,18 +91,6 @@ module Legion
 
           def sort_tools?
             prompt_caching_value(:sort_tools, true)
-          end
-
-          def config_value(config, key, default = nil)
-            return default unless config.respond_to?(:key?)
-
-            string_key = key.to_s
-            return config[string_key] if config.key?(string_key)
-
-            symbol_key = key.to_sym if key.respond_to?(:to_sym)
-            return config[symbol_key] if symbol_key && config.key?(symbol_key)
-
-            default
           end
         end
       end

@@ -18,14 +18,14 @@ module Legion
           end
 
           def model_names
-            models.map { |m| config_value(m, :id) }
+            models.map { |m| Legion::LLM::Settings.config_value(m, :id) }
           end
 
           def model_available?(name, instance: nil)
             if instance
               ensure_fresh
               list = models_for(instance: instance)
-              list.any? { |m| config_value(m, :id) == name }
+              list.any? { |m| Legion::LLM::Settings.config_value(m, :id) == name }
             else
               model_names.any? { |n| n == name }
             end
@@ -33,8 +33,8 @@ module Legion
 
           def max_context(name, instance: nil)
             target = instance ? models_for(instance: instance) : models
-            model = target.find { |m| config_value(m, :id) == name }
-            config_value(model, :max_model_len)
+            model = target.find { |m| Legion::LLM::Settings.config_value(m, :id) == name }
+            Legion::LLM::Settings.config_value(model, :max_model_len)
           end
 
           def models_for(instance:)
@@ -76,7 +76,7 @@ module Legion
           def stale?
             return true if @last_refreshed_by_instance.nil? || @last_refreshed_by_instance.empty?
 
-            ttl = config_value(discovery_settings, :refresh_seconds, 60)
+            ttl = Legion::LLM::Settings.config_value(discovery_settings, :refresh_seconds, 60)
             @last_refreshed_by_instance.values.any? { |t| Time.now - t > ttl }
           end
 
@@ -89,7 +89,7 @@ module Legion
           def all_models
             return [] if @models_by_instance.nil? || @models_by_instance.empty?
 
-            @models_by_instance.values.flatten(1).uniq { |m| config_value(m, :id) }
+            @models_by_instance.values.flatten(1).uniq { |m| Legion::LLM::Settings.config_value(m, :id) }
           end
 
           def resolved_instances
@@ -104,8 +104,8 @@ module Legion
           def read_instances_setting
             return nil unless Legion.const_defined?('Settings', false)
 
-            vllm_config = config_value(providers_settings, :vllm, {})
-            config_value(vllm_config, :instances)
+            vllm_config = Legion::LLM::Settings.config_value(providers_settings, :vllm, {})
+            Legion::LLM::Settings.config_value(vllm_config, :instances)
           rescue StandardError => e
             handle_exception(e, level: :debug)
             nil
@@ -120,7 +120,7 @@ module Legion
           def flat_base_url
             return 'http://localhost:8000/v1' unless Legion.const_defined?('Settings', false)
 
-            config_value(config_value(providers_settings, :vllm, {}), :base_url, 'http://localhost:8000/v1')
+            Legion::LLM::Settings.config_value(Legion::LLM::Settings.config_value(providers_settings, :vllm, {}), :base_url, 'http://localhost:8000/v1')
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.discovery.vllm.base_url')
             'http://localhost:8000/v1'
@@ -189,30 +189,18 @@ module Legion
           def discovery_settings
             return {} unless Legion.const_defined?('Settings', false)
 
-            config_value(llm_settings, :discovery, {})
+            Legion::LLM::Settings.config_value(llm_settings, :discovery, {})
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.discovery.vllm.settings')
             {}
           end
 
           def providers_settings
-            config_value(llm_settings, :providers, {})
+            Legion::LLM::Settings.config_value(llm_settings, :providers, {})
           end
 
           def llm_settings
             Legion::LLM::Settings.current_settings
-          end
-
-          def config_value(config, key, default = nil)
-            return default unless config.respond_to?(:key?)
-
-            string_key = key.to_s
-            return config[string_key] if config.key?(string_key)
-
-            symbol_key = key.to_sym if key.respond_to?(:to_sym)
-            return config[symbol_key] if symbol_key && config.key?(symbol_key)
-
-            default
           end
         end
       end

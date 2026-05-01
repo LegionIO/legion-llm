@@ -34,25 +34,13 @@ module Legion
           end
 
           def rag_setting(key, default = nil)
-            config_value(rag_settings, key, default)
+            Legion::LLM::Settings.config_value(rag_settings, key, default)
           end
 
           def settings_value(*keys, default: nil)
             Legion::LLM::Settings.value(*keys, default: default)
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.rag_context.settings', keys: keys)
-            default
-          end
-
-          def config_value(config, key, default = nil)
-            return default unless config.respond_to?(:key?)
-
-            string_key = key.to_s
-            return config[string_key] if config.key?(string_key)
-
-            symbol_key = key.to_sym if key.respond_to?(:to_sym)
-            return config[symbol_key] if symbol_key && config.key?(symbol_key)
-
             default
           end
 
@@ -78,18 +66,18 @@ module Legion
           end
 
           def record_rag_enrichment(result, strategy)
-            entries = config_value(result, :entries, [])
-            return unless result && config_value(result, :success) && entries.any?
+            entries = Legion::LLM::Settings.config_value(result, :entries, [])
+            return unless result && Legion::LLM::Settings.config_value(result, :success) && entries.any?
 
             @enrichments['rag:context_retrieval'] = {
-              content:   "#{config_value(result, :count)} entries retrieved via #{strategy}",
-              data:      { entries: entries, strategy: strategy, count: config_value(result, :count) },
+              content:   "#{Legion::LLM::Settings.config_value(result, :count)} entries retrieved via #{strategy}",
+              data:      { entries: entries, strategy: strategy, count: Legion::LLM::Settings.config_value(result, :count) },
               timestamp: Time.now
             }
           end
 
           def record_rag_timeline(result, strategy, start_time)
-            count = config_value(result, :count, 0)
+            count = Legion::LLM::Settings.config_value(result, :count, 0)
             @timeline.record(
               category: :enrichment, key: 'rag:context_retrieval',
               direction: :inbound,
@@ -168,8 +156,8 @@ module Legion
           end
 
           def extract_query
-            @request.messages.select { |m| config_value(m, :role).to_s == 'user' }
-                             .then { |messages| config_value(messages.last, :content) }
+            @request.messages.select { |m| Legion::LLM::Settings.config_value(m, :role).to_s == 'user' }
+                             .then { |messages| Legion::LLM::Settings.config_value(messages.last, :content) }
           end
         end
       end

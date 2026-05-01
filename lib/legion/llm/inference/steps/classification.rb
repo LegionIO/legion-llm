@@ -44,7 +44,7 @@ module Legion
             classification = @request.classification || compliance_classification_default || default_classification
             return unless classification_enabled?(classification)
 
-            declared_level  = config_value(classification, :level)
+            declared_level  = Legion::LLM::Settings.config_value(classification, :level)
             scan            = scan_content_for_sensitive_data
             effective_level = upgrade_if_needed(declared_level, scan)
             upgraded        = effective_level != declared_level
@@ -252,7 +252,7 @@ module Legion
 
           def resolve_current_provider
             routing = @request.respond_to?(:routing) ? @request.routing : nil
-            provider = config_value(routing, :provider) if routing.is_a?(Hash)
+            provider = Legion::LLM::Settings.config_value(routing, :provider) if routing.is_a?(Hash)
             provider ||= settings_value(:default_provider)
             provider&.to_sym
           rescue StandardError => e
@@ -269,23 +269,14 @@ module Legion
             keys.reduce(hash) do |current, key|
               return nil unless current.respond_to?(:key?)
 
-              config_value(current, key)
+              Legion::LLM::Settings.config_value(current, key)
             end
-          end
-
-          def config_value(hash, key)
-            return nil unless hash.respond_to?(:key?)
-
-            string_key = key.to_s
-            return hash[string_key] if hash.key?(string_key)
-
-            hash[key] if hash.key?(key)
           end
 
           def message_content(message)
             return nil unless message.is_a?(Hash)
 
-            config_value(message, :content)
+            Legion::LLM::Settings.config_value(message, :content)
           end
 
           def write_message_content(message, content)

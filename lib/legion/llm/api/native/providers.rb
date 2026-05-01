@@ -29,7 +29,7 @@ module Legion
                 {
                   name:          provider_name,
                   enabled:       true,
-                  default_model: Legion::LLM::API::Native::Providers.config_value(config, :default_model),
+                  default_model: Legion::LLM::Settings.config_value(config, :default_model),
                   health:        Legion::LLM::API::Native::Providers.provider_health(provider_name),
                   instances:     Legion::LLM::Call::Registry.instances_for(provider_name.to_sym).map do |inst_id, _adapter|
                                    { id: inst_id.to_s }
@@ -67,7 +67,7 @@ module Legion
               json_response({
                               name:          provider_name,
                               enabled:       true,
-                              default_model: Legion::LLM::API::Native::Providers.config_value(provider_config, :default_model),
+                              default_model: Legion::LLM::Settings.config_value(provider_config, :default_model),
                               health:        Legion::LLM::API::Native::Providers.provider_health(provider_name),
                               instances:     Legion::LLM::Call::Registry.instances_for(provider_name.to_sym).map do |inst_id, _adapter|
                                                { id: inst_id.to_s }
@@ -89,16 +89,7 @@ module Legion
           end
 
           def self.enabled_provider_config?(config)
-            config.is_a?(Hash) && config_value(config, :enabled, true) != false
-          end
-
-          def self.config_value(config, key, default = nil)
-            return default unless config.respond_to?(:key?)
-
-            string_key = key.to_s
-            return config[string_key] if config.key?(string_key)
-
-            config.key?(key) ? config[key] : default
+            config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled, true) != false
           end
 
           def self.settings_value(key, default = nil)

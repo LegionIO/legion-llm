@@ -94,25 +94,13 @@ module Legion
           end
 
           def tool_trigger_setting(key, default = nil)
-            config_value(settings_value(:tool_trigger, default: {}), key, default)
+            Legion::LLM::Settings.config_value(settings_value(:tool_trigger, default: {}), key, default)
           end
 
           def settings_value(*keys, default: nil)
             Legion::LLM::Settings.value(*keys, default: default)
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.trigger_match.settings', keys: keys)
-            default
-          end
-
-          def config_value(config, key, default = nil)
-            return default unless config.respond_to?(:key?)
-
-            string_key = key.to_s
-            return config[string_key] if config.key?(string_key)
-
-            symbol_key = key.to_sym if key.respond_to?(:to_sym)
-            return config[symbol_key] if symbol_key && config.key?(symbol_key)
-
             default
           end
 

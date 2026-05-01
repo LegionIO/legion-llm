@@ -15,10 +15,13 @@ module Legion
       extend Legion::Logging::Helper
 
       PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
-                        gemini: :cloud, azure: :cloud, ollama: :local, vllm: :local }.freeze
+                        gemini: :cloud, azure: :cloud, ollama: :local, vllm: :fleet }.freeze
       PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
 
       OLLAMA_MODEL_PATTERN = %r{[:/]}
+
+      @auto_rules = []
+      @auto_rules_populated = false
 
       class << self
         def infer_provider_for_model(model)
@@ -78,14 +81,25 @@ module Legion
         def routing_enabled?
           settings = routing_settings
           return false if settings.nil? || settings.empty?
-          return false unless settings[:enabled]
 
-          rules = settings[:rules]
-          rules.is_a?(Array) && !rules.empty?
+          settings[:enabled] == true && auto_rules_populated?
+        end
+
+        def auto_rules_populated?
+          @auto_rules_populated == true
+        end
+
+        def populate_auto_rules(discovered_instances)
+          raw = Discovery::RuleGenerator.generate(discovered_instances)
+          @auto_rules = raw.map { |h| Rule.from_hash(h.transform_keys(&:to_sym)) }
+          @auto_rules_populated = true
+          log.info("[llm][router] auto_rules_populated count=#{@auto_rules.size}")
         end
 
         def reset!
           @health_tracker = nil
+          @auto_rules = []
+          @auto_rules_populated = false
         end
 
         # Check whether a tier can be used right now.
@@ -156,8 +170,12 @@ module Legion
         end
 
         def load_rules
-          raw = routing_settings[:rules] || []
-          raw.map { |h| Rule.from_hash(h.transform_keys(&:to_sym)) }
+          manual = (routing_settings[:rules] || []).map do |h|
+            h = h.transform_keys(&:to_sym)
+            h[:priority] = (h[:priority] || 0) + 1000
+            Rule.from_hash(h)
+          end
+          (manual + (@auto_rules || [])).sort_by { |r| -r.priority }
         end
 
         def select_candidates(rules, intent, exclude: {})
@@ -231,7 +249,7 @@ module Legion
 
         def discovery_enabled?
           ds = discovery_settings
-          config_value(ds, :enabled, true)
+          Legion::LLM::Settings.config_value(ds, :enabled, true)
         end
 
         def discovery_settings
@@ -270,10 +288,10 @@ module Legion
         end
 
         def openai_compat_gateways
-          tiers = config_value(routing_settings, :tiers, {})
-          oc = config_value(tiers, :openai_compat, {})
+          tiers = Legion::LLM::Settings.config_value(routing_settings, :tiers, {})
+          oc = Legion::LLM::Settings.config_value(tiers, :openai_compat, {})
           oc = oc.transform_keys(&:to_sym) if oc.is_a?(Hash)
-          gateways = config_value(oc, :gateways)
+          gateways = Legion::LLM::Settings.config_value(oc, :gateways)
           return [] unless gateways.is_a?(Array)
 
           gateways.map { |g| g.is_a?(Hash) ? g.transform_keys(&:to_sym) : nil }.compact
@@ -301,9 +319,9 @@ module Legion
 
         def build_health_tracker
           settings = routing_settings
-          health   = config_value(settings, :health, {})
+          health   = Legion::LLM::Settings.config_value(settings, :health, {})
           health   = health.transform_keys(&:to_sym) if health.is_a?(Hash)
-          cb       = config_value(health, :circuit_breaker, {})
+          cb       = Legion::LLM::Settings.config_value(health, :circuit_breaker, {})
           cb       = cb.transform_keys(&:to_sym) if cb.is_a?(Hash)
 
           HealthTracker.new(
@@ -318,8 +336,8 @@ module Legion
           when :local
             :ollama
           when :fleet
-            vllm_config = config_value(providers_settings, :vllm)
-            vllm_config.is_a?(Hash) && config_value(vllm_config, :enabled) ? :vllm : :ollama
+            vllm_config = Legion::LLM::Settings.config_value(providers_settings, :vllm)
+            vllm_config.is_a?(Hash) && Legion::LLM::Settings.config_value(vllm_config, :enabled) ? :vllm : :ollama
           when :openai_compat
             :openai
           when :cloud
@@ -335,15 +353,15 @@ module Legion
         def default_model_for_tier(tier)
           case tier.to_sym
           when :local
-            ollama = config_value(providers_settings, :ollama, {})
-            config_value(ollama, :default_model) || 'llama3'
+            ollama = Legion::LLM::Settings.config_value(providers_settings, :ollama, {})
+            Legion::LLM::Settings.config_value(ollama, :default_model) || 'llama3'
           when :fleet
-            vllm_config = config_value(providers_settings, :vllm, {})
-            if config_value(vllm_config, :enabled)
-              config_value(vllm_config, :default_model) || 'qwen3.6-27b'
+            vllm_config = Legion::LLM::Settings.config_value(providers_settings, :vllm, {})
+            if Legion::LLM::Settings.config_value(vllm_config, :enabled)
+              Legion::LLM::Settings.config_value(vllm_config, :default_model) || 'qwen3.6-27b'
             else
-              ollama = config_value(providers_settings, :ollama, {})
-              config_value(ollama, :default_model) || 'llama3'
+              ollama = Legion::LLM::Settings.config_value(providers_settings, :ollama, {})
+              Legion::LLM::Settings.config_value(ollama, :default_model) || 'llama3'
             end
           when :openai_compat
             'gpt-4o'
@@ -380,11 +398,11 @@ module Legion
           return [] unless providers.is_a?(Hash)
 
           PROVIDER_ORDER.filter_map do |pname|
-            config = config_value(providers, pname)
-            next unless config.is_a?(Hash) && config_value(config, :enabled)
+            config = Legion::LLM::Settings.config_value(providers, pname)
+            next unless config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled)
 
             tier  = PROVIDER_TIER.fetch(pname, :cloud)
-            model = config_value(config, :default_model)
+            model = Legion::LLM::Settings.config_value(config, :default_model)
             next if model.nil? || model.to_s.empty?
             next unless tier_available?(tier)
 
@@ -438,9 +456,9 @@ module Legion
 
         def escalation_max_attempts
           settings = routing_settings
-          esc = config_value(settings, :escalation, {})
+          esc = Legion::LLM::Settings.config_value(settings, :escalation, {})
           esc = esc.transform_keys(&:to_sym) if esc.is_a?(Hash)
-          config_value(esc, :max_attempts, 3)
+          Legion::LLM::Settings.config_value(esc, :max_attempts, 3)
         end
 
         def default_settings_model
@@ -453,15 +471,6 @@ module Legion
 
         def providers_settings
           Legion::LLM::Settings.value(:providers, default: {})
-        end
-
-        def config_value(hash, key, default = nil)
-          return default unless hash.respond_to?(:key?)
-
-          string_key = key.to_s
-          return hash[string_key] if hash.key?(string_key)
-
-          hash.key?(key) ? hash[key] : default
         end
       end
     end

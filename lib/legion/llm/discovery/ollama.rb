@@ -67,7 +67,7 @@ module Legion
           def stale?
             return true if @last_refreshed_by_instance.nil? || @last_refreshed_by_instance.empty?
 
-            ttl = config_value(discovery_settings, :refresh_seconds, 60)
+            ttl = Legion::LLM::Settings.config_value(discovery_settings, :refresh_seconds, 60)
             @last_refreshed_by_instance.values.any? { |t| Time.now - t > ttl }
           end
 
@@ -95,8 +95,8 @@ module Legion
           def read_instances_setting
             return nil unless Legion.const_defined?('Settings', false)
 
-            ollama_config = config_value(providers_settings, :ollama, {})
-            config_value(ollama_config, :instances)
+            ollama_config = Legion::LLM::Settings.config_value(providers_settings, :ollama, {})
+            Legion::LLM::Settings.config_value(ollama_config, :instances)
           rescue StandardError => e
             handle_exception(e, level: :debug)
             nil
@@ -111,7 +111,7 @@ module Legion
           def flat_base_url
             return 'http://localhost:11434' unless Legion.const_defined?('Settings', false)
 
-            config_value(config_value(providers_settings, :ollama, {}), :base_url, 'http://localhost:11434')
+            Legion::LLM::Settings.config_value(Legion::LLM::Settings.config_value(providers_settings, :ollama, {}), :base_url, 'http://localhost:11434')
           rescue StandardError => e
             handle_exception(e, level: :debug)
             'http://localhost:11434'
@@ -166,30 +166,18 @@ module Legion
           def discovery_settings
             return {} unless Legion.const_defined?('Settings', false)
 
-            config_value(llm_settings, :discovery, {})
+            Legion::LLM::Settings.config_value(llm_settings, :discovery, {})
           rescue StandardError => e
             handle_exception(e, level: :debug)
             {}
           end
 
           def providers_settings
-            config_value(llm_settings, :providers, {})
+            Legion::LLM::Settings.config_value(llm_settings, :providers, {})
           end
 
           def llm_settings
             Legion::LLM::Settings.current_settings
-          end
-
-          def config_value(config, key, default = nil)
-            return default unless config.respond_to?(:key?)
-
-            string_key = key.to_s
-            return config[string_key] if config.key?(string_key)
-
-            symbol_key = key.to_sym if key.respond_to?(:to_sym)
-            return config[symbol_key] if symbol_key && config.key?(symbol_key)
-
-            default
           end
         end
       end
