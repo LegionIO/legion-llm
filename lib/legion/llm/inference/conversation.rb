@@ -116,8 +116,8 @@ module Legion
             return nil if tail.empty?
 
             entry = tail.last
-            ::JSON.parse(entry[:content], symbolize_names: true)
-          rescue ::JSON::ParserError => e
+            Legion::JSON.parse(entry[:content])
+          rescue Legion::JSON::ParseError => e
             handle_exception(e, level: :debug, handled: true, operation: 'llm.conversation.metadata_json_parse')
             nil
           end

@@ -20,7 +20,7 @@ module Legion
 
             parsed = Legion::JSON.load(content)
             { data: parsed, raw: content, model: raw_model, valid: true }
-          rescue ::JSON::ParserError => e
+          rescue Legion::JSON::ParseError => e
             log.warn "[llm][structured_output] model=#{model} provider=#{provider} parse_error=#{e.message}"
             handle_parse_error(e, messages, schema, model, provider, result, **)
           end

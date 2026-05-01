@@ -96,7 +96,7 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
       end
 
       allow(Legion::JSON).to receive(:dump).and_return('{}')
-      allow(Legion::JSON).to receive(:load).with('not json').and_raise(JSON::ParserError, 'unexpected token')
+      allow(Legion::JSON).to receive(:load).with('not json').and_raise(Legion::JSON::ParseError, 'unexpected token')
       allow(Legion::JSON).to receive(:load).with('{"name":"Bob"}').and_return({ name: 'Bob' })
       allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :retry_on_parse_failure).and_return(true)
       allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :max_retries).and_return(2)
@@ -117,7 +117,7 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
       end
 
       allow(Legion::JSON).to receive(:dump).and_return('{}')
-      allow(Legion::JSON).to receive(:load).with('not json').and_raise(JSON::ParserError, 'unexpected token')
+      allow(Legion::JSON).to receive(:load).with('not json').and_raise(Legion::JSON::ParseError, 'unexpected token')
       allow(Legion::JSON).to receive(:load).with('{"name":"Bob"}').and_return({ name: 'Bob' })
       allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :retry_on_parse_failure).and_return(true)
       allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :max_retries).and_return(2)
@@ -133,7 +133,7 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
       bad_result = { content: 'bad', model: 'gpt-4o' }
       allow(Legion::LLM::Inference).to receive(:send).with(:chat_single, anything).and_return(bad_result)
       allow(Legion::JSON).to receive(:dump).and_return('{}')
-      allow(Legion::JSON).to receive(:load).and_raise(JSON::ParserError, 'unexpected token')
+      allow(Legion::JSON).to receive(:load).and_raise(Legion::JSON::ParseError, 'unexpected token')
       Legion::Settings[:llm][:structured_output] = { retry_on_parse_failure: false }
 
       result = described_class.generate(messages: messages, schema: schema, model: 'gpt-4o')

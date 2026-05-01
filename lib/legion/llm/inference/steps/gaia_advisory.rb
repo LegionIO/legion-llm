@@ -180,8 +180,8 @@ module Legion
             )
             return nil unless result[:success] && result[:results]&.any?
 
-            raw = ::JSON.parse(result[:results].first[:content])
-            raw['weights']
+            raw = Legion::JSON.parse(result[:results].first[:content])
+            raw[:weights]
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.gaia_advisory.fetch_partner_weights')
             nil

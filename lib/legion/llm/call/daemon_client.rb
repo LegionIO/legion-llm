@@ -188,8 +188,8 @@ module Legion
         def safe_parse(body)
           return {} if body.nil? || body.strip.empty?
 
-          ::JSON.parse(body, symbolize_names: true)
-        rescue ::JSON::ParserError => e
+          Legion::JSON.parse(body)
+        rescue Legion::JSON::ParseError => e
           handle_exception(e, level: :debug)
           {}
         end

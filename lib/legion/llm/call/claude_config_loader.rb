@@ -35,7 +35,7 @@ module Legion
         def read_json(path)
           return {} unless File.exist?(path)
 
-          ::JSON.parse(File.read(path), symbolize_names: true)
+          Legion::JSON.parse(File.read(path))
         rescue StandardError => e
           handle_exception(e, level: :debug)
           {}

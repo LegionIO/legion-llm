@@ -29,8 +29,8 @@ RSpec.describe Legion::LLM::Discovery::Ollama do
 
     it 'includes model name and size' do
       model = described_class.models.first
-      expect(model['name']).to eq('llama3.1:8b')
-      expect(model['size']).to eq(4_700_000_000)
+      expect(model[:name]).to eq('llama3.1:8b')
+      expect(model[:size]).to eq(4_700_000_000)
     end
   end
 

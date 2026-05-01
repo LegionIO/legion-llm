@@ -54,8 +54,8 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
 
       it 'includes correct model names per instance' do
         result = described_class.scan_all_instances
-        local_names = result[:local][:models].map { |m| m['name'] }
-        apollo_names = result[:apollo][:models].map { |m| m['name'] }
+        local_names = result[:local][:models].map { |m| m[:name] }
+        apollo_names = result[:apollo][:models].map { |m| m[:name] }
         expect(local_names).to eq(['qwen3.6:27b-q4_K_M', 'llama3.1:8b'])
         expect(apollo_names).to eq(%w[mxbai-embed-large nomic-embed-text])
       end
@@ -78,23 +78,23 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
 
         it 'enriches models with capabilities from /api/show' do
           result = described_class.scan_all_instances
-          model = result[:local][:models].find { |m| m['name'] == 'qwen3.6:27b-q4_K_M' }
-          expect(model['capabilities']).to eq(%i[completion vision tools thinking])
+          model = result[:local][:models].find { |m| m[:name] == 'qwen3.6:27b-q4_K_M' }
+          expect(model[:capabilities]).to eq(%i[completion vision tools thinking])
         end
 
         it 'enriches models with context_length from /api/show' do
           result = described_class.scan_all_instances
-          model = result[:local][:models].find { |m| m['name'] == 'qwen3.6:27b-q4_K_M' }
-          expect(model['context_length']).to eq(262_144)
+          model = result[:local][:models].find { |m| m[:name] == 'qwen3.6:27b-q4_K_M' }
+          expect(model[:context_length]).to eq(262_144)
         end
 
         it 'enriches models with parameter metadata from /api/show' do
           result = described_class.scan_all_instances
-          model = result[:local][:models].find { |m| m['name'] == 'qwen3.6:27b-q4_K_M' }
-          expect(model['parameter_count']).to eq(27_781_427_952)
-          expect(model['parameter_size']).to eq('27.8B')
-          expect(model['quantization']).to eq('Q4_K_M')
-          expect(model['family']).to eq('qwen35')
+          model = result[:local][:models].find { |m| m[:name] == 'qwen3.6:27b-q4_K_M' }
+          expect(model[:parameter_count]).to eq(27_781_427_952)
+          expect(model[:parameter_size]).to eq('27.8B')
+          expect(model[:quantization]).to eq('Q4_K_M')
+          expect(model[:family]).to eq('qwen35')
         end
       end
 
@@ -134,7 +134,7 @@ RSpec.describe Legion::LLM::Discovery::Ollama, 'per-instance scanning' do
         described_class.refresh!
         local = described_class.models_for(instance: :local)
         expect(local.size).to eq(2)
-        expect(local.map { |m| m['name'] }).to include('llama3.1:8b')
+        expect(local.map { |m| m[:name] }).to include('llama3.1:8b')
       end
 
       it 'returns empty array for unknown instance' do

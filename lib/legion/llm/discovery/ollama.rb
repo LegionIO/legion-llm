@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'faraday'
-require 'json'
+require 'legion/json'
 
 require 'legion/logging/helper'
 module Legion
@@ -17,14 +17,14 @@ module Legion
           end
 
           def model_names
-            models.map { |m| m['name'] }
+            models.map { |m| m[:name] }
           end
 
           def model_available?(name, instance: nil)
             if instance
               ensure_fresh
               list = models_for(instance: instance)
-              list.any? { |m| m['name'] == name || m['name'].start_with?("#{name}:") }
+              list.any? { |m| m[:name] == name || m[:name].start_with?("#{name}:") }
             else
               model_names.any? { |n| n == name || n.start_with?("#{name}:") }
             end
@@ -34,10 +34,10 @@ module Legion
             if instance
               ensure_fresh
               models_for(instance: instance)
-                .find { |m| m['name'] == name || m['name'].start_with?("#{name}:") }
-                &.dig('size')
+                .find { |m| m[:name] == name || m[:name].start_with?("#{name}:") }
+                &.dig(:size)
             else
-              models.find { |m| m['name'] == name || m['name'].start_with?("#{name}:") }&.dig('size')
+              models.find { |m| m[:name] == name || m[:name].start_with?("#{name}:") }&.dig(:size)
             end
           end
 
@@ -93,7 +93,7 @@ module Legion
           def all_models
             return [] if @models_by_instance.nil? || @models_by_instance.empty?
 
-            @models_by_instance.values.flatten(1).uniq { |m| m['name'] }
+            @models_by_instance.values.flatten(1).uniq { |m| m[:name] }
           end
 
           def resolved_instances
@@ -165,7 +165,7 @@ module Legion
 
             # Only enrich models that pass filters to avoid unnecessary API calls
             eligible_names = models.filter_map do |m|
-              name = m['name']
+              name = m[:name]
               next nil if name.nil? || name.empty?
               next nil if effective_wl&.any? && effective_wl.none? { |pat| name.downcase.include?(pat.downcase) }
               next nil if effective_bl&.any? && effective_bl.any? { |pat| name.downcase.include?(pat.downcase) }
@@ -206,15 +206,15 @@ module Legion
 
           def apply_enrichment!(models, enriched)
             models.each do |m|
-              show_data = enriched[m['name']]
+              show_data = enriched[m[:name]]
               next unless show_data
 
-              m['capabilities']    = show_data[:capabilities] if show_data[:capabilities]
-              m['context_length']  = show_data[:context_length] if show_data[:context_length]
-              m['parameter_count'] = show_data[:parameter_count] if show_data[:parameter_count]
-              m['parameter_size']  = show_data[:parameter_size] if show_data[:parameter_size]
-              m['quantization']    = show_data[:quantization] if show_data[:quantization]
-              m['family']          = show_data[:family] if show_data[:family]
+              m[:capabilities]    = show_data[:capabilities] if show_data[:capabilities]
+              m[:context_length]  = show_data[:context_length] if show_data[:context_length]
+              m[:parameter_count] = show_data[:parameter_count] if show_data[:parameter_count]
+              m[:parameter_size]  = show_data[:parameter_size] if show_data[:parameter_size]
+              m[:quantization]    = show_data[:quantization] if show_data[:quantization]
+              m[:family]          = show_data[:family] if show_data[:family]
             end
           end
 
@@ -226,8 +226,8 @@ module Legion
             end
             response = conn.get('/api/tags')
             if response.success?
-              parsed = ::JSON.parse(response.body)
-              models = parsed['models'] || []
+              parsed = Legion::JSON.parse(response.body)
+              models = parsed[:models] || []
               log.debug("Discovery::Ollama model list refreshed url=#{base_url} count=#{models.size}")
               models
             else
@@ -245,11 +245,11 @@ module Legion
               f.options.open_timeout = 2
               f.adapter Faraday.default_adapter
             end
-            response = conn.post('/api/show', ::JSON.generate({ model: model_name }),
+            response = conn.post('/api/show', Legion::JSON.generate({ model: model_name }),
                                  'Content-Type' => 'application/json')
             return nil unless response.success?
 
-            parsed = ::JSON.parse(response.body)
+            parsed = Legion::JSON.parse(response.body)
             parse_show_response(parsed)
           rescue StandardError => e
             handle_exception(e, level: :debug)
@@ -258,16 +258,16 @@ module Legion
 
           def parse_show_response(data)
             result = {}
-            caps = data['capabilities']
+            caps = data[:capabilities]
             result[:capabilities] = caps.map { |c| c.to_s.to_sym } if caps.is_a?(Array) && caps.any?
 
-            details = data['details'] || {}
-            result[:parameter_size] = details['parameter_size'] if details['parameter_size']
-            result[:quantization]   = details['quantization_level'] if details['quantization_level']
-            result[:family]         = details['family'] if details['family']
+            details = data[:details] || {}
+            result[:parameter_size] = details[:parameter_size] if details[:parameter_size]
+            result[:quantization]   = details[:quantization_level] if details[:quantization_level]
+            result[:family]         = details[:family] if details[:family]
 
-            model_info = data['model_info'] || {}
-            param_count = model_info['general.parameter_count']
+            model_info = data[:model_info] || {}
+            param_count = model_info[:'general.parameter_count']
             result[:parameter_count] = param_count if param_count
 
             # Find context_length from model_info keys like "qwen35.context_length" or "llama.context_length"

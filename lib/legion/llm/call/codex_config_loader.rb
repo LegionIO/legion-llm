@@ -57,7 +57,7 @@ module Legion
         end
 
         def read_json(path)
-          ::JSON.parse(File.read(path), symbolize_names: true)
+          Legion::JSON.parse(File.read(path))
         rescue StandardError => e
           handle_exception(e, level: :debug)
           {}
@@ -121,7 +121,7 @@ module Legion
           return true unless parts.length == 3
 
           padded = parts[1] + ('=' * ((4 - (parts[1].length % 4)) % 4))
-          payload = ::JSON.parse(Base64.urlsafe_decode64(padded), symbolize_names: true)
+          payload = Legion::JSON.parse(Base64.urlsafe_decode64(padded))
           exp = payload[:exp]
           return true unless exp.is_a?(Integer)
 
