@@ -64,6 +64,13 @@ module Legion
           handle_exception(e, level: :warn, operation: 'llm.discovery.detect_embedding_capability')
         end
 
+        def discovered_instances
+          result = {}
+          result[:ollama] = Ollama.scan_all_instances if defined?(Ollama)
+          result[:vllm] = Vllm.scan_all_instances if defined?(Vllm)
+          result
+        end
+
         def reset!
           log.debug '[llm][discovery] reset'
           @can_embed = nil

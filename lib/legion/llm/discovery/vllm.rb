@@ -14,57 +14,70 @@ module Legion
         class << self
           def models
             ensure_fresh
-            @models || []
+            all_models
           end
 
           def model_names
             models.map { |m| config_value(m, :id) }
           end
 
-          def model_available?(name)
-            model_names.any? { |n| n == name }
+          def model_available?(name, instance: nil)
+            if instance
+              ensure_fresh
+              list = models_for(instance: instance)
+              list.any? { |m| config_value(m, :id) == name }
+            else
+              model_names.any? { |n| n == name }
+            end
           end
 
-          def max_context(name)
-            model = models.find { |m| config_value(m, :id) == name }
+          def max_context(name, instance: nil)
+            target = instance ? models_for(instance: instance) : models
+            model = target.find { |m| config_value(m, :id) == name }
             config_value(model, :max_model_len)
           end
 
-          def healthy?
-            response = health_connection.get('/health')
-            response.success?
-          rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.discovery.vllm.healthy')
-            false
+          def models_for(instance:)
+            ensure_fresh
+            (@models_by_instance || {})[instance.to_sym] || []
+          end
+
+          def scan_all_instances
+            instances = resolved_instances
+            scan_instances_parallel(instances)
+            instances.each_with_object({}) do |(id, cfg), result|
+              result[id] = { models: (@models_by_instance || {})[id] || [], base_url: cfg[:base_url] || cfg['base_url'] }
+            end
+          end
+
+          def healthy?(instance: nil)
+            instances = resolved_instances
+            if instance
+              cfg = instances[instance.to_sym]
+              return false unless cfg
+
+              base = cfg[:base_url] || cfg['base_url'] || 'http://localhost:8000/v1'
+              check_health(base)
+            else
+              instances.any? { |_id, cfg| check_health(cfg[:base_url] || cfg['base_url'] || 'http://localhost:8000/v1') }
+            end
           end
 
           def refresh!
-            response = connection.get('/v1/models')
-            if response.success?
-              parsed = Legion::JSON.load(response.body)
-              @models = parsed[:data] || []
-              log.debug "[llm][discovery][vllm] model list refreshed count=#{@models.size}"
-            else
-              log.warn "[llm][discovery][vllm] HTTP failure status=#{response.status}"
-              @models ||= []
-            end
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.discovery.vllm.refresh')
-            @models ||= []
-          ensure
-            @last_refreshed_at = Time.now
+            instances = resolved_instances
+            scan_instances_parallel(instances)
           end
 
           def reset!
-            @models = nil
-            @last_refreshed_at = nil
+            @models_by_instance = nil
+            @last_refreshed_by_instance = nil
           end
 
           def stale?
-            return true if @last_refreshed_at.nil?
+            return true if @last_refreshed_by_instance.nil? || @last_refreshed_by_instance.empty?
 
             ttl = config_value(discovery_settings, :refresh_seconds, 60)
-            Time.now - @last_refreshed_at > ttl
+            @last_refreshed_by_instance.values.any? { |t| Time.now - t > ttl }
           end
 
           private
@@ -73,30 +86,104 @@ module Legion
             refresh! if stale?
           end
 
-          def connection
-            Faraday.new(url: vllm_base_url) do |f|
-              f.options.timeout = 3
-              f.options.open_timeout = 2
-              f.adapter Faraday.default_adapter
+          def all_models
+            return [] if @models_by_instance.nil? || @models_by_instance.empty?
+
+            @models_by_instance.values.flatten(1).uniq { |m| config_value(m, :id) }
+          end
+
+          def resolved_instances
+            instances = read_instances_setting
+            if instances.is_a?(Hash) && !instances.empty?
+              normalize_instances(instances)
+            else
+              { default: { base_url: flat_base_url } }
             end
           end
 
-          def health_connection
-            base = vllm_base_url.sub(%r{/+\z}, '').sub(%r{/v1\z}, '')
-            Faraday.new(url: base) do |f|
-              f.options.timeout = 2
-              f.options.open_timeout = 2
-              f.adapter Faraday.default_adapter
+          def read_instances_setting
+            return nil unless Legion.const_defined?('Settings', false)
+
+            vllm_config = config_value(providers_settings, :vllm, {})
+            config_value(vllm_config, :instances)
+          rescue StandardError => e
+            handle_exception(e, level: :debug)
+            nil
+          end
+
+          def normalize_instances(raw)
+            raw.each_with_object({}) do |(id, cfg), hash|
+              hash[id.to_sym] = cfg.is_a?(Hash) ? cfg : { base_url: cfg.to_s }
             end
           end
 
-          def vllm_base_url
+          def flat_base_url
             return 'http://localhost:8000/v1' unless Legion.const_defined?('Settings', false)
 
             config_value(config_value(providers_settings, :vllm, {}), :base_url, 'http://localhost:8000/v1')
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.discovery.vllm.base_url')
             'http://localhost:8000/v1'
+          end
+
+          def scan_instances_parallel(instances)
+            @models_by_instance ||= {}
+            @last_refreshed_by_instance ||= {}
+
+            threads = instances.map do |id, cfg|
+              Thread.new(id, cfg) do |inst_id, inst_cfg|
+                base = inst_cfg[:base_url] || inst_cfg['base_url'] || 'http://localhost:8000/v1'
+                [inst_id, fetch_models(base)]
+              end
+            end
+
+            deadline = Time.now + 5
+            threads.each do |t|
+              remaining = [deadline - Time.now, 0].max
+              t.join(remaining)
+              if t.alive?
+                t.kill
+              elsif t.value
+                inst_id, result = t.value
+                @models_by_instance[inst_id] = result
+                @last_refreshed_by_instance[inst_id] = Time.now
+              end
+            end
+          end
+
+          def fetch_models(base_url)
+            conn = Faraday.new(url: base_url) do |f|
+              f.options.timeout = 2
+              f.options.open_timeout = 2
+              f.adapter Faraday.default_adapter
+            end
+            response = conn.get('/v1/models')
+            if response.success?
+              parsed = Legion::JSON.load(response.body)
+              model_list = parsed[:data] || []
+              log.debug "[llm][discovery][vllm] model list refreshed url=#{base_url} count=#{model_list.size}"
+              model_list
+            else
+              log.warn "[llm][discovery][vllm] HTTP failure url=#{base_url} status=#{response.status}"
+              []
+            end
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.discovery.vllm.refresh')
+            []
+          end
+
+          def check_health(base_url)
+            health_base = base_url.sub(%r{/+\z}, '').sub(%r{/v1\z}, '')
+            conn = Faraday.new(url: health_base) do |f|
+              f.options.timeout = 2
+              f.options.open_timeout = 2
+              f.adapter Faraday.default_adapter
+            end
+            response = conn.get('/health')
+            response.success?
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'llm.discovery.vllm.healthy')
+            false
           end
 
           def discovery_settings

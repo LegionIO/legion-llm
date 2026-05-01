@@ -114,7 +114,7 @@ RSpec.describe Legion::LLM::Discovery::Ollama do
       described_class.refresh!
       expect(described_class.stale?).to be false
 
-      described_class.instance_variable_set(:@last_refreshed_at, Time.now - 11)
+      described_class.instance_variable_set(:@last_refreshed_by_instance, { default: Time.now - 11 })
       expect(described_class.stale?).to be true
     end
   end
