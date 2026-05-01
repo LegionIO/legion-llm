@@ -36,6 +36,8 @@ RSpec.describe Legion::LLM do
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
       stub_request(:get, 'http://localhost:11434/api/tags')
         .to_return(status: 200, body: { 'models' => [] }.to_json)
+      stub_request(:get, 'http://localhost:8000/v1/models')
+        .to_return(status: 200, body: { 'data' => [] }.to_json)
       allow(Legion::LLM::Discovery::System).to receive(:platform).and_return(:unknown)
     end
 
@@ -88,6 +90,10 @@ RSpec.describe Legion::LLM do
       allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
       allow(Legion::LLM::Call::Providers).to receive(:ollama_running?).and_return(false)
       allow(Legion::LLM::Call::ClaudeConfigLoader).to receive(:load)
+      stub_request(:get, 'http://localhost:11434/api/tags')
+        .to_return(status: 200, body: { 'models' => [] }.to_json)
+      stub_request(:get, 'http://localhost:8000/v1/models')
+        .to_return(status: 200, body: { 'data' => [] }.to_json)
       # Clear any env-var-seeded defaults so auto_configure_defaults actually runs
       Legion::Settings[:llm][:default_model]    = nil
       Legion::Settings[:llm][:default_provider] = nil

@@ -7,6 +7,7 @@ require_relative 'router/escalation/chain'
 require_relative 'router/gateway_interceptor'
 require_relative 'discovery/ollama'
 require_relative 'discovery/system'
+require_relative 'discovery/memory_gate'
 
 require 'legion/logging/helper'
 module Legion
@@ -198,9 +199,16 @@ module Legion
           # 4.5 Reject Ollama rules where model is not pulled or doesn't fit
           discovered = unconstrained.reject { |r| excluded_by_discovery?(r) }
 
+          # 4.55 Reject local-tier rules where model exceeds available memory
+          memory_checked = discovered.reject { |r| excluded_by_memory?(r) }
+
           # 4.6 Reject rules matching caller-provided exclude list
           normalized_exclude = exclude.is_a?(Hash) ? exclude : {}
-          not_excluded = normalized_exclude.empty? ? discovered : discovered.reject { |r| excluded_by_caller?(r, normalized_exclude) }
+          not_excluded = if normalized_exclude.empty?
+                           memory_checked
+                         else
+                           memory_checked.reject { |r| excluded_by_caller?(r, normalized_exclude) }
+                         end
 
           # 5. Filter by tier availability
           final = not_excluded.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
@@ -245,6 +253,21 @@ module Legion
           floor = discovery_settings[:memory_floor_mb] || 2048
           model_mb = model_bytes / 1024 / 1024
           model_mb > (available - floor)
+        end
+
+        def excluded_by_memory?(rule)
+          return false unless discovery_enabled?
+
+          tier = (rule.target[:tier] || rule.target['tier'])&.to_sym
+          return false unless tier == :local
+
+          model = rule.target[:model] || rule.target['model']
+          provider = rule.target[:provider] || rule.target['provider']
+          instance = rule.target[:instance] || rule.target['instance']
+          !Discovery::MemoryGate.allow?(provider: provider, instance: instance, model: model)
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'router.excluded_by_memory')
+          false
         end
 
         def discovery_enabled?

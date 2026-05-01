@@ -83,6 +83,7 @@ module Legion
         Call::CodexConfigLoader.load
         Call::Providers.setup
         Discovery.run
+        Router.populate_auto_rules(Discovery.discovered_instances) if Router.respond_to?(:populate_auto_rules)
         Discovery.detect_embedding_capability
         Config.set_defaults
         Hooks.install_defaults
