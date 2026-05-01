@@ -8,33 +8,62 @@ module Legion
       module Registry
         extend Legion::Logging::Helper
 
+        # @registry structure: { provider_sym => { instance_sym => adapter } }
         @registry = {}
         @mutex = Mutex.new
 
         module_function
 
-        def register(name, extension_module)
-          @mutex.synchronize { @registry[name.to_sym] = extension_module }
-          log.info("[llm][providers] native_registered provider=#{name}")
+        def register(name, extension_module, instance: :default)
+          provider = name.to_sym
+          inst = instance.to_sym
+          @mutex.synchronize do
+            @registry[provider] ||= {}
+            @registry[provider][inst] = extension_module
+          end
+          log.info("[llm][registry] registered provider=#{provider} instance=#{inst}")
           extension_module
         end
 
-        def for(name)
-          @mutex.synchronize { @registry[name.to_sym] }
+        def for(name, instance: nil)
+          provider = name.to_sym
+          @mutex.synchronize do
+            instances = @registry[provider]
+            return nil unless instances
+
+            if instance
+              instances[instance.to_sym]
+            else
+              instances[:default] || instances.values.first
+            end
+          end
+        end
+
+        def instances_for(name)
+          provider = name.to_sym
+          @mutex.synchronize { (@registry[provider] || {}).dup }
         end
 
         def available
           @mutex.synchronize { @registry.keys.dup }
         end
 
-        def registered?(name)
-          @mutex.synchronize { @registry.key?(name.to_sym) }
+        def registered?(name, instance: nil)
+          provider = name.to_sym
+          @mutex.synchronize do
+            return false unless @registry.key?(provider)
+            return true unless instance
+
+            @registry[provider].key?(instance.to_sym)
+          end
         end
 
         def reset!
-          count = @mutex.synchronize { @registry.size }
-          @mutex.synchronize { @registry.clear }
-          log.info("[llm][providers] native_registry_reset count=#{count}")
+          @mutex.synchronize do
+            count = @registry.values.sum(&:size)
+            @registry.clear
+            log.info("[llm][registry] reset count=#{count}")
+          end
         end
       end
     end
