@@ -316,7 +316,7 @@ module Legion
         end
 
         def detect_small_model
-          providers = Legion::LLM::Settings.value(:providers, default: {})
+          providers = Legion::LLM::Settings.provider_settings
           %w[ollama].each do |provider|
             config = Legion::LLM::Settings.config_value(providers, provider, {})
             enabled = Legion::LLM::Settings.config_value(config, :enabled)

@@ -67,7 +67,7 @@ module Legion
         private
 
         def providers_config
-          Legion::LLM::Settings.value(:providers, default: {})
+          Legion::LLM::Settings.provider_settings
         end
 
         def embedding_settings

@@ -495,7 +495,7 @@ module Legion
         end
 
         def providers_settings
-          Legion::LLM::Settings.value(:providers, default: {})
+          Legion::LLM::Settings.provider_settings
         end
       end
     end

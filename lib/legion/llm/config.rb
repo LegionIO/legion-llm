@@ -23,7 +23,7 @@ module Legion
 
       def auto_configure_defaults
         log.debug '[llm][config] auto_configure_defaults.enter'
-        Legion::LLM::Settings.value(:providers, default: {}).each do |provider, config|
+        Legion::LLM::Settings.provider_settings.each do |provider, config|
           next unless Legion::LLM::Settings.config_value(config, :enabled)
 
           model = Legion::LLM::Settings.config_value(config, :default_model)

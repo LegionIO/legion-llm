@@ -46,7 +46,25 @@ module Legion
             instances = resolved_instances
             scan_instances_parallel(instances)
             instances.each_with_object({}) do |(id, cfg), result|
-              result[id] = { models: (@models_by_instance || {})[id] || [], base_url: cfg[:base_url] || cfg['base_url'] }
+              base_url = cfg[:base_url] || cfg['base_url']
+              instance_data = {
+                models:   (@models_by_instance || {})[id] || [],
+                base_url: base_url
+              }
+
+              # Pass through per-instance filter config for RuleGenerator
+              wl = cfg[:model_whitelist] || cfg['model_whitelist']
+              bl = cfg[:model_blacklist] || cfg['model_blacklist']
+              instance_data[:model_whitelist] = Array(wl) if wl
+              instance_data[:model_blacklist] = Array(bl) if bl
+
+              # Enrich models with context_length from max_model_len
+              instance_data[:models].each do |m|
+                ctx = Legion::LLM::Settings.config_value(m, :max_model_len)
+                m[:context_length] = ctx if ctx
+              end
+
+              result[id] = instance_data
             end
           end
 
@@ -196,7 +214,7 @@ module Legion
           end
 
           def providers_settings
-            Legion::LLM::Settings.config_value(llm_settings, :providers, {})
+            Legion::LLM::Settings.provider_settings
           end
 
           def llm_settings

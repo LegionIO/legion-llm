@@ -74,7 +74,7 @@ module Legion
             return
           end
 
-          providers = Legion::LLM::Settings.value(:providers, default: {})
+          providers = Legion::LLM::Settings.provider_settings
           openai_config = Legion::LLM::Settings.config_value(providers, :openai, {})
           existing_raw = Legion::LLM::Settings.config_value(openai_config, :api_key)
           resolved_existing = resolve_env_api_key(existing_raw)

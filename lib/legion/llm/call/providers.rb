@@ -485,7 +485,7 @@ module Legion
           LEX_LLM_PROVIDER_REQUIRES.each_value { |feature| load_optional_feature(feature) }
           return unless lex_llm_namespace
 
-          providers_config = Legion::LLM::Settings.value(:providers, default: {})
+          providers_config = Legion::LLM::Settings.provider_settings
           providers_config.each do |provider_name, provider_config|
             next unless provider_config.is_a?(Hash)
             next if Legion::LLM::Settings.config_value(provider_config, :enabled) == false
@@ -766,7 +766,9 @@ module Legion
         end
 
         def providers_settings
-          Legion::LLM::Settings.value(:providers, default: {})
+          Legion::LLM::Settings.provider_settings
+        rescue StandardError
+          Legion::LLM::Settings.provider_settings
         end
 
         def config_enabled?(config)

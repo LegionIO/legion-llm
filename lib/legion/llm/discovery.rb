@@ -203,7 +203,7 @@ module Legion
         end
 
         def providers_settings
-          Legion::LLM::Settings.config_value(llm_settings, :providers, {})
+          Legion::LLM::Settings.provider_settings
         end
 
         def llm_settings

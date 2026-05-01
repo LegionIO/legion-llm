@@ -135,6 +135,18 @@ module Legion
         {}
       end
 
+      def self.provider_settings
+        ext = Legion::Settings[:extensions]
+        if ext.is_a?(Hash) && ext[:llm].is_a?(Hash) && ext[:llm].any?
+          return ext[:llm]
+        end
+
+        value(:providers, default: {})
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.provider_settings')
+        value(:providers, default: {})
+      end
+
       def self.register_defaults!
         return unless Legion::Settings.respond_to?(:register_library)
 

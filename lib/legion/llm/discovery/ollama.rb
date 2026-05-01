@@ -50,7 +50,20 @@ module Legion
             instances = resolved_instances
             scan_instances_parallel(instances)
             instances.each_with_object({}) do |(id, cfg), result|
-              result[id] = { models: (@models_by_instance || {})[id] || [], base_url: cfg[:base_url] || cfg['base_url'] }
+              base_url = cfg[:base_url] || cfg['base_url']
+              models = (@models_by_instance || {})[id] || []
+              instance_data = { models: models, base_url: base_url }
+
+              # Pass through per-instance filter config for RuleGenerator
+              wl = cfg[:model_whitelist] || cfg['model_whitelist']
+              bl = cfg[:model_blacklist] || cfg['model_blacklist']
+              instance_data[:model_whitelist] = Array(wl) if wl
+              instance_data[:model_blacklist] = Array(bl) if bl
+
+              # Enrich models with /api/show metadata (capabilities, context_length, etc.)
+              enrich_instance_models!(id, base_url, models, wl.is_a?(Array) ? wl : nil, bl.is_a?(Array) ? bl : nil)
+
+              result[id] = instance_data
             end
           end
 
@@ -111,7 +124,9 @@ module Legion
           def flat_base_url
             return 'http://localhost:11434' unless Legion.const_defined?('Settings', false)
 
-            Legion::LLM::Settings.config_value(Legion::LLM::Settings.config_value(providers_settings, :ollama, {}), :base_url, 'http://localhost:11434')
+            Legion::LLM::Settings.config_value(
+              Legion::LLM::Settings.config_value(providers_settings, :ollama, {}), :base_url, 'http://localhost:11434'
+            )
           rescue StandardError => e
             handle_exception(e, level: :debug)
             'http://localhost:11434'
@@ -142,6 +157,62 @@ module Legion
             end
           end
 
+          def enrich_instance_models!(instance_id, base_url, models, whitelist, blacklist) # rubocop:disable Metrics/MethodLength
+            global_wl = routing_model_whitelist
+            global_bl = routing_model_blacklist
+            effective_wl = whitelist || global_wl
+            effective_bl = blacklist || global_bl
+
+            # Only enrich models that pass filters to avoid unnecessary API calls
+            eligible_names = models.filter_map do |m|
+              name = m['name']
+              next nil if name.nil? || name.empty?
+              next nil if effective_wl&.any? && effective_wl.none? { |pat| name.downcase.include?(pat.downcase) }
+              next nil if effective_bl&.any? && effective_bl.any? { |pat| name.downcase.include?(pat.downcase) }
+
+              name
+            end
+
+            return if eligible_names.empty?
+
+            enriched = enrich_models_parallel(instance_id, base_url, eligible_names)
+            apply_enrichment!(models, enriched)
+          rescue StandardError => e
+            handle_exception(e, level: :debug)
+          end
+
+          def enrich_models_parallel(instance_id, base_url, model_names)
+            enriched = {}
+            deadline = Time.now + 10
+
+            model_names.each do |name|
+              break if Time.now > deadline
+
+              show_data = fetch_model_show(base_url, name)
+              enriched[name] = show_data if show_data
+            end
+
+            log.debug("Discovery::Ollama enriched #{enriched.size}/#{model_names.size} models for instance=#{instance_id}")
+            enriched
+          rescue StandardError => e
+            handle_exception(e, level: :debug)
+            enriched || {}
+          end
+
+          def apply_enrichment!(models, enriched)
+            models.each do |m|
+              show_data = enriched[m['name']]
+              next unless show_data
+
+              m['capabilities']    = show_data[:capabilities] if show_data[:capabilities]
+              m['context_length']  = show_data[:context_length] if show_data[:context_length]
+              m['parameter_count'] = show_data[:parameter_count] if show_data[:parameter_count]
+              m['parameter_size']  = show_data[:parameter_size] if show_data[:parameter_size]
+              m['quantization']    = show_data[:quantization] if show_data[:quantization]
+              m['family']          = show_data[:family] if show_data[:family]
+            end
+          end
+
           def fetch_models(base_url)
             conn = Faraday.new(url: base_url) do |f|
               f.options.timeout = 2
@@ -161,6 +232,63 @@ module Legion
           rescue StandardError => e
             handle_exception(e, level: :warn)
             []
+          end
+
+          def fetch_model_show(base_url, model_name)
+            conn = Faraday.new(url: base_url) do |f|
+              f.options.timeout = 2
+              f.options.open_timeout = 2
+              f.adapter Faraday.default_adapter
+            end
+            response = conn.post('/api/show', ::JSON.generate({ model: model_name }),
+                                 'Content-Type' => 'application/json')
+            return nil unless response.success?
+
+            parsed = ::JSON.parse(response.body)
+            parse_show_response(parsed)
+          rescue StandardError => e
+            handle_exception(e, level: :debug)
+            nil
+          rescue Exception => e # rubocop:disable Lint/RescueException
+            # Best-effort enrichment must never block discovery; catch non-StandardError exceptions
+            # (e.g., WebMock::NetConnectNotAllowedError in tests) that bypass the normal rescue
+            handle_exception(e, level: :debug) rescue nil # rubocop:disable Style/RescueModifier
+            nil
+          end
+
+          def parse_show_response(data)
+            result = {}
+            caps = data['capabilities']
+            result[:capabilities] = caps.map { |c| c.to_s.to_sym } if caps.is_a?(Array) && caps.any?
+
+            details = data['details'] || {}
+            result[:parameter_size] = details['parameter_size'] if details['parameter_size']
+            result[:quantization]   = details['quantization_level'] if details['quantization_level']
+            result[:family]         = details['family'] if details['family']
+
+            model_info = data['model_info'] || {}
+            param_count = model_info['general.parameter_count']
+            result[:parameter_count] = param_count if param_count
+
+            # Find context_length from model_info keys like "qwen35.context_length" or "llama.context_length"
+            ctx_key = model_info.keys.find { |k| k.to_s.end_with?('.context_length') }
+            result[:context_length] = model_info[ctx_key] if ctx_key
+
+            result
+          end
+
+          def routing_model_whitelist
+            value = Legion::LLM::Settings.value(:routing, :model_whitelist)
+            value.is_a?(Array) ? value : nil
+          rescue StandardError
+            nil
+          end
+
+          def routing_model_blacklist
+            value = Legion::LLM::Settings.value(:routing, :model_blacklist)
+            value.is_a?(Array) ? value : nil
+          rescue StandardError
+            nil
           end
 
           def discovery_settings
