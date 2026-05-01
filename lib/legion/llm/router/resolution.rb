@@ -24,6 +24,10 @@ module Legion
           @tier == :local
         end
 
+        def direct?
+          @tier == :direct
+        end
+
         def fleet?
           @tier == :fleet
         end
@@ -41,7 +45,7 @@ module Legion
         end
 
         def external?
-          %i[cloud frontier openai_compat].include?(@tier)
+          !%i[local direct fleet].include?(@tier)
         end
 
         def to_h

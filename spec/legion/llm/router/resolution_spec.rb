@@ -84,6 +84,17 @@ RSpec.describe Legion::LLM::Router::Resolution do
     end
   end
 
+  describe '#direct?' do
+    it 'returns true for direct tier' do
+      r = described_class.new(tier: :direct, provider: :ollama, model: 'test')
+      expect(r.direct?).to be true
+    end
+
+    it 'returns false for non-direct tier' do
+      expect(resolution.direct?).to be false
+    end
+  end
+
   describe '#fleet?' do
     it 'returns true for fleet tier' do
       r = described_class.new(tier: :fleet, provider: :bedrock, model: 'some-model')
@@ -146,6 +157,11 @@ RSpec.describe Legion::LLM::Router::Resolution do
 
     it 'returns false for local tier' do
       expect(resolution.external?).to be false
+    end
+
+    it 'returns false for direct tier' do
+      r = described_class.new(tier: :direct, provider: :ollama, model: 'test')
+      expect(r.external?).to be false
     end
 
     it 'returns false for fleet tier' do

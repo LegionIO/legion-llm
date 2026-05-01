@@ -413,4 +413,56 @@ RSpec.describe Legion::LLM::Router do
       expect(described_class.infer_provider_for_model('some-custom-model')).to be_nil
     end
   end
+
+  # ─── tier_available? for :direct tier ────────────────────────────────────────
+
+  describe '.tier_available?' do
+    before do
+      # Remove the blanket stub so we test the real method
+      allow(described_class).to receive(:tier_available?).and_call_original
+      allow(described_class).to receive(:privacy_mode?).and_return(false)
+    end
+
+    it 'returns true for :direct tier' do
+      expect(described_class.tier_available?(:direct)).to be true
+    end
+
+    it 'returns true for :local tier' do
+      expect(described_class.tier_available?(:local)).to be true
+    end
+  end
+
+  # ─── external_tier? via TIER_EXTERNAL constant ───────────────────────────────
+
+  describe '.external_tier? (via TIER_EXTERNAL)' do
+    it 'returns false for :direct' do
+      expect(described_class.send(:external_tier?, :direct)).to be false
+    end
+
+    it 'returns false for :local' do
+      expect(described_class.send(:external_tier?, :local)).to be false
+    end
+
+    it 'returns true for :cloud' do
+      expect(described_class.send(:external_tier?, :cloud)).to be true
+    end
+
+    it 'returns true for :frontier' do
+      expect(described_class.send(:external_tier?, :frontier)).to be true
+    end
+
+    it 'returns true for :openai_compat' do
+      expect(described_class.send(:external_tier?, :openai_compat)).to be true
+    end
+  end
+
+  # ─── TIER_EXTERNAL constant ─────────────────────────────────────────────────
+
+  describe 'TIER_EXTERNAL' do
+    it 'is a frozen Set of external tiers' do
+      expect(described_class::TIER_EXTERNAL).to be_a(Set)
+      expect(described_class::TIER_EXTERNAL).to be_frozen
+      expect(described_class::TIER_EXTERNAL).to eq(Set[:cloud, :frontier, :openai_compat])
+    end
+  end
 end

@@ -19,6 +19,7 @@ module Legion
       PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
                         gemini: :cloud, azure: :cloud, ollama: :local, vllm: :fleet }.freeze
       PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
+      TIER_EXTERNAL = Set[:cloud, :frontier, :openai_compat].freeze
 
       OLLAMA_MODEL_PATTERN = %r{[:/]}
 
@@ -106,6 +107,7 @@ module Legion
 
         # Check whether a tier can be used right now.
         # :local          — always available
+        # :direct         — always available (remote self-hosted instances)
         # :fleet          — available when Legion::Transport is loaded
         # :openai_compat  — available when gateways are configured
         # :cloud          — available unless privacy mode
@@ -305,7 +307,7 @@ module Legion
         end
 
         def external_tier?(tier)
-          %i[cloud frontier openai_compat].include?(tier)
+          TIER_EXTERNAL.include?(tier)
         end
 
         def openai_compat_available?
@@ -358,7 +360,7 @@ module Legion
 
         def default_provider_for_tier(tier)
           case tier.to_sym
-          when :local
+          when :local, :direct
             :ollama
           when :fleet
             vllm_config = Legion::LLM::Settings.config_value(providers_settings, :vllm)
@@ -377,7 +379,7 @@ module Legion
 
         def default_model_for_tier(tier)
           case tier.to_sym
-          when :local
+          when :local, :direct
             ollama = Legion::LLM::Settings.config_value(providers_settings, :ollama, {})
             Legion::LLM::Settings.config_value(ollama, :default_model) || 'llama3'
           when :fleet
