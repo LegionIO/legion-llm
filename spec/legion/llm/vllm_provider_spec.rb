@@ -35,14 +35,13 @@ RSpec.describe 'vLLM provider integration' do
   end
 
   describe 'default_provider_for_tier(:fleet)' do
-    it 'returns :vllm when vllm is enabled' do
-      Legion::Settings[:llm][:providers][:vllm] = { enabled: true, default_model: 'qwen3.6-27b' }
+    it 'returns :vllm when vllm is registered' do
+      Legion::LLM::Call::Registry.register(:vllm, Module.new, metadata: { default_model: 'qwen3.6-27b' })
       result = Legion::LLM::Router.send(:default_provider_for_tier, :fleet)
       expect(result).to eq(:vllm)
     end
 
-    it 'returns :ollama when vllm is not enabled' do
-      Legion::Settings[:llm][:providers][:vllm] = { enabled: false }
+    it 'returns :ollama when vllm is not registered' do
       result = Legion::LLM::Router.send(:default_provider_for_tier, :fleet)
       expect(result).to eq(:ollama)
     end

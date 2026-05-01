@@ -94,15 +94,15 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
       expect(chain.primary.model).to eq('claude-sonnet-4-6')
     end
 
-    it 'returns a multi-provider chain from string-keyed provider settings' do
+    it 'returns a multi-provider chain from registry-registered providers' do
       Legion::Settings[:llm] = {
-        'providers' => {
-          'ollama'  => { 'enabled' => true, 'default_model' => 'llama3' },
-          'bedrock' => { 'enabled' => true, 'default_model' => 'us.anthropic.claude-sonnet-4-6-v1' }
-        },
         'discovery' => { 'enabled' => false },
         'routing'   => { 'enabled' => false, 'rules' => [] }
       }
+
+      # Register providers in the Registry with default_model metadata
+      Legion::LLM::Call::Registry.register(:ollama, Module.new, metadata: { default_model: 'llama3' })
+      Legion::LLM::Call::Registry.register(:bedrock, Module.new, metadata: { default_model: 'us.anthropic.claude-sonnet-4-6-v1' })
 
       chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })
 

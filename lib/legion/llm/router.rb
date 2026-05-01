@@ -359,12 +359,16 @@ module Legion
         end
 
         def default_provider_for_tier(tier)
-          case tier.to_sym
-          when :local, :direct
+          sym = tier.to_sym
+
+          # Check registry for the first registered provider in this tier
+          registry_provider = registry_provider_for_tier(sym)
+          return registry_provider if registry_provider
+
+          # Fallback to static defaults when registry has no match
+          case sym
+          when :local, :direct, :fleet
             :ollama
-          when :fleet
-            vllm_config = Legion::LLM::Settings.config_value(providers_settings, :vllm)
-            vllm_config.is_a?(Hash) && Legion::LLM::Settings.config_value(vllm_config, :enabled) ? :vllm : :ollama
           when :openai_compat
             :openai
           when :cloud
@@ -378,26 +382,22 @@ module Legion
         end
 
         def default_model_for_tier(tier)
-          case tier.to_sym
-          when :local, :direct
-            ollama = Legion::LLM::Settings.config_value(providers_settings, :ollama, {})
-            Legion::LLM::Settings.config_value(ollama, :default_model) || 'llama3'
-          when :fleet
-            vllm_config = Legion::LLM::Settings.config_value(providers_settings, :vllm, {})
-            if Legion::LLM::Settings.config_value(vllm_config, :enabled)
-              Legion::LLM::Settings.config_value(vllm_config, :default_model) || 'qwen3.6-27b'
-            else
-              ollama = Legion::LLM::Settings.config_value(providers_settings, :ollama, {})
-              Legion::LLM::Settings.config_value(ollama, :default_model) || 'llama3'
-            end
+          sym = tier.to_sym
+
+          # Try registry first: find a registered provider in this tier and ask for its model
+          registry_model = registry_model_for_tier(sym)
+          return registry_model if registry_model
+
+          # Fallback to static defaults
+          case sym
+          when :local, :direct, :fleet
+            'llama3'
           when :openai_compat
             'gpt-4o'
           when :cloud
             default_settings_model || 'us.anthropic.claude-sonnet-4-6'
           when :frontier
             default_settings_model || 'claude-sonnet-4-6'
-          else
-            'llama3'
           end
         end
 
@@ -421,17 +421,31 @@ module Legion
         end
 
         def enabled_provider_chain
-          providers = providers_settings
-          return [] unless providers.is_a?(Hash)
+          instances = begin
+            Call::Registry.all_instances
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'router.enabled_provider_chain')
+            []
+          end
+          return [] if instances.empty?
 
+          # Deduplicate by provider (take the first instance per provider family)
+          seen = {}
+          instances.each do |entry|
+            pname = entry[:provider]
+            seen[pname] ||= entry
+          end
+
+          # Build resolutions in PROVIDER_ORDER
           PROVIDER_ORDER.filter_map do |pname|
-            config = Legion::LLM::Settings.config_value(providers, pname)
-            next unless config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled)
+            entry = seen[pname]
+            next unless entry
 
-            tier  = PROVIDER_TIER.fetch(pname, :cloud)
-            model = Legion::LLM::Settings.config_value(config, :default_model)
-            next if model.nil? || model.to_s.empty?
+            tier = registry_tier(pname, entry[:metadata])
             next unless tier_available?(tier)
+
+            model = registry_default_model(entry)
+            next if model.nil? || model.to_s.empty?
 
             Resolution.new(tier: tier, provider: pname, model: model, rule: 'auto_chain')
           end
@@ -496,8 +510,77 @@ module Legion
           Legion::LLM::Settings.value(:default_provider)
         end
 
-        def providers_settings
-          Legion::LLM::Settings.provider_settings
+        # Determine tier for a provider: prefer registry metadata, fall back to PROVIDER_TIER constant.
+        def registry_tier(provider, metadata = {})
+          meta_tier = metadata[:tier] if metadata.is_a?(Hash)
+          return meta_tier.to_sym if meta_tier
+
+          PROVIDER_TIER.fetch(provider.to_sym, :cloud)
+        end
+
+        # Find first registered provider matching a given tier.
+        def registry_provider_for_tier(tier)
+          instances = begin
+            Call::Registry.all_instances
+          rescue StandardError
+            []
+          end
+
+          # Prefer PROVIDER_ORDER for deterministic selection
+          PROVIDER_ORDER.each do |pname|
+            entry = instances.find { |e| e[:provider] == pname }
+            next unless entry
+
+            entry_tier = registry_tier(pname, entry[:metadata])
+            return pname if entry_tier == tier
+          end
+          nil
+        end
+
+        # Find a default model from registry for a given tier.
+        # Tries adapter.offerings first, then metadata[:default_model].
+        def registry_model_for_tier(tier)
+          instances = begin
+            Call::Registry.all_instances
+          rescue StandardError
+            []
+          end
+
+          PROVIDER_ORDER.each do |pname|
+            entry = instances.find { |e| e[:provider] == pname }
+            next unless entry
+
+            entry_tier = registry_tier(pname, entry[:metadata])
+            next unless entry_tier == tier
+
+            model = registry_default_model(entry)
+            return model if model && !model.to_s.empty?
+          end
+          nil
+        end
+
+        # Extract a default model from a registry entry.
+        # Checks metadata[:default_model], then adapter.offerings.
+        def registry_default_model(entry)
+          metadata = entry[:metadata] || {}
+
+          # Prefer explicit default_model in metadata
+          dm = metadata[:default_model]
+          return dm.to_s unless dm.nil? || dm.to_s.empty?
+
+          # Try adapter offerings
+          adapter = entry[:adapter]
+          if adapter.respond_to?(:offerings)
+            models = begin
+              adapter.offerings
+            rescue StandardError
+              []
+            end
+            first = models.first
+            return first[:model] || first[:id] if first.is_a?(Hash) && (first[:model] || first[:id])
+          end
+
+          nil
         end
       end
     end
