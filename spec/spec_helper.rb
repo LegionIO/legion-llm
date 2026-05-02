@@ -8,6 +8,7 @@ end
 require 'webmock/rspec'
 
 require 'legion/logging'
+Legion::Logging.setup(level: 'error')
 require 'legion/settings'
 
 require 'legion/json'
