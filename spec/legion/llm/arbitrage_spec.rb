@@ -19,7 +19,7 @@ RSpec.describe Legion::LLM::Router::Arbitrage do
     end
 
     it 'reads string-keyed arbitrage settings' do
-      Legion::Settings[:llm] = { 'arbitrage' => { 'enabled' => true } }
+      Legion::Settings.set_prop(:llm, { 'arbitrage' => { 'enabled' => true } })
       expect(described_class.enabled?).to be true
     end
 
@@ -55,11 +55,11 @@ RSpec.describe Legion::LLM::Router::Arbitrage do
     end
 
     it 'reads string-keyed cost table overrides' do
-      Legion::Settings[:llm] = {
-        'arbitrage' => {
-          'cost_table' => { 'my-custom-model' => { 'input' => 1.0, 'output' => 2.0 } }
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'arbitrage' => {
+                                    'cost_table' => { 'my-custom-model' => { 'input' => 1.0, 'output' => 2.0 } }
+                                  }
+                                })
       expect(described_class.cost_table['my-custom-model']).to eq({ input: 1.0, output: 2.0 })
     end
   end

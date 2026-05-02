@@ -258,13 +258,13 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
 
   describe 'integration with Router.populate_auto_rules' do
     before do
-      Legion::Settings[:llm] = Legion::Settings[:llm].merge(
-        routing: {
-          enabled:        true,
-          rules:          [],
-          default_intent: { privacy: 'normal', capability: 'chat' }
-        }
-      )
+      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                        routing: {
+                                          enabled:        true,
+                                          rules:          [],
+                                          default_intent: { privacy: 'normal', capability: 'chat' }
+                                        }
+                                      ))
       allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
       allow(Legion::LLM::Router).to receive(:discovery_enabled?).and_return(false)
     end
@@ -302,13 +302,13 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
 
   describe 'Resolution instance: field' do
     it 'stores and returns instance from auto-generated rule' do
-      Legion::Settings[:llm] = Legion::Settings[:llm].merge(
-        routing: {
-          enabled:        true,
-          rules:          [],
-          default_intent: { privacy: 'normal', capability: 'chat' }
-        }
-      )
+      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                        routing: {
+                                          enabled:        true,
+                                          rules:          [],
+                                          default_intent: { privacy: 'normal', capability: 'chat' }
+                                        }
+                                      ))
       allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
       allow(Legion::LLM::Router).to receive(:discovery_enabled?).and_return(false)
 

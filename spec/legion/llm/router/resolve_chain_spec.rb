@@ -7,21 +7,21 @@ require 'legion/llm/router/escalation/chain'
 RSpec.describe 'Legion::LLM::Router.resolve_chain' do
   before do
     Legion::LLM::Router.reset!
-    Legion::Settings[:llm] = {
-      default_model:    'claude-sonnet-4-6',
-      default_provider: :bedrock,
-      providers:        {
-        ollama:  { enabled: true, default_model: 'llama3' },
-        bedrock: { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
-      },
-      discovery:        { enabled: false },
-      routing:          {
-        enabled:        true,
-        default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
-        escalation:     { enabled: true, max_attempts: 3, quality_threshold: 50 },
-        rules:          rules
-      }
-    }
+    Legion::Settings.set_prop(:llm, {
+                                default_model:    'claude-sonnet-4-6',
+                                default_provider: :bedrock,
+                                providers:        {
+                                  ollama:  { enabled: true, default_model: 'llama3' },
+                                  bedrock: { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
+                                },
+                                discovery:        { enabled: false },
+                                routing:          {
+                                  enabled:        true,
+                                  default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
+                                  escalation:     { enabled: true, max_attempts: 3, quality_threshold: 50 },
+                                  rules:          rules
+                                }
+                              })
     Legion::LLM::Router.populate_auto_rules({})
   end
 
@@ -95,10 +95,10 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
     end
 
     it 'returns a multi-provider chain from registry-registered providers' do
-      Legion::Settings[:llm] = {
-        'discovery' => { 'enabled' => false },
-        'routing'   => { 'enabled' => false, 'rules' => [] }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'discovery' => { 'enabled' => false },
+                                  'routing'   => { 'enabled' => false, 'rules' => [] }
+                                })
 
       # Register providers in the Registry with default_model metadata
       Legion::LLM::Call::Registry.register(:ollama, Module.new, metadata: { default_model: 'llama3' })

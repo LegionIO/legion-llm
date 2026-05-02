@@ -25,13 +25,13 @@ RSpec.describe 'Router memory gate integration' do
   end
 
   def configure_routing(rules:)
-    Legion::Settings[:llm] = Legion::Settings[:llm].merge(
-      routing: {
-        enabled:        true,
-        rules:          rules,
-        default_intent: { privacy: 'normal', capability: 'basic' }
-      }
-    )
+    Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                      routing: {
+                                        enabled:        true,
+                                        rules:          rules,
+                                        default_intent: { privacy: 'normal', capability: 'basic' }
+                                      }
+                                    ))
     Legion::LLM::Router.populate_auto_rules({})
   end
 

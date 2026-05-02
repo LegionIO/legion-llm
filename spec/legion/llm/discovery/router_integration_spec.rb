@@ -31,14 +31,14 @@ RSpec.describe 'Router discovery integration' do
   end
 
   def configure_routing(rules:)
-    Legion::Settings[:llm] = Legion::Settings[:llm].merge(
-      routing:   {
-        enabled:        true,
-        rules:          rules,
-        default_intent: { privacy: 'normal', capability: 'basic' }
-      },
-      discovery: { enabled: true, refresh_seconds: 60, memory_floor_mb: 2048 }
-    )
+    Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                      routing:   {
+                                        enabled:        true,
+                                        rules:          rules,
+                                        default_intent: { privacy: 'normal', capability: 'basic' }
+                                      },
+                                      discovery: { enabled: true, refresh_seconds: 60, memory_floor_mb: 2048 }
+                                    ))
     Legion::LLM::Router.populate_auto_rules({})
   end
 
@@ -91,14 +91,14 @@ RSpec.describe 'Router discovery integration' do
 
   describe 'when discovery is disabled' do
     before do
-      Legion::Settings[:llm] = Legion::Settings[:llm].merge(
-        routing:   {
-          enabled:        true,
-          rules:          rules_with_local,
-          default_intent: { privacy: 'normal', capability: 'basic' }
-        },
-        discovery: { enabled: false }
-      )
+      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                        routing:   {
+                                          enabled:        true,
+                                          rules:          rules_with_local,
+                                          default_intent: { privacy: 'normal', capability: 'basic' }
+                                        },
+                                        discovery: { enabled: false }
+                                      ))
       Legion::LLM::Router.populate_auto_rules({})
     end
 

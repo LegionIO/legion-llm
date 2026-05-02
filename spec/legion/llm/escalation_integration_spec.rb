@@ -12,18 +12,18 @@ RSpec.describe 'Legion::LLM.chat escalation' do
 
   before do
     Legion::LLM::Router.reset!
-    Legion::Settings[:llm] = {
-      default_model:    'claude-sonnet-4-6',
-      default_provider: :bedrock,
-      providers:        { bedrock: { enabled: true, default_model: 'claude-sonnet-4-6' } },
-      discovery:        { enabled: false },
-      routing:          {
-        enabled:        false,
-        default_intent: {},
-        escalation:     { enabled: true, max_attempts: 3, quality_threshold: 50 },
-        rules:          []
-      }
-    }
+    Legion::Settings.set_prop(:llm, {
+                                default_model:    'claude-sonnet-4-6',
+                                default_provider: :bedrock,
+                                providers:        { bedrock: { enabled: true, default_model: 'claude-sonnet-4-6' } },
+                                discovery:        { enabled: false },
+                                routing:          {
+                                  enabled:        false,
+                                  default_intent: {},
+                                  escalation:     { enabled: true, max_attempts: 3, quality_threshold: 50 },
+                                  rules:          []
+                                }
+                              })
   end
 
   describe 'with escalate: false' do

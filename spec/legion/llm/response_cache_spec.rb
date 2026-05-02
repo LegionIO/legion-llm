@@ -114,15 +114,15 @@ RSpec.describe Legion::LLM::Cache::Response do
     end
 
     it 'uses string-keyed response cache settings' do
-      Legion::Settings[:llm] = {
-        'prompt_caching' => {
-          'response_cache' => {
-            'spool_dir'             => spool_dir,
-            'spool_threshold_bytes' => 1,
-            'ttl_seconds'           => 300
-          }
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'prompt_caching' => {
+                                    'response_cache' => {
+                                      'spool_dir'             => spool_dir,
+                                      'spool_threshold_bytes' => 1,
+                                      'ttl_seconds'           => 300
+                                    }
+                                  }
+                                })
 
       described_class.complete(request_id, response: 'Hello world', meta: {})
       expect(described_class.response(request_id)).to eq('Hello world')

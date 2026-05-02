@@ -388,7 +388,7 @@ confidence: 0.9 }],
     end
 
     it 'honors string-keyed max_tool_rounds settings' do
-      Legion::Settings[:llm] = { 'max_tool_rounds' => 2, 'routing' => { 'escalation' => { 'pipeline_enabled' => false } } }
+      Legion::Settings.set_prop(:llm, { 'max_tool_rounds' => 2, 'routing' => { 'escalation' => { 'pipeline_enabled' => false } } })
 
       register_native_chat do
         { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
@@ -400,7 +400,7 @@ confidence: 0.9 }],
     end
 
     it 'uses MAX_NATIVE_TOOL_ROUNDS as default when max_tool_rounds not in settings' do
-      Legion::Settings[:llm] = { routing: { escalation: { pipeline_enabled: false } } }
+      Legion::Settings.set_prop(:llm, { routing: { escalation: { pipeline_enabled: false } } })
 
       register_native_chat { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }
       executor = described_class.new(request)
@@ -414,16 +414,16 @@ confidence: 0.9 }],
     subject(:executor) { described_class.new(request) }
 
     it 'honors string-keyed pipeline escalation settings' do
-      Legion::Settings[:llm] = {
-        'routing' => {
-          'escalation' => {
-            'enabled'           => true,
-            'pipeline_enabled'  => true,
-            'max_attempts'      => 7,
-            'quality_threshold' => 85
-          }
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'routing' => {
+                                    'escalation' => {
+                                      'enabled'           => true,
+                                      'pipeline_enabled'  => true,
+                                      'max_attempts'      => 7,
+                                      'quality_threshold' => 85
+                                    }
+                                  }
+                                })
 
       expect(executor.send(:pipeline_escalation_enabled?)).to be(true)
       expect(executor.send(:pipeline_escalation_max_attempts)).to eq(7)
@@ -431,11 +431,11 @@ confidence: 0.9 }],
     end
 
     it 'honors string-keyed native provider layer settings' do
-      Legion::Settings[:llm] = {
-        'provider_layer' => {
-          'mode' => 'auto'
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'provider_layer' => {
+                                    'mode' => 'auto'
+                                  }
+                                })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
@@ -448,11 +448,11 @@ confidence: 0.9 }],
         tools:    [Class.new]
       )
       tool_executor = described_class.new(tool_request)
-      Legion::Settings[:llm] = {
-        'provider_layer' => {
-          'mode' => 'native'
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'provider_layer' => {
+                                    'mode' => 'native'
+                                  }
+                                })
 
       expect(tool_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end
@@ -467,11 +467,11 @@ confidence: 0.9 }],
         end
       end
       stub_const('Legion::Settings::Extensions', extensions_mod)
-      Legion::Settings[:llm] = {
-        'provider_layer' => {
-          'mode' => 'auto'
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'provider_layer' => {
+                                    'mode' => 'auto'
+                                  }
+                                })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
@@ -493,29 +493,29 @@ confidence: 0.9 }],
         tools:    []
       )
       toolless_executor = described_class.new(toolless_request)
-      Legion::Settings[:llm] = {
-        'provider_layer' => {
-          'mode' => 'auto'
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'provider_layer' => {
+                                    'mode' => 'auto'
+                                  }
+                                })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(toolless_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end
 
     it 'finds string-keyed fallback provider configs' do
-      Legion::Settings[:llm] = {
-        'providers' => {
-          'ollama'  => {
-            'enabled'       => true,
-            'default_model' => 'qwen3.6:27b'
-          },
-          'bedrock' => {
-            'enabled'       => true,
-            'default_model' => 'claude-sonnet-4-6'
-          }
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'providers' => {
+                                    'ollama'  => {
+                                      'enabled'       => true,
+                                      'default_model' => 'qwen3.6:27b'
+                                    },
+                                    'bedrock' => {
+                                      'enabled'       => true,
+                                      'default_model' => 'claude-sonnet-4-6'
+                                    }
+                                  }
+                                })
 
       expect(executor.send(:find_fallback_provider, exclude: [])).to eq(
         { provider: :bedrock, model: 'claude-sonnet-4-6' }

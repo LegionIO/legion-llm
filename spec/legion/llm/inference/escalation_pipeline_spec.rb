@@ -18,23 +18,23 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
 
   before do
     Legion::LLM::Router.reset!
-    Legion::Settings[:llm] = {
-      default_model:    'claude-sonnet-4-6',
-      default_provider: :bedrock,
-      providers:        { bedrock: { enabled: true, default_model: 'claude-sonnet-4-6' } },
-      discovery:        { enabled: false },
-      routing:          {
-        enabled:        false,
-        default_intent: {},
-        escalation:     {
-          enabled:           true,
-          pipeline_enabled:  true,
-          max_attempts:      3,
-          quality_threshold: 50
-        },
-        rules:          []
-      }
-    }
+    Legion::Settings.set_prop(:llm, {
+                                default_model:    'claude-sonnet-4-6',
+                                default_provider: :bedrock,
+                                providers:        { bedrock: { enabled: true, default_model: 'claude-sonnet-4-6' } },
+                                discovery:        { enabled: false },
+                                routing:          {
+                                  enabled:        false,
+                                  default_intent: {},
+                                  escalation:     {
+                                    enabled:           true,
+                                    pipeline_enabled:  true,
+                                    max_attempts:      3,
+                                    quality_threshold: 50
+                                  },
+                                  rules:          []
+                                }
+                              })
   end
 
   describe 'when pipeline_enabled is false' do

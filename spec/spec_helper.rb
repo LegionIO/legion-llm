@@ -7,73 +7,8 @@ end
 
 require 'webmock/rspec'
 
-# Stub Legion::Logging and Legion::Settings before loading legion-llm
-module Legion
-  module Logging
-    class << self
-      def debug(msg = nil); end
-      def info(msg = nil); end
-      def warn(msg = nil); end
-      def error(msg = nil); end
-      def fatal(msg = nil); end
-    end
-  end
-
-  module Settings
-    @store = {}
-
-    class << self
-      def [](key)
-        @store[key.to_sym] ||= {}
-      end
-
-      def []=(key, value)
-        if respond_to?(:set_prop)
-          set_prop(key.to_sym, value)
-        else
-          @store[key.to_sym] = value
-        end
-      end
-
-      def key?(key)
-        if respond_to?(:get)
-          get.settings.key?(key.to_sym) || get.settings.key?(key.to_s)
-        else
-          @store.key?(key.to_sym)
-        end
-      end
-
-      def dig(*keys)
-        keys = keys.map(&:to_sym)
-        result = @store
-        keys.each do |k|
-          return nil unless result.is_a?(Hash)
-
-          result = result[k]
-        end
-        result
-      end
-
-      def merge_settings(key, defaults)
-        current = @store[key.to_sym] || {}
-        @store[key.to_sym] = defaults.merge(current)
-      end
-
-      def register_library(key, defaults)
-        sym = key.to_sym
-        return if @registered_libraries&.include?(sym)
-
-        merge_settings(sym, defaults)
-        (@registered_libraries ||= []) << sym
-      end
-
-      def reset!
-        @store = {}
-        @registered_libraries = []
-      end
-    end
-  end
-end
+require 'legion/logging'
+require 'legion/settings'
 
 require 'legion/json'
 require_relative 'support/transport_stub'
@@ -127,7 +62,6 @@ RSpec.configure do |config|
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
     # Seed the extensions[:llm] path so specs can write provider configs there
-    Legion::Settings[:extensions] ||= {}
     Legion::Settings[:extensions][:llm] ||= {}
     # Keep the full suite deterministic even when local/provider gems are present
     # and services like Ollama are running on the developer machine.

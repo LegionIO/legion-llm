@@ -54,13 +54,13 @@ RSpec.describe Legion::LLM::Router do
   end
 
   def configure_routing(enabled: true, rules: sample_rules, extra: {}, auto_rules_populated: true)
-    Legion::Settings[:llm] = Legion::Settings[:llm].merge(
-      routing: {
-        enabled:        enabled,
-        rules:          rules,
-        default_intent: { privacy: 'normal', capability: 'basic' }
-      }.merge(extra)
-    )
+    Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                      routing: {
+                                        enabled:        enabled,
+                                        rules:          rules,
+                                        default_intent: { privacy: 'normal', capability: 'basic' }
+                                      }.merge(extra)
+                                    ))
     described_class.populate_auto_rules({}) if auto_rules_populated && enabled
   end
 
@@ -350,7 +350,7 @@ RSpec.describe Legion::LLM::Router do
     end
 
     it 'returns false when routing settings are absent' do
-      Legion::Settings[:llm] = {}
+      Legion::Settings.set_prop(:llm, {})
       expect(described_class.routing_enabled?).to be false
     end
   end
