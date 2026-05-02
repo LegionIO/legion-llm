@@ -1,0 +1,148 @@
+{
+  "packs": ["agentic", "llm", "python", "channels"],
+
+  "crypt": {
+    "cluster_secret": "vault://kv/data/legionio/crypt#cluster_secret",
+    "vault": {
+      "default": "vault_test",
+      "kv_path": "kv",
+      "read_cluster_secret": false,
+      "kerberos": {
+        "service_principal": "HTTP/vault-test.uhg.com"
+      },
+      "leases": {
+        "rabbitmq": {
+          "path": "rabbitmq/creds/agent"
+        },
+        "postgresql": {
+          "path": "postgresql/creds/node"
+        },
+        "redis": {
+          "path": "redis/creds/agent"
+        }
+      },
+      "clusters": {
+        "vault_test": {
+          "protocol": "https",
+          "address": "vault-test.uhg.com",
+          "port": 443,
+          "namespace": "legionio",
+          "auth_method": "kerberos",
+          "tls": {
+            "verify": "none"
+          },
+          "kerberos": {
+            "service_principal": "HTTP/vault-test.uhg.com",
+            "auth_path": "auth/kerberos/login"
+          }
+        }
+      }
+    }
+  },
+
+  "transport": {
+    "connection": {
+      "host": "rabbitmq-amqp.service.aide-0073518.ap.elr.mesh.uhg.com",
+      "vhost": "legionio",
+      "user": "lease://rabbitmq#username",
+      "password": "lease://rabbitmq#password"
+    }
+  },
+
+  "cache": {
+    "driver": "redis",
+    "servers": [
+      "legionio-global-cache.service.aide-0075067.ap.ctc.stage.mesh.uhg.com:16379"
+    ],
+    "username": "lease://redis#username",
+    "password": "lease://redis#password"
+  },
+
+  "cache_local": {
+    "driver": "redis"
+  },
+
+  "data": {
+    "adapter": "postgres",
+    "max_connections": 5,
+    "connect_timeout": 30,
+    "read_timeout": 30,
+    "creds": {
+      "host": "rp000199299.uhc.com",
+      "database": "legion_db",
+      "user": "lease://postgresql#username",
+      "password": "lease://postgresql#password"
+    }
+  },
+
+  "llm": {
+    "default_provider": "bedrock",
+    "default_model": "us.anthropic.claude-sonnet-4-6",
+    "compliance": {
+      "classification_scan": false,
+      "encrypt_audit": false
+    },
+    "budget": {
+      "session_max_tokens": 500000,
+      "daily_max_tokens": 100000000
+    },
+    "providers": {
+      "bedrock": {
+        "enabled": true,
+        "bearer_token": "vault://kv/data/legionio/llm#bedrock_bearer_token"
+      },
+      "anthropic": {
+        "enabled": false,
+        "api_key": "env://ANTHROPIC_API_KEY"
+      },
+      "ollama": {
+        "enabled": true,
+        "default_model": "qwen3.5:latest",
+        "base_url": "http://localhost:11434"
+      },
+      "vllm": {
+        "enabled": true,
+        "default_model": "qwen3.6-27b",
+        "base_url": "http://10.11.164.92:8000/v1"
+      }
+    }
+  },
+
+  "gaia": {
+    "channels": {
+      "teams": { "enabled": true }
+    }
+  },
+
+  "microsoft_teams": {
+    "auth": {
+      "tenant_id": "db05faca-c82a-4b9d-b9c5-0f64b6755421",
+      "client_id": "8709c80b-2196-427b-80f6-7fcc4f9cae8b",
+      "delegated": {
+        "auto_authenticate": true
+      }
+    }
+  },
+
+  "extensions": {
+    "ollama": {
+      "s3": {
+        "bucket": "legion",
+        "prefix": "ollama/models",
+        "endpoint": "https://mesh.s3api-core.optum.com"
+      },
+      "default_models": [
+        "qwen3.5:4b",
+        "nomic-embed-text:latest",
+        "mxbai-embed-large:latest",
+        "snowflake-arctic-embed:latest",
+        "bge-large:latest"
+      ]
+    }
+  },
+
+  "rbac": {
+    "enabled": false,
+    "enforce": false
+  }
+}
