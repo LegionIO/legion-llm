@@ -21,3 +21,6 @@ legion.log
 .worktrees/
 .claude/
 docs/
+bin/apollo-setup-postreboot.sh
+bin/apollo-setup-prereboot.sh
+legionio-bootstrap-uhg-v3.json
