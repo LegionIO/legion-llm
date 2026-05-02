@@ -109,9 +109,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
   end
 
-  describe '#add_registry_tool_definitions when Settings::Extensions is not defined' do
+  describe '#add_registry_tool_definitions when Settings::Extensions has no tools' do
     it 'does not add any tools' do
-      hide_const('Legion::Settings::Extensions') if defined?(Legion::Settings::Extensions)
+      allow(Legion::Settings::Extensions).to receive(:tools).and_return([])
 
       executor = described_class.new(base_request)
       definitions = []

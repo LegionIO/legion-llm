@@ -47,20 +47,9 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolDiscovery do
       end
     end
 
-    context 'when Settings::Extensions is not available' do
+    context 'when Settings::Extensions has no tools' do
       it 'does not discover any tools' do
-        hide_const('Legion::Settings::Extensions') if defined?(Legion::Settings::Extensions)
-
-        executor.send(:discover_registry_tools)
-        discovered = executor.instance_variable_get(:@discovered_tools)
-
-        expect(discovered).to be_empty
-      end
-    end
-
-    context 'when neither registry is available' do
-      it 'does not discover any tools' do
-        hide_const('Legion::Settings::Extensions') if defined?(Legion::Settings::Extensions)
+        allow(Legion::Settings::Extensions).to receive(:tools).and_return([])
 
         executor.send(:discover_registry_tools)
         discovered = executor.instance_variable_get(:@discovered_tools)

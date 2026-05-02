@@ -52,10 +52,9 @@ RSpec.describe Legion::LLM::Tools::Dispatcher do
       end
     end
 
-    context 'when Legion::Settings::Extensions is not defined' do
-      it 'returns nil gracefully' do
-        # Settings::Extensions should not be defined in the test env by default
-        hide_const('Legion::Settings::Extensions') if defined?(Legion::Settings::Extensions)
+    context 'when Legion::Settings::Extensions has no matching tool' do
+      it 'returns nil' do
+        allow(Legion::Settings::Extensions).to receive(:find_tool).with('any_tool').and_return(nil)
         result = described_class.check_registry_override('any_tool')
         expect(result).to be_nil
       end
