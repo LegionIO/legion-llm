@@ -20,10 +20,13 @@ RSpec.describe Legion::LLM::Inference::Executor do
   describe '#step_metering' do
     let(:request) do
       Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+        messages:        [{ role: :user, content: 'hello' }],
+        routing:         { provider: :anthropic, model: 'claude-opus-4-6' },
+        conversation_id: 'conv_123',
+        caller:          caller
       )
     end
+    let(:caller) { { requested_by: { identity: 'user:alice', type: 'user', credential: 'cred_1' } } }
 
     subject(:executor) { described_class.new(request) }
 
@@ -38,7 +41,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
       executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
       executor.instance_variable_set(:@timestamps,
                                      { provider_start: Time.now - 0.3,
-                                       provider_end:   Time.now })
+                                       provider_end:   Time.now,
+                                       received:       Time.now - 0.4 })
+      executor.instance_variable_set(:@tracing, { correlation_id: 'corr_123' })
     end
 
     it 'calls Steps::Metering.build_event' do
@@ -52,6 +57,35 @@ RSpec.describe Legion::LLM::Inference::Executor do
       allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool).and_return(:dropped)
       expect { executor.send(:step_metering) }.not_to raise_error
       expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool)
+    end
+
+    it 'publishes cost, identity, conversation, and correlation metadata' do
+      allow(Legion::LLM::Metering::Pricing).to receive(:estimate).and_return(0.00042)
+      allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+      executor.send(:step_metering)
+
+      expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+        expect(event[:cost_usd]).to eq(0.00042)
+        expect(event[:identity]).to eq(identity: 'user:alice', type: 'user', credential: 'cred_1')
+        expect(event[:conversation_id]).to eq('conv_123')
+        expect(event[:correlation_id]).to eq('corr_123')
+        expect(event[:wall_clock_ms]).to be >= 0
+      end
+    end
+
+    context 'with a string caller' do
+      let(:caller) { 'extension:lex-test' }
+
+      it 'preserves the caller string as metering identity' do
+        allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+        executor.send(:step_metering)
+
+        expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+          expect(event[:identity]).to eq(identity: 'extension:lex-test')
+        end
+      end
     end
 
     it 'tolerates a nil raw_response without raising' do

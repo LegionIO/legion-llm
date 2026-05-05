@@ -396,7 +396,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.body).not_to include('tool_use')
     end
 
-    it 'emits thinking deltas without appending them to final content' do
+    it 'hides thinking deltas from streaming callers by default' do
       response = make_pipeline_response(content: 'answer')
       executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
       allow(executor).to receive(:tool_event_handler=)
@@ -416,10 +416,35 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       )
 
       expect(response.status).to eq(200)
+      expect(response.body).not_to include('event: thinking-delta')
+      expect(response.body).not_to include('reasoning...')
+      expect(response.body).to include('"content":"answer"')
+      expect(response.body).not_to include('"content":"reasoning...answer"')
+    end
+
+    it 'emits thinking deltas only when explicitly requested' do
+      response = make_pipeline_response(content: 'answer')
+      executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
+      allow(executor).to receive(:tool_event_handler=)
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:call_stream) do |&block|
+        block&.call(double('thinking_chunk', content: nil, thinking: 'reasoning...'))
+        block&.call(double('text_chunk', content: 'answer', thinking: nil))
+        response
+      end
+
+      response = post_json(
+        '/api/llm/inference',
+        { messages: [{ role: 'user', content: 'think first' }], stream: true, include_thinking: true },
+        'HTTP_ACCEPT' => 'text/event-stream'
+      )
+
+      expect(response.status).to eq(200)
       expect(response.body).to include('event: thinking-delta')
       expect(response.body).to include('data: {"delta":"reasoning..."}')
       expect(response.body).to include('"content":"answer"')
-      expect(response.body).not_to include('"content":"reasoning...answer"')
     end
   end
 end

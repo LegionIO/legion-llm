@@ -252,4 +252,12 @@ RSpec.describe Legion::LLM::Call::NativeResponseAdapter do
     adapter = described_class.new({ result: 'hi', usage: nil, metadata: { offering: { offering_id: 'x' } } })
     expect(adapter.metadata).to eq(offering: { offering_id: 'x' })
   end
+
+  it 'exposes provider thinking separately from content' do
+    adapter = described_class.new({ result: 'answer', usage: nil, thinking: { content: 'internal', enabled: true } })
+
+    expect(adapter.content).to eq('answer')
+    expect(adapter.thinking).to eq(content: 'internal', enabled: true)
+    expect(adapter[:thinking]).to eq(content: 'internal', enabled: true)
+  end
 end

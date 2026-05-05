@@ -1,5 +1,22 @@
 # Legion LLM Changelog
 
+## [0.8.51] - 2026-05-03
+
+### Changed
+- Native `/api/llm/inference` streaming hides provider thinking deltas by default, with `include_thinking: true` as the explicit diagnostic opt-in.
+- Pipeline metering events now carry wall-clock latency, estimated cost, conversation/correlation ids, billing, task, agent, identity, and routing context.
+- LLM transport messages now preserve caller identity, credential, and caller type headers from nested caller metadata, top-level identity metadata, and extension callers.
+
+### Fixed
+- Prompt audit events now include provider response thinking separately from assistant response content.
+- Native lex-llm dispatch now carries provider thinking separately from response content before API responses are emitted.
+- Native discovery now normalizes provider offering objects before generating routing candidates, preserving provider instance, tier, capabilities, context length, and parameter metadata.
+
+## [0.8.50] - 2026-05-03
+
+### Fixed
+- Native discovery now normalizes lex-llm `ModelOffering` objects before generating routing candidates, allowing auto-rules to populate from provider adapters again.
+
 ## [0.8.49] - 2026-04-29
 
 ### Changed

@@ -26,6 +26,7 @@ module Legion
               caller_context  = body[:caller]
               conversation_id = body[:conversation_id]
               request_id      = body[:request_id] || SecureRandom.uuid
+              include_thinking = body[:include_thinking] == true
 
               unless messages.is_a?(Array)
                 halt 400, { 'Content-Type' => 'application/json' },
@@ -145,7 +146,7 @@ module Legion
 
                   pipeline_response = executor.call_stream do |chunk|
                     thinking = extract_text_content(chunk.thinking) if chunk.respond_to?(:thinking)
-                    emit_sse_event(out, 'thinking-delta', { delta: thinking }) unless thinking.to_s.empty?
+                    emit_sse_event(out, 'thinking-delta', { delta: thinking }) if include_thinking && !thinking.to_s.empty?
 
                     text = extract_text_content(chunk.respond_to?(:content) ? chunk.content : chunk)
                     next if text.empty?

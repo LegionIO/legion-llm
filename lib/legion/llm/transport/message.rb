@@ -117,11 +117,19 @@ module Legion
           return {} unless caller.is_a?(Hash)
 
           rb = caller[:requested_by] || caller['requested_by'] || {}
+          top_id = @options[:identity] || {}
+          rb = {} unless rb.is_a?(Hash)
+          top_id = {} unless top_id.is_a?(Hash)
+          extension = caller[:extension] || caller['extension']
           h = {}
-          identity = rb[:identity] || rb['identity'] || rb[:username] || rb['username']
-          h['x-legion-identity']   = identity.to_s   if identity
-          h['x-legion-credential'] = (rb[:credential] || rb['credential']).to_s if rb[:credential] || rb['credential']
-          h['x-legion-hostname']   = (rb[:hostname] || rb['hostname']).to_s     if rb[:hostname] || rb['hostname']
+          identity = rb[:identity] || rb['identity'] || rb[:username] || rb['username'] ||
+                     top_id[:identity] || top_id['identity'] || (extension && "extension:#{extension}")
+          h['x-legion-identity'] = identity.to_s if identity
+          cred = rb[:credential] || rb['credential'] || top_id[:credential] || top_id['credential']
+          h['x-legion-credential'] = cred.to_s if cred
+          h['x-legion-hostname']   = (rb[:hostname] || rb['hostname']).to_s if rb[:hostname] || rb['hostname']
+          caller_type = rb[:type] || rb['type'] || top_id[:type] || top_id['type'] || (extension && 'extension')
+          h['x-legion-caller-type'] = caller_type.to_s if caller_type
           h
         end
 

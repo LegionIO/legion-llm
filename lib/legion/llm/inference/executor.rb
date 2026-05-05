@@ -1191,6 +1191,13 @@ module Legion
                        else
                          0
                        end
+          wall_clock_ms = if @timestamps[:received]
+                            ((Time.now - @timestamps[:received]) * 1000).round
+                          else
+                            0
+                          end
+          agent = @request.agent || {}
+          cost_usd = estimate_cost(input_tokens, output_tokens)
           log.debug("[pipeline][metering] action=build provider=#{@resolved_provider} model=#{@resolved_model} input=#{input_tokens} output=#{output_tokens}")
           event = Steps::Metering.build_event(
             provider:          @resolved_provider,
@@ -1202,13 +1209,47 @@ module Legion
             input_tokens:      input_tokens,
             output_tokens:     output_tokens,
             latency_ms:        latency_ms,
+            wall_clock_ms:     wall_clock_ms,
+            cost_usd:          cost_usd,
             request_id:        @request.id,
-            caller:            @request.caller
+            conversation_id:   @request.conversation_id,
+            correlation_id:    @tracing&.dig(:correlation_id),
+            caller:            @request.caller,
+            identity:          metering_identity,
+            billing:           @request.billing,
+            agent_id:          agent[:id],
+            task_id:           agent[:task_id],
+            routing_reason:    @audit.dig(:'routing:provider_selection', :data, :reason)
           )
           Steps::Metering.publish_or_spool(event)
         rescue StandardError => e
           @warnings << "metering error: #{e.message}"
           handle_exception(e, level: :warn, operation: 'llm.pipeline.step_metering')
+        end
+
+        def estimate_cost(input_tokens, output_tokens)
+          Legion::LLM::Metering::Pricing.estimate(
+            model_id: @resolved_model, input_tokens: input_tokens, output_tokens: output_tokens
+          )
+        rescue StandardError
+          nil
+        end
+
+        def metering_identity
+          caller_info = @request.caller
+          return { identity: caller_info } if caller_info.is_a?(String) && !caller_info.empty?
+          return nil unless caller_info.is_a?(Hash)
+
+          rb = caller_info[:requested_by] || caller_info['requested_by'] || caller_info
+          top_id = @request.respond_to?(:metadata) ? @request.metadata[:identity] || @request.metadata['identity'] : {}
+          top_id = {} unless top_id.is_a?(Hash)
+          extension = caller_info[:extension] || caller_info['extension']
+          {
+            identity:   rb[:identity] || rb['identity'] || rb[:username] || rb['username'] ||
+              top_id[:identity] || top_id['identity'] || (extension && "extension:#{extension}"),
+            type:       rb[:type] || rb['type'] || top_id[:type] || top_id['type'] || (extension && 'extension'),
+            credential: rb[:credential] || rb['credential'] || top_id[:credential] || top_id['credential']
+          }.compact
         end
 
         def step_context_store

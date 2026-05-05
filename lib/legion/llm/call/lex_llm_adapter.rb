@@ -177,6 +177,7 @@ module Legion
             model:       response.model_id,
             tool_calls:  response.respond_to?(:tool_calls) ? response.tool_calls : nil,
             stop_reason: response.respond_to?(:tool_call?) && response.tool_call? ? :tool_use : nil,
+            thinking:    thinking_hash(response),
             usage:       usage_hash(response),
             metadata:    response_metadata(response, offering_metadata: offering_metadata)
           }.compact
@@ -192,6 +193,7 @@ module Legion
             model:       last&.model_id,
             tool_calls:  tool_calls.empty? ? nil : tool_calls,
             stop_reason: tool_calls.empty? ? nil : :tool_use,
+            thinking:    stream_thinking_hash(chunks),
             usage:       last ? usage_hash(last) : {},
             metadata:    response_metadata(last, offering_metadata: offering_metadata)
           }.compact
@@ -204,6 +206,24 @@ module Legion
             cache_read_tokens:  response.cached_tokens.to_i,
             cache_write_tokens: response.cache_creation_tokens.to_i
           }
+        end
+
+        def stream_thinking_hash(chunks)
+          thinking_text = chunks.filter_map { |chunk| chunk.thinking&.text if chunk.respond_to?(:thinking) }.join
+          return nil if thinking_text.empty?
+
+          { content: thinking_text, enabled: true }
+        end
+
+        def thinking_hash(response)
+          return nil unless response.respond_to?(:thinking) && response.thinking
+
+          thinking = response.thinking
+          {
+            content:   thinking.respond_to?(:text) ? thinking.text : thinking,
+            signature: thinking.respond_to?(:signature) ? thinking.signature : nil,
+            enabled:   true
+          }.compact
         end
 
         def estimate_tokens(messages)

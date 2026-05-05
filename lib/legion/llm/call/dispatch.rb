@@ -10,14 +10,14 @@ module Legion
       class NativeResponseAdapter
         attr_reader :content, :model, :input_tokens, :output_tokens,
                     :cache_read_tokens, :cache_write_tokens, :usage, :metadata,
-                    :tool_calls, :stop_reason
+                    :tool_calls, :stop_reason, :thinking
 
         HASH_KEY_MAP = {
           result: :content, content: :content,
           input_tokens: :input_tokens, output_tokens: :output_tokens,
           cache_read_tokens: :cache_read_tokens, cache_write_tokens: :cache_write_tokens,
           usage: :usage, metadata: :metadata,
-          tool_calls: :tool_calls, stop_reason: :stop_reason,
+          tool_calls: :tool_calls, stop_reason: :stop_reason, thinking: :thinking,
           data: :content, model: :model
         }.freeze
 
@@ -28,6 +28,7 @@ module Legion
           @metadata            = result_hash[:metadata] || {}
           @tool_calls          = result_hash[:tool_calls] || []
           @stop_reason         = result_hash[:stop_reason]
+          @thinking            = result_hash[:thinking]
           usage                = self.class.coerce_usage(result_hash[:usage])
           @usage               = usage
           @input_tokens        = usage.input_tokens
@@ -62,7 +63,8 @@ module Legion
             ),
             metadata:    raw.respond_to?(:metadata) && raw.metadata.is_a?(Hash) ? raw.metadata : {},
             tool_calls:  raw.respond_to?(:tool_calls) ? raw.tool_calls : [],
-            stop_reason: raw.respond_to?(:stop_reason) ? raw.stop_reason : nil
+            stop_reason: raw.respond_to?(:stop_reason) ? raw.stop_reason : nil,
+            thinking:    raw.respond_to?(:thinking) ? raw.thinking : nil
           }.compact
         end
 

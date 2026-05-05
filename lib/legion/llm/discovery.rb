@@ -124,15 +124,16 @@ module Legion
 
             begin
               Array(adapter.offerings).map do |offering|
+                data = normalize_offering(offering)
                 {
-                  model:           (offering[:id] || offering[:name] || offering[:model]).to_s,
+                  model:           (data[:id] || data[:name] || data[:model]).to_s,
                   provider:        entry[:provider],
-                  instance:        entry[:instance],
-                  tier:            entry.dig(:metadata, :tier),
-                  size_bytes:      offering[:size_bytes] || offering[:size],
-                  capabilities:    offering[:capabilities] || [],
-                  context_length:  offering[:context_length] || offering[:max_model_len],
-                  parameter_count: offering[:parameter_count]
+                  instance:        data[:instance_id] || data[:provider_instance] || entry[:instance],
+                  tier:            data[:tier] || entry.dig(:metadata, :tier),
+                  size_bytes:      data[:size_bytes] || data[:size],
+                  capabilities:    data[:capabilities] || [],
+                  context_length:  data[:context_length] || data[:max_model_len] || data.dig(:limits, :context_window),
+                  parameter_count: data[:parameter_count] || data.dig(:metadata, :parameter_count)
                 }
               end
             rescue StandardError => e
@@ -159,6 +160,21 @@ module Legion
         end
 
         private
+
+        def normalize_offering(offering)
+          data = if offering.is_a?(Hash)
+                   offering
+                 elsif offering.respond_to?(:to_hash)
+                   offering.to_hash
+                 elsif offering.respond_to?(:to_h)
+                   offering.to_h
+                 else
+                   return {}
+                 end
+          return {} unless data.is_a?(Hash)
+
+          data.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+        end
 
         def discovered_models_stale?
           return true if @discovered_models_at.nil?

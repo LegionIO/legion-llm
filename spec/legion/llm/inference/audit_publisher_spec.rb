@@ -129,6 +129,21 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:response_content]).to eq('answer')
       expect(event[:messages]).to eq([{ role: :user, content: 'question' }])
     end
+
+    it 'includes response_thinking separately from response_content' do
+      thinking = { content: 'internal chain', enabled: true, config: { budget_tokens: 128 } }
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'r', conversation_id: 'c',
+        message:  { role: :assistant, content: 'answer' },
+        thinking: thinking
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+
+      expect(event[:response_content]).to eq('answer')
+      expect(event[:response_thinking]).to eq(thinking)
+    end
   end
 
   describe '.publish' do

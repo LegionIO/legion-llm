@@ -26,16 +26,21 @@ module Legion
 
           def identity_fields(opts)
             {
-              node_id:      opts[:node_id],
-              worker_id:    opts[:worker_id],
-              agent_id:     opts[:agent_id],
-              request_id:   opts[:request_id],
-              caller:       opts[:caller],
-              request_type: opts[:request_type],
-              tier:         opts[:tier],
-              provider:     opts[:provider],
-              model_id:     opts[:model_id],
-              offering_id:  opts[:offering_id]
+              node_id:         opts[:node_id],
+              worker_id:       opts[:worker_id],
+              agent_id:        opts[:agent_id],
+              task_id:         opts[:task_id],
+              request_id:      opts[:request_id],
+              conversation_id: opts[:conversation_id],
+              correlation_id:  opts[:correlation_id],
+              caller:          opts[:caller],
+              identity:        opts[:identity],
+              billing:         opts[:billing],
+              request_type:    opts[:request_type],
+              tier:            opts[:tier],
+              provider:        opts[:provider],
+              model_id:        opts[:model_id],
+              offering_id:     opts[:offering_id]
             }.compact
           end
 
@@ -51,6 +56,7 @@ module Legion
             {
               latency_ms:        opts.fetch(:latency_ms, 0),
               wall_clock_ms:     opts.fetch(:wall_clock_ms, 0),
+              cost_usd:          opts[:cost_usd],
               routing_reason:    opts[:routing_reason],
               offering_metadata: opts[:offering_metadata],
               recorded_at:       Time.now.utc.iso8601
