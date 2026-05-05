@@ -16,7 +16,8 @@ module Legion
         msg = "[DEPRECATION] #{old_name} is deprecated, use #{new_name} instead"
         msg += " (called from #{location})" if location
         log.warn(msg)
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, handled: true, operation: 'llm.compat.warn_once')
         warn msg
       end
     end
@@ -65,12 +66,6 @@ module Legion
       when :Compressor
         CompatWarning.warn_once('Legion::LLM::Compressor', 'Legion::LLM::Context::Compressor')
         Context::Compressor
-      when :ClaudeConfigLoader
-        CompatWarning.warn_once('Legion::LLM::ClaudeConfigLoader', 'Legion::LLM::Call::ClaudeConfigLoader')
-        Call::ClaudeConfigLoader
-      when :CodexConfigLoader
-        CompatWarning.warn_once('Legion::LLM::CodexConfigLoader', 'Legion::LLM::Call::CodexConfigLoader')
-        Call::CodexConfigLoader
       when :DaemonClient
         CompatWarning.warn_once('Legion::LLM::DaemonClient', 'Legion::LLM::Call::DaemonClient')
         Call::DaemonClient

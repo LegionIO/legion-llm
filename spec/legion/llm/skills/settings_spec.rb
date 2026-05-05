@@ -24,7 +24,7 @@ RSpec.describe Legion::LLM::Settings do
   end
 
   describe 'skills defaults merged into Legion::Settings' do
-    it 'populates Legion::Settings[:llm][:skills] via merge_settings' do
+    it 'populates Legion::Settings[:llm][:skills] via register_library' do
       expect(Legion::Settings[:llm][:skills][:enabled]).to be true
       expect(Legion::Settings[:llm][:skills][:max_active_skills]).to eq(1)
     end

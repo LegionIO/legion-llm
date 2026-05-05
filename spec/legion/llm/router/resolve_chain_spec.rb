@@ -7,21 +7,22 @@ require 'legion/llm/router/escalation/chain'
 RSpec.describe 'Legion::LLM::Router.resolve_chain' do
   before do
     Legion::LLM::Router.reset!
-    Legion::Settings[:llm] = {
-      default_model:    'claude-sonnet-4-6',
-      default_provider: :bedrock,
-      providers:        {
-        ollama:  { enabled: true, default_model: 'llama3' },
-        bedrock: { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
-      },
-      discovery:        { enabled: false },
-      routing:          {
-        enabled:        true,
-        default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
-        escalation:     { enabled: true, max_attempts: 3, quality_threshold: 50 },
-        rules:          rules
-      }
-    }
+    Legion::Settings.set_prop(:llm, {
+                                default_model:    'claude-sonnet-4-6',
+                                default_provider: :bedrock,
+                                providers:        {
+                                  ollama:  { enabled: true, default_model: 'llama3' },
+                                  bedrock: { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
+                                },
+                                discovery:        { enabled: false },
+                                routing:          {
+                                  enabled:        true,
+                                  default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
+                                  escalation:     { enabled: true, max_attempts: 3, quality_threshold: 50 },
+                                  rules:          rules
+                                }
+                              })
+    Legion::LLM::Router.populate_auto_rules({})
   end
 
   context 'with explicit fallback chain in rules' do
@@ -93,15 +94,15 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
       expect(chain.primary.model).to eq('claude-sonnet-4-6')
     end
 
-    it 'returns a multi-provider chain from string-keyed provider settings' do
-      Legion::Settings[:llm] = {
-        'providers' => {
-          'ollama'  => { 'enabled' => true, 'default_model' => 'llama3' },
-          'bedrock' => { 'enabled' => true, 'default_model' => 'us.anthropic.claude-sonnet-4-6-v1' }
-        },
-        'discovery' => { 'enabled' => false },
-        'routing'   => { 'enabled' => false, 'rules' => [] }
-      }
+    it 'returns a multi-provider chain from registry-registered providers' do
+      Legion::Settings.set_prop(:llm, {
+                                  'discovery' => { 'enabled' => false },
+                                  'routing'   => { 'enabled' => false, 'rules' => [] }
+                                })
+
+      # Register providers in the Registry with default_model metadata
+      Legion::LLM::Call::Registry.register(:ollama, Module.new, metadata: { default_model: 'llama3' })
+      Legion::LLM::Call::Registry.register(:bedrock, Module.new, metadata: { default_model: 'us.anthropic.claude-sonnet-4-6-v1' })
 
       chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })
 

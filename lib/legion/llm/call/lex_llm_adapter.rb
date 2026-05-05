@@ -9,9 +9,12 @@ module Legion
       class LexLLMAdapter
         include Legion::Logging::Helper
 
-        def initialize(provider_name, provider_class)
+        METADATA_KEYS = %i[tier capabilities enabled].freeze
+
+        def initialize(provider_name, provider_class, instance_config: {})
           @provider_name = provider_name.to_sym
           @provider_class = provider_class
+          @instance_config = instance_config
           @lex_llm_namespace = resolve_lex_llm_namespace
         end
 
@@ -76,25 +79,36 @@ module Legion
           provider.discover_offerings(live: live, **filters)
         end
 
+        ToolShim = Struct.new(:name, :description, :params_schema, keyword_init: true)
+
         private
 
         attr_reader :provider_name, :provider_class, :lex_llm_namespace
 
         def provider
-          @provider ||= provider_class.new(lex_llm_namespace.config)
+          @provider ||= build_instance_provider
+        end
+
+        def build_instance_provider
+          if @instance_config.empty?
+            provider_class.new(lex_llm_namespace.config)
+          else
+            provider_class.new(@instance_config.except(*METADATA_KEYS))
+          end
         end
 
         def model_info(model, offering_metadata: nil)
           offering = normalize_offering_metadata(offering_metadata)
           lex_llm_namespace::Model::Info.new(
-            id:                model,
-            name:              offering[:canonical_model_alias] || model,
-            provider:          provider_name,
-            family:            offering[:model_family],
-            context_window:    offering.dig(:limits, :context_window),
-            max_output_tokens: offering.dig(:limits, :max_output_tokens),
-            capabilities:      Array(offering[:capabilities]).map(&:to_s),
-            metadata:          offering
+            id:             model,
+            name:           offering[:canonical_model_alias] || model,
+            provider:       provider_name,
+            family:         offering[:model_family],
+            context_length: offering.dig(:limits, :context_window),
+            capabilities:   Array(offering[:capabilities]).map(&:to_s),
+            metadata:       offering.merge(
+              max_output_tokens: offering.dig(:limits, :max_output_tokens)
+            ).compact
           )
         end
 
@@ -130,11 +144,25 @@ module Legion
         end
 
         def normalize_tools(tools)
-          case tools
-          when Hash then tools
-          when Array then tools.to_h { |tool| [tool.name.to_sym, tool] }
-          else {}
-          end
+          hash = case tools
+                 when Hash then tools
+                 when Array then tools.to_h { |tool| [tool_key(tool), tool] }
+                 else {}
+                 end
+
+          hash.transform_values { |tool| tool.is_a?(Hash) ? shim_tool(tool) : tool }
+        end
+
+        def tool_key(tool)
+          (tool.respond_to?(:name) ? tool.name : tool[:name])&.to_sym
+        end
+
+        def shim_tool(hash)
+          ToolShim.new(
+            name:          hash[:name] || hash['name'],
+            description:   hash[:description] || hash['description'],
+            params_schema: hash[:parameters] || hash['parameters'] || hash[:input_schema] || hash['input_schema']
+          )
         end
 
         def normalize_hash(value)

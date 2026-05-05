@@ -20,19 +20,19 @@ RSpec.describe Legion::LLM::Settings do
     end
 
     it 'reads nested string-keyed settings' do
-      Legion::Settings[:llm] = { 'routing' => { 'fleet' => { 'timeout_seconds' => 60 } } }
+      Legion::Settings.set_prop(:llm, { 'routing' => { 'fleet' => { 'timeout_seconds' => 60 } } })
       expect(described_class.value(:routing, :fleet, :timeout_seconds)).to eq(60)
     end
 
     it 'reads the canonical Legion::Settings llm store directly' do
-      Legion::Settings[:llm] = { prompt_caching: { response_cache: { spool_dir: '/tmp/legion-file-override' } } }
+      Legion::Settings.set_prop(:llm, { prompt_caching: { response_cache: { spool_dir: '/tmp/legion-file-override' } } })
       allow(Legion::LLM).to receive(:settings).and_return({})
 
       expect(described_class.value(:prompt_caching, :response_cache, :spool_dir)).to eq('/tmp/legion-file-override')
     end
 
     it 'preserves JSON-loaded settings overrides' do
-      Legion::Settings[:llm] = Legion::JSON.load(<<~JSON)
+      Legion::Settings.set_prop(:llm, Legion::JSON.load(<<~JSON))
         {
           "prompt_caching": {
             "response_cache": {
@@ -53,18 +53,18 @@ RSpec.describe Legion::LLM::Settings do
   end
 
   describe '.register_defaults!' do
-    it 'merges LLM defaults when Legion::Settings can merge settings' do
-      allow(Legion::Settings).to receive(:merge_settings)
+    it 'registers LLM defaults via register_library' do
+      allow(Legion::Settings).to receive(:register_library)
 
       described_class.register_defaults!
 
-      expect(Legion::Settings).to have_received(:merge_settings).with(:llm, hash_including(enabled: true, providers: kind_of(Hash)))
+      expect(Legion::Settings).to have_received(:register_library).with(:llm, hash_including(enabled: true))
     end
   end
 
   describe '.global_value' do
     it 'reads non-LLM settings with string and symbol keys' do
-      Legion::Settings[:transport] = { 'connected' => true }
+      Legion::Settings.set_prop(:transport, { 'connected' => true })
 
       expect(described_class.global_value(:transport, :connected)).to be true
     end
@@ -80,7 +80,7 @@ RSpec.describe Legion::LLM::Settings do
 
   describe '.transport_connected?' do
     it 'uses the shared settings helper path' do
-      Legion::Settings[:transport] = { connected: true }
+      Legion::Settings.set_prop(:transport, { connected: true })
 
       expect(described_class.transport_connected?).to be true
     end

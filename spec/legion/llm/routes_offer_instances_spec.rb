@@ -29,9 +29,8 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
     before do
       allow(Legion::LLM).to receive(:started?).and_return(true)
-      allow(Legion::LLM::Discovery::Ollama).to receive(:models).and_return([])
-      allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([])
-      Legion::Settings[:llm][:providers][:vllm] = {
+      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
+      Legion::Settings[:extensions][:llm][:vllm] = {
         enabled:   true,
         instances: {
           'vllm-gpu-01' => {
@@ -47,6 +46,10 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
           }
         }
       }
+    end
+
+    after do
+      Legion::LLM::Call::Registry.reset!
     end
 
     it 'lists offerings with operation and model filters' do
@@ -73,22 +76,26 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(body[:data][:offering][:offering_id]).to eq(offering_id)
     end
 
-    it 'lists provider instances with capacity and offerings' do
+    it 'lists registered instances from the Registry' do
+      Legion::LLM::Call::Registry.register(:vllm, double('vllm-adapter'), instance: :'vllm-gpu-01')
+
       response = get_json('/api/llm/instances')
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
-      instance = body[:data][:instances].find { |row| row[:instance_id] == 'vllm-gpu-01' }
-      expect(instance[:capacity]).to include(max_context_window: 32_768, offering_count: 1)
-      expect(instance[:offerings].first[:model]).to eq('qwen3.6-27b')
+      instance = body[:data][:instances].find { |row| row[:instance] == 'vllm-gpu-01' }
+      expect(instance).to include(id: 'vllm/vllm-gpu-01', provider: 'vllm', instance: 'vllm-gpu-01')
+      expect(body[:data][:summary]).to include(total: a_kind_of(Integer))
     end
 
-    it 'returns provider instance details' do
+    it 'returns a single registered instance by composite id' do
+      Legion::LLM::Call::Registry.register(:vllm, double('vllm-adapter'), instance: :'vllm-gpu-01')
+
       response = get_json('/api/llm/instances/vllm-gpu-01')
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
-      expect(body[:data][:instance]).to include(instance_id: 'vllm-gpu-01', provider_family: 'vllm')
+      expect(body[:data][:instance]).to include(provider: 'vllm', instance: 'vllm-gpu-01')
     end
   end
 end

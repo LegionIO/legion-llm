@@ -19,7 +19,7 @@ RSpec.describe Legion::LLM::Scheduling do
     end
 
     it 'reads string-keyed scheduling settings' do
-      Legion::Settings[:llm] = { 'scheduling' => { 'enabled' => true } }
+      Legion::Settings.set_prop(:llm, { 'scheduling' => { 'enabled' => true } })
       expect(described_class.enabled?).to be true
     end
 
@@ -71,7 +71,7 @@ RSpec.describe Legion::LLM::Scheduling do
       end
 
       it 'uses string-keyed configured ranges' do
-        Legion::Settings[:llm] = { 'scheduling' => { 'enabled' => true, 'peak_hours_utc' => '9-17' } }
+        Legion::Settings.set_prop(:llm, { 'scheduling' => { 'enabled' => true, 'peak_hours_utc' => '9-17' } })
         frozen = Time.utc(2026, 3, 21, 12, 0, 0)
         allow(Time).to receive(:now).and_return(frozen)
         expect(described_class.peak_hours?).to be true

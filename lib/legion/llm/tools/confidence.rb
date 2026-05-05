@@ -88,7 +88,7 @@ module Legion
             end
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.hydrate_from_l2')
         end
 
         def hydrate_from_apollo
@@ -121,7 +121,7 @@ module Legion
             end
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.hydrate_from_apollo')
         end
 
         def reset!
@@ -151,7 +151,7 @@ module Legion
 
             Legion::Data::Local.upsert(:override_confidence, entry, conflict_keys: [:tool])
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.sync_l2')
             nil
           end
 
@@ -185,13 +185,15 @@ module Legion
 
           def local_cache_backend?
             respond_to?(:local_cache_connected?) && local_cache_connected?
-          rescue StandardError
+          rescue StandardError => e
+            log.debug("[llm][tools][confidence] action=local_cache_backend error=#{e.class}")
             false
           end
 
           def shared_cache_backend?
             respond_to?(:cache_connected?) && cache_connected?
-          rescue StandardError
+          rescue StandardError => e
+            log.debug("[llm][tools][confidence] action=shared_cache_backend error=#{e.class}")
             false
           end
 
@@ -201,7 +203,7 @@ module Legion
             rows = Legion::Data::Local.query('SELECT * FROM override_confidence WHERE tool = ?', tool)
             rows&.first
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.lookup_l2')
             nil
           end
         end

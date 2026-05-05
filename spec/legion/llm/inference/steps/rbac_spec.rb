@@ -69,7 +69,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Rbac do
     context 'when legion-rbac is not available and fail_open=true (explicit)' do
       before do
         hide_const('Legion::Rbac') if defined?(Legion::Rbac)
-        Legion::Settings[:rbac] = { fail_open: true }
+        Legion::Settings.set_prop(:rbac, { fail_open: true })
       end
 
       it 'permits non-fleet callers with warning' do
@@ -82,7 +82,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Rbac do
     context 'when legion-rbac is not available and fail_open=false' do
       before do
         hide_const('Legion::Rbac') if defined?(Legion::Rbac)
-        Legion::Settings[:rbac] = { fail_open: false }
+        Legion::Settings.set_prop(:rbac, { fail_open: false })
       end
 
       it 'raises PipelineError for non-fleet callers' do
@@ -116,13 +116,13 @@ RSpec.describe Legion::LLM::Inference::Steps::Rbac do
       before { hide_const('Legion::Rbac') if defined?(Legion::Rbac) }
 
       it 'raises PipelineError even when fail_open=true' do
-        Legion::Settings[:rbac] = { fail_open: true }
+        Legion::Settings.set_prop(:rbac, { fail_open: true })
         step = klass.new(fleet_request)
         expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError, /503/)
       end
 
       it 'raises PipelineError when fail_open=false' do
-        Legion::Settings[:rbac] = { fail_open: false }
+        Legion::Settings.set_prop(:rbac, { fail_open: false })
         step = klass.new(fleet_request)
         expect { step.step_rbac }.to raise_error(Legion::LLM::InferenceError, /503/)
       end

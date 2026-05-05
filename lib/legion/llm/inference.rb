@@ -26,30 +26,14 @@ module Legion
       module_function
 
       def llm_setting(key, default = nil)
-        config_value(llm_settings, key, default)
-      end
-
-      def llm_settings
-        Legion::LLM::Settings.current_settings
+        Legion::LLM::Settings.config_value(Legion::LLM::Settings.current_settings, key, default)
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.settings')
-        {}
+        default
       end
 
       def settings_value(*keys, default: nil)
         Legion::LLM::Settings.value(*keys, default: default)
-      end
-
-      def config_value(config, key, default = nil)
-        return default unless config.respond_to?(:key?)
-
-        string_key = key.to_s
-        return config[string_key] if config.key?(string_key)
-
-        symbol_key = key.to_sym if key.respond_to?(:to_sym)
-        return config[symbol_key] if symbol_key && config.key?(symbol_key)
-
-        default
       end
 
       # Public inference entry points — these are the methods delegated from Legion::LLM
@@ -752,16 +736,16 @@ module Legion
         routing = llm_setting(:routing)
         return false unless routing.is_a?(Hash)
 
-        esc = config_value(routing, :escalation, {})
-        config_value(esc, :enabled) == true
+        esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
+        Legion::LLM::Settings.config_value(esc, :enabled) == true
       end
 
       def escalation_quality_threshold
         routing = llm_setting(:routing)
         return 50 unless routing.is_a?(Hash)
 
-        esc = config_value(routing, :escalation, {})
-        config_value(esc, :quality_threshold, 50)
+        esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
+        Legion::LLM::Settings.config_value(esc, :quality_threshold, 50)
       end
 
       def emit_non_pipeline_metering(response, model:, provider:, caller: nil)

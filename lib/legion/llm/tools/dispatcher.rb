@@ -13,6 +13,7 @@ module Legion
 
         def dispatch(tool_call:, source:, exchange_id: nil)
           start_time = Time.now
+          log.debug "[llm][tools] action=dispatch.enter tool=#{tool_call[:name]} source_type=#{source[:type]} exchange_id=#{exchange_id}"
 
           if source[:type] == :mcp
             override = check_override(tool_call[:name])
@@ -24,9 +25,7 @@ module Legion
 
           result = case source[:type]
                    when :mcp
-                     mcp_result = dispatch_mcp(tool_call, source)
-                     run_shadow(tool_call, source, mcp_result)
-                     mcp_result
+                     dispatch_mcp(tool_call, source)
                    when :extension
                      dispatch_extension(tool_call, source)
                    when :registry
@@ -39,10 +38,12 @@ module Legion
                      { status: :error, error: "Unknown tool source type: #{source[:type]}" }
                    end
 
+          duration_ms = ((Time.now - start_time) * 1000).to_i
+          log.debug "[llm][tools] action=dispatch.complete tool=#{tool_call[:name]} status=#{result[:status]} duration_ms=#{duration_ms}"
           result.merge(
             source:      source,
             exchange_id: exchange_id,
-            duration_ms: ((Time.now - start_time) * 1000).to_i
+            duration_ms: duration_ms
           )
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.tools.dispatcher.dispatch_tool_call', tool_name: tool_call[:name])
@@ -50,10 +51,26 @@ module Legion
         end
 
         def check_override(tool_name)
-          settings_override = check_settings_override(tool_name)
-          return settings_override if settings_override
+          registry_override = check_registry_override(tool_name)
+          return registry_override if registry_override
 
-          check_catalog_override(tool_name)
+          check_settings_override(tool_name)
+        end
+
+        def check_registry_override(tool_name)
+          return nil unless Legion::Settings::Extensions.respond_to?(:find_tool)
+
+          entry = Legion::Settings::Extensions.find_tool(tool_name)
+          return nil unless entry
+
+          if entry[:tool_class]
+            { type: :registry, tool_class: entry[:tool_class] }
+          elsif entry[:extension] && entry[:runner] && entry[:function]
+            { type: :extension, lex: entry[:extension], runner: entry[:runner], function: entry[:function] }
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.tools.dispatcher.check_registry_override', tool_name: tool_name)
+          nil
         end
 
         def check_settings_override(tool_name)
@@ -71,22 +88,8 @@ module Legion
           }
         end
 
-        def check_catalog_override(tool_name)
-          return nil unless defined?(Legion::Extensions::Catalog::Registry)
-          return nil unless Legion::LLM::Tools::Confidence.should_override?(tool_name)
-
-          cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
-          return nil unless cap
-
-          {
-            type:     :extension,
-            lex:      cap.extension,
-            runner:   cap.runner,
-            function: cap.function
-          }
-        end
-
         def dispatch_mcp(tool_call, source)
+          log.debug "[llm][tools] action=dispatch_mcp tool=#{tool_call[:name]} server=#{source[:server]}"
           conn = ::Legion::MCP::Client::Pool.connection_for(source[:server])
           raise "No connection for MCP server: #{source[:server]}" unless conn
 
@@ -96,6 +99,7 @@ module Legion
         end
 
         def dispatch_extension(tool_call, source)
+          log.debug "[llm][tools] action=dispatch_extension tool=#{tool_call[:name]} lex=#{source[:lex]} runner=#{source[:runner]}"
           segments = (source[:lex] || '').delete_prefix('lex-').split('-')
           runner_path = (%w[Legion Extensions] + segments.map(&:capitalize) + ['Runners', source[:runner]]).join('::')
 
@@ -106,6 +110,7 @@ module Legion
         end
 
         def dispatch_registry(tool_call, source)
+          log.debug "[llm][tools] action=dispatch_registry tool=#{tool_call[:name]}"
           tool_class = source[:tool_class]
           raise "No registry tool class for #{tool_call[:name]}" unless tool_class.respond_to?(:call)
 
@@ -159,27 +164,6 @@ module Legion
 
         def result_error?(result)
           result.is_a?(Hash) && (result[:error] || result['error'])
-        end
-
-        def run_shadow(tool_call, _source, mcp_result)
-          tool_name = tool_call[:name]
-          return unless Legion::LLM::Tools::Confidence.should_shadow?(tool_name)
-          return unless defined?(Legion::Extensions::Catalog::Registry)
-
-          cap = Legion::Extensions::Catalog::Registry.for_override(tool_name)
-          return unless cap
-
-          shadow_source = { type: :extension, lex: cap.extension, runner: cap.runner, function: cap.function }
-          shadow_result = dispatch_extension(tool_call, shadow_source)
-
-          if shadow_result[:status] == :success && mcp_result[:status] == :success
-            Legion::LLM::Tools::Confidence.record_success(tool_name)
-          else
-            Legion::LLM::Tools::Confidence.record_failure(tool_name)
-          end
-        rescue StandardError => e
-          Legion::LLM::Tools::Confidence.record_failure(tool_name) if tool_name
-          handle_exception(e, level: :debug, operation: 'llm.tools.dispatcher.shadow_execution', tool_name: tool_name)
         end
       end
     end

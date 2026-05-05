@@ -2,11 +2,14 @@
 
 require 'securerandom'
 require 'uri'
+require 'legion/logging/helper'
 
 module Legion
   module LLM
     module Transport
       class Message < ::Legion::Transport::Message
+        include Legion::Logging::Helper
+
         # Keys stripped from the JSON body (in addition to base ENVELOPE_KEYS).
         # Do NOT add keys already in ENVELOPE_KEYS (:routing_key, :reply_to, etc.).
         # Do NOT add :request_type — metering/audit need it in the body.
@@ -38,7 +41,27 @@ module Legion
         end
 
         def headers
-          super.merge(llm_headers).merge(context_headers).merge(tracing_headers)
+          super.merge(llm_headers).merge(context_headers).merge(tracing_headers).merge(encryption_headers)
+        end
+
+        def encode_message
+          payload = message
+          payload = Legion::JSON.dump(payload) unless payload.is_a?(String)
+
+          if encrypt? && defined?(Legion::Crypt) && Legion::Crypt.respond_to?(:encrypt)
+            encrypted = Legion::Crypt.encrypt(payload)
+            @encrypted_iv = encrypted[:iv]
+            @options[:content_encoding] = 'encrypted/cs'
+            log.debug "[llm][transport] encode_message action=encrypt class=#{self.class.name}"
+            return encrypted[:enciphered_message]
+          end
+
+          @options[:content_encoding] = 'identity'
+          payload
+        end
+
+        def content_encoding
+          @options[:content_encoding] || super
         end
 
         def tracing_headers
@@ -62,6 +85,12 @@ module Legion
         end
 
         private
+
+        def encryption_headers
+          h = {}
+          h['iv'] = @encrypted_iv if @encrypted_iv
+          h
+        end
 
         def message_id_prefix = 'msg'
 

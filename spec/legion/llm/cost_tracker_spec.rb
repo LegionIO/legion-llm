@@ -158,11 +158,11 @@ RSpec.describe Legion::LLM::Metering::Recorder do
     end
 
     it 'reads string-keyed pricing overrides' do
-      Legion::Settings[:llm] = {
-        'pricing' => {
-          'custom-model' => { 'input' => 1.25, 'output' => 2.5 }
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'pricing' => {
+                                    'custom-model' => { 'input' => 1.25, 'output' => 2.5 }
+                                  }
+                                })
 
       pricing = described_class.pricing_for('custom-model')
       expect(pricing).to eq({ input: 1.25, output: 2.5 })

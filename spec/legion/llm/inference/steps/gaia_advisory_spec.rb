@@ -106,7 +106,7 @@ RSpec.describe Legion::LLM::Inference::Steps::GaiaAdvisory do
 
         advisory_data = step.enrichments['gaia:advisory'][:data]
         expect(advisory_data[:calibration_weights]).to eq(
-          'tone_adjustment' => 0.3, 'verbosity_adjustment' => 0.8
+          tone_adjustment: 0.3, verbosity_adjustment: 0.8
         )
       end
     end

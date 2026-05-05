@@ -29,74 +29,69 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
     before do
       allow(Legion::LLM).to receive(:started?).and_return(true)
-      allow(Legion::LLM::Discovery::Ollama).to receive(:models).and_return([])
-      allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([])
+      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
+      Legion::LLM::Call::Registry.reset!
     end
 
-    it 'lists string-keyed enabled providers' do
-      Legion::Settings[:llm][:providers]['bedrock-json'] = {
-        'enabled'       => true,
-        'default_model' => 'claude-sonnet-4-6',
-        'api_key'       => 'dead-key'
-      }
+    after do
+      Legion::LLM::Call::Registry.reset!
+    end
+
+    it 'lists providers from Registry' do
+      stub_mod = Module.new
+      Legion::LLM::Call::Registry.register(:bedrock, stub_mod, instance: :default,
+                                                               metadata: { tier:         :cloud,
+                                                                           capabilities: [:chat] })
 
       response = get_json('/api/llm/providers')
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
-      expect(body[:data][:providers]).to include(hash_including(name:          'bedrock-json',
-                                                                default_model: 'claude-sonnet-4-6'))
+      expect(body[:data][:providers]).to include(hash_including(provider: 'bedrock',
+                                                                instance: 'default',
+                                                                native:   true))
     end
 
-    it 'lists providers from top-level string-keyed provider settings' do
-      Legion::Settings[:llm]['providers'] = {
-        'bedrock-json' => {
-          'enabled'       => true,
-          'default_model' => 'claude-sonnet-4-6'
-        }
-      }
-
+    it 'returns empty list when no providers are registered' do
       response = get_json('/api/llm/providers')
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
-      expect(body[:data][:providers]).to include(hash_including(name: 'bedrock-json'))
+      expect(body[:data][:providers]).to eq([])
+      expect(body[:data][:summary][:total]).to eq(0)
     end
 
-    it 'redacts string-keyed secrets from provider details' do
-      Legion::Settings[:llm][:providers]['bedrock-json'] = {
-        'enabled'       => true,
-        'default_model' => 'claude-sonnet-4-6',
-        'api_key'       => 'dead-key',
-        'bearer_token'  => 'dead-bearer',
-        'region'        => 'us-east-2',
-        'instances'     => {
-          'bedrock1' => {
-            'enabled' => true,
-            'api_key' => 'nested-dead-key',
-            'region'  => 'us-east-1'
-          }
-        }
-      }
+    it 'includes tier and capabilities from metadata' do
+      stub_mod = Module.new
+      Legion::LLM::Call::Registry.register(:ollama, stub_mod, instance: :local1,
+                                                              metadata: { tier:         :local,
+                                                                          capabilities: %i[chat embeddings] })
 
-      response = get_json('/api/llm/providers/bedrock-json')
+      response = get_json('/api/llm/providers')
+      body = Legion::JSON.load(response.body)
+
+      entry = body[:data][:providers].find { |p| p[:provider] == 'ollama' }
+      expect(entry[:tier]).to eq('local')
+      expect(entry[:capabilities]).to include('chat', 'embeddings')
+    end
+
+    it 'returns provider instances by name' do
+      stub_mod = Module.new
+      Legion::LLM::Call::Registry.register(:bedrock, stub_mod, instance: :east,
+                                                               metadata: { tier: :cloud })
+      Legion::LLM::Call::Registry.register(:bedrock, stub_mod, instance: :west,
+                                                               metadata: { tier: :cloud })
+
+      response = get_json('/api/llm/providers/bedrock')
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
-      expect(body[:data][:config]).to include(region: 'us-east-2')
-      expect(body[:data][:config]).not_to have_key(:api_key)
-      expect(body[:data][:config]).not_to have_key(:bearer_token)
-      expect(body[:data][:config][:instances][:bedrock1]).to include(region: 'us-east-1')
-      expect(body[:data][:config][:instances][:bedrock1]).not_to have_key(:api_key)
+      expect(body[:data][:provider]).to eq('bedrock')
+      expect(body[:data][:instances].size).to eq(2)
     end
 
-    it 'hides disabled string-keyed providers' do
-      Legion::Settings[:llm][:providers]['disabled-provider'] = {
-        'enabled'       => false,
-        'default_model' => 'hidden'
-      }
-
-      response = get_json('/api/llm/providers/disabled-provider')
+    it 'returns 404 for unknown provider' do
+      response = get_json('/api/llm/providers/nonexistent')
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(404)

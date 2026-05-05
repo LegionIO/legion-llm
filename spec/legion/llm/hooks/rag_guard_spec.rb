@@ -137,12 +137,12 @@ RSpec.describe Legion::LLM::Hooks::RagGuard do
 
       context 'when reading string-keyed settings' do
         before do
-          Legion::Settings[:llm] = {
-            'rag_guard' => {
-              'threshold'  => 0.5,
-              'evaluators' => ['faithfulness']
-            }
-          }
+          Legion::Settings.set_prop(:llm, {
+                                      'rag_guard' => {
+                                        'threshold'  => 0.5,
+                                        'evaluators' => ['faithfulness']
+                                      }
+                                    })
           allow(mock_client).to receive(:run_evaluation).and_return({ summary: { avg_score: 0.6 } })
         end
 

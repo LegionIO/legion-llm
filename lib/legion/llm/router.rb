@@ -5,8 +5,9 @@ require_relative 'router/rule'
 require_relative 'router/health_tracker'
 require_relative 'router/escalation/chain'
 require_relative 'router/gateway_interceptor'
-require_relative 'discovery/ollama'
+require_relative 'discovery/rule_generator'
 require_relative 'discovery/system'
+require_relative 'discovery/memory_gate'
 
 require 'legion/logging/helper'
 module Legion
@@ -15,10 +16,14 @@ module Legion
       extend Legion::Logging::Helper
 
       PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
-                        gemini: :cloud, azure: :cloud, ollama: :local, vllm: :local }.freeze
+                        gemini: :cloud, azure: :cloud, ollama: :local, vllm: :fleet }.freeze
       PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
+      TIER_EXTERNAL = Set[:cloud, :frontier, :openai_compat].freeze
 
       OLLAMA_MODEL_PATTERN = %r{[:/]}
+
+      @auto_rules = []
+      @auto_rules_populated = false
 
       class << self
         def infer_provider_for_model(model)
@@ -42,6 +47,7 @@ module Legion
         # @param provider [Symbol, nil] explicit provider override
         # @return [Resolution, nil]
         def resolve(intent: nil, tier: nil, model: nil, provider: nil, exclude: {})
+          log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider}"
           return explicit_resolution(tier, provider, model) if tier
 
           return nil unless routing_enabled? && intent
@@ -62,6 +68,7 @@ module Legion
         end
 
         def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil, exclude: {})
+          log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations}"
           max = max_escalations || escalation_max_attempts
           return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model)], max_attempts: max) if tier
           return chain_from_defaults(model, provider, max) unless routing_enabled? && intent
@@ -76,27 +83,50 @@ module Legion
         def routing_enabled?
           settings = routing_settings
           return false if settings.nil? || settings.empty?
-          return false unless settings[:enabled]
 
-          rules = settings[:rules]
-          rules.is_a?(Array) && !rules.empty?
+          settings[:enabled] == true && auto_rules_populated?
+        end
+
+        def auto_rules_populated?
+          @auto_rules_populated == true
+        end
+
+        def populate_auto_rules(discovered_instances)
+          raw = Discovery::RuleGenerator.generate(discovered_instances)
+          @auto_rules = raw.map { |h| Rule.from_hash(h.transform_keys(&:to_sym)) }
+          @auto_rules_populated = true
+          log.info("[llm][router] auto_rules_populated count=#{@auto_rules.size}")
         end
 
         def reset!
           @health_tracker = nil
+          @auto_rules = []
+          @auto_rules_populated = false
         end
 
         # Check whether a tier can be used right now.
         # :local          — always available
+        # :direct         — always available (remote self-hosted instances)
         # :fleet          — available when Legion::Transport is loaded
         # :openai_compat  — available when gateways are configured
         # :cloud          — available unless privacy mode
         # :frontier       — available unless privacy mode
         def tier_available?(tier)
           sym = tier.to_sym
-          return false if external_tier?(sym) && privacy_mode?
-          return Legion.const_defined?('Transport', false) if sym == :fleet
-          return openai_compat_available? if sym == :openai_compat
+          if external_tier?(sym) && privacy_mode?
+            log.debug "[llm][router] action=tier_available tier=#{sym} available=false reason=privacy_mode"
+            return false
+          end
+          if sym == :fleet
+            available = Legion.const_defined?('Transport', false)
+            log.debug "[llm][router] action=tier_available tier=fleet available=#{available}"
+            return available
+          end
+          if sym == :openai_compat
+            available = openai_compat_available?
+            log.debug "[llm][router] action=tier_available tier=openai_compat available=#{available}"
+            return available
+          end
 
           true
         end
@@ -143,8 +173,12 @@ module Legion
         end
 
         def load_rules
-          raw = routing_settings[:rules] || []
-          raw.map { |h| Rule.from_hash(h.transform_keys(&:to_sym)) }
+          manual = (routing_settings[:rules] || []).map do |h|
+            h = h.transform_keys(&:to_sym)
+            h[:priority] = (h[:priority] || 0) + 1000
+            Rule.from_hash(h)
+          end
+          (manual + (@auto_rules || [])).sort_by { |r| -r.priority }
         end
 
         def select_candidates(rules, intent, exclude: {})
@@ -167,9 +201,16 @@ module Legion
           # 4.5 Reject Ollama rules where model is not pulled or doesn't fit
           discovered = unconstrained.reject { |r| excluded_by_discovery?(r) }
 
+          # 4.55 Reject local-tier rules where model exceeds available memory
+          memory_checked = discovered.reject { |r| excluded_by_memory?(r) }
+
           # 4.6 Reject rules matching caller-provided exclude list
           normalized_exclude = exclude.is_a?(Hash) ? exclude : {}
-          not_excluded = normalized_exclude.empty? ? discovered : discovered.reject { |r| excluded_by_caller?(r, normalized_exclude) }
+          not_excluded = if normalized_exclude.empty?
+                           memory_checked
+                         else
+                           memory_checked.reject { |r| excluded_by_caller?(r, normalized_exclude) }
+                         end
 
           # 5. Filter by tier availability
           final = not_excluded.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
@@ -202,12 +243,13 @@ module Legion
           tier     = (rule.target[:tier] || rule.target['tier'])&.to_sym
           provider = (rule.target[:provider] || rule.target['provider'])&.to_sym
           model    = rule.target[:model] || rule.target['model']
+          instance = rule.target[:instance] || rule.target['instance']
 
-          return false unless tier == :local && provider == :ollama && model
+          return false unless tier == :local && model
 
-          return true unless Discovery::Ollama.model_available?(model)
+          return true unless Discovery.model_available?(model, provider: provider, instance: instance)
 
-          model_bytes = Discovery::Ollama.model_size(model)
+          model_bytes = Discovery.model_size(model, provider: provider, instance: instance)
           available   = Discovery::System.available_memory_mb
           return false if model_bytes.nil? || available.nil?
 
@@ -216,16 +258,31 @@ module Legion
           model_mb > (available - floor)
         end
 
+        def excluded_by_memory?(rule)
+          return false unless discovery_enabled?
+
+          tier = (rule.target[:tier] || rule.target['tier'])&.to_sym
+          return false unless tier == :local
+
+          model = rule.target[:model] || rule.target['model']
+          provider = rule.target[:provider] || rule.target['provider']
+          instance = rule.target[:instance] || rule.target['instance']
+          !Discovery::MemoryGate.allow?(provider: provider, instance: instance, model: model)
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'router.excluded_by_memory')
+          false
+        end
+
         def discovery_enabled?
           ds = discovery_settings
-          config_value(ds, :enabled, true)
+          Legion::LLM::Settings.config_value(ds, :enabled, true)
         end
 
         def discovery_settings
           discovery = Legion::LLM::Settings.value(:discovery, default: {})
           discovery.is_a?(Hash) ? discovery.transform_keys(&:to_sym) : {}
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.router.discovery_settings')
           {}
         end
 
@@ -249,7 +306,7 @@ module Legion
         end
 
         def external_tier?(tier)
-          %i[cloud frontier openai_compat].include?(tier)
+          TIER_EXTERNAL.include?(tier)
         end
 
         def openai_compat_available?
@@ -257,10 +314,10 @@ module Legion
         end
 
         def openai_compat_gateways
-          tiers = config_value(routing_settings, :tiers, {})
-          oc = config_value(tiers, :openai_compat, {})
+          tiers = Legion::LLM::Settings.config_value(routing_settings, :tiers, {})
+          oc = Legion::LLM::Settings.config_value(tiers, :openai_compat, {})
           oc = oc.transform_keys(&:to_sym) if oc.is_a?(Hash)
-          gateways = config_value(oc, :gateways)
+          gateways = Legion::LLM::Settings.config_value(oc, :gateways)
           return [] unless gateways.is_a?(Array)
 
           gateways.map { |g| g.is_a?(Hash) ? g.transform_keys(&:to_sym) : nil }.compact
@@ -288,9 +345,9 @@ module Legion
 
         def build_health_tracker
           settings = routing_settings
-          health   = config_value(settings, :health, {})
+          health   = Legion::LLM::Settings.config_value(settings, :health, {})
           health   = health.transform_keys(&:to_sym) if health.is_a?(Hash)
-          cb       = config_value(health, :circuit_breaker, {})
+          cb       = Legion::LLM::Settings.config_value(health, :circuit_breaker, {})
           cb       = cb.transform_keys(&:to_sym) if cb.is_a?(Hash)
 
           HealthTracker.new(
@@ -301,12 +358,16 @@ module Legion
         end
 
         def default_provider_for_tier(tier)
-          case tier.to_sym
-          when :local
+          sym = tier.to_sym
+
+          # Check registry for the first registered provider in this tier
+          registry_provider = registry_provider_for_tier(sym)
+          return registry_provider if registry_provider
+
+          # Fallback to static defaults when registry has no match
+          case sym
+          when :local, :direct, :fleet
             :ollama
-          when :fleet
-            vllm_config = config_value(providers_settings, :vllm)
-            vllm_config.is_a?(Hash) && config_value(vllm_config, :enabled) ? :vllm : :ollama
           when :openai_compat
             :openai
           when :cloud
@@ -320,26 +381,22 @@ module Legion
         end
 
         def default_model_for_tier(tier)
-          case tier.to_sym
-          when :local
-            ollama = config_value(providers_settings, :ollama, {})
-            config_value(ollama, :default_model) || 'llama3'
-          when :fleet
-            vllm_config = config_value(providers_settings, :vllm, {})
-            if config_value(vllm_config, :enabled)
-              config_value(vllm_config, :default_model) || 'qwen3.6-27b'
-            else
-              ollama = config_value(providers_settings, :ollama, {})
-              config_value(ollama, :default_model) || 'llama3'
-            end
+          sym = tier.to_sym
+
+          # Try registry first: find a registered provider in this tier and ask for its model
+          registry_model = registry_model_for_tier(sym)
+          return registry_model if registry_model
+
+          # Fallback to static defaults
+          case sym
+          when :local, :direct, :fleet
+            'llama3'
           when :openai_compat
             'gpt-4o'
           when :cloud
             default_settings_model || 'us.anthropic.claude-sonnet-4-6'
           when :frontier
             default_settings_model || 'claude-sonnet-4-6'
-          else
-            'llama3'
           end
         end
 
@@ -363,17 +420,31 @@ module Legion
         end
 
         def enabled_provider_chain
-          providers = providers_settings
-          return [] unless providers.is_a?(Hash)
+          instances = begin
+            Call::Registry.all_instances
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'router.enabled_provider_chain')
+            []
+          end
+          return [] if instances.empty?
 
+          # Deduplicate by provider (take the first instance per provider family)
+          seen = {}
+          instances.each do |entry|
+            pname = entry[:provider]
+            seen[pname] ||= entry
+          end
+
+          # Build resolutions in PROVIDER_ORDER
           PROVIDER_ORDER.filter_map do |pname|
-            config = config_value(providers, pname)
-            next unless config.is_a?(Hash) && config_value(config, :enabled)
+            entry = seen[pname]
+            next unless entry
 
-            tier  = PROVIDER_TIER.fetch(pname, :cloud)
-            model = config_value(config, :default_model)
-            next if model.nil? || model.to_s.empty?
+            tier = registry_tier(pname, entry[:metadata])
             next unless tier_available?(tier)
+
+            model = registry_default_model(entry)
+            next if model.nil? || model.to_s.empty?
 
             Resolution.new(tier: tier, provider: pname, model: model, rule: 'auto_chain')
           end
@@ -425,9 +496,9 @@ module Legion
 
         def escalation_max_attempts
           settings = routing_settings
-          esc = config_value(settings, :escalation, {})
+          esc = Legion::LLM::Settings.config_value(settings, :escalation, {})
           esc = esc.transform_keys(&:to_sym) if esc.is_a?(Hash)
-          config_value(esc, :max_attempts, 3)
+          Legion::LLM::Settings.config_value(esc, :max_attempts, 3)
         end
 
         def default_settings_model
@@ -438,17 +509,77 @@ module Legion
           Legion::LLM::Settings.value(:default_provider)
         end
 
-        def providers_settings
-          Legion::LLM::Settings.value(:providers, default: {})
+        # Determine tier for a provider: prefer registry metadata, fall back to PROVIDER_TIER constant.
+        def registry_tier(provider, metadata = {})
+          meta_tier = metadata[:tier] if metadata.is_a?(Hash)
+          return meta_tier.to_sym if meta_tier
+
+          PROVIDER_TIER.fetch(provider.to_sym, :cloud)
         end
 
-        def config_value(hash, key, default = nil)
-          return default unless hash.respond_to?(:key?)
+        # Find first registered provider matching a given tier.
+        def registry_provider_for_tier(tier)
+          instances = begin
+            Call::Registry.all_instances
+          rescue StandardError
+            []
+          end
 
-          string_key = key.to_s
-          return hash[string_key] if hash.key?(string_key)
+          # Prefer PROVIDER_ORDER for deterministic selection
+          PROVIDER_ORDER.each do |pname|
+            entry = instances.find { |e| e[:provider] == pname }
+            next unless entry
 
-          hash.key?(key) ? hash[key] : default
+            entry_tier = registry_tier(pname, entry[:metadata])
+            return pname if entry_tier == tier
+          end
+          nil
+        end
+
+        # Find a default model from registry for a given tier.
+        # Tries adapter.offerings first, then metadata[:default_model].
+        def registry_model_for_tier(tier)
+          instances = begin
+            Call::Registry.all_instances
+          rescue StandardError
+            []
+          end
+
+          PROVIDER_ORDER.each do |pname|
+            entry = instances.find { |e| e[:provider] == pname }
+            next unless entry
+
+            entry_tier = registry_tier(pname, entry[:metadata])
+            next unless entry_tier == tier
+
+            model = registry_default_model(entry)
+            return model if model && !model.to_s.empty?
+          end
+          nil
+        end
+
+        # Extract a default model from a registry entry.
+        # Checks metadata[:default_model], then adapter.offerings.
+        def registry_default_model(entry)
+          metadata = entry[:metadata] || {}
+
+          # Prefer explicit default_model in metadata
+          dm = metadata[:default_model]
+          return dm.to_s unless dm.nil? || dm.to_s.empty?
+
+          # Try adapter offerings
+          adapter = entry[:adapter]
+          if adapter.respond_to?(:offerings)
+            models = begin
+              adapter.offerings
+            rescue StandardError
+              []
+            end
+            first = models.first
+            return first[:model] || first[:id] if first.is_a?(Hash) && (first[:model] || first[:id])
+          end
+
+          nil
         end
       end
     end

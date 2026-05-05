@@ -8,6 +8,7 @@ require_relative 'api/native/providers'
 require_relative 'api/native/models'
 require_relative 'api/native/offerings'
 require_relative 'api/native/instances'
+require_relative 'api/native/routing'
 require_relative 'api/translators/openai_request'
 require_relative 'api/translators/openai_response'
 require_relative 'api/openai/chat_completions'
@@ -34,6 +35,7 @@ module Legion
         Native::Models.registered(app)
         Native::Offerings.registered(app)
         Native::Instances.registered(app)
+        Native::Routing.registered(app)
         OpenAI::ChatCompletions.registered(app)
         OpenAI::Models.registered(app)
         OpenAI::Embeddings.registered(app)

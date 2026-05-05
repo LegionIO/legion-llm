@@ -56,12 +56,15 @@ module Legion
           end
         end
 
+        ENRICHMENT_KEYS = %i[model_capabilities context_length parameter_count].freeze
+
         def to_resolution
-          target_without_compress = @target.except(:compress_level, :offering_metadata)
+          enrichment = @target.slice(*ENRICHMENT_KEYS)
+          resolution_target = @target.except(:compress_level, :offering_metadata, *ENRICHMENT_KEYS)
           Resolution.new(
-            **target_without_compress,
+            **resolution_target,
             rule:              @name,
-            metadata:          { cost_multiplier: @cost_multiplier, fallback: @fallback }.compact,
+            metadata:          { cost_multiplier: @cost_multiplier, fallback: @fallback }.merge(enrichment).compact,
             compress_level:    @target.fetch(:compress_level, 0),
             offering_metadata: @target[:offering_metadata]
           )

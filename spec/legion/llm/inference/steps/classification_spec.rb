@@ -464,7 +464,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
 
       context 'when phi_block_cloud=false (default) with restricted + cloud provider' do
         before do
-          Legion::Settings[:llm] = { default_provider: :anthropic }
+          Legion::Settings.set_prop(:llm, { default_provider: :anthropic })
         end
 
         it 'permits with a warning' do

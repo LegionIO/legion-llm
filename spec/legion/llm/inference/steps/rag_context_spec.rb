@@ -84,12 +84,12 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
     end
 
     it 'uses string-keyed threshold settings' do
-      Legion::Settings[:llm] = {
-        'rag' => {
-          'utilization_compact_threshold' => 0.4,
-          'utilization_skip_threshold'    => 0.8
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'rag' => {
+                                    'utilization_compact_threshold' => 0.4,
+                                    'utilization_skip_threshold'    => 0.8
+                                  }
+                                })
 
       request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'query' }],
@@ -135,12 +135,12 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
     end
 
     it 'uses string-keyed trivial pattern settings' do
-      Legion::Settings[:llm] = {
-        'rag' => {
-          'trivial_patterns'  => %w[foo bar],
-          'trivial_max_chars' => 10
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'rag' => {
+                                    'trivial_patterns'  => %w[foo bar],
+                                    'trivial_max_chars' => 10
+                                  }
+                                })
 
       request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'foo' }])
       step = klass.new(request)

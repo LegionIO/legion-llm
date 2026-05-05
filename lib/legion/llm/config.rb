@@ -23,7 +23,7 @@ module Legion
 
       def auto_configure_defaults
         log.debug '[llm][config] auto_configure_defaults.enter'
-        Legion::LLM::Settings.value(:providers, default: {}).each do |provider, config|
+        extension_providers.each do |provider, config|
           next unless Legion::LLM::Settings.config_value(config, :enabled)
 
           model = Legion::LLM::Settings.config_value(config, :default_model)
@@ -35,6 +35,16 @@ module Legion
           break
         end
         log.debug '[llm][config] auto_configure_defaults.exit'
+      end
+
+      def extension_providers
+        ext = Legion::Settings[:extensions]
+        return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash)
+
+        {}
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.config.extension_providers')
+        {}
       end
     end
   end

@@ -12,6 +12,8 @@ module Legion
         def handle_fleet_request(payload)
           payload = normalize_payload(payload)
           message_context = payload[:message_context] || {}
+          log.debug '[llm][fleet][handler] action=handle_fleet_request.enter ' \
+                    "request_type=#{payload[:request_type]} model=#{payload[:model]} provider=#{payload[:provider]}"
 
           if Dispatcher.fleet_enabled? && !valid_token?(payload[:signed_token])
             error_response = { success: false, error: 'invalid_token',
@@ -33,7 +35,7 @@ module Legion
 
           !Legion::Crypt.validate_jwt(token).nil?
         rescue StandardError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.fleet.handler.valid_token')
           false
         end
 
@@ -42,6 +44,7 @@ module Legion
         end
 
         def call_local_llm(payload)
+          log.debug "[llm][fleet][handler] action=call_local_llm request_type=#{payload[:request_type]} model=#{payload[:model]}"
           return unavailable_response unless llm_available_for?(payload)
 
           case payload[:request_type]&.to_s
@@ -61,6 +64,7 @@ module Legion
         end
 
         def build_response(correlation_id, response, message_context: {})
+          log.debug "[llm][fleet][handler] action=build_response correlation_id=#{correlation_id}"
           model = extract_field(response, :model)
           {
             correlation_id:  correlation_id,
@@ -99,7 +103,7 @@ module Legion
           )
           channel.close
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.fleet.handler.publish_reply')
         end
 
         def extract_token(response, field)

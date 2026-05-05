@@ -12,6 +12,7 @@ module Legion
 
         # Backwards-compatible shim: supports old (model:, messages:) and new (request:, message_context:) callers
         def dispatch(model: nil, messages: nil, request: nil, message_context: {}, routing_key: nil, reply_to: nil, **opts)
+          log.debug "[llm][fleet][dispatcher] action=dispatch.enter model=#{model} routing_key=#{routing_key} fleet_available=#{fleet_available?}"
           return error_result('fleet_unavailable', message_context: message_context) unless fleet_available?
 
           # Old calling convention: build minimal params from model/messages
@@ -204,10 +205,12 @@ module Legion
         end
 
         def wait_for_response(correlation_id, timeout:, message_context: {}, future: nil)
+          log.debug "[llm][fleet][dispatcher] action=wait_for_response correlation_id=#{correlation_id} timeout=#{timeout}"
           future ||= ReplyDispatcher.register(correlation_id)
           result = future.value!(timeout)
           result || timeout_result(correlation_id, timeout, message_context: message_context)
-        rescue Concurrent::CancelledOperationError
+        rescue Concurrent::CancelledOperationError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.fleet.dispatcher.wait_cancelled')
           timeout_result(correlation_id, timeout, message_context: message_context)
         ensure
           ReplyDispatcher.deregister(correlation_id)

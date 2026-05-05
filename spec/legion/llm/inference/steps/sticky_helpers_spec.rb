@@ -12,16 +12,16 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyHelpers do
   subject(:host) { host_class.new }
 
   it 'honors string-keyed tool sticky settings' do
-    Legion::Settings[:llm] = {
-      'tool_sticky' => {
-        'enabled'              => false,
-        'trigger_turns'        => 4,
-        'execution_tool_calls' => 9,
-        'max_history_entries'  => 33,
-        'max_result_length'    => 1234,
-        'max_args_length'      => 321
-      }
-    }
+    Legion::Settings.set_prop(:llm, {
+                                'tool_sticky' => {
+                                  'enabled'              => false,
+                                  'trigger_turns'        => 4,
+                                  'execution_tool_calls' => 9,
+                                  'max_history_entries'  => 33,
+                                  'max_result_length'    => 1234,
+                                  'max_args_length'      => 321
+                                }
+                              })
 
     expect(host.send(:sticky_enabled?)).to be(false)
     expect(host.send(:trigger_sticky_turns)).to eq(4)

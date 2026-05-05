@@ -39,27 +39,41 @@ module Legion
           private
 
           def discover_registry_tools
-            return unless defined?(::Legion::Tools::Registry)
+            return unless Legion::Settings::Extensions.respond_to?(:tools) &&
+                          Legion::Settings::Extensions.respond_to?(:filter_tools) &&
+                          Array(Legion::Settings::Extensions.tools).any?
 
-            ::Legion::Tools::Registry.tools.each do |tool_class|
-              name = tool_class.respond_to?(:tool_name) ? tool_class.tool_name : tool_class.name
-              desc = tool_class.respond_to?(:description) ? tool_class.description : ''
-              schema = tool_class.respond_to?(:input_schema) ? tool_class.input_schema : {}
+            discover_settings_extensions_tools
+          rescue StandardError => e
+            @warnings << "Registry tool discovery error: #{e.message}"
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.tool_discovery.registry')
+          end
+
+          def discover_settings_extensions_tools
+            entries = Legion::Settings::Extensions.filter_tools(deferred: false)
+            entries.each do |entry|
               @discovered_tools << {
-                name:        name,
-                description: desc,
-                parameters:  schema,
-                source:      { type: :registry, server: 'legion' }
+                name:        entry[:name],
+                description: entry[:description] || '',
+                parameters:  entry[:input_schema] || entry[:parameters] || {},
+                source:      build_entry_source(entry)
               }
             end
 
             log.info(
               "[llm][tools] discover request_id=#{@request.id} " \
-              "registry_tools=#{::Legion::Tools::Registry.tools.size}"
+              "settings_extensions_tools=#{entries.size}"
             )
-          rescue StandardError => e
-            @warnings << "Registry tool discovery error: #{e.message}"
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.tool_discovery.registry')
+          end
+
+          def build_entry_source(entry)
+            if entry[:tool_class]
+              { type: :registry, tool_class: entry[:tool_class] }
+            elsif entry[:extension] && entry[:runner] && entry[:function]
+              { type: :extension, lex: entry[:extension], runner: entry[:runner], function: entry[:function] }
+            else
+              { type: :registry, server: 'legion' }
+            end
           end
 
           def discover_client_tools

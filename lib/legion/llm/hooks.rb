@@ -31,7 +31,7 @@ module Legion
           end
           nil
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.hooks.run_before')
           nil
         end
 
@@ -42,7 +42,7 @@ module Legion
           end
           nil
         rescue StandardError => e
-          handle_exception(e, level: :warn)
+          handle_exception(e, level: :warn, operation: 'llm.hooks.run_after')
           nil
         end
 

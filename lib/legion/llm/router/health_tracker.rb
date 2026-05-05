@@ -30,52 +30,88 @@ module Legion
         end
 
         # Thread-safe signal intake. Dispatches to the registered handler if one exists.
-        def report(provider:, signal:, value:, metadata: {}, offering_id: nil)
+        # When +instance:+ is given, tracks under "provider/instance".
+        # When +instance:+ is nil, tracks under "provider" (backward compat) or broadcasts
+        # to all known instances of that provider.
+        def report(provider:, signal:, value:, instance: nil, metadata: {}, offering_id: nil)
           sym     = signal.to_sym
           handler = @handlers[sym]
           return nil unless handler
 
-          payload = {
-            provider:    health_key(provider, offering_id),
-            provider_id: provider,
-            offering_id: offering_id,
-            signal:      sym,
-            value:       value,
-            metadata:    metadata,
-            at:          Time.now
-          }
-          @mutex.synchronize { handler.call(payload) }
+          if instance
+            # Instance-specific tracking
+            payload = build_payload(provider: provider, instance: instance,
+                                    key: instance_key(provider, instance),
+                                    offering_id: offering_id, signal: sym,
+                                    value: value, metadata: metadata)
+            @mutex.synchronize { handler.call(payload) }
+          else
+            # Check if we have tracked instances for this provider; if so, broadcast
+            instances = known_instances(provider)
+            if instances.empty?
+              # No instances tracked — use provider-level key (backward compat)
+              payload = build_payload(provider: provider, instance: nil,
+                                      key: health_key(provider, offering_id),
+                                      offering_id: offering_id, signal: sym,
+                                      value: value, metadata: metadata)
+              @mutex.synchronize { handler.call(payload) }
+            else
+              # Broadcast to all known instances of this provider
+              @mutex.synchronize do
+                instances.each do |inst_key|
+                  payload = build_payload(provider: provider, instance: nil,
+                                          key: inst_key, offering_id: offering_id,
+                                          signal: sym, value: value, metadata: metadata)
+                  handler.call(payload)
+                end
+              end
+            end
+          end
         end
 
         # Returns total priority adjustment for a provider.
         # Combines circuit-breaker penalty and latency penalty.
-        def adjustment(provider, offering_id: nil)
-          key = health_key(provider, offering_id)
-          key = provider if offering_id && !tracked?(key) && tracked?(provider)
-          circuit_adjustment(key) + latency_adjustment(key)
+        # When +instance:+ is given, returns that specific instance's adjustment.
+        # When nil, returns the worst-of across all known instances (most pessimistic).
+        def adjustment(provider, instance: nil, offering_id: nil)
+          if instance
+            key = instance_key(provider, instance)
+            return circuit_adjustment(key) + latency_adjustment(key)
+          end
+
+          # Check for known instances — return worst-of if any exist
+          instances = known_instances(provider)
+          if instances.empty?
+            # Backward compat: use provider-level or offering-level key
+            key = health_key(provider, offering_id)
+            key = provider if offering_id && !tracked?(key) && tracked?(provider)
+            return circuit_adjustment(key) + latency_adjustment(key)
+          end
+
+          instances.map { |k| circuit_adjustment(k) + latency_adjustment(k) }.min
         end
 
         # Returns :closed, :open, or :half_open.
-        def circuit_state(provider, offering_id: nil)
-          key = health_key(provider, offering_id)
-          key = provider if offering_id && !tracked?(key) && tracked?(provider)
-          circuit = @circuits[key]
-          return :closed if circuit.nil?
+        # When +instance:+ is given, returns that specific instance's state.
+        # When nil, returns the worst state across all known instances.
+        def circuit_state(provider, instance: nil, offering_id: nil)
+          return circuit_state_for_key(instance_key(provider, instance)) if instance
 
-          if circuit[:state] == :open
-            elapsed = Time.now - circuit[:opened_at]
-            if elapsed >= @cooldown_seconds
-              log.warn("Circuit open->half_open for provider=#{key} (cooldown elapsed)")
-              return :half_open
-            end
+          # Check for known instances — return worst state if any exist
+          instances = known_instances(provider)
+          if instances.empty?
+            # Backward compat: use provider-level or offering-level key
+            key = health_key(provider, offering_id)
+            key = provider if offering_id && !tracked?(key) && tracked?(provider)
+            return circuit_state_for_key(key)
           end
 
-          circuit[:state]
+          worst_circuit_state(instances)
         end
 
         # Clears circuit and latency data for a single provider.
-        def reset(provider, offering_id: nil)
-          key = health_key(provider, offering_id)
+        def reset(provider, instance: nil, offering_id: nil)
+          key = instance ? instance_key(provider, instance) : health_key(provider, offering_id)
           @mutex.synchronize do
             @circuits.delete(key)
             @latency_window.delete(key)
@@ -92,6 +128,11 @@ module Legion
 
         private
 
+        # Build key for provider/instance pair: "provider/instance"
+        def instance_key(provider, instance)
+          "#{provider}/#{instance}"
+        end
+
         def health_key(provider, offering_id = nil)
           offering_id.nil? || offering_id.to_s.empty? ? provider : offering_id.to_s
         end
@@ -100,84 +141,130 @@ module Legion
           @circuits.key?(key) || @latency_window.key?(key)
         end
 
+        # Returns all tracked instance keys for a given provider (keys matching "provider/...")
+        def known_instances(provider)
+          prefix = "#{provider}/"
+          all_keys = (@circuits.keys + @latency_window.keys).uniq
+          all_keys.select { |k| k.is_a?(String) && k.start_with?(prefix) }
+        end
+
+        def build_payload(provider:, instance:, key:, offering_id:, signal:, value:, metadata:)
+          {
+            provider:    key,
+            provider_id: provider,
+            instance:    instance,
+            offering_id: offering_id,
+            signal:      signal,
+            value:       value,
+            metadata:    metadata,
+            at:          Time.now
+          }
+        end
+
+        # Returns the circuit state for a single key
+        def circuit_state_for_key(key)
+          circuit = @circuits[key]
+          return :closed if circuit.nil?
+
+          if circuit[:state] == :open
+            elapsed = Time.now - circuit[:opened_at]
+            if elapsed >= @cooldown_seconds
+              log.warn("Circuit open->half_open for provider=#{key} (cooldown elapsed)")
+              return :half_open
+            end
+          end
+
+          circuit[:state]
+        end
+
+        # Returns the worst circuit state across multiple keys
+        # Priority: :open > :half_open > :closed
+        def worst_circuit_state(keys)
+          states = keys.map { |k| circuit_state_for_key(k) }
+          return :open if states.include?(:open)
+          return :half_open if states.include?(:half_open)
+
+          :closed
+        end
+
         def register_default_handlers
           register_handler(:error) do |payload|
-            provider = payload[:provider]
-            ensure_circuit(provider)
-            circuit = @circuits[provider]
+            key = payload[:provider]
+            ensure_circuit(key)
+            circuit = @circuits[key]
 
-            if circuit_state(provider) == :half_open
+            if circuit_state_for_key(key) == :half_open
               circuit[:state]     = :open
               circuit[:opened_at] = Time.now
-              log.warn("Circuit half_open->open for provider=#{provider} (error during probe)")
+              log.warn("Circuit half_open->open for provider=#{key} (error during probe)")
             else
               circuit[:failures] += 1.0
               if circuit[:failures] >= @failure_threshold
                 circuit[:state]     = :open
                 circuit[:opened_at] = Time.now
-                log.warn("Circuit closed->open for provider=#{provider} (failures=#{circuit[:failures]})")
+                log.warn("Circuit closed->open for provider=#{key} (failures=#{circuit[:failures]})")
               end
             end
           end
 
           register_handler(:success) do |payload|
-            provider = payload[:provider]
-            ensure_circuit(provider)
-            prev_state          = circuit_state(provider)
-            circuit             = @circuits[provider]
+            key = payload[:provider]
+            ensure_circuit(key)
+            prev_state          = circuit_state_for_key(key)
+            circuit             = @circuits[key]
             circuit[:failures]  = 0
             circuit[:state]     = :closed
             circuit[:opened_at] = nil
-            log.warn("Circuit #{prev_state}->closed for provider=#{provider}") if prev_state != :closed
+            log.warn("Circuit #{prev_state}->closed for provider=#{key}") if prev_state != :closed
           end
 
           register_handler(:quality_failure) do |payload|
-            provider = payload[:provider]
-            ensure_circuit(provider)
-            circuit = @circuits[provider]
+            key = payload[:provider]
+            ensure_circuit(key)
+            circuit = @circuits[key]
 
-            if circuit_state(provider) == :half_open
+            if circuit_state_for_key(key) == :half_open
               circuit[:state]     = :open
               circuit[:opened_at] = Time.now
-              log.warn("Circuit half_open->open for provider=#{provider} (quality failure during probe)")
+              log.warn("Circuit half_open->open for provider=#{key} (quality failure during probe)")
             else
               circuit[:failures] += 0.5
               if circuit[:failures] >= @failure_threshold
                 circuit[:state]     = :open
                 circuit[:opened_at] = Time.now
-                log.warn("Circuit closed->open for provider=#{provider} (quality failures=#{circuit[:failures]})")
+                log.warn("Circuit closed->open for provider=#{key} (quality failures=#{circuit[:failures]})")
               end
             end
           end
 
           register_handler(:latency) do |payload|
-            provider = payload[:provider]
-            @latency_window[provider] ||= []
-            @latency_window[provider] << { value: payload[:value], at: payload[:at] }
+            key = payload[:provider]
+            @latency_window[key] ||= []
+            @latency_window[key] << { value: payload[:value], at: payload[:at] }
           end
         end
 
-        def ensure_circuit(provider)
-          @circuits[provider] ||= { state: :closed, failures: 0.0, opened_at: nil }
+        def ensure_circuit(key)
+          @circuits[key] ||= { state: :closed, failures: 0.0, opened_at: nil }
         end
 
-        def circuit_adjustment(provider)
-          case circuit_state(provider)
+        def circuit_adjustment(key)
+          case circuit_state_for_key(key)
           when :open      then OPEN_PENALTY
           when :half_open then OPEN_PENALTY / 2
           else                 0
           end
         end
 
-        def latency_adjustment(provider)
-          entries = @latency_window[provider]
+        def latency_adjustment(key)
+          entries = @latency_window[key]
           return 0 if entries.nil? || entries.empty?
 
           cutoff = Time.now - @window_seconds
           recent = entries.select { |e| e[:at] >= cutoff }
 
           # Prune stale entries in-place
-          @latency_window[provider] = recent
+          @latency_window[key] = recent
 
           return 0 if recent.empty?
 
@@ -186,7 +273,7 @@ module Legion
 
           multiplier = (avg / LATENCY_THRESHOLD_MS).floor
           penalty = [LATENCY_PENALTY_STEP * multiplier, OPEN_PENALTY].max
-          log.debug("Latency penalty applied to provider=#{provider} avg_ms=#{avg.round} penalty=#{penalty}")
+          log.debug("Latency penalty applied to provider=#{key} avg_ms=#{avg.round} penalty=#{penalty}")
           penalty
         end
       end

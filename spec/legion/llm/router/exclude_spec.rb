@@ -27,13 +27,14 @@ RSpec.describe Legion::LLM::Router do
   end
 
   def configure_routing(rules: routing_rules)
-    Legion::Settings[:llm] = Legion::Settings[:llm].merge(
-      routing: {
-        enabled:        true,
-        rules:          rules,
-        default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' }
-      }
-    )
+    Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                      routing: {
+                                        enabled:        true,
+                                        rules:          rules,
+                                        default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' }
+                                      }
+                                    ))
+    described_class.populate_auto_rules({})
   end
 
   before do

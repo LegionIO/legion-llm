@@ -25,8 +25,8 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:timestamp]).to be_a(Time)
     end
 
-    it 'serializes Data.define tokens to a hash' do
-      usage = Data.define(:input_tokens, :output_tokens).new(input_tokens: 100, output_tokens: 20)
+    it 'serializes ::Data.define tokens to a hash' do
+      usage = ::Data.define(:input_tokens, :output_tokens).new(input_tokens: 100, output_tokens: 20)
       response = Legion::LLM::Inference::Response.build(
         request_id: 'r', conversation_id: 'c',
         message: { role: :assistant, content: 'hi' },

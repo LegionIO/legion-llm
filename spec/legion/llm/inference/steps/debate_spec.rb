@@ -65,7 +65,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       judge_model:              nil,
       model_selection_strategy: 'rotate'
     }
-    Legion::Settings[:llm][:providers] = {
+    Legion::Settings[:extensions][:llm] = {
       anthropic: { enabled: true, default_model: 'claude-sonnet-4-6' },
       openai:    { enabled: true, default_model: 'gpt-4o' },
       gemini:    { enabled: false, default_model: 'gemini-2.0-flash' }
@@ -108,11 +108,11 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       end
 
       it 'returns true when debate.enabled is string-keyed' do
-        Legion::Settings[:llm] = {
-          'debate' => {
-            'enabled' => true
-          }
-        }
+        Legion::Settings.set_prop(:llm, {
+                                    'debate' => {
+                                      'enabled' => true
+                                    }
+                                  })
         step = host_class.new(base_request)
         expect(step.debate_enabled?(base_request)).to be true
       end
@@ -303,25 +303,25 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
     end
 
     it 'uses string-keyed debate and provider settings' do
-      Legion::Settings[:llm] = {
-        'default_provider' => 'anthropic',
-        'default_model'    => 'claude-sonnet-4-6',
-        'debate'           => {
-          'enabled'          => true,
-          'default_rounds'   => 1,
-          'max_rounds'       => 2,
-          'challenger_model' => 'openai:gpt-4o',
-          'judge_model'      => 'anthropic:claude-sonnet-4-5'
+      Legion::Settings.set_prop(:llm, {
+                                  'default_provider' => 'anthropic',
+                                  'default_model'    => 'claude-sonnet-4-6',
+                                  'debate'           => {
+                                    'enabled'          => true,
+                                    'default_rounds'   => 1,
+                                    'max_rounds'       => 2,
+                                    'challenger_model' => 'openai:gpt-4o',
+                                    'judge_model'      => 'anthropic:claude-sonnet-4-5'
+                                  }
+                                })
+      Legion::Settings[:extensions][:llm] = {
+        'anthropic' => {
+          'enabled'       => true,
+          'default_model' => 'claude-sonnet-4-6'
         },
-        'providers'        => {
-          'anthropic' => {
-            'enabled'       => true,
-            'default_model' => 'claude-sonnet-4-6'
-          },
-          'openai'    => {
-            'enabled'       => true,
-            'default_model' => 'gpt-4o'
-          }
+        'openai'    => {
+          'enabled'       => true,
+          'default_model' => 'gpt-4o'
         }
       }
 
@@ -334,7 +334,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
     end
 
     it 'degrades gracefully when only one model is available' do
-      Legion::Settings[:llm][:providers] = {
+      Legion::Settings[:extensions][:llm] = {
         anthropic: { enabled: true, default_model: 'claude-sonnet-4-6' },
         openai:    { enabled: false, default_model: 'gpt-4o' }
       }

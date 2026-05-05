@@ -199,28 +199,31 @@ confidence: 0.9 }],
     end
 
     describe 'tool registry injection' do
-      it 'injects always-loaded tools and only requested deferred tools' do
-        always_tool = Class.new do
-          define_singleton_method(:tool_name) { 'legion.query.knowledge' }
-          define_singleton_method(:description) { 'Always loaded tool' }
-          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+      it 'injects always-loaded tools and only requested deferred tools via Settings::Extensions' do
+        always_entries = [
+          { name: 'legion_query_knowledge', description: 'Always loaded tool',
+            input_schema: { type: 'object', properties: {} }, deferred: false }
+        ]
+        deferred_entries = [
+          { name: 'legion_test_extra', description: 'Requested deferred tool',
+            input_schema: { type: 'object', properties: {} }, deferred: true },
+          { name: 'legion_test_skipped', description: 'Skipped deferred tool',
+            input_schema: { type: 'object', properties: {} }, deferred: true }
+        ]
+        all_entries = always_entries + deferred_entries
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) { all_entries }
+          define_singleton_method(:filter_tools) do |**criteria|
+            if criteria[:deferred] == false
+              always_entries
+            elsif criteria[:deferred] == true
+              deferred_entries
+            else
+              all_entries
+            end
+          end
         end
-        requested_tool = Class.new do
-          define_singleton_method(:tool_name) { 'legion.test.extra' }
-          define_singleton_method(:description) { 'Requested deferred tool' }
-          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
-        end
-        skipped_tool = Class.new do
-          define_singleton_method(:tool_name) { 'legion.test.skipped' }
-          define_singleton_method(:description) { 'Skipped deferred tool' }
-          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
-        end
-
-        registry_mod = Module.new do
-          define_singleton_method(:tools) { [always_tool] }
-          define_singleton_method(:deferred_tools) { [requested_tool, skipped_tool] }
-        end
-        stub_const('Legion::Tools::Registry', registry_mod)
+        stub_const('Legion::Settings::Extensions', extensions_mod)
 
         req = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'test' }],
@@ -233,32 +236,28 @@ confidence: 0.9 }],
       end
 
       it 'caps registry tools for local providers and prioritizes trigger-matched tools' do
-        always_tools = 3.times.map do |idx|
-          Class.new do
-            define_singleton_method(:tool_name) { "legion.always.#{idx}" }
-            define_singleton_method(:description) { 'Always loaded tool' }
-            define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+        always_entries = 3.times.map do |idx|
+          { name: "legion_always_#{idx}", description: 'Always loaded tool',
+            input_schema: { type: 'object', properties: {} }, deferred: false }
+        end
+        triggered_entries = 3.times.map do |idx|
+          { name: "legion_triggered_#{idx}", description: 'Triggered tool',
+            input_schema: { type: 'object', properties: {} }, deferred: false }
+        end
+        all_entries = always_entries
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) { all_entries }
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == false ? all_entries : []
           end
         end
-        triggered_tools = 3.times.map do |idx|
-          Class.new do
-            define_singleton_method(:tool_name) { "legion.triggered.#{idx}" }
-            define_singleton_method(:description) { 'Triggered tool' }
-            define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
-          end
-        end
-
-        registry_mod = Module.new do
-          define_singleton_method(:tools) { always_tools }
-          define_singleton_method(:deferred_tools) { [] }
-        end
-        stub_const('Legion::Tools::Registry', registry_mod)
+        stub_const('Legion::Settings::Extensions', extensions_mod)
         Legion::LLM.settings[:tool_trigger][:local_tool_limit] = 2
 
         req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
         executor = described_class.new(req)
         executor.instance_variable_set(:@resolved_provider, :vllm)
-        executor.instance_variable_set(:@triggered_tools, triggered_tools)
+        executor.instance_variable_set(:@triggered_tools, triggered_entries)
         names = executor.send(:native_tool_definitions).map(&:name)
 
         expect(names).to eq(%w[legion_triggered_0 legion_triggered_1])
@@ -389,7 +388,7 @@ confidence: 0.9 }],
     end
 
     it 'honors string-keyed max_tool_rounds settings' do
-      Legion::Settings[:llm] = { 'max_tool_rounds' => 2, 'routing' => { 'escalation' => { 'pipeline_enabled' => false } } }
+      Legion::Settings.set_prop(:llm, { 'max_tool_rounds' => 2, 'routing' => { 'escalation' => { 'pipeline_enabled' => false } } })
 
       register_native_chat do
         { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
@@ -401,7 +400,7 @@ confidence: 0.9 }],
     end
 
     it 'uses MAX_NATIVE_TOOL_ROUNDS as default when max_tool_rounds not in settings' do
-      Legion::Settings[:llm] = { routing: { escalation: { pipeline_enabled: false } } }
+      Legion::Settings.set_prop(:llm, { routing: { escalation: { pipeline_enabled: false } } })
 
       register_native_chat { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }
       executor = described_class.new(request)
@@ -415,16 +414,16 @@ confidence: 0.9 }],
     subject(:executor) { described_class.new(request) }
 
     it 'honors string-keyed pipeline escalation settings' do
-      Legion::Settings[:llm] = {
-        'routing' => {
-          'escalation' => {
-            'enabled'           => true,
-            'pipeline_enabled'  => true,
-            'max_attempts'      => 7,
-            'quality_threshold' => 85
-          }
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'routing' => {
+                                    'escalation' => {
+                                      'enabled'           => true,
+                                      'pipeline_enabled'  => true,
+                                      'max_attempts'      => 7,
+                                      'quality_threshold' => 85
+                                    }
+                                  }
+                                })
 
       expect(executor.send(:pipeline_escalation_enabled?)).to be(true)
       expect(executor.send(:pipeline_escalation_max_attempts)).to eq(7)
@@ -432,11 +431,11 @@ confidence: 0.9 }],
     end
 
     it 'honors string-keyed native provider layer settings' do
-      Legion::Settings[:llm] = {
-        'provider_layer' => {
-          'mode' => 'auto'
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'provider_layer' => {
+                                    'mode' => 'auto'
+                                  }
+                                })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
@@ -449,68 +448,74 @@ confidence: 0.9 }],
         tools:    [Class.new]
       )
       tool_executor = described_class.new(tool_request)
-      Legion::Settings[:llm] = {
-        'provider_layer' => {
-          'mode' => 'native'
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'provider_layer' => {
+                                    'mode' => 'native'
+                                  }
+                                })
 
       expect(tool_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end
 
-    it 'uses Legion::LLM::Call::Dispatch when registry tools would be injected by default' do
-      registry_tool = Class.new
-      registry_mod = Module.new do
-        define_singleton_method(:tools) { [registry_tool] }
-        define_singleton_method(:deferred_tools) { [] }
+    it 'uses Legion::LLM::Call::Dispatch when Settings::Extensions tools are available' do
+      extensions_mod = Module.new do
+        define_singleton_method(:tools) do
+          [{ name: 'registry_tool', description: 'Tool', input_schema: {}, deferred: false }]
+        end
+        define_singleton_method(:filter_tools) do |**criteria|
+          criteria[:deferred] == false ? tools : []
+        end
       end
-      stub_const('Legion::Tools::Registry', registry_mod)
-      Legion::Settings[:llm] = {
-        'provider_layer' => {
-          'mode' => 'auto'
-        }
-      }
+      stub_const('Legion::Settings::Extensions', extensions_mod)
+      Legion::Settings.set_prop(:llm, {
+                                  'provider_layer' => {
+                                    'mode' => 'auto'
+                                  }
+                                })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end
 
     it 'allows Legion::LLM::Call::Dispatch when tools were explicitly disabled' do
-      registry_tool = Class.new
-      registry_mod = Module.new do
-        define_singleton_method(:tools) { [registry_tool] }
-        define_singleton_method(:deferred_tools) { [] }
+      extensions_mod = Module.new do
+        define_singleton_method(:tools) do
+          [{ name: 'registry_tool', description: 'Tool', input_schema: {}, deferred: false }]
+        end
+        define_singleton_method(:filter_tools) do |**criteria|
+          criteria[:deferred] == false ? tools : []
+        end
       end
-      stub_const('Legion::Tools::Registry', registry_mod)
+      stub_const('Legion::Settings::Extensions', extensions_mod)
       toolless_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'no tools' }],
         routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
         tools:    []
       )
       toolless_executor = described_class.new(toolless_request)
-      Legion::Settings[:llm] = {
-        'provider_layer' => {
-          'mode' => 'auto'
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'provider_layer' => {
+                                    'mode' => 'auto'
+                                  }
+                                })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(toolless_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end
 
     it 'finds string-keyed fallback provider configs' do
-      Legion::Settings[:llm] = {
-        'providers' => {
-          'ollama'  => {
-            'enabled'       => true,
-            'default_model' => 'qwen3.6:27b'
-          },
-          'bedrock' => {
-            'enabled'       => true,
-            'default_model' => 'claude-sonnet-4-6'
-          }
-        }
-      }
+      Legion::Settings.set_prop(:llm, {
+                                  'providers' => {
+                                    'ollama'  => {
+                                      'enabled'       => true,
+                                      'default_model' => 'qwen3.6:27b'
+                                    },
+                                    'bedrock' => {
+                                      'enabled'       => true,
+                                      'default_model' => 'claude-sonnet-4-6'
+                                    }
+                                  }
+                                })
 
       expect(executor.send(:find_fallback_provider, exclude: [])).to eq(
         { provider: :bedrock, model: 'claude-sonnet-4-6' }
@@ -568,11 +573,16 @@ confidence: 0.9 }],
           define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
           define_singleton_method(:call) { |**| 'result text' }
         end
-        registry_mod = Module.new do
-          define_singleton_method(:tools) { [tool_class] }
-          define_singleton_method(:deferred_tools) { [] }
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [{ name: 'my_tool', description: 'My tool', input_schema: { type: 'object', properties: {} },
+               tool_class: tool_class, deferred: false }]
+          end
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == false ? tools : []
+          end
         end
-        stub_const('Legion::Tools::Registry', registry_mod)
+        stub_const('Legion::Settings::Extensions', extensions_mod)
         call_count = 0
         register_native_chat do
           call_count += 1
@@ -606,11 +616,16 @@ confidence: 0.9 }],
           define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
           define_singleton_method(:call) { |**| large_result }
         end
-        registry_mod = Module.new do
-          define_singleton_method(:tools) { [tool_class] }
-          define_singleton_method(:deferred_tools) { [] }
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [{ name: 'big_tool', description: 'Big tool', input_schema: { type: 'object', properties: {} },
+               tool_class: tool_class, deferred: false }]
+          end
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == false ? tools : []
+          end
         end
-        stub_const('Legion::Tools::Registry', registry_mod)
+        stub_const('Legion::Settings::Extensions', extensions_mod)
         call_count = 0
         register_native_chat do
           call_count += 1

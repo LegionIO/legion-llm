@@ -8,6 +8,8 @@ module Legion
   module LLM
     module Skills
       class Base
+        extend Legion::Logging::Helper
+
         class << self
           def skill_name(name = nil)
             name ? (@skill_name = name.to_s) : @skill_name
@@ -88,7 +90,8 @@ module Legion
             gem_name = parts.first.gsub(/([A-Z])/) { "-#{::Regexp.last_match(1).downcase}" }.sub(/^-/, 'lex-')
             spec = begin
               ::Gem::Specification.find_by_name(gem_name)
-            rescue ::Gem::MissingSpecError
+            rescue ::Gem::MissingSpecError => e
+              handle_exception(e, level: :debug, handled: true, operation: 'llm.skills.base.gem_lookup')
               nil
             end
             return nil unless spec

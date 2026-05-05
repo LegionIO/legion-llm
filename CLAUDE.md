@@ -8,7 +8,7 @@
 Core LegionIO gem providing LLM capabilities to all extensions through Legion-native provider dispatch. Includes a dynamic weighted routing engine that dispatches requests across local, fleet, and cloud tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health.
 
 **GitHub**: https://github.com/LegionIO/legion-llm
-**Version**: 0.8.0
+**Version**: 0.8.49
 **License**: Apache-2.0
 
 ## Architecture
@@ -61,7 +61,10 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   ├── Compressor   # Deterministic prompt compression (3 levels, code-block-aware)
 │   └── Curator      # Async conversation curation: strip thinking, distill tools, fold resolved exchanges
 ├── Discovery                            # Runtime introspection
-│   ├── Ollama       # Queries Ollama /api/tags for pulled models (TTL-cached)
+│   ├── Ollama       # Multi-instance Ollama /api/tags + /api/show discovery (TTL-cached)
+│   ├── Vllm         # Multi-instance vLLM /v1/models + /health discovery (TTL-cached)
+│   ├── RuleGenerator # Auto-generates routing rules from discovered instances/models
+│   ├── MemoryGate   # Checks available RAM before routing to local models
 │   └── System       # Queries OS memory: macOS (vm_stat/sysctl), Linux (/proc/meminfo)
 ├── Quality                              # Response quality evaluation
 │   ├── Checker      # Quality heuristics (empty, too_short, repetition, json_parse) + pluggable (was QualityChecker)
@@ -364,24 +367,21 @@ Settings read from `Legion::Settings[:llm]`:
 
 ### Provider Settings
 
-Each provider has: `enabled`, `api_key`, `vault_path`, plus provider-specific keys.
+Provider defaults now live in each `lex-llm-*` provider extension's `default_settings`. The `providers:` key in `Settings.default` ships as an empty hash; settings files and extension registrations populate it at runtime. Each provider has: `enabled`, `api_key`, plus provider-specific keys.
 
-Vault credential resolution: When `vault_path` is set and Legion::Crypt::Vault is connected, credentials are fetched from Vault at startup. Keys map to provider-specific fields automatically.
+Local/fleet providers (Ollama, vLLM, MLX) support multi-instance configs via an `instances:` hash. Discovery scans all instances in parallel, enriches models with real capability metadata, and generates per-instance routing rules.
 
-Bedrock supports two auth modes:
-- **SigV4** (default): `api_key` + `secret_key` (+ optional `session_token`)
-- **Bearer token**: `bearer_token` for AWS Identity Center/SSO. Native Bedrock providers consume it through lex-llm configuration.
+### Capability-Aware Routing
+
+Routing rules carry `model_capabilities`, `context_length`, and `parameter_count` from provider-supplied `Model::Info`. The `RuleGenerator` creates rules from discovered instances without a static capability map -- each provider supplies real metadata.
+
+### Memory Gate
+
+`Discovery::MemoryGate` checks available system memory before routing to local models. Models that exceed available RAM minus `discovery.memory_floor_mb` are silently skipped.
 
 ### Auto-Detection Priority
 
-When no defaults are configured, the first enabled provider is used:
-
-1. Bedrock -> `us.anthropic.claude-sonnet-4-6-v1`
-2. Anthropic -> `claude-sonnet-4-6`
-3. OpenAI -> `gpt-4o`
-4. Gemini -> `gemini-2.0-flash`
-5. Azure -> (endpoint-specific, from `api_base`)
-6. Ollama -> `llama3`
+When no defaults are configured, the first enabled provider is used. Detection order and default models are defined by each `lex-llm-*` provider extension.
 
 ### Routing Settings
 
@@ -501,7 +501,10 @@ In-memory signal consumer with pluggable handlers. Adjusts effective priorities 
 | `lib/legion/llm/context/compressor.rb` | Deterministic prompt compression: 3 levels, code-block-aware, stopword removal |
 | `lib/legion/llm/context/curator.rb` | Async heuristic conversation curation (was ContextCurator) |
 | `lib/legion/llm/discovery.rb` | Discovery entry point: run, detect_embedding_capability, can_embed? |
-| `lib/legion/llm/discovery/ollama.rb` | Ollama /api/tags discovery with TTL cache |
+| `lib/legion/llm/discovery/ollama.rb` | Multi-instance Ollama /api/tags + /api/show discovery with TTL cache |
+| `lib/legion/llm/discovery/vllm.rb` | Multi-instance vLLM /v1/models + /health discovery with TTL cache |
+| `lib/legion/llm/discovery/rule_generator.rb` | Auto-generates routing rules from discovered instances/models |
+| `lib/legion/llm/discovery/memory_gate.rb` | Checks available RAM vs model size before routing to local models |
 | `lib/legion/llm/discovery/system.rb` | OS memory introspection (macOS + Linux) with TTL cache |
 | `lib/legion/llm/quality.rb` | Quality entry point |
 | `lib/legion/llm/quality/checker.rb` | Quality heuristics + pluggable callable (was QualityChecker) |
@@ -715,7 +718,7 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` uses real `Legion::Logging` and `Legion::Settings` (no stubs — hard dependencies are always present). Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 1661 examples, 0 failures
+bundle exec rspec    # 2379 examples, 0 failures
 bundle exec rubocop  # 0 offenses
 ```
 

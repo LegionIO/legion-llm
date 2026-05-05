@@ -1,5 +1,23 @@
 # Legion LLM Changelog
 
+## [0.8.49] - 2026-04-29
+
+### Changed
+- `Settings.register_defaults!` now calls `Legion::Settings.register_library` instead of `merge_settings`, using the idempotent legion-settings 1.4.0 API that prevents double-registration.
+- Bumped `legion-settings` dependency floor to `>= 1.4.0`.
+- Test stub `Legion::Settings` now exposes `register_library` matching the real 1.4.0 API.
+
+## [0.8.48] - 2026-04-29
+
+### Added
+- `ToolDefinition.from_registry_entry` builds tool definitions from `Legion::Settings::Extensions` registry entries.
+- `Dispatcher` checks `Settings::Extensions` for tool override resolution; when no matching entry is found it falls back to settings-based MCP overrides (no `Tools::Registry` or `Catalog::Registry` fallback).
+- `Executor#add_registry_tool_definitions` reads from `Settings::Extensions` when available, falling back to `Legion::Tools::Registry` for backward compatibility.
+- `Steps::ToolDiscovery` discovers tools from `Settings::Extensions` when available, falling back to `Legion::Tools::Registry`.
+
+### Changed
+- Bumped `legion-settings` dependency floor to `>= 1.4.0` (requires `Settings::Extensions` module).
+
 ## [0.8.47] - 2026-04-29
 
 ### Fixed

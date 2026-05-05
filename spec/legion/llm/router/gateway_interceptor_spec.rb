@@ -8,9 +8,9 @@ RSpec.describe Legion::LLM::Router::GatewayInterceptor do
   end
 
   before do
-    Legion::Settings[:llm] = Legion::LLM::Settings.default.merge(
-      gateway: { enabled: true, endpoint: 'https://gateway.example.com/v1', model_policy: {} }
-    )
+    Legion::Settings.set_prop(:llm, Legion::LLM::Settings.default.merge(
+                                      gateway: { enabled: true, endpoint: 'https://gateway.example.com/v1', model_policy: {} }
+                                    ))
   end
 
   describe '.intercept' do
@@ -36,17 +36,17 @@ RSpec.describe Legion::LLM::Router::GatewayInterceptor do
     end
 
     it 'passes through when gateway disabled' do
-      Legion::Settings[:llm] = Legion::LLM::Settings.default.merge(
-        gateway: { enabled: false }
-      )
+      Legion::Settings.set_prop(:llm, Legion::LLM::Settings.default.merge(
+                                        gateway: { enabled: false }
+                                      ))
       result = described_class.intercept(resolution)
       expect(result).to eq(resolution)
     end
 
     it 'returns nil when model blocked by policy' do
-      Legion::Settings[:llm] = Legion::LLM::Settings.default.merge(
-        gateway: { enabled: true, endpoint: 'https://gw.example.com', model_policy: { high: ['gpt-*'] } }
-      )
+      Legion::Settings.set_prop(:llm, Legion::LLM::Settings.default.merge(
+                                        gateway: { enabled: true, endpoint: 'https://gw.example.com', model_policy: { high: ['gpt-*'] } }
+                                      ))
       result = described_class.intercept(resolution, context: { risk_tier: :high })
       expect(result).to be_nil
     end
@@ -58,23 +58,23 @@ RSpec.describe Legion::LLM::Router::GatewayInterceptor do
     end
 
     it 'allows when model matches fnmatch pattern' do
-      Legion::Settings[:llm] = Legion::LLM::Settings.default.merge(
-        gateway: { model_policy: { high: ['claude-*'] } }
-      )
+      Legion::Settings.set_prop(:llm, Legion::LLM::Settings.default.merge(
+                                        gateway: { model_policy: { high: ['claude-*'] } }
+                                      ))
       expect(described_class.model_allowed?('claude-sonnet-4-6', :high)).to be true
     end
 
     it 'reads string-keyed model policies' do
-      Legion::Settings[:llm] = Legion::LLM::Settings.default.merge(
-        'gateway' => { 'model_policy' => { 'high' => ['claude-*'] } }
-      )
+      Legion::Settings.set_prop(:llm, Legion::LLM::Settings.default.merge(
+                                        'gateway' => { 'model_policy' => { 'high' => ['claude-*'] } }
+                                      ))
       expect(described_class.model_allowed?('claude-sonnet-4-6', :high)).to be true
     end
 
     it 'blocks when model does not match any pattern' do
-      Legion::Settings[:llm] = Legion::LLM::Settings.default.merge(
-        gateway: { model_policy: { critical: ['claude-sonnet-4-6'] } }
-      )
+      Legion::Settings.set_prop(:llm, Legion::LLM::Settings.default.merge(
+                                        gateway: { model_policy: { critical: ['claude-sonnet-4-6'] } }
+                                      ))
       expect(described_class.model_allowed?('gpt-4o', :critical)).to be false
     end
   end

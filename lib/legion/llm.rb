@@ -15,8 +15,6 @@ require_relative 'llm/call/dispatch'
 require_relative 'llm/call/embeddings'
 require_relative 'llm/call/structured_output'
 require_relative 'llm/call/daemon_client'
-require_relative 'llm/call/claude_config_loader'
-require_relative 'llm/call/codex_config_loader'
 require_relative 'llm/router'
 require_relative 'llm/context/compressor'
 require_relative 'llm/context/curator'
@@ -79,10 +77,9 @@ module Legion
     class << self
       def start
         log.debug '[llm] start.enter'
-        Call::ClaudeConfigLoader.load
-        Call::CodexConfigLoader.load
         Call::Providers.setup
         Discovery.run
+        Router.populate_auto_rules(Discovery.discovered_instances) if Router.respond_to?(:populate_auto_rules)
         Discovery.detect_embedding_capability
         Config.set_defaults
         Hooks.install_defaults
@@ -114,6 +111,7 @@ module Legion
         @can_embed = nil
         @embedding_provider = nil
         @embedding_model = nil
+        @embedding_instance = nil
         @embedding_fallback_chain = nil
         log.info '[llm] shut down'
       end
@@ -167,6 +165,10 @@ module Legion
 
       def embedding_model
         Discovery.embedding_model || @embedding_model
+      end
+
+      def embedding_instance
+        Discovery.embedding_instance || @embedding_instance
       end
 
       def embedding_fallback_chain

@@ -29,12 +29,13 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
     before do
       allow(Legion::LLM).to receive(:started?).and_return(true)
-      allow(Legion::LLM::Discovery::Ollama).to receive(:models).and_return([])
-      allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([])
+      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
     end
 
     it 'lists normalized model offerings with type filters' do
-      Legion::Settings[:llm][:providers][:bedrock][:enabled] = true
+      Legion::Settings[:extensions][:llm][:bedrock] = {
+        enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6', region: 'us-east-2'
+      }
 
       response = get_json('/api/llm/models?type=embed')
       body = Legion::JSON.load(response.body)
@@ -45,11 +46,15 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'returns all provider offerings under the provider scoped route' do
-      Legion::Settings[:llm][:providers][:vllm][:enabled] = true
-      allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([
-                                                                           { id:            'qwen3.6-27b',
-                                                                             max_model_len: 32_768 }
-                                                                         ])
+      Legion::Settings[:extensions][:llm][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
+      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([
+                                                                                {
+                                                                                  model:          'qwen3.6-27b',
+                                                                                  provider:       :vllm,
+                                                                                  instance:       :default,
+                                                                                  context_length: 32_768
+                                                                                }
+                                                                              ])
 
       response = get_json('/api/llm/providers/vllm/models')
       body = Legion::JSON.load(response.body)
@@ -60,7 +65,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'returns a model detail document' do
-      Legion::Settings[:llm][:providers][:anthropic][:enabled] = true
+      Legion::Settings[:extensions][:llm][:anthropic] = { enabled: true, default_model: 'claude-sonnet-4-6' }
 
       response = get_json('/api/llm/models/claude-sonnet-4-6')
       body = Legion::JSON.load(response.body)
@@ -79,11 +84,15 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'backs OpenAI-compatible model listing with the same inference inventory' do
-      Legion::Settings[:llm][:providers][:vllm][:enabled] = true
-      allow(Legion::LLM::Discovery::Vllm).to receive(:models).and_return([
-                                                                           { id:            'qwen3.6-27b',
-                                                                             max_model_len: 32_768 }
-                                                                         ])
+      Legion::Settings[:extensions][:llm][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
+      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([
+                                                                                {
+                                                                                  model:          'qwen3.6-27b',
+                                                                                  provider:       :vllm,
+                                                                                  instance:       :default,
+                                                                                  context_length: 32_768
+                                                                                }
+                                                                              ])
 
       response = get_json('/v1/models')
       body = Legion::JSON.load(response.body)

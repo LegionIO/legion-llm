@@ -9,10 +9,6 @@ module Legion
         module Providers
           extend Legion::Logging::Helper
 
-          SECRET_KEYS = %w[
-            api_key secret_key bearer_token session_token auth_token authorization password
-          ].freeze
-
           def self.registered(app)
             log.debug('[llm][api][providers] registering provider routes')
 
@@ -20,19 +16,15 @@ module Legion
               log.debug('[llm][api][providers] action=list_providers')
               require_llm!
 
-              providers_config = Legion::LLM::API::Native::Providers.settings_value(:providers, {})
-              provider_list = providers_config.filter_map do |name, config|
-                next unless Legion::LLM::API::Native::Providers.enabled_provider_config?(config)
+              instances = begin
+                Legion::LLM::Call::Registry.all_instances
+              rescue StandardError => e
+                handle_exception(e, level: :warn, handled: true, operation: 'llm.api.providers.registry_read')
+                []
+              end
 
-                provider_name = name.to_s
-
-                {
-                  name:          provider_name,
-                  enabled:       true,
-                  default_model: Legion::LLM::API::Native::Providers.config_value(config, :default_model),
-                  health:        Legion::LLM::API::Native::Providers.provider_health(provider_name),
-                  native:        Legion::LLM::Call::Registry.registered?(provider_name.to_sym)
-                }
+              provider_list = instances.map do |entry|
+                Legion::LLM::API::Native::Providers.instance_to_hash(entry)
               end
 
               summary = {
@@ -53,22 +45,30 @@ module Legion
               require_llm!
 
               provider_name = params[:name].to_s
-              provider_config = Legion::LLM::API::Native::Providers.find_provider_config(provider_name)
+              provider_sym = provider_name.to_sym
 
-              unless Legion::LLM::API::Native::Providers.enabled_provider_config?(provider_config)
-                log.debug("[llm][api][providers] action=not_found name=#{params[:name]}")
-                halt json_error('provider_not_found', "Provider '#{params[:name]}' not found or disabled", status_code: 404)
+              instances = begin
+                Legion::LLM::Call::Registry.all_instances
+              rescue StandardError => e
+                handle_exception(e, level: :warn, handled: true, operation: 'llm.api.providers.registry_read')
+                []
               end
 
-              log.debug("[llm][api][providers] action=found name=#{params[:name]}")
-              json_response({
-                              name:          provider_name,
-                              enabled:       true,
-                              default_model: Legion::LLM::API::Native::Providers.config_value(provider_config, :default_model),
-                              health:        Legion::LLM::API::Native::Providers.provider_health(provider_name),
-                              native:        Legion::LLM::Call::Registry.registered?(provider_name.to_sym),
-                              config:        Legion::LLM::API::Native::Providers.safe_config(provider_config)
-                            })
+              family = instances.select { |entry| entry[:provider].to_sym == provider_sym }
+
+              unless family.any?
+                log.debug("[llm][api][providers] action=not_found name=#{params[:name]}")
+                halt json_error('provider_not_found',
+                                "Provider '#{params[:name]}' not found",
+                                status_code: 404)
+              end
+
+              provider_list = family.map do |entry|
+                Legion::LLM::API::Native::Providers.instance_to_hash(entry)
+              end
+
+              log.debug("[llm][api][providers] action=found name=#{params[:name]} instances=#{provider_list.size}")
+              json_response({ provider: provider_name, instances: provider_list })
             rescue StandardError => e
               handle_exception(e, level: :error, handled: true, operation: 'llm.api.providers.get')
               json_error('provider_error', e.message, status_code: 500)
@@ -77,54 +77,30 @@ module Legion
             log.debug('[llm][api][providers] provider routes registered')
           end
 
-          def self.find_provider_config(name)
-            providers = settings_value(:providers, {})
-            providers[name.to_sym] || providers[name.to_s]
-          end
-
-          def self.enabled_provider_config?(config)
-            config.is_a?(Hash) && config_value(config, :enabled, true) != false
-          end
-
-          def self.config_value(config, key, default = nil)
-            return default unless config.respond_to?(:key?)
-
-            string_key = key.to_s
-            return config[string_key] if config.key?(string_key)
-
-            config.key?(key) ? config[key] : default
-          end
-
-          def self.settings_value(key, default = nil)
-            Legion::LLM::Settings.value(key, default: default)
-          end
-
-          def self.safe_config(config)
-            config.each_with_object({}) do |(key, value), safe|
-              safe[key] = redact_value(value) unless SECRET_KEYS.include?(key.to_s)
+          def self.instance_to_hash(entry)
+            health = begin
+              Legion::LLM::Router.health_tracker
+            rescue StandardError
+              nil
             end
-          end
+            provider_key = entry[:provider].to_sym
+            instance_key = entry[:instance].to_sym
 
-          def self.redact_value(value)
-            case value
-            when Hash
-              safe_config(value)
-            when Array
-              value.map { |entry| redact_value(entry) }
-            else
-              value
-            end
-          end
-
-          def self.provider_health(name)
-            if Legion::LLM::Router.routing_enabled?
-              tracker = Legion::LLM::Router.health_tracker
-              provider_key = name.to_sym
-              { circuit_state: tracker.circuit_state(provider_key).to_s,
-                adjustment:    tracker.adjustment(provider_key) }
-            else
-              { circuit_state: 'unknown' }
-            end
+            {
+              provider:     entry[:provider].to_s,
+              instance:     entry[:instance].to_s,
+              tier:         entry.dig(:metadata, :tier)&.to_s,
+              capabilities: Array(entry.dig(:metadata, :capabilities)).map(&:to_s),
+              health:       if health
+                              {
+                                circuit_state: health.circuit_state(provider_key, instance: instance_key).to_s,
+                                adjustment:    health.adjustment(provider_key, instance: instance_key)
+                              }
+                            else
+                              {}
+                            end,
+              native:       true
+            }
           end
         end
       end

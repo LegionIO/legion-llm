@@ -34,6 +34,23 @@ module Legion
           )
         end
 
+        def self.from_registry_entry(entry)
+          source = {
+            type:       entry[:tool_class] ? :registry : :extension,
+            tool_class: entry[:tool_class],
+            extension:  entry[:extension],
+            runner:     entry[:runner],
+            function:   entry[:function]
+          }.compact
+
+          build(
+            name:        entry[:name],
+            description: entry[:description],
+            parameters:  entry[:input_schema] || entry[:parameters],
+            source:      source.compact
+          )
+        end
+
         def self.sanitize_tool_name(raw)
           name = raw.to_s.tr('.', '_')
           name = name.gsub(/[^a-zA-Z0-9_-]/, '')

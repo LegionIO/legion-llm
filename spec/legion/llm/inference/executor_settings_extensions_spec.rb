@@ -1,0 +1,123 @@
+# frozen_string_literal: true
+
+require 'spec_helper'
+
+RSpec.describe Legion::LLM::Inference::Executor do
+  let(:base_request) do
+    Legion::LLM::Inference::Request.build(
+      messages: [{ role: :user, content: 'hello' }],
+      routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+    )
+  end
+
+  describe '#add_registry_tool_definitions (Settings::Extensions path)' do
+    let(:tool_class_a) do
+      Class.new do
+        define_singleton_method(:call) { |**| { status: :success } }
+      end
+    end
+
+    let(:tool_entries) do
+      [
+        {
+          name:         'legion_read_file',
+          description:  'Read a file',
+          input_schema: { type: 'object', properties: { path: { type: 'string' } } },
+          tool_class:   tool_class_a,
+          extension:    'lex-node',
+          runner:       'filesystem',
+          deferred:     false
+        },
+        {
+          name:         'legion_write_file',
+          description:  'Write a file',
+          input_schema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } } },
+          tool_class:   nil,
+          extension:    'lex-node',
+          runner:       'filesystem',
+          deferred:     false
+        }
+      ]
+    end
+
+    let(:deferred_entries) do
+      [
+        {
+          name:         'legion_heavy_compute',
+          description:  'Heavy compute',
+          input_schema: { type: 'object' },
+          tool_class:   tool_class_a,
+          extension:    'lex-compute',
+          runner:       'compute',
+          deferred:     true
+        }
+      ]
+    end
+
+    let(:extensions_mod) do
+      all_entries = tool_entries + deferred_entries
+      non_deferred = tool_entries
+      deferred = deferred_entries
+      Module.new do
+        define_singleton_method(:tools) { all_entries }
+        define_singleton_method(:filter_tools) do |**criteria|
+          if criteria[:deferred] == false
+            non_deferred
+          elsif criteria[:deferred] == true
+            deferred
+          else
+            all_entries
+          end
+        end
+      end
+    end
+
+    it 'builds definitions from Settings::Extensions entries' do
+      stub_const('Legion::Settings::Extensions', extensions_mod)
+
+      executor = described_class.new(base_request)
+      definitions = []
+      executor.send(:add_registry_tool_definitions, definitions)
+
+      expect(definitions.size).to eq(2)
+      expect(definitions.map(&:name)).to contain_exactly('legion_read_file', 'legion_write_file')
+    end
+
+    it 'tracks tool_class in injected_tool_map' do
+      stub_const('Legion::Settings::Extensions', extensions_mod)
+
+      executor = described_class.new(base_request)
+      definitions = []
+      executor.send(:add_registry_tool_definitions, definitions)
+
+      map = executor.instance_variable_get(:@injected_tool_map)
+      expect(map['legion_read_file']).to eq(tool_class_a)
+      # nil tool_class entries are not tracked
+      expect(map).not_to have_key('legion_write_file')
+    end
+
+    it 'tracks source in native_tool_source_map' do
+      stub_const('Legion::Settings::Extensions', extensions_mod)
+
+      executor = described_class.new(base_request)
+      definitions = []
+      executor.send(:add_registry_tool_definitions, definitions)
+
+      source_map = executor.instance_variable_get(:@native_tool_source_map)
+      expect(source_map['legion_read_file'][:type]).to eq(:registry)
+      expect(source_map['legion_read_file'][:extension]).to eq('lex-node')
+    end
+  end
+
+  describe '#add_registry_tool_definitions when Settings::Extensions has no tools' do
+    it 'does not add any tools' do
+      allow(Legion::Settings::Extensions).to receive(:tools).and_return([])
+
+      executor = described_class.new(base_request)
+      definitions = []
+      executor.send(:add_registry_tool_definitions, definitions)
+
+      expect(definitions).to be_empty
+    end
+  end
+end

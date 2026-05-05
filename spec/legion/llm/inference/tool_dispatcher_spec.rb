@@ -51,25 +51,19 @@ RSpec.describe Legion::LLM::Inference::ToolDispatcher do
       expect(result[:source][:overridden_from]).to eq(source)
     end
 
-    context 'Catalog-driven auto-override' do
-      it 'uses Catalog override when confidence >= 0.8' do
+    context 'Settings::Extensions-driven override' do
+      it 'uses Settings::Extensions override when find_tool matches' do
         tool_call = { name: 'close_pr', arguments: { pr_id: 123 } }
         source = { type: :mcp, server: 'github' }
 
-        # No settings override
-        allow(Legion::Settings).to receive(:dig).with(:mcp, :overrides).and_return(nil)
+        extensions_mod = Module.new do
+          define_singleton_method(:find_tool) do |name|
+            return unless name == 'close_pr'
 
-        # Catalog has a matching capability
-        cap = double(extension: 'lex-github', runner: 'PullRequest', function: 'close')
-        catalog_mod = Module.new
-        allow(catalog_mod).to receive(:for_override).with('close_pr').and_return(cap)
-        stub_const('Legion::Extensions::Catalog::Registry', catalog_mod)
-
-        # Override confidence is high
-        Legion::LLM::Tools::Confidence.reset!
-        Legion::LLM::Tools::Confidence.record(
-          tool: 'close_pr', lex: 'lex-github:PullRequest:close', confidence: 0.85
-        )
+            { extension: 'lex-github', runner: 'PullRequest', function: 'close' }
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
 
         runner = double('PullRequest')
         allow(runner).to receive(:close).and_return({ closed: true })
@@ -79,16 +73,16 @@ RSpec.describe Legion::LLM::Inference::ToolDispatcher do
         expect(result[:source][:type]).to eq(:extension)
       end
 
-      it 'falls through to MCP when confidence is too low' do
+      it 'falls through to MCP when Settings::Extensions has no match' do
         tool_call = { name: 'list_files', arguments: { path: '.' } }
         source = { type: :mcp, server: 'filesystem' }
 
-        allow(Legion::Settings).to receive(:dig).with(:mcp, :overrides).and_return(nil)
+        extensions_mod = Module.new do
+          define_singleton_method(:find_tool) { |_name| nil }
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
 
-        Legion::LLM::Tools::Confidence.reset!
-        Legion::LLM::Tools::Confidence.record(
-          tool: 'list_files', lex: 'lex-fs:Dir:list', confidence: 0.3
-        )
+        allow(Legion::Settings).to receive(:dig).with(:mcp, :overrides).and_return(nil)
 
         conn = double('Connection')
         allow(conn).to receive(:call_tool).and_return({

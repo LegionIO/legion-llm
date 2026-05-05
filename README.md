@@ -2,7 +2,7 @@
 
 LLM routing and provider orchestration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Routes chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata through Legion-native `lex-llm-*` provider extensions.
 
-**Version**: 0.8.47
+**Version**: 0.8.49
 
 ## Installation
 
@@ -90,6 +90,8 @@ When enabled, validates `Authorization: Bearer <token>` or `x-api-key` headers a
 
 ## Configuration
 
+Provider defaults now live in each `lex-llm-*` provider extension. `legion-llm` ships an empty `providers: {}` hash; settings files and extension registrations populate it at runtime.
+
 Add to your LegionIO settings directory (e.g. `~/.legionio/settings/llm.json`):
 
 ```json
@@ -103,53 +105,60 @@ Add to your LegionIO settings directory (e.g. `~/.legionio/settings/llm.json`):
         "region": "us-east-2",
         "bearer_token": ["vault://secret/data/llm/bedrock#bearer_token", "env://AWS_BEARER_TOKEN"]
       },
-      "anthropic": {
-        "enabled": false,
-        "api_key": "env://ANTHROPIC_API_KEY"
-      },
-      "openai": {
-        "enabled": false,
-        "api_key": "env://OPENAI_API_KEY"
-      },
       "ollama": {
-        "enabled": false,
-        "base_url": "http://localhost:11434"
-      },
-      "vllm": {
-        "enabled": false,
-        "base_url": "http://localhost:8000/v1",
-        "default_model": "qwen3.6-27b",
-        "enable_thinking": true
-      },
-      "mlx": {
-        "enabled": false,
-        "base_url": "http://localhost:8000"
+        "enabled": true,
+        "base_url": "http://localhost:11434",
+        "instances": {
+          "default": { "base_url": "http://localhost:11434" },
+          "gpu_server": { "base_url": "http://gpu-server:11434" }
+        }
       }
     }
   }
 }
 ```
 
-Credentials are resolved automatically by the universal secret resolver in `legion-settings` (v1.3.0+). Use `vault://` URIs for Vault secrets, `env://` for environment variables, or plain strings for static values. Array values act as fallback chains — the first non-nil result wins.
+Credentials are resolved automatically by the universal secret resolver in `legion-settings` (v1.3.0+). Use `vault://` URIs for Vault secrets, `env://` for environment variables, or plain strings for static values. Array values act as fallback chains -- the first non-nil result wins.
 
-### Provider Configuration
+### Provider Extensions (lex-llm-*)
 
-Each provider supports these common fields:
+Each provider is a standalone `lex-llm-*` gem that ships its own `default_settings`, model catalog, and capability declarations. The provider registers itself with `legion-llm` at load time. Provider gems implement:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `enabled` | Boolean | Enable this provider (default: `false`) |
-| `api_key` | String | API key (supports `vault://`, `env://`, or plain string) |
+- **`default_settings`** -- Connection defaults (base_url, region, API key env vars)
+- **`model_allowed?(model_name)`** -- Provider-level model filtering
+- **`Model::Info`** -- Real capabilities, context lengths, and parameter counts for each model
 
-Provider-specific fields:
+The routing layer only sees models the provider has already filtered and annotated.
 
-| Provider | Additional Fields |
-|----------|------------------|
-| **Bedrock** | `secret_key`, `session_token`, `region` (default: `us-east-2`), `bearer_token` (alternative to SigV4 — for AWS Identity Center/SSO) |
-| **Azure** | `api_base` (Azure OpenAI endpoint URL, required), `auth_token` (bearer token alternative to `api_key`) |
-| **Ollama** | `base_url` (default: `http://localhost:11434`) |
-| **vLLM** | `base_url` (default: `http://localhost:8000/v1`), `api_key`, `enable_thinking` |
-| **MLX** | `base_url` (default: `http://localhost:8000`), `api_key` |
+### Multi-Instance Providers
+
+Local and fleet providers (Ollama, vLLM, MLX) support multiple named instances:
+
+```json
+{
+  "ollama": {
+    "enabled": true,
+    "instances": {
+      "macbook":    { "base_url": "http://localhost:11434" },
+      "gpu_server": { "base_url": "http://gpu-server:11434" }
+    }
+  }
+}
+```
+
+Discovery scans all instances in parallel, enriches models with `/api/show` metadata, and generates per-instance routing rules. Each instance appears independently in the routing table so the router can target the exact hardware.
+
+### Capability-Aware Routing
+
+Routing rules and auto-generated rules carry `model_capabilities`, `context_length`, and `parameter_count` from provider-supplied `Model::Info`. The router uses these to match capability requirements (e.g., `thinking`, `vision`, `tools`) without a static lookup table.
+
+### Generic Dispatch
+
+`Call::Dispatch.call` accepts a `capability:` parameter (`:chat`, `:stream`, `:embed`) and routes to the registered `lex-llm-*` adapter. This replaces the old provider-specific dispatch paths.
+
+### Memory Gate
+
+Discovery checks available system memory (macOS `vm_stat`/`sysctl`, Linux `/proc/meminfo`) before routing to local models. Models that exceed available RAM minus `discovery.memory_floor_mb` are silently skipped.
 
 ### Credential Resolution
 
@@ -171,18 +180,7 @@ By the time `Legion::LLM.start` runs, all `vault://` and `env://` references hav
 
 ### Auto-Detection
 
-If no `default_model` or `default_provider` is set, legion-llm auto-detects from the first enabled provider in priority order:
-
-| Priority | Provider | Default Model |
-|----------|----------|---------------|
-| 1 | Bedrock | `us.anthropic.claude-sonnet-4-6-v1` |
-| 2 | Anthropic | `claude-sonnet-4-6` |
-| 3 | OpenAI | `gpt-4o` |
-| 4 | Gemini | `gemini-2.0-flash` |
-| 5 | Azure | (endpoint-specific) |
-| 6 | Ollama | `qwen3.5:latest` |
-| 7 | vLLM | `qwen3.6-27b` |
-| 8 | MLX | (configured model) |
+If no `default_model` or `default_provider` is set, legion-llm auto-detects from the first enabled provider. The detection order and default models are defined by each `lex-llm-*` provider extension's `default_settings`.
 
 ## Core API
 

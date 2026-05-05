@@ -37,6 +37,7 @@ module Legion
 
       class << self
         def offerings(filters = {})
+          log.debug "[llm][inventory] action=offerings.enter filters=#{filters.keys}"
           normalized_filters = normalize_filter_hash(filters)
           list = []
           providers_config.each do |provider_family, config|
@@ -48,7 +49,9 @@ module Legion
           list.concat(discovery_offerings)
           list.concat(native_provider_offerings)
           list = dedupe_offerings(list)
-          filter_offerings(list, normalized_filters)
+          result = filter_offerings(list, normalized_filters)
+          log.debug "[llm][inventory] action=offerings.complete total=#{result.size}"
+          result
         rescue NameError, ArgumentError, TypeError => e
           handle_exception(e, level: :error, handled: false, operation: 'llm.inventory.offerings')
           raise
@@ -64,7 +67,13 @@ module Legion
         private
 
         def providers_config
-          Legion::LLM::Settings.value(:providers, default: {})
+          ext = Legion::Settings[:extensions]
+          return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash)
+
+          {}
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.providers_config')
+          {}
         end
 
         def embedding_settings
@@ -254,7 +263,27 @@ module Legion
         end
 
         def discovery_offerings
-          ollama_discovery_offerings + vllm_discovery_offerings
+          return [] unless defined?(Legion::LLM::Discovery)
+
+          Legion::LLM::Discovery.discovered_models.filter_map do |model_entry|
+            provider_family = model_entry[:provider]
+            config = option(providers_config, provider_family, {})
+            next unless enabled_config?(config)
+
+            model_name = model_entry[:model]
+            entry = {
+              model:          model_name,
+              type:           infer_model_type(model_name),
+              source:         :discovery,
+              context_window: model_entry[:context_length]
+            }
+            inst = model_entry[:instance]
+            entry[:instance_id] = inst if inst && inst != :default
+            build_offering(provider_family, config, entry)
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.discovery')
+          []
         end
 
         def native_provider_offerings
@@ -285,41 +314,6 @@ module Legion
             metadata: normalize_hash(option(data, :metadata))
           )
           build_offering(provider_family, {}, entry)
-        end
-
-        def ollama_discovery_offerings
-          return [] unless defined?(Legion::LLM::Discovery::Ollama)
-
-          config = option(providers_config, :ollama, {})
-          return [] unless enabled_config?(config)
-
-          Legion::LLM::Discovery::Ollama.models.filter_map do |model|
-            model_name = model['name'] || model[:name]
-            build_offering(:ollama, config, model: model_name, type: infer_model_type(model_name), source: :discovery)
-          end
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.discovery.ollama')
-          []
-        end
-
-        def vllm_discovery_offerings
-          return [] unless defined?(Legion::LLM::Discovery::Vllm)
-
-          config = option(providers_config, :vllm, {})
-          return [] unless enabled_config?(config)
-
-          Legion::LLM::Discovery::Vllm.models.filter_map do |model|
-            model_id = model[:id] || model['id']
-            context_window = model[:max_model_len] || model['max_model_len']
-            build_offering(:vllm, config,
-                           model:          model_id,
-                           type:           :inference,
-                           context_window: context_window,
-                           source:         :discovery)
-          end
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.discovery.vllm')
-          []
         end
 
         def option(hash, key, default = nil)

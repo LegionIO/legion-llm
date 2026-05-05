@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
-require 'legion/settings' unless defined?(Legion::Settings)
+require 'legion/settings'
 
 module Legion
   module LLM
@@ -19,7 +19,6 @@ module Legion
           default_model:             model_override,
           default_provider:          nil,
           system_baseline:           system_baseline_default,
-          providers:                 providers,
           routing:                   routing_defaults,
           budget:                    budget_defaults,
           confidence:                confidence_defaults,
@@ -73,8 +72,6 @@ module Legion
       end
 
       def self.namespace(namespace)
-        return {} unless defined?(Legion::Settings)
-
         settings = Legion::Settings[namespace]
         settings.is_a?(Hash) ? settings : {}
       rescue StandardError => e
@@ -83,7 +80,7 @@ module Legion
       end
 
       def self.global_value(namespace, *keys, default: nil)
-        if defined?(Legion::Settings) && Legion::Settings.respond_to?(:dig) && keys.any?
+        if Legion::Settings.respond_to?(:dig) && keys.any?
           direct = Legion::Settings.dig(namespace, *keys)
           return direct unless direct.nil?
         end
@@ -117,7 +114,7 @@ module Legion
       end
 
       def self.enterprise_privacy?
-        if defined?(Legion::Settings) && Legion::Settings.respond_to?(:enterprise_privacy?)
+        if Legion::Settings.respond_to?(:enterprise_privacy?)
           Legion::Settings.enterprise_privacy?
         else
           ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
@@ -128,21 +125,20 @@ module Legion
       end
 
       def self.current_settings
-        if defined?(Legion::Settings)
-          settings = Legion::Settings[:llm]
-          return settings if settings.is_a?(Hash)
-        end
+        settings = Legion::Settings[:llm]
+        return settings if settings.is_a?(Hash)
 
         {}
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.current_settings')
-        defined?(Legion::Settings) ? Legion::Settings[:llm] : {}
+        {}
       end
 
       def self.register_defaults!
-        return unless defined?(Legion::Settings) && Legion::Settings.respond_to?(:merge_settings)
+        return unless Legion::Settings.respond_to?(:register_library)
 
-        Legion::Settings.merge_settings(:llm, default)
+        log.debug '[llm][settings] action=register_defaults'
+        Legion::Settings.register_library(:llm, default)
       end
 
       def self.assign_value(target, keys, value)
@@ -456,59 +452,8 @@ module Legion
         }
       end
 
-      def self.providers
-        {
-          bedrock:   {
-            enabled:       false,
-            default_model: 'us.anthropic.claude-sonnet-4-6',
-            api_key:       nil,
-            secret_key:    nil,
-            session_token: nil,
-            bearer_token:  'env://AWS_BEARER_TOKEN_BEDROCK',
-            region:        'us-east-2'
-          },
-          anthropic: {
-            enabled:       false,
-            default_model: 'claude-sonnet-4-6',
-            api_key:       'env://ANTHROPIC_API_KEY'
-          },
-          openai:    {
-            enabled:       false,
-            default_model: 'gpt-4o',
-            api_key:       ['env://OPENAI_API_KEY', 'env://CODEX_API_KEY']
-          },
-          gemini:    {
-            enabled:       false,
-            default_model: 'gemini-2.0-flash',
-            api_key:       'env://GEMINI_API_KEY'
-          },
-          azure:     {
-            enabled:       false,
-            default_model: nil,
-            api_base:      nil,
-            api_key:       nil,
-            auth_token:    nil
-          },
-          ollama:    {
-            enabled:       false,
-            default_model: 'qwen3.5:latest',
-            base_url:      'http://localhost:11434'
-          },
-          vllm:      {
-            enabled:         false,
-            default_model:   'qwen3.6-27b',
-            base_url:        'http://localhost:8000/v1',
-            api_key:         nil,
-            enable_thinking: true
-          },
-          mlx:       {
-            enabled:       false,
-            default_model: nil,
-            base_url:      'http://localhost:8000',
-            api_key:       nil
-          }
-        }
-      end
+      # Provider defaults live in each lex-llm-* provider extension's
+      # `default_settings` and are accessed via Legion::Settings[:extensions][:llm].
     end
   end
 end

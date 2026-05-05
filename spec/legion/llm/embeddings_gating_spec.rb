@@ -17,64 +17,40 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
     Legion::LLM.instance_variable_set(:@started, true)
     Legion::LLM.instance_variable_set(:@embedding_provider, nil)
     Legion::LLM.instance_variable_set(:@embedding_model, nil)
-    Legion::LLM.instance_variable_set(:@embedding_fallback_chain, [])
   end
 
   after do
     Legion::LLM.instance_variable_set(:@started, nil)
-    Legion::LLM.instance_variable_set(:@embedding_fallback_chain, nil)
   end
 
-  describe 'Legion::LLM::Embeddings.generate with a disabled provider' do
+  describe 'Legion::LLM::Embeddings.generate with no provider configured' do
+    it 'returns an error when no provider is set' do
+      result = Legion::LLM::Embeddings.generate(text: 'hello')
+      expect(result[:vector]).to be_nil
+      expect(result[:error]).to eq('No embedding provider configured')
+    end
+  end
+
+  describe 'Legion::LLM::Embeddings.generate when Dispatch raises' do
     before do
-      Legion::Settings[:llm][:providers][:azure] = { enabled: false }
+      Legion::LLM.instance_variable_set(:@embedding_provider, :azure)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
     end
 
-    it 'returns an error hash with :error matching /disabled/' do
+    it 'returns an error hash when dispatch fails' do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call)
+        .and_raise(Legion::LLM::ProviderError.new('Native provider not registered: azure'))
+
       result = Legion::LLM::Embeddings.generate(text: 'hello', provider: :azure)
       expect(result[:vector]).to be_nil
-      expect(result[:error]).to match(/disabled/)
-    end
-
-    it 'does not dispatch native embeddings' do
-      expect(Legion::LLM::Call::Dispatch).not_to receive(:dispatch_embed)
-      Legion::LLM::Embeddings.generate(text: 'hello', provider: :azure)
-    end
-
-    it 'includes the provider name in the error message' do
-      result = Legion::LLM::Embeddings.generate(text: 'hello', provider: :azure)
       expect(result[:error]).to include('azure')
     end
-  end
 
-  describe 'Legion::LLM::Embeddings.generate_batch with a disabled provider' do
-    before do
-      Legion::Settings[:llm][:providers][:openai] = { enabled: false }
-    end
+    it 'does not raise to callers' do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call)
+        .and_raise(StandardError.new('connection refused'))
 
-    it 'returns an array of error hashes' do
-      results = Legion::LLM::Embeddings.generate_batch(texts: %w[foo bar baz], provider: :openai)
-      expect(results.size).to eq(3)
-    end
-
-    it 'each result has :vector nil and :error matching /disabled/' do
-      results = Legion::LLM::Embeddings.generate_batch(texts: %w[foo bar], provider: :openai)
-      expect(results).to all(include(vector: nil))
-      expect(results.map { |r| r[:error] }).to all(match(/disabled/))
-    end
-
-    it 'each result includes :model, :dimensions, and :index for consistent shape' do
-      results = Legion::LLM::Embeddings.generate_batch(texts: %w[foo bar], provider: :openai)
-      results.each_with_index do |result, i|
-        expect(result).to include(:model, :provider, :dimensions)
-        expect(result[:dimensions]).to eq(0)
-        expect(result[:index]).to eq(i)
-      end
-    end
-
-    it 'does not dispatch native embeddings' do
-      expect(Legion::LLM::Call::Dispatch).not_to receive(:dispatch_embed)
-      Legion::LLM::Embeddings.generate_batch(texts: %w[foo], provider: :openai)
+      expect { Legion::LLM::Embeddings.generate(text: 'hello', provider: :azure) }.not_to raise_error
     end
   end
 
@@ -84,11 +60,9 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
     end
 
     before do
-      Legion::Settings[:llm][:providers][:openai] = { enabled: true }
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_return(native_embed_response(mock_response))
-      allow(Legion::LLM::Embeddings).to receive(:provider_supports_embeddings?).with(:openai).and_return(true)
+      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response(mock_response))
     end
 
     it 'is not blocked and returns a vector' do
@@ -104,11 +78,9 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
     end
 
     before do
-      Legion::Settings[:llm][:providers][:openai] = { enabled: true }
       Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
       Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_embed).and_return(native_embed_response(mock_response))
-      allow(Legion::LLM::Embeddings).to receive(:provider_supports_embeddings?).with(:openai).and_return(true)
+      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response(mock_response))
     end
 
     it 'is not blocked and returns vectors' do
@@ -118,61 +90,20 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
     end
   end
 
-  describe 'Legion::LLM::Embeddings provider_disabled? (private)' do
-    it 'returns true when provider has enabled: false' do
-      Legion::Settings[:llm][:providers][:bedrock] = { enabled: false }
-      result = Legion::LLM::Embeddings.send(:provider_disabled?, :bedrock)
-      expect(result).to be true
-    end
-
-    it 'returns true when provider config was loaded from JSON string keys' do
-      Legion::Settings[:llm]['providers'] = { 'bedrock' => { 'enabled' => false } }
-      result = Legion::LLM::Embeddings.send(:provider_disabled?, :bedrock)
-      expect(result).to be true
-    end
-
-    it 'returns false when provider has enabled: true' do
-      Legion::Settings[:llm][:providers][:bedrock] = { enabled: true }
-      result = Legion::LLM::Embeddings.send(:provider_disabled?, :bedrock)
-      expect(result).to be false
-    end
-
-    it 'returns false when provider config is not a Hash' do
-      allow(Legion::Settings).to receive(:dig).and_call_original
-      allow(Legion::Settings).to receive(:dig).with(:llm, :providers, :unknown).and_return(nil)
-      result = Legion::LLM::Embeddings.send(:provider_disabled?, :unknown)
-      expect(result).to be false
-    end
-
-    it 'returns false when provider is nil' do
-      result = Legion::LLM::Embeddings.send(:provider_disabled?, nil)
-      expect(result).to be false
-    end
-
-    it 'returns false when settings access raises' do
-      allow(Legion::Settings).to receive(:[]).and_raise(StandardError.new('boom'))
-      result = Legion::LLM::Embeddings.send(:provider_disabled?, :bedrock)
-      expect(result).to be false
-    end
-  end
-
-  describe 'Legion::LLM::Embeddings.generate with an unsupported provider' do
+  describe 'Legion::LLM::Embeddings.generate_batch when Dispatch raises' do
     before do
-      Legion::Settings[:llm][:providers][:bedrock] = { enabled: true }
-      Legion::LLM.instance_variable_set(:@embedding_provider, :bedrock)
-      allow(Legion::LLM::Embeddings).to receive(:provider_supports_embeddings?).with(:bedrock).and_return(false)
+      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
     end
 
-    it 'returns an error hash without dispatching native embeddings' do
-      expect(Legion::LLM::Call::Dispatch).not_to receive(:dispatch_embed)
-      result = Legion::LLM::Embeddings.generate(text: 'hello', provider: :bedrock)
-      expect(result[:vector]).to be_nil
-      expect(result[:error]).to match(/does not support embeddings/)
-    end
+    it 'returns error hashes for all texts' do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call)
+        .and_raise(StandardError.new('batch dispatch failed'))
 
-    it 'includes the provider name in the error' do
-      result = Legion::LLM::Embeddings.generate(text: 'hello', provider: :bedrock)
-      expect(result[:error]).to include('bedrock')
+      results = Legion::LLM::Embeddings.generate_batch(texts: %w[foo bar baz], provider: :openai)
+      expect(results.size).to eq(3)
+      expect(results).to all(include(vector: nil))
+      expect(results.map { |r| r[:error] }).to all(include('batch dispatch failed'))
     end
   end
 end

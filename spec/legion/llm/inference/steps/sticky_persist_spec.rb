@@ -34,20 +34,19 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
     double(conversation_id: conv_id)
   end
 
-  def deferred_tool(name, ext, runner)
-    double(tool_name: name, extension: ext, runner: runner, deferred?: true)
+  def deferred_tool_entry(name, ext, runner)
+    { name: name, extension: ext, runner: runner, deferred: true }
   end
 
   before do
-    unless defined?(Legion::Tools::Registry)
-      stub_const('Legion::Tools::Registry', Module.new do
-        def self.all_tools = []
-      end)
+    extensions_mod = Module.new do
+      define_singleton_method(:tools) { [] }
     end
+    stub_const('Legion::Settings::Extensions', extensions_mod) unless defined?(Legion::Settings::Extensions)
 
     allow(Legion::LLM::Inference::Conversation).to receive(:read_sticky_state).and_return({})
     allow(Legion::LLM::Inference::Conversation).to receive(:write_sticky_state)
-    allow(Legion::Tools::Registry).to receive(:all_tools).and_return([])
+    allow(Legion::Settings::Extensions).to receive(:tools).and_return([])
   end
 
   describe '#step_sticky_persist' do
@@ -65,7 +64,7 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
     end
 
     it 'increments deferred_tool_calls by number of completed deferred tools' do
-      tc = deferred_tool('legion-github-issues-list_issues', 'github', 'issues')
+      tc = deferred_tool_entry('legion-github-issues-list_issues', 'github', 'issues')
       instance.injected_tool_map['legion-github-issues-list_issues'] = tc
       instance.pending_tool_history << {
         tool_name: 'legion-github-issues-list_issues', result: '{}', error: false, runner_key: nil
@@ -79,7 +78,7 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
     end
 
     it 'does NOT count errored tool calls toward deferred counter' do
-      tc = deferred_tool('tool-err', 'github', 'issues')
+      tc = deferred_tool_entry('tool-err', 'github', 'issues')
       instance.injected_tool_map['tool-err'] = tc
       instance.pending_tool_history << {
         tool_name: 'tool-err', result: '{"error":"fail"}', error: true, runner_key: nil
@@ -93,7 +92,7 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
     end
 
     it 'sets execution-tier stickiness for executed runner' do
-      tc = deferred_tool('tool-a', 'github', 'issues')
+      tc = deferred_tool_entry('tool-a', 'github', 'issues')
       instance.injected_tool_map['tool-a'] = tc
       instance.pending_tool_history << { tool_name: 'tool-a', result: '{}', error: false, runner_key: nil }
       instance.instance_variable_set(:@request, fake_request('c1'))
@@ -175,9 +174,9 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
       end
     end
 
-    it 'resolves tool class via Registry snapshot when @injected_tool_map misses (Legion::LLM::Call::Dispatch path)' do
-      tc = deferred_tool('legion-github-issues-list_issues', 'github', 'issues')
-      allow(Legion::Tools::Registry).to receive(:all_tools).and_return([tc])
+    it 'resolves tool entry via Settings::Extensions snapshot when @injected_tool_map misses' do
+      tc = deferred_tool_entry('legion-github-issues-list_issues', 'github', 'issues')
+      allow(Legion::Settings::Extensions).to receive(:tools).and_return([tc])
       instance.pending_tool_history << {
         tool_name: 'legion-github-issues-list_issues', result: '{}', error: false, runner_key: nil
       }
