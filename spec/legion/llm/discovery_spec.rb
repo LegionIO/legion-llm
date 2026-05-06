@@ -39,4 +39,29 @@ RSpec.describe Legion::LLM::Discovery do
       )
     )
   end
+
+  it 'normalizes string provider instances from adapter offerings to symbols' do
+    adapter = Class.new do
+      def offerings(live: false)
+        return [] unless live
+
+        [
+          {
+            model:             'gpt4o-prod',
+            provider_instance: 'eastus',
+            capabilities:      %i[chat],
+            size_bytes:        1_024
+          }
+        ]
+      end
+    end.new
+
+    Legion::LLM::Call::Registry.register(:azure_foundry, adapter, instance: :default)
+
+    discovered = described_class.discovered_models
+
+    expect(discovered.first[:instance]).to eq(:eastus)
+    expect(described_class.model_available?('gpt4o-prod', provider: :azure_foundry, instance: :eastus)).to be true
+    expect(described_class.model_size('gpt4o-prod', provider: :azure_foundry, instance: :eastus)).to eq(1_024)
+  end
 end

@@ -132,7 +132,7 @@ module Legion
                 {
                   model:           (data[:id] || data[:name] || data[:model]).to_s,
                   provider:        entry[:provider],
-                  instance:        data[:instance_id] || data[:provider_instance] || entry[:instance],
+                  instance:        normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
                   tier:            data[:tier] || entry.dig(:metadata, :tier),
                   size_bytes:      data[:size_bytes] || data[:size],
                   capabilities:    data[:capabilities] || [],
@@ -178,6 +178,12 @@ module Legion
           return {} unless data.is_a?(Hash)
 
           data.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+        end
+
+        def normalize_instance_id(value)
+          return nil if value.nil?
+
+          value.respond_to?(:to_sym) ? value.to_sym : value
         end
 
         def discovered_models_stale?

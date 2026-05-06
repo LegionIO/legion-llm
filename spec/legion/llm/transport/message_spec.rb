@@ -156,6 +156,20 @@ RSpec.describe Legion::LLM::Transport::Message do
       expect(msg.headers['x-legion-caller-type']).to eq('extension')
     end
 
+    it 'promotes top-level identity metadata when caller is absent' do
+      msg = build(identity: { identity: 'extension:lex-test', type: 'extension', credential: 'system' })
+
+      expect(msg.headers['x-legion-identity']).to eq('extension:lex-test')
+      expect(msg.headers['x-legion-caller-type']).to eq('extension')
+      expect(msg.headers['x-legion-credential']).to eq('system')
+    end
+
+    it 'promotes plain string callers as identity headers' do
+      msg = build(caller: 'extension:lex-test')
+
+      expect(msg.headers['x-legion-identity']).to eq('extension:lex-test')
+    end
+
     it 'omits provider header when not set' do
       msg = described_class.new(model: 'test')
       expect(msg.headers).not_to have_key('x-legion-llm-provider')

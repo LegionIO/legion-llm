@@ -7,6 +7,12 @@
 - Provider rediscovery now rebuilds registry entries after `Call::Registry.reset!`, supporting LegionIO reload/hot-update flows without relying on provider require-time side effects.
 - Bumped the `lex-llm` dependency floor to `>= 0.4.1` for pure provider discovery and alias metadata.
 
+### Fixed
+- Preserve streaming thinking chunks that providers emit as plain strings.
+- Normalize discovered provider instance ids from provider offerings before memory-gate and availability checks.
+- Use canonical offering aliases for metering cost estimates and fall back to caller agent metadata for fleet context.
+- Preserve extension, string, and top-level caller identity metadata in audit events and transport headers.
+
 ## [0.9.0] - 2026-05-06
 
 ### Changed

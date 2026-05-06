@@ -269,21 +269,38 @@ module Legion
         end
 
         def stream_thinking_hash(chunks)
-          thinking_text = chunks.filter_map { |chunk| chunk.thinking&.text if chunk.respond_to?(:thinking) }.join
+          thinking_parts = chunks.filter_map do |chunk|
+            normalize_thinking_value(chunk.thinking) if chunk.respond_to?(:thinking)
+          end
+          thinking_text = thinking_parts.filter_map { |part| part[:content] }.join
+          signature = thinking_parts.find { |part| part[:signature] }&.dig(:signature)
           return nil if thinking_text.empty?
 
-          { content: thinking_text, enabled: true }
+          { content: thinking_text, signature: signature, enabled: true }.compact
         end
 
         def thinking_hash(response)
           return nil unless response.respond_to?(:thinking) && response.thinking
 
-          thinking = response.thinking
-          {
-            content:   thinking.respond_to?(:text) ? thinking.text : thinking,
-            signature: thinking.respond_to?(:signature) ? thinking.signature : nil,
-            enabled:   true
-          }.compact
+          normalize_thinking_value(response.thinking)
+        end
+
+        def normalize_thinking_value(thinking)
+          case thinking
+          when Hash
+            normalized = thinking.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+            {
+              content:   normalized[:content] || normalized[:text],
+              signature: normalized[:signature],
+              enabled:   true
+            }.compact
+          else
+            {
+              content:   thinking.respond_to?(:text) ? thinking.text : thinking,
+              signature: thinking.respond_to?(:signature) ? thinking.signature : nil,
+              enabled:   true
+            }.compact
+          end
         end
 
         def estimate_tokens(messages)

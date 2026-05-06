@@ -74,6 +74,41 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
     end
 
+    it 'estimates cost from canonical offering aliases when present' do
+      executor.instance_variable_set(:@resolved_model, 'gpt4o-prod')
+      executor.instance_variable_set(:@resolved_offering_metadata, { canonical_model_alias: 'gpt-4o' })
+      allow(Legion::LLM::Metering::Pricing).to receive(:estimate).and_return(0.00042)
+      allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+      executor.send(:step_metering)
+
+      expect(Legion::LLM::Metering::Pricing).to have_received(:estimate).with(
+        model_id:      'gpt-4o',
+        input_tokens:  50,
+        output_tokens: 20
+      )
+    end
+
+    context 'with agent metadata on the caller hash' do
+      let(:caller) do
+        {
+          requested_by: { identity: 'fleet:worker-1', type: 'service' },
+          agent:        { id: 'fleet:agent-1', task_id: 'task-123' }
+        }
+      end
+
+      it 'publishes agent and task identifiers from caller metadata' do
+        allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+        executor.send(:step_metering)
+
+        expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+          expect(event[:agent_id]).to eq('fleet:agent-1')
+          expect(event[:task_id]).to eq('task-123')
+        end
+      end
+    end
+
     context 'with a string caller' do
       let(:caller) { 'extension:lex-test' }
 

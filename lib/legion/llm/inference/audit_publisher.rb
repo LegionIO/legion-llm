@@ -65,16 +65,20 @@ module Legion
         end
 
         def extract_identity(caller)
+          return { identity: caller } if caller.is_a?(String) && !caller.empty?
           return nil unless caller.is_a?(Hash)
 
-          rb = caller[:requested_by] || caller['requested_by']
-          return nil unless rb.is_a?(Hash)
+          rb = caller[:requested_by] || caller['requested_by'] || caller
+          rb = {} unless rb.is_a?(Hash)
+          extension = caller[:extension] || caller['extension']
 
-          {
-            identity:   rb[:identity] || rb['identity'],
-            type:       rb[:type] || rb['type'],
+          identity = {
+            identity:   rb[:identity] || rb['identity'] || rb[:username] || rb['username'] ||
+                        (extension && "extension:#{extension}"),
+            type:       rb[:type] || rb['type'] || (extension && 'extension'),
             credential: rb[:credential] || rb['credential']
           }.compact
+          identity.empty? ? nil : identity
         end
 
         def serialize_tokens(tokens)

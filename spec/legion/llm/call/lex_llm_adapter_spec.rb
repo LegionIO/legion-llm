@@ -165,6 +165,23 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
   end
 
+  it 'accumulates plain string streaming thinking chunks' do
+    chunk_class = Struct.new(:content, :model_id, :input_tokens, :output_tokens,
+                             :cached_tokens, :cache_creation_tokens, :thinking,
+                             keyword_init: true)
+    provider_class.define_method(:complete) do |_messages, model:, **, &block|
+      block.call(chunk_class.new(content: 'answer', model_id: model.id, input_tokens: 7, output_tokens: 3,
+                                 cached_tokens: 0, cache_creation_tokens: 0))
+      block.call(chunk_class.new(content: '', model_id: model.id, input_tokens: 7, output_tokens: 3,
+                                 cached_tokens: 0, cache_creation_tokens: 0, thinking: 'internal reasoning'))
+    end
+
+    result = adapter.stream(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
+
+    expect(result[:result]).to eq('answer')
+    expect(result[:thinking]).to eq(content: 'internal reasoning', enabled: true)
+  end
+
   it 'estimates token count for non-hash message inputs' do
     result = adapter.count_tokens(model: 'model-a', messages: ['hello world'])
 

@@ -144,6 +144,32 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:response_content]).to eq('answer')
       expect(event[:response_thinking]).to eq(thinking)
     end
+
+    it 'extracts extension caller identity into audit events' do
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'r', conversation_id: 'c',
+        message: { role: :assistant, content: 'answer' },
+        caller: { extension: 'lex-test' }
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+
+      expect(event[:identity]).to eq(identity: 'extension:lex-test', type: 'extension')
+    end
+
+    it 'extracts string caller identity into audit events' do
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'r', conversation_id: 'c',
+        message: { role: :assistant, content: 'answer' },
+        caller: 'extension:lex-test'
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+
+      expect(event[:identity]).to eq(identity: 'extension:lex-test')
+    end
   end
 
   describe '.publish' do

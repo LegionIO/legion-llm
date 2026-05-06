@@ -1226,7 +1226,7 @@ module Legion
                           else
                             0
                           end
-          agent = @request.agent || {}
+          agent = request_agent_context
           cost_usd = estimate_cost(input_tokens, output_tokens)
           log.debug("[pipeline][metering] action=build provider=#{@resolved_provider} model=#{@resolved_model} input=#{input_tokens} output=#{output_tokens}")
           event = Steps::Metering.build_event(
@@ -1259,11 +1259,34 @@ module Legion
 
         def estimate_cost(input_tokens, output_tokens)
           Legion::LLM::Metering::Pricing.estimate(
-            model_id: @resolved_model, input_tokens: input_tokens, output_tokens: output_tokens
+            model_id: metering_model_id, input_tokens: input_tokens, output_tokens: output_tokens
           )
         rescue StandardError => e
           handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.estimate_cost')
           nil
+        end
+
+        def metering_model_id
+          metadata = @resolved_offering_metadata
+          return @resolved_model unless metadata.is_a?(Hash)
+
+          metadata[:canonical_model_alias] || metadata['canonical_model_alias'] || @resolved_model
+        end
+
+        def request_agent_context
+          direct_agent = normalize_agent_context(@request.agent)
+          return direct_agent unless direct_agent.empty?
+
+          caller = @request.caller
+          return {} unless caller.is_a?(Hash)
+
+          normalize_agent_context(caller[:agent] || caller['agent'])
+        end
+
+        def normalize_agent_context(value)
+          return {} unless value.is_a?(Hash)
+
+          value.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
         end
 
         def metering_identity
