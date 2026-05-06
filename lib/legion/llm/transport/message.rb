@@ -3,6 +3,7 @@
 require 'securerandom'
 require 'uri'
 require 'legion/logging/helper'
+require_relative '../caller_identity'
 
 module Legion
   module LLM
@@ -208,44 +209,17 @@ module Legion
         end
 
         def identity_headers
-          caller = @options[:caller]
-          top_id = normalize_identity_option(@options[:identity])
-          rb = {}
-          extension = nil
-          caller_identity = nil
-          caller_type = nil
+          identity = Legion::LLM::CallerIdentity.normalize(caller: @options[:caller], identity: @options[:identity])
+          return {} unless identity
 
-          if caller.is_a?(Hash)
-            rb = caller[:requested_by] || caller['requested_by'] || {}
-            extension = caller[:extension] || caller['extension']
-          elsif caller.is_a?(String) && !caller.empty?
-            caller_identity = caller
-            caller_type = caller.split(':', 2).first if caller.include?(':')
-          end
-
-          rb = {} unless rb.is_a?(Hash)
           h = {}
-          identity = rb[:identity] || rb['identity'] || rb[:username] || rb['username'] ||
-                     top_id[:identity] || top_id['identity'] || (extension && "extension:#{extension}") ||
-                     caller_identity
-          h['x-legion-identity'] = identity.to_s if identity
-          cred = rb[:credential] || rb['credential'] || top_id[:credential] || top_id['credential']
+          h['x-legion-identity'] = identity[:identity].to_s if identity[:identity]
+          cred = identity[:credential]
           h['x-legion-credential'] = cred.to_s if cred
-          h['x-legion-hostname']   = (rb[:hostname] || rb['hostname']).to_s if rb[:hostname] || rb['hostname']
-          type = rb[:type] || rb['type'] || top_id[:type] || top_id['type'] || (extension && 'extension') || caller_type
+          h['x-legion-hostname']   = identity[:hostname].to_s if identity[:hostname]
+          type = identity[:type]
           h['x-legion-caller-type'] = type.to_s if type
           h
-        end
-
-        def normalize_identity_option(value)
-          case value
-          when Hash
-            value
-          when String
-            { identity: value }
-          else
-            {}
-          end
         end
 
         def context_headers

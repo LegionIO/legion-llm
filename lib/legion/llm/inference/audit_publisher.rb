@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative '../caller_identity'
 module Legion
   module LLM
     module Inference
@@ -65,20 +66,7 @@ module Legion
         end
 
         def extract_identity(caller)
-          return { identity: caller } if caller.is_a?(String) && !caller.empty?
-          return nil unless caller.is_a?(Hash)
-
-          rb = caller[:requested_by] || caller['requested_by'] || caller
-          rb = {} unless rb.is_a?(Hash)
-          extension = caller[:extension] || caller['extension']
-
-          identity = {
-            identity:   rb[:identity] || rb['identity'] || rb[:username] || rb['username'] ||
-                        (extension && "extension:#{extension}"),
-            type:       rb[:type] || rb['type'] || (extension && 'extension'),
-            credential: rb[:credential] || rb['credential']
-          }.compact
-          identity.empty? ? nil : identity
+          Legion::LLM::CallerIdentity.normalize(caller: caller)
         end
 
         def serialize_tokens(tokens)

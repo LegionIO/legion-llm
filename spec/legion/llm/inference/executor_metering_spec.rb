@@ -109,6 +109,29 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
     end
 
+    context 'with a namespaced caller id and ambiguous display identity' do
+      let(:caller) do
+        {
+          requested_by: {
+            id:         'system:system',
+            identity:   'system',
+            type:       'service',
+            credential: 'system'
+          }
+        }
+      end
+
+      it 'publishes the namespaced id as metering identity' do
+        allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+        executor.send(:step_metering)
+
+        expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+          expect(event[:identity]).to eq(identity: 'system:system', type: 'service', credential: 'system')
+        end
+      end
+    end
+
     context 'with a string caller' do
       let(:caller) { 'extension:lex-test' }
 
@@ -118,7 +141,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         executor.send(:step_metering)
 
         expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
-          expect(event[:identity]).to eq(identity: 'extension:lex-test')
+          expect(event[:identity]).to eq(identity: 'extension:lex-test', type: 'extension')
         end
       end
     end

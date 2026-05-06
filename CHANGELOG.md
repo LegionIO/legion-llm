@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.2] - 2026-05-06
+
+### Fixed
+- Prefer namespaced caller ids over ambiguous display identities when publishing audit, metering, and transport identity metadata.
+
 ## [0.9.1] - 2026-05-06
 
 ### Changed

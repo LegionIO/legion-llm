@@ -158,6 +158,26 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:identity]).to eq(identity: 'extension:lex-test', type: 'extension')
     end
 
+    it 'prefers namespaced caller ids over ambiguous display identities' do
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'r', conversation_id: 'c',
+        message: { role: :assistant, content: 'answer' },
+        caller: {
+          requested_by: {
+            id:         'system:system',
+            identity:   'system',
+            type:       'service',
+            credential: 'system'
+          }
+        }
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+
+      expect(event[:identity]).to eq(identity: 'system:system', type: 'service', credential: 'system')
+    end
+
     it 'extracts string caller identity into audit events' do
       response = Legion::LLM::Inference::Response.build(
         request_id: 'r', conversation_id: 'c',
@@ -168,7 +188,7 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
 
       event = described_class.build_event(request: request, response: response)
 
-      expect(event[:identity]).to eq(identity: 'extension:lex-test')
+      expect(event[:identity]).to eq(identity: 'extension:lex-test', type: 'extension')
     end
   end
 

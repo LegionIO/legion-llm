@@ -149,6 +149,33 @@ RSpec.describe Legion::LLM::Transport::Message do
       expect(msg.headers['x-legion-credential']).to eq('cred_1')
     end
 
+    it 'prefers namespaced caller ids over ambiguous display identities' do
+      msg = build(
+        caller: {
+          requested_by: {
+            id:         'system:system',
+            identity:   'system',
+            type:       'service',
+            credential: 'system'
+          }
+        }
+      )
+
+      expect(msg.headers['x-legion-identity']).to eq('system:system')
+      expect(msg.headers['x-legion-caller-type']).to eq('service')
+      expect(msg.headers['x-legion-credential']).to eq('system')
+    end
+
+    it 'prefers normalized top-level identity over ambiguous display identities' do
+      msg = build(
+        caller:   { requested_by: { identity: 'system', type: 'service' } },
+        identity: { identity: 'system:system', type: 'service' }
+      )
+
+      expect(msg.headers['x-legion-identity']).to eq('system:system')
+      expect(msg.headers['x-legion-caller-type']).to eq('service')
+    end
+
     it 'promotes extension callers with string keys' do
       msg = build(caller: { 'extension' => 'lex-test' })
 

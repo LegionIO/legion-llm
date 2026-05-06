@@ -2,6 +2,7 @@
 
 require 'concurrent'
 
+require_relative '../caller_identity'
 require_relative 'route_attempts'
 
 module Legion
@@ -1290,20 +1291,8 @@ module Legion
         end
 
         def metering_identity
-          caller_info = @request.caller
-          return { identity: caller_info } if caller_info.is_a?(String) && !caller_info.empty?
-          return nil unless caller_info.is_a?(Hash)
-
-          rb = caller_info[:requested_by] || caller_info['requested_by'] || caller_info
-          top_id = @request.respond_to?(:metadata) ? @request.metadata[:identity] || @request.metadata['identity'] : {}
-          top_id = {} unless top_id.is_a?(Hash)
-          extension = caller_info[:extension] || caller_info['extension']
-          {
-            identity:   rb[:identity] || rb['identity'] || rb[:username] || rb['username'] ||
-              top_id[:identity] || top_id['identity'] || (extension && "extension:#{extension}"),
-            type:       rb[:type] || rb['type'] || top_id[:type] || top_id['type'] || (extension && 'extension'),
-            credential: rb[:credential] || rb['credential'] || top_id[:credential] || top_id['credential']
-          }.compact
+          top_id = @request.respond_to?(:metadata) ? @request.metadata[:identity] || @request.metadata['identity'] : nil
+          Legion::LLM::CallerIdentity.normalize(caller: @request.caller, identity: top_id)
         end
 
         def step_context_store
