@@ -91,6 +91,10 @@ module Legion
           @discovered_models_cache || []
         end
 
+        def cached_discovered_models
+          @discovered_models_cache || []
+        end
+
         # Check whether a specific model is available from any registered provider.
         def model_available?(model, provider: nil, instance: nil)
           psym = provider&.to_sym
@@ -123,7 +127,7 @@ module Legion
             next [] unless adapter.respond_to?(:offerings)
 
             begin
-              Array(adapter.offerings).map do |offering|
+              Array(adapter.offerings(live: true)).map do |offering|
                 data = normalize_offering(offering)
                 {
                   model:           (data[:id] || data[:name] || data[:model]).to_s,
@@ -279,7 +283,7 @@ module Legion
           return true unless model
 
           start_time = Time.now
-          Call::Dispatch.dispatch_embed(provider: provider, model: model, text: 'health check')
+          Call::Dispatch.call(provider: provider, capability: :embed, model: model, text: 'health check')
           elapsed = ((Time.now - start_time) * 1000).round
           log.info "[llm][discovery] embedding health check ok provider=#{provider} model=#{model} elapsed_ms=#{elapsed}"
           true

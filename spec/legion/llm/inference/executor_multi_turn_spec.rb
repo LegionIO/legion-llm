@@ -18,9 +18,9 @@ RSpec.describe 'Inference::Executor multi-turn message injection' do
       )
       executor = Legion::LLM::Inference::Executor.new(request)
 
-      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).with(hash_including(
-                                                                            messages: [{ role: :user, content: 'hello' }]
-                                                                          )).and_return(native_dispatch_result(content: 'reply'))
+      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(hash_including(
+                                                                   messages: [{ role: :user, content: 'hello' }]
+                                                                 )).and_return(native_dispatch_result(content: 'reply'))
 
       executor.call
     end
@@ -39,7 +39,7 @@ RSpec.describe 'Inference::Executor multi-turn message injection' do
       request = Legion::LLM::Inference::Request.build(messages: messages)
       executor = Legion::LLM::Inference::Executor.new(request)
 
-      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+      expect(Legion::LLM::Call::Dispatch).to receive(:call)
         .and_return(native_dispatch_result(content: 'reply'))
 
       executor.call
@@ -62,7 +62,7 @@ RSpec.describe 'Inference::Executor multi-turn message injection' do
         ]
       )
       executor = Legion::LLM::Inference::Executor.new(request)
-      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+      expect(Legion::LLM::Call::Dispatch).to receive(:call)
         .and_return(native_dispatch_result(content: 'reply'))
 
       executor.call
@@ -79,7 +79,7 @@ RSpec.describe 'Inference::Executor multi-turn message injection' do
       request = Legion::LLM::Inference::Request.build(messages: messages)
       executor = Legion::LLM::Inference::Executor.new(request)
 
-      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_stream)
+      expect(Legion::LLM::Call::Dispatch).to receive(:call)
         .and_return(native_dispatch_result(content: 'reply'))
 
       chunks = []

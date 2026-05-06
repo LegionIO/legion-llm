@@ -172,7 +172,7 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
 
         results = described_class.flush
 
-        expect(Legion::LLM::Call::Dispatch).to have_received(:dispatch_chat).with(hash_including(model: 'gpt-4o', provider: :openai))
+        expect(Legion::LLM::Call::Dispatch).to have_received(:call).with(hash_including(model: 'gpt-4o', provider: :openai))
         expect(results.first[:status]).to eq(:completed)
         expect(results.first[:result][:response].content).to eq('batched response')
       end

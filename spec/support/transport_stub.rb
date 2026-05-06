@@ -1,6 +1,63 @@
 # frozen_string_literal: true
 
 # Stub Legion::Transport base classes for standalone testing of LLM transport messages.
+# Prefer the real transport contract when available so local stubs do not collide
+# with gems that load legion-transport later in the same process.
+begin
+  ENV['LEGION_MODE'] ||= 'lite'
+  require 'legion/transport'
+
+  module Legion
+    module LLM
+      module SpecTransport
+        class DefaultExchange
+          attr_reader :channel, :name, :published_payload, :published_options
+
+          def initialize(channel)
+            @channel = channel
+            @name = ''
+          end
+
+          def publish(payload, **options)
+            @published_payload = payload
+            @published_options = options
+            true
+          end
+        end
+
+        class Channel
+          attr_reader :confirm_timeout, :default_exchange
+
+          def initialize
+            @open = true
+            @default_exchange = DefaultExchange.new(self)
+          end
+
+          def open? = @open
+          def prefetch(*) = true
+
+          def confirm_select = true
+
+          def wait_for_confirms(timeout = nil)
+            @confirm_timeout = timeout
+            true
+          end
+
+          def on_return(&); end
+        end
+      end
+    end
+  end
+
+  class << Legion::Transport::Connection
+    def channel
+      @channel ||= Legion::LLM::SpecTransport::Channel.new
+    end
+  end
+rescue LoadError
+  # Older standalone test environments may not install legion-transport.
+end
+
 # Only defined when the real legion-transport gem is not loaded.
 unless defined?(Legion::Transport::Message) && Legion::Transport::Message.instance_method(:initialize).parameters.any?
   module Legion

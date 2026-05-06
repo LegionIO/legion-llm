@@ -162,14 +162,18 @@ module Legion
 
                   routing = pipeline_response.routing || {}
                   tokens = pipeline_response.tokens || {}
+                  done_payload = {
+                    request_id:      request_id,
+                    content:         full_text,
+                    model:           (routing[:model] || routing['model']).to_s,
+                    input_tokens:    token_value(tokens, :input),
+                    output_tokens:   token_value(tokens, :output),
+                    tool_calls:      extract_tool_calls(pipeline_response),
+                    conversation_id: pipeline_response.conversation_id
+                  }
+                  done_payload[:thinking] = pipeline_response.thinking if include_thinking && pipeline_response.thinking
                   emit_sse_event(out, 'done', {
-                                   request_id:      request_id,
-                                   content:         full_text,
-                                   model:           (routing[:model] || routing['model']).to_s,
-                                   input_tokens:    token_value(tokens, :input),
-                                   output_tokens:   token_value(tokens, :output),
-                                   tool_calls:      extract_tool_calls(pipeline_response),
-                                   conversation_id: pipeline_response.conversation_id
+                                   **done_payload
                                  })
 
                   log.info(
@@ -209,16 +213,18 @@ module Legion
                   "stop_reason=#{pipeline_response.stop&.dig(:reason) || 'unknown'} stream=false"
                 )
 
-                json_response({
-                                request_id:      request_id,
-                                content:         content,
-                                tool_calls:      tool_calls,
-                                stop_reason:     pipeline_response.stop&.dig(:reason)&.to_s,
-                                model:           (routing[:model] || routing['model']).to_s,
-                                input_tokens:    token_value(tokens, :input),
-                                output_tokens:   token_value(tokens, :output),
-                                conversation_id: pipeline_response.conversation_id
-                              }, status_code: 200)
+                payload = {
+                  request_id:      request_id,
+                  content:         content,
+                  tool_calls:      tool_calls,
+                  stop_reason:     pipeline_response.stop&.dig(:reason)&.to_s,
+                  model:           (routing[:model] || routing['model']).to_s,
+                  input_tokens:    token_value(tokens, :input),
+                  output_tokens:   token_value(tokens, :output),
+                  conversation_id: pipeline_response.conversation_id
+                }
+                payload[:thinking] = pipeline_response.thinking if include_thinking && pipeline_response.thinking
+                json_response(payload, status_code: 200)
               end
             rescue Legion::LLM::AuthError => e
               handle_exception(e, level: :error, handled: true, operation: 'llm.api.inference.auth', request_id: request_id)

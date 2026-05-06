@@ -43,7 +43,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
     end
 
     it 'uses single provider call and returns a Inference::Response' do
-      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(native_dispatch_result(content: good_content))
+      expect(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: good_content))
 
       executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
@@ -52,7 +52,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
     end
 
     it 'does not retry on quality failure' do
-      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(native_dispatch_result(content: short_content))
+      expect(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: short_content))
 
       executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
@@ -66,7 +66,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
     end
 
     it 'returns a Inference::Response on first passing attempt' do
-      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(native_dispatch_result(content: good_content))
+      expect(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: good_content))
 
       executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
@@ -76,7 +76,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
 
     it 'retries on quality failure and returns good response on second attempt' do
       call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
         call_count += 1
         if call_count == 1
           native_dispatch_result(content: short_content)
@@ -94,7 +94,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
 
     it 'retries on provider error and returns good response on second attempt' do
       call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
         call_count += 1
         raise Legion::LLM::ProviderError, 'timeout' if call_count == 1
 
@@ -110,7 +110,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
 
     it 'raises EscalationExhausted when all attempts fail' do
       call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
         call_count += 1
         raise Legion::LLM::ProviderError, 'always fails'
       end
@@ -123,7 +123,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       Legion::Settings[:llm][:routing][:escalation][:max_attempts] = 2
 
       call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
         call_count += 1
         raise Legion::LLM::ProviderError, 'fail'
       end
@@ -135,7 +135,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
 
     it 'records timeline events for each escalation attempt' do
       call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
         call_count += 1
         if call_count == 1
           native_dispatch_result(content: short_content)
@@ -159,7 +159,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       )
 
       call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
         call_count += 1
         if call_count == 1
           native_dispatch_result(content: 'this response is long enough but lacks the keyword padding here')
@@ -180,7 +180,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
         escalation: { pipeline_enabled: false }
       }
 
-      expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(native_dispatch_result(content: good_content))
+      expect(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: good_content))
 
       executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call

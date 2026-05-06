@@ -64,6 +64,81 @@ module Legion
           @options[:content_encoding] || super
         end
 
+        def publish_envelope_options(options)
+          {
+            routing_key:      options[:routing_key] || routing_key || '',
+            content_type:     options[:content_type] || content_type,
+            content_encoding: options[:content_encoding] || content_encoding,
+            type:             options[:type] || type,
+            priority:         options[:priority] || priority,
+            expiration:       options[:expiration] || expiration,
+            headers:          headers,
+            persistent:       options.key?(:persistent) ? options[:persistent] : persistent,
+            message_id:       message_id,
+            correlation_id:   correlation_id,
+            reply_to:         reply_to,
+            app_id:           app_id,
+            timestamp:        timestamp
+          }.tap do |envelope|
+            envelope[:mandatory] = true if options[:mandatory] == true
+          end
+        end
+
+        def install_return_listener(exchange_dest, options, return_state)
+          return unless options[:mandatory] == true
+
+          return_channel = publish_channel(exchange_dest)
+          return unless return_channel.respond_to?(:on_return)
+
+          expected_correlation_id = correlation_id
+          expected_message_id = message_id
+          return_channel.on_return do |return_info, properties, _content|
+            next if properties.respond_to?(:correlation_id) && properties.correlation_id &&
+                    expected_correlation_id && properties.correlation_id != expected_correlation_id
+            next if properties.respond_to?(:message_id) && properties.message_id &&
+                    expected_message_id && properties.message_id != expected_message_id
+
+            return_state[:returned] = true
+            return_state[:reply_code] = return_info.reply_code if return_info.respond_to?(:reply_code)
+            return_state[:reply_text] = return_info.reply_text if return_info.respond_to?(:reply_text)
+          end
+        end
+
+        def prepare_publisher_confirms(exchange_dest, options)
+          return unless options[:publisher_confirm] == true
+
+          confirm_channel = publish_channel(exchange_dest)
+          confirm_channel.confirm_select if confirm_channel.respond_to?(:confirm_select)
+        end
+
+        def publish_result(exchange_dest, options, return_state)
+          status = confirm_publish(exchange_dest, options)
+          status = :unroutable if return_state[:returned]
+          ex_name = exchange_dest.respond_to?(:name) ? exchange_dest.name : exchange_dest.to_s
+          {
+            status:            status,
+            accepted:          status == :accepted,
+            exchange:          ex_name,
+            routing_key:       options[:routing_key] || routing_key || '',
+            message_id:        message_id,
+            return_reply_code: return_state[:reply_code],
+            return_reply_text: return_state[:reply_text],
+            correlation_id:    correlation_id
+          }.compact
+        end
+
+        def publish_failure_result(status, error, options = @options)
+          {
+            status:         status,
+            accepted:       false,
+            error_class:    error.class.name,
+            error:          error.message,
+            routing_key:    options[:routing_key] || routing_key || '',
+            message_id:     message_id,
+            correlation_id: correlation_id
+          }
+        end
+
         def tracing_headers
           tracing = @options[:tracing] || context_value(message_context, :tracing)
           return {} unless tracing.is_a?(Hash)
@@ -85,6 +160,26 @@ module Legion
         end
 
         private
+
+        def publish_channel(exchange_dest)
+          return exchange_dest.channel if exchange_dest.respond_to?(:channel)
+
+          channel
+        end
+
+        def confirm_publish(exchange_dest, options)
+          return :accepted unless options[:publisher_confirm] == true
+
+          confirm_channel = publish_channel(exchange_dest)
+          return :accepted unless confirm_channel.respond_to?(:wait_for_confirms)
+
+          timeout = options[:publish_confirm_timeout_ms]
+          confirmed = timeout ? confirm_channel.wait_for_confirms(timeout.to_f / 1000.0) : confirm_channel.wait_for_confirms
+          confirmed == false ? :nacked : :accepted
+        rescue Timeout::Error => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.transport.confirm_publish')
+          :confirm_timeout
+        end
 
         def encryption_headers
           h = {}

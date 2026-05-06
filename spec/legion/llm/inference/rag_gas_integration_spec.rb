@@ -68,7 +68,7 @@ confidence: 0.9 }],
     allow(mock_session).to receive(:ask).and_return(mock_response)
 
     injected = nil
-    allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat) do |**kwargs|
+    allow(Legion::LLM::Call::Dispatch).to receive(:call) do |**kwargs|
       injected = kwargs[:system]
       native_dispatch_result(content: 'pipeline response')
     end

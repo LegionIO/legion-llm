@@ -2,7 +2,7 @@
 
 LLM routing and provider orchestration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Routes chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata through Legion-native `lex-llm-*` provider extensions.
 
-**Version**: 0.8.49
+**Version**: 0.9.0
 
 ## Installation
 
@@ -60,7 +60,7 @@ Requests flow through the full Inference pipeline — routing, metering, audit, 
 Both formats supported with correct SSE shapes:
 - **OpenAI**: `data: {"choices":[{"delta":{"content":"..."}}]}` chunks, terminated by `data: [DONE]`
 - **Anthropic**: Typed events — `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`
-- **Native**: `/api/llm/inference` streams `text-delta`, `thinking-delta`, tool lifecycle events, and a final `done` event. Structured provider content blocks are flattened to plain text in both streaming and non-streaming native responses so `content` remains a string for daemon clients.
+- **Native**: `/api/llm/inference` streams `text-delta`, optional `thinking-delta` events when `include_thinking: true`, tool lifecycle events, and a final `done` event. Structured provider content blocks are flattened to plain text in both streaming and non-streaming native responses so `content` remains a string for daemon clients.
 
 ### API Authentication
 
@@ -370,9 +370,9 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   ├── Arbitrage    # Cost-aware model selection when no rules match
 │   └── Escalation/
 │       └── History  # EscalationHistory mixin
-├── Fleet                                # Fleet RPC dispatch over AMQP (built-in)
+├── Fleet                                # Fleet dispatch over AMQP; provider responders live in lex-llm-* gems
 │   ├── Dispatcher   # Fleet RPC dispatch with routing key building, per-type timeouts
-│   ├── Handler      # Fleet request handler for GPU worker nodes
+│   ├── WorkerExecution # Shared execution policy called by provider-owned responders
 │   └── ReplyDispatcher # Correlation-based reply routing
 ├── API                                  # All external HTTP interfaces
 │   ├── Auth         # Config-driven Bearer/x-api-key auth for /v1/ routes
@@ -392,10 +392,10 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │       ├── OpenAIRequest / OpenAIResponse
 │       └── AnthropicRequest / AnthropicResponse
 ├── Audit                                # Prompt, tool, and skill audit event emission
-├── Transport                            # Centralized AMQP exchange and message definitions
+├── Transport                            # Centralized AMQP exchange and non-fleet message definitions
 │   ├── Message      # LLM base message: context propagation, LLM headers
 │   ├── Exchanges/   # Fleet, Metering, Audit, Escalation
-│   └── Messages/    # FleetRequest, FleetResponse, FleetError, MeteringEvent, etc.
+│   └── Messages/    # MeteringEvent, prompt/tool audit, escalation, and compatibility wrappers
 ├── Scheduling                           # Deferred execution
 │   ├── Batch        # Non-urgent request batching with priority queue and auto-flush
 │   └── OffPeak      # Peak-hour deferral
@@ -497,8 +497,8 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 │  Tier 1: LOCAL  → Ollama on this machine (direct HTTP)   │
 │          Zero network overhead, no Transport              │
 │                                                          │
-│  Tier 2: FLEET  → vLLM/Ollama on GPU workers             │
-│          Built-in Fleet RPC over AMQP                     │
+│  Tier 2: FLEET  → provider-owned lex-llm-* responders     │
+│          Shared lex-llm fleet envelopes over AMQP         │
 │                                                          │
 │  Tier 3: CLOUD  → Bedrock / Azure / Gemini               │
 │  Tier 4: FRONTIER → Anthropic / OpenAI                   │
@@ -509,12 +509,12 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 | Tier | Target | Use Case |
 |------|--------|----------|
 | `local` | Ollama on localhost | Privacy-sensitive, offline, or low-latency workloads |
-| `fleet` | Shared hardware via built-in Fleet dispatcher (AMQP) | Larger vLLM/Ollama models on dedicated GPU servers |
-| `openai_compat` | OpenAI-compatible gateways | Self-hosted or proxy endpoints with OpenAI-compatible APIs |
+| `fleet` | Shared hardware via provider-owned lex-llm responders over AMQP | Larger vLLM/Ollama models on dedicated GPU servers |
+| `openai_compat` | OpenAI-compatible provider instances | Self-hosted or proxy endpoints with OpenAI-compatible APIs |
 | `cloud` | API providers (Bedrock, Azure, Gemini) | Managed cloud inference |
 | `frontier` | API providers (Anthropic, OpenAI) | Frontier models, full-capability inference |
 
-Fleet dispatch is built into legion-llm. The `Fleet::Dispatcher` publishes shared-lane requests to keys such as `llm.fleet.inference.qwen3-6-27b.ctx32000` or `llm.fleet.embed.nomic-embed-text`; `Fleet::Handler` processes them on GPU worker nodes and replies through correlated live responses. Keep `routing.tiers.fleet.routing_style` set to `shared_lane` for the default pooled model lanes, set it to `offering_lane` for exact provider-instance lanes such as `llm.fleet.offering.vllm-gpu-01.qwen3-6.inference`, or use any other value only for the legacy `llm.request.{provider}.{type}.{model}` keys.
+Fleet dispatch is built into `legion-llm`, but fleet consumption is provider-owned. `Fleet::Dispatcher` publishes shared `lex-llm` protocol-v2 `FleetRequest` envelopes to keys such as `llm.fleet.inference.qwen3-6-27b.ctx32000` or `llm.fleet.embed.nomic-embed-text`; the enabled provider gem actor consumes the request, validates the signed token and idempotency key, calls `Legion::LLM::Fleet::WorkerExecution`, and replies with shared `FleetResponse` or `FleetError` envelopes. Keep `routing.tiers.fleet.routing_style` set to `shared_lane` for the default pooled model lanes, or set it to `offering_lane` for exact provider-instance lanes such as `llm.fleet.offering.vllm-gpu-01.qwen3-6.inference`.
 
 #### Intent-Based Dispatch
 
@@ -585,7 +585,7 @@ Add routing configuration under the `llm` key:
           "timeout_seconds": 30,
           "timeouts": { "embed": 10, "chat": 30, "generate": 30, "default": 30 }
         },
-        "openai_compat": { "gateways": [] },
+        "openai_compat": { "providers": ["openai"] },
         "cloud": { "providers": ["bedrock", "azure", "gemini"] },
         "frontier": { "providers": ["anthropic", "openai"] }
       },
@@ -853,6 +853,8 @@ Legion::Service#initialize
   load_extensions      # LEX extensions (can use LLM if available)
 ```
 
+LegionIO hosts these routes through `mount_library_routes('llm', Routes::Llm, 'Legion::LLM::Routes')`. The route modules remain owned by `legion-llm`; LegionIO no longer registers provider gateway fallback routes when the library is available.
+
 - **Service**: `setup_llm` called between data and supervision in startup sequence
 - **Extensions**: `llm_required?` method on extension module, checked at load time
 - **Helpers**: `Legion::Extensions::Helpers::LLM` auto-loaded when gem is present
@@ -887,8 +889,9 @@ bundle exec rubocop -A
 | `legion-json` | Legion JSON serialization |
 | `legion-logging` | Logging |
 | `legion-settings` | Configuration defaults and file overrides |
+| `legion-transport` (>= 1.4.14) | AMQP transport for fleet dispatch, metering, and audit |
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
-| `lex-llm` (>= 0.1.6) | Provider-neutral model offering and adapter base |
+| `lex-llm` (>= 0.4.0) | Provider-neutral contract, model offerings, response normalization, and fleet envelopes |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 

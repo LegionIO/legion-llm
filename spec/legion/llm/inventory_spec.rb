@@ -5,6 +5,7 @@ require 'spec_helper'
 RSpec.describe Legion::LLM::Inventory do
   before do
     allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
+    allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
   end
 
   it 'builds default inference and embedding offerings from settings' do
@@ -24,14 +25,16 @@ RSpec.describe Legion::LLM::Inventory do
 
   it 'includes discovered vLLM context windows in the shared fleet lane' do
     Legion::Settings[:extensions][:llm][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
-    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([
-                                                                              {
-                                                                                model:          'qwen3.6-27b',
-                                                                                provider:       :vllm,
-                                                                                instance:       :default,
-                                                                                context_length: 65_536
-                                                                              }
-                                                                            ])
+    discovered_models = [
+      {
+        model:          'qwen3.6-27b',
+        provider:       :vllm,
+        instance:       :default,
+        context_length: 65_536
+      }
+    ]
+    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered_models)
+    allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered_models)
 
     offering = described_class.offerings(provider: 'vllm', model: 'qwen3.6-27b').first
 
@@ -42,10 +45,12 @@ RSpec.describe Legion::LLM::Inventory do
 
   it 'filters embedding and inference offerings independently' do
     Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
-    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([
-                                                                              { model: 'qwen3.6:27b', provider: :ollama, instance: :default },
-                                                                              { model: 'nomic-embed-text', provider: :ollama, instance: :default }
-                                                                            ])
+    discovered_models = [
+      { model: 'qwen3.6:27b', provider: :ollama, instance: :default },
+      { model: 'nomic-embed-text', provider: :ollama, instance: :default }
+    ]
+    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered_models)
+    allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered_models)
 
     embed_offerings = described_class.offerings(provider: 'ollama', type: 'embed')
     inference_offerings = described_class.offerings(provider: 'ollama', type: 'inference')
@@ -150,25 +155,25 @@ RSpec.describe Legion::LLM::Inventory do
   end
 
   it 'consumes lex-llm native provider offerings when adapters expose them' do
-    adapter = double(
-      'Adapter',
-      offerings: [
-        {
-          offering_id:           'azure:default:inference:gpt-4o',
-          provider_family:       :azure_foundry,
-          model_family:          :openai,
-          provider_instance:     :eastus,
-          model:                 'gpt4o-prod',
-          canonical_model_alias: 'gpt-4o',
-          usage_type:            :inference,
-          routing_metadata:      { deployment: 'gpt4o-prod' },
-          credentials:           { api_key: 'secret' },
-          capabilities:          %i[chat tools]
-        }
-      ]
-    )
-    allow(Legion::LLM::Call::Registry).to receive(:available).and_return([:azure_foundry])
-    allow(Legion::LLM::Call::Registry).to receive(:for).with(:azure_foundry).and_return(adapter)
+    adapter = double('Adapter')
+    allow(adapter).to receive(:offerings).with(live: false).and_return([
+                                                                         {
+                                                                           offering_id:           'azure:default:inference:gpt-4o',
+                                                                           provider_family:       :azure_foundry,
+                                                                           model_family:          :openai,
+                                                                           provider_instance:     :eastus,
+                                                                           model:                 'gpt4o-prod',
+                                                                           canonical_model_alias: 'gpt-4o',
+                                                                           usage_type:            :inference,
+                                                                           routing_metadata:      { deployment: 'gpt4o-prod' },
+                                                                           credentials:           { api_key: 'secret' },
+                                                                           capabilities:          %i[chat tools]
+                                                                         }
+                                                                       ])
+    allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([
+                                                                               { provider: :azure_foundry, instance: :eastus,
+                                                                                 adapter: adapter, metadata: {} }
+                                                                             ])
 
     offering = described_class.offerings(provider: 'azure_foundry').first
 
@@ -181,6 +186,31 @@ RSpec.describe Legion::LLM::Inventory do
       routing_metadata:      { deployment: 'gpt4o-prod' }
     )
     expect(offering).not_to have_key(:credentials)
+  end
+
+  it 'uses cached discovery for inventory reads without forcing provider refresh' do
+    Legion::Settings[:extensions][:llm][:vllm] = { enabled: true }
+    adapter = double('Adapter')
+    allow(adapter).to receive(:offerings).with(live: false).and_return([])
+    expect(adapter).not_to receive(:offerings).with(live: true)
+    allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([
+                                                                               { provider: :vllm, instance: :apollo,
+                                                                                 adapter: adapter, metadata: {} }
+                                                                             ])
+    allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([
+                                                                                     {
+                                                                                       model:      'qwen3.6-27b',
+                                                                                       provider:   :vllm,
+                                                                                       instance:   :apollo,
+                                                                                       tier:       :direct,
+                                                                                       size_bytes: nil
+                                                                                     }
+                                                                                   ])
+    expect(Legion::LLM::Discovery).not_to receive(:refresh_discovered_models!)
+
+    offerings = described_class.offerings(provider: 'vllm')
+
+    expect(offerings.map { |offering| offering[:model] }).to include('qwen3.6-27b')
   end
 
   it 'reads top-level string-keyed provider and embedding settings' do

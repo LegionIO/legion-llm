@@ -349,6 +349,112 @@ confidence: 0.9 }],
     end
   end
 
+  describe 'route attempt metadata' do
+    let(:fleet_request) do
+      Legion::LLM::Inference::Request.build(
+        id:              'req-route-fleet',
+        conversation_id: 'conv-route-fleet',
+        messages:        [{ role: :user, content: 'hello' }],
+        routing:         { provider: :vllm, model: 'qwen3.6-27b' }
+      )
+    end
+
+    it 'records direct success attempts in the response routing payload and timeline' do
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      register_native_chat do
+        { content: 'direct answer', usage: { input_tokens: 10, output_tokens: 5 } }
+      end
+
+      response = described_class.new(request).call
+      attempt = response.routing[:route_attempts].last
+
+      expect(attempt).to include(
+        provider:      :anthropic,
+        model:         'claude-opus-4-6',
+        dispatch_path: :direct,
+        status:        :success
+      )
+      expect(attempt).to include(:idempotency_key, :selected_lane)
+      expect(response.timeline).to include(hash_including(key: 'provider:route_attempt', data: attempt))
+    end
+
+    it 'records fleet timeouts with the selected lane and idempotency key' do
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
+        success:        false,
+        error:          'fleet_timeout',
+        correlation_id: 'corr-timeout',
+        timeout:        1
+      )
+
+      executor = described_class.new(fleet_request)
+
+      expect { executor.call }.to raise_error(Legion::LLM::ProviderError, /fleet_timeout/)
+      attempt = executor.instance_variable_get(:@route_attempts).last
+      expect(attempt).to include(
+        provider:       :vllm,
+        model:          'qwen3.6-27b',
+        dispatch_path:  :fleet,
+        status:         :failure,
+        failure_reason: 'fleet_timeout'
+      )
+      expect(attempt[:idempotency_key]).to match(/\Aidem_/)
+      expect(attempt[:selected_lane]).to eq('llm.fleet.inference.qwen3-6-27b')
+    end
+
+    it 'records fleet errors separately from publish and timeout failures' do
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
+        success:        false,
+        error:          'fleet_worker_error',
+        correlation_id: 'corr-error'
+      )
+
+      executor = described_class.new(fleet_request)
+
+      expect { executor.call }.to raise_error(Legion::LLM::ProviderError, /fleet_worker_error/)
+      expect(executor.instance_variable_get(:@route_attempts).last).to include(
+        dispatch_path:  :fleet,
+        status:         :failure,
+        failure_reason: 'fleet_worker_error'
+      )
+    end
+
+    it 'keeps failed fleet attempt metadata when escalation succeeds on a direct provider' do
+      fleet_resolution = Legion::LLM::Router::Resolution.new(tier: :fleet, provider: :vllm, model: 'qwen3.6-27b')
+      direct_resolution = Legion::LLM::Router::Resolution.new(tier: :cloud, provider: :anthropic, model: 'claude-opus-4-6')
+      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [fleet_resolution, direct_resolution], max_attempts: 2)
+      escalation_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        extra:    { intent: { capability: :chat } }
+      )
+
+      Legion::Settings[:llm][:routing][:escalation][:enabled] = true
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = true
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+      allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
+        success:        false,
+        error:          'fleet_timeout',
+        correlation_id: 'corr-timeout'
+      )
+      register_native_chat(:anthropic) do
+        {
+          content: 'direct escalation answer with enough text to pass quality',
+          usage:   { input_tokens: 8, output_tokens: 9 }
+        }
+      end
+
+      response = described_class.new(escalation_request).call
+      attempts = response.routing[:route_attempts]
+
+      expect(attempts.map { |attempt| attempt[:dispatch_path] }).to eq(%i[fleet direct])
+      expect(attempts.first).to include(status: :failure, failure_reason: 'fleet_timeout')
+      expect(attempts.last).to include(status: :success, escalation: hash_including(attempt: 2))
+      expect(response.message[:content]).to include('direct escalation answer')
+    end
+  end
+
   describe 'MCP integration' do
     it 'includes McpDiscovery step module' do
       expect(described_class.ancestors).to include(Legion::LLM::Inference::Steps::McpDiscovery)

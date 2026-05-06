@@ -495,7 +495,6 @@ module Legion
         if (intent || tier) && Router.routing_enabled?
           resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
           if resolution
-            resolution = Router::GatewayInterceptor.intercept(resolution, context: kwargs.fetch(:context, {}))
             model = resolution.model
             provider = resolution.provider
             assert_external_allowed! if resolution.external?
@@ -505,6 +504,7 @@ module Legion
         end
 
         model ||= llm_setting(:default_model)
+        instance = resolution&.instance || kwargs[:instance] || kwargs[:instance_id] || kwargs[:provider_instance]
         provider ||= (model && Router.infer_provider_for_model(model)) ||
                      llm_setting(:default_provider)
 
@@ -518,19 +518,21 @@ module Legion
         opts[:tools] = tools if tools
 
         log.debug "[llm][inference] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
-        chat_single_native(model: opts[:model], provider: opts[:provider], message: message,
+        chat_single_native(model: opts[:model], provider: opts[:provider], instance: instance, message: message,
                            caller: kwargs[:caller], **opts.except(:model, :provider), &)
       end
 
-      def chat_single_native(model:, provider:, message:, caller: nil, **, &block)
+      def chat_single_native(model:, provider:, message:, instance: nil, caller: nil, **, &block)
         raise native_provider_error('session-style chat requires message or messages') unless message
         raise native_provider_error('chat without a native provider') unless provider
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         result = if block
-                   Call::Dispatch.dispatch_stream(provider: provider, model: model, messages: messages, **, &block)
+                   Call::Dispatch.call(provider: provider, instance: instance, capability: :stream, model: model,
+                                       messages: messages, **, &block)
                  else
-                   Call::Dispatch.dispatch_chat(provider: provider, model: model, messages: messages, **)
+                   Call::Dispatch.call(provider: provider, instance: instance, capability: :chat, model: model,
+                                       messages: messages, **)
                  end
         response = Call::NativeResponseAdapter.new(result)
         emit_non_pipeline_metering(response, model: model, provider: provider, caller: caller)

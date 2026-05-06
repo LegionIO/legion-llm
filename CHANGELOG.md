@@ -1,5 +1,23 @@
 # Legion LLM Changelog
 
+## [0.9.0] - 2026-05-06
+
+### Changed
+- Added shared provider-owned fleet responder execution support for lex-llm provider gems.
+- Moved fleet dispatch defaults to top-level `fleet.dispatch`, removed legacy gateway defaults, and rejected `routing.use_fleet` / `openai_compat.gateways` settings during validation.
+- OpenAI-compatible routing now resolves through registered `lex-llm-openai` provider instances instead of gateway interceptor configuration.
+- Native dispatch now routes chat, stream, embed, image, and health calls through the canonical lex-llm provider-instance adapter contract.
+- Native inference now records direct/fleet route attempts with dispatch path, idempotency key, selected lane, failure reason, and escalation context.
+- Native inference and `/api/llm/inference` now strip provider thinking from caller-visible content and expose thinking only through explicit diagnostic fields/events.
+- Inventory and provider/model API reads now use cached discovery and non-live provider offerings, so explicit discovery refresh remains the only path that probes provider endpoints.
+- Fleet dispatch now publishes shared lex-llm protocol-v2 envelopes with canonical `operation`, `request_id`, `correlation_id`, `idempotency_key`, signed tokens, and strict reply matching.
+- Fleet worker handling now validates protocol-v2 envelopes, enforces token/idempotency policy, dispatches local providers through canonical lex-llm methods, and publishes shared lex-llm response/error envelopes.
+- Bumped dependency floors to `lex-llm >= 0.4.0` and `legion-transport >= 1.4.14` for shared provider contracts and fleet envelopes.
+
+### Removed
+- Removed the gateway interceptor runtime path and gateway metering fallback.
+- Retired `Legion::LLM::Transport::Messages::FleetRequest`, `FleetResponse`, and `FleetError` as fleet message authorities in favor of `Legion::Extensions::Llm::Transport::Messages::*`.
+
 ## [0.8.51] - 2026-05-03
 
 ### Changed

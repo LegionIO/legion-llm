@@ -20,7 +20,7 @@ RSpec.describe Legion::LLM::Discovery do
       metadata:        { parameter_count: 27_000_000_000 }
     )
     adapter = Class.new do
-      define_method(:offerings) { [offering] }
+      define_method(:offerings) { |live: false| live ? [offering] : [] }
     end.new
 
     Legion::LLM::Call::Registry.register(:vllm, adapter, instance: :apollo, metadata: { tier: :direct })

@@ -19,11 +19,11 @@ module Legion
           default_model:             model_override,
           default_provider:          nil,
           system_baseline:           system_baseline_default,
+          fleet:                     fleet_defaults,
           routing:                   routing_defaults,
           budget:                    budget_defaults,
           confidence:                confidence_defaults,
           discovery:                 discovery_defaults,
-          gateway:                   gateway_defaults,
           daemon:                    daemon_defaults,
           prompt_caching:            prompt_caching_defaults,
           arbitrage:                 arbitrage_defaults,
@@ -141,6 +141,22 @@ module Legion
         Legion::Settings.register_library(:llm, default)
       end
 
+      def self.validate!(settings)
+        raise ArgumentError, 'llm.gateway has been removed; configure provider instances instead' if config_key?(settings, :gateway)
+
+        routing = config_value(settings, :routing, {})
+        if routing.is_a?(Hash)
+          raise ArgumentError, 'routing.use_fleet has been removed; configure fleet.dispatch.enabled instead' if config_key?(routing, :use_fleet)
+
+          openai_compat = config_value(config_value(routing, :tiers, {}), :openai_compat, {})
+          if openai_compat.is_a?(Hash) && config_key?(openai_compat, :gateways)
+            raise ArgumentError, 'routing.tiers.openai_compat.gateways has been removed; configure lex-llm-openai provider instances instead'
+          end
+        end
+
+        settings
+      end
+
       def self.assign_value(target, keys, value)
         leaf = keys[0...-1].reduce(target) do |current, key|
           existing = config_value(current, key)
@@ -229,6 +245,46 @@ module Legion
         }
       end
 
+      def self.fleet_defaults
+        {
+          dispatch:  {
+            enabled:                true,
+            exchange:               'llm.fleet',
+            routing_style:          :shared_lane,
+            mandatory:              true,
+            publisher_confirm:      true,
+            spool:                  false,
+            timeout_seconds:        30,
+            timeouts:               { chat: 30, stream: 30, embed: 10, image: 60, default: 30 },
+            require_auth:           nil,
+            token_ttl_seconds:      180,
+            reply_queue_expires_ms: 60_000,
+            reply_queue_prefix:     'llm.fleet.reply',
+            request_ttl_ms:         120_000
+          },
+          auth:      {
+            require_signed_token:   true,
+            issuer:                 'legion-llm',
+            audience:               'lex-llm-fleet-worker',
+            algorithm:              'HS256',
+            accepted_issuers:       ['legion-llm'],
+            max_clock_skew_seconds: 30
+          },
+          responder: {
+            enabled:                    true,
+            require_auth:               nil,
+            require_policy:             false,
+            require_idempotency:        true,
+            idempotency_ttl_seconds:    600,
+            accepted_protocol_version:  2,
+            mandatory:                  false,
+            publisher_confirm:          false,
+            publish_confirm_timeout_ms: 500,
+            spool:                      false
+          }
+        }
+      end
+
       def self.routing_defaults
         {
           enabled:        true,
@@ -242,9 +298,7 @@ module Legion
               timeout_seconds: 30,
               timeouts:        { embed: 10, chat: 30, generate: 30, default: 30 }
             },
-            openai_compat: {
-              gateways: []
-            },
+            openai_compat: {},
             cloud:         { providers: %w[bedrock azure gemini] },
             frontier:      { providers: %w[anthropic openai] }
           },
@@ -270,18 +324,6 @@ module Legion
           session_max_tokens:  nil,
           session_warn_tokens: nil,
           daily_max_tokens:    nil
-        }
-      end
-
-      def self.gateway_defaults
-        {
-          enabled:            true,
-          endpoint:           nil,
-          api_key:            nil,
-          timeout_seconds:    30,
-          model_policy:       {},
-          headers:            {},
-          fallback_to_direct: true
         }
       end
 
@@ -454,6 +496,13 @@ module Legion
 
       # Provider defaults live in each lex-llm-* provider extension's
       # `default_settings` and are accessed via Legion::Settings[:extensions][:llm].
+
+      def self.config_key?(config, key)
+        return false unless config.respond_to?(:key?)
+
+        config.key?(key) || config.key?(key.to_s)
+      end
+      private_class_method :config_key?
     end
   end
 end

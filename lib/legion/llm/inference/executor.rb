@@ -2,11 +2,14 @@
 
 require 'concurrent'
 
+require_relative 'route_attempts'
+
 module Legion
   module LLM
     module Inference
       class Executor
         include Legion::Logging::Helper
+        include RouteAttempts
         include Steps::Rbac
         include Steps::Classification
         include Steps::Billing
@@ -69,12 +72,16 @@ module Legion
           @discovered_tools = []
           @triggered_tools = []
           @resolved_provider = nil
+          @resolved_instance = nil
           @resolved_model = nil
+          @resolved_tier = nil
           @resolved_offering_id = nil
           @resolved_offering_metadata = {}
           @confidence_score = nil
           @escalation_chain = nil
           @escalation_history = []
+          @route_attempts = []
+          @current_escalation_context = nil
           @proactive_tier_assignment = nil
           @tool_event_handler = nil
           @sticky_turn_snapshot = nil
@@ -128,6 +135,15 @@ module Legion
 
         def local_provider?
           %i[ollama vllm].include?(@resolved_provider&.to_sym)
+        end
+
+        def inferred_provider_tier(provider)
+          return nil unless provider
+          return Router.provider_tier(provider) if defined?(Router) && Router.respond_to?(:provider_tier)
+
+          Router::PROVIDER_TIER.fetch(provider.to_sym, :cloud) if defined?(Router::PROVIDER_TIER)
+        rescue StandardError
+          :cloud
         end
 
         def execute_steps
@@ -276,6 +292,7 @@ module Legion
           log.debug "[llm][executor] action=step_routing.enter requested_provider=#{@request.routing[:provider]} requested_model=#{@request.routing[:model]}"
           @timestamps[:routing_start] = Time.now
           provider = @request.routing[:provider]
+          instance = @request.routing[:instance] || @request.routing[:instance_id] || @request.routing[:provider_instance]
           model = @request.routing[:model]
           offering_id = @request.routing[:offering_id] || @request.routing[:id]
           offering_metadata = normalize_offering_metadata(@request.routing[:offering_metadata] ||
@@ -304,13 +321,15 @@ module Legion
                          end
             if resolution
               provider = resolution.provider
+              instance = resolution.instance || instance
               model = resolution.model
+              tier = resolution.tier
               offering_id = resolution.offering_id || offering_id
               offering_metadata = resolution.offering_metadata unless resolution.offering_metadata.empty?
               @audit[:'routing:provider_selection'] = {
                 outcome: :success,
                 detail: "selected #{provider}:#{model} via #{resolution.rule}",
-                data: { strategy: resolution.rule, tier: resolution.tier, offering_id: offering_id,
+                data: { strategy: resolution.rule, tier: resolution.tier, instance: instance, offering_id: offering_id,
                         offering_metadata: offering_metadata }.compact,
                 duration_ms: 0, timestamp: Time.now
               }
@@ -320,11 +339,15 @@ module Legion
           @resolved_provider = provider ||
                                (model && Router.infer_provider_for_model(model)) ||
                                llm_setting(:default_provider)
+          @resolved_instance = instance || llm_setting(:default_instance)
           @resolved_model = model || llm_setting(:default_model)
+          @resolved_tier = tier&.to_sym || inferred_provider_tier(@resolved_provider)
           @resolved_offering_id = offering_id
           @resolved_offering_metadata = offering_metadata
 
-          log.info "[llm][inference] resolved provider=#{@resolved_provider} model=#{@resolved_model} offering_id=#{@resolved_offering_id}"
+          log.info '[llm][inference] resolved ' \
+                   "provider=#{@resolved_provider} instance=#{@resolved_instance || 'default'} " \
+                   "model=#{@resolved_model} offering_id=#{@resolved_offering_id}"
           @timeline.record(
             category: :audit, key: 'routing:provider_selection',
             direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
@@ -395,7 +418,9 @@ module Legion
           chain.each do |resolution|
             start_time = Time.now
             @resolved_provider = resolution.provider
+            @resolved_instance = resolution.instance
             @resolved_model = resolution.model
+            @resolved_tier = resolution.tier
             @resolved_offering_id = resolution.offering_id
             @resolved_offering_metadata = resolution.offering_metadata
             succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
@@ -422,6 +447,10 @@ module Legion
         end
 
         def attempt_escalation(resolution, threshold, quality_check, start_time)
+          @current_escalation_context = {
+            attempt:      @escalation_history.size + 1,
+            max_attempts: @escalation_chain&.max_attempts
+          }.compact
           execute_provider_request
           duration_ms = ((Time.now - start_time) * 1000).round
           result = Quality::Checker.check(@raw_response, quality_threshold: threshold, quality_check: quality_check)
@@ -438,6 +467,8 @@ module Legion
             duration_ms: duration_ms
           )
           result.passed
+        ensure
+          @current_escalation_context = nil
         end
 
         def record_escalation_failure(err, resolution, start_time, outcome:, operation:, handled: false)
@@ -505,7 +536,9 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
-          raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless use_native_dispatch?(@resolved_provider)
+          unless fleet_dispatch? || use_native_dispatch?(@resolved_provider)
+            raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}"
+          end
 
           execute_provider_request_native
 
@@ -543,6 +576,7 @@ module Legion
             model:    @resolved_model,
             provider: @resolved_provider
           }
+          opts[:instance] = @resolved_instance if @resolved_instance
           opts[:thinking] = @request.thinking if @request.thinking
           opts.compact
         end
@@ -555,12 +589,7 @@ module Legion
           log.debug "[llm][executor] action=native_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
 
           loop do
-            result = Call::Dispatch.dispatch_chat(
-              provider: @resolved_provider,
-              model:    @resolved_model,
-              messages: messages,
-              **native_dispatch_options
-            )
+            result = dispatch_provider_request(capability: :chat, operation: :chat, messages: messages)
             result = Call::NativeResponseAdapter.coerce_result(result)
             tool_calls = Array(result[:tool_calls]).map { |tool_call| normalize_native_tool_call(tool_call) }
             if tool_calls.empty?
@@ -912,7 +941,9 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
-          raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless use_native_dispatch?(@resolved_provider)
+          unless fleet_dispatch? || use_native_dispatch?(@resolved_provider)
+            raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}"
+          end
 
           execute_provider_request_stream_native(&)
 
@@ -920,13 +951,12 @@ module Legion
           record_provider_response
         end
 
-        def execute_provider_request_stream_native(&)
-          result = Call::Dispatch.dispatch_stream(
-            provider: @resolved_provider,
-            model:    @resolved_model,
-            messages: native_dispatch_messages,
-            **native_dispatch_options,
-            &
+        def execute_provider_request_stream_native(&block)
+          result = dispatch_provider_request(
+            capability:   :stream,
+            operation:    :chat,
+            messages:     native_dispatch_messages,
+            stream_block: block
           )
           merge_response_offering_metadata(result[:metadata])
           @raw_response = Call::NativeResponseAdapter.new(result)
@@ -1231,7 +1261,8 @@ module Legion
           Legion::LLM::Metering::Pricing.estimate(
             model_id: @resolved_model, input_tokens: input_tokens, output_tokens: output_tokens
           )
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.estimate_cost')
           nil
         end
 
@@ -1391,6 +1422,7 @@ module Legion
 
           routing[:escalated] = @escalation_history.size > 1
           routing[:escalation_chain] = @escalation_history if @escalation_history.any?
+          routing[:route_attempts] = @route_attempts.dup if @route_attempts.any?
 
           if @timestamps[:provider_start] && @timestamps[:provider_end]
             routing[:latency_ms] = ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).round
@@ -1433,21 +1465,39 @@ module Legion
         def extract_thinking
           return nil unless @raw_response
 
-          thinking_content = if @raw_response.respond_to?(:thinking) && @raw_response.thinking
-                               @raw_response.thinking
-                             elsif @raw_response.respond_to?(:metadata) && @raw_response.metadata.is_a?(Hash)
-                               @raw_response.metadata[:thinking] || @raw_response.metadata['thinking']
-                             end
-          return nil unless thinking_content
+          thinking = if @raw_response.respond_to?(:thinking) && @raw_response.thinking
+                       @raw_response.thinking
+                     elsif @raw_response.respond_to?(:metadata) && @raw_response.metadata.is_a?(Hash)
+                       @raw_response.metadata[:thinking] || @raw_response.metadata['thinking']
+                     end
+          return nil unless thinking
 
-          {
-            content: thinking_content,
-            enabled: true,
-            config:  @request.thinking
-          }
+          payload = normalize_thinking_payload(thinking)
+          return nil unless payload
+
+          payload[:config] = @request.thinking if @request.thinking
+          payload
         rescue StandardError => e
           handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.extract_thinking')
           nil
+        end
+
+        def normalize_thinking_payload(thinking)
+          if thinking.is_a?(Hash)
+            normalized = thinking.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+            content = normalized[:content] || normalized[:text]
+            signature = normalized[:signature]
+          elsif thinking.respond_to?(:text)
+            content = thinking.text
+            signature = thinking.respond_to?(:signature) ? thinking.signature : nil
+          else
+            content = thinking
+            signature = nil
+          end
+          content = content.to_s.strip unless content.nil?
+          return nil if content.to_s.empty? && signature.to_s.empty?
+
+          { content: content, signature: signature, enabled: true }.compact
         end
 
         def build_response_cache

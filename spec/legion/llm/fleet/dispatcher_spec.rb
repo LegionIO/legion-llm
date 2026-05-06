@@ -3,6 +3,8 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Fleet::Dispatcher do
+  let(:future) { instance_double(Concurrent::Promises::ResolvableFuture) }
+
   describe '.fleet_available?' do
     it 'returns false when transport is not connected' do
       expect(described_class.fleet_available?).to eq(false)
@@ -14,107 +16,205 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       expect(described_class.fleet_enabled?).to eq(true)
     end
 
-    it 'returns false when use_fleet is false' do
-      Legion::Settings[:llm][:routing] = { use_fleet: false }
+    it 'returns false when fleet dispatch is disabled' do
+      Legion::Settings[:llm][:fleet] = { dispatch: { enabled: false } }
       expect(described_class.fleet_enabled?).to eq(false)
     end
 
-    it 'returns false when string-keyed settings disable fleet' do
-      Legion::Settings[:llm]['routing'] = { 'use_fleet' => false }
+    it 'returns false when string-keyed fleet dispatch settings disable fleet' do
+      Legion::Settings[:llm]['fleet'] = { 'dispatch' => { 'enabled' => false } }
       expect(described_class.fleet_enabled?).to eq(false)
+    end
+
+    it 'ignores the removed routing.use_fleet setting' do
+      Legion::Settings[:llm][:routing] = { use_fleet: false }
+      expect(described_class.fleet_enabled?).to eq(true)
     end
   end
 
   describe '.dispatch' do
     it 'returns fleet_unavailable when fleet is not available' do
-      result = described_class.dispatch(model: 'test', messages: [])
+      result = described_class.dispatch(
+        operation: :chat,
+        request:   { provider: 'ollama', provider_instance: 'default', model: 'test', messages: [] }
+      )
       expect(result[:success]).to eq(false)
       expect(result[:error]).to eq('fleet_unavailable')
     end
 
-    it 'registers the reply future before publishing the request' do
+    it 'requires an operation' do
+      expect do
+        described_class.dispatch(request: { provider: 'ollama', model: 'test' })
+      end.to raise_error(ArgumentError, /operation is required/)
+    end
+
+    it 'publishes canonical protocol-v2 fleet request envelopes without legacy fields' do
       order = []
-      future = instance_double(Concurrent::Promises::ResolvableFuture)
+      published_options = nil
+      fleet_message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
+
       allow(described_class).to receive(:fleet_available?).and_return(true)
       allow(future).to receive(:value!).and_return({ success: true })
-      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register) do |correlation_id, expected: {}|
+      allow(Legion::LLM::Fleet::TokenIssuer).to receive(:issue).and_return('signed-token')
+      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:agent_queue_name).and_return('llm.fleet.reply.test')
+      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register) do |correlation_id, expected:|
         order << :register
-        expect(correlation_id).not_to be_nil
-        expect(expected).to eq({})
+        expect(correlation_id).to match(/\Areq_/)
+        expect(expected).to include(
+          protocol_version: 2,
+          operation:        :chat,
+          correlation_id:   correlation_id
+        )
         future
       end
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:deregister)
-      allow(described_class).to receive(:publish_request) do
+      expect(fleet_message).to receive(:publish).with(
+        hash_including(
+          mandatory:                  true,
+          publisher_confirm:          true,
+          publish_confirm_timeout_ms: 500,
+          spool:                      false,
+          return_result:              true
+        )
+      ) do
         order << :publish
         { accepted: true, status: :accepted }
       end
+      expect(Legion::Extensions::Llm::Transport::Messages::FleetRequest).to receive(:new) do |options|
+        published_options = options
+        expect(options).to include(
+          operation:         :chat,
+          provider:          'ollama',
+          provider_instance: 'default',
+          model:             'qwen3.6:27b',
+          reply_to:          'llm.fleet.reply.test',
+          protocol_version:  2,
+          request_id:        a_string_matching(/\Areq_/),
+          correlation_id:    a_string_matching(/\Areq_/),
+          idempotency_key:   a_string_matching(/\Aidem_/),
+          signed_token:      'signed-token'
+        )
+        expect(options).not_to include(:request_type)
+        expect(options).not_to include(:fleet_correlation_id)
+        fleet_message
+      end
 
-      described_class.dispatch(model: 'test', messages: [], timeout: 1)
+      described_class.dispatch(
+        operation:       :chat,
+        request:         {
+          provider:          'ollama',
+          provider_instance: 'default',
+          model:             'qwen3.6:27b',
+          messages:          [{ role: 'user', content: 'hello' }]
+        },
+        message_context: { request_id: 'caller-req' },
+        timeout:         1
+      )
 
       expect(order).to eq(%i[register publish])
+      expect(published_options[:params]).to eq(messages: [{ role: 'user', content: 'hello' }])
+      expect(published_options[:message_context]).to eq(request_id: 'caller-req')
     end
 
-    it 'does not attach request metadata gates to legacy fleet replies' do
-      future = instance_double(Concurrent::Promises::ResolvableFuture)
+    it 'publishes unsigned requests when fleet dispatch auth is disabled' do
+      published_options = nil
+      fleet_message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
+
+      Legion::Settings[:llm][:fleet] = { dispatch: { require_auth: false } }
       allow(described_class).to receive(:fleet_available?).and_return(true)
       allow(future).to receive(:value!).and_return({ success: true })
+      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:agent_queue_name).and_return('llm.fleet.reply.test')
+      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register).and_return(future)
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:deregister)
-      allow(described_class).to receive(:publish_request).and_return({ accepted: true, status: :accepted })
+      allow(fleet_message).to receive(:publish).and_return({ accepted: true, status: :accepted })
+      allow(Legion::Extensions::Llm::Transport::Messages::FleetRequest).to receive(:new) do |options|
+        published_options = options
+        fleet_message
+      end
 
-      expect(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register).with(String, expected: {}).and_return(future)
+      expect(Legion::LLM::Fleet::TokenIssuer).not_to receive(:issue)
 
-      described_class.dispatch(model: 'test', messages: [], timeout: 1)
+      described_class.dispatch(operation: :chat, request: { provider: 'ollama', model: 'test' })
+
+      expect(published_options[:signed_token]).to eq('unsigned')
     end
 
-    it 'does not attach request metadata gates to request-object fleet replies' do
-      future = instance_double(Concurrent::Promises::ResolvableFuture)
+    it 'inherits dispatch auth from shared fleet auth policy when dispatch override is unset' do
+      published_options = nil
+      fleet_message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
+
+      Legion::Settings[:llm][:fleet] = { auth: { require_signed_token: false } }
       allow(described_class).to receive(:fleet_available?).and_return(true)
       allow(future).to receive(:value!).and_return({ success: true })
+      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:agent_queue_name).and_return('llm.fleet.reply.test')
+      allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register).and_return(future)
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:deregister)
-      allow(described_class).to receive(:publish_request).and_return({ accepted: true, status: :accepted })
+      allow(fleet_message).to receive(:publish).and_return({ accepted: true, status: :accepted })
+      allow(Legion::Extensions::Llm::Transport::Messages::FleetRequest).to receive(:new) do |options|
+        published_options = options
+        fleet_message
+      end
 
-      expect(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register).with(String, expected: {}).and_return(future)
+      expect(Legion::LLM::Fleet::TokenIssuer).not_to receive(:issue)
 
-      described_class.dispatch(request: { model: 'test', request_type: 'chat', provider: 'ollama' })
+      described_class.dispatch(operation: :chat, request: { provider: 'ollama', model: 'test' })
+
+      expect(published_options[:signed_token]).to eq('unsigned')
+    end
+
+    it 'rejects legacy fleet fields instead of forwarding them in params' do
+      allow(described_class).to receive(:fleet_available?).and_return(true)
+
+      expect do
+        described_class.dispatch(
+          operation: :chat,
+          request:   { provider: 'ollama', model: 'test', request_type: 'chat' }
+        )
+      end.to raise_error(ArgumentError, /request_type/)
     end
 
     it 'uses the effective wait timeout as the fleet message TTL' do
       published = nil
-      future = instance_double(Concurrent::Promises::ResolvableFuture)
+      fleet_message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
+
       allow(described_class).to receive(:fleet_available?).and_return(true)
       allow(future).to receive(:value!).and_return({ success: true })
+      allow(Legion::LLM::Fleet::TokenIssuer).to receive(:issue).and_return('signed-token')
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register).and_return(future)
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:deregister)
-      allow(described_class).to receive(:publish_request) do |**opts|
-        published = opts
-        { accepted: true, status: :accepted }
+      allow(fleet_message).to receive(:publish).and_return({ accepted: true, status: :accepted })
+      allow(Legion::Extensions::Llm::Transport::Messages::FleetRequest).to receive(:new) do |options|
+        published = options
+        fleet_message
       end
 
-      described_class.dispatch(model: 'test', messages: [], timeout: 7)
+      described_class.dispatch(operation: :chat, request: { provider: 'ollama', model: 'test' }, timeout: 7)
 
       expect(published[:ttl]).to eq(7)
+      expect(published[:timeout_seconds]).to eq(7)
     end
 
     it 'builds context-aware lanes from string-keyed request limits' do
       published = nil
-      future = instance_double(Concurrent::Promises::ResolvableFuture)
+      fleet_message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
       request = {
-        'provider'     => 'ollama',
-        'request_type' => 'chat',
-        'model'        => 'qwen3.6:27b',
-        'limits'       => { 'context_window' => 65_536 },
-        'ttl'          => 9
+        'provider' => 'ollama',
+        'model'    => 'qwen3.6:27b',
+        'limits'   => { 'context_window' => 65_536 },
+        'ttl'      => 9
       }
       allow(described_class).to receive(:fleet_available?).and_return(true)
       allow(future).to receive(:value!).and_return({ success: true })
+      allow(Legion::LLM::Fleet::TokenIssuer).to receive(:issue).and_return('signed-token')
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register).and_return(future)
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:deregister)
-      allow(described_class).to receive(:publish_request) do |**opts|
-        published = opts
-        { accepted: true, status: :accepted }
+      allow(fleet_message).to receive(:publish).and_return({ accepted: true, status: :accepted })
+      allow(Legion::Extensions::Llm::Transport::Messages::FleetRequest).to receive(:new) do |options|
+        published = options
+        fleet_message
       end
 
-      described_class.dispatch(request: request)
+      described_class.dispatch(operation: :chat, request: request)
 
       expect(published[:routing_key]).to eq('llm.fleet.inference.qwen3-6-27b.ctx65536')
       expect(published[:ttl]).to eq(9)
@@ -122,13 +222,18 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
 
     it 'returns a structured error when fleet publish is unroutable' do
       allow(described_class).to receive(:fleet_available?).and_return(true)
+      allow(Legion::LLM::Fleet::TokenIssuer).to receive(:issue).and_return('signed-token')
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:register)
         .and_return(instance_double(Concurrent::Promises::ResolvableFuture))
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:deregister)
       allow(described_class).to receive(:publish_request)
         .and_return({ accepted: false, status: :unroutable })
 
-      result = described_class.dispatch(model: 'test', messages: [], message_context: { request_id: 'req-1' })
+      result = described_class.dispatch(
+        operation:       :chat,
+        request:         { provider: 'ollama', model: 'test' },
+        message_context: { request_id: 'req-1' }
+      )
 
       expect(result[:success]).to eq(false)
       expect(result[:error]).to eq('no_fleet_queue')
@@ -146,45 +251,43 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       expect(described_class.resolve_timeout(override: 60)).to eq(60)
     end
 
-    it 'reads from settings' do
-      Legion::Settings[:llm][:routing] = { tiers: { fleet: { timeout_seconds: 45 } } }
+    it 'reads from fleet dispatch settings' do
+      Legion::Settings[:llm][:fleet] = { dispatch: { timeout_seconds: 45 } }
       expect(described_class.resolve_timeout).to eq(45)
     end
 
     it 'reads per-type timeouts' do
-      expect(described_class.resolve_timeout(request_type: :embed)).to eq(10)
+      expect(described_class.resolve_timeout(operation: :embed)).to eq(10)
     end
 
     it 'reads per-type timeouts from settings' do
-      Legion::Settings[:llm][:routing] = { tiers: { fleet: { timeouts: { chat: 60 } } } }
-      expect(described_class.resolve_timeout(request_type: :chat)).to eq(60)
+      Legion::Settings[:llm][:fleet] = { dispatch: { timeouts: { chat: 60 } } }
+      expect(described_class.resolve_timeout(operation: :chat)).to eq(60)
     end
 
     it 'reads per-type timeouts from string-keyed settings' do
-      Legion::Settings[:llm]['routing'] = {
-        'tiers' => {
-          'fleet' => {
-            'timeouts'        => { 'embed' => 12 },
-            'timeout_seconds' => 45
-          }
+      Legion::Settings[:llm]['fleet'] = {
+        'dispatch' => {
+          'timeouts'        => { 'embed' => 12 },
+          'timeout_seconds' => 45
         }
       }
 
-      expect(described_class.resolve_timeout(request_type: :embed)).to eq(12)
-      expect(described_class.resolve_timeout(request_type: :chat)).to eq(45)
+      expect(described_class.resolve_timeout(operation: :embed)).to eq(12)
+      expect(described_class.resolve_timeout(operation: :chat)).to eq(45)
     end
   end
 
   describe '.build_routing_key' do
     it 'builds shared fleet lane keys by default' do
-      key = described_class.build_routing_key(provider: 'ollama', request_type: 'chat', model: 'qwen3.5:27b')
+      key = described_class.build_routing_key(provider: 'ollama', operation: 'chat', model: 'qwen3.5:27b')
       expect(key).to eq('llm.fleet.inference.qwen3-5-27b')
     end
 
     it 'can build legacy provider/model keys for compatibility' do
       key = described_class.build_routing_key(
         provider:      'ollama',
-        request_type:  'chat',
+        operation:     'chat',
         model:         'qwen3.5:27b',
         routing_style: :legacy_provider_model
       )
@@ -194,7 +297,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
     it 'can build target shared lane keys with context windows' do
       key = described_class.build_routing_key(
         provider:       'ollama',
-        request_type:   'chat',
+        operation:      'chat',
         model:          'qwen3.6:27b',
         context_window: 32_768,
         routing_style:  :shared_lane
@@ -207,7 +310,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       key = described_class.build_routing_key(
         provider:          'vllm',
         provider_instance: 'macbook-m4',
-        request_type:      'chat',
+        operation:         'chat',
         model:             'qwen3.6:27b',
         routing_style:     :offering_lane
       )
@@ -215,12 +318,12 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       expect(key).to eq('llm.fleet.offering.macbook-m4.qwen3-6-27b.inference')
     end
 
-    it 'reads legacy routing style from string-keyed settings' do
-      Legion::Settings[:llm]['routing'] = {
-        'tiers' => { 'fleet' => { 'routing_style' => 'legacy_provider_model' } }
+    it 'reads routing style from string-keyed fleet dispatch settings' do
+      Legion::Settings[:llm]['fleet'] = {
+        'dispatch' => { 'routing_style' => 'legacy_provider_model' }
       }
 
-      key = described_class.build_routing_key(provider: 'ollama', request_type: 'chat', model: 'qwen3.5:27b')
+      key = described_class.build_routing_key(provider: 'ollama', operation: 'chat', model: 'qwen3.5:27b')
 
       expect(key).to eq('llm.request.ollama.chat.qwen3.5.27b')
     end
@@ -257,25 +360,36 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
     allow(described_class).to receive(:ensure_consumer)
   end
 
-  it 'preserves handler-side failure payloads without forcing success' do
-    future = described_class.register('corr-123')
+  it 'accepts versioned fleet responses' do
+    future = described_class.register('corr-123', expected: {
+                                        protocol_version: 2,
+                                        operation:        :chat,
+                                        correlation_id:   'corr-123'
+                                      })
 
     described_class.handle_delivery(
-      { correlation_id: 'corr-123', success: false, error: 'invalid_token' }
+      { protocol_version: 2, operation: :chat, correlation_id: 'corr-123', success: true, content: 'hello' },
+      { correlation_id: 'corr-123', type: 'llm.fleet.response' }
     )
 
     expect(future.value!).to eq(
-      correlation_id: 'corr-123',
-      success:        false,
-      error:          'invalid_token'
+      correlation_id:   'corr-123',
+      protocol_version: 2,
+      operation:        :chat,
+      success:          true,
+      content:          'hello'
     )
   end
 
-  it 'handles llm.fleet.error type by normalizing error payload' do
-    future = described_class.register('corr-456')
+  it 'accepts versioned fleet errors and normalizes them' do
+    future = described_class.register('corr-456', expected: {
+                                        protocol_version: 2,
+                                        operation:        :chat,
+                                        correlation_id:   'corr-456'
+                                      })
 
     described_class.handle_delivery(
-      { error: { code: 'model_not_loaded', message: 'not available' }, correlation_id: 'corr-456',
+      { protocol_version: 2, operation: :chat, code: 'model_not_loaded', message: 'not available', correlation_id: 'corr-456',
         message_context: { conv: 'c1' } },
       { correlation_id: 'corr-456', type: 'llm.fleet.error' }
     )
@@ -287,76 +401,93 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
     expect(result[:message_context]).to eq({ conv: 'c1' })
   end
 
-  it 'handles string-keyed fleet errors from JSON payloads' do
-    future = described_class.register('corr-json')
+  it 'ignores unversioned responses' do
+    described_class.register('corr-legacy', expected: {
+                               protocol_version: 2,
+                               operation:        :chat,
+                               correlation_id:   'corr-legacy'
+                             })
 
     described_class.handle_delivery(
-      {
-        'error'           => { 'code' => 'model_not_loaded', 'message' => 'not available' },
-        'correlation_id'  => 'corr-json',
-        'message_context' => { 'request_id' => 'req-json' }
-      },
-      { 'correlation_id' => 'corr-json', 'type' => 'llm.fleet.error' }
-    )
-
-    result = future.value!
-    expect(result[:success]).to eq(false)
-    expect(result[:error]).to eq('model_not_loaded')
-    expect(result[:correlation_id]).to eq('corr-json')
-    expect(result[:message_context]).to eq({ 'request_id' => 'req-json' })
-  end
-
-  it 'uses string-keyed properties for correlation matching' do
-    future = described_class.register('corr-props')
-
-    described_class.handle_delivery({ success: true }, { 'correlation_id' => 'corr-props' })
-
-    expect(future.value!).to eq(success: true)
-  end
-
-  it 'handles llm.fleet.response type as passthrough' do
-    future = described_class.register('corr-789')
-
-    described_class.handle_delivery(
-      { success: true, content: 'hello' },
-      { correlation_id: 'corr-789', type: 'llm.fleet.response' }
-    )
-
-    result = future.value!
-    expect(result[:success]).to eq(true)
-  end
-
-  it 'does not fulfill a response that conflicts with expected metadata' do
-    future = described_class.register('corr-expected', expected: { model: 'qwen3.6' })
-
-    described_class.handle_delivery(
-      { correlation_id: 'corr-expected', model: 'llama3.2', success: true }
+      { operation: :chat, correlation_id: 'corr-legacy', success: true },
+      { correlation_id: 'corr-legacy', type: 'llm.fleet.response' }
     )
 
     expect(described_class.pending_count).to eq(1)
-
-    described_class.handle_delivery(
-      { correlation_id: 'corr-expected', model: 'qwen3.6', success: true }
-    )
-
-    expect(future.value![:success]).to eq(true)
-    expect(described_class.pending_count).to eq(0)
   end
 
-  it 'does not fulfill a response missing required expected metadata' do
-    future = described_class.register('corr-missing', expected: { model: 'qwen3.6' })
+  it 'ignores malformed protocol versions that coerce to v2' do
+    described_class.register('corr-malformed', expected: {
+                               protocol_version: 2,
+                               operation:        :chat,
+                               correlation_id:   'corr-malformed'
+                             })
 
     described_class.handle_delivery(
-      { correlation_id: 'corr-missing', success: true }
+      { protocol_version: '2junk', operation: :chat, correlation_id: 'corr-malformed', success: true },
+      { correlation_id: 'corr-malformed', type: 'llm.fleet.response' }
     )
 
     expect(described_class.pending_count).to eq(1)
+  end
+
+  it 'ignores no-type fallback responses' do
+    described_class.register('corr-notype', expected: {
+                               protocol_version: 2,
+                               operation:        :chat,
+                               correlation_id:   'corr-notype'
+                             })
 
     described_class.handle_delivery(
-      { correlation_id: 'corr-missing', model: 'qwen3.6', success: true }
+      { protocol_version: 2, operation: :chat, correlation_id: 'corr-notype', success: true }
     )
 
-    expect(future.value![:success]).to eq(true)
+    expect(described_class.pending_count).to eq(1)
+  end
+
+  it 'ignores responses with the wrong correlation id' do
+    described_class.register('corr-expected', expected: {
+                               protocol_version: 2,
+                               operation:        :chat,
+                               correlation_id:   'corr-expected'
+                             })
+
+    described_class.handle_delivery(
+      { protocol_version: 2, operation: :chat, correlation_id: 'corr-other', success: true },
+      { correlation_id: 'corr-other', type: 'llm.fleet.response' }
+    )
+
+    expect(described_class.pending_count).to eq(1)
+  end
+
+  it 'ignores responses whose AMQP property matches but payload correlation_id is wrong' do
+    described_class.register('corr-expected', expected: {
+                               protocol_version: 2,
+                               operation:        :chat,
+                               correlation_id:   'corr-expected'
+                             })
+
+    described_class.handle_delivery(
+      { protocol_version: 2, operation: :chat, correlation_id: 'corr-other', success: true },
+      { correlation_id: 'corr-expected', type: 'llm.fleet.response' }
+    )
+
+    expect(described_class.pending_count).to eq(1)
+  end
+
+  it 'ignores late responses after deregister' do
+    described_class.register('corr-late', expected: {
+                               protocol_version: 2,
+                               operation:        :chat,
+                               correlation_id:   'corr-late'
+                             })
+    described_class.deregister('corr-late')
+
+    described_class.handle_delivery(
+      { protocol_version: 2, operation: :chat, correlation_id: 'corr-late', success: true },
+      { correlation_id: 'corr-late', type: 'llm.fleet.response' }
+    )
+
     expect(described_class.pending_count).to eq(0)
   end
 

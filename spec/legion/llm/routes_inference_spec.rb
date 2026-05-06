@@ -82,7 +82,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
       end
 
       it 'injects prior messages before the final ask' do
-        expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+        expect(Legion::LLM::Call::Dispatch).to receive(:call)
           .and_return(native_dispatch_result(content: 'pipeline response'))
 
         Legion::LLM.chat(messages: multi_turn_messages)
@@ -107,7 +107,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
       end
 
       it 'passes tool classes to the pipeline' do
-        expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat)
+        expect(Legion::LLM::Call::Dispatch).to receive(:call)
           .with(hash_including(tools: hash_including(test_tool: hash_including(name: 'test_tool'))))
           .and_return(native_dispatch_result(content: 'pipeline response'))
         Legion::LLM.chat(
@@ -174,7 +174,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       )
     end
 
-    def make_pipeline_response(content: 'ok', tools: [], timeline: [], stop_reason: :end_turn)
+    def make_pipeline_response(content: 'ok', tools: [], timeline: [], stop_reason: :end_turn, thinking: nil)
       double(
         'pipeline_response',
         message:         { role: :assistant, content: content },
@@ -184,6 +184,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
         enrichments:     {},
         stop:            { reason: stop_reason },
         timeline:        timeline,
+        thinking:        thinking,
         conversation_id: 'conv_test'
       )
     end
@@ -327,6 +328,29 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.status).to eq(200)
       body = Legion::JSON.load(response.body)
       expect(body[:data][:content]).to eq('plain reply')
+    end
+
+    it 'returns thinking separately only when explicitly requested' do
+      response = make_pipeline_response(
+        content:  'Hello! How can I help you today?',
+        thinking: { content: 'The user said "hello".', enabled: true }
+      )
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+
+      default_response = post_json('/api/llm/inference', { messages: [{ role: 'user', content: 'hello' }] })
+      default_body = Legion::JSON.load(default_response.body)
+      expect(default_body[:data]).not_to have_key(:thinking)
+
+      thinking_response = post_json('/api/llm/inference', {
+                                      messages:         [{ role: 'user', content: 'hello' }],
+                                      include_thinking: true
+                                    })
+      thinking_body = Legion::JSON.load(thinking_response.body)
+      expect(thinking_body[:data][:content]).to eq('Hello! How can I help you today?')
+      expect(thinking_body[:data][:thinking]).to eq(content: 'The user said "hello".', enabled: true)
     end
 
     it 'streams text and tool events for daemon consumers' do

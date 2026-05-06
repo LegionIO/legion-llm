@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'simplecov'
+require 'base64'
 SimpleCov.start do
   add_filter '/spec/'
 end
@@ -27,6 +28,7 @@ def native_dispatch_result(content: 'test response', input_tokens: 10, output_to
 end
 
 def stub_native_provider(content: 'test response', input_tokens: 10, output_tokens: 5, tool_calls: [], available: true)
+  chunk = Struct.new(:content).new(content)
   result = native_dispatch_result(
     content:       content,
     input_tokens:  input_tokens,
@@ -37,15 +39,16 @@ def stub_native_provider(content: 'test response', input_tokens: 10, output_toke
   allow(Legion::LLM::Call::Dispatch).to receive(:available?).and_return(available)
   allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_return(result)
   allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_stream) do |**_, &block|
-    block&.call(double('NativeChunk', content: content))
+    block&.call(chunk)
     result
   end
+  allow(Legion::LLM::Call::Dispatch).to receive(:call).and_call_original
   if defined?(Legion::LLM::Call::Registry)
     %i[anthropic test bedrock openai ollama].each do |provider|
       Legion::LLM::Call::Registry.register(provider, Module.new do
         define_singleton_method(:chat) { |**| result }
         define_singleton_method(:stream) do |**, &block|
-          block&.call(double('NativeChunk', content: content))
+          block&.call(chunk)
           result
         end
         define_singleton_method(:embed) do |**|
@@ -61,6 +64,8 @@ RSpec.configure do |config|
   config.before(:each) do
     Legion::Settings.reset!
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+    Legion::Settings.merge_settings('transport', Legion::Transport::Settings.default) if
+      defined?(Legion::Transport::Settings)
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
     # Seed the extensions[:llm] path so specs can write provider configs there
     Legion::Settings[:extensions][:llm] ||= {}

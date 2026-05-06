@@ -21,6 +21,10 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         yield('chunk') if block_given?
         { content: 'streamed response', usage: { input_tokens: 8, output_tokens: 4 } }
       end
+
+      def image(model:, prompt:, size:, **) # rubocop:disable Lint/UnusedMethodArgument
+        { result: [{ url: 'https://images.invalid/generated.png' }], model: model, usage: {} }
+      end
     end
   end
 
@@ -56,6 +60,16 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
       expect(result[:result]).to eq('streamed response')
       expect(result[:usage].output_tokens).to eq(4)
       expect(chunks).to eq(['chunk'])
+    end
+
+    it 'dispatches image capability — calls ext.image' do
+      result = described_class.call(
+        provider: :ollama, capability: :image, instance: :local,
+        model: 'image-model', prompt: 'draw an icon', size: '1024x1024'
+      )
+
+      expect(result[:result]).to eq([{ url: 'https://images.invalid/generated.png' }])
+      expect(result[:model]).to eq('image-model')
     end
 
     it 'accepts string capability and coerces to symbol' do

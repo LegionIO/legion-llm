@@ -2,6 +2,12 @@
 
 require 'legion/logging/helper'
 
+begin
+  require 'legion/extensions/llm/responses/thinking_extractor'
+rescue LoadError
+  nil
+end
+
 module Legion
   module LLM
     module Call
@@ -23,12 +29,17 @@ module Legion
 
         def initialize(result_hash)
           result_hash = self.class.coerce_result(result_hash)
-          @content             = result_hash[:result].to_s
+          extracted = self.class.extract_result(
+            result_hash[:result],
+            metadata: result_hash[:metadata] || {},
+            thinking: result_hash[:thinking]
+          )
+          @content             = extracted[:result].to_s
           @model               = result_hash[:model]
-          @metadata            = result_hash[:metadata] || {}
+          @metadata            = extracted[:metadata] || {}
           @tool_calls          = result_hash[:tool_calls] || []
           @stop_reason         = result_hash[:stop_reason]
-          @thinking            = result_hash[:thinking]
+          @thinking            = extracted[:thinking]
           usage                = self.class.coerce_usage(result_hash[:usage])
           @usage               = usage
           @input_tokens        = usage.input_tokens
@@ -68,6 +79,22 @@ module Legion
           }.compact
         end
 
+        def self.extract_result(result, metadata: {}, thinking: nil)
+          extractor = defined?(::Legion::Extensions::Llm::Responses::ThinkingExtractor) &&
+                      ::Legion::Extensions::Llm::Responses::ThinkingExtractor
+          return { result: result, metadata: metadata || {}, thinking: normalize_thinking_payload(thinking) } unless extractor
+
+          extraction = extractor.extract(result, metadata: metadata || {})
+          {
+            result:   extraction.content,
+            metadata: extraction.metadata,
+            thinking: merge_thinking_payloads(
+              normalize_thinking_payload(thinking),
+              normalize_thinking_payload(content: extraction.thinking, signature: extraction.signature)
+            )
+          }
+        end
+
         def self.coerce_usage(raw_usage)
           return raw_usage if raw_usage.is_a?(Usage)
           return Usage.new unless raw_usage.is_a?(Hash)
@@ -78,6 +105,39 @@ module Legion
             cache_read_tokens:  (raw_usage[:cache_read_tokens] || raw_usage['cache_read_tokens']).to_i,
             cache_write_tokens: (raw_usage[:cache_write_tokens] || raw_usage['cache_write_tokens']).to_i
           )
+        end
+
+        def self.merge_thinking_payloads(existing, extracted)
+          return existing || extracted unless existing && extracted
+
+          content = [existing[:content], extracted[:content]].compact.map(&:to_s).reject(&:empty?).join
+          existing.merge(
+            content:   content.empty? ? nil : content,
+            signature: existing[:signature] || extracted[:signature],
+            enabled:   true
+          ).compact
+        end
+
+        def self.normalize_thinking_payload(value = nil, content: nil, signature: nil)
+          value = { content: content, signature: signature } if value.nil? && (content || signature)
+          return nil if value.nil?
+
+          if value.is_a?(Hash)
+            normalized = value.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+            content = normalized[:content] || normalized[:text]
+            signature = normalized[:signature]
+          elsif value.respond_to?(:text)
+            content = value.text
+            signature = value.respond_to?(:signature) ? value.signature : nil
+          else
+            content = value
+            signature = nil
+          end
+
+          content = content.to_s.strip unless content.nil?
+          return nil if content.to_s.empty? && signature.to_s.empty?
+
+          { content: content, signature: signature, enabled: true }.compact
         end
       end
 
@@ -90,6 +150,7 @@ module Legion
           chat:         :chat,
           stream:       :stream,
           embed:        :embed,
+          image:        :image,
           count_tokens: :count_tokens
         }.freeze
 
@@ -205,11 +266,27 @@ module Legion
 
           log.debug("[llm][native] normalized_response usage_class=#{usage.class}")
           metadata = raw[:metadata] || raw[:offering_metadata] || {}
+          extracted = NativeResponseAdapter.extract_result(
+            result,
+            metadata: metadata,
+            thinking: raw[:thinking] || raw['thinking']
+          )
+          result = extracted[:result]
+          metadata = extracted[:metadata]
+          thinking = extracted[:thinking]
 
           tool_calls = normalize_tool_calls(raw[:tool_calls] || raw['tool_calls'] || raw[:tools] || raw['tools'] || result)
           stop_reason = raw[:stop_reason] || raw['stop_reason'] || (tool_calls.any? ? :tool_use : nil)
 
-          { result: result, usage: usage, metadata: metadata, tool_calls: tool_calls, stop_reason: stop_reason }.compact
+          {
+            result:      result,
+            model:       raw[:model] || raw['model'],
+            usage:       usage,
+            metadata:    metadata,
+            tool_calls:  tool_calls,
+            stop_reason: stop_reason,
+            thinking:    thinking
+          }.compact
         end
 
         def normalize_tool_calls(value)

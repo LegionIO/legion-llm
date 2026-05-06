@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'faraday'
 
 RSpec.describe 'Pipeline pre-rollout integration' do
   let(:mock_session) do
@@ -218,17 +219,17 @@ RSpec.describe 'Pipeline pre-rollout integration' do
     end
 
     it 'raises typed AuthError for 401' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_raise(Faraday::UnauthorizedError.new(nil, { status: 401 }))
+      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_raise(Faraday::UnauthorizedError.new(nil, { status: 401 }))
       expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::AuthError)
     end
 
     it 'raises typed RateLimitError for 429' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_raise(Faraday::TooManyRequestsError.new(nil, { status: 429 }))
+      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_raise(Faraday::TooManyRequestsError.new(nil, { status: 429 }))
       expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::RateLimitError)
     end
 
     it 'raises typed ProviderDown for connection failures' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:dispatch_chat).and_raise(Faraday::ConnectionFailed.new('connection refused'))
+      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_raise(Faraday::ConnectionFailed.new('connection refused'))
       expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::ProviderDown)
     end
   end

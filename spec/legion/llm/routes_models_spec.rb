@@ -30,6 +30,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     before do
       allow(Legion::LLM).to receive(:started?).and_return(true)
       allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
     end
 
     it 'lists normalized model offerings with type filters' do
@@ -47,14 +48,16 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
     it 'returns all provider offerings under the provider scoped route' do
       Legion::Settings[:extensions][:llm][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
-      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([
-                                                                                {
-                                                                                  model:          'qwen3.6-27b',
-                                                                                  provider:       :vllm,
-                                                                                  instance:       :default,
-                                                                                  context_length: 32_768
-                                                                                }
-                                                                              ])
+      discovered_models = [
+        {
+          model:          'qwen3.6-27b',
+          provider:       :vllm,
+          instance:       :default,
+          context_length: 32_768
+        }
+      ]
+      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered_models)
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered_models)
 
       response = get_json('/api/llm/providers/vllm/models')
       body = Legion::JSON.load(response.body)
@@ -85,14 +88,16 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
     it 'backs OpenAI-compatible model listing with the same inference inventory' do
       Legion::Settings[:extensions][:llm][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
-      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([
-                                                                                {
-                                                                                  model:          'qwen3.6-27b',
-                                                                                  provider:       :vllm,
-                                                                                  instance:       :default,
-                                                                                  context_length: 32_768
-                                                                                }
-                                                                              ])
+      discovered_models = [
+        {
+          model:          'qwen3.6-27b',
+          provider:       :vllm,
+          instance:       :default,
+          context_length: 32_768
+        }
+      ]
+      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered_models)
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered_models)
 
       response = get_json('/v1/models')
       body = Legion::JSON.load(response.body)
