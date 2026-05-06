@@ -87,9 +87,10 @@ RSpec.describe Legion::LLM::Fleet::WorkerExecution do
     Legion::Settings[:llm][:fleet] = { responder: { require_auth: true } }
     calls = 0
     allow(Legion::LLM::Fleet::TokenValidator).to receive(:validate!)
-      .with(token: 'signed-token', envelope: envelope, record_replay: false)
+      .with(token: 'signed-token', envelope: envelope)
       .and_return({ jti: 'jti-retry' })
     allow(Legion::LLM::Fleet::TokenValidator).to receive(:mark_replay!)
+    allow(Legion::LLM::Fleet::TokenValidator).to receive(:release_replay!)
     allow(provider).to receive(:chat) do
       calls += 1
       raise 'transient' if calls == 1
@@ -104,6 +105,7 @@ RSpec.describe Legion::LLM::Fleet::WorkerExecution do
     result = described_class.call(envelope: envelope, provider: provider)
 
     expect(result.content).to eq('done')
+    expect(Legion::LLM::Fleet::TokenValidator).to have_received(:release_replay!).with('jti-retry').once
     expect(Legion::LLM::Fleet::TokenValidator).to have_received(:mark_replay!).with('jti-retry').once
     expect(provider).to have_received(:chat).twice
   end
