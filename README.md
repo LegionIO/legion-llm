@@ -122,7 +122,7 @@ Credentials are resolved automatically by the universal secret resolver in `legi
 
 ### Provider Extensions (lex-llm-*)
 
-Each provider is a standalone `lex-llm-*` gem that ships its own `default_settings`, model catalog, and capability declarations. The provider registers itself with `legion-llm` at load time. Provider gems implement:
+Each provider is a standalone `lex-llm-*` gem that ships its own `default_settings`, model catalog, capability declarations, and optional provider-owned fleet worker actor. When a provider gem is loaded, `legion-llm` discovers it through the shared `lex-llm` provider contract and registers provider instances for routing. Provider gems implement:
 
 - **`default_settings`** -- Connection defaults (base_url, region, API key env vars)
 - **`model_allowed?(model_name)`** -- Provider-level model filtering
@@ -372,7 +372,7 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │       └── History  # EscalationHistory mixin
 ├── Fleet                                # Fleet dispatch over AMQP; provider responders live in lex-llm-* gems
 │   ├── Dispatcher   # Fleet RPC dispatch with routing key building, per-type timeouts
-│   ├── WorkerExecution # Shared execution policy called by provider-owned responders
+│   ├── TokenIssuer  # Request-side JWT minting for provider-owned responders
 │   └── ReplyDispatcher # Correlation-based reply routing
 ├── API                                  # All external HTTP interfaces
 │   ├── Auth         # Config-driven Bearer/x-api-key auth for /v1/ routes
@@ -514,7 +514,7 @@ legion-llm includes a dynamic weighted routing engine that dispatches requests a
 | `cloud` | API providers (Bedrock, Azure, Gemini) | Managed cloud inference |
 | `frontier` | API providers (Anthropic, OpenAI) | Frontier models, full-capability inference |
 
-Fleet dispatch is built into `legion-llm`, but fleet consumption is provider-owned. `Fleet::Dispatcher` publishes shared `lex-llm` protocol-v2 `FleetRequest` envelopes to keys such as `llm.fleet.inference.qwen3-6-27b.ctx32000` or `llm.fleet.embed.nomic-embed-text`; the enabled provider gem actor consumes the request, validates the signed token and idempotency key, calls `Legion::LLM::Fleet::WorkerExecution`, and replies with shared `FleetResponse` or `FleetError` envelopes. Keep `routing.tiers.fleet.routing_style` set to `shared_lane` for the default pooled model lanes, or set it to `offering_lane` for exact provider-instance lanes such as `llm.fleet.offering.vllm-gpu-01.qwen3-6.inference`.
+Fleet dispatch is built into `legion-llm`, but fleet consumption is provider-owned. `Fleet::Dispatcher` publishes shared `lex-llm` protocol-v2 `FleetRequest` envelopes to keys such as `llm.fleet.inference.qwen3-6-27b.ctx32000` or `llm.fleet.embed.nomic-embed-text`; the enabled provider gem actor consumes the request, validates the signed token and idempotency key through `Legion::Extensions::Llm::Fleet::ProviderResponder`, calls its local provider instance through the canonical `lex-llm` provider methods, and replies with shared `FleetResponse` or `FleetError` envelopes. Keep `routing.tiers.fleet.routing_style` set to `shared_lane` for the default pooled model lanes, or set it to `offering_lane` for exact provider-instance lanes such as `llm.fleet.offering.vllm-gpu-01.qwen3-6.inference`.
 
 #### Intent-Based Dispatch
 
@@ -891,7 +891,7 @@ bundle exec rubocop -A
 | `legion-settings` | Configuration defaults and file overrides |
 | `legion-transport` (>= 1.4.14) | AMQP transport for fleet dispatch, metering, and audit |
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
-| `lex-llm` (>= 0.4.0) | Provider-neutral contract, model offerings, response normalization, and fleet envelopes |
+| `lex-llm` (>= 0.4.3) | Provider-neutral contract, model offerings, response normalization, fleet envelopes, and responder-side fleet execution helpers |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 

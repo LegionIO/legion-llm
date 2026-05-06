@@ -3,10 +3,12 @@
 require 'securerandom'
 require 'time'
 
+require 'legion/extensions/llm/fleet/token_error'
+
 module Legion
   module LLM
     module Fleet
-      class TokenError < StandardError; end
+      TokenError = ::Legion::Extensions::Llm::Fleet::TokenError unless const_defined?(:TokenError, false)
 
       module TokenIssuer
         ISSUER = 'legion-llm'

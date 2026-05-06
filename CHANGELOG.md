@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.9.3] - 2026-05-06
+
+### Changed
+- Delegated responder-side fleet provider execution, token validation, and provider response publishing to the shared `lex-llm` fleet helpers.
+- Kept `legion-llm` as the request-side fleet dispatcher and token issuer while retaining compatibility aliases for old responder constants.
+- Bumped the `lex-llm` dependency floor to `>= 0.4.3` for shared responder execution helpers.
+
 ## [0.9.2] - 2026-05-06
 
 ### Fixed
