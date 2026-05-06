@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.9.1] - 2026-05-06
+
+### Changed
+- `legion-llm` now owns lex-llm provider registration by scanning loaded provider modules, constructing `LexLLMAdapter` instances, and writing `Call::Registry`.
+- Provider rediscovery now rebuilds registry entries after `Call::Registry.reset!`, supporting LegionIO reload/hot-update flows without relying on provider require-time side effects.
+- Bumped the `lex-llm` dependency floor to `>= 0.4.1` for pure provider discovery and alias metadata.
+
 ## [0.9.0] - 2026-05-06
 
 ### Changed
