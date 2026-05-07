@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.9.11] - 2026-05-07
+
+### Fixed
+- `infer_provider_for_model` now consults `Discovery.cached_discovered_models` before falling back to static regex patterns, so models reported by registered lex-llm-* providers route correctly regardless of naming convention.
+- Add Bedrock vendor prefix detection (`anthropic.`, `meta.`, `mistral.`, etc.) before the Ollama catch-all pattern to prevent Bedrock model IDs like `anthropic.claude-opus-4-5-20251101-v1:0` from being misrouted to Ollama due to the `:` in the version suffix.
+- `inferred_provider_tier` now checks `Call::Registry` metadata for the provider's tier before falling back to the static `PROVIDER_TIER` hash.
+- Restore `thinking` option in `native_dispatch_chat_options` where provider dispatch expects it.
+
 ## [0.9.10] - 2026-05-07
 
 ### Fixed

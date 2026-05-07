@@ -28,14 +28,29 @@ module Legion
         def infer_provider_for_model(model)
           return nil if model.nil? || model.to_s.empty?
 
+          discovered = discover_provider_for_model(model)
+          return discovered if discovered
+
           model_s = model.to_s
           return :bedrock if model_s.start_with?('us.')
+          return :bedrock if model_s.match?(/\A(anthropic|meta|mistral|cohere|amazon|ai21)\./i)
           return :openai if model_s.match?(/\Agpt-|\Ao[134]-/)
           return :anthropic if model_s.start_with?('claude-')
           return :gemini if model_s.start_with?('gemini-')
           return :ollama if model_s.match?(OLLAMA_MODEL_PATTERN)
 
           nil
+        end
+
+        def discover_provider_for_model(model)
+          return nil unless defined?(Discovery)
+
+          model_s = model.to_s
+          entry = Discovery.cached_discovered_models.find do |m|
+            dn = m[:model].to_s
+            dn == model_s || dn.start_with?("#{model_s}:")
+          end
+          entry&.dig(:provider)
         end
 
         # Resolve an LLM routing intent to a tier/provider/model decision.

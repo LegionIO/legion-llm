@@ -142,6 +142,9 @@ module Legion
 
         def inferred_provider_tier(provider)
           return nil unless provider
+
+          meta = Call::Registry.metadata_for(provider, @resolved_instance || :default)
+          return meta[:tier].to_sym if meta.is_a?(Hash) && meta[:tier]
           return Router.provider_tier(provider) if defined?(Router) && Router.respond_to?(:provider_tier)
 
           Router::PROVIDER_TIER.fetch(provider.to_sym, :cloud) if defined?(Router::PROVIDER_TIER)
@@ -650,10 +653,7 @@ module Legion
         end
 
         def native_dispatch_chat_options
-          opts = {
-            model:    @resolved_model,
-            provider: @resolved_provider
-          }
+          opts = { model: @resolved_model, provider: @resolved_provider }
           opts[:instance] = @resolved_instance if @resolved_instance
           opts[:thinking] = @request.thinking if @request.thinking
           opts.compact
