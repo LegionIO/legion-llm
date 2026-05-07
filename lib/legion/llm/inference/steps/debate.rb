@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,6 +9,7 @@ module Legion
       module Steps
         module Debate
           include Legion::Logging::Helper
+          include Steps::Logging
 
           CHALLENGER_PROMPT = <<~PROMPT
             You are a critical analyst reviewing the following response. Your job is to identify
@@ -63,11 +65,21 @@ module Legion
           PROMPT
 
           def step_debate
-            return unless debate_enabled?(@request)
-            return unless @raw_response
+            unless debate_enabled?(@request)
+              log_step_debug(:debate, :skipped, reason: :disabled)
+              return
+            end
+            unless @raw_response
+              log_step_debug(:debate, :skipped, reason: :no_response)
+              return
+            end
 
+            log_step_debug(:debate, :start)
             debate_result = run_debate(@raw_response, @request)
-            return unless debate_result
+            unless debate_result
+              log_step_debug(:debate, :skipped, reason: :no_result)
+              return
+            end
 
             @raw_response = debate_result[:synthetic_response]
             @enrichments['debate:result'] = {
@@ -82,6 +94,14 @@ module Legion
               detail: "rounds=#{debate_result[:rounds]} advocate=#{debate_result[:metadata][:advocate_model]} " \
                       "challenger=#{debate_result[:metadata][:challenger_model]} judge=#{debate_result[:metadata][:judge_model]}",
               from: 'pipeline', to: 'pipeline'
+            )
+            log_step_info(
+              :debate,
+              :complete,
+              rounds:           debate_result[:rounds],
+              advocate_model:   debate_result[:metadata][:advocate_model],
+              challenger_model: debate_result[:metadata][:challenger_model],
+              judge_model:      debate_result[:metadata][:judge_model]
             )
           rescue StandardError => e
             @warnings << "debate step error: #{e.message}"
@@ -122,8 +142,17 @@ module Legion
             current_advocate = advocate_text
             current_challenger = nil
             current_rebuttal   = nil
+            log_step_debug(
+              :debate,
+              :models_selected,
+              rounds:           rounds,
+              advocate_model:   advocate_model,
+              challenger_model: challenger_model,
+              judge_model:      judge_model
+            )
 
-            rounds.times do |_i|
+            rounds.times do |i|
+              log_step_debug(:debate, :round_start, round: i + 1)
               current_challenger = call_debate_role(
                 prompt: format(CHALLENGER_PROMPT, question: question, advocate: current_advocate),
                 model:  challenger_model
@@ -137,6 +166,7 @@ module Legion
               current_advocate = current_rebuttal
             end
 
+            log_step_debug(:debate, :judge_start, model: judge_model)
             judge_synthesis = call_debate_role(
               prompt: format(JUDGE_PROMPT,
                              question:   question,
@@ -290,8 +320,10 @@ module Legion
 
             opts = { message: prompt, model: mdl }
             opts[:provider] = provider if provider
+            log_step_debug(:debate, :role_call, provider: provider || 'default', model: mdl, prompt_chars: prompt.length)
 
             response = Legion::LLM.chat_direct(**opts)
+            log_step_debug(:debate, :role_response, provider: provider || 'default', model: mdl)
             extract_content(response)
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.debate.role')

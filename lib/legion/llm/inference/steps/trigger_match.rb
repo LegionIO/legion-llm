@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,21 +9,35 @@ module Legion
       module Steps
         module TriggerMatch
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_trigger_match
             start_time = nil
-            return unless defined?(::Legion::Tools::TriggerIndex)
-            return if ::Legion::Tools::TriggerIndex.empty?
+            unless defined?(::Legion::Tools::TriggerIndex)
+              log_step_debug(:trigger_match, :skipped, reason: :trigger_index_unavailable)
+              return
+            end
+            if ::Legion::Tools::TriggerIndex.empty?
+              log_step_debug(:trigger_match, :skipped, reason: :trigger_index_empty)
+              return
+            end
 
             start_time = ::Time.now
 
             text = extract_recent_text
             word_set = normalize_message_words(text)
-            return if word_set.empty?
+            if word_set.empty?
+              log_step_debug(:trigger_match, :skipped, reason: :no_words)
+              return
+            end
+            log_step_debug(:trigger_match, :scanning, word_count: word_set.size)
 
             matched, per_word = ::Legion::Tools::TriggerIndex.match(word_set)
             subtract_always_loaded(matched)
-            return if matched.empty?
+            if matched.empty?
+              log_step_debug(:trigger_match, :no_matches)
+              return
+            end
 
             limit = trigger_tool_limit
             @triggered_tools = if matched.size <= limit
@@ -41,6 +56,7 @@ module Legion
             end
 
             record_trigger_match_timeline(@triggered_tools.size, start_time)
+            log_step_debug(:trigger_match, :matched, matched_count: matched.size, injected_count: @triggered_tools.size, limit: limit)
           rescue StandardError => e
             @warnings << "Trigger match error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.trigger_match')
@@ -78,10 +94,14 @@ module Legion
           end
 
           def subtract_always_loaded(matched)
-            return unless Legion::Settings::Extensions.respond_to?(:filter_tools)
+            unless Legion::Settings::Extensions.respond_to?(:filter_tools)
+              log_step_debug(:trigger_match, :always_loaded_filter_skipped, reason: :settings_extensions_unavailable)
+              return
+            end
 
             always = Legion::Settings::Extensions.filter_tools(deferred: false).map { |t| t[:name] }
             matched.reject! { |tool| always.include?(tool.tool_name) }
+            log_step_debug(:trigger_match, :always_loaded_filtered, always_loaded_count: always.size, remaining_count: matched.size)
           end
 
           def trigger_scan_depth

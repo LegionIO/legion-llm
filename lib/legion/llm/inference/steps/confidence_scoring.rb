@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,9 +9,13 @@ module Legion
       module Steps
         module ConfidenceScoring
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_confidence_scoring
-            return unless @raw_response
+            unless @raw_response
+              log_step_debug(:confidence_scoring, :skipped, reason: :no_response)
+              return
+            end
 
             opts = {
               json_expected:     @request.response_format&.dig(:type) == :json,
@@ -20,6 +25,13 @@ module Legion
             }.compact
 
             @confidence_score = Quality::Confidence::Scorer.score(@raw_response, **opts)
+            log_step_debug(
+              :confidence_scoring,
+              :scored,
+              score:  @confidence_score.score.round(3),
+              band:   @confidence_score.band,
+              source: @confidence_score.source
+            )
 
             @timeline.record(
               category: :internal, key: 'confidence:scored',

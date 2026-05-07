@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,17 +9,32 @@ module Legion
       module Steps
         module RagContext
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_rag_context
-            return unless rag_enabled?
-            return unless substantive_query?
-            return unless apollo_available_or_warn?
+            unless rag_enabled?
+              log_step_debug(:rag_context, :skipped, reason: :disabled)
+              return
+            end
+            unless substantive_query?
+              log_step_debug(:rag_context, :skipped, reason: :non_substantive_query)
+              return
+            end
+            unless apollo_available_or_warn?
+              log_step_debug(:rag_context, :skipped, reason: :apollo_unavailable)
+              return
+            end
 
-            strategy = select_context_strategy(utilization: estimate_utilization)
-            return if strategy == :none
+            utilization = estimate_utilization
+            strategy = select_context_strategy(utilization: utilization)
+            if strategy == :none
+              log_step_debug(:rag_context, :skipped, reason: :context_window_high, utilization: utilization.round(3))
+              return
+            end
 
             query = extract_query
             start_time = Time.now
+            log_step_debug(:rag_context, :retrieve, strategy: strategy, query_chars: query.to_s.length)
             result = apollo_retrieve(query: query, strategy: strategy)
             record_rag_enrichment(result, strategy)
             record_rag_timeline(result, strategy, start_time)
@@ -62,18 +78,23 @@ module Legion
             return true if apollo_available?
 
             @warnings << 'Apollo unavailable for RAG context retrieval'
+            log_step_debug(:rag_context, :apollo_unavailable)
             false
           end
 
           def record_rag_enrichment(result, strategy)
             entries = Legion::LLM::Settings.config_value(result, :entries, [])
-            return unless result && Legion::LLM::Settings.config_value(result, :success) && entries.any?
+            unless result && Legion::LLM::Settings.config_value(result, :success) && entries.any?
+              log_step_debug(:rag_context, :no_context_added, strategy: strategy)
+              return
+            end
 
             @enrichments['rag:context_retrieval'] = {
               content:   "#{Legion::LLM::Settings.config_value(result, :count)} entries retrieved via #{strategy}",
               data:      { entries: entries, strategy: strategy, count: Legion::LLM::Settings.config_value(result, :count) },
               timestamp: Time.now
             }
+            log_step_info(:rag_context, :context_added, strategy: strategy, entry_count: entries.size)
           end
 
           def record_rag_timeline(result, strategy, start_time)
@@ -134,6 +155,7 @@ module Legion
             compact_limit = rag_setting(:compact_limit, 5)
             confidence    = rag_setting(:min_confidence, 0.5)
             limit = strategy == :rag_compact ? compact_limit : full_limit
+            log_step_debug(:rag_context, :apollo_query, strategy: strategy, limit: limit, min_confidence: confidence)
 
             if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
               ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
@@ -144,6 +166,7 @@ module Legion
                 if ::Legion::Apollo.started?
                   ::Legion::Apollo.retrieve(text: query, limit: limit, scope: :all)
                 else
+                  log_step_debug(:rag_context, :apollo_query_skipped, reason: :not_started)
                   []
                 end
               rescue StandardError => e

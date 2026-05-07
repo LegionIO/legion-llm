@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.4] - 2026-05-06
+
+### Changed
+- Added shared inference step logging helpers and debug-level step enter/complete/failure logs.
+- Added safe debug/info instrumentation across inference steps for routing actions, enrichment decisions, tool handling, RAG, skill injection, sticky runner state, billing, classification, debate, post-response audit, and metering emission.
+
 ## [0.9.3] - 2026-05-06
 
 ### Changed

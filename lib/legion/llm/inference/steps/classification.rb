@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,6 +9,7 @@ module Legion
       module Steps
         module Classification
           include Legion::Logging::Helper
+          include Steps::Logging
 
           LEVELS = %i[public internal confidential restricted].freeze
 
@@ -42,15 +44,29 @@ module Legion
 
           def step_classification
             classification = @request.classification || compliance_classification_default || default_classification
-            return unless classification_enabled?(classification)
+            unless classification_enabled?(classification)
+              log_step_debug(:classification, :skipped, reason: :disabled)
+              return
+            end
 
-            declared_level  = Legion::LLM::Settings.config_value(classification, :level)
+            declared_level = Legion::LLM::Settings.config_value(classification, :level)
+            log_step_debug(:classification, :scan_start, declared_level: declared_level)
             scan            = scan_content_for_sensitive_data
             effective_level = upgrade_if_needed(declared_level, scan)
             upgraded        = effective_level != declared_level
 
             redact_sensitive_content(scan)
             enforce_phi_cloud_gate(effective_level)
+            log_step_info(
+              :classification,
+              :scan_complete,
+              declared_level:  declared_level,
+              effective_level: effective_level,
+              contains_pii:    scan[:contains_pii],
+              contains_phi:    scan[:contains_phi],
+              pattern_count:   scan[:patterns].size,
+              upgraded:        upgraded
+            )
 
             @enrichments['classification:scan'] = {
               declared_level:    declared_level,
@@ -104,11 +120,18 @@ module Legion
           end
 
           def redact_sensitive_content(scan)
-            return unless redaction_enabled?
-            return unless scan[:contains_pii] || scan[:contains_phi]
+            unless redaction_enabled?
+              log_step_debug(:classification, :redaction_skipped, reason: :disabled)
+              return
+            end
+            unless scan[:contains_pii] || scan[:contains_phi]
+              log_step_debug(:classification, :redaction_skipped, reason: :no_sensitive_patterns)
+              return
+            end
 
             placeholder = redaction_placeholder
             active_patterns = strict_hipaa_mode? ? PII_PATTERNS : PII_PATTERNS_CORE
+            redacted_messages = 0
 
             @request.messages.each do |message|
               content = message_content(message)
@@ -125,6 +148,7 @@ module Legion
               end
 
               write_message_content(message, content)
+              redacted_messages += 1
             end
 
             @enrichments['classification:redaction'] = {
@@ -133,6 +157,7 @@ module Legion
               placeholder:       placeholder,
               timestamp:         Time.now
             }
+            log_step_info(:classification, :redacted, message_count: redacted_messages, pattern_count: scan[:patterns].size)
           end
 
           def extract_text_content
@@ -209,12 +234,19 @@ module Legion
           end
 
           def enforce_phi_cloud_gate(effective_level)
-            return unless effective_level == :restricted
+            unless effective_level == :restricted
+              log_step_debug(:classification, :phi_cloud_gate_skipped, reason: :not_restricted, level: effective_level)
+              return
+            end
 
             provider = resolve_current_provider
-            return unless cloud_provider?(provider)
+            unless cloud_provider?(provider)
+              log_step_debug(:classification, :phi_cloud_gate_skipped, reason: :not_cloud_provider, provider: provider || 'none')
+              return
+            end
 
             if phi_block_cloud?
+              log_step_info(:classification, :phi_cloud_gate_blocked, provider: provider)
               raise Legion::LLM::PipelineError.new(
                 "Restricted/sensitive content (level=restricted) cannot be sent to cloud provider #{provider}. " \
                 'Set compliance.phi_block_cloud=false to override, or use a local provider.',
@@ -226,6 +258,7 @@ module Legion
               "[classification] Restricted/sensitive content (level=restricted) routing to cloud provider #{provider} — " \
               'compliance.phi_block_cloud is disabled, permitting'
             )
+            log_step_info(:classification, :phi_cloud_gate_permitted, provider: provider)
             @warnings << "Restricted/sensitive content routing to cloud provider #{provider} (phi_block_cloud disabled)"
           end
 

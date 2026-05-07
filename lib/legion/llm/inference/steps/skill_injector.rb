@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,14 +9,23 @@ module Legion
       module Steps
         module SkillInjector
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_skill_injector
-            return unless skills_enabled?
+            unless skills_enabled?
+              log_step_debug(:skill_injector, :skipped, reason: :disabled_or_unavailable)
+              return
+            end
 
             conv_id = @request.conversation_id
-            return unless conv_id
+            unless conv_id
+              log_step_debug(:skill_injector, :skipped, reason: :no_conversation_id)
+              return
+            end
+            log_step_debug(:skill_injector, :start)
 
             if (state = Inference::Conversation.skill_state(conv_id))
+              log_step_debug(:skill_injector, :resume_active_skill, skill_key: state[:skill_key], resume_at: state[:resume_at])
               resume_active_skill(conv_id, state)
               return
             end
@@ -46,6 +56,7 @@ module Legion
           def resume_active_skill(conv_id, state)
             skill_class = Legion::LLM::Skills::Registry.find(state[:skill_key])
             unless skill_class
+              log_step_info(:skill_injector, :clear_missing_skill_state, skill_key: state[:skill_key])
               Inference::Conversation.clear_skill_state(conv_id)
               return
             end
@@ -56,15 +67,25 @@ module Legion
           end
 
           def check_trigger_words(conv_id)
-            return if at_max_active_skills?(conv_id)
+            if at_max_active_skills?(conv_id)
+              log_step_debug(:skill_injector, :trigger_words_skipped, reason: :max_active_skills)
+              return
+            end
 
             text  = extract_message_text
             words = text.downcase.gsub(/[^a-z ]/, ' ').split.to_set
-            return if words.empty?
+            if words.empty?
+              log_step_debug(:skill_injector, :trigger_words_skipped, reason: :no_words)
+              return
+            end
 
             index = Legion::LLM::Skills::Registry.trigger_word_index
             matched_keys = words.flat_map { |w| index[w] || [] }.uniq
-            return if matched_keys.empty?
+            if matched_keys.empty?
+              log_step_debug(:skill_injector, :trigger_words_no_match, word_count: words.size)
+              return
+            end
+            log_step_debug(:skill_injector, :trigger_words_matched, matched_count: matched_keys.size)
 
             matched_keys.each do |key|
               skill_class = Legion::LLM::Skills::Registry.find(key)
@@ -77,10 +98,17 @@ module Legion
           end
 
           def check_file_change_triggers(conv_id)
-            return if at_max_active_skills?(conv_id)
+            if at_max_active_skills?(conv_id)
+              log_step_debug(:skill_injector, :file_triggers_skipped, reason: :max_active_skills)
+              return
+            end
 
             changed = Array(@request.metadata&.dig(:changed_files) || [])
-            return if changed.empty?
+            if changed.empty?
+              log_step_debug(:skill_injector, :file_triggers_skipped, reason: :no_changed_files)
+              return
+            end
+            log_step_debug(:skill_injector, :file_triggers_scan, changed_file_count: changed.size)
 
             Legion::LLM::Skills::Registry.file_trigger_skills.each do |skill_class|
               key = "#{skill_class.namespace}:#{skill_class.skill_name}"
@@ -99,10 +127,18 @@ module Legion
           end
 
           def check_auto_skills(conv_id)
-            return if at_max_active_skills?(conv_id)
-            return if settings_value(:skills, :auto_inject) == false
+            if at_max_active_skills?(conv_id)
+              log_step_debug(:skill_injector, :auto_skills_skipped, reason: :max_active_skills)
+              return
+            end
+            if settings_value(:skills, :auto_inject) == false
+              log_step_debug(:skill_injector, :auto_skills_skipped, reason: :disabled)
+              return
+            end
 
-            Legion::LLM::Skills::Registry.by_trigger(:auto).each do |skill_class|
+            candidates = Legion::LLM::Skills::Registry.by_trigger(:auto)
+            log_step_debug(:skill_injector, :auto_skills_scan, candidate_count: candidates.size)
+            candidates.each do |skill_class|
               key = "#{skill_class.namespace}:#{skill_class.skill_name}"
               next if skill_disabled?(key)
               next unless when_conditions_match?(skill_class)
@@ -113,15 +149,24 @@ module Legion
           end
 
           def activate_skill(conv_id, skill_class)
+            log_step_info(
+              :skill_injector,
+              :activate_skill,
+              skill: "#{skill_class.namespace}:#{skill_class.skill_name}"
+            )
             result = skill_class.new.run(from_step: 0, context: build_skill_context(conv_id))
             @skill_executed = true
             inject_skill_result(result)
           end
 
           def inject_skill_result(result)
-            return unless result.inject && !result.inject.empty?
+            unless result.inject && !result.inject.empty?
+              log_step_debug(:skill_injector, :inject_skipped, reason: :empty_result)
+              return
+            end
 
             @enrichments['skill:active'] = result.inject
+            log_step_debug(:skill_injector, :inject_enrichment, key_count: result.inject.respond_to?(:keys) ? result.inject.keys.size : nil)
           end
 
           def when_conditions_match?(skill_class)

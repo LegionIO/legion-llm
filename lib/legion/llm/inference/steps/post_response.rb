@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,19 +9,27 @@ module Legion
       module Steps
         module PostResponse
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_post_response
             response = current_response
+            log_step_debug(:post_response, :publish_audit, provider: @resolved_provider || 'none', model: @resolved_model || 'none')
 
             audit_event = AuditPublisher.publish(request: @request, response: response)
 
-            Legion::Gaia::AuditObserver.instance.process_event(audit_event) if defined?(Legion::Gaia::AuditObserver) && audit_event
+            if defined?(Legion::Gaia::AuditObserver) && audit_event
+              log_step_debug(:post_response, :notify_gaia_audit_observer)
+              Legion::Gaia::AuditObserver.instance.process_event(audit_event)
+            else
+              log_step_debug(:post_response, :gaia_audit_observer_skipped, reason: audit_event ? :observer_unavailable : :no_audit_event)
+            end
 
             @timeline.record(
               category: :audit, key: 'audit:publish',
               direction: :outbound, detail: 'published to llm.audit',
               from: 'pipeline', to: 'llm.audit'
             )
+            log_step_debug(:post_response, :complete, audit_event_present: !audit_event.nil?)
           rescue StandardError => e
             @warnings << "post_response error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.post_response')

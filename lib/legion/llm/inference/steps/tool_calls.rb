@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,14 +9,19 @@ module Legion
       module Steps
         module ToolCalls
           include Legion::Logging::Helper
+          include Steps::Logging
 
           MAX_TOOL_LOOPS = 10
 
           # rubocop:disable Metrics/MethodLength, Metrics/BlockLength
           def step_tool_calls
-            return unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
+            unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
+              log_step_debug(:tool_calls, :skipped, reason: :no_tool_calls)
+              return
+            end
 
             tool_calls = @raw_response.tool_calls
+            log_step_debug(:tool_calls, :start, tool_call_count: tool_calls.size)
             log.info(
               "[llm][tools] detected request_id=#{@request.id} " \
               "conversation_id=#{@request.conversation_id || 'none'} count=#{tool_calls.size}"
@@ -35,14 +41,8 @@ module Legion
                 next
               end
 
-              log.info(
-                "[llm][tools] dispatch request_id=#{@request.id} " \
-                "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
-                "source=#{describe_tool_source(source)} " \
-                "arguments=#{summarize_tool_arguments(tc[:arguments] || tc['arguments'])}"
-              )
-
               tool_exchange_id = Tracing.exchange_id
+              log_tool_call_dispatch(tool_call_id, tool_name, source, tc[:arguments] || tc['arguments'])
               result = ToolDispatcher.dispatch(
                 tool_call:   tc,
                 source:      source,
@@ -90,12 +90,7 @@ module Legion
                 }
               )
 
-              log.info(
-                "[llm][tools] result request_id=#{@request.id} " \
-                "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
-                "status=#{result[:status]} duration_ms=#{result[:duration_ms]} " \
-                "preview=#{summarize_tool_result(result[:result])}"
-              )
+              log_tool_call_result(tool_call_id, tool_name, result)
             end
           rescue StandardError => e
             @warnings << "Tool call handling error: #{e.message}"
@@ -139,12 +134,45 @@ module Legion
             end
           end
 
-          def summarize_tool_arguments(arguments)
-            arguments.to_s[0, 200].inspect
+          def log_tool_call_dispatch(tool_call_id, tool_name, source, arguments)
+            source_description = describe_tool_source(source)
+            log.info(
+              "[llm][tools] dispatch request_id=#{@request.id} " \
+              "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
+              "source=#{source_description} argument_chars=#{argument_size(arguments)}"
+            )
+            log_step_debug(
+              :tool_calls,
+              :dispatch,
+              tool_call_id: tool_call_id || 'none',
+              tool_name:    tool_name,
+              source:       source_description
+            )
           end
 
-          def summarize_tool_result(result)
-            result.to_s[0, 200].inspect
+          def log_tool_call_result(tool_call_id, tool_name, result)
+            log.info(
+              "[llm][tools] result request_id=#{@request.id} " \
+              "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
+              "status=#{result[:status]} duration_ms=#{result[:duration_ms]} " \
+              "result_class=#{result[:result].class} result_chars=#{result_size(result[:result])}"
+            )
+            log_step_debug(
+              :tool_calls,
+              :result,
+              tool_call_id: tool_call_id || 'none',
+              tool_name:    tool_name,
+              status:       result[:status],
+              duration_ms:  result[:duration_ms]
+            )
+          end
+
+          def argument_size(arguments)
+            arguments.to_s.length
+          end
+
+          def result_size(result)
+            result.to_s.length
           end
         end
       end

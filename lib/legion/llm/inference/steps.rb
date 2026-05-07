@@ -9,6 +9,7 @@ module Legion
   end
 end
 
+require_relative 'steps/logging'
 require_relative 'steps/metering'
 require_relative 'steps/span_annotator'
 require_relative 'steps/rbac'

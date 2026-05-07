@@ -12,15 +12,24 @@ module Legion
           extend Legion::Logging::Helper
 
           def build_event(**opts)
-            log.debug("[metering][build_event] action=build provider=#{opts[:provider]} model=#{opts[:model_id]}")
+            log.debug(
+              "[metering][build_event] action=build request_id=#{opts[:request_id]} " \
+              "conversation_id=#{opts[:conversation_id] || 'none'} provider=#{opts[:provider]} " \
+              "instance=#{opts[:provider_instance] || 'default'} model=#{opts[:model_id]}"
+            )
             identity_fields(opts).merge(token_fields(opts)).merge(timing_and_context(opts))
           end
 
           def publish_or_spool(event)
+            log.debug(
+              "[metering][publish_or_spool] action=publish request_id=#{event[:request_id]} " \
+              "provider=#{event[:provider]} model=#{event[:model_id]} total_tokens=#{event[:total_tokens]}"
+            )
             publish_event(event)
           end
 
           def flush_spool
+            log.debug('[metering][flush_spool] action=flush')
             Legion::LLM::Metering.flush_spool
           end
 
@@ -64,6 +73,10 @@ module Legion
           end
 
           def publish_event(event)
+            log.debug(
+              "[metering][publish_event] action=emit request_id=#{event[:request_id]} " \
+              "conversation_id=#{event[:conversation_id] || 'none'}"
+            )
             Legion::LLM::Metering.emit(event)
           end
         end

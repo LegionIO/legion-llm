@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,10 +9,12 @@ module Legion
       module Steps
         module McpDiscovery
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_mcp_discovery
             @discovered_tools ||= []
             start_time = Time.now
+            log_step_debug(:mcp_discovery, :start, existing_tool_count: @discovered_tools.size)
 
             discover_server_tools
             discover_client_tools
@@ -27,6 +30,7 @@ module Legion
             end
 
             record_mcp_timeline(total, start_time)
+            log_step_debug(:mcp_discovery, :complete, tool_count: total)
           rescue StandardError => e
             @warnings << "MCP discovery error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.mcp_discovery')
@@ -37,9 +41,14 @@ module Legion
 
           def discover_server_tools
             server = mcp_server
-            return unless server.respond_to?(:tool_registry)
+            unless server.respond_to?(:tool_registry)
+              log_step_debug(:mcp_discovery, :server_skipped, reason: :no_tool_registry)
+              return
+            end
 
-            server.tool_registry.each do |tool_class|
+            registry = server.tool_registry
+            log_step_debug(:mcp_discovery, :server_scan, candidate_count: registry.size)
+            registry.each do |tool_class|
               name = tool_class.respond_to?(:tool_name) ? tool_class.tool_name : tool_class.name
               desc = tool_class.respond_to?(:description) ? tool_class.description : ''
               schema = tool_class.respond_to?(:input_schema) ? tool_class.input_schema : {}
@@ -53,7 +62,7 @@ module Legion
 
             log.info(
               "[llm][mcp] discover request_id=#{@request.id} " \
-              "server_tools=#{server.tool_registry.size}"
+              "server_tools=#{registry.size}"
             )
           rescue StandardError => e
             @warnings << "Server tool discovery error: #{e.message}"
@@ -61,9 +70,14 @@ module Legion
           end
 
           def discover_client_tools
-            return unless defined?(::Legion::MCP::Client::Pool)
+            unless defined?(::Legion::MCP::Client::Pool)
+              log_step_debug(:mcp_discovery, :client_skipped, reason: :mcp_client_pool_unavailable)
+              return
+            end
 
-            ::Legion::MCP::Client::Pool.all_tools.each do |tool|
+            tools = ::Legion::MCP::Client::Pool.all_tools
+            log_step_debug(:mcp_discovery, :client_scan, candidate_count: tools.size)
+            tools.each do |tool|
               @discovered_tools << {
                 name:        tool[:name],
                 description: tool[:description],

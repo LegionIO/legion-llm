@@ -11,6 +11,7 @@ module Legion
       class Executor
         include Legion::Logging::Helper
         include RouteAttempts
+        include Steps::Logging
         include Steps::Rbac
         include Steps::Classification
         include Steps::Billing
@@ -1091,22 +1092,42 @@ module Legion
         end
 
         def execute_step(name, &block)
-          return block.call unless pipeline_spans_enabled?
+          started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+          log_step_debug(name, :enter)
+          unless pipeline_spans_enabled?
+            begin
+              result = block.call
+              log_step_debug(name, :complete, duration_ms: elapsed_monotonic_ms(started_at))
+              return result
+            rescue StandardError => e
+              log_step_info(name, :failed, error_class: e.class.name)
+              raise
+            end
+          end
 
           block_called = false
           begin
-            Legion::Telemetry.with_span("pipeline.#{name}", kind: :internal) do |span|
+            result = Legion::Telemetry.with_span("pipeline.#{name}", kind: :internal) do |span|
               block_called = true
-              result = block.call
+              step_result = block.call
               annotate_span(span, name)
-              result
+              step_result
             end
+            log_step_debug(name, :complete, duration_ms: elapsed_monotonic_ms(started_at))
+            result
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.with_step_span', step: name, block_called: block_called)
+            log_step_info(name, :failed, error_class: e.class.name)
             raise if block_called
 
-            block.call
+            fallback_result = block.call
+            log_step_debug(name, :complete_after_span_failure, duration_ms: elapsed_monotonic_ms(started_at))
+            fallback_result
           end
+        end
+
+        def elapsed_monotonic_ms(started_at)
+          ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - started_at) * 1000).round
         end
 
         def telemetry_enabled?
