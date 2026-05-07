@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 require 'legion/llm/discovery/rule_generator'
+require 'legion/llm/discovery'
 require 'legion/llm/router'
 
 RSpec.describe Legion::LLM::Discovery::RuleGenerator do
@@ -332,6 +333,108 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         tier: :local, provider: :ollama, model: 'llama3'
       )
       expect(resolution.to_h).not_to have_key(:instance)
+    end
+  end
+
+  describe 'per-model tier override in .generate' do
+    it 'uses model-level tier (symbol key) over TIER_MAP when present' do
+      direct_vllm = {
+        vllm: {
+          gpu1: {
+            models: [
+              { 'name' => 'llama3:8b', 'tier' => :direct }
+            ]
+          }
+        }
+      }
+      rules = described_class.generate(direct_vllm)
+      chat_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:capability] == :chat }
+      expect(chat_rule[:then][:tier]).to eq(:direct)
+    end
+
+    it 'uses model-level tier (string key) over TIER_MAP when present' do
+      direct_vllm = {
+        vllm: {
+          gpu1: {
+            models: [
+              { 'name' => 'mistral:7b', 'tier' => 'direct' }
+            ]
+          }
+        }
+      }
+      rules = described_class.generate(direct_vllm)
+      chat_rule = rules.find { |r| r[:name].include?('mistral:7b') && r[:when][:capability] == :chat }
+      expect(chat_rule[:then][:tier]).to eq(:direct)
+    end
+
+    it 'falls back to TIER_MAP when no per-model tier is present' do
+      default_vllm = {
+        vllm: {
+          gpu1: {
+            models: [
+              { 'name' => 'llama3:8b' }
+            ]
+          }
+        }
+      }
+      rules = described_class.generate(default_vllm)
+      chat_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:capability] == :chat }
+      expect(chat_rule[:then][:tier]).to eq(:fleet)
+    end
+
+    it 'applies per-model tier override to stream rules as well' do
+      direct_vllm = {
+        vllm: {
+          gpu1: {
+            models: [
+              { 'name' => 'llama3:8b', 'tier' => :direct }
+            ]
+          }
+        }
+      }
+      rules = described_class.generate(direct_vllm)
+      stream_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:capability] == :stream }
+      expect(stream_rule[:then][:tier]).to eq(:direct)
+    end
+  end
+end
+
+RSpec.describe Legion::LLM::Discovery do
+  before do
+    Legion::LLM::Discovery.reset!
+  end
+
+  describe '.normalize_model_for_rules (via discovered_instances)' do
+    context 'when model entry has a tier' do
+      it 'includes tier in the normalized hash' do
+        model_entry = {
+          model:    'llama3:8b',
+          provider: :vllm,
+          instance: :gpu1,
+          tier:     :direct
+        }
+        result = Legion::LLM::Discovery.send(:normalize_model_for_rules, model_entry)
+        expect(result['tier']).to eq(:direct)
+      end
+    end
+
+    context 'when model entry has no tier' do
+      it 'omits the tier key entirely' do
+        model_entry = {
+          model:    'llama3:8b',
+          provider: :vllm,
+          instance: :gpu1,
+          tier:     nil
+        }
+        result = Legion::LLM::Discovery.send(:normalize_model_for_rules, model_entry)
+        expect(result).not_to have_key('tier')
+      end
+    end
+
+    it 'always includes the model name' do
+      model_entry = { model: 'llama3:8b', provider: :vllm, instance: :gpu1 }
+      result = Legion::LLM::Discovery.send(:normalize_model_for_rules, model_entry)
+      expect(result['name']).to eq('llama3:8b')
     end
   end
 end
