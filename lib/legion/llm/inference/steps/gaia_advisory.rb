@@ -257,6 +257,69 @@ module Legion
             types << 'format_adjustment' if pc[:compatibility]
             types.empty? ? ['partner_hint'] : types
           end
+
+          def gaia_advisory_tool_entries
+            hint_names = gaia_tool_hint_names
+            return [] if hint_names.empty?
+            return [] unless Legion::Settings::Extensions.respond_to?(:filter_tools)
+
+            entries = Legion::Settings::Extensions.filter_tools(deferred: false) +
+                      Legion::Settings::Extensions.filter_tools(deferred: true)
+            entries.each_with_object([]) do |entry, selected|
+              name = normalized_tool_name(registry_entry_name(entry))
+              next unless hint_names.include?(name)
+              next if gaia_tool_suppressed?(name)
+              next if selected.any? { |existing| normalized_tool_name(registry_entry_name(existing)) == name }
+
+              selected << entry
+            end
+          end
+
+          def gaia_tool_hint_names
+            Array(gaia_advisory_value(:tool_hint)).filter_map do |name|
+              normalized = normalized_tool_name(name)
+              normalized unless normalized.empty?
+            end
+          end
+
+          def gaia_suppressed_tool_names
+            @gaia_suppressed_tool_names ||= Array(gaia_advisory_value(:suppress)).filter_map do |name|
+              normalized = normalized_tool_name(name)
+              normalized unless normalized.empty?
+            end
+          end
+
+          def gaia_tool_suppressed?(name)
+            gaia_suppressed_tool_names.include?(normalized_tool_name(name))
+          end
+
+          def gaia_advisory_value(key)
+            data = gaia_advisory_data
+            return nil unless data.respond_to?(:key?)
+
+            data[key] || data[key.to_s]
+          end
+
+          def gaia_advisory_data
+            enrichment = @enrichments['gaia:advisory']
+            return {} unless enrichment.respond_to?(:key?)
+
+            enrichment[:data] || enrichment['data'] || {}
+          end
+
+          def registry_entry_name(entry)
+            if entry.is_a?(Hash)
+              entry[:name] || entry['name']
+            elsif entry.respond_to?(:tool_name)
+              entry.tool_name
+            elsif entry.respond_to?(:name)
+              entry.name
+            end
+          end
+
+          def normalized_tool_name(name)
+            name.to_s.tr('.', '_')
+          end
         end
       end
     end

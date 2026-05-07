@@ -716,6 +716,7 @@ module Legion
                        else
                          Types::ToolDefinition.from_tool_class(tool)
                        end
+          return if gaia_tool_suppressed?(definition.name)
           return if definitions.any? { |existing| existing.name == definition.name }
 
           @injected_tool_map[definition.name] = definition.source[:tool_class] if definition.source[:tool_class]
@@ -742,8 +743,13 @@ module Legion
           inject_limit = registry_tool_limit
 
           always_entries = Legion::Settings::Extensions.filter_tools(deferred: false)
+          gaia_entries = gaia_advisory_tool_entries
           triggered_entries = @triggered_tools.any? ? Array(@triggered_tools) : []
-          prioritized = local_provider? ? triggered_entries + always_entries : always_entries + triggered_entries
+          prioritized = if local_provider?
+                          gaia_entries + triggered_entries + always_entries
+                        else
+                          always_entries + gaia_entries + triggered_entries
+                        end
 
           prioritized.each do |entry|
             break if inject_limit && injected_names.size >= inject_limit
@@ -753,6 +759,7 @@ module Legion
                          else
                            Types::ToolDefinition.from_tool_class(entry)
                          end
+            next if gaia_tool_suppressed?(definition.name)
             next if injected_names.include?(definition.name)
 
             tool_class = entry.is_a?(Hash) ? entry[:tool_class] : entry
@@ -773,6 +780,7 @@ module Legion
           deferred_entries.each do |entry|
             definition = Types::ToolDefinition.from_registry_entry(entry)
             next unless requested.include?(definition.name)
+            next if gaia_tool_suppressed?(definition.name)
             next if injected_names.include?(definition.name)
 
             @injected_tool_map[definition.name] = entry[:tool_class] if entry[:tool_class]

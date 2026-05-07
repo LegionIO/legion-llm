@@ -235,6 +235,53 @@ confidence: 0.9 }],
         expect(names).not_to include('legion_test_skipped')
       end
 
+      it 'uses GAIA tool hints and suppressions when building native tools' do
+        always_entries = [
+          { name: 'legion_query_knowledge', description: 'Suppressed always-loaded tool',
+            input_schema: { type: 'object', properties: {} }, deferred: false }
+        ]
+        deferred_entries = [
+          { name: 'legion_test_extra', description: 'GAIA hinted deferred tool',
+            input_schema: { type: 'object', properties: {} }, deferred: true }
+        ]
+        all_entries = always_entries + deferred_entries
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) { all_entries }
+          define_singleton_method(:filter_tools) do |**criteria|
+            if criteria[:deferred] == false
+              always_entries
+            elsif criteria[:deferred] == true
+              deferred_entries
+            else
+              all_entries
+            end
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+
+        req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
+        executor = described_class.new(req)
+        executor.enrichments['gaia:advisory'] = {
+          data: { tool_hint: ['legion.test.extra'], suppress: ['legion_query_knowledge'] }
+        }
+
+        names = executor.send(:native_tool_definitions).map(&:name)
+        expect(names).to include('legion_test_extra')
+        expect(names).not_to include('legion_query_knowledge')
+      end
+
+      it 'suppresses explicitly provided native tools when GAIA says to suppress them' do
+        req = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'test' }],
+          tools:    [{ name: 'blocked_tool', description: 'blocked', parameters: { type: 'object' } }]
+        )
+        executor = described_class.new(req)
+        executor.enrichments['gaia:advisory'] = { data: { suppress: ['blocked_tool'] } }
+
+        names = executor.send(:native_tool_definitions).map(&:name)
+        expect(names).not_to include('blocked_tool')
+      end
+
       it 'caps registry tools for local providers and prioritizes trigger-matched tools' do
         always_entries = 3.times.map do |idx|
           { name: "legion_always_#{idx}", description: 'Always loaded tool',
@@ -261,6 +308,41 @@ confidence: 0.9 }],
         names = executor.send(:native_tool_definitions).map(&:name)
 
         expect(names).to eq(%w[legion_triggered_0 legion_triggered_1])
+      end
+
+      it 'prioritizes GAIA hinted tools before triggered tools for local providers' do
+        always_entries = []
+        hinted_entries = [
+          { name: 'legion_hinted', description: 'Hinted tool',
+            input_schema: { type: 'object', properties: {} }, deferred: true }
+        ]
+        triggered_entries = [
+          { name: 'legion_triggered', description: 'Triggered tool',
+            input_schema: { type: 'object', properties: {} }, deferred: false }
+        ]
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) { hinted_entries + triggered_entries }
+          define_singleton_method(:filter_tools) do |**criteria|
+            if criteria[:deferred] == false
+              always_entries
+            elsif criteria[:deferred] == true
+              hinted_entries
+            else
+              hinted_entries + triggered_entries
+            end
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+        Legion::LLM.settings[:tool_trigger][:local_tool_limit] = 1
+
+        req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
+        executor = described_class.new(req)
+        executor.instance_variable_set(:@resolved_provider, :vllm)
+        executor.instance_variable_set(:@triggered_tools, triggered_entries)
+        executor.enrichments['gaia:advisory'] = { data: { tool_hint: ['legion_hinted'] } }
+
+        names = executor.send(:native_tool_definitions).map(&:name)
+        expect(names).to eq(['legion_hinted'])
       end
     end
   end

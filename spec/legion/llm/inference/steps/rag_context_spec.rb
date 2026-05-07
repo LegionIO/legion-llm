@@ -286,6 +286,23 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       expect(entries.map { |entry| entry[:content] }).to include('Prior decision: use pgvector cosine distance')
     end
 
+    it 'caps retrieval limit with GAIA advisory context window' do
+      request = Legion::LLM::Inference::Request.build(
+        messages:         [{ role: :user, content: 'what is pgvector?' }],
+        context_strategy: :rag
+      )
+
+      apollo_runner = double('Knowledge')
+      allow(apollo_runner).to receive(:retrieve_relevant)
+        .with(query: 'what is pgvector?', limit: 2, min_confidence: 0.5)
+        .and_return({ success: true, entries: [], count: 0 })
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+
+      step = klass.new(request)
+      step.enrichments['gaia:advisory'] = { data: { context_window: { limit: 2 } } }
+      step.step_rag_context
+    end
+
     it 'uses compact_limit for rag_compact strategy' do
       Legion::Settings[:llm][:rag][:compact_limit] = 3
 
