@@ -48,6 +48,13 @@ RSpec.describe Legion::LLM::DaemonClient do
     end
   end
 
+  describe '.state_mutex' do
+    it 'uses a shared mutex for cached daemon state' do
+      expect(described_class.send(:state_mutex)).to be_a(Mutex)
+      expect(described_class.send(:state_mutex)).to equal(described_class.send(:state_mutex))
+    end
+  end
+
   # ──────────────────────────────────────────────
   # daemon_url
   # ──────────────────────────────────────────────

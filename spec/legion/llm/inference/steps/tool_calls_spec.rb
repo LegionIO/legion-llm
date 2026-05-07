@@ -3,7 +3,7 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inference::Steps::ToolCalls do
-  let(:logger) { instance_double('Logger', info: nil) }
+  let(:logger) { instance_double('Logger', debug: nil, info: nil) }
 
   let(:klass) do
     Class.new do

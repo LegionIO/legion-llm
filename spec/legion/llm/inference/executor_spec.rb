@@ -235,6 +235,53 @@ confidence: 0.9 }],
         expect(names).not_to include('legion_test_skipped')
       end
 
+      it 'uses GAIA tool hints and suppressions when building native tools' do
+        always_entries = [
+          { name: 'legion_query_knowledge', description: 'Suppressed always-loaded tool',
+            input_schema: { type: 'object', properties: {} }, deferred: false }
+        ]
+        deferred_entries = [
+          { name: 'legion_test_extra', description: 'GAIA hinted deferred tool',
+            input_schema: { type: 'object', properties: {} }, deferred: true }
+        ]
+        all_entries = always_entries + deferred_entries
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) { all_entries }
+          define_singleton_method(:filter_tools) do |**criteria|
+            if criteria[:deferred] == false
+              always_entries
+            elsif criteria[:deferred] == true
+              deferred_entries
+            else
+              all_entries
+            end
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+
+        req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
+        executor = described_class.new(req)
+        executor.enrichments['gaia:advisory'] = {
+          data: { tool_hint: ['legion.test.extra'], suppress: ['legion_query_knowledge'] }
+        }
+
+        names = executor.send(:native_tool_definitions).map(&:name)
+        expect(names).to include('legion_test_extra')
+        expect(names).not_to include('legion_query_knowledge')
+      end
+
+      it 'suppresses explicitly provided native tools when GAIA says to suppress them' do
+        req = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'test' }],
+          tools:    [{ name: 'blocked_tool', description: 'blocked', parameters: { type: 'object' } }]
+        )
+        executor = described_class.new(req)
+        executor.enrichments['gaia:advisory'] = { data: { suppress: ['blocked_tool'] } }
+
+        names = executor.send(:native_tool_definitions).map(&:name)
+        expect(names).not_to include('blocked_tool')
+      end
+
       it 'caps registry tools for local providers and prioritizes trigger-matched tools' do
         always_entries = 3.times.map do |idx|
           { name: "legion_always_#{idx}", description: 'Always loaded tool',
@@ -261,6 +308,41 @@ confidence: 0.9 }],
         names = executor.send(:native_tool_definitions).map(&:name)
 
         expect(names).to eq(%w[legion_triggered_0 legion_triggered_1])
+      end
+
+      it 'prioritizes GAIA hinted tools before triggered tools for local providers' do
+        always_entries = []
+        hinted_entries = [
+          { name: 'legion_hinted', description: 'Hinted tool',
+            input_schema: { type: 'object', properties: {} }, deferred: true }
+        ]
+        triggered_entries = [
+          { name: 'legion_triggered', description: 'Triggered tool',
+            input_schema: { type: 'object', properties: {} }, deferred: false }
+        ]
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) { hinted_entries + triggered_entries }
+          define_singleton_method(:filter_tools) do |**criteria|
+            if criteria[:deferred] == false
+              always_entries
+            elsif criteria[:deferred] == true
+              hinted_entries
+            else
+              hinted_entries + triggered_entries
+            end
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+        Legion::LLM.settings[:tool_trigger][:local_tool_limit] = 1
+
+        req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
+        executor = described_class.new(req)
+        executor.instance_variable_set(:@resolved_provider, :vllm)
+        executor.instance_variable_set(:@triggered_tools, triggered_entries)
+        executor.enrichments['gaia:advisory'] = { data: { tool_hint: ['legion_hinted'] } }
+
+        names = executor.send(:native_tool_definitions).map(&:name)
+        expect(names).to eq(['legion_hinted'])
       end
     end
   end
@@ -289,6 +371,26 @@ confidence: 0.9 }],
       allow(executor).to receive(:step_provider_call)
       executor.call
       expect(executor.enrichments['context:conversation_history']).to be_nil
+    end
+  end
+
+  describe 'privacy-constrained routing' do
+    it 'uses forced classification tier even when caller requested a cloud tier' do
+      privacy_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'patient diagnosis is hypertension' }],
+        routing:  { provider: nil, model: nil },
+        extra:    { tier: :cloud, intent: { capability: :reasoning } }
+      )
+      executor = described_class.new(privacy_request)
+      executor.instance_variable_set(
+        :@proactive_tier_assignment,
+        { tier: :local, intent: { privacy: :strict }, source: :classification, forced: true }
+      )
+
+      executor.send(:step_routing)
+
+      expect(executor.instance_variable_get(:@resolved_tier)).to eq(:local)
+      expect(executor.audit[:'routing:provider_selection'][:data][:tier]).to eq(:local)
     end
   end
 
@@ -346,6 +448,112 @@ confidence: 0.9 }],
       executor = described_class.new(request)
       register_native_chat { raise Faraday::ServerError.new(nil, { status: 500 }) }
       expect { executor.call }.to raise_error(Legion::LLM::ProviderError)
+    end
+  end
+
+  describe 'route attempt metadata' do
+    let(:fleet_request) do
+      Legion::LLM::Inference::Request.build(
+        id:              'req-route-fleet',
+        conversation_id: 'conv-route-fleet',
+        messages:        [{ role: :user, content: 'hello' }],
+        routing:         { provider: :vllm, model: 'qwen3.6-27b' }
+      )
+    end
+
+    it 'records direct success attempts in the response routing payload and timeline' do
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      register_native_chat do
+        { content: 'direct answer', usage: { input_tokens: 10, output_tokens: 5 } }
+      end
+
+      response = described_class.new(request).call
+      attempt = response.routing[:route_attempts].last
+
+      expect(attempt).to include(
+        provider:      :anthropic,
+        model:         'claude-opus-4-6',
+        dispatch_path: :direct,
+        status:        :success
+      )
+      expect(attempt).to include(:idempotency_key, :selected_lane)
+      expect(response.timeline).to include(hash_including(key: 'provider:route_attempt', data: attempt))
+    end
+
+    it 'records fleet timeouts with the selected lane and idempotency key' do
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
+        success:        false,
+        error:          'fleet_timeout',
+        correlation_id: 'corr-timeout',
+        timeout:        1
+      )
+
+      executor = described_class.new(fleet_request)
+
+      expect { executor.call }.to raise_error(Legion::LLM::ProviderError, /fleet_timeout/)
+      attempt = executor.instance_variable_get(:@route_attempts).last
+      expect(attempt).to include(
+        provider:       :vllm,
+        model:          'qwen3.6-27b',
+        dispatch_path:  :fleet,
+        status:         :failure,
+        failure_reason: 'fleet_timeout'
+      )
+      expect(attempt[:idempotency_key]).to match(/\Aidem_/)
+      expect(attempt[:selected_lane]).to eq('llm.fleet.inference.qwen3-6-27b')
+    end
+
+    it 'records fleet errors separately from publish and timeout failures' do
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
+        success:        false,
+        error:          'fleet_worker_error',
+        correlation_id: 'corr-error'
+      )
+
+      executor = described_class.new(fleet_request)
+
+      expect { executor.call }.to raise_error(Legion::LLM::ProviderError, /fleet_worker_error/)
+      expect(executor.instance_variable_get(:@route_attempts).last).to include(
+        dispatch_path:  :fleet,
+        status:         :failure,
+        failure_reason: 'fleet_worker_error'
+      )
+    end
+
+    it 'keeps failed fleet attempt metadata when escalation succeeds on a direct provider' do
+      fleet_resolution = Legion::LLM::Router::Resolution.new(tier: :fleet, provider: :vllm, model: 'qwen3.6-27b')
+      direct_resolution = Legion::LLM::Router::Resolution.new(tier: :cloud, provider: :anthropic, model: 'claude-opus-4-6')
+      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [fleet_resolution, direct_resolution], max_attempts: 2)
+      escalation_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        extra:    { intent: { capability: :chat } }
+      )
+
+      Legion::Settings[:llm][:routing][:escalation][:enabled] = true
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = true
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+      allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
+        success:        false,
+        error:          'fleet_timeout',
+        correlation_id: 'corr-timeout'
+      )
+      register_native_chat(:anthropic) do
+        {
+          content: 'direct escalation answer with enough text to pass quality',
+          usage:   { input_tokens: 8, output_tokens: 9 }
+        }
+      end
+
+      response = described_class.new(escalation_request).call
+      attempts = response.routing[:route_attempts]
+
+      expect(attempts.map { |attempt| attempt[:dispatch_path] }).to eq(%i[fleet direct])
+      expect(attempts.first).to include(status: :failure, failure_reason: 'fleet_timeout')
+      expect(attempts.last).to include(status: :success, escalation: hash_including(attempt: 2))
+      expect(response.message[:content]).to include('direct escalation answer')
     end
   end
 

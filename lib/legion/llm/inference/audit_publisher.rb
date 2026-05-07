@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative '../caller_identity'
 module Legion
   module LLM
     module Inference
@@ -26,27 +27,28 @@ module Legion
           provider_payload = hash_value(audit_data, :provider_payload) || {}
 
           event = {
-            request_id:       response.request_id,
-            conversation_id:  response.conversation_id,
-            caller:           response.caller,
-            identity:         extract_identity(response.caller),
-            routing:          response.routing,
-            tokens:           serialize_tokens(response.tokens),
-            cost:             response.cost,
-            system_prompt:    hash_value(provider_payload, :system_prompt),
-            injected_tools:   hash_value(provider_payload, :injected_tools),
-            enrichments:      compact_enrichments(response.enrichments),
-            audit:            without_provider_payload(audit_data),
-            timeline:         compact_timeline(response.timeline),
-            classification:   response.classification,
-            tracing:          response.tracing,
-            messages:         current_turn_messages(request.messages),
-            response_content: msg_content,
-            tools_used:       tools_data,
-            timestamp:        Time.now,
-            request_type:     request.respond_to?(:request_type) ? request.request_type : 'chat',
-            tier:             hash_value(response.routing, :tier),
-            message_context:  build_message_context(request: request, response: response)
+            request_id:        response.request_id,
+            conversation_id:   response.conversation_id,
+            caller:            response.caller,
+            identity:          extract_identity(response.caller),
+            routing:           response.routing,
+            tokens:            serialize_tokens(response.tokens),
+            cost:              response.cost,
+            system_prompt:     hash_value(provider_payload, :system_prompt),
+            injected_tools:    hash_value(provider_payload, :injected_tools),
+            enrichments:       compact_enrichments(response.enrichments),
+            audit:             without_provider_payload(audit_data),
+            timeline:          compact_timeline(response.timeline),
+            classification:    response.classification,
+            tracing:           response.tracing,
+            messages:          current_turn_messages(request.messages),
+            response_content:  msg_content,
+            response_thinking: response.thinking,
+            tools_used:        tools_data,
+            timestamp:         Time.now,
+            request_type:      request.respond_to?(:request_type) ? request.request_type : 'chat',
+            tier:              hash_value(response.routing, :tier),
+            message_context:   build_message_context(request: request, response: response)
           }
           event[:message_id] = msg_id if msg_id
           event[:task_id] = msg_task_id if msg_task_id
@@ -64,16 +66,7 @@ module Legion
         end
 
         def extract_identity(caller)
-          return nil unless caller.is_a?(Hash)
-
-          rb = caller[:requested_by] || caller['requested_by']
-          return nil unless rb.is_a?(Hash)
-
-          {
-            identity:   rb[:identity] || rb['identity'],
-            type:       rb[:type] || rb['type'],
-            credential: rb[:credential] || rb['credential']
-          }.compact
+          Legion::LLM::CallerIdentity.normalize(caller: caller)
         end
 
         def serialize_tokens(tokens)

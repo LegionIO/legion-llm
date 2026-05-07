@@ -334,6 +334,83 @@ RSpec.describe Legion::LLM::Context::Curator do
 
   # --- async curation does not block caller ---
 
+  describe 'stored curation records' do
+    it 'stores a marker when a curation pass does not modify any messages' do
+      curator.send(:store_curated, conversation_id, [{ role: :user, content: 'short message' }])
+
+      curated_entries = Legion::LLM::Inference::Conversation.messages(conversation_id)
+                                                            .select { |msg| msg[:role] == described_class::CURATED_KEY }
+      expect(curated_entries.size).to eq(1)
+      payload = Legion::JSON.parse(curated_entries.first[:content])
+      expect(payload[:type] || payload['type']).to eq('curation_marker')
+    end
+
+    it 'uses stored curated summaries instead of the original verbose message content' do
+      original = Legion::LLM::Inference::Conversation.append(
+        conversation_id,
+        role:    :tool,
+        content: 'verbose payload ' * 100
+      )
+      curator.send(
+        :store_curated,
+        conversation_id,
+        [
+          original.merge(
+            content:          'stored compact summary',
+            original_content: original[:content],
+            curated:          true
+          )
+        ]
+      )
+
+      result = curator.curated_messages
+
+      expect(result.map { |msg| msg[:content] }).to include('stored compact summary')
+      expect(result.map { |msg| msg[:content] }).not_to include(original[:content])
+    end
+
+    it 'runs structural curation when a marker exists without per-message summaries' do
+      content = 'This is a longer duplicate message about a configuration problem in Legion'
+      Legion::LLM::Inference::Conversation.append(conversation_id, role: :user, content: content)
+      Legion::LLM::Inference::Conversation.append(conversation_id, role: :user, content: content)
+      curator.send(:store_curated, conversation_id, [{ role: :user, content: 'short message' }])
+
+      result = curator.curated_messages
+
+      expect(result.count { |msg| msg[:role] == :user && msg[:content] == content }).to eq(1)
+    end
+  end
+
+  describe '#drop_and_archive' do
+    it 'archives dropped conversation turns to Apollo and returns the retained tail' do
+      ingested = []
+      apollo_local = Module.new do
+        define_singleton_method(:started?) { true }
+        define_singleton_method(:ingest) { |**payload| ingested << payload }
+      end
+      stub_const('Legion::Apollo::Local', apollo_local)
+      Legion::Settings[:llm][:context_curation] = Legion::Settings[:llm][:context_curation].merge(
+        target_context_tokens:   5,
+        archive_preserve_recent: 1
+      )
+
+      messages = [
+        { seq: 1, role: :user, content: 'old user message ' * 20 },
+        { seq: 2, role: :assistant, content: 'old assistant message ' * 20 },
+        { seq: 3, role: :user, content: 'new question' }
+      ]
+
+      retained = curator.drop_and_archive(messages, conversation_id: conversation_id)
+
+      expect(retained.map { |msg| msg[:seq] }).to eq([3])
+      expect(ingested.size).to eq(1)
+      expect(ingested.first[:tags]).to include('llm_conversation_history', "conversation:#{conversation_id}")
+      expect(ingested.first[:content]).to include('old user message', 'old assistant message')
+    end
+  end
+
+  # --- async curation does not block caller ---
+
   describe '#curate_turn' do
     it 'returns a Thread without blocking' do
       messages = [{ role: :user, content: 'hi' }]
@@ -353,19 +430,14 @@ RSpec.describe Legion::LLM::Context::Curator do
   # --- curated cache invalidation ---
 
   describe 'cache invalidation after async curation' do
-    it 'clears @curated_cache after thread completes' do
-      # Prime the cache
-      allow(Legion::LLM::Inference::Conversation).to receive(:conversation_exists?).and_return(false)
-      first = curator.curated_messages
-      expect(first).to be_nil # no curated messages yet
+    it 'clears @curated_messages after thread completes' do
+      curator.instance_variable_set(:@curated_messages, [{ role: :user, content: 'stale' }])
 
-      # After curate_turn, the cache should be invalidated
       thread = curator.curate_turn(turn_messages:      [{ role: :user, content: 'msg' }],
                                    assistant_response: 'resp')
       thread.join(2)
-      # @curated_cache was set to nil — next call will re-load
-      # We can't directly inspect @curated_cache, but curated_messages should still work
-      expect { curator.curated_messages }.not_to raise_error
+
+      expect(curator.instance_variable_get(:@curated_messages)).to be_nil
     end
   end
 
@@ -395,6 +467,15 @@ RSpec.describe Legion::LLM::Context::Curator do
 
     it 'target_context_tokens is accessible in settings' do
       expect(Legion::Settings[:llm][:context_curation][:target_context_tokens]).to eq(40_000)
+    end
+
+    it 'can use vLLM as the small local/fleet curation model' do
+      Legion::Settings[:extensions][:llm] = {
+        ollama: { enabled: false, default_model: 'llama3.1:8b' },
+        vllm:   { enabled: true, default_model: 'qwen3.6-27b' }
+      }
+
+      expect(curator.send(:detect_small_model)).to eq('qwen3.6-27b')
     end
   end
 

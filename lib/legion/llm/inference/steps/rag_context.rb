@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,17 +9,32 @@ module Legion
       module Steps
         module RagContext
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_rag_context
-            return unless rag_enabled?
-            return unless substantive_query?
-            return unless apollo_available_or_warn?
+            unless rag_enabled?
+              log_step_debug(:rag_context, :skipped, reason: :disabled)
+              return
+            end
+            unless substantive_query?
+              log_step_debug(:rag_context, :skipped, reason: :non_substantive_query)
+              return
+            end
+            unless apollo_available_or_warn?
+              log_step_debug(:rag_context, :skipped, reason: :apollo_unavailable)
+              return
+            end
 
-            strategy = select_context_strategy(utilization: estimate_utilization)
-            return if strategy == :none
+            utilization = estimate_utilization
+            strategy = select_context_strategy(utilization: utilization)
+            if strategy == :none
+              log_step_debug(:rag_context, :skipped, reason: :context_window_high, utilization: utilization.round(3))
+              return
+            end
 
             query = extract_query
             start_time = Time.now
+            log_step_debug(:rag_context, :retrieve, strategy: strategy, query_chars: query.to_s.length)
             result = apollo_retrieve(query: query, strategy: strategy)
             record_rag_enrichment(result, strategy)
             record_rag_timeline(result, strategy, start_time)
@@ -62,18 +78,23 @@ module Legion
             return true if apollo_available?
 
             @warnings << 'Apollo unavailable for RAG context retrieval'
+            log_step_debug(:rag_context, :apollo_unavailable)
             false
           end
 
           def record_rag_enrichment(result, strategy)
             entries = Legion::LLM::Settings.config_value(result, :entries, [])
-            return unless result && Legion::LLM::Settings.config_value(result, :success) && entries.any?
+            unless result && Legion::LLM::Settings.config_value(result, :success) && entries.any?
+              log_step_debug(:rag_context, :no_context_added, strategy: strategy)
+              return
+            end
 
             @enrichments['rag:context_retrieval'] = {
               content:   "#{Legion::LLM::Settings.config_value(result, :count)} entries retrieved via #{strategy}",
               data:      { entries: entries, strategy: strategy, count: Legion::LLM::Settings.config_value(result, :count) },
               timestamp: Time.now
             }
+            log_step_info(:rag_context, :context_added, strategy: strategy, entry_count: entries.size)
           end
 
           def record_rag_timeline(result, strategy, start_time)
@@ -133,8 +154,16 @@ module Legion
             full_limit    = rag_setting(:full_limit, 10)
             compact_limit = rag_setting(:compact_limit, 5)
             confidence    = rag_setting(:min_confidence, 0.5)
-            limit = strategy == :rag_compact ? compact_limit : full_limit
+            limit = apply_gaia_context_limit(strategy == :rag_compact ? compact_limit : full_limit,
+                                             strategy: strategy)
+            log_step_debug(:rag_context, :apollo_query, strategy: strategy, limit: limit, min_confidence: confidence)
 
+            general = apollo_retrieve_general(query: query, limit: limit, confidence: confidence)
+            history = apollo_retrieve_conversation_history(query: query, limit: limit, confidence: confidence)
+            merge_apollo_results(general, history)
+          end
+
+          def apollo_retrieve_general(query:, limit:, confidence:)
             if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
               ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
                 query: query, limit: limit, min_confidence: confidence
@@ -144,6 +173,7 @@ module Legion
                 if ::Legion::Apollo.started?
                   ::Legion::Apollo.retrieve(text: query, limit: limit, scope: :all)
                 else
+                  log_step_debug(:rag_context, :apollo_query_skipped, reason: :not_started)
                   []
                 end
               rescue StandardError => e
@@ -155,9 +185,109 @@ module Legion
             end
           end
 
+          def apollo_retrieve_conversation_history(query:, limit:, confidence:)
+            return empty_apollo_result unless conversation_history_retrieval_enabled?
+
+            conversation_id = @request.conversation_id
+            return empty_apollo_result if conversation_id.to_s.empty?
+
+            tags = ['llm_conversation_history', "conversation:#{conversation_id}"]
+            log_step_debug(:rag_context, :apollo_history_query, limit: limit, tag_count: tags.size)
+            if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
+              ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
+                query:          query,
+                limit:          limit,
+                min_confidence: confidence,
+                tags:           tags,
+                domain:         'conversation_history'
+              )
+            elsif defined?(::Legion::Apollo) && ::Legion::Apollo.started?
+              ::Legion::Apollo.retrieve(
+                text:   query,
+                limit:  limit,
+                scope:  :all,
+                tags:   tags,
+                domain: 'conversation_history'
+              )
+            else
+              empty_apollo_result
+            end
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_context.apollo_history_retrieve',
+                                conversation_id: conversation_id)
+            empty_apollo_result
+          end
+
+          def conversation_history_retrieval_enabled?
+            rag_setting(:conversation_history_enabled, false) == true
+          end
+
+          def merge_apollo_results(*results)
+            entries = results.flat_map { |result| apollo_result_entries(result) }
+            {
+              success: entries.any? || results.any? { |result| Legion::LLM::Settings.config_value(result, :success) },
+              entries: entries,
+              count:   entries.size
+            }
+          end
+
+          def apollo_result_entries(result)
+            return [] if result.nil?
+
+            if result.respond_to?(:key?)
+              Array(Legion::LLM::Settings.config_value(result, :entries, []))
+            else
+              Array(result)
+            end
+          end
+
+          def empty_apollo_result
+            { success: true, entries: [], count: 0 }
+          end
+
           def extract_query
             @request.messages.select { |m| Legion::LLM::Settings.config_value(m, :role).to_s == 'user' }
                              .then { |messages| Legion::LLM::Settings.config_value(messages.last, :content) }
+          end
+
+          def apply_gaia_context_limit(limit, strategy:)
+            gaia_limit = gaia_context_limit(strategy: strategy)
+            return limit unless gaia_limit&.positive?
+
+            [limit, gaia_limit].min
+          end
+
+          def gaia_context_limit(strategy:)
+            window = gaia_advisory_value(:context_window)
+            case window
+            when Hash
+              value = window[strategy] || window[strategy.to_s] ||
+                      window[:limit] || window['limit'] ||
+                      window[:max_entries] || window['max_entries'] ||
+                      window[:context_limit] || window['context_limit']
+              positive_integer(value)
+            when Array
+              window.size.positive? ? window.size : nil
+            else
+              positive_integer(window)
+            end
+          end
+
+          def gaia_advisory_value(key)
+            enrichment = @enrichments['gaia:advisory']
+            return nil unless enrichment.respond_to?(:key?)
+
+            data = enrichment[:data] || enrichment['data'] || {}
+            return nil unless data.respond_to?(:key?)
+
+            data[key] || data[key.to_s]
+          end
+
+          def positive_integer(value)
+            integer = Integer(value)
+            integer.positive? ? integer : nil
+          rescue ArgumentError, TypeError
+            nil
           end
         end
       end

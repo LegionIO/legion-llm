@@ -62,7 +62,7 @@ RSpec.describe Legion::LLM::Tools::Dispatcher do
   end
 
   describe '.check_override' do
-    it 'prefers registry override over settings and catalog overrides' do
+    it 'prefers explicit settings override over registry and catalog overrides' do
       extensions_mod = Module.new do
         define_singleton_method(:find_tool) do |_name|
           { name: 'test_tool', tool_class: Class.new { define_singleton_method(:call) { |**| {} } } }
@@ -70,13 +70,13 @@ RSpec.describe Legion::LLM::Tools::Dispatcher do
       end
       stub_const('Legion::Settings::Extensions', extensions_mod)
 
-      # Even if settings override exists, registry wins
+      settings_result = { type: :extension, lex: 'lex-other', runner: 'r', function: 'f' }
       allow(described_class).to receive(:check_settings_override).and_return(
-        { type: :extension, lex: 'lex-other', runner: 'r', function: 'f' }
+        settings_result
       )
 
       result = described_class.check_override('test_tool')
-      expect(result[:type]).to eq(:registry)
+      expect(result).to eq(settings_result)
     end
 
     it 'falls back to settings override when registry returns nil' do

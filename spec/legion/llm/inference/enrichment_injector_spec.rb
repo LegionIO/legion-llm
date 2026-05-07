@@ -48,6 +48,21 @@ RSpec.describe Legion::LLM::Inference::EnrichmentInjector do
       result = described_class.inject(system: nil, enrichments: {})
       expect(result).to be_nil
     end
+
+    it 'injects loaded conversation history before RAG context' do
+      result = described_class.inject(
+        system:      nil,
+        enrichments: {
+          'context:conversation_history' => [{ role: :user, content: 'previous decision' }],
+          'rag:context_retrieval'        => {
+            data: { entries: [{ content: 'external fact', content_type: 'fact' }] }
+          }
+        }
+      )
+
+      expect(result).to include('Prior conversation history')
+      expect(result.index('previous decision')).to be < result.index('external fact')
+    end
   end
 
   describe 'system_baseline integration' do

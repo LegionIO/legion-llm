@@ -14,7 +14,7 @@ RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
       tier:            'fleet',
       message_context: { conversation_id: 'conv_1' },
       classification:  { level: 'internal', contains_phi: true, jurisdictions: %w[us eu], retention: 'permanent' },
-      caller:          { requested_by: { identity: 'user:matt', type: 'user' } }
+      caller:          { requested_by: { identity: 'user:alice', type: 'user' } }
     }
   end
 
@@ -67,7 +67,8 @@ RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
     end
 
     it 'sets caller identity' do
-      expect(headers['x-legion-caller-identity']).to eq('user:matt')
+      expect(headers['x-legion-identity']).to eq('user:alice')
+      expect(headers).not_to have_key('x-legion-caller-identity')
     end
 
     it 'sets caller type' do

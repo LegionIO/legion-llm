@@ -9,8 +9,8 @@ RSpec.describe Legion::LLM::Router::Arbitrage do
   end
 
   describe '.enabled?' do
-    it 'returns false by default' do
-      expect(described_class.enabled?).to be false
+    it 'returns true by default' do
+      expect(described_class.enabled?).to be true
     end
 
     it 'returns true when enabled in settings' do
@@ -62,6 +62,19 @@ RSpec.describe Legion::LLM::Router::Arbitrage do
                                 })
       expect(described_class.cost_table['my-custom-model']).to eq({ input: 1.0, output: 2.0 })
     end
+
+    it 'adds zero-cost local and fleet offerings from inventory' do
+      allow(Legion::LLM::Inventory).to receive(:offerings).and_return([
+                                                                        { model: 'qwen3.6-27b', tier: :fleet, type: :inference },
+                                                                        { model: 'nomic-embed-text', tier: :local, type: :embed },
+                                                                        { model: 'claude-sonnet-4-6', tier: :frontier, type: :inference }
+                                                                      ])
+
+      table = described_class.cost_table
+
+      expect(table['qwen3.6-27b']).to eq({ input: 0.0, output: 0.0 })
+      expect(table).not_to have_key('nomic-embed-text')
+    end
   end
 
   describe '.estimated_cost' do
@@ -97,6 +110,11 @@ RSpec.describe Legion::LLM::Router::Arbitrage do
     it 'returns nil when disabled' do
       Legion::Settings[:llm][:arbitrage] = { enabled: false }
       expect(described_class.cheapest_for(capability: :basic)).to be_nil
+    end
+
+    it 'does not require a Quality::Checker.model_score method' do
+      expect(Legion::LLM::Quality::Checker).not_to respond_to(:model_score)
+      expect { described_class.cheapest_for(capability: :moderate) }.not_to raise_error
     end
 
     it 'returns the cheapest model for basic capability' do

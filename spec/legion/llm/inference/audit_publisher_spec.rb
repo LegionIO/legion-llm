@@ -129,6 +129,67 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:response_content]).to eq('answer')
       expect(event[:messages]).to eq([{ role: :user, content: 'question' }])
     end
+
+    it 'includes response_thinking separately from response_content' do
+      thinking = { content: 'internal chain', enabled: true, config: { budget_tokens: 128 } }
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'r', conversation_id: 'c',
+        message:  { role: :assistant, content: 'answer' },
+        thinking: thinking
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+
+      expect(event[:response_content]).to eq('answer')
+      expect(event[:response_thinking]).to eq(thinking)
+    end
+
+    it 'extracts extension caller identity into audit events' do
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'r', conversation_id: 'c',
+        message: { role: :assistant, content: 'answer' },
+        caller: { extension: 'lex-test' }
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+
+      expect(event[:identity]).to eq(identity: 'extension:lex-test', type: 'extension')
+    end
+
+    it 'prefers namespaced caller ids over ambiguous display identities' do
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'r', conversation_id: 'c',
+        message: { role: :assistant, content: 'answer' },
+        caller: {
+          requested_by: {
+            id:         'system:system',
+            identity:   'system',
+            type:       'service',
+            credential: 'system'
+          }
+        }
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+
+      expect(event[:identity]).to eq(identity: 'system:system', type: 'service', credential: 'system')
+    end
+
+    it 'extracts string caller identity into audit events' do
+      response = Legion::LLM::Inference::Response.build(
+        request_id: 'r', conversation_id: 'c',
+        message: { role: :assistant, content: 'answer' },
+        caller: 'extension:lex-test'
+      )
+      request = Legion::LLM::Inference::Request.build(messages: [])
+
+      event = described_class.build_event(request: request, response: response)
+
+      expect(event[:identity]).to eq(identity: 'extension:lex-test', type: 'extension')
+    end
   end
 
   describe '.publish' do

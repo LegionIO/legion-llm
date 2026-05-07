@@ -28,8 +28,31 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
                                    input_tokens: 7, output_tokens: 3)
       end
 
-      def embed(_text, model:, dimensions:)
+      def embed(text:, model:, dimensions:, params: {}, headers: {})
+        self.class.last_embed_call = { text: text, model: model, dimensions: dimensions, params: params, headers: headers }
         llm_namespace::Embedding.new(vectors: Array.new(dimensions || 2, 0.5), model: model, input_tokens: 4)
+      end
+
+      def image(prompt:, model:, size:, with: nil, mask: nil, params: {}, headers: {})
+        {
+          result:  [{ url: 'https://images.invalid/result.png' }],
+          model:   model,
+          usage:   {},
+          headers: headers,
+          params:  params,
+          prompt:  prompt,
+          size:    size,
+          with:    with,
+          mask:    mask
+        }
+      end
+
+      def health(live:)
+        { status: live ? 'healthy' : 'unknown', ready: live }
+      end
+
+      class << self
+        attr_accessor :last_embed_call
       end
     end
   end
@@ -85,10 +108,43 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
   end
 
   it 'maps embedding dispatch to lex-llm provider embeddings' do
-    result = adapter.embed(model: 'embed-a', text: 'hello', dimensions: 3)
+    result = adapter.embed(
+      model:      'embed-a',
+      text:       'hello',
+      dimensions: 3,
+      params:     { input_type: 'query' },
+      headers:    { 'X-Test' => '1' }
+    )
 
     expect(result[:result]).to eq([0.5, 0.5, 0.5])
     expect(result[:usage]).to include(input_tokens: 4, output_tokens: 0)
+    expect(provider_class.last_embed_call).to include(
+      text:       'hello',
+      dimensions: 3,
+      params:     { input_type: 'query' },
+      headers:    { 'X-Test' => '1' }
+    )
+    expect(provider_class.last_embed_call[:model]).to be_a(lex_llm_test_namespace::Model::Info)
+  end
+
+  it 'maps image dispatch to lex-llm provider image generation' do
+    result = adapter.image(
+      model:   'image-a',
+      prompt:  'draw a clean interface',
+      size:    '1024x1024',
+      with:    'input.png',
+      mask:    'mask.png',
+      params:  { quality: 'high' },
+      headers: { 'X-Test' => '1' }
+    )
+
+    expect(result[:result]).to eq([{ url: 'https://images.invalid/result.png' }])
+    expect(result[:model]).to be_a(lex_llm_test_namespace::Model::Info)
+    expect(result[:metadata]).to eq({})
+  end
+
+  it 'maps health checks to the lex-llm provider health contract' do
+    expect(adapter.health(live: true)).to eq(status: 'healthy', ready: true)
   end
 
   it 'streams provider chunks through the callback and response accumulator' do
@@ -107,6 +163,23 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result[:result]).to eq('hello')
     expect(result[:model]).to eq('model-a')
     expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
+  end
+
+  it 'accumulates plain string streaming thinking chunks' do
+    chunk_class = Struct.new(:content, :model_id, :input_tokens, :output_tokens,
+                             :cached_tokens, :cache_creation_tokens, :thinking,
+                             keyword_init: true)
+    provider_class.define_method(:complete) do |_messages, model:, **, &block|
+      block.call(chunk_class.new(content: 'answer', model_id: model.id, input_tokens: 7, output_tokens: 3,
+                                 cached_tokens: 0, cache_creation_tokens: 0))
+      block.call(chunk_class.new(content: '', model_id: model.id, input_tokens: 7, output_tokens: 3,
+                                 cached_tokens: 0, cache_creation_tokens: 0, thinking: 'internal reasoning'))
+    end
+
+    result = adapter.stream(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
+
+    expect(result[:result]).to eq('answer')
+    expect(result[:thinking]).to eq(content: 'internal reasoning', enabled: true)
   end
 
   it 'estimates token count for non-hash message inputs' do

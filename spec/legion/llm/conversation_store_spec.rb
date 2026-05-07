@@ -72,6 +72,17 @@ RSpec.describe Legion::LLM::Inference::Conversation do
       result = described_class.read_sticky_state('conv-sticky-2')
       expect(result[:deferred_tool_calls]).to eq(3)
     end
+
+    it 'loads sticky_state from persistent storage when the conversation is not in memory' do
+      allow(described_class).to receive(:db_available?).and_return(true)
+      allow(described_class).to receive(:db_load_sticky_state)
+        .with('evicted-conv')
+        .and_return({ deferred_tool_calls: 4 })
+
+      result = described_class.read_sticky_state('evicted-conv')
+
+      expect(result[:deferred_tool_calls]).to eq(4)
+    end
   end
 
   describe '.write_sticky_state' do
@@ -82,8 +93,12 @@ RSpec.describe Legion::LLM::Inference::Conversation do
 
     it 'persists state to an in-memory conversation' do
       described_class.append('conv-sticky-3', role: :user, content: 'hi')
+      allow(described_class).to receive(:db_available?).and_return(true)
+      allow(described_class).to receive(:db_persist_sticky_state)
       described_class.write_sticky_state('conv-sticky-3', { deferred_tool_calls: 7 })
       expect(described_class.read_sticky_state('conv-sticky-3')[:deferred_tool_calls]).to eq(7)
+      expect(described_class).to have_received(:db_persist_sticky_state)
+        .with('conv-sticky-3', { deferred_tool_calls: 7 })
     end
 
     it 'replaces the entire sticky_state slot (not a merge)' do

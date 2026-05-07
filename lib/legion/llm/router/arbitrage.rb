@@ -15,13 +15,16 @@ module Legion
           'gpt-4o'                            => { input: 2.5,  output: 10.0 },
           'gpt-4o-mini'                       => { input: 0.15, output: 0.60 },
           'gemini-2.0-flash'                  => { input: 0.10, output: 0.40 },
-          'llama3'                            => { input: 0.0,  output: 0.0  }
+          'llama3'                            => { input: 0.0,  output: 0.0  },
+          'llama3.1'                          => { input: 0.0,  output: 0.0  },
+          'qwen3'                             => { input: 0.0,  output: 0.0  },
+          'qwen3.6-27b'                       => { input: 0.0,  output: 0.0  }
         }.freeze
 
         class << self
           # Returns true when arbitrage is enabled in settings.
           def enabled?
-            settings.fetch(:enabled, false) == true
+            settings.fetch(:enabled, true) == true
           end
 
           # Returns the estimated cost for a request with the given token counts.
@@ -68,9 +71,9 @@ module Legion
           # Returns the merged cost table: defaults overridden by any settings-defined entries.
           def cost_table
             overrides = settings.fetch(:cost_table, {})
-            return DEFAULT_COST_TABLE if overrides.nil? || overrides.empty?
+            merged = DEFAULT_COST_TABLE.merge(zero_cost_inventory_models)
+            return merged if overrides.nil? || overrides.empty?
 
-            merged = DEFAULT_COST_TABLE.dup
             overrides.each do |model, costs|
               entry = costs.transform_keys(&:to_sym)
               merged[model.to_s] = entry
@@ -93,19 +96,39 @@ module Legion
           # Models that are local (cost 0) always qualify for :basic capability.
           def eligible_models(capability:, quality_floor: 0.7)
             cap = capability.to_sym
+            _ = quality_floor
 
             disqualified_for_reasoning = %w[gpt-4o-mini gemini-2.0-flash llama3]
 
-            models = cost_table.keys.reject do |model|
+            cost_table.keys.reject do |model|
               cap == :reasoning && disqualified_for_reasoning.include?(model)
             end
+          end
 
-            return models unless defined?(Legion::LLM::Quality::Checker) && Quality::Checker.respond_to?(:model_score)
+          def zero_cost_inventory_models
+            return {} unless defined?(Legion::LLM::Inventory) && Legion::LLM::Inventory.respond_to?(:offerings)
 
-            models.select do |model|
-              score = Quality::Checker.model_score(model)
-              score.nil? || score >= quality_floor
+            Array(Legion::LLM::Inventory.offerings).each_with_object({}) do |offering, table|
+              next unless zero_cost_offering?(offering)
+
+              model = offering[:model] || offering['model']
+              next if model.to_s.empty?
+
+              table[model.to_s] = { input: 0.0, output: 0.0 }
             end
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.router.arbitrage.zero_cost_inventory_models')
+            {}
+          end
+
+          def zero_cost_offering?(offering)
+            return false unless offering.respond_to?(:key?)
+
+            type = offering[:type] || offering['type']
+            return false unless type.nil? || type.to_s == 'inference' || type.to_s == 'chat'
+
+            tier = (offering[:tier] || offering['tier']).to_s
+            %w[local fleet].include?(tier)
           end
         end
       end

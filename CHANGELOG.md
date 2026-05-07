@@ -1,5 +1,122 @@
 # Legion LLM Changelog
 
+## [0.9.9] - 2026-05-07
+
+### Fixed
+- Initialized sticky-state persistence reads explicitly on cache misses to satisfy static analysis without changing runtime behavior.
+- Consume GAIA advisory `tool_hint`, `suppress`, and `context_window` data when building native tool definitions and sizing RAG retrieval, so GAIA advisory outputs affect provider calls instead of only appearing in enrichment summaries.
+
+## [0.9.8] - 2026-05-06
+
+### Fixed
+- Fixed Anthropic Messages request normalization for multi-block content.
+- Marked API-submitted client tools as non-executable server-side while preserving trusted registry/deferred tool injection.
+- Preferred explicit settings overrides over registry MCP overrides.
+- Added structured-output parse retries through alternate routes when an escalation route is available.
+- Added bounded metering spool writes, disabled-vs-dropped audit results, and warning logs for invalid settings paths and invalid inventory offerings.
+- Preserved non-text message content for audit/persistence and extracted string-keyed text blocks correctly.
+- Added trackable unknown caller identity defaults for audit/transport envelopes.
+- Used provider embedding usage tokens when formatting OpenAI-compatible embedding responses.
+- Serialized daemon-client cached state behind a shared mutex.
+- Added escalation transport exchange binding for escalation events.
+
+## [0.9.7] - 2026-05-06
+
+### Fixed
+- Enabled arbitrage by default, added zero-cost local/fleet offering coverage, and removed the dead `Quality::Checker.model_score` dependency from arbitrage eligibility.
+- Skipped debate when fewer than two distinct models are available and captured judge evaluation/confidence separately from the final answer.
+- Reused the shared context token estimator for billing preflight cost checks.
+- Logged dropped metering emissions at the inference metering call site.
+- Added resolved model metadata to routing span attributes.
+- Stopped treating standalone email addresses as PII by default while preserving contextual and opt-in email detection.
+- Allowed context curation to choose vLLM/MLX local or fleet models for LLM-assisted summarization.
+- Routed compressor summarization through standard low-cost/basic intent when no explicit compressor model is configured.
+
+## [0.9.6] - 2026-05-06
+
+### Fixed
+- Enforced privacy classification as a forced local routing constraint, even when callers request a cloud tier.
+- Made RAG faithfulness failures block caller-visible responses by default and record structured audit data.
+- Archived dropped conversation turns into Apollo with conversation-scoped tags and retrieved archived history during RAG context loading.
+- Reported escalation quality failures and low-confidence responses to `Router::HealthTracker` as quality signals.
+- Persisted conversation sticky state through the database path and restored it after in-memory LRU eviction.
+- Counted pending conversation-history and RAG enrichments in token-budget checks before provider dispatch.
+- Averaged provider health priority adjustments across instances while preserving worst-state circuit reporting.
+
+## [0.9.5] - 2026-05-06
+
+### Fixed
+- Fixed context curator cache invalidation and stored curated-summary replay so compacted messages are used on later turns.
+- Persisted curation marker records even when a pass does not rewrite individual messages, allowing structural curation to run for short-message turns.
+- Fixed compressor LLM summarization to call `Legion::LLM.chat_direct` with a prompt message instead of the obsolete session-style API.
+- Warn and omit misleading zero-dollar cost estimates when provider usage metadata collapses to zero tokens for a known model.
+
+## [0.9.4] - 2026-05-06
+
+### Changed
+- Added shared inference step logging helpers and debug-level step enter/complete/failure logs.
+- Added safe debug/info instrumentation across inference steps for routing actions, enrichment decisions, tool handling, RAG, skill injection, sticky runner state, billing, classification, debate, post-response audit, and metering emission.
+
+## [0.9.3] - 2026-05-06
+
+### Changed
+- Delegated responder-side fleet provider execution, token validation, and provider response publishing to the shared `lex-llm` fleet helpers.
+- Kept `legion-llm` as the request-side fleet dispatcher and token issuer while retaining compatibility aliases for old responder constants.
+- Bumped the `lex-llm` dependency floor to `>= 0.4.3` for shared responder execution helpers.
+
+## [0.9.2] - 2026-05-06
+
+### Fixed
+- Prefer namespaced caller ids over ambiguous display identities when publishing audit, metering, and transport identity metadata.
+
+## [0.9.1] - 2026-05-06
+
+### Changed
+- `legion-llm` now owns lex-llm provider registration by scanning loaded provider modules, constructing `LexLLMAdapter` instances, and writing `Call::Registry`.
+- Provider rediscovery now rebuilds registry entries after `Call::Registry.reset!`, supporting LegionIO reload/hot-update flows without relying on provider require-time side effects.
+- Bumped the `lex-llm` dependency floor to `>= 0.4.1` for pure provider discovery and alias metadata.
+
+### Fixed
+- Preserve streaming thinking chunks that providers emit as plain strings.
+- Normalize discovered provider instance ids from provider offerings before memory-gate and availability checks.
+- Use canonical offering aliases for metering cost estimates and fall back to caller agent metadata for fleet context.
+- Preserve extension, string, and top-level caller identity metadata in audit events and transport headers.
+
+## [0.9.0] - 2026-05-06
+
+### Changed
+- Added shared provider-owned fleet responder execution support for lex-llm provider gems.
+- Moved fleet dispatch defaults to top-level `fleet.dispatch`, removed legacy gateway defaults, and rejected `routing.use_fleet` / `openai_compat.gateways` settings during validation.
+- OpenAI-compatible routing now resolves through registered `lex-llm-openai` provider instances instead of gateway interceptor configuration.
+- Native dispatch now routes chat, stream, embed, image, and health calls through the canonical lex-llm provider-instance adapter contract.
+- Native inference now records direct/fleet route attempts with dispatch path, idempotency key, selected lane, failure reason, and escalation context.
+- Native inference and `/api/llm/inference` now strip provider thinking from caller-visible content and expose thinking only through explicit diagnostic fields/events.
+- Inventory and provider/model API reads now use cached discovery and non-live provider offerings, so explicit discovery refresh remains the only path that probes provider endpoints.
+- Fleet dispatch now publishes shared lex-llm protocol-v2 envelopes with canonical `operation`, `request_id`, `correlation_id`, `idempotency_key`, signed tokens, and strict reply matching.
+- Fleet worker handling now validates protocol-v2 envelopes, enforces token/idempotency policy, dispatches local providers through canonical lex-llm methods, and publishes shared lex-llm response/error envelopes.
+- Bumped dependency floors to `lex-llm >= 0.4.0` and `legion-transport >= 1.4.14` for shared provider contracts and fleet envelopes.
+
+### Removed
+- Removed the gateway interceptor runtime path and gateway metering fallback.
+- Retired `Legion::LLM::Transport::Messages::FleetRequest`, `FleetResponse`, and `FleetError` as fleet message authorities in favor of `Legion::Extensions::Llm::Transport::Messages::*`.
+
+## [0.8.51] - 2026-05-03
+
+### Changed
+- Native `/api/llm/inference` streaming hides provider thinking deltas by default, with `include_thinking: true` as the explicit diagnostic opt-in.
+- Pipeline metering events now carry wall-clock latency, estimated cost, conversation/correlation ids, billing, task, agent, identity, and routing context.
+- LLM transport messages now preserve caller identity, credential, and caller type headers from nested caller metadata, top-level identity metadata, and extension callers.
+
+### Fixed
+- Prompt audit events now include provider response thinking separately from assistant response content.
+- Native lex-llm dispatch now carries provider thinking separately from response content before API responses are emitted.
+- Native discovery now normalizes provider offering objects before generating routing candidates, preserving provider instance, tier, capabilities, context length, and parameter metadata.
+
+## [0.8.50] - 2026-05-03
+
+### Fixed
+- Native discovery now normalizes lex-llm `ModelOffering` objects before generating routing candidates, allowing auto-rules to populate from provider adapters again.
+
 ## [0.8.49] - 2026-04-29
 
 ### Changed

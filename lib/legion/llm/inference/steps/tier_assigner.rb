@@ -20,6 +20,13 @@ module Legion
           ].freeze
 
           def assign(caller:, classification:, priority:, gaia_hint:, existing_tier:, existing_intent: nil) # rubocop:disable Lint/UnusedMethodArgument
+            # Privacy classifications are hard routing constraints. They must
+            # override caller-supplied tier/intent and advisory signals.
+            if privacy_constrained?(classification)
+              log.info('[llm][routing] tier_assigned source=classification tier=local forced=true')
+              return { tier: :local, intent: { privacy: :strict }, source: :classification, forced: true }
+            end
+
             if existing_tier
               log.debug("[llm][routing] tier_preserved tier=#{existing_tier}")
               return nil
@@ -36,14 +43,7 @@ module Legion
             mapping = find_role_mapping(caller)
             return mapping if mapping
 
-            # 3. Classification-driven: PHI/PII/restricted -> local only (fail closed)
-            if classification && (value(classification, :contains_phi) || value(classification, :contains_pii) ||
-                                  value(classification, :level)&.to_sym == :restricted)
-              log.info('[llm][routing] tier_assigned source=classification tier=local (phi/pii/restricted)')
-              return { tier: :local, intent: { privacy: :strict }, source: :classification }
-            end
-
-            # 4. Priority-driven
+            # 3. Priority-driven
             case priority&.to_sym
             when :critical, :high
               log.info("[llm][routing] tier_assigned source=priority tier=frontier priority=#{priority}")
@@ -52,6 +52,14 @@ module Legion
               log.info("[llm][routing] tier_assigned source=priority tier=local priority=#{priority}")
               { tier: :local, intent: { cost: :minimize }, source: :priority }
             end
+          end
+
+          def privacy_constrained?(classification)
+            return false unless classification
+
+            value(classification, :contains_phi) ||
+              value(classification, :contains_pii) ||
+              value(classification, :level)&.to_sym == :restricted
           end
 
           def find_role_mapping(caller)

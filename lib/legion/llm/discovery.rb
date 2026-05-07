@@ -91,6 +91,10 @@ module Legion
           @discovered_models_cache || []
         end
 
+        def cached_discovered_models
+          @discovered_models_cache || []
+        end
+
         # Check whether a specific model is available from any registered provider.
         def model_available?(model, provider: nil, instance: nil)
           psym = provider&.to_sym
@@ -123,16 +127,17 @@ module Legion
             next [] unless adapter.respond_to?(:offerings)
 
             begin
-              Array(adapter.offerings).map do |offering|
+              Array(adapter.offerings(live: true)).map do |offering|
+                data = normalize_offering(offering)
                 {
-                  model:           (offering[:id] || offering[:name] || offering[:model]).to_s,
+                  model:           (data[:id] || data[:name] || data[:model]).to_s,
                   provider:        entry[:provider],
-                  instance:        entry[:instance],
-                  tier:            entry.dig(:metadata, :tier),
-                  size_bytes:      offering[:size_bytes] || offering[:size],
-                  capabilities:    offering[:capabilities] || [],
-                  context_length:  offering[:context_length] || offering[:max_model_len],
-                  parameter_count: offering[:parameter_count]
+                  instance:        normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
+                  tier:            data[:tier] || entry.dig(:metadata, :tier),
+                  size_bytes:      data[:size_bytes] || data[:size],
+                  capabilities:    data[:capabilities] || [],
+                  context_length:  data[:context_length] || data[:max_model_len] || data.dig(:limits, :context_window),
+                  parameter_count: data[:parameter_count] || data.dig(:metadata, :parameter_count)
                 }
               end
             rescue StandardError => e
@@ -159,6 +164,27 @@ module Legion
         end
 
         private
+
+        def normalize_offering(offering)
+          data = if offering.is_a?(Hash)
+                   offering
+                 elsif offering.respond_to?(:to_hash)
+                   offering.to_hash
+                 elsif offering.respond_to?(:to_h)
+                   offering.to_h
+                 else
+                   return {}
+                 end
+          return {} unless data.is_a?(Hash)
+
+          data.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+        end
+
+        def normalize_instance_id(value)
+          return nil if value.nil?
+
+          value.respond_to?(:to_sym) ? value.to_sym : value
+        end
 
         def discovered_models_stale?
           return true if @discovered_models_at.nil?
@@ -263,7 +289,7 @@ module Legion
           return true unless model
 
           start_time = Time.now
-          Call::Dispatch.dispatch_embed(provider: provider, model: model, text: 'health check')
+          Call::Dispatch.call(provider: provider, capability: :embed, model: model, text: 'health check')
           elapsed = ((Time.now - start_time) * 1000).round
           log.info "[llm][discovery] embedding health check ok provider=#{provider} model=#{model} elapsed_ms=#{elapsed}"
           true

@@ -19,8 +19,8 @@ module Legion
         end
 
         def chat(model:, messages:, **opts)
-          response = provider.complete(
-            normalize_messages(messages, system: opts[:system]),
+          response = provider.chat(
+            messages:    normalize_messages(messages, system: opts[:system]),
             tools:       normalize_tools(opts[:tools]),
             temperature: opts[:temperature],
             params:      opts[:params] || {},
@@ -36,8 +36,8 @@ module Legion
 
         def stream(model:, messages:, **opts, &block)
           chunks = []
-          provider.complete(
-            normalize_messages(messages, system: opts[:system]),
+          provider.stream_chat(
+            messages:    normalize_messages(messages, system: opts[:system]),
             tools:       normalize_tools(opts[:tools]),
             temperature: opts[:temperature],
             params:      opts[:params] || {},
@@ -55,7 +55,14 @@ module Legion
         end
 
         def embed(model:, text:, dimensions: nil, **opts)
-          response = provider.embed(text, model: model, dimensions: dimensions)
+          model_info = model_info(model, offering_metadata: opts[:offering_metadata])
+          response = provider.embed(
+            text:       text,
+            model:      model_info,
+            dimensions: dimensions,
+            params:     opts[:params] || {},
+            headers:    opts[:headers] || {}
+          )
 
           {
             result:   response.vectors,
@@ -65,9 +72,28 @@ module Legion
           }
         end
 
+        def image(model:, prompt:, size:, with: nil, mask: nil, **opts)
+          model_info = model_info(model, offering_metadata: opts[:offering_metadata])
+          response = call_image_provider(
+            prompt:  prompt,
+            model:   model_info,
+            size:    size,
+            with:    with,
+            mask:    mask,
+            params:  opts[:params] || {},
+            headers: opts[:headers] || {}
+          )
+
+          image_response(response, model: model_info, offering_metadata: opts[:offering_metadata])
+        end
+
+        def health(live: false)
+          provider.health(live: live)
+        end
+
         def count_tokens(model:, messages:, **)
           {
-            result: estimate_tokens(messages),
+            result: provider.count_tokens(messages: normalize_messages(messages), model: model_info(model)),
             model:  model,
             usage:  {}
           }
@@ -94,6 +120,15 @@ module Legion
             provider_class.new(lex_llm_namespace.config)
           else
             provider_class.new(@instance_config.except(*METADATA_KEYS))
+          end
+        end
+
+        def call_image_provider(**args)
+          if provider.method(:image).parameters.include?(%i[key headers]) ||
+             provider.method(:image).parameters.include?(%i[keyreq headers])
+            provider.image(**args)
+          else
+            provider.image(**args.except(:headers))
           end
         end
 
@@ -177,6 +212,7 @@ module Legion
             model:       response.model_id,
             tool_calls:  response.respond_to?(:tool_calls) ? response.tool_calls : nil,
             stop_reason: response.respond_to?(:tool_call?) && response.tool_call? ? :tool_use : nil,
+            thinking:    thinking_hash(response),
             usage:       usage_hash(response),
             metadata:    response_metadata(response, offering_metadata: offering_metadata)
           }.compact
@@ -192,9 +228,35 @@ module Legion
             model:       last&.model_id,
             tool_calls:  tool_calls.empty? ? nil : tool_calls,
             stop_reason: tool_calls.empty? ? nil : :tool_use,
+            thinking:    stream_thinking_hash(chunks),
             usage:       last ? usage_hash(last) : {},
             metadata:    response_metadata(last, offering_metadata: offering_metadata)
           }.compact
+        end
+
+        def image_response(response, model:, offering_metadata: nil)
+          return hash_image_response(response, model: model, offering_metadata: offering_metadata) if response.is_a?(Hash)
+
+          {
+            result:   [
+              {
+                url:            response.url,
+                b64_json:       response.data,
+                mime_type:      response.mime_type,
+                revised_prompt: response.revised_prompt
+              }.compact
+            ],
+            model:    response.model_id || model,
+            usage:    response.usage || {},
+            metadata: response_metadata(response, offering_metadata: offering_metadata)
+          }
+        end
+
+        def hash_image_response(response, model:, offering_metadata: nil)
+          normalized = response.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+          normalized[:model] ||= model
+          normalized[:metadata] ||= response_metadata(offering_metadata: offering_metadata)
+          normalized
         end
 
         def usage_hash(response)
@@ -204,6 +266,41 @@ module Legion
             cache_read_tokens:  response.cached_tokens.to_i,
             cache_write_tokens: response.cache_creation_tokens.to_i
           }
+        end
+
+        def stream_thinking_hash(chunks)
+          thinking_parts = chunks.filter_map do |chunk|
+            normalize_thinking_value(chunk.thinking) if chunk.respond_to?(:thinking)
+          end
+          thinking_text = thinking_parts.filter_map { |part| part[:content] }.join
+          signature = thinking_parts.find { |part| part[:signature] }&.dig(:signature)
+          return nil if thinking_text.empty?
+
+          { content: thinking_text, signature: signature, enabled: true }.compact
+        end
+
+        def thinking_hash(response)
+          return nil unless response.respond_to?(:thinking) && response.thinking
+
+          normalize_thinking_value(response.thinking)
+        end
+
+        def normalize_thinking_value(thinking)
+          case thinking
+          when Hash
+            normalized = thinking.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+            {
+              content:   normalized[:content] || normalized[:text],
+              signature: normalized[:signature],
+              enabled:   true
+            }.compact
+          else
+            {
+              content:   thinking.respond_to?(:text) ? thinking.text : thinking,
+              signature: thinking.respond_to?(:signature) ? thinking.signature : nil,
+              enabled:   true
+            }.compact
+          end
         end
 
         def estimate_tokens(messages)

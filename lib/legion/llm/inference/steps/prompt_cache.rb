@@ -16,13 +16,22 @@ module Legion
           # @param system_blocks [Array<Hash>] array of system message hashes
           # @return [Array<Hash>] system blocks, possibly with cache_control on last entry
           def apply_cache_control(system_blocks)
-            return system_blocks unless caching_enabled? && cache_system_prompt?
-            return system_blocks if system_blocks.nil? || system_blocks.empty?
+            unless caching_enabled? && cache_system_prompt?
+              log.debug('[llm][prompt_cache] cache_control skipped=disabled')
+              return system_blocks
+            end
+            if system_blocks.nil? || system_blocks.empty?
+              log.debug('[llm][prompt_cache] cache_control skipped=empty_system')
+              return system_blocks
+            end
 
             total_chars = system_blocks.sum { |b| b[:content].to_s.length }
             min_chars   = prompt_caching_value(:min_tokens, 1024) * 4
 
-            return system_blocks if total_chars < min_chars
+            if total_chars < min_chars
+              log.debug("[llm][prompt_cache] cache_control skipped=below_threshold total_chars=#{total_chars} min_chars=#{min_chars}")
+              return system_blocks
+            end
 
             scope = prompt_caching_value(:scope, 'ephemeral')
             log.info("[llm][prompt_cache] cache_control scope=#{scope} total_chars=#{total_chars}")
@@ -35,8 +44,14 @@ module Legion
           # @param tools [Array<Hash>] array of tool definition hashes with :name key
           # @return [Array<Hash>] tools sorted by name
           def sort_tools_deterministically(tools)
-            return tools unless caching_enabled? && sort_tools?
-            return tools if tools.nil? || tools.empty?
+            unless caching_enabled? && sort_tools?
+              log.debug('[llm][prompt_cache] sort_tools skipped=disabled')
+              return tools
+            end
+            if tools.nil? || tools.empty?
+              log.debug('[llm][prompt_cache] sort_tools skipped=empty_tools')
+              return tools
+            end
 
             log.debug("[llm][prompt_cache] sort_tools count=#{tools.size}")
             tools.sort_by { |t| t[:name].to_s }
@@ -48,15 +63,24 @@ module Legion
           # @param messages [Array<Hash>] ordered list of conversation messages
           # @return [Array<Hash>] messages, possibly with cache_control on the last stable one
           def apply_conversation_breakpoint(messages)
-            return messages unless caching_enabled? && cache_conversation?
-            return messages if messages.nil? || messages.size < 2
+            unless caching_enabled? && cache_conversation?
+              log.debug('[llm][prompt_cache] conversation_breakpoint skipped=disabled')
+              return messages
+            end
+            if messages.nil? || messages.size < 2
+              log.debug("[llm][prompt_cache] conversation_breakpoint skipped=too_few_messages count=#{messages&.size || 0}")
+              return messages
+            end
 
             scope   = prompt_caching_value(:scope, 'ephemeral')
             prior   = messages[0..-2]
             current = messages.last
 
             last_stable_idx = prior.rindex { |m| !m[:cache_control] }
-            return messages unless last_stable_idx
+            unless last_stable_idx
+              log.debug('[llm][prompt_cache] conversation_breakpoint skipped=no_stable_message')
+              return messages
+            end
 
             updated_prior = prior.dup
             updated_prior[last_stable_idx] = prior[last_stable_idx].merge(cache_control: { type: scope })

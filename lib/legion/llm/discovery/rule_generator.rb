@@ -138,7 +138,8 @@ module Legion
           return ext[:llm] if ext.is_a?(Hash) && ext[:llm].is_a?(Hash)
 
           {}
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'rule_generator.extension_providers')
           {}
         end
       end

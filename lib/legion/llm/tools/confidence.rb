@@ -15,6 +15,7 @@ module Legion
         FAILURE_DELTA = -0.1
 
         @overrides_l0 = {}
+        @pending_l2_sync = {}
         @mutex = Mutex.new
 
         module_function
@@ -29,7 +30,7 @@ module Legion
             }
           end
           sync_to_l1(tool)
-          sync_to_l2(tool)
+          schedule_l2_retry(tool) unless sync_to_l2(tool)
         end
 
         def record_success(tool)
@@ -42,7 +43,7 @@ module Legion
             entry[:updated_at] = Time.now
           end
           sync_to_l1(tool)
-          sync_to_l2(tool)
+          schedule_l2_retry(tool) unless sync_to_l2(tool)
         end
 
         def record_failure(tool)
@@ -55,7 +56,7 @@ module Legion
             entry[:updated_at] = Time.now
           end
           sync_to_l1(tool)
-          sync_to_l2(tool)
+          schedule_l2_retry(tool) unless sync_to_l2(tool)
         end
 
         def lookup(tool)
@@ -76,6 +77,10 @@ module Legion
 
         def all_overrides
           @mutex.synchronize { @overrides_l0.values.map(&:dup) }
+        end
+
+        def pending_l2_sync
+          @mutex.synchronize { @pending_l2_sync.keys }
         end
 
         def hydrate_from_l2
@@ -125,7 +130,10 @@ module Legion
         end
 
         def reset!
-          @mutex.synchronize { @overrides_l0.clear }
+          @mutex.synchronize do
+            @overrides_l0.clear
+            @pending_l2_sync.clear
+          end
         end
 
         class << self
@@ -144,15 +152,22 @@ module Legion
           end
 
           def sync_to_l2(tool)
-            return unless defined?(Legion::Data::Local)
+            return true unless defined?(Legion::Data::Local)
 
             entry = @mutex.synchronize { @overrides_l0[tool] }
-            return unless entry
+            return true unless entry
 
             Legion::Data::Local.upsert(:override_confidence, entry, conflict_keys: [:tool])
+            @mutex.synchronize { @pending_l2_sync.delete(tool) }
+            true
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.sync_l2')
-            nil
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.confidence.sync_l2', tool: tool)
+            false
+          end
+
+          def schedule_l2_retry(tool)
+            @mutex.synchronize { @pending_l2_sync[tool] = Time.now }
+            log.warn("[llm][tools][confidence] action=l2_sync_pending tool=#{tool}")
           end
 
           def lookup_l1(tool)

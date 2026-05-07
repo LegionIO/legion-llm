@@ -3,182 +3,172 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Fleet::Handler do
-  let(:messages) do
-    [
-      { role: 'system', content: 'be brief' },
-      { role: 'user', content: 'real prompt' }
-    ]
-  end
-
-  describe '.require_auth?' do
-    it 'returns false by default' do
-      expect(described_class.require_auth?).to eq(false)
-    end
-
-    it 'returns true when configured' do
-      Legion::Settings[:llm][:routing] = { fleet: { require_auth: true } }
-      expect(described_class.require_auth?).to eq(true)
-    end
-
-    it 'reads string-keyed auth settings' do
-      Legion::Settings[:llm]['routing'] = { 'fleet' => { 'require_auth' => true } }
-      expect(described_class.require_auth?).to eq(true)
-    end
-  end
-
-  describe '.build_response' do
-    it 'builds response hash from correlation_id and response object' do
-      response = double(input_tokens: 10, output_tokens: 5, thinking_tokens: 0,
-                        provider: :anthropic, model: 'claude-opus-4-6')
-      result = described_class.build_response('corr-123', response)
-      expect(result[:correlation_id]).to eq('corr-123')
-      expect(result[:input_tokens]).to eq(10)
-      expect(result[:output_tokens]).to eq(5)
-      expect(result[:provider]).to eq(:anthropic)
-    end
-
-    it 'handles responses without token methods' do
-      response = { content: 'hello' }
-      result = described_class.build_response('corr-123', response)
-      expect(result[:correlation_id]).to eq('corr-123')
-      expect(result[:input_tokens]).to eq(0)
-    end
-
-    it 'preserves success, error, provider, and model from hash responses' do
-      response = {
-        success:  false,
-        error:    'llm_not_available',
-        provider: :openai,
-        model:    'gpt-4o'
-      }
-
-      result = described_class.build_response('corr-123', response)
-
-      expect(result[:success]).to eq(false)
-      expect(result[:error]).to eq('llm_not_available')
-      expect(result[:provider]).to eq(:openai)
-      expect(result[:model]).to eq('gpt-4o')
-      expect(result[:model_id]).to eq('gpt-4o')
-    end
-
-    it 'preserves message_context when supplied' do
-      result = described_class.build_response(
-        'corr-123',
-        { success: true, model: 'qwen3.6' },
-        message_context: { conversation_id: 'conv-1', request_id: 'req-1' }
-      )
-
-      expect(result[:message_context]).to eq(conversation_id: 'conv-1', request_id: 'req-1')
-    end
-  end
-
-  describe '.valid_token?' do
-    it 'returns true when auth not required' do
-      expect(described_class.valid_token?(nil)).to eq(true)
-    end
+  let(:envelope) do
+    {
+      protocol_version:  2,
+      request_id:        'req-handler',
+      correlation_id:    'corr-handler',
+      idempotency_key:   'idem-handler',
+      operation:         :chat,
+      provider:          'ollama',
+      provider_instance: 'default',
+      model:             'llama3.2',
+      params:            { messages: [{ role: 'user', content: 'hello' }] },
+      reply_to:          'llm.fleet.reply.test',
+      message_context:   { conversation_id: 'conv-1' },
+      caller:            { source: 'test' },
+      trace_context:     { trace_id: 'trace-1' },
+      signed_token:      'signed-token',
+      timeout_seconds:   30,
+      expires_at:        (Time.now.utc + 30).iso8601
+    }
   end
 
   describe '.handle_fleet_request' do
-    it 'returns invalid_token when auth is required and the token is missing' do
-      Legion::Settings[:llm][:routing] = { fleet: { require_auth: true } }
+    it 'executes a strict protocol-v2 request through WorkerExecution and publishes a FleetResponse' do
+      response = Legion::Extensions::Llm::Responses::ChatResponse.new(
+        content: 'hello back',
+        model:   'llama3.2',
+        tokens:  { input: 3, output: 2 }
+      )
+      provider = instance_double('Provider')
+      message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetResponse, publish: { accepted: true })
+      resolver = nil
 
-      result = described_class.handle_fleet_request(correlation_id: 'corr-123')
+      allow(described_class).to receive(:resolve_provider).with(envelope).and_return(provider)
+      allow(Legion::LLM::Fleet::WorkerExecution).to receive(:call)
+        .with(envelope: envelope, provider: an_object_satisfying { |object|
+          resolver = object
+          object.respond_to?(:call)
+        })
+        .and_wrap_original do |_original, envelope:, provider:|
+          provider.call(envelope)
+          response
+        end
 
-      expect(result).to eq(success: false, error: 'invalid_token')
+      expect(Legion::Extensions::Llm::Transport::Messages::FleetResponse).to receive(:new).with(
+        hash_including(
+          protocol_version:  2,
+          request_id:        'req-handler',
+          correlation_id:    'corr-handler',
+          idempotency_key:   'idem-handler',
+          operation:         :chat,
+          provider:          'ollama',
+          provider_instance: 'default',
+          model:             'llama3.2',
+          reply_to:          'llm.fleet.reply.test',
+          message_context:   { conversation_id: 'conv-1' },
+          content:           'hello back',
+          usage:             { input: 3, output: 2 }
+        )
+      ).and_return(message)
+
+      result = described_class.handle_fleet_request(envelope)
+
+      expect(result[:success]).to eq(true)
+      expect(result[:content]).to eq('hello back')
+      expect(resolver).not_to be_nil
+      expect(message).to have_received(:publish).with(
+        hash_including(
+          mandatory:                  false,
+          publisher_confirm:          false,
+          publish_confirm_timeout_ms: 500,
+          spool:                      false,
+          return_result:              true
+        )
+      )
     end
 
-    it 'preserves unavailable-LLM failures from local execution' do
-      allow(described_class).to receive(:call_local_llm).and_return(success: false, error: 'llm_not_available')
+    it 'publishes FleetError when protocol validation fails' do
+      message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetError, publish: { accepted: true })
 
-      result = described_class.handle_fleet_request(correlation_id: 'corr-123')
+      expect(Legion::Extensions::Llm::Transport::Messages::FleetError).to receive(:new).with(
+        hash_including(
+          protocol_version: 2,
+          request_id:       'req-handler',
+          correlation_id:   'corr-handler',
+          reply_to:         'llm.fleet.reply.test',
+          code:             'invalid_fleet_request'
+        )
+      ).and_return(message)
+
+      result = described_class.handle_fleet_request(envelope.except(:operation))
 
       expect(result[:success]).to eq(false)
-      expect(result[:error]).to eq('llm_not_available')
-      expect(result[:response]).to eq(success: false, error: 'llm_not_available')
+      expect(result[:error]).to eq('invalid_fleet_request')
+      expect(message).to have_received(:publish)
     end
 
-    it 'normalizes string-keyed payloads and carries message_context into replies' do
-      allow(described_class).to receive(:call_local_llm).and_return(success: true, model: 'qwen3.6')
+    it 'rejects malformed protocol versions that coerce to v2' do
+      message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetError, publish: { accepted: true })
+      allow(Legion::Extensions::Llm::Transport::Messages::FleetError).to receive(:new).and_return(message)
 
-      result = described_class.handle_fleet_request(
-        'correlation_id'  => 'corr-json',
-        'message_context' => { 'conversation_id' => 'conv-json', 'request_id' => 'req-json' }
-      )
+      result = described_class.handle_fleet_request(envelope.merge(protocol_version: '2junk'))
 
-      expect(result[:correlation_id]).to eq('corr-json')
-      expect(result[:message_context]).to eq({ 'conversation_id' => 'conv-json', 'request_id' => 'req-json' })
-    end
-  end
-
-  describe '.call_local_llm' do
-    it 'forwards provider and model to structured execution' do
-      expect(Legion::LLM).to receive(:structured_direct).with(
-        messages: messages,
-        schema:   { type: 'object' },
-        model:    'claude-sonnet-4-6',
-        provider: :anthropic
-      )
-
-      described_class.call_local_llm(
-        request_type: 'structured',
-        messages:     messages,
-        schema:       { type: 'object' },
-        model:        'claude-sonnet-4-6',
-        provider:     :anthropic
-      )
+      expect(result[:success]).to eq(false)
+      expect(result[:error]).to eq('invalid_fleet_request')
     end
 
-    it 'forwards provider and model to embeddings execution' do
-      expect(Legion::LLM).to receive(:embed_direct).with(
-        'real prompt',
-        model:    'text-embedding-3-small',
-        provider: :openai
-      )
+    it 'does not resolve providers before WorkerExecution validates identity and policy' do
+      allow(Legion::LLM::Fleet::WorkerExecution).to receive(:call)
+        .and_raise(Legion::LLM::Fleet::WorkerExecution::PolicyError, 'bad token')
 
-      described_class.call_local_llm(
-        request_type: 'embed',
-        messages:     messages,
-        model:        'text-embedding-3-small',
-        provider:     :openai
-      )
+      expect(described_class).not_to receive(:resolve_provider)
+
+      result = described_class.handle_fleet_request(envelope)
+
+      expect(result[:success]).to eq(false)
+      expect(result[:error]).to eq('fleet_policy_denied')
     end
 
-    it 'replays prior messages before asking the final prompt' do
-      session = instance_double('NativeChat')
-      allow(Legion::LLM).to receive(:send).with(
-        :chat_single,
-        model:    'claude-sonnet-4-6',
-        provider: :anthropic,
-        intent:   :support,
-        tier:     :cloud,
-        tools:    nil
-      ).and_return(session)
-      allow(session).to receive(:respond_to?).with(:with_instructions).and_return(true)
-      allow(session).to receive(:with_instructions)
-      allow(session).to receive(:add_message)
-      allow(session).to receive(:ask).and_return({ content: 'done' })
+    it 'rejects protocol-v2 requests missing full shared request envelope fields' do
+      message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetError, publish: { accepted: true })
+      allow(Legion::Extensions::Llm::Transport::Messages::FleetError).to receive(:new).and_return(message)
 
-      described_class.call_local_llm(
-        request_type: 'chat',
-        messages:     messages,
-        model:        'claude-sonnet-4-6',
-        provider:     :anthropic,
-        intent:       :support,
-        tier:         :cloud,
-        system:       'follow system'
-      )
+      result = described_class.handle_fleet_request(envelope.except(:caller))
 
-      expect(session).to have_received(:with_instructions).with('follow system')
-      expect(session).to have_received(:add_message).with(role: 'system', content: 'be brief')
-      expect(session).to have_received(:ask).with('real prompt')
+      expect(result[:success]).to eq(false)
+      expect(result[:error]).to eq('invalid_fleet_request')
+      expect(message).to have_received(:publish)
     end
 
-    it 'returns llm_not_available when the request method is unavailable' do
-      allow(Legion::LLM).to receive(:respond_to?).with(:chat_direct, true).and_return(false)
+    it 'rejects legacy protocol-v1 fleet fields on inbound worker requests' do
+      message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetError, publish: { accepted: true })
+      allow(Legion::Extensions::Llm::Transport::Messages::FleetError).to receive(:new).and_return(message)
 
-      result = described_class.call_local_llm(request_type: 'chat', messages: messages)
+      result = described_class.handle_fleet_request(envelope.merge(request_type: 'chat'))
 
-      expect(result).to eq(success: false, error: 'llm_not_available')
+      expect(result[:success]).to eq(false)
+      expect(result[:error]).to eq('invalid_fleet_request')
+      expect(result[:message]).to include('request_type')
+    end
+
+    it 'allows unsigned inbound requests when responder auth is disabled' do
+      response = { content: 'hello back', usage: { input: 3, output: 2 } }
+      message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetResponse, publish: { accepted: true })
+
+      Legion::Settings[:llm][:fleet] = { responder: { require_auth: false } }
+      allow(Legion::LLM::Fleet::WorkerExecution).to receive(:call).and_return(response)
+      allow(Legion::Extensions::Llm::Transport::Messages::FleetResponse).to receive(:new).and_return(message)
+
+      result = described_class.handle_fleet_request(envelope.except(:signed_token))
+
+      expect(result[:success]).to eq(true)
+      expect(Legion::LLM::Fleet::WorkerExecution).to have_received(:call)
+    end
+
+    it 'inherits responder auth from shared fleet auth policy when responder override is unset' do
+      response = { content: 'hello back', usage: { input: 3, output: 2 } }
+      message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetResponse, publish: { accepted: true })
+
+      Legion::Settings[:llm][:fleet] = { auth: { require_signed_token: false } }
+      allow(Legion::LLM::Fleet::WorkerExecution).to receive(:call).and_return(response)
+      allow(Legion::Extensions::Llm::Transport::Messages::FleetResponse).to receive(:new).and_return(message)
+
+      result = described_class.handle_fleet_request(envelope.except(:signed_token))
+
+      expect(result[:success]).to eq(true)
+      expect(Legion::LLM::Fleet::WorkerExecution).to have_received(:call)
     end
   end
 end

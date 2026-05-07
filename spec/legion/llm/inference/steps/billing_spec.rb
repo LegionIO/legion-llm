@@ -91,6 +91,21 @@ RSpec.describe Legion::LLM::Inference::Steps::Billing do
         step.step_billing
         expect(step.enrichments['billing:budget_check']).to have_key(:estimated_cost_usd)
       end
+
+      it 'uses the shared context token estimator for input tokens' do
+        messages = [{ role: :user, content: '{"records":["alpha","beta"]}' }]
+        allow(Legion::LLM::Context::Compressor).to receive(:estimate_tokens).with(messages).and_return(42)
+        allow(Legion::LLM::Metering::Pricing).to receive(:estimate).and_return(0.001)
+
+        step = build_step(billing: { spending_cap: 1.0 }, messages: messages, model: 'qwen3.6-27b')
+        step.step_billing
+
+        expect(Legion::LLM::Metering::Pricing).to have_received(:estimate).with(
+          model_id:      'qwen3.6-27b',
+          input_tokens:  42,
+          output_tokens: 0
+        )
+      end
     end
   end
 end

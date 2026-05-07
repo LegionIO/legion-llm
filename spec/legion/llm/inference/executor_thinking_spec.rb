@@ -41,4 +41,32 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
     end
   end
+
+  describe '#call thinking normalization' do
+    it 'strips malformed provider think tags before returning visible content' do
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { provider: :vllm, model: 'qwen3.6-27b' }
+      )
+      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = false
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+
+      Legion::LLM::Call::Registry.register(:vllm, Module.new do
+        module_function
+
+        def chat(model:, messages:, **) # rubocop:disable Lint/UnusedMethodArgument
+          {
+            result: "The user said \"hello\".\n</think>\n\nHello! How can I help you today?",
+            model:  model,
+            usage:  { input_tokens: 10, output_tokens: 5 }
+          }
+        end
+      end)
+
+      response = described_class.new(request).call
+
+      expect(response.message[:content]).to eq('Hello! How can I help you today?')
+      expect(response.thinking).to include(content: 'The user said "hello".')
+    end
+  end
 end

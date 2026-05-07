@@ -7,9 +7,10 @@ RSpec.describe Legion::LLM::Inference::Steps::RagGuard do
     Class.new do
       include Legion::LLM::Inference::Steps::RagGuard
 
-      attr_accessor :enrichments, :warnings, :timeline, :raw_response
+      attr_accessor :audit, :enrichments, :warnings, :timeline, :raw_response
 
       def initialize
+        @audit = {}
         @enrichments = {
           'rag:context_retrieval' => {
             data: { entries: [{ content: 'pgvector uses cosine distance' }] }
@@ -34,15 +35,19 @@ RSpec.describe Legion::LLM::Inference::Steps::RagGuard do
       expect(step.warnings).to be_empty
     end
 
-    it 'adds warning when response contradicts context' do
+    it 'blocks when response contradicts context' do
       step = klass.new
       if defined?(Legion::LLM::Hooks::RagGuard)
         allow(Legion::LLM::Hooks::RagGuard).to receive(:check_rag_faithfulness)
           .and_return({ faithful: false, details: 'RAG faithfulness check failed: contradicts source' })
       end
 
-      step.check_rag_faithfulness
-      expect(step.warnings).to include(match(/faithfulness/i)) if defined?(Legion::LLM::Hooks::RagGuard)
+      if defined?(Legion::LLM::Hooks::RagGuard)
+        expect { step.check_rag_faithfulness }.to raise_error(Legion::LLM::PipelineError, /faithfulness/i)
+        expect(step.audit[:'rag:faithfulness'][:outcome]).to eq(:failure)
+      else
+        step.check_rag_faithfulness
+      end
     end
 
     it 'skips when no RAG context was retrieved' do

@@ -41,20 +41,80 @@ module Legion
         # -- private helpers --------------------------------------------------
 
         def rediscover_all_providers
-          Call::Registry.all_provider_families.each do |family|
-            mod = resolve_provider_module(family)
-            mod.rediscover! if mod.respond_to?(:rediscover!)
-          end
+          loaded_provider_modules.each { |provider_module| rediscover_provider_module(provider_module) }
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.providers.rediscover_all')
         end
 
-        def resolve_provider_module(family)
-          return nil unless defined?(Legion::Extensions::Llm)
+        def loaded_provider_modules
+          return [] unless defined?(Legion::Extensions::Llm)
 
-          camel = family.to_s.split('_').map(&:capitalize).join
-          Legion::Extensions::Llm.const_get(camel, false)
-        rescue NameError
+          Legion::Extensions::Llm.constants(false).filter_map do |const_name|
+            mod = Legion::Extensions::Llm.const_get(const_name, false)
+            provider_module?(mod) ? mod : nil
+          rescue NameError
+            nil
+          end
+        end
+
+        def provider_module?(mod)
+          mod.is_a?(Module) &&
+            mod.const_defined?(:PROVIDER_FAMILY, false) &&
+            mod.respond_to?(:provider_class) &&
+            mod.respond_to?(:discover_instances)
+        end
+
+        def rediscover_provider_module(provider_module)
+          family = provider_module::PROVIDER_FAMILY.to_sym
+          aliases = provider_aliases(provider_module)
+          ([family] + aliases).each { |provider| Call::Registry.deregister_provider(provider) }
+
+          provider_module.discover_instances.each do |instance_id, config|
+            register_provider_instance(provider_module, family, aliases, instance_id, config)
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true,
+                              operation: 'llm.providers.rediscover_provider',
+                              provider: safe_provider_family(provider_module))
+        end
+
+        def register_provider_instance(provider_module, family, aliases, instance_id, config)
+          normalized_config = normalize_instance_config(config)
+          registry_config = adapter_instance_config(normalized_config, instance_id)
+          metadata = instance_metadata(normalized_config)
+          adapter = Call::LexLLMAdapter.new(family, provider_module.provider_class, instance_config: registry_config)
+
+          Call::Registry.register(family, adapter, instance: instance_id, metadata: metadata)
+          aliases.each do |provider_alias|
+            Call::Registry.register(provider_alias, adapter, instance: instance_id, metadata: metadata)
+          end
+        end
+
+        def provider_aliases(provider_module)
+          return [] unless provider_module.respond_to?(:provider_aliases)
+
+          Array(provider_module.provider_aliases).compact.map(&:to_sym)
+        end
+
+        def normalize_instance_config(config)
+          config.to_h.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+        end
+
+        def adapter_instance_config(config, instance_id)
+          config.except(:tier, :capabilities).tap do |registry_config|
+            registry_config[:instance_id] ||= instance_id
+          end
+        end
+
+        def instance_metadata(config)
+          { tier: config[:tier], capabilities: config[:capabilities] || [] }
+        end
+
+        def safe_provider_family(provider_module)
+          return nil unless provider_module&.const_defined?(:PROVIDER_FAMILY, false)
+
+          provider_module::PROVIDER_FAMILY
+        rescue StandardError
           nil
         end
 

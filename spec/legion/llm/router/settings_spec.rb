@@ -11,6 +11,25 @@ RSpec.describe Legion::LLM::Settings do
     it 'includes a :routing key' do
       expect(defaults).to have_key(:routing)
     end
+
+    it 'includes fleet dispatch defaults' do
+      expect(defaults).to include(:fleet)
+      expect(defaults.dig(:fleet, :dispatch, :enabled)).to be(true)
+    end
+
+    it 'does not include legacy gateway defaults' do
+      expect(defaults).not_to have_key(:gateway)
+    end
+  end
+
+  describe '.validate!' do
+    it 'rejects legacy routing.use_fleet settings' do
+      legacy = { routing: { use_fleet: false }, fleet: { dispatch: { enabled: true } } }
+
+      expect do
+        described_class.validate!(legacy)
+      end.to raise_error(ArgumentError, /routing\.use_fleet/)
+    end
   end
 
   describe '.value' do
@@ -145,8 +164,8 @@ RSpec.describe Legion::LLM::Settings do
         expect(tiers).to have_key(:openai_compat)
       end
 
-      it 'openai_compat tier has gateways list' do
-        expect(tiers[:openai_compat][:gateways]).to eq([])
+      it 'openai_compat tier does not configure gateway lists' do
+        expect(tiers.dig(:openai_compat, :gateways)).to be_nil
       end
 
       it 'cloud tier includes managed providers only' do

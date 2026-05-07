@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,6 +9,7 @@ module Legion
       module Steps
         module StickyPersist
           include Legion::Logging::Helper
+          include Steps::Logging
           include Steps::StickyHelpers
 
           SENSITIVE_PARAM_NAMES = %w[
@@ -16,8 +18,7 @@ module Legion
           ].freeze
 
           def step_sticky_persist # rubocop:disable Metrics/AbcSize,Metrics/MethodLength,Metrics/PerceivedComplexity
-            return unless @sticky_turn_snapshot
-            return unless sticky_enabled? && @request.conversation_id
+            return unless sticky_persist_ready?
 
             conv_id        = @request.conversation_id
             state          = Inference::Conversation.read_sticky_state(conv_id).dup
@@ -35,6 +36,14 @@ module Legion
 
             pending_snapshot = @pending_tool_history.dup # Concurrent::Array#dup is thread-safe
             completed        = pending_snapshot.select { |e| e[:result] && !e[:error] }
+            log_step_debug(
+              :sticky_persist,
+              :state_loaded,
+              runner_count:    runners.size,
+              pending_count:   pending_snapshot.size,
+              completed_count: completed.size,
+              deferred_count:  deferred_count
+            )
 
             executed_runner_keys = []
             deferred_call_count  = 0
@@ -101,12 +110,37 @@ module Legion
             end
 
             Inference::Conversation.write_sticky_state(conv_id, state)
+            log_step_debug(
+              :sticky_persist,
+              :state_written,
+              runner_count:          runners.size,
+              executed_runner_count: executed_runner_keys.size,
+              deferred_call_count:   deferred_call_count,
+              history_count:         state[:tool_call_history]&.size || 0
+            )
           rescue StandardError => e
             @warnings << "sticky_persist error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.step_sticky_persist')
           end
 
           private
+
+          def sticky_persist_ready?
+            unless @sticky_turn_snapshot
+              log_step_debug(:sticky_persist, :skipped, reason: :no_turn_snapshot)
+              return false
+            end
+            unless sticky_enabled?
+              log_step_debug(:sticky_persist, :skipped, reason: :disabled)
+              return false
+            end
+            unless @request.conversation_id
+              log_step_debug(:sticky_persist, :skipped, reason: :no_conversation_id)
+              return false
+            end
+
+            true
+          end
 
           def tool_entry_deferred?(entry)
             return false unless entry

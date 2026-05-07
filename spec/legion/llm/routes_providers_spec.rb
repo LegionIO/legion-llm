@@ -30,6 +30,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     before do
       allow(Legion::LLM).to receive(:started?).and_return(true)
       allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
       Legion::LLM::Call::Registry.reset!
     end
 

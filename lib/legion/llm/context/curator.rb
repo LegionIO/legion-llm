@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'digest'
+
 require 'legion/logging/helper'
 module Legion
   module LLM
@@ -13,7 +15,7 @@ module Legion
 
         def initialize(conversation_id:)
           @conversation_id = conversation_id
-          @curated_cache   = nil
+          @curated_messages = nil
         end
 
         # Called async after each turn completes — zero latency impact.
@@ -23,7 +25,7 @@ module Legion
           Thread.new do
             curated = turn_messages.map { |msg| curate_message(msg, assistant_response) }
             store_curated(@conversation_id, curated)
-            @curated_cache = nil
+            @curated_messages = nil
           rescue StandardError => e
             handle_exception(e, level: :warn)
           end
@@ -35,6 +37,36 @@ module Legion
           return nil unless enabled?
 
           @curated_messages ||= load_curated(@conversation_id)
+        end
+
+        # Drops older conversation turns from the prompt window after archiving
+        # them into Apollo for scoped retrieval on future turns.
+        def drop_and_archive(messages, conversation_id:)
+          return messages unless archive_dropped_turns?
+          return messages unless messages.is_a?(Array) && messages.any?
+
+          target_tokens = setting(:target_context_tokens, 40_000)
+          estimated = Context::Compressor.estimate_tokens(messages)
+          return messages if estimated <= target_tokens
+
+          preserve_recent = setting(:archive_preserve_recent, setting(:preserve_recent, 10)).to_i
+          preserve_recent = 1 unless preserve_recent.positive?
+          return messages if messages.size <= preserve_recent
+
+          retained = messages.last(preserve_recent)
+          dropped = messages[0...-preserve_recent]
+          return messages if dropped.empty?
+
+          archived = archive_conversation_history(dropped, conversation_id: conversation_id)
+          return messages unless archived
+
+          log.info("[llm][context_curator] action=drop_and_archive conversation_id=#{conversation_id} " \
+                   "dropped=#{dropped.size} retained=#{retained.size} estimated_tokens=#{estimated}")
+          retained
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.context_curator.drop_and_archive',
+                              conversation_id: conversation_id)
+          messages
         end
 
         # Heuristic: distill a single tool-result message to a compact summary.
@@ -143,6 +175,10 @@ module Legion
             setting(:mode, 'heuristic') == 'llm_assisted'
         end
 
+        def archive_dropped_turns?
+          setting(:archive_dropped_turns, true)
+        end
+
         def curation_settings
           Legion::LLM::Settings.value(:context_curation, default: {})
         rescue StandardError => e
@@ -182,17 +218,28 @@ module Legion
         end
 
         def store_curated(conversation_id, curated_messages)
-          curated_messages.each do |msg|
+          curated_count = 0
+          curated_messages.each_with_index do |msg, index|
             next unless msg[:curated]
 
             Inference::Conversation.append(
               conversation_id,
-              role:             CURATED_KEY,
-              content:          msg[:content],
-              original_content: msg[:original_content],
-              source_role:      msg[:role]
+              role:        CURATED_KEY,
+              content:     Legion::JSON.dump(curated_message_payload(msg, index)),
+              source_id:   msg[:id],
+              source_seq:  msg[:seq],
+              source_role: msg[:role]
             )
+            curated_count += 1
           end
+
+          Inference::Conversation.append(
+            conversation_id,
+            role:            CURATED_KEY,
+            content:         Legion::JSON.dump(type: 'curation_marker', curated_count: curated_count),
+            curation_marker: true,
+            curated_count:   curated_count
+          )
         rescue StandardError => e
           handle_exception(e, level: :warn)
         end
@@ -201,11 +248,16 @@ module Legion
           return nil unless Inference::Conversation.conversation_exists?(conversation_id)
 
           raw = Inference::Conversation.messages(conversation_id)
-          curated = raw.select { |m| m[:role] == CURATED_KEY }
-          return nil if curated.empty?
+          curated_entries = raw.select { |m| m[:role] == CURATED_KEY }
+          return nil if curated_entries.empty?
 
           regular = raw.reject { |m| m[:role] == CURATED_KEY }
-          apply_curation_pipeline(regular)
+          summaries = normalized_curated_summaries(curated_entries)
+          if summaries.empty?
+            apply_curation_pipeline(regular)
+          else
+            apply_structural_curation_pipeline(substitute_curated_summaries(regular, summaries))
+          end
         rescue StandardError => e
           handle_exception(e, level: :warn)
           nil
@@ -223,6 +275,162 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn)
           messages
+        end
+
+        def apply_structural_curation_pipeline(messages)
+          result = fold_resolved_exchanges(messages)
+          result = evict_superseded(result)
+          dedup_similar(result)
+        rescue StandardError => e
+          handle_exception(e, level: :warn)
+          messages
+        end
+
+        def archive_conversation_history(messages, conversation_id:)
+          payload = archived_history_payload(messages, conversation_id: conversation_id)
+          return false if payload[:content].empty?
+
+          if defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
+            ::Legion::Apollo::Local.ingest(
+              content:        payload[:content],
+              tags:           payload[:tags],
+              source_channel: 'llm_context_curator',
+              confidence:     0.75,
+              metadata:       payload[:metadata]
+            )
+            return true
+          end
+
+          if defined?(::Legion::Apollo) && ::Legion::Apollo.respond_to?(:ingest)
+            ::Legion::Apollo.ingest(
+              content:          payload[:content],
+              content_type:     'conversation_turn',
+              tags:             payload[:tags],
+              source_channel:   'llm_context_curator',
+              knowledge_domain: 'conversation_history',
+              context:          payload[:metadata]
+            )
+            return true
+          end
+
+          if defined?(::Legion::Extensions::Apollo::Runners::Knowledge) &&
+             ::Legion::Extensions::Apollo::Runners::Knowledge.respond_to?(:handle_ingest)
+            result = ::Legion::Extensions::Apollo::Runners::Knowledge.handle_ingest(
+              content:          payload[:content],
+              content_type:     'conversation_turn',
+              tags:             payload[:tags],
+              source_agent:     'legion-llm',
+              source_channel:   'llm_context_curator',
+              knowledge_domain: 'conversation_history',
+              context:          payload[:metadata]
+            )
+            return result.nil? || !result.respond_to?(:key?) || result[:success] != false
+          end
+
+          log.debug("[llm][context_curator] action=drop_and_archive.skipped reason=apollo_unavailable conversation_id=#{conversation_id}")
+          false
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.context_curator.archive_conversation_history',
+                              conversation_id: conversation_id)
+          false
+        end
+
+        def archived_history_payload(messages, conversation_id:)
+          seqs = messages.filter_map { |msg| msg[:seq] }
+          {
+            content:  messages.map { |msg| archived_message_line(msg) }.join("\n"),
+            tags:     ['llm_conversation_history', "conversation:#{conversation_id}"],
+            metadata: {
+              conversation_id: conversation_id,
+              seq_start:       seqs.min,
+              seq_end:         seqs.max,
+              message_count:   messages.size,
+              source:          'conversation_history'
+            }.compact
+          }
+        end
+
+        def archived_message_line(msg)
+          role = msg[:role] || 'unknown'
+          content = msg[:content]
+          content = content.filter_map { |part| part.is_a?(Hash) ? part[:text] || part['text'] : part.to_s }.join if content.is_a?(Array)
+          "[#{role}] #{content}"
+        end
+
+        def curated_message_payload(msg, index)
+          {
+            type:          'curated_message',
+            content:       msg[:content],
+            original_hash: content_digest(msg[:original_content] || msg[:content]),
+            source_id:     msg[:id],
+            source_seq:    msg[:seq] || (index + 1),
+            source_role:   msg[:role]
+          }.compact
+        end
+
+        def normalized_curated_summaries(entries)
+          entries.filter_map do |entry|
+            payload = curated_payload(entry)
+            next if payload_value(payload, :type) == 'curation_marker' || entry[:curation_marker]
+
+            {
+              content:          payload_value(payload, :content) || entry[:content],
+              original_content: payload_value(payload, :original_content) || entry[:original_content],
+              original_hash:    payload_value(payload, :original_hash) || content_digest(entry[:original_content]),
+              source_id:        payload_value(payload, :source_id) || entry[:source_id],
+              source_seq:       payload_value(payload, :source_seq) || entry[:source_seq],
+              source_role:      payload_value(payload, :source_role) || entry[:source_role]
+            }.compact
+          end
+        end
+
+        def substitute_curated_summaries(messages, summaries)
+          by_id       = summary_index(summaries, :source_id)
+          by_seq      = summary_index(summaries, :source_seq) { |summary| summary_key(summary[:source_role], summary[:source_seq]) }
+          by_original = summary_index(summaries, :original_hash) { |summary| summary_key(summary[:source_role], summary[:original_hash]) }
+
+          messages.map do |msg|
+            summary = by_id[msg[:id]] ||
+                      by_seq[summary_key(msg[:role], msg[:seq])] ||
+                      by_original[summary_key(msg[:role], content_digest(msg[:content]))]
+            next msg unless summary
+
+            msg.merge(
+              content:          summary[:content],
+              curated:          true,
+              original_content: summary[:original_content] || msg[:content]
+            )
+          end
+        end
+
+        def summary_index(summaries, field)
+          summaries.each_with_object({}) do |summary, index|
+            next unless summary[field]
+
+            key = block_given? ? yield(summary) : summary[field]
+            index[key] = summary
+          end
+        end
+
+        def summary_key(role, value)
+          [role.to_s, value]
+        end
+
+        def content_digest(content)
+          return nil if content.nil?
+
+          Digest::SHA256.hexdigest(content.to_s)
+        end
+
+        def curated_payload(entry)
+          parsed = Legion::JSON.parse(entry[:content].to_s)
+          parsed.is_a?(Hash) ? parsed : {}
+        rescue Legion::JSON::ParseError
+          {}
+        end
+
+        def payload_value(payload, key)
+          payload[key] || payload[key.to_s]
         end
 
         # Build a heuristic summary for a tool result based on detected tool type.
@@ -318,7 +526,7 @@ module Legion
         def detect_small_model
           ext = Legion::Settings[:extensions]
           providers = (ext.is_a?(Hash) && ext[:llm].is_a?(Hash) ? ext[:llm] : {})
-          %w[ollama].each do |provider|
+          %w[ollama vllm mlx].each do |provider|
             config = Legion::LLM::Settings.config_value(providers, provider, {})
             enabled = Legion::LLM::Settings.config_value(config, :enabled)
             model = Legion::LLM::Settings.config_value(config, :default_model)

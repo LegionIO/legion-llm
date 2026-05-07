@@ -17,6 +17,10 @@ module Legion
 
         module_function
 
+        def state_mutex
+          @state_mutex ||= Mutex.new
+        end
+
         # Returns true if the daemon is reachable and healthy.
         # Returns false immediately if daemon_url is nil.
         # Caches a positive health check for HEALTH_CACHE_TTL seconds.
@@ -25,14 +29,13 @@ module Legion
           return false if daemon_url.nil?
 
           now = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-
-          return true if @healthy == true && @health_checked_at && (now - @health_checked_at) < HEALTH_CACHE_TTL
+          cached_healthy = state_mutex.synchronize do
+            @healthy == true && @health_checked_at && (now - @health_checked_at) < HEALTH_CACHE_TTL
+          end
+          return true if cached_healthy
 
           result = check_health
-          if result
-            @healthy           = true
-            @health_checked_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-          end
+          record_health(result) if result
           result
         end
 
@@ -61,16 +64,20 @@ module Legion
         # Returns the daemon URL from settings, cached after first read.
         # Returns nil if settings are unavailable or the key is missing.
         def daemon_url
-          return @daemon_url if defined?(@daemon_url)
+          state_mutex.synchronize do
+            return @daemon_url if defined?(@daemon_url)
 
-          @daemon_url = fetch_daemon_url
+            @daemon_url = fetch_daemon_url
+          end
         end
 
         # Clears all cached state. Returns self for chaining.
         def reset!
-          remove_instance_variable(:@daemon_url) if defined?(@daemon_url)
-          @healthy           = nil
-          @health_checked_at = nil
+          state_mutex.synchronize do
+            remove_instance_variable(:@daemon_url) if defined?(@daemon_url)
+            @healthy           = nil
+            @health_checked_at = nil
+          end
           self
         end
 
@@ -79,8 +86,7 @@ module Legion
         def check_health
           response = http_get('/api/health')
           healthy = response.code == '200'
-          @healthy           = healthy
-          @health_checked_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+          record_health(healthy)
           log.info("Daemon health check result=#{healthy ? 'healthy' : 'unhealthy'} url=#{daemon_url}")
           healthy
         rescue StandardError => e
@@ -92,8 +98,7 @@ module Legion
         # Marks the daemon as unhealthy and records the timestamp.
         def mark_unhealthy
           log.warn("Daemon marked unhealthy url=#{daemon_url}")
-          @healthy           = false
-          @health_checked_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+          record_health(false)
         end
 
         # Builds and sends a GET request. Returns Net::HTTPResponse.
@@ -185,6 +190,13 @@ module Legion
           nil
         end
 
+        def record_health(healthy)
+          state_mutex.synchronize do
+            @healthy = healthy == true
+            @health_checked_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+          end
+        end
+
         def safe_parse(body)
           return {} if body.nil? || body.strip.empty?
 
@@ -242,7 +254,8 @@ module Legion
           end
         end
 
-        private_class_method :fetch_daemon_url, :safe_parse, :extract_retry_after, :interpret_inference_response
+        private_class_method :state_mutex, :fetch_daemon_url, :record_health, :safe_parse, :extract_retry_after,
+                             :interpret_inference_response
       end
     end
   end

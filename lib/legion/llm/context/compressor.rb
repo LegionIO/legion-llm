@@ -176,9 +176,18 @@ module Legion
           def llm_summarize(text, max_tokens)
             return nil unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:chat_direct)
 
-            session = Legion::LLM.chat_direct(model: summarize_model)
-            response = session.ask("#{SUMMARIZE_PROMPT}\n\n#{text[0, max_tokens * 8]}")
-            response.content
+            payload = {
+              message: "#{SUMMARIZE_PROMPT}\n\n#{text[0, max_tokens * 8]}"
+            }
+            model = summarize_model
+            if model
+              payload[:model] = model
+            else
+              payload[:intent] = { capability: :basic, cost: :minimize }
+            end
+
+            response = Legion::LLM.chat_direct(**payload)
+            response.respond_to?(:content) ? response.content : nil
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.compressor.llm_summarize')
             log.debug("[llm][compressor] summarize_failed error=#{e.message}")
@@ -186,11 +195,9 @@ module Legion
           end
 
           def summarize_model
-            if defined?(Legion::LLM::Settings)
-              Legion::LLM::Settings.value(:compressor, :model, default: 'gpt-4o-mini')
-            else
-              'gpt-4o-mini'
-            end
+            return unless defined?(Legion::LLM::Settings)
+
+            Legion::LLM::Settings.value(:compressor, :model)
           end
 
           def jaccard_similarity(text_a, text_b)

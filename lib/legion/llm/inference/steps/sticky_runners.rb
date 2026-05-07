@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,10 +9,18 @@ module Legion
       module Steps
         module StickyRunners
           include Legion::Logging::Helper
+          include Steps::Logging
           include Steps::StickyHelpers
 
           def step_sticky_runners
-            return unless sticky_enabled? && @request.conversation_id
+            unless sticky_enabled?
+              log_step_debug(:sticky_runners, :skipped, reason: :disabled)
+              return
+            end
+            unless @request.conversation_id
+              log_step_debug(:sticky_runners, :skipped, reason: :no_conversation_id)
+              return
+            end
 
             conv_id = @request.conversation_id
 
@@ -25,6 +34,7 @@ module Legion
             state          = Inference::Conversation.read_sticky_state(conv_id)
             runners        = state[:sticky_runners] || {}
             deferred_count = state[:deferred_tool_calls] || 0
+            log_step_debug(:sticky_runners, :state_loaded, runner_count: runners.size, deferred_count: deferred_count)
 
             live_keys = runners.select do |_k, v|
               (v[:tier] == :triggered && @sticky_turn_snapshot < v[:expires_at_turn]) ||
@@ -40,6 +50,8 @@ module Legion
 
                 @triggered_tools << entry
               end
+            else
+              log_step_debug(:sticky_runners, :tool_filter_skipped, reason: :settings_extensions_unavailable)
             end
 
             @enrichments['tool:sticky_runners'] = {
@@ -52,6 +64,7 @@ module Legion
               direction: :inbound, detail: "#{live_keys.size} sticky runners",
               from: 'sticky_state', to: 'pipeline'
             )
+            log_step_debug(:sticky_runners, :complete, live_runner_count: live_keys.size, triggered_tool_count: @triggered_tools.size)
           rescue StandardError => e
             @warnings << "sticky_runners error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.step_sticky_runners')

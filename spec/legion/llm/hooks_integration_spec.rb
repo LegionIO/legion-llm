@@ -19,5 +19,18 @@ RSpec.describe 'Legion::LLM hooks integration' do
       expect(result[:action]).to eq(:block)
       expect(result[:response][:blocked]).to be true
     end
+
+    it 'returns a structured blocked response when a hook blocks without a response body' do
+      Legion::Settings[:llm][:pipeline_enabled] = false
+      Legion::LLM::Hooks.before_chat { { action: :block, reason: 'blocked by policy' } }
+      expect(Legion::LLM::Inference).not_to receive(:chat_direct)
+
+      result = Legion::LLM::Inference.chat(
+        message: 'forbidden input',
+        model:   'test-model'
+      )
+
+      expect(result).to include(error: 'request_blocked', message: 'blocked by policy')
+    end
   end
 end

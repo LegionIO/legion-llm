@@ -18,6 +18,20 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         )
         expect(result).to be_nil
       end
+
+      it 'still forces local routing when classification detects PHI' do
+        result = assigner.assign(
+          caller:          { requested_by: { identity: 'user:matt', type: :user } },
+          classification:  { contains_phi: true, contains_pii: false },
+          priority:        :normal,
+          gaia_hint:       nil,
+          existing_tier:   :cloud,
+          existing_intent: { capability: :reasoning }
+        )
+
+        expect(result).to include(tier: :local, source: :classification, forced: true)
+        expect(result[:intent]).to include(privacy: :strict)
+      end
     end
 
     context 'when GAIA routing hint is present' do
@@ -233,6 +247,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         expect(result[:tier]).not_to eq(:cloud)
         expect(result[:intent]).to include(privacy: :strict)
         expect(result[:source]).to eq(:classification)
+        expect(result[:forced]).to be true
       end
 
       it 'constrains PII to local tier, never cloud' do
@@ -374,7 +389,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         expect(result[:source]).to eq(:gaia)
       end
 
-      it 'prefers role mapping over classification' do
+      it 'prefers classification over role mapping when privacy is constrained' do
         classification = { contains_phi: true, contains_pii: false }
         result = assigner.assign(
           caller:          { requested_by: { identity: 'gaia:tick:phase_1', type: :system } },
@@ -384,8 +399,9 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           existing_tier:   nil,
           existing_intent: nil
         )
-        expect(result[:source]).to eq(:role_mapping)
+        expect(result[:source]).to eq(:classification)
         expect(result[:tier]).to eq(:local)
+        expect(result[:forced]).to be true
       end
 
       it 'prefers classification over priority (PHI overrides low priority → local)' do

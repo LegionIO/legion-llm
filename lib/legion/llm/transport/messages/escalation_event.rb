@@ -5,6 +5,10 @@ module Legion
     module Transport
       module Messages
         class EscalationEvent < Legion::LLM::Transport::Message
+          def exchange
+            Legion::LLM::Transport::Exchanges::Escalation
+          end
+
           def routing_key
             'llm.escalation.completed'
           end

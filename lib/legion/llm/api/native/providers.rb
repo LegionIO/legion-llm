@@ -80,7 +80,8 @@ module Legion
           def self.instance_to_hash(entry)
             health = begin
               Legion::LLM::Router.health_tracker
-            rescue StandardError
+            rescue StandardError => e
+              handle_exception(e, level: :debug, handled: true, operation: 'api.providers.health_tracker')
               nil
             end
             provider_key = entry[:provider].to_sym

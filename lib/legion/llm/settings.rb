@@ -19,20 +19,22 @@ module Legion
           default_model:             model_override,
           default_provider:          nil,
           system_baseline:           system_baseline_default,
+          fleet:                     fleet_defaults,
           routing:                   routing_defaults,
           budget:                    budget_defaults,
           confidence:                confidence_defaults,
           discovery:                 discovery_defaults,
-          gateway:                   gateway_defaults,
           daemon:                    daemon_defaults,
           prompt_caching:            prompt_caching_defaults,
           arbitrage:                 arbitrage_defaults,
           batch:                     batch_defaults,
           scheduling:                scheduling_defaults,
           rag:                       rag_defaults,
+          rag_guard:                 rag_guard_defaults,
           embedding:                 embedding_defaults,
           conversation:              conversation_defaults,
           telemetry:                 telemetry_defaults,
+          metering:                  metering_defaults,
           context_curation:          context_curation_defaults,
           debate:                    debate_defaults,
           provider_layer:            provider_layer_defaults,
@@ -46,14 +48,19 @@ module Legion
 
       def self.value(*keys, default: nil)
         missing = Object.new
-        keys.reduce(current_settings) do |current, key|
-          return default unless current.respond_to?(:key?)
+        current = current_settings
+        keys.each_with_index do |key, index|
+          unless current.respond_to?(:key?)
+            warn_invalid_path(nil, keys, index, current)
+            return default
+          end
 
           value = config_value(current, key, missing)
           return default if value.equal?(missing)
 
-          value
+          current = value
         end
+        current
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.settings.value')
         default
@@ -85,11 +92,20 @@ module Legion
           return direct unless direct.nil?
         end
 
-        keys.reduce(self.namespace(namespace)) do |current, key|
-          return default unless current.respond_to?(:key?)
+        missing = Object.new
+        current = self.namespace(namespace)
+        keys.each_with_index do |key, index|
+          unless current.respond_to?(:key?)
+            warn_invalid_path(namespace, keys, index, current)
+            return default
+          end
 
-          config_value(current, key)
+          value = config_value(current, key, missing)
+          return default if value.equal?(missing)
+
+          current = value
         end
+        current
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.global_value', namespace: namespace, keys: keys)
         default
@@ -139,6 +155,22 @@ module Legion
 
         log.debug '[llm][settings] action=register_defaults'
         Legion::Settings.register_library(:llm, default)
+      end
+
+      def self.validate!(settings)
+        raise ArgumentError, 'llm.gateway has been removed; configure provider instances instead' if config_key?(settings, :gateway)
+
+        routing = config_value(settings, :routing, {})
+        if routing.is_a?(Hash)
+          raise ArgumentError, 'routing.use_fleet has been removed; configure fleet.dispatch.enabled instead' if config_key?(routing, :use_fleet)
+
+          openai_compat = config_value(config_value(routing, :tiers, {}), :openai_compat, {})
+          if openai_compat.is_a?(Hash) && config_key?(openai_compat, :gateways)
+            raise ArgumentError, 'routing.tiers.openai_compat.gateways has been removed; configure lex-llm-openai provider instances instead'
+          end
+        end
+
+        settings
       end
 
       def self.assign_value(target, keys, value)
@@ -229,6 +261,46 @@ module Legion
         }
       end
 
+      def self.fleet_defaults
+        {
+          dispatch:  {
+            enabled:                true,
+            exchange:               'llm.fleet',
+            routing_style:          :shared_lane,
+            mandatory:              true,
+            publisher_confirm:      true,
+            spool:                  false,
+            timeout_seconds:        30,
+            timeouts:               { chat: 30, stream: 30, embed: 10, image: 60, default: 30 },
+            require_auth:           nil,
+            token_ttl_seconds:      180,
+            reply_queue_expires_ms: 60_000,
+            reply_queue_prefix:     'llm.fleet.reply',
+            request_ttl_ms:         120_000
+          },
+          auth:      {
+            require_signed_token:   true,
+            issuer:                 'legion-llm',
+            audience:               'lex-llm-fleet-worker',
+            algorithm:              'HS256',
+            accepted_issuers:       ['legion-llm'],
+            max_clock_skew_seconds: 30
+          },
+          responder: {
+            enabled:                    true,
+            require_auth:               nil,
+            require_policy:             false,
+            require_idempotency:        true,
+            idempotency_ttl_seconds:    600,
+            accepted_protocol_version:  2,
+            mandatory:                  false,
+            publisher_confirm:          false,
+            publish_confirm_timeout_ms: 500,
+            spool:                      false
+          }
+        }
+      end
+
       def self.routing_defaults
         {
           enabled:        true,
@@ -242,9 +314,7 @@ module Legion
               timeout_seconds: 30,
               timeouts:        { embed: 10, chat: 30, generate: 30, default: 30 }
             },
-            openai_compat: {
-              gateways: []
-            },
+            openai_compat: {},
             cloud:         { providers: %w[bedrock azure gemini] },
             frontier:      { providers: %w[anthropic openai] }
           },
@@ -273,21 +343,9 @@ module Legion
         }
       end
 
-      def self.gateway_defaults
-        {
-          enabled:            true,
-          endpoint:           nil,
-          api_key:            nil,
-          timeout_seconds:    30,
-          model_policy:       {},
-          headers:            {},
-          fallback_to_direct: true
-        }
-      end
-
       def self.arbitrage_defaults
         {
-          enabled:            false,
+          enabled:            true,
           prefer_cheapest:    true,
           quality_floor:      0.7,
           cost_table_refresh: 86_400,
@@ -321,8 +379,16 @@ module Legion
           min_confidence:                0.5,
           utilization_compact_threshold: 0.7,
           utilization_skip_threshold:    0.9,
+          conversation_history_enabled:  false,
           trivial_max_chars:             20,
           trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank]
+        }
+      end
+
+      def self.rag_guard_defaults
+        {
+          threshold:        0.7,
+          block_on_failure: true
         }
       end
 
@@ -360,19 +426,30 @@ module Legion
         }
       end
 
+      def self.metering_defaults
+        {
+          spool: {
+            max_events:        10_000,
+            flush_batch_sleep: 0.0
+          }
+        }
+      end
+
       def self.context_curation_defaults
         {
-          enabled:               true,
-          mode:                  'heuristic',
-          llm_assisted:          false,
-          llm_model:             nil,
-          tool_result_max_chars: 2000,
-          thinking_eviction:     true,
-          exchange_folding:      true,
-          superseded_eviction:   true,
-          dedup_enabled:         true,
-          dedup_threshold:       0.85,
-          target_context_tokens: 40_000
+          enabled:                 true,
+          mode:                    'heuristic',
+          llm_assisted:            false,
+          llm_model:               nil,
+          tool_result_max_chars:   2000,
+          thinking_eviction:       true,
+          exchange_folding:        true,
+          superseded_eviction:     true,
+          dedup_enabled:           true,
+          dedup_threshold:         0.85,
+          target_context_tokens:   40_000,
+          archive_dropped_turns:   true,
+          archive_preserve_recent: 10
         }
       end
 
@@ -448,12 +525,26 @@ module Legion
           redact_pii:            false,
           redaction_placeholder: '[REDACTED]',
           strict_hipaa:          false,
+          standalone_email_pii:  false,
           default_level:         :public
         }
       end
 
       # Provider defaults live in each lex-llm-* provider extension's
       # `default_settings` and are accessed via Legion::Settings[:extensions][:llm].
+
+      def self.config_key?(config, key)
+        return false unless config.respond_to?(:key?)
+
+        config.key?(key) || config.key?(key.to_s)
+      end
+
+      def self.warn_invalid_path(namespace, keys, index, current)
+        traversed = keys.first(index + 1)
+        path = ([namespace].compact + traversed).join('.')
+        log.warn("[llm][settings] invalid_path path=#{path} current_class=#{current.class}")
+      end
+      private_class_method :config_key?, :warn_invalid_path
     end
   end
 end

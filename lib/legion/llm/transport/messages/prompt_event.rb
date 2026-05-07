@@ -32,10 +32,18 @@ module Legion
           end
 
           def caller_headers
-            caller_info = @options.dig(:caller, :requested_by) || {}
+            caller_raw = @options[:caller] || {}
+            return {} unless caller_raw.is_a?(Hash)
+
+            caller_info = caller_raw[:requested_by] || caller_raw['requested_by'] || caller_raw
+            caller_info = {} unless caller_info.is_a?(Hash)
+            top_id      = @options[:identity] || {}
+            top_id      = {} unless top_id.is_a?(Hash)
+            extension   = caller_raw[:extension] || caller_raw['extension']
+            type        = caller_info[:type] || caller_info['type'] || top_id[:type] || top_id['type'] ||
+                          (extension && 'extension')
             h = {}
-            h['x-legion-caller-identity'] = caller_info[:identity].to_s if caller_info[:identity]
-            h['x-legion-caller-type']     = caller_info[:type].to_s     if caller_info[:type]
+            h['x-legion-caller-type'] = type.to_s if type
             h
           end
 

@@ -54,18 +54,11 @@ RSpec.describe Legion::LLM::Hooks::Metering do
 
   describe '.metering_available?' do
     it 'returns false when nothing is available' do
-      allow(described_class).to receive(:gateway_metering?).and_return(false)
       allow(described_class).to receive(:transport_metering?).and_return(false)
       expect(described_class.metering_available?).to be(false)
     end
 
-    it 'returns true when gateway metering is available' do
-      allow(described_class).to receive(:gateway_metering?).and_return(true)
-      expect(described_class.metering_available?).to be(true)
-    end
-
     it 'returns true when transport metering is available' do
-      allow(described_class).to receive(:gateway_metering?).and_return(false)
       allow(described_class).to receive(:transport_metering?).and_return(true)
       expect(described_class.metering_available?).to be(true)
     end

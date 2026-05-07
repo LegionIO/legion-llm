@@ -146,10 +146,13 @@ module Legion
 
         def build_offering(provider_family, config, entry)
           model = (option(entry, :model) || option(entry, :id) || option(entry, :name)).to_s
-          return nil if model.empty?
+          if model.empty?
+            log.warn("[llm][inventory] invalid_offering provider=#{provider_family} reason=missing_model")
+            return nil
+          end
 
           type = normalize_type(option(entry, :usage_type) || option(entry, :type) || option(entry, :purpose) ||
-                                option(entry, :kind) || infer_model_type(model))
+                             option(entry, :kind) || infer_model_type(model))
           limits = normalize_limits(option(entry, :limits) || entry)
           source = (option(entry, :source) || :settings).to_sym
           metadata = normalize_hash(option(entry, :metadata) || option(config, :metadata) || {})
@@ -265,7 +268,13 @@ module Legion
         def discovery_offerings
           return [] unless defined?(Legion::LLM::Discovery)
 
-          Legion::LLM::Discovery.discovered_models.filter_map do |model_entry|
+          cached_models = if Legion::LLM::Discovery.respond_to?(:cached_discovered_models)
+                            Legion::LLM::Discovery.cached_discovered_models
+                          else
+                            Legion::LLM::Discovery.discovered_models
+                          end
+
+          cached_models.filter_map do |model_entry|
             provider_family = model_entry[:provider]
             config = option(providers_config, provider_family, {})
             next unless enabled_config?(config)
@@ -289,12 +298,13 @@ module Legion
         def native_provider_offerings
           return [] unless defined?(Legion::LLM::Call::Registry)
 
-          Legion::LLM::Call::Registry.available.flat_map do |provider_name|
-            adapter = Legion::LLM::Call::Registry.for(provider_name)
+          Legion::LLM::Call::Registry.all_instances.flat_map do |entry|
+            provider_name = entry[:provider]
+            adapter = entry[:adapter]
             next [] unless adapter.respond_to?(:offerings)
 
-            Array(adapter.offerings).filter_map do |offering|
-              normalize_native_offering(provider_name, offering)
+            Array(adapter.offerings(live: false)).filter_map do |offering|
+              normalize_native_offering(provider_name, offering, instance: entry[:instance])
             end
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.native_provider',
@@ -303,15 +313,17 @@ module Legion
           end
         end
 
-        def normalize_native_offering(provider_name, offering)
+        def normalize_native_offering(provider_name, offering, instance: nil)
           data = normalize_hash(offering.respond_to?(:to_h) ? offering.to_h : offering)
           provider_family = normalize_symbol(option(data, :provider_family) || option(data, :provider) || provider_name)
+          provider_instance = option(data, :provider_instance) || option(data, :instance_id) || instance
           usage_type = option(data, :usage_type)
           entry = data.merge(
-            model:    option(data, :model),
-            type:     normalize_type(usage_type || option(data, :type)),
-            source:   :native_provider,
-            metadata: normalize_hash(option(data, :metadata))
+            model:       option(data, :model),
+            instance_id: provider_instance,
+            type:        normalize_type(usage_type || option(data, :type)),
+            source:      :native_provider,
+            metadata:    normalize_hash(option(data, :metadata))
           )
           build_offering(provider_family, {}, entry)
         end

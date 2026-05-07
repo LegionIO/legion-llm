@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,20 +9,32 @@ module Legion
       module Steps
         module ToolHistory
           include Legion::Logging::Helper
+          include Steps::Logging
           include Steps::StickyHelpers
 
           def step_tool_history_inject
-            return unless sticky_enabled? && @request.conversation_id
+            unless sticky_enabled?
+              log_step_debug(:tool_history, :skipped, reason: :sticky_disabled)
+              return
+            end
+            unless @request.conversation_id
+              log_step_debug(:tool_history, :skipped, reason: :no_conversation_id)
+              return
+            end
 
             state   = Inference::Conversation.read_sticky_state(@request.conversation_id)
             history = state[:tool_call_history] || []
-            return if history.empty?
+            if history.empty?
+              log_step_debug(:tool_history, :skipped, reason: :empty_history)
+              return
+            end
 
             @enrichments['tool:call_history'] = {
               content:   format_history(history),
               data:      { entry_count: history.size },
               timestamp: Time.now
             }
+            log_step_debug(:tool_history, :injected, history_count: history.size)
           rescue StandardError => e
             @warnings << "tool_history_inject error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.step_tool_history_inject')

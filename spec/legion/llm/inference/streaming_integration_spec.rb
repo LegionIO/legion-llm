@@ -124,7 +124,7 @@ tool_calls: nil, stop_reason: nil)
     allow(mock_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
     allow(mock_session).to receive(:ask).and_return(mock_response)
 
-    expect(Legion::LLM::Call::Dispatch).to receive(:dispatch_stream)
+    expect(Legion::LLM::Call::Dispatch).to receive(:call)
       .with(hash_including(system: a_string_including('Base streaming system', 'streaming parity context')))
       .and_return(native_dispatch_result(content: 'pipeline response'))
 

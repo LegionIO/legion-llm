@@ -183,7 +183,9 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
         step = host_class.new(debate_request, raw_response)
         step.step_debate
         expect(step.enrichments).to have_key('debate:result')
-        expect(step.enrichments['debate:result'][:data]).to include(:enabled, :rounds, :advocate_model, :challenger_model, :judge_model)
+        expect(step.enrichments['debate:result'][:data]).to include(
+          :enabled, :rounds, :advocate_model, :challenger_model, :judge_model, :judge_evaluation
+        )
       end
 
       it 'records a timeline event' do
@@ -333,15 +335,16 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       expect(metadata[:judge_model]).to eq('anthropic:claude-sonnet-4-5')
     end
 
-    it 'degrades gracefully when only one model is available' do
+    it 'skips debate when only one model is available' do
       Legion::Settings[:extensions][:llm] = {
         anthropic: { enabled: true, default_model: 'claude-sonnet-4-6' },
         openai:    { enabled: false, default_model: 'gpt-4o' }
       }
       step = host_class.new(debate_request, raw_response)
       step.step_debate
-      expect(step.warnings).to include(match(/fewer than 2 models available/))
-      expect(step.enrichments).to have_key('debate:result')
+      expect(step.warnings).to include(match(/fewer than 2 distinct models available/))
+      expect(step.enrichments).not_to have_key('debate:result')
+      expect(Legion::LLM).not_to have_received(:chat_direct)
     end
   end
 
@@ -359,6 +362,21 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       metadata = step.enrichments['debate:result'][:data]
       expect(metadata).to have_key(:advocate_summary)
       expect(metadata).to have_key(:challenger_summary)
+    end
+
+    it 'separates judge evaluation metadata from the final answer when sections are present' do
+      allow(Legion::LLM).to receive(:chat_direct).and_return(
+        { content: 'role response' },
+        { content: 'role response' },
+        { content: "Evaluation: challenger was stronger because it found risk.\nFinal answer: ship the safer option." }
+      )
+
+      step = host_class.new(debate_request, raw_response)
+      step.step_debate
+
+      metadata = step.enrichments['debate:result'][:data]
+      expect(metadata[:judge_evaluation]).to include('challenger was stronger')
+      expect(step.raw_response.content).to eq('ship the safer option.')
     end
   end
 

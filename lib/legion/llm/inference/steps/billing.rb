@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative '../../context/compressor'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,15 +10,27 @@ module Legion
       module Steps
         module Billing
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_billing
-            return unless @request.billing
+            unless @request.billing
+              log_step_debug(:billing, :skipped, reason: :no_billing_context)
+              return
+            end
 
             billing        = @request.billing
             cap            = billing[:spending_cap]
             estimated_cost = cap ? estimate_request_cost : nil
+            log_step_debug(:billing, :checking, budget_id: billing[:budget_id] || 'none', spending_cap: cap || 'none')
 
             if cap && estimated_cost > cap
+              log_step_info(
+                :billing,
+                :cap_exceeded,
+                budget_id:          billing[:budget_id] || 'none',
+                estimated_cost_usd: estimated_cost.round(6),
+                spending_cap:       cap
+              )
               log.error(
                 "[llm][billing] cap_exceeded request_id=#{@request.id} " \
                 "budget_id=#{billing[:budget_id]} estimated_cost=#{estimated_cost.round(6)} cap=#{cap}"
@@ -52,13 +66,20 @@ module Legion
               direction: :internal, detail: "outcome=success, budget_id=#{billing[:budget_id]}",
               from:      'pipeline', to: 'billing'
             )
+            log_step_debug(
+              :billing,
+              :complete,
+              budget_id:          billing[:budget_id] || 'none',
+              estimated_cost_usd: estimated_cost || 0,
+              spending_cap:       cap || 'none'
+            )
           end
 
           private
 
           def estimate_request_cost
             model_id     = @request.routing[:model]
-            input_tokens = @request.messages.sum { |m| m[:content].to_s.length } / 4
+            input_tokens = Legion::LLM::Context::Compressor.estimate_tokens(@request.messages)
             Legion::LLM::Metering::Pricing.estimate(model_id: model_id, input_tokens: input_tokens, output_tokens: 0)
           end
         end

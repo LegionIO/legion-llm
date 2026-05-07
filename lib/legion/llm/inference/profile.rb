@@ -35,11 +35,12 @@ module Legion
         module_function
 
         def derive(caller_hash)
-          return :external if caller_hash.nil?
+          return :external unless caller_hash.is_a?(Hash)
 
-          requested_by = caller_hash[:requested_by] || {}
-          type = requested_by[:type]&.to_sym
-          identity = requested_by[:identity].to_s
+          requested_by = caller_hash[:requested_by] || caller_hash['requested_by'] || {}
+          requested_by = {} unless requested_by.is_a?(Hash)
+          type = (requested_by[:type] || requested_by['type'])&.to_sym
+          identity = (requested_by[:identity] || requested_by['identity']).to_s
 
           return :quick_reply if type == :quick_reply
           return :human       if %i[human user].include?(type)

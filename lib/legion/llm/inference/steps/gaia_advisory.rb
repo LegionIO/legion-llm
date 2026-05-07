@@ -1,26 +1,33 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 module Legion
   module LLM
     module Inference
       module Steps
         module GaiaAdvisory
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_gaia_advisory
             unless defined?(::Legion::Gaia) && ::Legion::Gaia.started?
+              log_step_debug(:gaia_advisory, :skipped, reason: :gaia_unavailable)
               @warnings << 'GAIA unavailable for pre-request shaping'
               return
             end
 
+            log_step_debug(:gaia_advisory, :request_advisory, message_count: @request.messages.size)
             advisory = ::Legion::Gaia.advise(
               conversation_id: @request.conversation_id,
               messages:        @request.messages,
               caller:          @request.caller
             )
 
-            return if advisory.nil? || advisory.empty?
+            if advisory.nil? || advisory.empty?
+              log_step_debug(:gaia_advisory, :skipped, reason: :empty_advisory)
+              return
+            end
 
             enrich_advisory_with_partner_context(advisory)
 
@@ -54,6 +61,13 @@ module Legion
             )
 
             record_advisory_meta_to_gaia(advisory)
+            log_step_info(
+              :gaia_advisory,
+              :complete,
+              advisory_types:    classify_advisory_types(advisory).join(','),
+              has_system_prompt: advisory.key?(:system_prompt),
+              has_routing_hint:  advisory.key?(:routing_hint)
+            )
           rescue StandardError => e
             @warnings << "GAIA advisory error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.gaia_advisory')
@@ -61,8 +75,12 @@ module Legion
 
           # Exposed as a public method so specs can stub it on instances.
           def build_partner_context(identity)
-            return default_partner_context unless apollo_local_available?
+            unless apollo_local_available?
+              log_step_debug(:gaia_advisory, :partner_context_default, reason: :apollo_unavailable)
+              return default_partner_context
+            end
 
+            log_step_debug(:gaia_advisory, :partner_context_query)
             entries = ::Legion::Apollo::Local.query(
               text:  identity,
               tags:  ['partner'],
@@ -93,14 +111,24 @@ module Legion
           end
 
           def enrich_advisory_with_partner_context(advisory)
-            return unless defined?(::Legion::Gaia::BondRegistry)
+            unless defined?(::Legion::Gaia::BondRegistry)
+              log_step_debug(:gaia_advisory, :partner_context_skipped, reason: :bond_registry_unavailable)
+              return
+            end
 
             identity = @request.caller&.dig(:requested_by, :identity)
-            return unless identity
-            return unless ::Legion::Gaia::BondRegistry.partner?(identity)
+            unless identity
+              log_step_debug(:gaia_advisory, :partner_context_skipped, reason: :no_identity)
+              return
+            end
+            unless ::Legion::Gaia::BondRegistry.partner?(identity)
+              log_step_debug(:gaia_advisory, :partner_context_skipped, reason: :not_partner)
+              return
+            end
 
             partner_ctx = build_partner_context(identity)
             advisory[:partner_context] = partner_ctx if partner_ctx
+            log_step_debug(:gaia_advisory, :partner_context_added, present: !partner_ctx.nil?)
           rescue StandardError => e
             handle_exception(e, level: :debug)
           end
@@ -172,15 +200,22 @@ module Legion
           end
 
           def fetch_calibration_weights
-            return nil unless apollo_local_available?
+            unless apollo_local_available?
+              log_step_debug(:gaia_advisory, :calibration_skipped, reason: :apollo_unavailable)
+              return nil
+            end
 
             result = ::Legion::Apollo::Local.query(
               text: 'bond calibration weights',
               tags: %w[bond calibration weights]
             )
-            return nil unless result[:success] && result[:results]&.any?
+            unless result[:success] && result[:results]&.any?
+              log_step_debug(:gaia_advisory, :calibration_skipped, reason: :no_results)
+              return nil
+            end
 
             raw = Legion::JSON.parse(result[:results].first[:content])
+            log_step_debug(:gaia_advisory, :calibration_loaded)
             raw[:weights]
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.gaia_advisory.fetch_partner_weights')
@@ -188,8 +223,14 @@ module Legion
           end
 
           def record_advisory_meta_to_gaia(advisory)
-            return unless defined?(::Legion::Gaia) && ::Legion::Gaia.respond_to?(:record_advisory_meta)
-            return unless advisory[:partner_context]
+            unless defined?(::Legion::Gaia) && ::Legion::Gaia.respond_to?(:record_advisory_meta)
+              log_step_debug(:gaia_advisory, :record_meta_skipped, reason: :gaia_unavailable)
+              return
+            end
+            unless advisory[:partner_context]
+              log_step_debug(:gaia_advisory, :record_meta_skipped, reason: :no_partner_context)
+              return
+            end
 
             advisory_id = SecureRandom.uuid
             advisory_types = classify_advisory_types(advisory)
@@ -198,6 +239,7 @@ module Legion
               advisory_id:    advisory_id,
               advisory_types: advisory_types
             )
+            log_step_debug(:gaia_advisory, :record_meta, advisory_id: advisory_id, advisory_type_count: advisory_types.size)
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.gaia_advisory.record_meta')
             nil
@@ -214,6 +256,69 @@ module Legion
             types << 'verbosity_adjustment' if pc[:interaction_pattern] && pc[:interaction_pattern] != :unknown
             types << 'format_adjustment' if pc[:compatibility]
             types.empty? ? ['partner_hint'] : types
+          end
+
+          def gaia_advisory_tool_entries
+            hint_names = gaia_tool_hint_names
+            return [] if hint_names.empty?
+            return [] unless Legion::Settings::Extensions.respond_to?(:filter_tools)
+
+            entries = Legion::Settings::Extensions.filter_tools(deferred: false) +
+                      Legion::Settings::Extensions.filter_tools(deferred: true)
+            entries.each_with_object([]) do |entry, selected|
+              name = normalized_tool_name(registry_entry_name(entry))
+              next unless hint_names.include?(name)
+              next if gaia_tool_suppressed?(name)
+              next if selected.any? { |existing| normalized_tool_name(registry_entry_name(existing)) == name }
+
+              selected << entry
+            end
+          end
+
+          def gaia_tool_hint_names
+            Array(gaia_advisory_value(:tool_hint)).filter_map do |name|
+              normalized = normalized_tool_name(name)
+              normalized unless normalized.empty?
+            end
+          end
+
+          def gaia_suppressed_tool_names
+            @gaia_suppressed_tool_names ||= Array(gaia_advisory_value(:suppress)).filter_map do |name|
+              normalized = normalized_tool_name(name)
+              normalized unless normalized.empty?
+            end
+          end
+
+          def gaia_tool_suppressed?(name)
+            gaia_suppressed_tool_names.include?(normalized_tool_name(name))
+          end
+
+          def gaia_advisory_value(key)
+            data = gaia_advisory_data
+            return nil unless data.respond_to?(:key?)
+
+            data[key] || data[key.to_s]
+          end
+
+          def gaia_advisory_data
+            enrichment = @enrichments['gaia:advisory']
+            return {} unless enrichment.respond_to?(:key?)
+
+            enrichment[:data] || enrichment['data'] || {}
+          end
+
+          def registry_entry_name(entry)
+            if entry.is_a?(Hash)
+              entry[:name] || entry['name']
+            elsif entry.respond_to?(:tool_name)
+              entry.tool_name
+            elsif entry.respond_to?(:name)
+              entry.name
+            end
+          end
+
+          def normalized_tool_name(name)
+            name.to_s.tr('.', '_')
           end
         end
       end

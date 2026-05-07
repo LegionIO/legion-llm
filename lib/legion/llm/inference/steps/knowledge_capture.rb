@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,15 +9,23 @@ module Legion
       module Steps
         module KnowledgeCapture
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_knowledge_capture
             response = current_response
             request = @request
             enrichments = @enrichments
             local_enabled = local_capture_enabled?
+            log_step_debug(
+              :knowledge_capture,
+              :dispatch_async,
+              local_enabled:       local_enabled,
+              writeback_available: defined?(Legion::Extensions::Apollo::Helpers::Writeback)
+            )
 
             Thread.new do
               if defined?(Legion::Extensions::Apollo::Helpers::Writeback)
+                log_step_debug(:knowledge_capture, :writeback_route)
                 Legion::Extensions::Apollo::Helpers::Writeback.evaluate_and_route(
                   request:     request,
                   response:    response,
@@ -49,13 +58,20 @@ module Legion
           end
 
           def ingest_to_local(response:)
-            return unless response
+            unless response
+              log_step_debug(:knowledge_capture, :local_ingest_skipped, reason: :no_response)
+              return
+            end
 
             content = response.message[:content].to_s
-            return if content.empty?
+            if content.empty?
+              log_step_debug(:knowledge_capture, :local_ingest_skipped, reason: :empty_content)
+              return
+            end
 
             model = response.routing[:model].to_s
             tags  = ['llm_response', model].reject(&:empty?)
+            log_step_debug(:knowledge_capture, :local_ingest, content_chars: content.length, tag_count: tags.size)
 
             ::Legion::Apollo::Local.ingest(
               content:        content,

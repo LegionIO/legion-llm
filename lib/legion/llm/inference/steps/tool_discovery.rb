@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,10 +9,12 @@ module Legion
       module Steps
         module ToolDiscovery
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_tool_discovery
             @discovered_tools ||= []
             start_time = Time.now
+            log_step_debug(:tool_discovery, :start, existing_tool_count: @discovered_tools.size)
 
             discover_registry_tools
             discover_client_tools
@@ -27,6 +30,7 @@ module Legion
             end
 
             record_tool_discovery_timeline(total, start_time)
+            log_step_debug(:tool_discovery, :complete, tool_count: total)
           rescue StandardError => e
             @warnings << "Tool discovery error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.tool_discovery')
@@ -39,9 +43,15 @@ module Legion
           private
 
           def discover_registry_tools
-            return unless Legion::Settings::Extensions.respond_to?(:tools) &&
-                          Legion::Settings::Extensions.respond_to?(:filter_tools) &&
-                          Array(Legion::Settings::Extensions.tools).any?
+            unless Legion::Settings::Extensions.respond_to?(:tools) &&
+                   Legion::Settings::Extensions.respond_to?(:filter_tools)
+              log_step_debug(:tool_discovery, :registry_skipped, reason: :settings_extensions_unavailable)
+              return
+            end
+            unless Array(Legion::Settings::Extensions.tools).any?
+              log_step_debug(:tool_discovery, :registry_skipped, reason: :no_registered_tools)
+              return
+            end
 
             discover_settings_extensions_tools
           rescue StandardError => e
@@ -51,6 +61,7 @@ module Legion
 
           def discover_settings_extensions_tools
             entries = Legion::Settings::Extensions.filter_tools(deferred: false)
+            log_step_debug(:tool_discovery, :registry_scan, candidate_count: entries.size)
             entries.each do |entry|
               @discovered_tools << {
                 name:        entry[:name],
@@ -77,9 +88,14 @@ module Legion
           end
 
           def discover_client_tools
-            return unless defined?(::Legion::MCP::Client::Pool)
+            unless defined?(::Legion::MCP::Client::Pool)
+              log_step_debug(:tool_discovery, :client_skipped, reason: :mcp_client_pool_unavailable)
+              return
+            end
 
-            ::Legion::MCP::Client::Pool.all_tools.each do |tool|
+            tools = ::Legion::MCP::Client::Pool.all_tools
+            log_step_debug(:tool_discovery, :client_scan, candidate_count: tools.size)
+            tools.each do |tool|
               @discovered_tools << {
                 name:        tool[:name],
                 description: tool[:description],

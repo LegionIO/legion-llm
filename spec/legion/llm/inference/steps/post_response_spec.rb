@@ -90,4 +90,22 @@ timestamp: Time.now }
       end
     end
   end
+
+  describe '#extract_tokens' do
+    it 'warns when provider usage fields collapse to zero tokens for a known model' do
+      logger = instance_double('Logger', debug: nil, warn: nil)
+      response = Struct.new(:input_tokens, :output_tokens).new(nil, nil)
+      step = klass.new(request)
+      step.raw_response = response
+      allow(step).to receive(:log).and_return(logger)
+
+      usage = step.send(:extract_tokens)
+
+      expect(usage.input_tokens).to eq(0)
+      expect(usage.output_tokens).to eq(0)
+      expect(logger).to have_received(:warn).with(
+        include('[llm][post_response] zero_tokens', 'provider=anthropic', 'model=claude-opus-4-6')
+      )
+    end
+  end
 end

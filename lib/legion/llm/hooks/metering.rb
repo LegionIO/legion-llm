@@ -47,11 +47,7 @@ module Legion
         end
 
         def metering_available?
-          gateway_metering? || transport_metering?
-        end
-
-        def gateway_metering?
-          defined?(LegionLLMGateway) && LegionLLMGateway.respond_to?(:emit)
+          transport_metering?
         end
 
         def transport_metering?
@@ -59,11 +55,7 @@ module Legion
         end
 
         def publish_metering(data)
-          if gateway_metering?
-            LegionLLMGateway.emit(data)
-          elsif transport_metering?
-            Legion::LLM::Metering.emit(data)
-          end
+          Legion::LLM::Metering.emit(data) if transport_metering?
         rescue StandardError => e
           handle_exception(e, level: :warn)
         end

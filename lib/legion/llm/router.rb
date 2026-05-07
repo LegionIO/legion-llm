@@ -4,7 +4,6 @@ require_relative 'router/resolution'
 require_relative 'router/rule'
 require_relative 'router/health_tracker'
 require_relative 'router/escalation/chain'
-require_relative 'router/gateway_interceptor'
 require_relative 'discovery/rule_generator'
 require_relative 'discovery/system'
 require_relative 'discovery/memory_gate'
@@ -108,7 +107,7 @@ module Legion
         # :local          — always available
         # :direct         — always available (remote self-hosted instances)
         # :fleet          — available when Legion::Transport is loaded
-        # :openai_compat  — available when gateways are configured
+        # :openai_compat  — available when OpenAI-compatible provider instances are registered
         # :cloud          — available unless privacy mode
         # :frontier       — available unless privacy mode
         def tier_available?(tier)
@@ -149,14 +148,17 @@ module Legion
         end
 
         def explicit_resolution(tier, provider, model)
-          resolved_provider = provider ? provider.to_sym : default_provider_for_tier(tier)
-          resolved_model = model || default_model_for_tier(tier)
+          registry_entry = provider ? nil : registry_entry_for_tier(tier)
+          resolved_provider = provider ? provider.to_sym : (registry_entry&.[](:provider) || default_provider_for_tier(tier))
+          resolved_model = model || registry_default_model(registry_entry) || default_model_for_tier(tier)
 
           Resolution.new(
             tier:     tier,
             provider: resolved_provider,
             model:    resolved_model,
-            rule:     'explicit'
+            instance: registry_entry&.[](:instance),
+            rule:     'explicit',
+            metadata: registry_resolution_metadata(registry_entry)
           )
         end
 
@@ -310,17 +312,7 @@ module Legion
         end
 
         def openai_compat_available?
-          !openai_compat_gateways.empty?
-        end
-
-        def openai_compat_gateways
-          tiers = Legion::LLM::Settings.config_value(routing_settings, :tiers, {})
-          oc = Legion::LLM::Settings.config_value(tiers, :openai_compat, {})
-          oc = oc.transform_keys(&:to_sym) if oc.is_a?(Hash)
-          gateways = Legion::LLM::Settings.config_value(oc, :gateways)
-          return [] unless gateways.is_a?(Array)
-
-          gateways.map { |g| g.is_a?(Hash) ? g.transform_keys(&:to_sym) : nil }.compact
+          !registry_entry_for_tier(:openai_compat).nil?
         end
 
         def pick_best(candidates)
@@ -519,41 +511,28 @@ module Legion
 
         # Find first registered provider matching a given tier.
         def registry_provider_for_tier(tier)
-          instances = begin
-            Call::Registry.all_instances
-          rescue StandardError
-            []
-          end
-
-          # Prefer PROVIDER_ORDER for deterministic selection
-          PROVIDER_ORDER.each do |pname|
-            entry = instances.find { |e| e[:provider] == pname }
-            next unless entry
-
-            entry_tier = registry_tier(pname, entry[:metadata])
-            return pname if entry_tier == tier
-          end
-          nil
+          registry_entry_for_tier(tier)&.[](:provider)
         end
 
         # Find a default model from registry for a given tier.
         # Tries adapter.offerings first, then metadata[:default_model].
         def registry_model_for_tier(tier)
+          registry_default_model(registry_entry_for_tier(tier))
+        end
+
+        def registry_entry_for_tier(tier)
           instances = begin
             Call::Registry.all_instances
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'router.registry_entry_for_tier')
             []
           end
 
           PROVIDER_ORDER.each do |pname|
-            entry = instances.find { |e| e[:provider] == pname }
-            next unless entry
-
-            entry_tier = registry_tier(pname, entry[:metadata])
-            next unless entry_tier == tier
-
-            model = registry_default_model(entry)
-            return model if model && !model.to_s.empty?
+            entry = instances.find do |candidate|
+              candidate[:provider] == pname && registry_tier(pname, candidate[:metadata]) == tier
+            end
+            return entry if entry
           end
           nil
         end
@@ -561,6 +540,8 @@ module Legion
         # Extract a default model from a registry entry.
         # Checks metadata[:default_model], then adapter.offerings.
         def registry_default_model(entry)
+          return nil unless entry
+
           metadata = entry[:metadata] || {}
 
           # Prefer explicit default_model in metadata
@@ -572,7 +553,8 @@ module Legion
           if adapter.respond_to?(:offerings)
             models = begin
               adapter.offerings
-            rescue StandardError
+            rescue StandardError => e
+              handle_exception(e, level: :debug, handled: true, operation: 'router.registry_default_model')
               []
             end
             first = models.first
@@ -580,6 +562,13 @@ module Legion
           end
 
           nil
+        end
+
+        def registry_resolution_metadata(entry)
+          return {} unless entry
+
+          metadata = entry[:metadata]
+          metadata.is_a?(Hash) ? metadata.dup : {}
         end
       end
     end

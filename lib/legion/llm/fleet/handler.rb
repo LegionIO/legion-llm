@@ -1,6 +1,11 @@
 # frozen_string_literal: true
 
+require 'legion/extensions/llm/fleet/protocol'
 require 'legion/logging/helper'
+
+require_relative '../call/registry'
+require_relative 'worker_execution'
+
 module Legion
   module LLM
     module Fleet
@@ -9,280 +14,242 @@ module Legion
 
         module_function
 
+        LEGACY_FIELDS = %i[schema_version request_type fleet_correlation_id].freeze
+
         def handle_fleet_request(payload)
-          payload = normalize_payload(payload)
-          message_context = payload[:message_context] || {}
+          envelope = normalize_hash(payload)
           log.debug '[llm][fleet][handler] action=handle_fleet_request.enter ' \
-                    "request_type=#{payload[:request_type]} model=#{payload[:model]} provider=#{payload[:provider]}"
+                    "operation=#{envelope[:operation]} model=#{envelope[:model]} provider=#{envelope[:provider]}"
 
-          if Dispatcher.fleet_enabled? && !valid_token?(payload[:signed_token])
-            error_response = { success: false, error: 'invalid_token',
-                               message_context: optional_message_context(message_context) }.compact
-            publish_reply(payload[:reply_to], payload[:correlation_id], error_response) if payload[:reply_to]
-            return error_response
-          end
-
-          response = call_local_llm(payload)
-          response_hash = build_response(payload[:correlation_id], response, message_context: message_context)
-          publish_reply(payload[:reply_to], payload[:correlation_id], response_hash) if payload[:reply_to]
-          response_hash
-        end
-
-        def valid_token?(token)
-          return true unless require_auth?
-          return false if token.nil?
-          return true unless defined?(Legion::Crypt)
-
-          !Legion::Crypt.validate_jwt(token).nil?
+          validate_envelope!(envelope)
+          provider_resolver = proc { |validated_envelope| resolve_provider(validated_envelope) }
+          response = WorkerExecution.call(envelope: envelope, provider: provider_resolver)
+          result = build_success(envelope, response)
+          publish_response(envelope, result) if envelope[:reply_to]
+          result
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.fleet.handler.valid_token')
-          false
+          handle_exception(e, level: :warn, operation: 'llm.fleet.handler.handle_fleet_request')
+          result = build_error(envelope || {}, e)
+          publish_error(envelope || {}, result) if envelope&.[](:reply_to)
+          result
         end
 
-        def require_auth?
-          Legion::LLM::Settings.value(:routing, :fleet, :require_auth) == true
-        end
+        def validate_envelope!(envelope)
+          raise ArgumentError, 'invalid_fleet_request: unsupported protocol_version' unless protocol_version?(envelope[:protocol_version])
 
-        def call_local_llm(payload)
-          log.debug "[llm][fleet][handler] action=call_local_llm request_type=#{payload[:request_type]} model=#{payload[:model]}"
-          return unavailable_response unless llm_available_for?(payload)
-
-          case payload[:request_type]&.to_s
-          when 'structured'
-            Legion::LLM.structured_direct(
-              messages: payload[:messages],
-              schema:   payload[:schema],
-              model:    payload[:model],
-              provider: payload[:provider]
-            )
-          when 'embed'
-            text = payload[:text] || extract_terminal_content(payload[:messages])
-            Legion::LLM.embed_direct(text, model: payload[:model], provider: payload[:provider])
-          else
-            execute_chat_request(payload)
+          required_fields = %i[
+            request_id correlation_id operation provider provider_instance model params reply_to
+            message_context caller trace_context timeout_seconds expires_at idempotency_key
+          ]
+          required_fields << :signed_token if responder_auth_required?
+          required_fields.each do |key|
+            raise ArgumentError, "invalid_fleet_request: #{key} is required" if envelope[key].nil?
+          end
+          LEGACY_FIELDS.each do |key|
+            raise ArgumentError, "invalid_fleet_request: #{key} is not supported" if envelope.key?(key)
           end
         end
 
-        def build_response(correlation_id, response, message_context: {})
-          log.debug "[llm][fleet][handler] action=build_response correlation_id=#{correlation_id}"
-          model = extract_field(response, :model)
+        def resolve_provider(envelope)
+          provider = envelope[:provider]
+          instance = envelope[:provider_instance]
+          adapter = Legion::LLM::Call::Registry.for(provider, instance: instance)
+          return adapter if adapter
+
+          raise ArgumentError, "provider_not_registered: #{provider}/#{instance}"
+        end
+
+        def build_success(envelope, response)
           {
-            correlation_id:  correlation_id,
-            success:         extract_success(response),
-            error:           extract_error(response),
-            response:        response,
-            input_tokens:    extract_token(response, :input_tokens),
-            output_tokens:   extract_token(response, :output_tokens),
-            thinking_tokens: extract_token(response, :thinking_tokens),
-            provider:        extract_field(response, :provider),
-            model:           model,
-            model_id:        model,
-            message_context: optional_message_context(message_context)
+            success:           true,
+            protocol_version:  envelope[:protocol_version],
+            request_id:        envelope[:request_id],
+            correlation_id:    envelope[:correlation_id],
+            idempotency_key:   envelope[:idempotency_key],
+            operation:         envelope[:operation],
+            provider:          envelope[:provider],
+            provider_instance: envelope[:provider_instance],
+            model:             response_model(response) || envelope[:model],
+            reply_to:          envelope[:reply_to],
+            message_context:   envelope[:message_context] || {},
+            trace_context:     envelope[:trace_context] || {},
+            content:           response_content(response),
+            tool_calls:        response_tool_calls(response),
+            usage:             response_usage(response),
+            finish_reason:     response_finish_reason(response),
+            metadata:          response_metadata(response)
           }.compact
         end
 
-        def publish_reply(reply_to, correlation_id, response_hash)
-          return unless defined?(Legion::Transport)
+        def build_error(envelope, error)
+          {
+            success:           false,
+            error:             error_code(error),
+            protocol_version:  envelope[:protocol_version] || ::Legion::Extensions::Llm::Fleet::Protocol::VERSION,
+            request_id:        envelope[:request_id],
+            correlation_id:    envelope[:correlation_id],
+            idempotency_key:   envelope[:idempotency_key],
+            operation:         envelope[:operation],
+            provider:          envelope[:provider],
+            provider_instance: envelope[:provider_instance],
+            model:             envelope[:model],
+            reply_to:          envelope[:reply_to],
+            message_context:   envelope[:message_context] || {},
+            trace_context:     envelope[:trace_context] || {},
+            message:           error.message,
+            error_class:       error.class.name
+          }.compact
+        end
 
-          if defined?(Legion::LLM::Transport::Messages::FleetResponse)
-            publish_result = Legion::LLM::Transport::Messages::FleetResponse.new(
-              **response_hash, reply_to: reply_to, fleet_correlation_id: correlation_id
-            ).publish
-            log.warn("[llm][fleet][handler] action=reply_publish_failed correlation_id=#{correlation_id} status=#{publish_result[:status]}") if
-              publish_result.is_a?(Hash) && publish_result[:accepted] == false
-            return publish_result
-          end
-
-          payload = Legion::JSON.dump(response_hash)
-          channel = Legion::Transport.connection.create_channel
-          channel.default_exchange.publish(
-            payload,
-            routing_key:    reply_to,
-            correlation_id: correlation_id,
-            content_type:   'application/json'
-          )
-          channel.close
+        def publish_response(_envelope, result)
+          require 'legion/extensions/llm/transport/messages/fleet_response'
+          publish_result = ::Legion::Extensions::Llm::Transport::Messages::FleetResponse.new(
+            protocol_version:  result[:protocol_version],
+            request_id:        result[:request_id],
+            correlation_id:    result[:correlation_id],
+            idempotency_key:   result[:idempotency_key],
+            operation:         result[:operation],
+            provider:          result[:provider],
+            provider_instance: result[:provider_instance],
+            model:             result[:model],
+            reply_to:          result[:reply_to],
+            message_context:   result[:message_context],
+            trace_context:     result[:trace_context],
+            content:           result[:content],
+            tool_calls:        result[:tool_calls],
+            usage:             result[:usage],
+            finish_reason:     result[:finish_reason],
+            metadata:          result[:metadata]
+          ).publish(reply_publish_options)
+          log_reply_publish_failure(publish_result, result[:correlation_id]) unless publish_accepted?(publish_result)
+          publish_result
         rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.fleet.handler.publish_reply')
+          handle_exception(e, level: :warn, operation: 'llm.fleet.handler.publish_response')
         end
 
-        def extract_token(response, field)
-          return hash_token(response, field) if response.is_a?(Hash)
-
-          if response.respond_to?(:tokens) && response.tokens.is_a?(Hash)
-            token_key = { input_tokens: :input, output_tokens: :output, thinking_tokens: :thinking }[field]
-            value = response.tokens[token_key] || response.tokens[token_key.to_s]
-            return value.to_i if value
-          end
-
-          return 0 unless response.respond_to?(field)
-
-          response.public_send(field).to_i
+        def publish_error(_envelope, result)
+          require 'legion/extensions/llm/transport/messages/fleet_error'
+          publish_result = ::Legion::Extensions::Llm::Transport::Messages::FleetError.new(
+            protocol_version:  result[:protocol_version],
+            request_id:        result[:request_id],
+            correlation_id:    result[:correlation_id],
+            idempotency_key:   result[:idempotency_key],
+            operation:         result[:operation],
+            provider:          result[:provider],
+            provider_instance: result[:provider_instance],
+            model:             result[:model],
+            reply_to:          result[:reply_to],
+            message_context:   result[:message_context],
+            trace_context:     result[:trace_context],
+            code:              result[:error],
+            message:           result[:message],
+            error_class:       result[:error_class],
+            retryable:         false
+          ).publish(reply_publish_options)
+          log_reply_publish_failure(publish_result, result[:correlation_id]) unless publish_accepted?(publish_result)
+          publish_result
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.fleet.handler.publish_error')
         end
 
-        def normalize_payload(payload)
-          return {} unless payload.is_a?(Hash)
+        def normalize_hash(hash)
+          return {} unless hash.respond_to?(:each)
 
-          payload.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-        end
-
-        def fetch_option(hash, key)
-          return nil unless hash.respond_to?(:key?)
-
-          string_key = key.to_s
-          return hash[string_key] if hash.key?(string_key)
-
-          hash[key] if hash.key?(key)
-        end
-
-        def nested_fetch(hash, *keys)
-          keys.reduce(hash) do |current, key|
-            return nil unless current.respond_to?(:key?)
-
-            fetch_option(current, key)
+          hash.each_with_object({}) do |(key, value), result|
+            result[key.respond_to?(:to_sym) ? key.to_sym : key] = normalize_value(value)
           end
         end
 
-        def optional_message_context(message_context)
-          message_context.nil? || message_context.empty? ? nil : message_context
-        end
-
-        def extract_field(response, field)
-          if response.is_a?(Hash)
-            direct = response[field] || response[field.to_s]
-            return direct unless direct.nil?
-
-            meta = response[:meta] || response['meta']
-            if meta.is_a?(Hash)
-              meta_value = meta[field] || meta[field.to_s]
-              return meta_value unless meta_value.nil?
-            end
-
-            routing = response[:routing] || response['routing']
-            if routing.is_a?(Hash)
-              routing_value = routing[field] || routing[field.to_s]
-              return routing_value unless routing_value.nil?
-            end
-
-            return nil
-          end
-
-          if response.respond_to?(:routing) && response.routing.is_a?(Hash)
-            routing_value = response.routing[field] || response.routing[field.to_s]
-            return routing_value unless routing_value.nil?
-          end
-
-          return nil unless response.respond_to?(field)
-
-          response.public_send(field)
-        end
-
-        def llm_available_for?(payload)
-          return false unless defined?(Legion::LLM)
-
-          Legion::LLM.respond_to?(availability_method_for(payload), true)
-        end
-
-        def availability_method_for(payload)
-          case payload[:request_type]&.to_s
-          when 'structured'
-            :structured_direct
-          when 'embed'
-            :embed_direct
+        def normalize_value(value)
+          case value
+          when Hash
+            normalize_hash(value)
+          when Array
+            value.map { |entry| normalize_value(entry) }
           else
-            :chat_direct
+            value
           end
         end
 
-        def unavailable_response
-          { success: false, error: 'llm_not_available' }
+        def response_content(response)
+          return response[:content] || response['content'] || response[:result] || response['result'] if response.is_a?(Hash)
+          return response.content if response.respond_to?(:content)
+
+          response
         end
 
-        def execute_chat_request(payload)
-          if payload[:message]
-            return Legion::LLM.chat_direct(
-              model:    payload[:model],
-              provider: payload[:provider],
-              intent:   payload[:intent],
-              tier:     payload[:tier],
-              message:  payload[:message]
-            )
-          end
+        def response_model(response)
+          return response[:model] || response['model'] if response.is_a?(Hash)
+          return response.model if response.respond_to?(:model)
 
-          messages = normalize_messages(payload[:messages])
-          prompt = extract_terminal_content(messages)
-          return { success: false, error: 'invalid_request' } if prompt.nil?
-
-          session = Legion::LLM.send(
-            :chat_single,
-            model:    payload[:model],
-            provider: payload[:provider],
-            intent:   payload[:intent],
-            tier:     payload[:tier],
-            tools:    payload[:tools]
-          )
-          session.with_instructions(payload[:system]) if payload[:system] && session.respond_to?(:with_instructions)
-
-          prior_messages = messages.size > 1 ? messages[0..-2] : []
-          prior_messages.each { |message| session.add_message(message) }
-
-          session.ask(prompt)
+          nil
         end
 
-        def normalize_messages(messages)
-          Array(messages).map do |message|
-            next message unless message.is_a?(Hash)
+        def response_tool_calls(response)
+          return response[:tool_calls] || response['tool_calls'] if response.is_a?(Hash)
+          return response.tool_calls if response.respond_to?(:tool_calls)
 
-            message.each_with_object({}) do |(key, value), normalized|
-              normalized[key.respond_to?(:to_sym) ? key.to_sym : key] = value
-            end
-          end
+          nil
         end
 
-        def extract_terminal_content(messages)
-          normalized = normalize_messages(messages)
-          message_content(normalized.last)
+        def response_usage(response)
+          return response[:usage] || response['usage'] || {} if response.is_a?(Hash)
+          return response.tokens if response.respond_to?(:tokens)
+
+          {}
         end
 
-        def message_content(message)
-          return unless message.is_a?(Hash)
+        def response_finish_reason(response)
+          return response[:finish_reason] || response['finish_reason'] if response.is_a?(Hash)
+          return response.finish_reason if response.respond_to?(:finish_reason)
 
-          message[:content] || message['content']
+          nil
         end
 
-        def extract_success(response)
-          return response[:success] if response.is_a?(Hash) && response.key?(:success)
-          return response['success'] if response.is_a?(Hash) && response.key?('success')
-          return false if extract_error(response)
+        def response_metadata(response)
+          return response[:metadata] || response['metadata'] || {} if response.is_a?(Hash)
+          return response.metadata if response.respond_to?(:metadata)
 
-          true
+          {}
         end
 
-        def extract_error(response)
-          return unless response.is_a?(Hash)
+        def error_code(error)
+          message = error.message.to_s
+          return 'invalid_fleet_request' if message.start_with?('invalid_fleet_request')
+          return 'provider_not_registered' if message.start_with?('provider_not_registered')
+          return 'fleet_policy_denied' if error.is_a?(WorkerExecution::PolicyError)
 
-          response[:error] || response['error']
+          'fleet_worker_error'
         end
 
-        def hash_token(response, field)
-          direct = response[field] || response[field.to_s]
-          return direct.to_i if direct
+        def responder_auth_required?
+          value = Legion::LLM::Settings.value(:fleet, :responder, :require_auth, default: nil)
+          return value != false unless value.nil?
 
-          meta = response[:meta] || response['meta']
-          if meta.is_a?(Hash)
-            meta_key = { input_tokens: :tokens_in, output_tokens: :tokens_out, thinking_tokens: :thinking_tokens }[field]
-            meta_value = meta[meta_key] || meta[meta_key.to_s]
-            return meta_value.to_i if meta_value
-          end
+          Legion::LLM::Settings.value(:fleet, :auth, :require_signed_token, default: true) != false
+        end
 
-          tokens = response[:tokens] || response['tokens']
-          if tokens.is_a?(Hash)
-            token_key = { input_tokens: :input, output_tokens: :output, thinking_tokens: :thinking }[field]
-            token_value = tokens[token_key] || tokens[token_key.to_s]
-            return token_value.to_i if token_value
-          end
+        def protocol_version?(value)
+          value == ::Legion::Extensions::Llm::Fleet::Protocol::VERSION ||
+            value == ::Legion::Extensions::Llm::Fleet::Protocol::VERSION.to_s
+        end
 
-          0
+        def reply_publish_options
+          {
+            mandatory:                  Legion::LLM::Settings.value(:fleet, :responder, :mandatory, default: false),
+            publisher_confirm:          Legion::LLM::Settings.value(:fleet, :responder, :publisher_confirm, default: false),
+            publish_confirm_timeout_ms: Legion::LLM::Settings.value(:fleet, :responder, :publish_confirm_timeout_ms, default: 500),
+            spool:                      Legion::LLM::Settings.value(:fleet, :responder, :spool, default: false),
+            return_result:              true
+          }
+        end
+
+        def publish_accepted?(publish_result)
+          publish_result.is_a?(Hash) && publish_result[:accepted] == true
+        end
+
+        def log_reply_publish_failure(publish_result, correlation_id)
+          log.warn("[llm][fleet][handler] action=reply_publish_failed correlation_id=#{correlation_id} status=#{publish_result&.[](:status)}")
         end
       end
     end

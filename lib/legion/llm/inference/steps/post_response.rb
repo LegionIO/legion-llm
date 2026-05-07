@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'logging'
 
 module Legion
   module LLM
@@ -8,19 +9,27 @@ module Legion
       module Steps
         module PostResponse
           include Legion::Logging::Helper
+          include Steps::Logging
 
           def step_post_response
             response = current_response
+            log_step_debug(:post_response, :publish_audit, provider: @resolved_provider || 'none', model: @resolved_model || 'none')
 
             audit_event = AuditPublisher.publish(request: @request, response: response)
 
-            Legion::Gaia::AuditObserver.instance.process_event(audit_event) if defined?(Legion::Gaia::AuditObserver) && audit_event
+            if defined?(Legion::Gaia::AuditObserver) && audit_event
+              log_step_debug(:post_response, :notify_gaia_audit_observer)
+              Legion::Gaia::AuditObserver.instance.process_event(audit_event)
+            else
+              log_step_debug(:post_response, :gaia_audit_observer_skipped, reason: audit_event ? :observer_unavailable : :no_audit_event)
+            end
 
             @timeline.record(
               category: :audit, key: 'audit:publish',
               direction: :outbound, detail: 'published to llm.audit',
               from: 'pipeline', to: 'llm.audit'
             )
+            log_step_debug(:post_response, :complete, audit_event_present: !audit_event.nil?)
           rescue StandardError => e
             @warnings << "post_response error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.post_response')
@@ -36,6 +45,8 @@ module Legion
 
             cache_read  = @raw_response.respond_to?(:cache_read_tokens) ? @raw_response.cache_read_tokens.to_i : 0
             cache_write = @raw_response.respond_to?(:cache_write_tokens) ? @raw_response.cache_write_tokens.to_i : 0
+
+            log_zero_token_usage(input, output)
 
             Usage.new(
               input_tokens:       input,
@@ -86,6 +97,17 @@ module Legion
             return response_tool_calls if respond_to?(:response_tool_calls, true)
 
             []
+          end
+
+          def log_zero_token_usage(input, output)
+            return unless input.zero? && output.zero? && @resolved_model
+            return if @zero_token_warning_logged
+
+            @zero_token_warning_logged = true
+            log.warn(
+              "[llm][post_response] zero_tokens request_id=#{@request&.id || 'none'} " \
+              "provider=#{@resolved_provider || 'none'} model=#{@resolved_model}"
+            )
           end
         end
       end
