@@ -46,10 +46,13 @@ module Legion
                 model_name = (model_data[:name] || model_data['name']).to_s
                 next if model_name.empty?
 
+                model_tier = extract_field(model_data, :tier)&.to_sym ||
+                             extract_field(model_data, 'tier')&.to_sym ||
+                             tier
                 capability = embedding_model?(model_data) ? :embed : :chat
-                priority = (TIER_WEIGHT[tier] || 80) - order
-                rules << build_rule(provider, instance_id, model_data, capability, tier, priority)
-                rules << build_rule(provider, instance_id, model_data, :stream, tier, priority) if capability == :chat
+                priority = (TIER_WEIGHT[model_tier] || 80) - order
+                rules << build_rule(provider, instance_id, model_data, capability, model_tier, priority)
+                rules << build_rule(provider, instance_id, model_data, :stream, model_tier, priority) if capability == :chat
                 order += 1
               end
             end

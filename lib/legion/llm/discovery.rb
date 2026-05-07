@@ -212,6 +212,7 @@ module Legion
         # Normalize a discovered model entry into a hash compatible with RuleGenerator
         def normalize_model_for_rules(model_entry)
           h = { 'name' => model_entry[:model] }
+          h['tier'] = model_entry[:tier] if model_entry[:tier]
           h['capabilities'] = model_entry[:capabilities] if model_entry[:capabilities]&.any?
           h['context_length'] = model_entry[:context_length] if model_entry[:context_length]
           h['parameter_count'] = model_entry[:parameter_count] if model_entry[:parameter_count]
