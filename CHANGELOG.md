@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.9] - 2026-05-07
+
+### Fixed
+- Initialized sticky-state persistence reads explicitly on cache misses to satisfy static analysis without changing runtime behavior.
+
 ## [0.9.8] - 2026-05-06
 
 ### Fixed

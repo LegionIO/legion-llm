@@ -127,6 +127,7 @@ module Legion
           # ensure_conversation, avoiding resurrection of unknown conversations.
           def read_sticky_state(conversation_id)
             unless in_memory?(conversation_id)
+              persisted = nil
               persisted = db_load_sticky_state(conversation_id) if db_available?
               return persisted if persisted.is_a?(Hash) && persisted.any?
 
