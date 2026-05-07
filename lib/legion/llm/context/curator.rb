@@ -39,6 +39,36 @@ module Legion
           @curated_messages ||= load_curated(@conversation_id)
         end
 
+        # Drops older conversation turns from the prompt window after archiving
+        # them into Apollo for scoped retrieval on future turns.
+        def drop_and_archive(messages, conversation_id:)
+          return messages unless archive_dropped_turns?
+          return messages unless messages.is_a?(Array) && messages.any?
+
+          target_tokens = setting(:target_context_tokens, 40_000)
+          estimated = Context::Compressor.estimate_tokens(messages)
+          return messages if estimated <= target_tokens
+
+          preserve_recent = setting(:archive_preserve_recent, setting(:preserve_recent, 10)).to_i
+          preserve_recent = 1 unless preserve_recent.positive?
+          return messages if messages.size <= preserve_recent
+
+          retained = messages.last(preserve_recent)
+          dropped = messages[0...-preserve_recent]
+          return messages if dropped.empty?
+
+          archived = archive_conversation_history(dropped, conversation_id: conversation_id)
+          return messages unless archived
+
+          log.info("[llm][context_curator] action=drop_and_archive conversation_id=#{conversation_id} " \
+                   "dropped=#{dropped.size} retained=#{retained.size} estimated_tokens=#{estimated}")
+          retained
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.context_curator.drop_and_archive',
+                              conversation_id: conversation_id)
+          messages
+        end
+
         # Heuristic: distill a single tool-result message to a compact summary.
         def distill_tool_result(msg, _assistant_context = nil)
           content = msg[:content].to_s
@@ -143,6 +173,10 @@ module Legion
           enabled? &&
             setting(:llm_assisted, false) &&
             setting(:mode, 'heuristic') == 'llm_assisted'
+        end
+
+        def archive_dropped_turns?
+          setting(:archive_dropped_turns, true)
         end
 
         def curation_settings
@@ -250,6 +284,77 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn)
           messages
+        end
+
+        def archive_conversation_history(messages, conversation_id:)
+          payload = archived_history_payload(messages, conversation_id: conversation_id)
+          return false if payload[:content].empty?
+
+          if defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
+            ::Legion::Apollo::Local.ingest(
+              content:        payload[:content],
+              tags:           payload[:tags],
+              source_channel: 'llm_context_curator',
+              confidence:     0.75,
+              metadata:       payload[:metadata]
+            )
+            return true
+          end
+
+          if defined?(::Legion::Apollo) && ::Legion::Apollo.respond_to?(:ingest)
+            ::Legion::Apollo.ingest(
+              content:          payload[:content],
+              content_type:     'conversation_turn',
+              tags:             payload[:tags],
+              source_channel:   'llm_context_curator',
+              knowledge_domain: 'conversation_history',
+              context:          payload[:metadata]
+            )
+            return true
+          end
+
+          if defined?(::Legion::Extensions::Apollo::Runners::Knowledge) &&
+             ::Legion::Extensions::Apollo::Runners::Knowledge.respond_to?(:handle_ingest)
+            result = ::Legion::Extensions::Apollo::Runners::Knowledge.handle_ingest(
+              content:          payload[:content],
+              content_type:     'conversation_turn',
+              tags:             payload[:tags],
+              source_agent:     'legion-llm',
+              source_channel:   'llm_context_curator',
+              knowledge_domain: 'conversation_history',
+              context:          payload[:metadata]
+            )
+            return result.nil? || !result.respond_to?(:key?) || result[:success] != false
+          end
+
+          log.debug("[llm][context_curator] action=drop_and_archive.skipped reason=apollo_unavailable conversation_id=#{conversation_id}")
+          false
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.context_curator.archive_conversation_history',
+                              conversation_id: conversation_id)
+          false
+        end
+
+        def archived_history_payload(messages, conversation_id:)
+          seqs = messages.filter_map { |msg| msg[:seq] }
+          {
+            content:  messages.map { |msg| archived_message_line(msg) }.join("\n"),
+            tags:     ['llm_conversation_history', "conversation:#{conversation_id}"],
+            metadata: {
+              conversation_id: conversation_id,
+              seq_start:       seqs.min,
+              seq_end:         seqs.max,
+              message_count:   messages.size,
+              source:          'conversation_history'
+            }.compact
+          }
+        end
+
+        def archived_message_line(msg)
+          role = msg[:role] || 'unknown'
+          content = msg[:content]
+          content = content.filter_map { |part| part.is_a?(Hash) ? part[:text] || part['text'] : part.to_s }.join if content.is_a?(Array)
+          "[#{role}] #{content}"
         end
 
         def curated_message_payload(msg, index)

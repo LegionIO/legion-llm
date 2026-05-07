@@ -13,10 +13,11 @@ RSpec.describe Legion::LLM::Inference::Steps::ConfidenceScoring do
     Class.new do
       include Legion::LLM::Inference::Steps::ConfidenceScoring
 
-      attr_accessor :request, :timeline, :warnings, :raw_response, :confidence_score
+      attr_accessor :audit, :request, :timeline, :warnings, :raw_response, :confidence_score
 
       def initialize(request, raw_response = nil)
         @request          = request
+        @audit            = {}
         @timeline         = Legion::LLM::Inference::Timeline.new
         @warnings         = []
         @raw_response     = raw_response
@@ -91,6 +92,28 @@ RSpec.describe Legion::LLM::Inference::Steps::ConfidenceScoring do
         step.step_confidence_scoring
         expect(step.confidence_score.source).to eq(:caller_provided)
         expect(step.confidence_score.score).to eq(0.9)
+      end
+
+      it 'adds a structured warning and reports health when confidence is low' do
+        low_request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'hello' }],
+          extra:    { confidence_score: 0.1 }
+        )
+        health_tracker = instance_double(Legion::LLM::Router::HealthTracker, report: nil)
+        allow(Legion::LLM::Router).to receive(:health_tracker).and_return(health_tracker)
+        step = host_class.new(low_request, raw_response)
+        step.instance_variable_set(:@resolved_provider, :anthropic)
+        step.instance_variable_set(:@resolved_instance, :primary)
+        step.instance_variable_set(:@resolved_offering_id, 'anthropic:primary:chat:opus')
+
+        step.step_confidence_scoring
+
+        expect(step.warnings).to include(hash_including(type: :low_confidence, band: :very_low))
+        expect(step.audit[:'confidence:action'][:outcome]).to eq(:warning)
+        expect(health_tracker).to have_received(:report).with(
+          hash_including(provider: :anthropic, instance: :primary, offering_id: 'anthropic:primary:chat:opus',
+                         signal: :quality_failure, value: 1)
+        )
       end
     end
 

@@ -157,6 +157,12 @@ module Legion
             limit = strategy == :rag_compact ? compact_limit : full_limit
             log_step_debug(:rag_context, :apollo_query, strategy: strategy, limit: limit, min_confidence: confidence)
 
+            general = apollo_retrieve_general(query: query, limit: limit, confidence: confidence)
+            history = apollo_retrieve_conversation_history(query: query, limit: limit, confidence: confidence)
+            merge_apollo_results(general, history)
+          end
+
+          def apollo_retrieve_general(query:, limit:, confidence:)
             if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
               ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
                 query: query, limit: limit, min_confidence: confidence
@@ -176,6 +182,66 @@ module Legion
             else
               []
             end
+          end
+
+          def apollo_retrieve_conversation_history(query:, limit:, confidence:)
+            return empty_apollo_result unless conversation_history_retrieval_enabled?
+
+            conversation_id = @request.conversation_id
+            return empty_apollo_result if conversation_id.to_s.empty?
+
+            tags = ['llm_conversation_history', "conversation:#{conversation_id}"]
+            log_step_debug(:rag_context, :apollo_history_query, limit: limit, tag_count: tags.size)
+            if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
+              ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
+                query:          query,
+                limit:          limit,
+                min_confidence: confidence,
+                tags:           tags,
+                domain:         'conversation_history'
+              )
+            elsif defined?(::Legion::Apollo) && ::Legion::Apollo.started?
+              ::Legion::Apollo.retrieve(
+                text:   query,
+                limit:  limit,
+                scope:  :all,
+                tags:   tags,
+                domain: 'conversation_history'
+              )
+            else
+              empty_apollo_result
+            end
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_context.apollo_history_retrieve',
+                                conversation_id: conversation_id)
+            empty_apollo_result
+          end
+
+          def conversation_history_retrieval_enabled?
+            rag_setting(:conversation_history_enabled, false) == true
+          end
+
+          def merge_apollo_results(*results)
+            entries = results.flat_map { |result| apollo_result_entries(result) }
+            {
+              success: entries.any? || results.any? { |result| Legion::LLM::Settings.config_value(result, :success) },
+              entries: entries,
+              count:   entries.size
+            }
+          end
+
+          def apollo_result_entries(result)
+            return [] if result.nil?
+
+            if result.respond_to?(:key?)
+              Array(Legion::LLM::Settings.config_value(result, :entries, []))
+            else
+              Array(result)
+            end
+          end
+
+          def empty_apollo_result
+            { success: true, entries: [], count: 0 }
           end
 
           def extract_query

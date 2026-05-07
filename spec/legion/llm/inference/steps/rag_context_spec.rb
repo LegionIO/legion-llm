@@ -258,6 +258,34 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       step.step_rag_context
     end
 
+    it 'retrieves scoped archived conversation history when a conversation_id is present' do
+      Legion::Settings[:llm][:rag][:conversation_history_enabled] = true
+      request = Legion::LLM::Inference::Request.build(
+        conversation_id:  'conv-rag-history',
+        messages:         [{ role: :user, content: 'what did we decide about pgvector?' }],
+        context_strategy: :rag
+      )
+
+      apollo_runner = double('Knowledge')
+      allow(apollo_runner).to receive(:retrieve_relevant)
+        .with(query: 'what did we decide about pgvector?', limit: 10, min_confidence: 0.5)
+        .and_return({ success: true, entries: [], count: 0 })
+      allow(apollo_runner).to receive(:retrieve_relevant)
+        .with(hash_including(tags: include('conversation:conv-rag-history'), domain: 'conversation_history'))
+        .and_return({
+                      success: true,
+                      entries: [{ id: 'hist-1', content: 'Prior decision: use pgvector cosine distance', content_type: 'conversation_turn' }],
+                      count:   1
+                    })
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+
+      step = klass.new(request)
+      step.step_rag_context
+
+      entries = step.enrichments['rag:context_retrieval'][:data][:entries]
+      expect(entries.map { |entry| entry[:content] }).to include('Prior decision: use pgvector cosine distance')
+    end
+
     it 'uses compact_limit for rag_compact strategy' do
       Legion::Settings[:llm][:rag][:compact_limit] = 3
 

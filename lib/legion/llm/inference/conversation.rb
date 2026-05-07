@@ -122,23 +122,31 @@ module Legion
             nil
           end
 
-          # Returns the sticky_state hash for this conversation, or {} (frozen) if
-          # the conversation is not in memory. Does NOT call ensure_conversation —
-          # avoids resurrecting an evicted conversation as an empty shell.
-          # Sticky state is in-memory only; eviction loses it.
+          # Returns the sticky_state hash for this conversation, loading from
+          # persistent storage on cache miss when available. Does NOT call
+          # ensure_conversation, avoiding resurrection of unknown conversations.
           def read_sticky_state(conversation_id)
-            return {}.freeze unless in_memory?(conversation_id)
+            unless in_memory?(conversation_id)
+              persisted = db_load_sticky_state(conversation_id) if db_available?
+              return persisted if persisted.is_a?(Hash) && persisted.any?
 
-            conversations[conversation_id][:sticky_state] ||= {}
+              return {}.freeze
+            end
+
+            conversations[conversation_id][:sticky_state] ||= begin
+              persisted = db_load_sticky_state(conversation_id) if db_available?
+              persisted.is_a?(Hash) ? persisted : {}
+            end
           end
 
-          # Writes sticky_state to an in-memory conversation.
-          # No-ops if the conversation is not in memory (evicted = state already lost).
+          # Writes sticky_state to an in-memory conversation and persists it when
+          # a DB backing store is available.
           def write_sticky_state(conversation_id, state)
             return unless in_memory?(conversation_id)
 
             conversations[conversation_id][:sticky_state] = state
             touch(conversation_id)
+            db_persist_sticky_state(conversation_id, state) if db_available?
           end
 
           def create_conversation(conversation_id, **metadata)
@@ -276,7 +284,8 @@ module Legion
             return unless oldest_id
 
             if conversations[oldest_id]&.dig(:sticky_state)&.any?
-              log&.warn("[ConversationStore] evicting #{oldest_id} with non-empty sticky_state — sticky state lost")
+              db_persist_sticky_state(oldest_id, conversations[oldest_id][:sticky_state]) if db_available?
+              log&.warn("[ConversationStore] evicting #{oldest_id} with non-empty sticky_state")
             end
             conversations.delete(oldest_id)
           end
@@ -491,6 +500,34 @@ module Legion
             Legion::Data.connection[:conversation_messages].insert(row)
           end
 
+          def db_persist_sticky_state(conversation_id, state)
+            db_append_message(
+              conversation_id,
+              {
+                id:         SecureRandom.uuid,
+                seq:        next_seq(conversation_id),
+                role:       METADATA_ROLE,
+                content:    Legion::JSON.dump(type: 'sticky_state', state: state),
+                created_at: Time.now
+              }
+            )
+          end
+
+          def db_load_sticky_state(conversation_id)
+            rows = Legion::Data.connection[:conversation_messages]
+                               .where(conversation_id: conversation_id, role: METADATA_ROLE.to_s)
+                               .order(:seq)
+                               .all
+            rows.reverse_each do |row|
+              payload = sticky_state_payload(row[:content])
+              next unless payload
+
+              state = payload[:state] || payload['state']
+              return symbolize_hash(state) if state.is_a?(Hash)
+            end
+            nil
+          end
+
           def db_chain_columns_exist?
             @db_chain_columns_exist ||=
               Legion::Data.connection.schema(:conversation_messages)
@@ -529,6 +566,22 @@ module Legion
             base[:message_group_id] = row[:message_group_id] if row.key?(:message_group_id)
             base[:agent_id]         = row[:agent_id] if row.key?(:agent_id)
             base
+          end
+
+          def sticky_state_payload(content)
+            payload = Legion::JSON.parse(content.to_s)
+            return nil unless payload.is_a?(Hash)
+
+            type = payload[:type] || payload['type']
+            type == 'sticky_state' ? payload : nil
+          rescue Legion::JSON::ParseError
+            nil
+          end
+
+          def symbolize_hash(hash)
+            hash.to_h.each_with_object({}) do |(key, value), memo|
+              memo[key.respond_to?(:to_sym) ? key.to_sym : key] = value.is_a?(Hash) ? symbolize_hash(value) : value
+            end
           end
 
           def spool_message(conversation_id, msg)

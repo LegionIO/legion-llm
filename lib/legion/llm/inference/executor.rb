@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'concurrent'
+require 'faraday'
 
 require_relative '../caller_identity'
 require_relative 'route_attempts'
@@ -221,6 +222,18 @@ module Legion
                       maybe_compact_history(conv_id, history)
                     end
 
+          archived_history = curator.drop_and_archive(history, conversation_id: conv_id)
+          if archived_history.size < history.size
+            @timeline.record(
+              category: :internal, key: 'context:archived',
+              direction: :outbound,
+              detail: "archived #{history.size - archived_history.size} prior messages to Apollo",
+              from: 'context_curator', to: 'apollo'
+            )
+            Conversation.replace(conv_id, archived_history)
+            history = archived_history
+          end
+
           @enrichments['context:conversation_history'] = history
           @timeline.record(
             category: :internal, key: 'context:loaded',
@@ -293,59 +306,17 @@ module Legion
         def step_routing
           log.debug "[llm][executor] action=step_routing.enter requested_provider=#{@request.routing[:provider]} requested_model=#{@request.routing[:model]}"
           @timestamps[:routing_start] = Time.now
-          provider = @request.routing[:provider]
-          instance = @request.routing[:instance] || @request.routing[:instance_id] || @request.routing[:provider_instance]
-          model = @request.routing[:model]
-          offering_id = @request.routing[:offering_id] || @request.routing[:id]
-          offering_metadata = normalize_offering_metadata(@request.routing[:offering_metadata] ||
-                                                          @request.routing[:offering])
-          intent = @request.extra[:intent]
-          tier = @request.extra[:tier]
+          state = resolve_routing_state(apply_proactive_tier_assignment(routing_request_state))
 
-          # Consume proactive tier assignment when no explicit tier/intent provided by caller
-          if @proactive_tier_assignment && !tier && !intent
-            tier = @proactive_tier_assignment[:tier]
-            intent = @proactive_tier_assignment[:intent]
-          end
-
-          if (intent || tier) && defined?(Router) && Router.routing_enabled?
-            resolution = if pipeline_escalation_enabled?
-                           @escalation_chain = Router.resolve_chain(
-                             intent:          intent,
-                             tier:            tier,
-                             model:           model,
-                             provider:        provider,
-                             max_escalations: pipeline_escalation_max_attempts
-                           )
-                           @escalation_chain.primary
-                         else
-                           Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
-                         end
-            if resolution
-              provider = resolution.provider
-              instance = resolution.instance || instance
-              model = resolution.model
-              tier = resolution.tier
-              offering_id = resolution.offering_id || offering_id
-              offering_metadata = resolution.offering_metadata unless resolution.offering_metadata.empty?
-              @audit[:'routing:provider_selection'] = {
-                outcome: :success,
-                detail: "selected #{provider}:#{model} via #{resolution.rule}",
-                data: { strategy: resolution.rule, tier: resolution.tier, instance: instance, offering_id: offering_id,
-                        offering_metadata: offering_metadata }.compact,
-                duration_ms: 0, timestamp: Time.now
-              }
-            end
-          end
-
-          @resolved_provider = provider ||
-                               (model && Router.infer_provider_for_model(model)) ||
+          @resolved_provider = state[:provider] ||
+                               (state[:model] && Router.infer_provider_for_model(state[:model])) ||
                                llm_setting(:default_provider)
-          @resolved_instance = instance || llm_setting(:default_instance)
-          @resolved_model = model || llm_setting(:default_model)
-          @resolved_tier = tier&.to_sym || inferred_provider_tier(@resolved_provider)
-          @resolved_offering_id = offering_id
-          @resolved_offering_metadata = offering_metadata
+          @resolved_instance = state[:instance] || llm_setting(:default_instance)
+          @resolved_model = state[:model] || llm_setting(:default_model)
+          @resolved_tier = state[:tier]&.to_sym || inferred_provider_tier(@resolved_provider)
+          @resolved_offering_id = state[:offering_id]
+          @resolved_offering_metadata = state[:offering_metadata]
+          record_forced_tier_selection unless @audit[:'routing:provider_selection']
 
           log.info '[llm][inference] resolved ' \
                    "provider=#{@resolved_provider} instance=#{@resolved_instance || 'default'} " \
@@ -355,6 +326,74 @@ module Legion
             direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
             from: 'router', to: 'pipeline'
           )
+        end
+
+        def routing_request_state
+          {
+            provider:          @request.routing[:provider],
+            instance:          @request.routing[:instance] || @request.routing[:instance_id] || @request.routing[:provider_instance],
+            model:             @request.routing[:model],
+            offering_id:       @request.routing[:offering_id] || @request.routing[:id],
+            offering_metadata: normalize_offering_metadata(@request.routing[:offering_metadata] ||
+                                                           @request.routing[:offering]),
+            intent:            @request.extra[:intent],
+            tier:              @request.extra[:tier]
+          }
+        end
+
+        def apply_proactive_tier_assignment(state)
+          # Forced assignments carry security/privacy constraints and override
+          # caller-supplied tier/intent. Advisory assignments only fill blanks.
+          if @proactive_tier_assignment&.dig(:forced)
+            state[:tier] = @proactive_tier_assignment[:tier]
+            state[:intent] = merge_routing_intent(state[:intent], @proactive_tier_assignment[:intent])
+            log.info "[llm][routing] action=forced_tier source=#{@proactive_tier_assignment[:source]} tier=#{state[:tier]}"
+          elsif @proactive_tier_assignment && !state[:tier] && !state[:intent]
+            state[:tier] = @proactive_tier_assignment[:tier]
+            state[:intent] = @proactive_tier_assignment[:intent]
+          end
+          state
+        end
+
+        def resolve_routing_state(state)
+          return state unless (state[:intent] || state[:tier]) && defined?(Router) && Router.routing_enabled?
+
+          resolution = routing_resolution_for(state)
+          return state unless resolution
+
+          apply_routing_resolution(state, resolution)
+        end
+
+        def routing_resolution_for(state)
+          if pipeline_escalation_enabled?
+            @escalation_chain = Router.resolve_chain(
+              intent:          state[:intent],
+              tier:            state[:tier],
+              model:           state[:model],
+              provider:        state[:provider],
+              max_escalations: pipeline_escalation_max_attempts
+            )
+            @escalation_chain.primary
+          else
+            Router.resolve(intent: state[:intent], tier: state[:tier], model: state[:model], provider: state[:provider])
+          end
+        end
+
+        def apply_routing_resolution(state, resolution)
+          state[:provider] = resolution.provider
+          state[:instance] = resolution.instance || state[:instance]
+          state[:model] = resolution.model
+          state[:tier] = resolution.tier
+          state[:offering_id] = resolution.offering_id || state[:offering_id]
+          state[:offering_metadata] = resolution.offering_metadata unless resolution.offering_metadata.empty?
+          @audit[:'routing:provider_selection'] = {
+            outcome: :success,
+            detail: "selected #{state[:provider]}:#{state[:model]} via #{resolution.rule}",
+            data: { strategy: resolution.rule, tier: resolution.tier, instance: state[:instance],
+                    offering_id: state[:offering_id], offering_metadata: state[:offering_metadata] }.compact,
+            duration_ms: 0, timestamp: Time.now
+          }
+          state
         end
 
         def step_request_normalization
@@ -468,9 +507,27 @@ module Legion
             failures:    result.passed ? [] : result.failures,
             duration_ms: duration_ms
           )
+          report_escalation_quality_failure(resolution, result) unless result.passed
           result.passed
         ensure
           @current_escalation_context = nil
+        end
+
+        def report_escalation_quality_failure(resolution, result)
+          Router.health_tracker.report(
+            provider:    resolution.provider,
+            instance:    resolution.instance,
+            offering_id: resolution.offering_id,
+            signal:      :quality_failure,
+            value:       1,
+            metadata:    {
+              model:    resolution.model,
+              failures: Array(result.failures)
+            }
+          )
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.escalation_attempt.health_report',
+                              provider: resolution.provider, model: resolution.model)
         end
 
         def record_escalation_failure(err, resolution, start_time, outcome:, operation:, handled: false)
@@ -503,6 +560,25 @@ module Legion
           attempt[:offering_id] = resolution.offering_id if resolution.offering_id
           attempt[:offering_metadata] = resolution.offering_metadata unless resolution.offering_metadata.empty?
           attempt
+        end
+
+        def merge_routing_intent(existing, assignment)
+          existing_hash = existing.is_a?(Hash) ? existing : {}
+          assignment_hash = assignment.is_a?(Hash) ? assignment : {}
+          existing_hash.merge(assignment_hash)
+        end
+
+        def record_forced_tier_selection
+          return unless @proactive_tier_assignment&.dig(:forced)
+
+          @audit[:'routing:provider_selection'] = {
+            outcome:     :success,
+            detail:      "forced tier #{@resolved_tier} by #{@proactive_tier_assignment[:source]}",
+            data:        { tier: @resolved_tier, strategy: @proactive_tier_assignment[:source],
+                           provider: @resolved_provider, model: @resolved_model }.compact,
+            duration_ms: 0,
+            timestamp:   Time.now
+          }
         end
 
         def pipeline_escalation_enabled?

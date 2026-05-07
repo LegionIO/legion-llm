@@ -292,6 +292,26 @@ confidence: 0.9 }],
     end
   end
 
+  describe 'privacy-constrained routing' do
+    it 'uses forced classification tier even when caller requested a cloud tier' do
+      privacy_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'patient diagnosis is hypertension' }],
+        routing:  { provider: nil, model: nil },
+        extra:    { tier: :cloud, intent: { capability: :reasoning } }
+      )
+      executor = described_class.new(privacy_request)
+      executor.instance_variable_set(
+        :@proactive_tier_assignment,
+        { tier: :local, intent: { privacy: :strict }, source: :classification, forced: true }
+      )
+
+      executor.send(:step_routing)
+
+      expect(executor.instance_variable_get(:@resolved_tier)).to eq(:local)
+      expect(executor.audit[:'routing:provider_selection'][:data][:tier]).to eq(:local)
+    end
+  end
+
   describe 'step_context_store' do
     before { Legion::LLM::Inference::Conversation.reset! }
 

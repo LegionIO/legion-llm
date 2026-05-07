@@ -30,6 +30,7 @@ module Legion
           batch:                     batch_defaults,
           scheduling:                scheduling_defaults,
           rag:                       rag_defaults,
+          rag_guard:                 rag_guard_defaults,
           embedding:                 embedding_defaults,
           conversation:              conversation_defaults,
           telemetry:                 telemetry_defaults,
@@ -363,8 +364,16 @@ module Legion
           min_confidence:                0.5,
           utilization_compact_threshold: 0.7,
           utilization_skip_threshold:    0.9,
+          conversation_history_enabled:  false,
           trivial_max_chars:             20,
           trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank]
+        }
+      end
+
+      def self.rag_guard_defaults
+        {
+          threshold:        0.7,
+          block_on_failure: true
         }
       end
 
@@ -404,17 +413,19 @@ module Legion
 
       def self.context_curation_defaults
         {
-          enabled:               true,
-          mode:                  'heuristic',
-          llm_assisted:          false,
-          llm_model:             nil,
-          tool_result_max_chars: 2000,
-          thinking_eviction:     true,
-          exchange_folding:      true,
-          superseded_eviction:   true,
-          dedup_enabled:         true,
-          dedup_threshold:       0.85,
-          target_context_tokens: 40_000
+          enabled:                 true,
+          mode:                    'heuristic',
+          llm_assisted:            false,
+          llm_model:               nil,
+          tool_result_max_chars:   2000,
+          thinking_eviction:       true,
+          exchange_folding:        true,
+          superseded_eviction:     true,
+          dedup_enabled:           true,
+          dedup_threshold:         0.85,
+          target_context_tokens:   40_000,
+          archive_dropped_turns:   true,
+          archive_preserve_recent: 10
         }
       end
 

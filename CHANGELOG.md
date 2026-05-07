@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.9.6] - 2026-05-06
+
+### Fixed
+- Enforced privacy classification as a forced local routing constraint, even when callers request a cloud tier.
+- Made RAG faithfulness failures block caller-visible responses by default and record structured audit data.
+- Archived dropped conversation turns into Apollo with conversation-scoped tags and retrieved archived history during RAG context loading.
+- Reported escalation quality failures and low-confidence responses to `Router::HealthTracker` as quality signals.
+- Persisted conversation sticky state through the database path and restored it after in-memory LRU eviction.
+- Counted pending conversation-history and RAG enrichments in token-budget checks before provider dispatch.
+- Averaged provider health priority adjustments across instances while preserving worst-state circuit reporting.
+
 ## [0.9.5] - 2026-05-06
 
 ### Fixed

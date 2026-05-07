@@ -7,11 +7,12 @@ RSpec.describe Legion::LLM::Inference::Steps::TokenBudget do
     Class.new do
       include Legion::LLM::Inference::Steps::TokenBudget
 
-      attr_accessor :warnings
+      attr_accessor :enrichments, :warnings
 
       def initialize(request)
-        @request  = request
-        @warnings = []
+        @request     = request
+        @enrichments = {}
+        @warnings    = []
       end
     end
   end
@@ -95,6 +96,23 @@ RSpec.describe Legion::LLM::Inference::Steps::TokenBudget do
           system:   system_str,
           extra:    { max_input_tokens: 50 }
         )
+        expect { ex.step_token_budget }.to raise_error(Legion::LLM::TokenBudgetExceeded)
+      end
+    end
+
+    context 'with pending enrichments contributing to input estimate' do
+      it 'includes conversation history and RAG context in the input estimate' do
+        ex = build_executor(
+          messages: [{ role: :user, content: 'hi' }],
+          extra:    { max_input_tokens: 50 }
+        )
+        ex.enrichments['context:conversation_history'] = [
+          { role: :user, content: 'older context ' * 80 }
+        ]
+        ex.enrichments['rag:context_retrieval'] = {
+          data: { entries: [{ content_type: 'fact', content: 'retrieved context ' * 80 }] }
+        }
+
         expect { ex.step_token_budget }.to raise_error(Legion::LLM::TokenBudgetExceeded)
       end
     end

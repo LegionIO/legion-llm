@@ -83,10 +83,10 @@ RSpec.describe Legion::LLM::Router::HealthTracker do
       expect(tracker.adjustment(:ollama, instance: :remote)).to eq(0)
     end
 
-    it 'returns worst-of adjustment across all instances when no instance specified' do
+    it 'returns average adjustment across all instances when no instance specified' do
       3.times { tracker.report(provider: :ollama, instance: :local, signal: :error, value: 1) }
       tracker.report(provider: :ollama, instance: :remote, signal: :success, value: nil)
-      expect(tracker.adjustment(:ollama)).to eq(-50)
+      expect(tracker.adjustment(:ollama)).to eq(-25)
     end
 
     it 'returns specific instance circuit_state' do
@@ -146,8 +146,8 @@ RSpec.describe Legion::LLM::Router::HealthTracker do
 
       expect(tracker.adjustment(:ollama, instance: :local)).to eq(-20)
       expect(tracker.adjustment(:ollama, instance: :remote)).to eq(0)
-      # Worst-of: local has -20
-      expect(tracker.adjustment(:ollama)).to eq(-20)
+      # Provider adjustment averages the two instances; circuit_state remains worst-of separately.
+      expect(tracker.adjustment(:ollama)).to eq(-10)
     end
   end
 

@@ -381,6 +381,34 @@ RSpec.describe Legion::LLM::Context::Curator do
     end
   end
 
+  describe '#drop_and_archive' do
+    it 'archives dropped conversation turns to Apollo and returns the retained tail' do
+      ingested = []
+      apollo_local = Module.new do
+        define_singleton_method(:started?) { true }
+        define_singleton_method(:ingest) { |**payload| ingested << payload }
+      end
+      stub_const('Legion::Apollo::Local', apollo_local)
+      Legion::Settings[:llm][:context_curation] = Legion::Settings[:llm][:context_curation].merge(
+        target_context_tokens:   5,
+        archive_preserve_recent: 1
+      )
+
+      messages = [
+        { seq: 1, role: :user, content: 'old user message ' * 20 },
+        { seq: 2, role: :assistant, content: 'old assistant message ' * 20 },
+        { seq: 3, role: :user, content: 'new question' }
+      ]
+
+      retained = curator.drop_and_archive(messages, conversation_id: conversation_id)
+
+      expect(retained.map { |msg| msg[:seq] }).to eq([3])
+      expect(ingested.size).to eq(1)
+      expect(ingested.first[:tags]).to include('llm_conversation_history', "conversation:#{conversation_id}")
+      expect(ingested.first[:content]).to include('old user message', 'old assistant message')
+    end
+  end
+
   # --- async curation does not block caller ---
 
   describe '#curate_turn' do

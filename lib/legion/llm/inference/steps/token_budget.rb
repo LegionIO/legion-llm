@@ -52,9 +52,21 @@ module Legion
           end
 
           def estimate_input_tokens
-            content_chars = @request.messages.sum { |m| m[:content].to_s.length }
-            system_chars  = @request.system.to_s.length
+            content_chars = @request.messages.sum { |m| message_content_chars(m[:content]) }
+            injected_system = EnrichmentInjector.inject(
+              system:      @request.system,
+              enrichments: @enrichments || {}
+            )
+            system_chars = injected_system.to_s.length
             (content_chars + system_chars) / 4
+          end
+
+          def message_content_chars(content)
+            return content.to_s.length unless content.is_a?(Array)
+
+            content.sum do |part|
+              part.is_a?(Hash) ? (part[:text] || part['text']).to_s.length : part.to_s.length
+            end
           end
         end
       end

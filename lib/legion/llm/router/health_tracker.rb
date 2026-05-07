@@ -72,14 +72,15 @@ module Legion
         # Returns total priority adjustment for a provider.
         # Combines circuit-breaker penalty and latency penalty.
         # When +instance:+ is given, returns that specific instance's adjustment.
-        # When nil, returns the worst-of across all known instances (most pessimistic).
+        # When nil, returns the average across all known instances so one bad
+        # node penalizes the provider proportionally instead of globally.
         def adjustment(provider, instance: nil, offering_id: nil)
           if instance
             key = instance_key(provider, instance)
             return circuit_adjustment(key) + latency_adjustment(key)
           end
 
-          # Check for known instances — return worst-of if any exist
+          # Check for known instances — return average adjustment if any exist.
           instances = known_instances(provider)
           if instances.empty?
             # Backward compat: use provider-level or offering-level key
@@ -88,7 +89,8 @@ module Legion
             return circuit_adjustment(key) + latency_adjustment(key)
           end
 
-          instances.map { |k| circuit_adjustment(k) + latency_adjustment(k) }.min
+          adjustments = instances.map { |k| circuit_adjustment(k) + latency_adjustment(k) }
+          (adjustments.sum.to_f / adjustments.size).round
         end
 
         # Returns :closed, :open, or :half_open.
