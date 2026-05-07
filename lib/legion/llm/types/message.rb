@@ -52,12 +52,31 @@ module Legion
           case content
           when String then content
           when Array
-            content.select { |b| b.is_a?(Hash) ? b[:type] == :text : b.respond_to?(:text) }
-                   .map { |b| b.is_a?(Hash) ? b[:text] : b.text }
-                   .join
+            dropped = 0
+            text_parts = content.filter_map do |block|
+              extracted = text_from_block(block)
+              dropped += 1 if extracted.nil?
+              extracted
+            end
+            self.class.log.debug("[types][message] action=text dropped_non_text=#{dropped} id=#{id}") if dropped.positive?
+            text_parts.join
           else
             content.to_s
           end
+        end
+
+        def full_content
+          case content
+          when String
+            content
+          when Array, Hash
+            Legion::JSON.dump(content)
+          else
+            content.to_s
+          end
+        rescue StandardError => e
+          self.class.handle_exception(e, level: :debug, handled: true, operation: 'llm.types.message.full_content')
+          content.inspect
         end
 
         def to_h
@@ -66,6 +85,18 @@ module Legion
 
         def to_provider_hash
           { role: role.to_s, content: text }.compact
+        end
+
+        private
+
+        def text_from_block(block)
+          return block.text if block.respond_to?(:text)
+          return nil unless block.is_a?(Hash)
+
+          type = block[:type] || block['type']
+          return nil unless type.nil? || type.to_s == 'text'
+
+          block[:text] || block['text'] || block[:content] || block['content']
         end
       end
     end

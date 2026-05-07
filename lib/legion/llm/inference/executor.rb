@@ -695,10 +695,16 @@ module Legion
           @native_tool_definitions ||= begin
             definitions = []
             Array(@request.tools).each { |tool| add_native_tool_definition(definitions, tool) }
-            add_registry_tool_definitions(definitions) unless @request.tools.is_a?(Array) && @request.tools.empty?
+            add_registry_tool_definitions(definitions) if registry_tool_injection_requested?
             log.debug "[llm][executor] action=native_tool_definitions.built count=#{definitions.size}"
             definitions
           end
+        end
+
+        def registry_tool_injection_requested?
+          return true unless @request.tools.is_a?(Array) && @request.tools.empty?
+
+          requested_deferred_tool_names.any?
         end
 
         def add_native_tool_definition(definitions, tool)

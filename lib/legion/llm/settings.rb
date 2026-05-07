@@ -34,6 +34,7 @@ module Legion
           embedding:                 embedding_defaults,
           conversation:              conversation_defaults,
           telemetry:                 telemetry_defaults,
+          metering:                  metering_defaults,
           context_curation:          context_curation_defaults,
           debate:                    debate_defaults,
           provider_layer:            provider_layer_defaults,
@@ -47,14 +48,19 @@ module Legion
 
       def self.value(*keys, default: nil)
         missing = Object.new
-        keys.reduce(current_settings) do |current, key|
-          return default unless current.respond_to?(:key?)
+        current = current_settings
+        keys.each_with_index do |key, index|
+          unless current.respond_to?(:key?)
+            warn_invalid_path(nil, keys, index, current)
+            return default
+          end
 
           value = config_value(current, key, missing)
           return default if value.equal?(missing)
 
-          value
+          current = value
         end
+        current
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.settings.value')
         default
@@ -86,11 +92,20 @@ module Legion
           return direct unless direct.nil?
         end
 
-        keys.reduce(self.namespace(namespace)) do |current, key|
-          return default unless current.respond_to?(:key?)
+        missing = Object.new
+        current = self.namespace(namespace)
+        keys.each_with_index do |key, index|
+          unless current.respond_to?(:key?)
+            warn_invalid_path(namespace, keys, index, current)
+            return default
+          end
 
-          config_value(current, key)
+          value = config_value(current, key, missing)
+          return default if value.equal?(missing)
+
+          current = value
         end
+        current
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.global_value', namespace: namespace, keys: keys)
         default
@@ -411,6 +426,15 @@ module Legion
         }
       end
 
+      def self.metering_defaults
+        {
+          spool: {
+            max_events:        10_000,
+            flush_batch_sleep: 0.0
+          }
+        }
+      end
+
       def self.context_curation_defaults
         {
           enabled:                 true,
@@ -514,7 +538,13 @@ module Legion
 
         config.key?(key) || config.key?(key.to_s)
       end
-      private_class_method :config_key?
+
+      def self.warn_invalid_path(namespace, keys, index, current)
+        traversed = keys.first(index + 1)
+        path = ([namespace].compact + traversed).join('.')
+        log.warn("[llm][settings] invalid_path path=#{path} current_class=#{current.class}")
+      end
+      private_class_method :config_key?, :warn_invalid_path
     end
   end
 end

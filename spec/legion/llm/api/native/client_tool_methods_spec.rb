@@ -50,3 +50,25 @@ RSpec.describe Legion::LLM::API::Native::ClientToolMethods do
     end
   end
 end
+
+RSpec.describe Legion::LLM::API::Native::Helpers do
+  describe '#build_client_tool_class' do
+    let(:app_class) do
+      Class.new do
+        def self.helpers(&)
+          class_eval(&)
+        end
+      end
+    end
+
+    before do
+      described_class.registered(app_class)
+    end
+
+    it 'marks API-submitted client tools as non-executable server-side' do
+      tool = app_class.new.send(:build_client_tool_class, 'file_write', 'write file', {})
+
+      expect(tool.source).to include(type: :client, executable: false)
+    end
+  end
+end

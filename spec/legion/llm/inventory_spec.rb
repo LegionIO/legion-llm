@@ -239,4 +239,16 @@ RSpec.describe Legion::LLM::Inventory do
       described_class.offerings(provider: 'bedrock')
     end.to raise_error(NoMethodError, /broken/)
   end
+
+  it 'logs invalid configured offerings with no model identifier' do
+    Legion::Settings[:llm][:embedding] = { provider_models: {} }
+    Legion::Settings[:extensions][:llm][:bedrock] = {
+      enabled:   true,
+      offerings: [{ type: :inference }]
+    }
+
+    expect(described_class.log).to receive(:warn).with(/invalid_offering.*provider=bedrock/)
+
+    expect(described_class.offerings(provider: 'bedrock')).to be_empty
+  end
 end

@@ -380,7 +380,7 @@ module Legion
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_before(messages: messages, model: resolved_model)
-          return blocked[:response] if blocked
+          return blocked[:response] || blocked_hook_response(blocked) if blocked
         end
 
         result = chat_direct(model: model, provider: provider, intent: intent, tier: tier,
@@ -389,7 +389,7 @@ module Legion
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_after(response: result, messages: messages, model: resolved_model)
-          return blocked[:response] if blocked
+          return blocked[:response] || blocked_hook_response(blocked) if blocked
         end
 
         result = apply_response_guards(result, kwargs) if response_guards_enabled? && result.is_a?(Hash)
@@ -703,6 +703,11 @@ module Legion
 
       def response_guards_enabled?
         settings_value(:response_guards, :enabled) == true
+      end
+
+      def blocked_hook_response(blocked)
+        reason = blocked[:reason] || blocked['reason'] || blocked[:message] || blocked['message'] || 'request blocked by hook'
+        { error: 'request_blocked', message: reason.to_s }
       end
 
       def apply_response_guards(result, kwargs)

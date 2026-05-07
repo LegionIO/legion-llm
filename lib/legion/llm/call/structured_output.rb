@@ -60,18 +60,48 @@ module Legion
           def retry_with_instruction(messages, schema, model, provider: nil, **opts)
             instruction = "Your previous response was not valid JSON. Respond with ONLY a valid JSON object matching this schema:\n#{Legion::JSON.dump(schema)}"
             user_content = extract_user_content(messages, instruction)
+            route = alternate_retry_route(model, provider)
+            retry_model = route[:model] || model
+            retry_provider = route[:provider] || provider
             result = Legion::LLM::Inference.send(:chat_single,
-                                                 model: model, provider: provider, intent: nil, tier: nil,
+                                                 model: retry_model, provider: retry_provider, intent: nil, tier: nil,
                                                  message: user_content, **opts.except(:attempt))
 
             retry_content = strip_markdown_fences(result.respond_to?(:content) ? result.content : result[:content])
             retry_model = result.respond_to?(:model_id) ? result.model_id : result[:model]
 
             parsed = Legion::JSON.load(retry_content)
-            { data: parsed, raw: retry_content, model: retry_model, valid: true, retried: true }
+            { data: parsed, raw: retry_content, model: retry_model, valid: true, retried: true, retry_route: route }
           rescue StandardError => e
             handle_exception(e, level: :warn)
             { data: nil, error: e.message, valid: false }
+          end
+
+          def alternate_retry_route(model, provider)
+            return {} unless defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:resolve_chain)
+
+            chain = Legion::LLM::Router.resolve_chain(intent: { capability: :structured_output }, max_escalations: max_retries + 1)
+            route = Array(chain).find do |candidate|
+              candidate_model = route_value(candidate, :model)
+              candidate_provider = route_value(candidate, :provider)
+              next false if candidate_model.nil? && candidate_provider.nil?
+
+              candidate_model.to_s != model.to_s || candidate_provider.to_s != provider.to_s
+            end
+            return {} unless route
+
+            { model: route_value(route, :model), provider: route_value(route, :provider) }.compact
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.structured_output.alternate_retry_route')
+            {}
+          end
+
+          def route_value(route, key)
+            return route.public_send(key) if route.respond_to?(key)
+            return route[key] if route.respond_to?(:key?) && route.key?(key)
+
+            string_key = key.to_s
+            route[string_key] if route.respond_to?(:key?) && route.key?(string_key)
           end
 
           def extract_user_content(messages, instruction)

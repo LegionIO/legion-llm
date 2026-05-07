@@ -46,6 +46,28 @@ RSpec.describe Legion::LLM::Inference::Executor do
         executor = described_class.new(request_empty_tools)
         expect(executor.send(:native_tool_definitions)).to eq([])
       end
+
+      it 'injects requested deferred registry tools from metadata' do
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: true }]
+          end
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == true ? tools : []
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'use registry tool' }],
+          tools:    [],
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+          metadata: { requested_tools: ['registry_tool'] }
+        )
+
+        executor = described_class.new(request)
+
+        expect(executor.send(:native_tool_definitions).map(&:name)).to include('registry_tool')
+      end
     end
 
     context 'when @request.tools is a non-Array (nil via direct construction)' do

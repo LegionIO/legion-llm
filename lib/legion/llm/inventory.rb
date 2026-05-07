@@ -146,10 +146,13 @@ module Legion
 
         def build_offering(provider_family, config, entry)
           model = (option(entry, :model) || option(entry, :id) || option(entry, :name)).to_s
-          return nil if model.empty?
+          if model.empty?
+            log.warn("[llm][inventory] invalid_offering provider=#{provider_family} reason=missing_model")
+            return nil
+          end
 
           type = normalize_type(option(entry, :usage_type) || option(entry, :type) || option(entry, :purpose) ||
-                                option(entry, :kind) || infer_model_type(model))
+                             option(entry, :kind) || infer_model_type(model))
           limits = normalize_limits(option(entry, :limits) || entry)
           source = (option(entry, :source) || :settings).to_sym
           metadata = normalize_hash(option(entry, :metadata) || option(config, :metadata) || {})

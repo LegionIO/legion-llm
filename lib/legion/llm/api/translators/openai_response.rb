@@ -70,8 +70,8 @@ module Legion
             }
           end
 
-          def format_embeddings(vector, model:, input_text:)
-            tokens = input_text.to_s.split.size
+          def format_embeddings(vector, model:, input_text:, usage: nil)
+            tokens = embedding_token_count(usage, input_text)
 
             {
               object: 'list',
@@ -133,6 +133,16 @@ module Legion
             return tokens.public_send(method_name) if method_name && tokens.respond_to?(method_name)
 
             nil
+          end
+
+          def embedding_token_count(usage, input_text)
+            usage_hash = usage.respond_to?(:key?) ? usage : {}
+            token_count = usage_hash[:prompt_tokens] || usage_hash['prompt_tokens'] ||
+                          usage_hash[:input_tokens] || usage_hash['input_tokens'] ||
+                          usage_hash[:total_tokens] || usage_hash['total_tokens']
+            return token_count.to_i if token_count
+
+            input_text.to_s.split.size
           end
         end
       end

@@ -1,5 +1,19 @@
 # Legion LLM Changelog
 
+## [0.9.8] - 2026-05-06
+
+### Fixed
+- Fixed Anthropic Messages request normalization for multi-block content.
+- Marked API-submitted client tools as non-executable server-side while preserving trusted registry/deferred tool injection.
+- Preferred explicit settings overrides over registry MCP overrides.
+- Added structured-output parse retries through alternate routes when an escalation route is available.
+- Added bounded metering spool writes, disabled-vs-dropped audit results, and warning logs for invalid settings paths and invalid inventory offerings.
+- Preserved non-text message content for audit/persistence and extracted string-keyed text blocks correctly.
+- Added trackable unknown caller identity defaults for audit/transport envelopes.
+- Used provider embedding usage tokens when formatting OpenAI-compatible embedding responses.
+- Serialized daemon-client cached state behind a shared mutex.
+- Added escalation transport exchange binding for escalation events.
+
 ## [0.9.7] - 2026-05-06
 
 ### Fixed

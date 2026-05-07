@@ -9,8 +9,8 @@ RSpec.describe Legion::LLM::Audit do
   let(:tool_event) { { tool_name: 'list_files', provider: 'ollama' } }
 
   describe '.emit_prompt' do
-    it 'returns :dropped when transport not connected' do
-      expect(described_class.emit_prompt(prompt_event)).to eq(:dropped)
+    it 'returns :disabled when transport not connected' do
+      expect(described_class.emit_prompt(prompt_event)).to eq(:disabled)
     end
 
     it 'returns :published when transport connected' do
@@ -32,8 +32,8 @@ RSpec.describe Legion::LLM::Audit do
   end
 
   describe '.emit_tools' do
-    it 'returns :dropped when transport not connected' do
-      expect(described_class.emit_tools(tool_event)).to eq(:dropped)
+    it 'returns :disabled when transport not connected' do
+      expect(described_class.emit_tools(tool_event)).to eq(:disabled)
     end
 
     it 'returns :published when transport connected' do
@@ -77,11 +77,11 @@ RSpec.describe Legion::LLM::Audit do
     context 'when transport is unavailable' do
       before { allow(described_class).to receive(:transport_connected?).and_return(false) }
 
-      it 'returns :dropped' do
+      it 'returns :disabled' do
         expect(described_class.emit_skill(skill_name: 'x', namespace: 'y',
                                           step_name: 's', gate: nil, status: :completed,
                                           duration_ms: 0, metadata: {}, classification: {}))
-          .to eq(:dropped)
+          .to eq(:disabled)
       end
     end
   end

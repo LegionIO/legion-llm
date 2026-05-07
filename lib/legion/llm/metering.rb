@@ -11,6 +11,9 @@ module Legion
     module Metering
       extend Legion::Logging::Helper
 
+      DEFAULT_SPOOL_MAX = 10_000
+      DEFAULT_SPOOL_FLUSH_BATCH_SLEEP = 0.0
+
       def self.load_transport
         return unless defined?(Legion::Transport::Message)
 
@@ -28,9 +31,13 @@ module Legion
           log.info("[llm][metering] published provider=#{event[:provider]} model=#{event[:model_id]}")
           :published
         elsif spool_available?
-          spool_event(event)
-          log.info("[llm][metering] spooled provider=#{event[:provider]} model=#{event[:model_id]}")
-          :spooled
+          result = spool_event(event)
+          if result == :spooled
+            log.info("[llm][metering] spooled provider=#{event[:provider]} model=#{event[:model_id]}")
+          else
+            log.warn("[llm][metering] dropped provider=#{event[:provider]} model=#{event[:model_id]} reason=spool_cap")
+          end
+          result
         else
           log.warn("[llm][metering] dropped provider=#{event[:provider]} model=#{event[:model_id]}")
           :dropped
@@ -44,7 +51,11 @@ module Legion
         return 0 unless spool_available? && transport_connected?
 
         spool = Legion::Data::Spool.for(Legion::LLM)
-        flushed = spool.flush(:metering) { |event| emit(event) }
+        throttle = spool_flush_batch_sleep
+        flushed = spool.flush(:metering) do |event|
+          emit(event)
+          sleep(throttle) if throttle.positive?
+        end
         log.info("[llm][metering] spool_flushed count=#{flushed}")
         flushed
       rescue StandardError => e
@@ -101,7 +112,21 @@ module Legion
 
       def spool_event(event)
         spool = Legion::Data::Spool.for(Legion::LLM)
+        if spool.respond_to?(:count) && spool.count(:metering).to_i >= spool_max_events
+          log.warn("[llm][metering] spool_full count=#{spool.count(:metering)} max=#{spool_max_events}")
+          return :dropped
+        end
+
         spool.write(:metering, event)
+        :spooled
+      end
+
+      def spool_max_events
+        Legion::LLM::Settings.value(:metering, :spool, :max_events, default: DEFAULT_SPOOL_MAX).to_i
+      end
+
+      def spool_flush_batch_sleep
+        Legion::LLM::Settings.value(:metering, :spool, :flush_batch_sleep, default: DEFAULT_SPOOL_FLUSH_BATCH_SLEEP).to_f
       end
 
       def extract_usage(response)

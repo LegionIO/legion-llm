@@ -24,8 +24,8 @@ module Legion
           log.info('[llm][audit] published prompt audit')
           :published
         else
-          log.warn('[llm][audit] dropped prompt audit: transport unavailable')
-          :dropped
+          log.warn('[llm][audit] disabled prompt audit: transport unavailable')
+          :disabled
         end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.audit.emit_prompt')
@@ -38,8 +38,8 @@ module Legion
           log.info('[llm][audit] published tool audit')
           :published
         else
-          log.warn('[llm][audit] dropped tool audit: transport unavailable')
-          :dropped
+          log.warn('[llm][audit] disabled tool audit: transport unavailable')
+          :disabled
         end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.audit.emit_tools')
@@ -52,8 +52,8 @@ module Legion
           log.info('[llm][audit] published skill audit')
           :published
         else
-          log.warn('[llm][audit] dropped skill audit: transport unavailable')
-          :dropped
+          log.warn('[llm][audit] disabled skill audit: transport unavailable')
+          :disabled
         end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.audit.emit_skill')

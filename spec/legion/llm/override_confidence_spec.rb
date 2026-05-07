@@ -20,6 +20,19 @@ RSpec.describe Legion::LLM::Tools::Confidence do
       described_class.record(tool: 'x', lex: 'lex-x:Y:z', confidence: 1.5)
       expect(described_class.lookup('x')[:confidence]).to eq(1.0)
     end
+
+    it 'warns and schedules L2 retry when database sync fails' do
+      stub_const('Legion::Data::Local', Class.new)
+      allow(Legion::Data::Local).to receive(:upsert).and_raise(StandardError, 'db unavailable')
+      expect(described_class).to receive(:handle_exception).with(
+        instance_of(StandardError),
+        hash_including(level: :warn, operation: 'llm.tools.confidence.sync_l2')
+      )
+
+      described_class.record(tool: 'x', lex: 'lex-x:Y:z', confidence: 0.5)
+
+      expect(described_class.pending_l2_sync).to include('x')
+    end
   end
 
   describe '.record_success / .record_failure' do

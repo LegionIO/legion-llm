@@ -58,4 +58,8 @@ RSpec.describe Legion::LLM::Transport::Messages::EscalationEvent do
   it 'returns the correct routing key' do
     expect(event.routing_key).to eq('llm.escalation.completed')
   end
+
+  it 'publishes to the escalation exchange' do
+    expect(event.exchange).to eq(Legion::LLM::Transport::Exchanges::Escalation)
+  end
 end

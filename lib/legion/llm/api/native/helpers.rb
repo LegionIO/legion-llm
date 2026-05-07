@@ -301,7 +301,7 @@ module Legion
                   name:        tname,
                   description: tdesc,
                   parameters:  tschema || {},
-                  source:      { type: :client, executable: true }
+                  source:      { type: :client, executable: false }
                 )
               rescue StandardError => e
                 handle_exception(e, level: :warn, handled: true, operation: "llm.api.build_client_tool_class.#{tname}")

@@ -51,10 +51,10 @@ module Legion
         end
 
         def check_override(tool_name)
-          registry_override = check_registry_override(tool_name)
-          return registry_override if registry_override
+          settings_override = check_settings_override(tool_name)
+          return settings_override if settings_override
 
-          check_settings_override(tool_name)
+          check_registry_override(tool_name)
         end
 
         def check_registry_override(tool_name)

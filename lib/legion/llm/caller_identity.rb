@@ -4,6 +4,7 @@ module Legion
   module LLM
     module CallerIdentity
       GENERIC_IDENTITIES = %w[anonymous process service system user].freeze
+      DEFAULT_IDENTITY = { identity: 'unknown:anonymous', type: 'unknown' }.freeze
 
       module_function
 
@@ -40,11 +41,11 @@ module Legion
           credential: first_present(hash_value(requested_by, :credential), hash_value(top_identity, :credential)),
           hostname:   hash_value(requested_by, :hostname)
         }.compact
-        result.empty? ? nil : result
+        result.empty? ? DEFAULT_IDENTITY.dup : result
       end
 
       def normalize_string(value)
-        return nil unless present?(value)
+        return DEFAULT_IDENTITY.dup unless present?(value)
 
         type = value.to_s.include?(':') ? value.to_s.split(':', 2).first : nil
         { identity: value.to_s, type: type }.compact

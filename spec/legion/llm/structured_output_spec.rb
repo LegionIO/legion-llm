@@ -106,6 +106,34 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
       expect(result[:retried]).to be true
     end
 
+    it 'escalates parse retry to an alternate route when available' do
+      bad_result = { content: 'not json', model: 'primary-model' }
+      good_result = { content: '{"name":"Bob"}', model: 'backup-model' }
+      route = Legion::LLM::Router::Resolution.new(provider: :bedrock, model: 'backup-model', tier: :cloud)
+
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return([route])
+      allow(Legion::JSON).to receive(:dump).and_return('{}')
+      allow(Legion::JSON).to receive(:load).with('not json').and_raise(Legion::JSON::ParseError, 'unexpected token')
+      allow(Legion::JSON).to receive(:load).with('{"name":"Bob"}').and_return({ name: 'Bob' })
+      allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :retry_on_parse_failure).and_return(true)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :max_retries).and_return(2)
+
+      expect(Legion::LLM::Inference).to receive(:send).with(
+        :chat_single,
+        hash_including(model: 'primary-model', provider: :ollama)
+      ).and_return(bad_result)
+      expect(Legion::LLM::Inference).to receive(:send).with(
+        :chat_single,
+        hash_including(model: 'backup-model', provider: :bedrock)
+      ).and_return(good_result)
+
+      result = described_class.generate(messages: messages, schema: schema, model: 'primary-model', provider: :ollama)
+
+      expect(result[:valid]).to be true
+      expect(result[:retried]).to be true
+      expect(result[:retry_route]).to include(model: 'backup-model', provider: :bedrock)
+    end
+
     it 'strips markdown code fences from retry responses before parsing JSON' do
       bad_result = { content: 'not json', model: 'gpt-4o' }
       good_result = { content: "```\n{\"name\":\"Bob\"}\n```", model: 'gpt-4o' }

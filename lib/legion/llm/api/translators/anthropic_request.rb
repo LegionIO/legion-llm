@@ -84,7 +84,7 @@ module Legion
             return content if content.is_a?(String)
             return content unless content.is_a?(Array)
 
-            content.map do |block|
+            parts = content.map do |block|
               bs = block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
               type = bs[:type].to_s
               case type
