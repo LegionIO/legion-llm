@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.8.50] - 2026-05-07
+
+### Fixed
+- Consume GAIA advisory `tool_hint`, `suppress`, and `context_window` data when building native tool definitions and sizing RAG retrieval, so GAIA advisory outputs affect provider calls instead of only appearing in enrichment summaries.
+
 ## [0.8.49] - 2026-04-29
 
 ### Changed

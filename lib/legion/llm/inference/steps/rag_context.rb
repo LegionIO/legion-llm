@@ -133,7 +133,8 @@ module Legion
             full_limit    = rag_setting(:full_limit, 10)
             compact_limit = rag_setting(:compact_limit, 5)
             confidence    = rag_setting(:min_confidence, 0.5)
-            limit = strategy == :rag_compact ? compact_limit : full_limit
+            limit = apply_gaia_context_limit(strategy == :rag_compact ? compact_limit : full_limit,
+                                             strategy: strategy)
 
             if defined?(::Legion::Extensions::Apollo::Runners::Knowledge)
               ::Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
@@ -158,6 +159,46 @@ module Legion
           def extract_query
             @request.messages.select { |m| Legion::LLM::Settings.config_value(m, :role).to_s == 'user' }
                              .then { |messages| Legion::LLM::Settings.config_value(messages.last, :content) }
+          end
+
+          def apply_gaia_context_limit(limit, strategy:)
+            gaia_limit = gaia_context_limit(strategy: strategy)
+            return limit unless gaia_limit&.positive?
+
+            [limit, gaia_limit].min
+          end
+
+          def gaia_context_limit(strategy:)
+            window = gaia_advisory_value(:context_window)
+            case window
+            when Hash
+              value = window[strategy] || window[strategy.to_s] ||
+                      window[:limit] || window['limit'] ||
+                      window[:max_entries] || window['max_entries'] ||
+                      window[:context_limit] || window['context_limit']
+              positive_integer(value)
+            when Array
+              window.size.positive? ? window.size : nil
+            else
+              positive_integer(window)
+            end
+          end
+
+          def gaia_advisory_value(key)
+            enrichment = @enrichments['gaia:advisory']
+            return nil unless enrichment.respond_to?(:key?)
+
+            data = enrichment[:data] || enrichment['data'] || {}
+            return nil unless data.respond_to?(:key?)
+
+            data[key] || data[key.to_s]
+          end
+
+          def positive_integer(value)
+            integer = Integer(value)
+            integer.positive? ? integer : nil
+          rescue ArgumentError, TypeError
+            nil
           end
         end
       end
