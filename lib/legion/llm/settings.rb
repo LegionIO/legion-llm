@@ -330,7 +330,7 @@ module Legion
 
       def self.arbitrage_defaults
         {
-          enabled:            false,
+          enabled:            true,
           prefer_cheapest:    true,
           quality_floor:      0.7,
           cost_table_refresh: 86_400,
@@ -501,6 +501,7 @@ module Legion
           redact_pii:            false,
           redaction_placeholder: '[REDACTED]',
           strict_hipaa:          false,
+          standalone_email_pii:  false,
           default_level:         :public
         }
       end

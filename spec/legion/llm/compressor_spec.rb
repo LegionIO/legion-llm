@@ -164,7 +164,10 @@ RSpec.describe Legion::LLM::Context::Compressor do
     it 'uses LLM when available' do
       fake_response = double('Response', content: 'Summary of conversation')
       expect(Legion::LLM).to receive(:chat_direct)
-        .with(hash_including(model: 'gpt-4o-mini', message: include('Summarize this conversation concisely')))
+        .with(hash_including(
+                intent:  { capability: :basic, cost: :minimize },
+                message: include('Summarize this conversation concisely')
+              ))
         .and_return(fake_response)
 
       long_messages = 200.times.map do |i|
@@ -173,6 +176,23 @@ RSpec.describe Legion::LLM::Context::Compressor do
       result = described_class.summarize_messages(long_messages, max_tokens: 500)
       expect(result[:compressed]).to be true
       expect(result[:summary]).to eq('Summary of conversation')
+    end
+
+    it 'uses an explicitly configured compressor model when provided' do
+      Legion::Settings[:llm][:compressor] = { model: 'ollama:llama3.1:8b' }
+      fake_response = double('Response', content: 'Configured model summary')
+
+      expect(Legion::LLM).to receive(:chat_direct)
+        .with(hash_including(model: 'ollama:llama3.1:8b', message: include('Summarize this conversation concisely')))
+        .and_return(fake_response)
+
+      long_messages = 200.times.map do |i|
+        { role: i.even? ? 'user' : 'assistant', content: "Important message #{i} with significant content here." }
+      end
+
+      result = described_class.summarize_messages(long_messages, max_tokens: 500)
+
+      expect(result[:summary]).to eq('Configured model summary')
     end
   end
 

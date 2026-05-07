@@ -44,8 +44,9 @@ module Legion
 
           JUDGE_PROMPT = <<~PROMPT
             You are an impartial judge evaluating a multi-round debate about the following question.
-            Your task is to synthesize the strongest arguments from both sides and produce the most
-            accurate, balanced, and complete answer possible.
+            Your task is to evaluate the strength of each position, state which argument was stronger
+            and why, assign confidence to the final position, then produce the most accurate,
+            balanced, and complete answer possible.
 
             Original question/request:
             %<question>s
@@ -59,9 +60,10 @@ module Legion
             Advocate's rebuttal:
             %<rebuttal>s
 
-            Synthesize these perspectives into a final, authoritative answer. Incorporate valid
-            points from the critique while preserving what the advocate got right. Be direct and
-            definitive.
+            Respond using exactly these section labels:
+            Evaluation: compare the advocate and challenger, state which side was stronger, and give confidence.
+            Final answer: synthesize the final answer. Incorporate valid points from the critique while preserving
+            what the advocate got right. Be direct and definitive.
           PROMPT
 
           def step_debate
@@ -134,63 +136,41 @@ module Legion
 
             models = select_debate_models(request)
             @warnings << models[:warning] if models[:warning]
+            if models[:skip]
+              log_step_info(:debate, :skipped, reason: models[:skip])
+              return nil
+            end
 
             advocate_model    = models[:advocate]
             challenger_model  = models[:challenger]
             judge_model       = models[:judge]
 
             current_advocate = advocate_text
-            current_challenger = nil
-            current_rebuttal   = nil
-            log_step_debug(
-              :debate,
-              :models_selected,
-              rounds:           rounds,
-              advocate_model:   advocate_model,
-              challenger_model: challenger_model,
-              judge_model:      judge_model
+            log_debate_models(rounds, advocate_model, challenger_model, judge_model)
+            current_challenger, current_rebuttal = run_debate_rounds(
+              rounds: rounds, question: question, advocate_model: advocate_model,
+              challenger_model: challenger_model, current_advocate: current_advocate
             )
 
-            rounds.times do |i|
-              log_step_debug(:debate, :round_start, round: i + 1)
-              current_challenger = call_debate_role(
-                prompt: format(CHALLENGER_PROMPT, question: question, advocate: current_advocate),
-                model:  challenger_model
-              )
-              current_rebuttal = call_debate_role(
-                prompt: format(REBUTTAL_PROMPT, question:   question,
-                                                advocate:   current_advocate,
-                                                challenger: current_challenger),
-                model:  advocate_model
-              )
-              current_advocate = current_rebuttal
-            end
-
-            log_step_debug(:debate, :judge_start, model: judge_model)
-            judge_synthesis = call_debate_role(
-              prompt: format(JUDGE_PROMPT,
-                             question:   question,
-                             advocate:   advocate_text,
-                             challenger: current_challenger || '',
-                             rebuttal:   current_rebuttal || ''),
-              model:  judge_model
+            judge_synthesis = judge_debate(
+              question:           question,
+              advocate_text:      advocate_text,
+              current_challenger: current_challenger,
+              current_rebuttal:   current_rebuttal,
+              judge_model:        judge_model
             )
-
-            synthetic_response = SyntheticResponse.new(judge_synthesis)
+            judge_sections = parse_judge_output(judge_synthesis)
+            synthetic_response = SyntheticResponse.new(judge_sections[:final_answer])
 
             {
               synthetic_response: synthetic_response,
               rounds:             rounds,
-              metadata:           {
-                enabled:            true,
-                rounds:             rounds,
-                advocate_model:     advocate_model,
-                challenger_model:   challenger_model,
-                judge_model:        judge_model,
-                advocate_summary:   truncate_for_metadata(advocate_text),
-                challenger_summary: truncate_for_metadata(current_challenger),
-                judge_confidence:   nil
-              }
+              metadata:           debate_metadata(
+                rounds: rounds, advocate_model: advocate_model, challenger_model: challenger_model,
+                judge_model: judge_model, advocate_text: advocate_text,
+                current_challenger: current_challenger, judge_sections: judge_sections,
+                judge_synthesis: judge_synthesis
+              )
             }
           end
 
@@ -262,13 +242,13 @@ module Legion
 
             available = available_models
             if available.size < 2
-              warning = 'debate: fewer than 2 models available — using same model for all roles (training bias not avoided)'
-              fallback = available.first || advocate_model
+              warning = 'debate: fewer than 2 distinct models available; skipping debate'
               return {
                 advocate:   advocate_model,
-                challenger: explicit_challenger || fallback,
-                judge:      explicit_judge      || fallback,
-                warning:    warning
+                challenger: explicit_challenger,
+                judge:      explicit_judge,
+                warning:    warning,
+                skip:       :insufficient_distinct_models
               }
             end
 
@@ -328,6 +308,82 @@ module Legion
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.debate.role')
             "[debate role error: #{e.message}]"
+          end
+
+          def log_debate_models(rounds, advocate_model, challenger_model, judge_model)
+            log_step_debug(
+              :debate,
+              :models_selected,
+              rounds:           rounds,
+              advocate_model:   advocate_model,
+              challenger_model: challenger_model,
+              judge_model:      judge_model
+            )
+          end
+
+          def run_debate_rounds(rounds:, question:, advocate_model:, challenger_model:, current_advocate:)
+            current_challenger = nil
+            current_rebuttal = nil
+            rounds.times do |i|
+              log_step_debug(:debate, :round_start, round: i + 1)
+              current_challenger = call_debate_role(
+                prompt: format(CHALLENGER_PROMPT, question: question, advocate: current_advocate),
+                model:  challenger_model
+              )
+              current_rebuttal = call_debate_role(
+                prompt: format(REBUTTAL_PROMPT, question: question, advocate: current_advocate,
+                                                challenger: current_challenger),
+                model:  advocate_model
+              )
+              current_advocate = current_rebuttal
+            end
+            [current_challenger, current_rebuttal]
+          end
+
+          def judge_debate(question:, advocate_text:, current_challenger:, current_rebuttal:, judge_model:)
+            log_step_debug(:debate, :judge_start, model: judge_model)
+            call_debate_role(
+              prompt: format(JUDGE_PROMPT,
+                             question:   question,
+                             advocate:   advocate_text,
+                             challenger: current_challenger || '',
+                             rebuttal:   current_rebuttal || ''),
+              model:  judge_model
+            )
+          end
+
+          def debate_metadata(rounds:, advocate_model:, challenger_model:, judge_model:, advocate_text:,
+                              current_challenger:, judge_sections:, judge_synthesis:)
+            {
+              enabled:            true,
+              rounds:             rounds,
+              advocate_model:     advocate_model,
+              challenger_model:   challenger_model,
+              judge_model:        judge_model,
+              advocate_summary:   truncate_for_metadata(advocate_text),
+              challenger_summary: truncate_for_metadata(current_challenger),
+              judge_evaluation:   judge_sections[:evaluation],
+              judge_confidence:   estimate_judge_confidence(judge_sections[:evaluation] || judge_synthesis)
+            }
+          end
+
+          def parse_judge_output(content)
+            text = content.to_s.strip
+            evaluation = text[/\bEvaluation:\s*(.*?)(?:\n\s*Final answer:|\z)/mi, 1]&.strip
+            final_answer = text[/\bFinal answer:\s*(.*)\z/mi, 1]&.strip
+
+            {
+              evaluation:   truncate_for_metadata(evaluation || text),
+              final_answer: final_answer.to_s.empty? ? text : final_answer
+            }
+          end
+
+          def estimate_judge_confidence(text)
+            normalized = text.to_s.downcase
+            return 0.4 if normalized.match?(/\b(low confidence|uncertain|unclear|weak evidence)\b/)
+            return 0.85 if normalized.match?(/\b(high confidence|stronger|clearly|definitive)\b/)
+
+            0.65
           end
 
           def truncate_for_metadata(text, limit = 200)

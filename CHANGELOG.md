@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.9.7] - 2026-05-06
+
+### Fixed
+- Enabled arbitrage by default, added zero-cost local/fleet offering coverage, and removed the dead `Quality::Checker.model_score` dependency from arbitrage eligibility.
+- Skipped debate when fewer than two distinct models are available and captured judge evaluation/confidence separately from the final answer.
+- Reused the shared context token estimator for billing preflight cost checks.
+- Logged dropped metering emissions at the inference metering call site.
+- Added resolved model metadata to routing span attributes.
+- Stopped treating standalone email addresses as PII by default while preserving contextual and opt-in email detection.
+- Allowed context curation to choose vLLM/MLX local or fleet models for LLM-assisted summarization.
+- Routed compressor summarization through standard low-cost/basic intent when no explicit compressor model is configured.
+
 ## [0.9.6] - 2026-05-06
 
 ### Fixed

@@ -25,7 +25,14 @@ module Legion
               "[metering][publish_or_spool] action=publish request_id=#{event[:request_id]} " \
               "provider=#{event[:provider]} model=#{event[:model_id]} total_tokens=#{event[:total_tokens]}"
             )
-            publish_event(event)
+            result = publish_event(event)
+            if result == :dropped
+              log.warn(
+                "[metering][publish_or_spool] action=dropped request_id=#{event[:request_id]} " \
+                "provider=#{event[:provider]} model=#{event[:model_id]}"
+              )
+            end
+            result
           end
 
           def flush_spool

@@ -15,9 +15,10 @@ module Legion
 
           PII_PATTERNS_CORE = {
             ssn:   /\b\d{3}-\d{2}-\d{4}\b/,
-            email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
             phone: /\b(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/
           }.freeze
+
+          EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/
 
           PII_PATTERNS_EXTENDED = {
             ip_address:     /\b(?:\d{1,3}\.){3}\d{1,3}\b/,
@@ -31,7 +32,7 @@ module Legion
             npi_number:     /\b\d{10}\b/
           }.freeze
 
-          PII_PATTERNS = PII_PATTERNS_CORE.merge(PII_PATTERNS_EXTENDED).freeze
+          PII_PATTERNS = PII_PATTERNS_CORE.merge(email: EMAIL_PATTERN).merge(PII_PATTERNS_EXTENDED).freeze
 
           PHI_KEYWORDS = %w[
             patient diagnosis medication prescription
@@ -111,9 +112,13 @@ module Legion
 
             phi_found = PHI_KEYWORDS.any? { |kw| text.downcase.include?(kw) }
             patterns << :phi_keyword if phi_found
+            if text.match?(EMAIL_PATTERN) && (standalone_email_pii? || phi_found || patterns.any?)
+              patterns.delete(:email)
+              patterns << :email
+            end
 
             {
-              contains_pii: patterns.intersect?(active_patterns.keys),
+              contains_pii: patterns.intersect?(active_patterns.keys + [:email]),
               contains_phi: phi_found,
               patterns:     patterns
             }
@@ -130,7 +135,7 @@ module Legion
             end
 
             placeholder = redaction_placeholder
-            active_patterns = strict_hipaa_mode? ? PII_PATTERNS : PII_PATTERNS_CORE
+            active_patterns = redaction_patterns_for(scan)
             redacted_messages = 0
 
             @request.messages.each do |message|
@@ -223,6 +228,22 @@ module Legion
             handle_exception(e, level: :warn, handled: true,
                                 operation: 'llm.pipeline.steps.classification.strict_hipaa')
             false
+          end
+
+          def standalone_email_pii?
+            setting = settings_value(:compliance, :standalone_email_pii)
+            setting == true
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.steps.classification.standalone_email_pii')
+            false
+          end
+
+          def redaction_patterns_for(scan)
+            active_patterns = strict_hipaa_mode? ? PII_PATTERNS : PII_PATTERNS_CORE
+            return active_patterns.merge(email: EMAIL_PATTERN) if Array(scan[:patterns]).include?(:email)
+
+            active_patterns
           end
 
           def redaction_placeholder

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative '../../context/compressor'
 require_relative 'logging'
 
 module Legion
@@ -78,7 +79,7 @@ module Legion
 
           def estimate_request_cost
             model_id     = @request.routing[:model]
-            input_tokens = @request.messages.sum { |m| m[:content].to_s.length } / 4
+            input_tokens = Legion::LLM::Context::Compressor.estimate_tokens(@request.messages)
             Legion::LLM::Metering::Pricing.estimate(model_id: model_id, input_tokens: input_tokens, output_tokens: 0)
           end
         end

@@ -32,5 +32,16 @@ RSpec.describe Legion::LLM::Inference::Steps::Metering do
       result = described_class.publish_or_spool({ model_id: 'test' })
       expect(result).to eq(:dropped)
     end
+
+    it 'warns when the metering event is dropped' do
+      event = { request_id: 'req-1', provider: 'vllm', model_id: 'qwen3.6-27b', total_tokens: 10 }
+      allow(Legion::LLM::Metering).to receive(:emit).and_return(:dropped)
+      allow(described_class.log).to receive(:warn)
+
+      result = described_class.publish_or_spool(event)
+
+      expect(result).to eq(:dropped)
+      expect(described_class.log).to have_received(:warn).with(/action=dropped/)
+    end
   end
 end

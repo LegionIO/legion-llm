@@ -53,8 +53,12 @@ module Legion
               return {} unless entry.is_a?(Hash)
 
               data = entry[:data] || {}
+              offering = data[:offering_metadata] || data['offering_metadata'] || {}
+              offering = offering.transform_keys(&:to_sym) if offering.respond_to?(:transform_keys)
+              model = data[:model] || data['model'] || offering[:raw_model] || offering[:model] ||
+                      offering[:canonical_model_alias]
               {
-                'gen_ai.request.model' => nil,
+                'gen_ai.request.model' => model,
                 'routing.strategy'     => data[:strategy]&.to_s,
                 'routing.tier'         => data[:tier]&.to_s
               }.compact

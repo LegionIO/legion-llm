@@ -145,7 +145,28 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
         expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:ssn)
       end
 
-      it 'detects email pattern' do
+      it 'does not treat a standalone email as PII by default' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'contact john.doe@example.com for help' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be false
+        expect(step.enrichments['classification:scan'][:detected_patterns]).not_to include(:email)
+      end
+
+      it 'detects email pattern when another sensitive signal is present' do
+        step = build_step(
+          classification: { level: :internal },
+          messages:       [{ role: :user, content: 'patient email john.doe@example.com and SSN is 123-45-6789' }]
+        )
+        step.step_classification
+        expect(step.enrichments['classification:scan'][:contains_pii]).to be true
+        expect(step.enrichments['classification:scan'][:detected_patterns]).to include(:email, :ssn)
+      end
+
+      it 'can explicitly treat standalone emails as PII' do
+        Legion::Settings[:llm][:compliance] = Legion::Settings[:llm][:compliance].merge(standalone_email_pii: true)
         step = build_step(
           classification: { level: :internal },
           messages:       [{ role: :user, content: 'contact john.doe@example.com for help' }]

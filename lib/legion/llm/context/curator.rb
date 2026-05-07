@@ -526,7 +526,7 @@ module Legion
         def detect_small_model
           ext = Legion::Settings[:extensions]
           providers = (ext.is_a?(Hash) && ext[:llm].is_a?(Hash) ? ext[:llm] : {})
-          %w[ollama].each do |provider|
+          %w[ollama vllm mlx].each do |provider|
             config = Legion::LLM::Settings.config_value(providers, provider, {})
             enabled = Legion::LLM::Settings.config_value(config, :enabled)
             model = Legion::LLM::Settings.config_value(config, :default_model)

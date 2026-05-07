@@ -468,6 +468,15 @@ RSpec.describe Legion::LLM::Context::Curator do
     it 'target_context_tokens is accessible in settings' do
       expect(Legion::Settings[:llm][:context_curation][:target_context_tokens]).to eq(40_000)
     end
+
+    it 'can use vLLM as the small local/fleet curation model' do
+      Legion::Settings[:extensions][:llm] = {
+        ollama: { enabled: false, default_model: 'llama3.1:8b' },
+        vllm:   { enabled: true, default_model: 'qwen3.6-27b' }
+      }
+
+      expect(curator.send(:detect_small_model)).to eq('qwen3.6-27b')
+    end
   end
 
   # --- default settings values ---

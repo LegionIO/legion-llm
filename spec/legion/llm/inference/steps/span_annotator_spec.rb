@@ -72,12 +72,26 @@ RSpec.describe Legion::LLM::Inference::Steps::SpanAnnotator do
         audit = {
           'routing:provider_selection': {
             outcome: :success,
-            data:    { strategy: 'intent_match', tier: :cloud }
+            data:    { strategy: 'intent_match', tier: :cloud, model: 'qwen3.6-27b' }
           }
         }
         attrs = described_class.attributes_for(:routing, audit: audit, enrichments: {})
         expect(attrs['routing.strategy']).to eq('intent_match')
         expect(attrs['routing.tier']).to eq('cloud')
+        expect(attrs['gen_ai.request.model']).to eq('qwen3.6-27b')
+      end
+
+      it 'uses offering metadata raw_model when routing data model is absent' do
+        audit = {
+          'routing:provider_selection': {
+            outcome: :success,
+            data:    { offering_metadata: { raw_model: 'llama3.1:8b' } }
+          }
+        }
+
+        attrs = described_class.attributes_for(:routing, audit: audit, enrichments: {})
+
+        expect(attrs['gen_ai.request.model']).to eq('llama3.1:8b')
       end
 
       it 'returns empty hash when routing audit is absent' do
