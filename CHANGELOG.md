@@ -1,6 +1,6 @@
 # Legion LLM Changelog
 
-## [0.10.0] - 2026-05-07
+## [0.9.10] - 2026-05-07
 
 ### Fixed
 - `normalize_model_for_rules` now passes the `tier` field from each discovered model entry through to `RuleGenerator`, so per-instance tier configuration is no longer silently dropped.
