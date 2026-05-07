@@ -46,6 +46,8 @@ module Legion
             cache_read  = @raw_response.respond_to?(:cache_read_tokens) ? @raw_response.cache_read_tokens.to_i : 0
             cache_write = @raw_response.respond_to?(:cache_write_tokens) ? @raw_response.cache_write_tokens.to_i : 0
 
+            log_zero_token_usage(input, output)
+
             Usage.new(
               input_tokens:       input,
               output_tokens:      output,
@@ -95,6 +97,17 @@ module Legion
             return response_tool_calls if respond_to?(:response_tool_calls, true)
 
             []
+          end
+
+          def log_zero_token_usage(input, output)
+            return unless input.zero? && output.zero? && @resolved_model
+            return if @zero_token_warning_logged
+
+            @zero_token_warning_logged = true
+            log.warn(
+              "[llm][post_response] zero_tokens request_id=#{@request&.id || 'none'} " \
+              "provider=#{@resolved_provider || 'none'} model=#{@resolved_model}"
+            )
           end
         end
       end

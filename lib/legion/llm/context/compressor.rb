@@ -176,9 +176,11 @@ module Legion
           def llm_summarize(text, max_tokens)
             return nil unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:chat_direct)
 
-            session = Legion::LLM.chat_direct(model: summarize_model)
-            response = session.ask("#{SUMMARIZE_PROMPT}\n\n#{text[0, max_tokens * 8]}")
-            response.content
+            response = Legion::LLM.chat_direct(
+              model:   summarize_model,
+              message: "#{SUMMARIZE_PROMPT}\n\n#{text[0, max_tokens * 8]}"
+            )
+            response.respond_to?(:content) ? response.content : nil
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.compressor.llm_summarize')
             log.debug("[llm][compressor] summarize_failed error=#{e.message}")

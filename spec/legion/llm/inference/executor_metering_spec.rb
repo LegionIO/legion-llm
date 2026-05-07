@@ -89,6 +89,28 @@ RSpec.describe Legion::LLM::Inference::Executor do
       )
     end
 
+    it 'does not emit a zero-dollar cost estimate when provider usage is missing for a known model' do
+      logger = instance_double('Logger', debug: nil, warn: nil)
+      raw = double('raw_response',
+                   content:       'hello',
+                   input_tokens:  nil,
+                   output_tokens: nil)
+      executor.instance_variable_set(:@raw_response, raw)
+      allow(executor).to receive(:log).and_return(logger)
+      allow(Legion::LLM::Metering::Pricing).to receive(:estimate)
+      allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+      executor.send(:step_metering)
+
+      expect(Legion::LLM::Metering::Pricing).not_to have_received(:estimate)
+      expect(logger).to have_received(:warn).with(
+        include('[llm][metering] zero_tokens', 'provider=anthropic', 'model=claude-opus-4-6')
+      )
+      expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+        expect(event).not_to have_key(:cost_usd)
+      end
+    end
+
     context 'with agent metadata on the caller hash' do
       let(:caller) do
         {

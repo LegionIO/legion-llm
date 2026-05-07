@@ -163,16 +163,9 @@ RSpec.describe Legion::LLM::Context::Compressor do
 
     it 'uses LLM when available' do
       fake_response = double('Response', content: 'Summary of conversation')
-      fake_session = double('Session')
-      allow(fake_session).to receive(:ask).and_return(fake_response)
-
-      llm_mod = Module.new do
-        def self.chat_direct(**)
-          @session
-        end
-      end
-      llm_mod.instance_variable_set(:@session, fake_session)
-      stub_const('Legion::LLM', llm_mod)
+      expect(Legion::LLM).to receive(:chat_direct)
+        .with(hash_including(model: 'gpt-4o-mini', message: include('Summarize this conversation concisely')))
+        .and_return(fake_response)
 
       long_messages = 200.times.map do |i|
         { role: i.even? ? 'user' : 'assistant', content: "Important message #{i} with significant content here." }

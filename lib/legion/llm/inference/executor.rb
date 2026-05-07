@@ -1280,9 +1280,25 @@ module Legion
         end
 
         def estimate_cost(input_tokens, output_tokens)
-          Legion::LLM::Metering::Pricing.estimate(
-            model_id: metering_model_id, input_tokens: input_tokens, output_tokens: output_tokens
+          model_id = metering_model_id
+          if (input_tokens + output_tokens).zero? && model_id
+            log.warn(
+              "[llm][metering] zero_tokens request_id=#{@request.id} " \
+              "provider=#{@resolved_provider || 'none'} model=#{model_id} cost_estimate_skipped=true"
+            )
+            return nil
+          end
+
+          estimated = Legion::LLM::Metering::Pricing.estimate(
+            model_id: model_id, input_tokens: input_tokens, output_tokens: output_tokens
           )
+          if estimated.nil? && model_id
+            log.warn(
+              "[llm][metering] cost_estimate_unavailable request_id=#{@request.id} " \
+              "provider=#{@resolved_provider || 'none'} model=#{model_id}"
+            )
+          end
+          estimated
         rescue StandardError => e
           handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.estimate_cost')
           nil

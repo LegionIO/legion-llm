@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'digest'
+
 require 'legion/logging/helper'
 module Legion
   module LLM
@@ -13,7 +15,7 @@ module Legion
 
         def initialize(conversation_id:)
           @conversation_id = conversation_id
-          @curated_cache   = nil
+          @curated_messages = nil
         end
 
         # Called async after each turn completes — zero latency impact.
@@ -23,7 +25,7 @@ module Legion
           Thread.new do
             curated = turn_messages.map { |msg| curate_message(msg, assistant_response) }
             store_curated(@conversation_id, curated)
-            @curated_cache = nil
+            @curated_messages = nil
           rescue StandardError => e
             handle_exception(e, level: :warn)
           end
@@ -182,17 +184,28 @@ module Legion
         end
 
         def store_curated(conversation_id, curated_messages)
-          curated_messages.each do |msg|
+          curated_count = 0
+          curated_messages.each_with_index do |msg, index|
             next unless msg[:curated]
 
             Inference::Conversation.append(
               conversation_id,
-              role:             CURATED_KEY,
-              content:          msg[:content],
-              original_content: msg[:original_content],
-              source_role:      msg[:role]
+              role:        CURATED_KEY,
+              content:     Legion::JSON.dump(curated_message_payload(msg, index)),
+              source_id:   msg[:id],
+              source_seq:  msg[:seq],
+              source_role: msg[:role]
             )
+            curated_count += 1
           end
+
+          Inference::Conversation.append(
+            conversation_id,
+            role:            CURATED_KEY,
+            content:         Legion::JSON.dump(type: 'curation_marker', curated_count: curated_count),
+            curation_marker: true,
+            curated_count:   curated_count
+          )
         rescue StandardError => e
           handle_exception(e, level: :warn)
         end
@@ -201,11 +214,16 @@ module Legion
           return nil unless Inference::Conversation.conversation_exists?(conversation_id)
 
           raw = Inference::Conversation.messages(conversation_id)
-          curated = raw.select { |m| m[:role] == CURATED_KEY }
-          return nil if curated.empty?
+          curated_entries = raw.select { |m| m[:role] == CURATED_KEY }
+          return nil if curated_entries.empty?
 
           regular = raw.reject { |m| m[:role] == CURATED_KEY }
-          apply_curation_pipeline(regular)
+          summaries = normalized_curated_summaries(curated_entries)
+          if summaries.empty?
+            apply_curation_pipeline(regular)
+          else
+            apply_structural_curation_pipeline(substitute_curated_summaries(regular, summaries))
+          end
         rescue StandardError => e
           handle_exception(e, level: :warn)
           nil
@@ -223,6 +241,91 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn)
           messages
+        end
+
+        def apply_structural_curation_pipeline(messages)
+          result = fold_resolved_exchanges(messages)
+          result = evict_superseded(result)
+          dedup_similar(result)
+        rescue StandardError => e
+          handle_exception(e, level: :warn)
+          messages
+        end
+
+        def curated_message_payload(msg, index)
+          {
+            type:          'curated_message',
+            content:       msg[:content],
+            original_hash: content_digest(msg[:original_content] || msg[:content]),
+            source_id:     msg[:id],
+            source_seq:    msg[:seq] || (index + 1),
+            source_role:   msg[:role]
+          }.compact
+        end
+
+        def normalized_curated_summaries(entries)
+          entries.filter_map do |entry|
+            payload = curated_payload(entry)
+            next if payload_value(payload, :type) == 'curation_marker' || entry[:curation_marker]
+
+            {
+              content:          payload_value(payload, :content) || entry[:content],
+              original_content: payload_value(payload, :original_content) || entry[:original_content],
+              original_hash:    payload_value(payload, :original_hash) || content_digest(entry[:original_content]),
+              source_id:        payload_value(payload, :source_id) || entry[:source_id],
+              source_seq:       payload_value(payload, :source_seq) || entry[:source_seq],
+              source_role:      payload_value(payload, :source_role) || entry[:source_role]
+            }.compact
+          end
+        end
+
+        def substitute_curated_summaries(messages, summaries)
+          by_id       = summary_index(summaries, :source_id)
+          by_seq      = summary_index(summaries, :source_seq) { |summary| summary_key(summary[:source_role], summary[:source_seq]) }
+          by_original = summary_index(summaries, :original_hash) { |summary| summary_key(summary[:source_role], summary[:original_hash]) }
+
+          messages.map do |msg|
+            summary = by_id[msg[:id]] ||
+                      by_seq[summary_key(msg[:role], msg[:seq])] ||
+                      by_original[summary_key(msg[:role], content_digest(msg[:content]))]
+            next msg unless summary
+
+            msg.merge(
+              content:          summary[:content],
+              curated:          true,
+              original_content: summary[:original_content] || msg[:content]
+            )
+          end
+        end
+
+        def summary_index(summaries, field)
+          summaries.each_with_object({}) do |summary, index|
+            next unless summary[field]
+
+            key = block_given? ? yield(summary) : summary[field]
+            index[key] = summary
+          end
+        end
+
+        def summary_key(role, value)
+          [role.to_s, value]
+        end
+
+        def content_digest(content)
+          return nil if content.nil?
+
+          Digest::SHA256.hexdigest(content.to_s)
+        end
+
+        def curated_payload(entry)
+          parsed = Legion::JSON.parse(entry[:content].to_s)
+          parsed.is_a?(Hash) ? parsed : {}
+        rescue Legion::JSON::ParseError
+          {}
+        end
+
+        def payload_value(payload, key)
+          payload[key] || payload[key.to_s]
         end
 
         # Build a heuristic summary for a tool result based on detected tool type.

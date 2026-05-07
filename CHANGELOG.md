@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.9.5] - 2026-05-06
+
+### Fixed
+- Fixed context curator cache invalidation and stored curated-summary replay so compacted messages are used on later turns.
+- Persisted curation marker records even when a pass does not rewrite individual messages, allowing structural curation to run for short-message turns.
+- Fixed compressor LLM summarization to call `Legion::LLM.chat_direct` with a prompt message instead of the obsolete session-style API.
+- Warn and omit misleading zero-dollar cost estimates when provider usage metadata collapses to zero tokens for a known model.
+
 ## [0.9.4] - 2026-05-06
 
 ### Changed
