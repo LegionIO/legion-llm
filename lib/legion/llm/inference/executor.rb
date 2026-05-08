@@ -3,7 +3,7 @@
 require 'concurrent'
 require 'faraday'
 
-require_relative '../caller_identity'
+require_relative '../publisher_identity'
 require_relative 'route_attempts'
 
 module Legion
@@ -142,6 +142,9 @@ module Legion
 
         def inferred_provider_tier(provider)
           return nil unless provider
+
+          meta = Call::Registry.metadata_for(provider, @resolved_instance || :default)
+          return meta[:tier].to_sym if meta.is_a?(Hash) && meta[:tier]
           return Router.provider_tier(provider) if defined?(Router) && Router.respond_to?(:provider_tier)
 
           Router::PROVIDER_TIER.fetch(provider.to_sym, :cloud) if defined?(Router::PROVIDER_TIER)
@@ -650,10 +653,7 @@ module Legion
         end
 
         def native_dispatch_chat_options
-          opts = {
-            model:    @resolved_model,
-            provider: @resolved_provider
-          }
+          opts = { model: @resolved_model, provider: @resolved_provider }
           opts[:instance] = @resolved_instance if @resolved_instance
           opts[:thinking] = @request.thinking if @request.thinking
           opts.compact
@@ -729,8 +729,8 @@ module Legion
 
         def add_registry_tool_definitions(definitions)
           return unless Legion::Settings::Extensions.respond_to?(:tools) &&
-                        Legion::Settings::Extensions.respond_to?(:filter_tools) &&
-                        Array(Legion::Settings::Extensions.tools).any?
+                        Legion::Settings::Extensions.respond_to?(:filter_tools)
+          return unless Array(Legion::Settings::Extensions.tools).any? || @triggered_tools.any?
 
           add_settings_extensions_tool_definitions(definitions)
         rescue StandardError => e
@@ -1418,8 +1418,7 @@ module Legion
         end
 
         def metering_identity
-          top_id = @request.respond_to?(:metadata) ? @request.metadata[:identity] || @request.metadata['identity'] : nil
-          Legion::LLM::CallerIdentity.normalize(caller: @request.caller, identity: top_id)
+          Legion::LLM::PublisherIdentity.current
         end
 
         def step_context_store

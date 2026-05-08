@@ -3,7 +3,7 @@
 require 'securerandom'
 require 'uri'
 require 'legion/logging/helper'
-require_relative '../caller_identity'
+require_relative '../publisher_identity'
 
 module Legion
   module LLM
@@ -209,7 +209,7 @@ module Legion
         end
 
         def identity_headers
-          identity = Legion::LLM::CallerIdentity.normalize(caller: @options[:caller], identity: @options[:identity])
+          identity = Legion::LLM::PublisherIdentity.current
           return {} unless identity
 
           h = {}

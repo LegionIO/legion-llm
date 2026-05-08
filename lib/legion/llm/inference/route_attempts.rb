@@ -96,11 +96,10 @@ module Legion
             model:             @resolved_model,
             idempotency_key:   idempotency_key,
             messages:          messages,
-            options:           native_dispatch_options,
             caller:            @request.caller,
             trace_context:     @tracing || {},
             timeout:           @request.ttl
-          }.compact
+          }.merge(native_dispatch_options).compact
         end
 
         def normalize_fleet_result(result)

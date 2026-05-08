@@ -132,7 +132,7 @@ module Legion
             total_duration += duration_ms
             inject_parts << result.inject if result.inject
 
-            emit_step_success(conv_id, method_name, step_idx, duration_ms, result, classification)
+            emit_step_success(conv_id, method_name, step_idx, duration_ms, result, classification, context)
 
             next unless result.gate
 
@@ -154,14 +154,21 @@ module Legion
 
         private
 
+        def context_caller(context)
+          return nil unless context.is_a?(Hash)
+
+          context[:caller] || context['caller']
+        end
+
         def execute_step(method_name, step_idx, context, conv_id, classification)
           t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+          caller = context_caller(context)
           emit_event(conv_id, 'skill.step.started',
                      step_name: method_name, step_index: step_idx)
           Legion::LLM::Metering.emit(
             request_type: 'skill.step.start', skill_name: self.class.skill_name,
             namespace: self.class.namespace, step_name: method_name,
-            step_index: step_idx, tier: 'local'
+            step_index: step_idx, tier: 'local', caller: caller
           )
           result = public_send(method_name, context: context)
           unless result.respond_to?(:inject) && result.respond_to?(:metadata) && result.respond_to?(:gate)
@@ -175,10 +182,11 @@ module Legion
           [result, duration_ms]
         rescue StandardError => e
           duration_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
-          handle_step_error(e, method_name, step_idx, conv_id, duration_ms, classification)
+          handle_step_error(e, method_name, step_idx, conv_id, duration_ms, classification, context)
         end
 
-        def handle_step_error(err, method_name, step_idx, conv_id, duration_ms, classification)
+        def handle_step_error(err, method_name, step_idx, conv_id, duration_ms, classification, context)
+          caller = context_caller(context)
           Legion::LLM::Inference::Conversation.clear_skill_state(conv_id) if conv_id
           emit_event(conv_id, 'skill.step.failed',
                      step_name: method_name, error: err.message)
@@ -186,19 +194,20 @@ module Legion
             skill_name: self.class.skill_name, namespace: self.class.namespace,
             step_name: method_name, gate: nil, status: :failed,
             duration_ms: duration_ms, metadata: { error: err.message },
-            classification: classification
+            classification: classification, caller: caller
           )
           Legion::LLM::Metering.emit(
             request_type: 'skill.step', skill_name: self.class.skill_name,
             namespace: self.class.namespace, step_name: method_name,
-            step_index: step_idx, duration_ms: duration_ms, gate: nil, tier: 'local'
+            step_index: step_idx, duration_ms: duration_ms, gate: nil, tier: 'local', caller: caller
           )
           raise Legion::LLM::Skills::StepError.new(
             "#{self.class.skill_name}##{method_name} failed: #{err.message}", cause: err
           )
         end
 
-        def emit_step_success(conv_id, method_name, step_idx, duration_ms, result, classification)
+        def emit_step_success(conv_id, method_name, step_idx, duration_ms, result, classification, context)
+          caller = context_caller(context)
           emit_event(conv_id, 'skill.step.completed',
                      step_name: method_name, duration_ms: duration_ms,
                      metadata: result.metadata)
@@ -206,13 +215,13 @@ module Legion
             skill_name: self.class.skill_name, namespace: self.class.namespace,
             step_name: method_name, gate: result.gate,
             status: :completed, duration_ms: duration_ms,
-            metadata: result.metadata, classification: classification
+            metadata: result.metadata, classification: classification, caller: caller
           )
           Legion::LLM::Metering.emit(
             request_type: 'skill.step', skill_name: self.class.skill_name,
             namespace: self.class.namespace, step_name: method_name,
             step_index: step_idx, duration_ms: duration_ms,
-            gate: result.gate&.to_s, tier: 'local'
+            gate: result.gate&.to_s, tier: 'local', caller: caller
           )
         end
 

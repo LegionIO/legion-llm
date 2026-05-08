@@ -189,6 +189,24 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       )
     end
 
+    def stub_process_identity(identity: 'matt@example.com', kind: :human, source: :system)
+      stub_const('Legion::Identity', Module.new) unless defined?(Legion::Identity)
+      process = Module.new do
+        class << self
+          attr_accessor :canonical_name_value, :kind_value, :source_value
+
+          def canonical_name = @canonical_name_value
+          def kind = @kind_value
+          def source = @source_value
+        end
+      end
+      process.canonical_name_value = identity
+      process.kind_value = kind
+      process.source_value = source
+
+      stub_const('Legion::Identity::Process', process)
+    end
+
     before do
       Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
       allow(Legion::LLM).to receive(:started?).and_return(true)
@@ -272,6 +290,50 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
         'identity'   => 'matt@example.com',
         'type'       => 'user',
         'credential' => 'session'
+      )
+    end
+
+    it 'falls back to local process identity when middleware provides generic system caller metadata' do
+      captured = nil
+      response = make_pipeline_response
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+      principal = instance_double(
+        'Legion::Identity::Request',
+        canonical_name: 'system',
+        to_caller_hash: {
+          requested_by: {
+            id:         'system:system',
+            identity:   'system',
+            type:       :service,
+            credential: :system
+          }
+        }
+      )
+
+      allow(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        captured = kwargs
+        :req
+      end
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      stub_const('Legion::Identity', Module.new) unless defined?(Legion::Identity)
+      stub_const('Legion::Identity::Request', Class.new) unless defined?(Legion::Identity::Request)
+      allow(Legion::Identity::Request).to receive(:from_env).and_return(principal)
+      stub_process_identity
+
+      response = post_json(
+        '/api/llm/inference',
+        {
+          messages: [{ role: 'user', content: 'hello' }],
+          caller:   { requested_by: { id: 'santa:claude', identity: 'santa claude', type: 'external' } }
+        }
+      )
+
+      expect(response.status).to eq(200)
+      expect(captured[:caller]).to include(source: 'api', path: '/api/llm/inference')
+      expect(captured[:caller][:requested_by]).to eq(
+        identity:   'matt@example.com',
+        type:       :human,
+        credential: :system
       )
     end
 

@@ -119,5 +119,23 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
       expect(definitions).to be_empty
     end
+
+    it 'still adds trigger-matched tools' do
+      triggered_tool = Class.new do
+        define_singleton_method(:tool_name) { 'legion_dynamic_triggered' }
+        define_singleton_method(:description) { 'Triggered dynamic tool' }
+        define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+      end
+      allow(Legion::Settings::Extensions).to receive(:tools).and_return([])
+      allow(Legion::Settings::Extensions).to receive(:filter_tools).and_return([])
+
+      executor = described_class.new(base_request)
+      executor.instance_variable_set(:@triggered_tools, [triggered_tool])
+      definitions = []
+      executor.send(:add_registry_tool_definitions, definitions)
+
+      expect(definitions.map(&:name)).to contain_exactly('legion_dynamic_triggered')
+      expect(executor.instance_variable_get(:@injected_tool_map)['legion_dynamic_triggered']).to eq(triggered_tool)
+    end
   end
 end

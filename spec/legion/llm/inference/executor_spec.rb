@@ -522,6 +522,39 @@ confidence: 0.9 }],
       )
     end
 
+    it 'passes native dispatch options as top-level fleet request params' do
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      captured_request = nil
+      allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch) do |request:, **|
+        captured_request = request
+        { success: true, content: 'fleet answer', usage: { input_tokens: 1, output_tokens: 1 } }
+      end
+      tool_request = Legion::LLM::Inference::Request.build(
+        id:              'req-route-fleet-tools',
+        conversation_id: 'conv-route-fleet-tools',
+        messages:        [{ role: :user, content: 'lookup teams chat' }],
+        system:          'Use available tools.',
+        routing:         { provider: :vllm, model: 'qwen3.6-27b' },
+        tools:           [
+          {
+            name:        'legion_lookup',
+            description: 'Lookup data',
+            parameters:  { type: 'object', properties: { query: { type: 'string' } } }
+          }
+        ]
+      )
+
+      response = described_class.new(tool_request).call
+
+      expect(response.message[:content]).to eq('fleet answer')
+      expect(captured_request).to include(:system, :tools)
+      expect(captured_request).not_to have_key(:options)
+      expect(captured_request[:system]).to eq('Use available tools.')
+      expect(captured_request[:tools]).to include(
+        legion_lookup: hash_including(name: 'legion_lookup', description: 'Lookup data')
+      )
+    end
+
     it 'keeps failed fleet attempt metadata when escalation succeeds on a direct provider' do
       fleet_resolution = Legion::LLM::Router::Resolution.new(tier: :fleet, provider: :vllm, model: 'qwen3.6-27b')
       direct_resolution = Legion::LLM::Router::Resolution.new(tier: :cloud, provider: :anthropic, model: 'claude-opus-4-6')

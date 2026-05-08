@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'publisher_identity'
 require_relative 'metering/usage'
 require_relative 'inference/request'
 require_relative 'inference/response'
@@ -589,7 +590,7 @@ module Legion
           return response if response
         end
 
-        publish_escalation_event(history, :exhausted) if history.size > 1
+        publish_escalation_event(history, :exhausted, caller: kwargs[:caller]) if history.size > 1
         message = "All #{history.size} escalation attempts failed"
         if last_error
           providers = history.filter_map { |attempt| attempt[:provider] }.uniq.join(', ')
@@ -608,7 +609,8 @@ module Legion
         duration_ms = ((Time.now - start_time) * 1000).round
         result = Quality::Checker.check(response, quality_threshold: threshold, quality_check: quality_check)
 
-        return [response, nil] if escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain)
+        return [response, nil] if escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain,
+                                                             caller: kwargs[:caller])
 
         report_health(:quality_failure, resolution, duration_ms, failures: result.failures)
         history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
@@ -630,13 +632,13 @@ module Legion
                            **opts.except(:model, :provider))
       end
 
-      def escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain)
+      def escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain, caller: nil)
         return false unless result.passed
 
         report_health(:success, resolution, duration_ms)
         history << build_attempt(resolution, :success, [], duration_ms)
         attach_escalation_history(response, history, resolution, chain)
-        publish_escalation_event(history, :success) if history.size > 1
+        publish_escalation_event(history, :success, caller: caller) if history.size > 1
         log.debug "[llm][inference] chat_with_escalation success attempts=#{history.size}"
         true
       end
@@ -683,11 +685,12 @@ module Legion
                                      signal: :latency, value: duration_ms, metadata: {})
       end
 
-      def publish_escalation_event(history, final_outcome)
+      def publish_escalation_event(history, final_outcome, caller: nil)
         payload = {
           outcome:   final_outcome,
           attempts:  history.size,
           history:   history,
+          caller:    caller || Legion::LLM::PublisherIdentity.caller_hash,
           timestamp: Time.now.utc.iso8601
         }
 
@@ -775,7 +778,7 @@ module Legion
 
       def emit_privacy_blocked_audit
         Legion::LLM::Audit.emit_prompt(
-          request_id: nil, conversation_id: nil, caller: nil,
+          request_id: nil, conversation_id: nil, caller: Legion::LLM::PublisherIdentity.caller_hash,
           routing: {}, tokens: {}, status: 'privacy_blocked',
           error: { class: 'PrivacyModeError', message: 'External tiers blocked by enterprise privacy' },
           timestamp: Time.now, request_type: 'chat'

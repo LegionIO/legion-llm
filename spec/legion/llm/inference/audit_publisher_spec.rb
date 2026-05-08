@@ -3,7 +3,29 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inference::AuditPublisher do
+  def stub_process_identity(identity: 'matt@example.com', kind: :human, source: :system)
+    stub_const('Legion::Identity', Module.new) unless defined?(Legion::Identity)
+    process = Module.new do
+      class << self
+        attr_accessor :canonical_name_value, :kind_value, :source_value
+
+        def canonical_name = @canonical_name_value
+        def kind = @kind_value
+        def source = @source_value
+      end
+    end
+    process.canonical_name_value = identity
+    process.kind_value = kind
+    process.source_value = source
+
+    stub_const('Legion::Identity::Process', process)
+  end
+
   describe '.build_event' do
+    before do
+      stub_process_identity
+    end
+
     it 'builds event with required fields from request and response' do
       response = Legion::LLM::Inference::Response.build(
         request_id: 'req_abc', conversation_id: 'conv_xyz',
@@ -19,7 +41,7 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:request_id]).to eq('req_abc')
       expect(event[:conversation_id]).to eq('conv_xyz')
       expect(event[:caller]).to eq(response.caller)
-      expect(event[:identity]).to eq({ identity: 'user:matt', type: :user, credential: :api })
+      expect(event[:identity]).to eq({ identity: 'matt@example.com', type: :human, credential: :system })
       expect(event[:tokens]).to be_a(Hash)
       expect(event[:routing]).to eq(response.routing)
       expect(event[:timestamp]).to be_a(Time)
@@ -145,7 +167,7 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:response_thinking]).to eq(thinking)
     end
 
-    it 'extracts extension caller identity into audit events' do
+    it 'keeps extension caller context while using publisher identity for audit attribution' do
       response = Legion::LLM::Inference::Response.build(
         request_id: 'r', conversation_id: 'c',
         message: { role: :assistant, content: 'answer' },
@@ -155,10 +177,11 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
 
       event = described_class.build_event(request: request, response: response)
 
-      expect(event[:identity]).to eq(identity: 'extension:lex-test', type: 'extension')
+      expect(event[:caller]).to eq(extension: 'lex-test')
+      expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
     end
 
-    it 'prefers namespaced caller ids over ambiguous display identities' do
+    it 'does not let namespaced caller ids override publisher identity' do
       response = Legion::LLM::Inference::Response.build(
         request_id: 'r', conversation_id: 'c',
         message: { role: :assistant, content: 'answer' },
@@ -175,10 +198,10 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
 
       event = described_class.build_event(request: request, response: response)
 
-      expect(event[:identity]).to eq(identity: 'system:system', type: 'service', credential: 'system')
+      expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
     end
 
-    it 'extracts string caller identity into audit events' do
+    it 'does not let string caller identity override publisher identity' do
       response = Legion::LLM::Inference::Response.build(
         request_id: 'r', conversation_id: 'c',
         message: { role: :assistant, content: 'answer' },
@@ -188,7 +211,7 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
 
       event = described_class.build_event(request: request, response: response)
 
-      expect(event[:identity]).to eq(identity: 'extension:lex-test', type: 'extension')
+      expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
     end
   end
 

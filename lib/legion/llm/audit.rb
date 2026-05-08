@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'publisher_identity'
 
 module Legion
   module LLM
@@ -19,6 +20,7 @@ module Legion
       module_function
 
       def emit_prompt(event)
+        event = attributed_event(event)
         if transport_connected? && defined?(Legion::LLM::Transport::Messages::PromptEvent)
           Legion::LLM::Transport::Messages::PromptEvent.new(**event).publish
           log.info('[llm][audit] published prompt audit')
@@ -33,6 +35,7 @@ module Legion
       end
 
       def emit_tools(event)
+        event = attributed_event(event)
         if transport_connected? && defined?(Legion::LLM::Transport::Messages::ToolEvent)
           Legion::LLM::Transport::Messages::ToolEvent.new(**event).publish
           log.info('[llm][audit] published tool audit')
@@ -47,6 +50,7 @@ module Legion
       end
 
       def emit_skill(**event)
+        event = attributed_event(event)
         if transport_connected? && defined?(Legion::LLM::Transport::Messages::SkillEvent)
           Legion::LLM::Transport::Messages::SkillEvent.new(**event).publish
           log.info('[llm][audit] published skill audit')
@@ -62,6 +66,13 @@ module Legion
 
       def transport_connected?
         Legion::LLM::Settings.transport_connected?
+      end
+
+      def attributed_event(event)
+        source = event.is_a?(Hash) ? event.dup : {}
+        source[:identity] = Legion::LLM::PublisherIdentity.current
+        source[:caller] ||= Legion::LLM::PublisherIdentity.caller_hash
+        source
       end
 
       # Backward-compat: resolve old Legion::LLM::Audit::Exchange, ::PromptEvent, etc.

@@ -1,5 +1,31 @@
 # Legion LLM Changelog
 
+## [0.9.14] - 2026-05-08
+
+### Fixed
+- Guard discovery-first provider inference when the lightweight discovery namespace is loaded before the full discovery cache API.
+- Clean up publisher-identity review follow-up by making request identity fallback explicit and removing unused caller identity requires.
+
+## [0.9.13] - 2026-05-08
+
+### Fixed
+- Allow trigger-matched registry tools to reach native provider dispatch even when `Settings::Extensions` has no always-loaded tools registered.
+- Pass native dispatch options as top-level fleet request parameters so fleet providers receive `system`, `tools`, and offering metadata consistently with direct dispatch.
+
+## [0.9.12] - 2026-05-07
+
+### Fixed
+- Route LLM AMQP publisher identity, API fallback caller identity, prompt audit attribution, and metering attribution through the local `Legion::Identity::Process` identity instead of trusting request-supplied caller hashes.
+- Preserve request caller context separately from publisher identity headers, including prompt audit request caller type, skill events, escalation events, fleet envelopes, reflection ingest metadata, and privacy-blocked audit events.
+
+## [0.9.11] - 2026-05-07
+
+### Fixed
+- `infer_provider_for_model` now consults `Discovery.cached_discovered_models` before falling back to static regex patterns, so models reported by registered lex-llm-* providers route correctly regardless of naming convention.
+- Add Bedrock vendor prefix detection (`anthropic.`, `meta.`, `mistral.`, etc.) before the Ollama catch-all pattern to prevent Bedrock model IDs like `anthropic.claude-opus-4-5-20251101-v1:0` from being misrouted to Ollama due to the `:` in the version suffix.
+- `inferred_provider_tier` now checks `Call::Registry` metadata for the provider's tier before falling back to the static `PROVIDER_TIER` hash.
+- Restore `thinking` option in `native_dispatch_chat_options` where provider dispatch expects it.
+
 ## [0.9.10] - 2026-05-07
 
 ### Fixed

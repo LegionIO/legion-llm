@@ -5,6 +5,7 @@ require 'open3'
 require 'time'
 require 'legion/cache/helper'
 require 'legion/logging/helper'
+require 'legion/llm/publisher_identity'
 require 'legion/llm/types'
 
 begin
@@ -390,8 +391,18 @@ module Legion
 
               define_method(:identity_canonical_name) do |rack_env|
                 request_identity = identity_request_from_env(rack_env)
-                name = request_identity&.canonical_name if request_identity.respond_to?(:canonical_name)
-                return name if name && name.to_s != ''
+                if request_identity.respond_to?(:to_caller_hash)
+                  caller_hash = request_identity.to_caller_hash
+                  requested_by = nil
+                  requested_by = caller_hash[:requested_by] || caller_hash['requested_by'] if caller_hash.is_a?(Hash)
+                  unless Legion::LLM::PublisherIdentity.generic_requested_by?(requested_by)
+                    name = requested_by[:identity] || requested_by['identity'] if requested_by.respond_to?(:key?)
+                    return name if name && name.to_s != ''
+                  end
+                end
+
+                publisher_identity = Legion::LLM::PublisherIdentity.requested_by[:identity]
+                return publisher_identity if publisher_identity && publisher_identity.to_s != ''
 
                 if defined?(Legion::Identity::Process) && Legion::Identity::Process.respond_to?(:canonical_name)
                   process_name = Legion::Identity::Process.canonical_name
@@ -408,16 +419,12 @@ module Legion
                   caller_hash = request_identity.to_caller_hash
                   if caller_hash.is_a?(Hash)
                     requested_by = caller_hash[:requested_by] || caller_hash['requested_by']
-                    return { requested_by: requested_by } if requested_by
+                    return { requested_by: requested_by } if requested_by && !Legion::LLM::PublisherIdentity.generic_requested_by?(requested_by)
                   end
                 end
 
                 {
-                  requested_by: {
-                    identity:   identity_canonical_name(rack_env),
-                    type:       :process,
-                    credential: :system
-                  }
+                  requested_by: Legion::LLM::PublisherIdentity.requested_by
                 }
               end
 

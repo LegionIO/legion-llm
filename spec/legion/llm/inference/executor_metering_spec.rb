@@ -3,6 +3,24 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inference::Executor do
+  def stub_process_identity(identity: 'matt@example.com', kind: :human, source: :system)
+    stub_const('Legion::Identity', Module.new) unless defined?(Legion::Identity)
+    process = Module.new do
+      class << self
+        attr_accessor :canonical_name_value, :kind_value, :source_value
+
+        def canonical_name = @canonical_name_value
+        def kind = @kind_value
+        def source = @source_value
+      end
+    end
+    process.canonical_name_value = identity
+    process.kind_value = kind
+    process.source_value = source
+
+    stub_const('Legion::Identity::Process', process)
+  end
+
   describe 'metering step registration' do
     it 'includes :metering in STEPS' do
       expect(described_class::STEPS).to include(:metering)
@@ -31,6 +49,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     subject(:executor) { described_class.new(request) }
 
     before do
+      stub_process_identity
       # Stub the raw_response with token data
       raw = double('raw_response',
                    content:       'hello',
@@ -67,7 +86,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
       expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
         expect(event[:cost_usd]).to eq(0.00042)
-        expect(event[:identity]).to eq(identity: 'user:alice', type: 'user', credential: 'cred_1')
+        expect(event[:caller]).to eq(caller)
+        expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
         expect(event[:conversation_id]).to eq('conv_123')
         expect(event[:correlation_id]).to eq('corr_123')
         expect(event[:wall_clock_ms]).to be >= 0
@@ -143,13 +163,14 @@ RSpec.describe Legion::LLM::Inference::Executor do
         }
       end
 
-      it 'publishes the namespaced id as metering identity' do
+      it 'keeps the caller context but publishes process identity for metering attribution' do
         allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
 
         executor.send(:step_metering)
 
         expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
-          expect(event[:identity]).to eq(identity: 'system:system', type: 'service', credential: 'system')
+          expect(event[:caller]).to eq(caller)
+          expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
         end
       end
     end
@@ -157,13 +178,14 @@ RSpec.describe Legion::LLM::Inference::Executor do
     context 'with a string caller' do
       let(:caller) { 'extension:lex-test' }
 
-      it 'preserves the caller string as metering identity' do
+      it 'keeps the caller string but publishes process identity for metering attribution' do
         allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
 
         executor.send(:step_metering)
 
         expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
-          expect(event[:identity]).to eq(identity: 'extension:lex-test', type: 'extension')
+          expect(event[:caller]).to eq('extension:lex-test')
+          expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
         end
       end
     end

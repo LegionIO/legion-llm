@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative '../publisher_identity'
 module Legion
   module LLM
     module Hooks
@@ -166,7 +167,11 @@ module Legion
                                   knowledge_domain: 'reflection',
                                   confidence:       entry[:confidence],
                                   source_agent:     "llm:#{model}",
-                                  metadata:         { context: entry[:context], source: 'reflection_hook' }
+                                  metadata:         {
+                                    context:      entry[:context],
+                                    source:       'reflection_hook',
+                                    submitted_by: Legion::LLM::PublisherIdentity.requested_by
+                                  }
                                 })
             )
             log.info("[llm][reflection] published via=transport model=#{model} type=#{entry[:type]}")
@@ -176,7 +181,8 @@ module Legion
               content_type:     entry[:type].to_s,
               knowledge_domain: 'reflection',
               confidence:       entry[:confidence],
-              source_agent:     "llm:#{model}"
+              source_agent:     "llm:#{model}",
+              metadata:         { submitted_by: Legion::LLM::PublisherIdentity.requested_by }
             )
             log.info("[llm][reflection] published via=direct model=#{model} type=#{entry[:type]}")
           end
