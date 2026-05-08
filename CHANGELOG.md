@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.13] - 2026-05-08
+
+### Fixed
+- Allow trigger-matched registry tools to reach native provider dispatch even when `Settings::Extensions` has no always-loaded tools registered.
+- Pass native dispatch options as top-level fleet request parameters so fleet providers receive `system`, `tools`, and offering metadata consistently with direct dispatch.
+
 ## [0.9.12] - 2026-05-07
 
 ### Fixed

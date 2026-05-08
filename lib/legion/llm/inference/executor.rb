@@ -729,8 +729,8 @@ module Legion
 
         def add_registry_tool_definitions(definitions)
           return unless Legion::Settings::Extensions.respond_to?(:tools) &&
-                        Legion::Settings::Extensions.respond_to?(:filter_tools) &&
-                        Array(Legion::Settings::Extensions.tools).any?
+                        Legion::Settings::Extensions.respond_to?(:filter_tools)
+          return unless Array(Legion::Settings::Extensions.tools).any? || @triggered_tools.any?
 
           add_settings_extensions_tool_definitions(definitions)
         rescue StandardError => e
