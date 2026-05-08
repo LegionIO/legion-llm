@@ -32,6 +32,20 @@ module Legion
               source = find_tool_source(tool_name)
               next unless source
 
+              if client_passthrough_source?(source)
+                log.info(
+                  "[llm][tools] client_passthrough request_id=#{@request.id} " \
+                  "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name}"
+                )
+                log_step_debug(
+                  :tool_calls,
+                  :client_passthrough,
+                  tool_call_id: tool_call_id || 'none',
+                  tool_name:    tool_name
+                )
+                next
+              end
+
               # Skip builtin tools; native providers handle provider-owned tools.
               if source[:type] == :builtin
                 log.info(
@@ -121,6 +135,102 @@ module Legion
             return override if override
 
             { type: :builtin }
+          end
+
+          def client_passthrough_source?(source)
+            source[:type] == :client && source[:executable] != true
+          end
+
+          def client_passthrough_tool_call?(tool_call)
+            client_passthrough_source?(find_tool_source(tool_call[:name]))
+          end
+
+          def client_passthrough_tool_loop_result(result, tool_calls, round)
+            result[:tool_calls] = tool_calls
+            log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=client_passthrough"
+            result
+          end
+
+          def normalize_tool_arguments(arguments)
+            case arguments
+            when nil
+              {}
+            when Hash
+              arguments
+            when String
+              return {} if arguments.strip.empty?
+
+              parsed = Legion::JSON.parse(arguments)
+              parsed.is_a?(Hash) ? parsed : {}
+            else
+              arguments.respond_to?(:to_h) ? arguments.to_h : {}
+            end
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.normalize_tool_arguments')
+            {}
+          end
+
+          def registry_tool_sources_available?
+            unless Legion::Settings::Extensions.respond_to?(:tools) &&
+                   Legion::Settings::Extensions.respond_to?(:filter_tools)
+              log_tool_injection_skip(:settings_extensions_unavailable)
+              return false
+            end
+
+            settings_tool_count = Array(Legion::Settings::Extensions.tools).size
+            if settings_tool_count.zero? && @triggered_tools.empty?
+              log_tool_injection_skip(:no_settings_or_triggered_tools, settings_tool_count: settings_tool_count)
+              return false
+            end
+
+            true
+          end
+
+          def log_tool_injection_skip(reason, settings_tool_count: nil)
+            log.info(
+              "[llm][tools][inject] action=registry_skipped request_id=#{request_log_value(:id, 'unknown')} " \
+              "conversation_id=#{request_log_value(:conversation_id, 'none') || 'none'} reason=#{reason} " \
+              "settings_tools=#{settings_tool_count || 'unknown'} triggered_tools=#{@triggered_tools.size} " \
+              "requested_tools=#{requested_deferred_tool_names.size}"
+            )
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.log_tool_injection_skip')
+          end
+
+          def log_native_tool_definitions(definitions)
+            log.info(
+              "[llm][tools][inject] action=native_tool_definitions request_id=#{request_log_value(:id, 'unknown')} " \
+              "conversation_id=#{request_log_value(:conversation_id, 'none') || 'none'} provider=#{@resolved_provider || 'unknown'} " \
+              "model=#{@resolved_model || 'unknown'} total=#{definitions.size} sources=#{format_tool_source_counts(definitions)} " \
+              "client_request_tools=#{Array(request_log_value(:tools, [])).size} triggered_tools=#{@triggered_tools.size} " \
+              "requested_tools=#{requested_deferred_tool_names.size} names=#{format_tool_names(definitions.map(&:name))}"
+            )
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.log_native_tool_definitions')
+          end
+
+          def format_tool_source_counts(definitions)
+            counts = definitions.each_with_object(Hash.new(0)) do |definition, memo|
+              source = definition.respond_to?(:source) ? definition.source : {}
+              key = source.is_a?(Hash) ? (source[:type] || source['type'] || :unknown) : :unknown
+              memo[key] += 1
+            end
+            return 'none' if counts.empty?
+
+            counts.map { |key, count| "#{key}:#{count}" }.join(',')
+          end
+
+          def format_tool_names(names, limit = 30)
+            names = Array(names).map(&:to_s).reject(&:empty?)
+            return 'none' if names.empty?
+
+            visible = names.first(limit)
+            suffix = names.size > limit ? ",+#{names.size - limit}more" : ''
+            "#{visible.join(',')}#{suffix}"
+          end
+
+          def request_log_value(method_name, fallback)
+            @request.respond_to?(method_name) ? @request.public_send(method_name) : fallback
           end
 
           def describe_tool_source(source)

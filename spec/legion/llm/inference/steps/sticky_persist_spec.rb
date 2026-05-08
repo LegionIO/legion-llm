@@ -145,6 +145,19 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
       end
     end
 
+    it 'stores empty string tool arguments as an empty args hash' do
+      instance.pending_tool_history << {
+        tool_name: 'my-tool', result: '{}', error: false,
+        runner_key: 'my_runner', args: ''
+      }
+      instance.instance_variable_set(:@request, fake_request('c1'))
+      instance.step_sticky_persist
+
+      expect(Legion::LLM::Inference::Conversation).to have_received(:write_sticky_state) do |_, state|
+        expect(state[:tool_call_history].first[:args]).to eq({})
+      end
+    end
+
     it 'trims tool_call_history to max_history_entries' do
       allow(instance).to receive(:max_history_entries).and_return(2)
       existing = Array.new(3) { |i| { tool: "t#{i}", runner: 'r', turn: i, args: {}, result: '{}', error: false } }

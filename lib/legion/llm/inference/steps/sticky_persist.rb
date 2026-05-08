@@ -17,7 +17,7 @@ module Legion
             access_token private_key secret_key auth_token credential
           ].freeze
 
-          def step_sticky_persist # rubocop:disable Metrics/AbcSize,Metrics/MethodLength,Metrics/PerceivedComplexity
+          def step_sticky_persist # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
             return unless sticky_persist_ready?
 
             conv_id        = @request.conversation_id
@@ -100,7 +100,7 @@ module Legion
                   tool:   entry[:tool_name],
                   runner: runner_key,
                   turn:   @sticky_turn_snapshot,
-                  args:   sanitize_args(truncate_args(entry[:args] || {})),
+                  args:   sanitize_args(truncate_args(normalize_history_args(entry[:args]))),
                   result: entry[:result].to_s[0, max_result_length],
                   error:  entry[:error] || false
                 }
@@ -160,6 +160,25 @@ module Legion
             else
               "#{entry.extension}_#{entry.runner}"
             end
+          end
+
+          def normalize_history_args(args)
+            case args
+            when nil
+              {}
+            when Hash
+              args
+            when String
+              return {} if args.strip.empty?
+
+              parsed = Legion::JSON.parse(args)
+              parsed.is_a?(Hash) ? parsed : {}
+            else
+              args.respond_to?(:to_h) ? args.to_h : {}
+            end
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.step_sticky_persist.normalize_args')
+            {}
           end
 
           def sanitize_args(args)

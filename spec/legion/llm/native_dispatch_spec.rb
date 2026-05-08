@@ -204,6 +204,22 @@ RSpec.describe Legion::LLM::Call::Dispatch do
       result = described_class.dispatch_chat(provider: :passthru, model: nil, messages: [])
       expect(result[:usage].input_tokens).to eq(99)
     end
+
+    it 'normalizes empty string tool-call arguments to an empty hash' do
+      Legion::LLM::Call::Registry.register(:openai, Module.new do
+        define_singleton_method(:chat) do |**|
+          {
+            content:    '',
+            usage:      {},
+            tool_calls: [{ id: 'call_1', function: { name: 'mcp_servers', arguments: '' } }]
+          }
+        end
+      end)
+
+      result = described_class.dispatch_chat(provider: :openai, model: nil, messages: [])
+
+      expect(result[:tool_calls].first[:arguments]).to eq({})
+    end
   end
 end
 

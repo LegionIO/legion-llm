@@ -258,6 +258,31 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       step.step_rag_context
     end
 
+    it 'extracts text from structured user content before querying Apollo' do
+      request = Legion::LLM::Inference::Request.build(
+        messages:         [
+          {
+            role:    :user,
+            content: [
+              { type: 'text', text: 'okay updated some things, try again' }
+            ]
+          }
+        ],
+        context_strategy: :rag
+      )
+
+      apollo_runner = double('Knowledge')
+      allow(apollo_runner).to receive(:retrieve_relevant)
+        .with(query: 'okay updated some things, try again', limit: 10, min_confidence: 0.5)
+        .and_return({ success: true, entries: [], count: 0 })
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+
+      step = klass.new(request)
+      step.step_rag_context
+
+      expect(step.warnings).to be_empty
+    end
+
     it 'retrieves scoped archived conversation history when a conversation_id is present' do
       Legion::Settings[:llm][:rag][:conversation_history_enabled] = true
       request = Legion::LLM::Inference::Request.build(

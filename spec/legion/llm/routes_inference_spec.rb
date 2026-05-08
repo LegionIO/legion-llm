@@ -455,6 +455,30 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.body).to include('event: done')
     end
 
+    it 'streams returned client tool calls when the server does not execute them' do
+      tool_call = { id: 'call_client_1', name: 'web_search', arguments: { query: 'legion tools' } }
+      response = make_pipeline_response(content: '', tools: [tool_call], stop_reason: :tool_use)
+      executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
+      allow(executor).to receive(:tool_event_handler=)
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:call_stream).and_return(response)
+
+      response = post_json(
+        '/api/llm/inference',
+        { messages: [{ role: 'user', content: 'search the web' }], stream: true },
+        'HTTP_ACCEPT' => 'text/event-stream'
+      )
+
+      expect(response.status).to eq(200)
+      expect(response.body).to include('event: tool-call')
+      expect(response.body).to include('"toolCallId":"call_client_1"')
+      expect(response.body).to include('"toolName":"web_search"')
+      expect(response.body).to include('"args":{"query":"legion tools"}')
+      expect(response.body).to include('event: done')
+    end
+
     it 'flattens structured streaming content blocks into text deltas' do
       response = make_pipeline_response(content: 'Plain reply')
       executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)

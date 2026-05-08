@@ -606,11 +606,26 @@ confidence: 0.9 }],
   end
 
   describe 'tool loop cap (max_tool_rounds)' do
+    let(:server_tool_class) do
+      Class.new do
+        def self.call(**)
+          {}
+        end
+      end
+    end
+
     let(:tool_request) do
       Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'use tool' }],
         routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
-        tools:    [{ name: 'lookup', description: 'Lookup', parameters: { type: 'object', properties: {} } }]
+        tools:    [
+          {
+            name:        'lookup',
+            description: 'Lookup',
+            parameters:  { type: 'object', properties: {} },
+            source:      { type: :registry, tool_class: server_tool_class }
+          }
+        ]
       )
     end
 
@@ -648,6 +663,31 @@ confidence: 0.9 }],
       allow(executor).to receive(:step_response_normalization)
 
       expect { executor.call }.not_to raise_error
+    end
+
+    it 'returns non-executable client tool calls for the caller instead of dispatching them server-side' do
+      client_tool = Legion::LLM::Types::ToolDefinition.build(
+        name:        'mcp_servers',
+        description: 'List MCP servers',
+        source:      { type: :client, executable: false }
+      )
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'use client tool' }],
+        routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+        tools:    [client_tool]
+      )
+      register_native_chat do
+        { content: '', tool_calls: [{ id: 'call_1', name: 'mcp_servers', arguments: '' }], usage: {} }
+      end
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :anthropic)
+      executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
+
+      expect(Legion::LLM::Inference::ToolDispatcher).not_to receive(:dispatch)
+
+      result = executor.send(:execute_native_tool_loop)
+
+      expect(result[:tool_calls].first[:name]).to eq('mcp_servers')
     end
   end
 

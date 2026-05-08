@@ -72,7 +72,13 @@ module Legion
                 build_client_tool_class(ts[:name].to_s, ts[:description].to_s, ts[:parameters] || ts[:input_schema])
               end
 
-              log.debug("[llm][api][inference] action=tools_built client_tools=#{tool_declarations.size}")
+              client_tool_names = tool_declarations.map(&:name)
+              client_tool_summary = client_tool_names.empty? ? 'none' : client_tool_names.first(30).join(',')
+              client_tool_summary = "#{client_tool_summary},+#{client_tool_names.size - 30}more" if client_tool_names.size > 30
+              log.info(
+                "[llm][api][tools] action=client_tools_built request_id=#{request_id} " \
+                "conversation_id=#{conversation_id || 'none'} count=#{tool_declarations.size} names=#{client_tool_summary}"
+              )
 
               streaming = body[:stream] == true && request.preferred_type.to_s.include?('text/event-stream')
               effective_caller = build_server_caller(source: 'api', path: request.path, env: env,
@@ -155,6 +161,7 @@ module Legion
                     emit_sse_event(out, 'text-delta', { delta: text })
                   end
 
+                  emit_response_tool_call_events(out, pipeline_response)
                   emit_timeline_tool_events(out, pipeline_response, skip_tool_results: !executor.tool_event_handler.nil?)
 
                   enrichments = pipeline_response.enrichments
