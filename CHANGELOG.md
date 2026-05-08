@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.14] - 2026-05-08
+
+### Fixed
+- Guard discovery-first provider inference when the lightweight discovery namespace is loaded before the full discovery cache API.
+- Clean up publisher-identity review follow-up by making request identity fallback explicit and removing unused caller identity requires.
+
 ## [0.9.13] - 2026-05-08
 
 ### Fixed

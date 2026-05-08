@@ -43,10 +43,10 @@ module Legion
         end
 
         def discover_provider_for_model(model)
-          return nil unless defined?(Discovery)
+          return nil unless defined?(Discovery) && Discovery.respond_to?(:cached_discovered_models)
 
           model_s = model.to_s
-          entry = Discovery.cached_discovered_models.find do |m|
+          entry = Array(Discovery.cached_discovered_models).find do |m|
             dn = m[:model].to_s
             dn == model_s || dn.start_with?("#{model_s}:")
           end

@@ -393,6 +393,7 @@ module Legion
                 request_identity = identity_request_from_env(rack_env)
                 if request_identity.respond_to?(:to_caller_hash)
                   caller_hash = request_identity.to_caller_hash
+                  requested_by = nil
                   requested_by = caller_hash[:requested_by] || caller_hash['requested_by'] if caller_hash.is_a?(Hash)
                   unless Legion::LLM::PublisherIdentity.generic_requested_by?(requested_by)
                     name = requested_by[:identity] || requested_by['identity'] if requested_by.respond_to?(:key?)
