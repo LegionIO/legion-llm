@@ -22,6 +22,24 @@ RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
     described_class.new(**base_opts, **)
   end
 
+  def stub_process_identity(identity: 'matt@example.com', kind: :human, source: :system)
+    stub_const('Legion::Identity', Module.new) unless defined?(Legion::Identity)
+    process = Module.new do
+      class << self
+        attr_accessor :canonical_name_value, :kind_value, :source_value
+
+        def canonical_name = @canonical_name_value
+        def kind = @kind_value
+        def source = @source_value
+      end
+    end
+    process.canonical_name_value = identity
+    process.kind_value = kind
+    process.source_value = source
+
+    stub_const('Legion::Identity::Process', process)
+  end
+
   describe '#type' do
     it 'returns llm.audit.prompt' do
       expect(build.type).to eq('llm.audit.prompt')
@@ -54,6 +72,10 @@ RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
   describe '#headers' do
     let(:headers) { build.headers }
 
+    before do
+      stub_process_identity
+    end
+
     it 'sets classification header' do
       expect(headers['x-legion-classification']).to eq('internal')
     end
@@ -66,13 +88,14 @@ RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
       expect(headers['x-legion-jurisdictions']).to eq('us,eu')
     end
 
-    it 'sets caller identity' do
-      expect(headers['x-legion-identity']).to eq('user:alice')
+    it 'sets publisher identity without exposing a legacy caller identity header' do
+      expect(headers['x-legion-identity']).to eq('matt@example.com')
       expect(headers).not_to have_key('x-legion-caller-identity')
     end
 
-    it 'sets caller type' do
-      expect(headers['x-legion-caller-type']).to eq('user')
+    it 'preserves publisher caller type and carries request caller type separately' do
+      expect(headers['x-legion-caller-type']).to eq('human')
+      expect(headers['x-legion-request-caller-type']).to eq('user')
     end
 
     it 'sets retention' do

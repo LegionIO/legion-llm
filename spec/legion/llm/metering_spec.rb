@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 require_relative '../../support/transport_stub'
+require 'legion/llm/hooks'
 require 'legion/llm/metering'
 
 RSpec.describe Legion::LLM::Metering do
@@ -62,6 +63,29 @@ RSpec.describe Legion::LLM::Metering do
 
       expect { described_class.emit(event) }.not_to raise_error
       expect(described_class.emit(event)).to eq(:dropped)
+    end
+  end
+
+  describe '.install_hook' do
+    after do
+      Legion::LLM::Hooks.reset!
+    end
+
+    it 'forwards after_chat caller context into emitted metering events' do
+      allow(described_class).to receive(:emit)
+
+      described_class.install_hook
+      Legion::LLM::Hooks.run_after(
+        response: { usage: { input_tokens: 12, output_tokens: 4 }, meta: { provider: 'ollama', model: 'qwen' } },
+        messages: [{ role: 'user', content: 'hello' }],
+        model:    'qwen',
+        caller:   { requested_by: { identity: 'user:alice', type: :human } }
+      )
+
+      expect(described_class).to have_received(:emit).with(hash_including(
+                                                             caller: { requested_by: { identity: 'user:alice',
+                                                                                       type:     :human } }
+                                                           ))
     end
   end
 

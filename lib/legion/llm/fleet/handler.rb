@@ -4,6 +4,7 @@ require 'legion/extensions/llm/fleet/protocol'
 require 'legion/logging/helper'
 
 require_relative '../call/registry'
+require_relative '../publisher_identity'
 require_relative 'worker_execution'
 
 module Legion
@@ -73,6 +74,8 @@ module Legion
             reply_to:          envelope[:reply_to],
             message_context:   envelope[:message_context] || {},
             trace_context:     envelope[:trace_context] || {},
+            caller:            envelope[:caller],
+            identity:          Legion::LLM::PublisherIdentity.current,
             content:           response_content(response),
             tool_calls:        response_tool_calls(response),
             usage:             response_usage(response),
@@ -96,12 +99,14 @@ module Legion
             reply_to:          envelope[:reply_to],
             message_context:   envelope[:message_context] || {},
             trace_context:     envelope[:trace_context] || {},
+            caller:            envelope[:caller],
+            identity:          Legion::LLM::PublisherIdentity.current,
             message:           error.message,
             error_class:       error.class.name
           }.compact
         end
 
-        def publish_response(_envelope, result)
+        def publish_response(envelope, result)
           require 'legion/extensions/llm/transport/messages/fleet_response'
           publish_result = ::Legion::Extensions::Llm::Transport::Messages::FleetResponse.new(
             protocol_version:  result[:protocol_version],
@@ -115,6 +120,8 @@ module Legion
             reply_to:          result[:reply_to],
             message_context:   result[:message_context],
             trace_context:     result[:trace_context],
+            caller:            envelope[:caller],
+            identity:          Legion::LLM::PublisherIdentity.current,
             content:           result[:content],
             tool_calls:        result[:tool_calls],
             usage:             result[:usage],
@@ -127,7 +134,7 @@ module Legion
           handle_exception(e, level: :warn, operation: 'llm.fleet.handler.publish_response')
         end
 
-        def publish_error(_envelope, result)
+        def publish_error(envelope, result)
           require 'legion/extensions/llm/transport/messages/fleet_error'
           publish_result = ::Legion::Extensions::Llm::Transport::Messages::FleetError.new(
             protocol_version:  result[:protocol_version],
@@ -141,6 +148,8 @@ module Legion
             reply_to:          result[:reply_to],
             message_context:   result[:message_context],
             trace_context:     result[:trace_context],
+            caller:            envelope[:caller],
+            identity:          Legion::LLM::PublisherIdentity.current,
             code:              result[:error],
             message:           result[:message],
             error_class:       result[:error_class],

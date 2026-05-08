@@ -6,6 +6,7 @@ require 'time'
 require 'legion/extensions/llm/fleet/protocol'
 require 'legion/logging/helper'
 
+require_relative '../publisher_identity'
 require_relative 'token_issuer'
 
 module Legion
@@ -15,7 +16,7 @@ module Legion
         extend Legion::Logging::Helper
 
         ENVELOPE_KEYS = %i[
-          app_id caller correlation_id expires_at idempotency_key message_context operation
+          app_id caller correlation_id expires_at idempotency_key identity message_context operation
           model priority protocol_version provider provider_instance reply_to request_id routing_key
           signed_token timeout timeout_seconds trace_context ttl
         ].freeze
@@ -89,6 +90,7 @@ module Legion
             reply_to:          reply_to,
             message_context:   message_context || {},
             caller:            fetch_option(request_opts, :caller) || default_caller,
+            identity:          Legion::LLM::PublisherIdentity.current,
             trace_context:     fetch_option(request_opts, :trace_context) || {},
             timeout_seconds:   timeout,
             expires_at:        (Time.now.utc + timeout).iso8601,
@@ -293,7 +295,11 @@ module Legion
         end
 
         def default_caller
-          { source: 'legion-llm', component: 'fleet_dispatcher' }
+          {
+            source:       'legion-llm',
+            component:    'fleet_dispatcher',
+            requested_by: Legion::LLM::PublisherIdentity.requested_by
+          }
         end
       end
     end

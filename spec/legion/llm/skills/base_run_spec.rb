@@ -44,7 +44,13 @@ RSpec.describe Legion::LLM::Skills::Base, '#run' do
     end
   end
 
-  let(:context) { { conversation_id: 'conv-123', classification: { level: 'internal' } } }
+  let(:context) do
+    {
+      conversation_id: 'conv-123',
+      classification:  { level: 'internal' },
+      caller:          { requested_by: { identity: 'user:alice', type: :human } }
+    }
+  end
 
   it 'runs all steps and returns complete result' do
     result = skill_class.new.run(from_step: 0, context: context)
@@ -91,16 +97,20 @@ RSpec.describe Legion::LLM::Skills::Base, '#run' do
   it 'emits metering start + end per step (twice per step always)' do
     skill_class.new.run(from_step: 0, context: context)
     expect(Legion::LLM::Metering).to have_received(:emit)
-      .with(hash_including(request_type: 'skill.step.start')).exactly(2).times
+      .with(hash_including(request_type: 'skill.step.start', caller: context[:caller])).exactly(2).times
     expect(Legion::LLM::Metering).to have_received(:emit)
-      .with(hash_including(request_type: 'skill.step')).exactly(2).times
+      .with(hash_including(request_type: 'skill.step', caller: context[:caller])).exactly(2).times
+    expect(Legion::LLM::Audit).to have_received(:emit_skill)
+      .with(hash_including(caller: context[:caller])).exactly(2).times
   end
 
   it 'emits metering end on failure path (twice per step always)' do
     allow_any_instance_of(skill_class).to receive(:step_a).and_raise(RuntimeError, 'boom')
     expect { skill_class.new.run(from_step: 0, context: context) }.to raise_error(Legion::LLM::Skills::StepError)
     expect(Legion::LLM::Metering).to have_received(:emit)
-      .with(hash_including(request_type: 'skill.step')).once
+      .with(hash_including(request_type: 'skill.step', caller: context[:caller])).once
+    expect(Legion::LLM::Audit).to have_received(:emit_skill)
+      .with(hash_including(caller: context[:caller])).once
   end
 
   context 'with a chain follower' do

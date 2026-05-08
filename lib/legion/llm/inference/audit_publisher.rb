@@ -2,6 +2,7 @@
 
 require 'legion/logging/helper'
 require_relative '../caller_identity'
+require_relative '../publisher_identity'
 module Legion
   module LLM
     module Inference
@@ -65,8 +66,8 @@ module Legion
           nil
         end
 
-        def extract_identity(caller)
-          Legion::LLM::CallerIdentity.normalize(caller: caller)
+        def extract_identity(_caller)
+          Legion::LLM::PublisherIdentity.current
         end
 
         def serialize_tokens(tokens)

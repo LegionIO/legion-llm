@@ -5,6 +5,7 @@ require_relative 'metering/estimator'
 require_relative 'metering/tracker'
 require_relative 'metering/tokens'
 require_relative 'metering/usage'
+require_relative 'publisher_identity'
 
 module Legion
   module LLM
@@ -24,6 +25,7 @@ module Legion
       module_function
 
       def emit(event)
+        event = attributed_event(event)
         event_class = metering_event_class if transport_connected?
 
         if event_class
@@ -47,6 +49,13 @@ module Legion
         :dropped
       end
 
+      def attributed_event(event)
+        source = event.is_a?(Hash) ? event.dup : {}
+        source[:identity] = Legion::LLM::PublisherIdentity.current
+        source[:caller] ||= Legion::LLM::PublisherIdentity.caller_hash
+        source
+      end
+
       def flush_spool
         return 0 unless spool_available? && transport_connected?
 
@@ -64,7 +73,7 @@ module Legion
       end
 
       def install_hook
-        Legion::LLM::Hooks.after_chat do |response:, model:, **|
+        Legion::LLM::Hooks.after_chat do |response:, model:, caller: nil, **|
           usage = extract_usage(response)
           next if usage[:input_tokens].zero? && usage[:output_tokens].zero?
 
@@ -83,6 +92,7 @@ module Legion
             model_id:      resolved_model,
             input_tokens:  usage[:input_tokens],
             output_tokens: usage[:output_tokens],
+            caller:        caller,
             event_type:    'llm_completion',
             status:        response.is_a?(Hash) && response[:error] ? 'failure' : 'success'
           )

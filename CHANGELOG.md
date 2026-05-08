@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.12] - 2026-05-07
+
+### Fixed
+- Route LLM AMQP publisher identity, API fallback caller identity, prompt audit attribution, and metering attribution through the local `Legion::Identity::Process` identity instead of trusting request-supplied caller hashes.
+- Preserve request caller context separately from publisher identity headers, including prompt audit request caller type, skill events, escalation events, fleet envelopes, reflection ingest metadata, and privacy-blocked audit events.
+
 ## [0.9.11] - 2026-05-07
 
 ### Fixed

@@ -43,7 +43,7 @@ module Legion
             type        = caller_info[:type] || caller_info['type'] || top_id[:type] || top_id['type'] ||
                           (extension && 'extension')
             h = {}
-            h['x-legion-caller-type'] = type.to_s if type
+            h['x-legion-request-caller-type'] = type.to_s if type
             h
           end
 

@@ -11,6 +11,26 @@ RSpec.describe Legion::LLM::Transport::Message do
     described_class.new(**base_opts, **)
   end
 
+  def stub_process_identity(identity: 'matt@example.com', kind: :human, source: :system, hostname: 'matt-mac')
+    stub_const('Legion::Identity', Module.new) unless defined?(Legion::Identity)
+    process = Module.new do
+      class << self
+        attr_accessor :canonical_name_value, :kind_value, :source_value, :hostname_value
+
+        def canonical_name = @canonical_name_value
+        def kind = @kind_value
+        def source = @source_value
+        def hostname = @hostname_value
+      end
+    end
+    process.canonical_name_value = identity
+    process.kind_value = kind
+    process.source_value = source
+    process.hostname_value = hostname
+
+    stub_const('Legion::Identity::Process', process)
+  end
+
   describe '#message_context' do
     it 'returns empty hash when not set' do
       msg = build
@@ -91,6 +111,10 @@ RSpec.describe Legion::LLM::Transport::Message do
   end
 
   describe '#headers' do
+    before do
+      stub_process_identity
+    end
+
     it 'includes provider header' do
       msg = build(provider: 'ollama')
       expect(msg.headers['x-legion-llm-provider']).to eq('ollama')
@@ -133,7 +157,7 @@ RSpec.describe Legion::LLM::Transport::Message do
       expect(msg.headers).not_to have_key('x-legion-llm-request-id')
     end
 
-    it 'promotes caller identity and caller type from string-keyed nested caller metadata' do
+    it 'uses local process identity headers instead of string-keyed nested caller metadata' do
       msg = build(
         caller: {
           'requested_by' => {
@@ -144,12 +168,13 @@ RSpec.describe Legion::LLM::Transport::Message do
         }
       )
 
-      expect(msg.headers['x-legion-identity']).to eq('user:alice')
-      expect(msg.headers['x-legion-caller-type']).to eq('user')
-      expect(msg.headers['x-legion-credential']).to eq('cred_1')
+      expect(msg.headers['x-legion-identity']).to eq('matt@example.com')
+      expect(msg.headers['x-legion-caller-type']).to eq('human')
+      expect(msg.headers['x-legion-credential']).to eq('system')
+      expect(msg.message[:caller]['requested_by']['identity']).to eq('user:alice')
     end
 
-    it 'prefers namespaced caller ids over ambiguous display identities' do
+    it 'ignores namespaced caller ids when building publisher identity headers' do
       msg = build(
         caller: {
           requested_by: {
@@ -161,40 +186,42 @@ RSpec.describe Legion::LLM::Transport::Message do
         }
       )
 
-      expect(msg.headers['x-legion-identity']).to eq('system:system')
-      expect(msg.headers['x-legion-caller-type']).to eq('service')
+      expect(msg.headers['x-legion-identity']).to eq('matt@example.com')
+      expect(msg.headers['x-legion-caller-type']).to eq('human')
       expect(msg.headers['x-legion-credential']).to eq('system')
     end
 
-    it 'prefers normalized top-level identity over ambiguous display identities' do
+    it 'ignores top-level identity metadata when building publisher identity headers' do
       msg = build(
         caller:   { requested_by: { identity: 'system', type: 'service' } },
         identity: { identity: 'system:system', type: 'service' }
       )
 
-      expect(msg.headers['x-legion-identity']).to eq('system:system')
-      expect(msg.headers['x-legion-caller-type']).to eq('service')
+      expect(msg.headers['x-legion-identity']).to eq('matt@example.com')
+      expect(msg.headers['x-legion-caller-type']).to eq('human')
     end
 
-    it 'promotes extension callers with string keys' do
+    it 'keeps extension callers in the body while headers use publisher identity' do
       msg = build(caller: { 'extension' => 'lex-test' })
 
-      expect(msg.headers['x-legion-identity']).to eq('extension:lex-test')
-      expect(msg.headers['x-legion-caller-type']).to eq('extension')
+      expect(msg.headers['x-legion-identity']).to eq('matt@example.com')
+      expect(msg.headers['x-legion-caller-type']).to eq('human')
+      expect(msg.message[:caller]).to eq('extension' => 'lex-test')
     end
 
-    it 'promotes top-level identity metadata when caller is absent' do
+    it 'does not let top-level identity metadata override publisher identity headers' do
       msg = build(identity: { identity: 'extension:lex-test', type: 'extension', credential: 'system' })
 
-      expect(msg.headers['x-legion-identity']).to eq('extension:lex-test')
-      expect(msg.headers['x-legion-caller-type']).to eq('extension')
+      expect(msg.headers['x-legion-identity']).to eq('matt@example.com')
+      expect(msg.headers['x-legion-caller-type']).to eq('human')
       expect(msg.headers['x-legion-credential']).to eq('system')
     end
 
-    it 'promotes plain string callers as identity headers' do
+    it 'does not let plain string callers override publisher identity headers' do
       msg = build(caller: 'extension:lex-test')
 
-      expect(msg.headers['x-legion-identity']).to eq('extension:lex-test')
+      expect(msg.headers['x-legion-identity']).to eq('matt@example.com')
+      expect(msg.headers['x-legion-caller-type']).to eq('human')
     end
 
     it 'omits provider header when not set' do

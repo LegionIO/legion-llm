@@ -3,7 +3,7 @@
 require 'concurrent'
 require 'faraday'
 
-require_relative '../caller_identity'
+require_relative '../publisher_identity'
 require_relative 'route_attempts'
 
 module Legion
@@ -1418,8 +1418,7 @@ module Legion
         end
 
         def metering_identity
-          top_id = @request.respond_to?(:metadata) ? @request.metadata[:identity] || @request.metadata['identity'] : nil
-          Legion::LLM::CallerIdentity.normalize(caller: @request.caller, identity: top_id)
+          Legion::LLM::PublisherIdentity.current
         end
 
         def step_context_store
