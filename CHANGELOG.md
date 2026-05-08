@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.9.15] - 2026-05-08
+
+### Fixed
+- Normalize structured user message content before RAG query handling, preventing multipart API messages from crashing trivial-query detection or reaching Apollo as arrays.
+- Normalize empty string tool-call arguments to `{}` and make sticky tool history tolerate non-hash argument payloads without dropping state writes.
+- Pass non-executable API client tool calls through to callers as streaming `tool-call` events instead of dispatching them server-side as failed tool executions.
+- Add runtime logging for client tool receipt, native tool injection summaries, registry-injection skips, and returned tool-call SSE emission.
+
 ## [0.9.14] - 2026-05-08
 
 ### Fixed

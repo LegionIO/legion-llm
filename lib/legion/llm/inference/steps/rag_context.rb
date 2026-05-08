@@ -127,11 +127,12 @@ module Legion
           def estimate_utilization
             return 0.0 if @request.tokens[:max].nil? || @request.tokens[:max].zero?
 
-            message_tokens = @request.messages.sum { |m| (m[:content]&.length || 0) / 4 }
+            message_tokens = @request.messages.sum { |m| content_text(message_content(m)).length / 4 }
             message_tokens.to_f / @request.tokens[:max]
           end
 
           def trivial_query?(query)
+            query = content_text(query)
             max_chars = rag_setting(:trivial_max_chars, 20)
             patterns  = rag_setting(:trivial_patterns, [])
 
@@ -247,7 +248,34 @@ module Legion
 
           def extract_query
             @request.messages.select { |m| Legion::LLM::Settings.config_value(m, :role).to_s == 'user' }
-                             .then { |messages| Legion::LLM::Settings.config_value(messages.last, :content) }
+                             .then { |messages| content_text(message_content(messages.last)) }
+          end
+
+          def message_content(message)
+            Legion::LLM::Settings.config_value(message, :content)
+          end
+
+          def content_text(content)
+            case content
+            when nil
+              ''
+            when String
+              content
+            when Array
+              content.filter_map { |entry| content_text(entry) }.join
+            when Hash
+              type = content[:type] || content['type']
+              return '' unless type.nil? || type.to_s == 'text'
+
+              text = if content.key?(:text) || content.key?('text')
+                       content[:text] || content['text']
+                     else
+                       content[:content] || content['content']
+                     end
+              content_text(text)
+            else
+              content.respond_to?(:text) ? content.text.to_s : content.to_s
+            end
           end
 
           def apply_gaia_context_limit(limit, strategy:)

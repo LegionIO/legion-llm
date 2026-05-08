@@ -72,5 +72,26 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolCalls do
       step.step_tool_calls
       expect(step.timeline.events).to be_empty
     end
+
+    it 'passes non-executable client tool calls through without dispatching server-side' do
+      request = Legion::LLM::Inference::Request.build(id: 'req_tool_2', conversation_id: 'conv_tool_2', messages: [])
+      step = klass.new(request)
+      step.instance_variable_set(:@native_tool_source_map, {
+                                   'mcp_servers' => { type: :client, executable: false }
+                                 })
+      step.raw_response = double(
+        content:    nil,
+        tool_calls: [{ name: 'mcp_servers', arguments: '', id: 'call_1' }]
+      )
+      allow(step.raw_response).to receive(:respond_to?).with(:tool_calls).and_return(true)
+
+      expect(Legion::LLM::Inference::ToolDispatcher).not_to receive(:dispatch)
+
+      step.step_tool_calls
+
+      expect(logger).to have_received(:info).with(
+        include('[llm][tools] client_passthrough', 'request_id=req_tool_2', 'name=mcp_servers')
+      )
+    end
   end
 end

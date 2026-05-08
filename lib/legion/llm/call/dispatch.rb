@@ -332,11 +332,13 @@ module Legion
 
         def parse_arguments(arguments)
           return arguments unless arguments.is_a?(String)
+          return {} if arguments.strip.empty?
 
-          Legion::JSON.parse(arguments)
+          parsed = Legion::JSON.parse(arguments)
+          parsed.is_a?(Hash) ? parsed : {}
         rescue StandardError => e
           handle_exception(e, level: :debug, handled: true, operation: 'llm.dispatch.parse_arguments')
-          arguments
+          {}
         end
       end
     end

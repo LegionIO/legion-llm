@@ -674,6 +674,7 @@ module Legion
               log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=no_tool_calls"
               return result
             end
+            return client_passthrough_tool_loop_result(result, tool_calls, round) if tool_calls.any? { |tool_call| client_passthrough_tool_call?(tool_call) }
 
             round += 1
             tool_names = tool_calls.map { |tc| tc[:name] }.join(',')
@@ -697,6 +698,7 @@ module Legion
             Array(@request.tools).each { |tool| add_native_tool_definition(definitions, tool) }
             add_registry_tool_definitions(definitions) if registry_tool_injection_requested?
             log.debug "[llm][executor] action=native_tool_definitions.built count=#{definitions.size}"
+            log_native_tool_definitions(definitions)
             definitions
           end
         end
@@ -728,9 +730,7 @@ module Legion
         end
 
         def add_registry_tool_definitions(definitions)
-          return unless Legion::Settings::Extensions.respond_to?(:tools) &&
-                        Legion::Settings::Extensions.respond_to?(:filter_tools)
-          return unless Array(Legion::Settings::Extensions.tools).any? || @triggered_tools.any?
+          return unless registry_tool_sources_available?
 
           add_settings_extensions_tool_definitions(definitions)
         rescue StandardError => e
@@ -841,7 +841,7 @@ module Legion
                        else
                          {}
                        end
-          normalized[:arguments] ||= {}
+          normalized[:arguments] = normalize_tool_arguments(normalized[:arguments])
           normalized[:id] ||= "call_#{SecureRandom.hex(12)}"
           normalized
         end

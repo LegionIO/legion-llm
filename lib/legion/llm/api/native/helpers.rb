@@ -347,6 +347,56 @@ module Legion
                 stream << "event: #{event_name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
               end
 
+              define_method(:emit_response_tool_call_events) do |stream, pipeline_response|
+                tool_calls = extract_tool_calls(pipeline_response)
+                return if tool_calls.empty?
+
+                timeline_tool_call_ids = Array(pipeline_response.timeline).filter_map do |event|
+                  key = event[:key].to_s
+                  next unless key.start_with?('tool:execute:')
+
+                  data = event[:data].is_a?(Hash) ? event[:data] : {}
+                  data[:tool_call_id] || data['tool_call_id']
+                end
+
+                emitted = 0
+                skipped_timeline = 0
+                request_id = pipeline_response.respond_to?(:request_id) ? pipeline_response.request_id : 'unknown'
+                conversation_id = pipeline_response.respond_to?(:conversation_id) ? pipeline_response.conversation_id : 'none'
+
+                tool_calls.each do |tool_call|
+                  tool_call_id = tool_call[:id] || tool_call['id']
+                  if tool_call_id && timeline_tool_call_ids.include?(tool_call_id)
+                    skipped_timeline += 1
+                    next
+                  end
+
+                  tool_name = tool_call[:name] || tool_call['name']
+                  next if tool_name.to_s.empty?
+
+                  log.info(
+                    "[llm][api][tools] action=returned_tool_call_sse request_id=#{request_id || 'unknown'} " \
+                    "conversation_id=#{conversation_id || 'none'} tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
+                    "args_class=#{(tool_call[:arguments] || tool_call['arguments'] || {}).class}"
+                  )
+                  emit_sse_event(stream, 'tool-call', {
+                                   toolCallId: tool_call_id,
+                                   toolName:   tool_name,
+                                   args:       tool_call[:arguments] || tool_call['arguments'] || {},
+                                   timestamp:  Time.now.utc.iso8601
+                                 })
+                  emitted += 1
+                end
+
+                names = tool_calls.map { |tool_call| tool_call[:name] || tool_call['name'] }.compact
+                names = names.first(30).join(',') + (names.size > 30 ? ",+#{names.size - 30}more" : '')
+                log.info(
+                  "[llm][api][tools] action=returned_tool_calls_complete request_id=#{request_id || 'unknown'} " \
+                  "conversation_id=#{conversation_id || 'none'} total=#{tool_calls.size} emitted=#{emitted} " \
+                  "skipped_timeline=#{skipped_timeline} names=#{names.empty? ? 'none' : names}"
+                )
+              end
+
               define_method(:emit_timeline_tool_events) do |stream, pipeline_response, skip_tool_results: false|
                 timeline = Array(pipeline_response.timeline)
                 log.debug("[llm][api][helpers] emit_timeline_tool_events count=#{timeline.size} skip_tool_results=#{skip_tool_results}")
