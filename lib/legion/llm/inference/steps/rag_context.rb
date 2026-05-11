@@ -320,7 +320,8 @@ module Legion
           def positive_integer(value)
             integer = Integer(value)
             integer.positive? ? integer : nil
-          rescue ArgumentError, TypeError
+          rescue ArgumentError, TypeError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.steps.rag_context.positive_integer')
             nil
           end
         end
