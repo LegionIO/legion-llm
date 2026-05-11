@@ -31,9 +31,7 @@ module Legion
           end
 
           def refresh!
-            @total_fetched_at = nil
             @available_fetched_at = nil
-            @total_memory_mb = nil
             @available_memory_mb = nil
             @last_refreshed_at = Time.now
           end
@@ -57,7 +55,6 @@ module Legion
           private
 
           def ensure_total_fresh
-            refresh! if stale?
             return unless @total_fetched_at.nil?
 
             fetch_total
