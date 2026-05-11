@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.16] - 2026-05-11
+
+### Fixed
+- Renamed `Metering#settings_value` to `extract_hash_value` to fix method shadowing with `Legion::Logging::Helper#settings_value`, which resolves a `wrong number of arguments (given 3, expected 2)` error raised from `instance_log_level` when metering is active.
+
 ## [0.9.15] - 2026-05-08
 
 ### Fixed
