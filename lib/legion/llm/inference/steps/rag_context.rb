@@ -134,12 +134,18 @@ module Legion
           def trivial_query?(query)
             query = content_text(query)
             max_chars = rag_setting(:trivial_max_chars, 20)
-            patterns  = rag_setting(:trivial_patterns, [])
-
-            return false if query.length > max_chars
+            configured_patterns = rag_setting(:trivial_patterns)
 
             normalized = query.strip.downcase.gsub(/[^a-z0-9\s]/, '')
-            patterns.any? { |p| normalized == p }
+            patterns = configured_patterns || trivial_patterns
+            return true if patterns.any? { |p| normalized == p }
+            return true if configured_patterns.nil? && query.length <= max_chars && normalized.split.length <= 1
+
+            false
+          end
+
+          def trivial_patterns
+            rag_setting(:trivial_patterns, %w[ping pong ding test foobar])
           end
 
           def apollo_available?
@@ -314,7 +320,8 @@ module Legion
           def positive_integer(value)
             integer = Integer(value)
             integer.positive? ? integer : nil
-          rescue ArgumentError, TypeError
+          rescue ArgumentError, TypeError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.steps.rag_context.positive_integer')
             nil
           end
         end

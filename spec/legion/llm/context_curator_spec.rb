@@ -338,7 +338,8 @@ RSpec.describe Legion::LLM::Context::Curator do
     it 'stores a marker when a curation pass does not modify any messages' do
       curator.send(:store_curated, conversation_id, [{ role: :user, content: 'short message' }])
 
-      curated_entries = Legion::LLM::Inference::Conversation.messages(conversation_id)
+      # CURATED_KEY entries are internal bookkeeping — use raw_messages to inspect them.
+      curated_entries = Legion::LLM::Inference::Conversation.raw_messages(conversation_id)
                                                             .select { |msg| msg[:role] == described_class::CURATED_KEY }
       expect(curated_entries.size).to eq(1)
       payload = Legion::JSON.parse(curated_entries.first[:content])

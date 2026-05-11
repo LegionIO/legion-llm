@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.9.17] - 2026-05-11
+
+### Fixed
+- `total_memory_mb` now fetched exactly once on first access and never re-fetched; hardware memory is static so repeated `sysctl` calls every 60s were wasteful. `refresh!` only clears the available memory cache; `reset!` still clears everything (for tests).
+- `trivial_query?` now correctly identifies short/trivial messages: a query is trivial if it matches a known trivial pattern (exact normalized match), or if no custom patterns are configured and the query is short (under `trivial_max_chars`) and a single word. Previously, an empty patterns list caused `.any?` to always return false, so nothing was ever trivial.
+- Added `trivial_patterns` helper with configurable defaults (`ping`, `pong`, `ding`, `test`, `foobar`) readable via `rag.trivial_patterns` setting; when custom patterns are explicitly configured, the short-query heuristic is disabled so only listed patterns are treated as trivial.
+
+## [0.9.16] - 2026-05-11
+
+### Fixed
+- Renamed `Metering#settings_value` to `extract_hash_value` to fix method shadowing with `Legion::Logging::Helper#settings_value`, which resolves a `wrong number of arguments (given 3, expected 2)` error raised from `instance_log_level` when metering is active.
+
 ## [0.9.15] - 2026-05-08
 
 ### Fixed
