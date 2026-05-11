@@ -247,11 +247,13 @@ module Legion
         def load_curated(conversation_id)
           return nil unless Inference::Conversation.conversation_exists?(conversation_id)
 
-          raw = Inference::Conversation.messages(conversation_id)
+          # Use raw_messages so CURATED_ROLE entries are visible even though they
+          # are filtered out of the public-facing Conversation#messages array.
+          raw = Inference::Conversation.raw_messages(conversation_id)
           curated_entries = raw.select { |m| m[:role] == CURATED_KEY }
           return nil if curated_entries.empty?
 
-          regular = raw.reject { |m| m[:role] == CURATED_KEY }
+          regular = raw.reject { |m| [CURATED_KEY, Inference::Conversation::METADATA_ROLE].include?(m[:role]) }
           summaries = normalized_curated_summaries(curated_entries)
           if summaries.empty?
             apply_curation_pipeline(regular)

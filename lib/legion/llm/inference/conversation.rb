@@ -11,6 +11,7 @@ module Legion
 
         MAX_CONVERSATIONS = 256
         METADATA_ROLE = :__metadata__
+        CURATED_ROLE  = :__curated__
 
         class << self
           def append(conversation_id, role:, content:, parent_id: nil, sidechain: false,
@@ -38,13 +39,25 @@ module Legion
 
           # Returns flat ordered message array — backward-compatible.
           # Uses chain reconstruction when parent links exist; falls back to seq order.
+          # Internal-only roles (__metadata__, __curated__) are filtered out.
           def messages(conversation_id)
             if in_memory?(conversation_id)
               touch(conversation_id)
-              raw = conversations[conversation_id][:messages].reject { |m| m[:role] == METADATA_ROLE }
+              raw = conversations[conversation_id][:messages].reject { |m| internal_role?(m[:role]) }
               chain_or_seq(raw)
             else
               load_from_db(conversation_id)
+            end
+          end
+
+          # Returns ALL messages including internal-role entries (__metadata__, __curated__).
+          # Use this when you need access to curation markers or metadata entries.
+          def raw_messages(conversation_id)
+            if in_memory?(conversation_id)
+              touch(conversation_id)
+              conversations[conversation_id][:messages].dup
+            else
+              load_all_from_db(conversation_id)
             end
           end
 
@@ -53,14 +66,14 @@ module Legion
           def build_chain(conversation_id, include_sidechains: false)
             raw = all_raw_messages(conversation_id)
             raw = raw.reject { |m| m[:sidechain] } unless include_sidechains
-            raw = raw.reject { |m| m[:role] == METADATA_ROLE }
+            raw = raw.reject { |m| internal_role?(m[:role]) }
             reconstruct_chain(raw)
           end
 
           # Return sidechain messages; optionally filter by agent_id.
           def sidechain_messages(conversation_id, agent_id: nil)
             raw = all_raw_messages(conversation_id)
-            result = raw.select { |m| m[:sidechain] && m[:role] != METADATA_ROLE }
+            result = raw.select { |m| m[:sidechain] && !internal_role?(m[:role]) }
             result = result.select { |m| m[:agent_id] == agent_id } unless agent_id.nil?
             result.sort_by { |m| m[:seq] }
           end
@@ -242,6 +255,12 @@ module Legion
           end
 
           private
+
+          # Returns true for roles that are internal bookkeeping and should not
+          # appear in the public-facing message array returned by #messages.
+          def internal_role?(role)
+            [METADATA_ROLE, CURATED_ROLE].include?(role)
+          end
 
           def conversations
             @conversations ||= {}
@@ -543,7 +562,20 @@ module Legion
                                .where(conversation_id: conversation_id)
                                .order(:seq)
                                .map { |row| symbolize_message(row) }
+                               .reject { |m| internal_role?(m[:role]) }
             chain_or_seq(rows)
+          end
+
+          def load_all_from_db(conversation_id)
+            return [] unless db_available?
+
+            Legion::Data.connection[:conversation_messages]
+                        .where(conversation_id: conversation_id)
+                        .order(:seq)
+                        .map { |row| symbolize_message(row) }
+          rescue StandardError => e
+            handle_exception(e, level: :debug)
+            []
           end
 
           def db_conversation_record?(conversation_id)
