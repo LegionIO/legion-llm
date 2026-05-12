@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.9.19] - 2026-05-11
+
+### Added
+- `GET /api/llm/tiers` — full RESTful tier hierarchy endpoint with sub-routes: `/:tier`, `/:tier/providers`, `/:tier/providers/:provider`, `/:tier/providers/:provider/instances`, `/:tier/providers/:provider/instances/:instance`, `/:tier/providers/:provider/instances/:instance/models`, `/:tier/providers/:provider/models`. Returns tier availability, provider health, instance details, and model listings in a structured tree.
+- `POST /api/llm/inference` now accepts `tier` parameter in request body, passed through to the routing pipeline via `Request.extra[:tier]`. Supports values: `local`, `fleet`, `openai_compat`, `cloud`, `frontier`.
+- Request log for `/api/llm/inference` now includes `requested_tier` field.
+
+### Changed
+- `GET /api/llm/offerings` response restructured from flat array to grouped hash: `tier → provider → instance → [offerings]`. Individual offering lookup (`GET /api/llm/offerings/:id`) unchanged.
+
 ## [0.9.18] - 2026-05-11
 
 ### Fixed
