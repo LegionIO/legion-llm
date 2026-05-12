@@ -23,6 +23,7 @@ module Legion
               requested_tools = body[:requested_tools] || []
               model           = body[:model]
               provider        = body[:provider]
+              tier            = body[:tier]
               caller_context  = body[:caller]
               conversation_id = body[:conversation_id]
               request_id      = body[:request_id] || SecureRandom.uuid
@@ -88,11 +89,15 @@ module Legion
                 "[llm][api][inference] action=accepted request_id=#{request_id} " \
                 "conversation_id=#{conversation_id || 'none'} caller=#{caller_summary} " \
                 "messages=#{messages.size} client_tools=#{tools.size} requested_tools=#{Array(requested_tools).size} " \
-                "requested_provider=#{provider || 'auto'} requested_model=#{model || 'auto'} stream=#{streaming}"
+                "requested_tier=#{tier || 'auto'} requested_provider=#{provider || 'auto'} " \
+                "requested_model=#{model || 'auto'} stream=#{streaming}"
               )
 
               require 'legion/llm/inference/request' unless defined?(Legion::LLM::Inference::Request)
               require 'legion/llm/inference/executor' unless defined?(Legion::LLM::Inference::Executor)
+
+              extra = {}
+              extra[:tier] = tier.to_sym if tier
 
               pipeline_request = Legion::LLM::Inference::Request.build(
                 id:              request_id,
@@ -104,7 +109,8 @@ module Legion
                 conversation_id: conversation_id,
                 metadata:        { requested_tools: requested_tools },
                 stream:          streaming,
-                cache:           { strategy: :default, cacheable: true }
+                cache:           { strategy: :default, cacheable: true },
+                extra:           extra
               )
 
               setup_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - route_t0) * 1000).round

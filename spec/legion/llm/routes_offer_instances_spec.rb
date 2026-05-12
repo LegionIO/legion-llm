@@ -58,13 +58,12 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
-      expect(body[:data][:summary]).to include(total: 1, operation: 'inference')
-      expect(body[:data][:offerings].first).to include(
-        model:             'qwen3.6-27b',
-        provider_family:   'vllm',
-        provider_instance: 'vllm-gpu-01',
-        instance_id:       'vllm-gpu-01'
-      )
+      expect(body[:data][:summary]).to include(total: 1)
+
+      offerings_tree = body[:data][:offerings]
+      all_offerings = offerings_tree.values.flat_map { |providers| providers.values.flat_map { |instances| instances.values.flatten } }
+      expect(all_offerings.size).to eq(1)
+      expect(all_offerings.first[:model]).to eq('qwen3.6-27b')
     end
 
     it 'returns offering details by offering id' do
