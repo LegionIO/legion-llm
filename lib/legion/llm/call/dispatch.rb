@@ -37,7 +37,7 @@ module Legion
           @content             = extracted[:result].to_s
           @model               = result_hash[:model]
           @metadata            = extracted[:metadata] || {}
-          @tool_calls          = result_hash[:tool_calls] || []
+          @tool_calls          = self.class.coerce_tool_calls(result_hash[:tool_calls])
           @stop_reason         = result_hash[:stop_reason]
           @thinking            = extracted[:thinking]
           usage                = self.class.coerce_usage(result_hash[:usage])
@@ -73,7 +73,7 @@ module Legion
               cache_write_tokens: raw.respond_to?(:cache_creation_tokens) ? raw.cache_creation_tokens.to_i : 0
             ),
             metadata:    raw.respond_to?(:metadata) && raw.metadata.is_a?(Hash) ? raw.metadata : {},
-            tool_calls:  raw.respond_to?(:tool_calls) ? raw.tool_calls : [],
+            tool_calls:  raw.respond_to?(:tool_calls) ? coerce_tool_calls(raw.tool_calls) : [],
             stop_reason: raw.respond_to?(:stop_reason) ? raw.stop_reason : nil,
             thinking:    raw.respond_to?(:thinking) ? raw.thinking : nil
           }.compact
@@ -105,6 +105,29 @@ module Legion
             cache_read_tokens:  (raw_usage[:cache_read_tokens] || raw_usage['cache_read_tokens']).to_i,
             cache_write_tokens: (raw_usage[:cache_write_tokens] || raw_usage['cache_write_tokens']).to_i
           )
+        end
+
+        def self.coerce_tool_calls(raw)
+          return [] if raw.nil?
+          return raw if raw.is_a?(Array)
+
+          return raw.values.filter_map { |entry| coerce_single_tool_call(entry) } if raw.is_a?(Hash) && !single_tool_call_hash?(raw)
+
+          [coerce_single_tool_call(raw)].compact
+        end
+
+        def self.single_tool_call_hash?(hash)
+          hash.key?(:name) || hash.key?('name') || hash.key?(:function) || hash.key?('function')
+        end
+
+        def self.coerce_single_tool_call(entry)
+          if entry.respond_to?(:id) && entry.respond_to?(:name)
+            return { id: entry.id, name: entry.name, arguments: entry.respond_to?(:arguments) ? entry.arguments : {} }
+          end
+
+          return entry if entry.is_a?(Hash)
+
+          nil
         end
 
         def self.merge_thinking_payloads(existing, extracted)

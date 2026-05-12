@@ -150,7 +150,7 @@ module Legion
         def normalize_messages(messages, system: nil)
           message_class = lex_llm_namespace::Message
           raw_messages = Array(messages)
-          raw_messages = [{ role: :system, content: system }] + raw_messages if present_system?(system)
+          raw_messages = prepend_or_merge_system(raw_messages, system) if present_system?(system)
 
           raw_messages.map do |message|
             next message if message.is_a?(message_class)
@@ -162,6 +162,22 @@ module Legion
               tool_calls:   message_hash[:tool_calls],
               tool_call_id: message_hash[:tool_call_id]
             )
+          end
+        end
+
+        def prepend_or_merge_system(raw_messages, system)
+          first = raw_messages.first
+          first_role = if first.is_a?(Hash)
+                         first[:role] || first['role']
+                       elsif first.respond_to?(:role)
+                         first.role
+                       end
+          if first_role.to_s == 'system'
+            existing_content = first.is_a?(Hash) ? (first[:content] || first['content']) : first.content
+            merged = { role: :system, content: "#{system}\n\n#{existing_content}" }
+            [merged] + raw_messages[1..]
+          else
+            [{ role: :system, content: system }] + raw_messages
           end
         end
 
