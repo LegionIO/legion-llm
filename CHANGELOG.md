@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.18] - 2026-05-11
+
+### Fixed
+- `NativeResponseAdapter` now coerces tool_calls from the Hash-keyed-by-name format (returned by OpenAI-compatible providers via lex-llm) into a flat Array of Hashes, preventing TypeError crashes in `step_tool_calls`, `response_tool_calls`, and the native tool loop when streaming tool-use responses from vllm/ollama.
+- `LexLLMAdapter#normalize_messages` merges enriched system content with an existing system message at index 0 instead of prepending a duplicate, preventing vllm "System message must be at the beginning" rejections during gaia narrator ticks.
+
 ## [0.9.17] - 2026-05-11
 
 ### Fixed
