@@ -2,11 +2,7 @@
 
 require 'legion/logging/helper'
 
-begin
-  require 'legion/extensions/llm/responses/thinking_extractor'
-rescue LoadError
-  nil
-end
+require 'legion/extensions/llm/responses/thinking_extractor'
 
 module Legion
   module LLM
