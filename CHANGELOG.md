@@ -2,6 +2,9 @@
 
 ## [0.9.20] - 2026-05-12
 
+### Added
+- Added `llm.gaia.advisory_enabled`, defaulting to `true`, so GAIA pre-request advisory shaping can be disabled without code changes.
+
 ### Fixed
 - Preserve accumulated streamed native tool-call arguments from lex-llm provider responses instead of rebuilding final responses from partial stream chunks.
 - Symbolize extension tool arguments before invoking runner keyword methods so JSON string keys such as `chat_id` satisfy Ruby keyword parameters.
@@ -9,6 +12,7 @@
 - Skip trigger matching cleanly when `Legion::Settings::Extensions` is not loaded instead of warning through a rescued `NameError`.
 - Accumulate only stream fallback state in the lex-llm adapter instead of retaining every streamed chunk when providers return final messages.
 - Apply explicit vLLM tool-name forcing only on the first native tool-loop round, allowing follow-up automatic tool calls after the requested tool returns.
+- Ignore absent GAIA advisory context-window limits when sizing RAG retrieval instead of routing nil through debug exception handling.
 
 ## [0.9.19] - 2026-05-11
 

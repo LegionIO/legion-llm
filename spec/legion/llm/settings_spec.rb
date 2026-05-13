@@ -4,6 +4,12 @@ require 'spec_helper'
 require 'legion/llm/settings'
 
 RSpec.describe Legion::LLM::Settings do
+  describe '.default' do
+    it 'enables GAIA advisory by default' do
+      expect(described_class.default.dig(:gaia, :advisory_enabled)).to be true
+    end
+  end
+
   describe '.value' do
     it 'warns when a configured path traverses a scalar value' do
       Legion::Settings[:llm][:routing] = 'invalid'

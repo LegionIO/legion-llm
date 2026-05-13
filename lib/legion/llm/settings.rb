@@ -31,6 +31,7 @@ module Legion
           scheduling:                scheduling_defaults,
           rag:                       rag_defaults,
           rag_guard:                 rag_guard_defaults,
+          gaia:                      gaia_defaults,
           embedding:                 embedding_defaults,
           conversation:              conversation_defaults,
           telemetry:                 telemetry_defaults,
@@ -389,6 +390,12 @@ module Legion
         {
           threshold:        0.7,
           block_on_failure: true
+        }
+      end
+
+      def self.gaia_defaults
+        {
+          advisory_enabled: true
         }
       end
 

@@ -328,6 +328,25 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       step.step_rag_context
     end
 
+    it 'ignores missing GAIA advisory context window values without exception handling' do
+      request = Legion::LLM::Inference::Request.build(
+        messages:         [{ role: :user, content: 'what is pgvector?' }],
+        context_strategy: :rag
+      )
+
+      apollo_runner = double('Knowledge')
+      allow(apollo_runner).to receive(:retrieve_relevant)
+        .with(query: 'what is pgvector?', limit: 10, min_confidence: 0.5)
+        .and_return({ success: true, entries: [], count: 0 })
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+
+      step = klass.new(request)
+      step.enrichments['gaia:advisory'] = { data: { context_window: { rag: nil } } }
+
+      expect(step).not_to receive(:handle_exception)
+      step.step_rag_context
+    end
+
     it 'uses compact_limit for rag_compact strategy' do
       Legion::Settings[:llm][:rag][:compact_limit] = 3
 

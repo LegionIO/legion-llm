@@ -26,6 +26,21 @@ RSpec.describe Legion::LLM::Inference::Steps::GaiaAdvisory do
   end
 
   describe '#step_gaia_advisory' do
+    it 'skips when GAIA advisory is disabled by settings' do
+      Legion::Settings[:llm][:gaia][:advisory_enabled] = false
+      gaia_mod = Module.new
+      allow(gaia_mod).to receive(:advise)
+      allow(gaia_mod).to receive(:started?).and_return(true)
+      stub_const('Legion::Gaia', gaia_mod)
+
+      step = klass.new(request)
+      step.step_gaia_advisory
+
+      expect(gaia_mod).not_to have_received(:advise)
+      expect(step.enrichments).not_to have_key('gaia:advisory')
+      expect(step.warnings).to be_empty
+    end
+
     it 'populates enrichments when GAIA returns advisory' do
       gaia_mod = Module.new
       allow(gaia_mod).to receive(:advise).and_return({
