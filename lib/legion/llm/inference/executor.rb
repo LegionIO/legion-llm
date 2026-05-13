@@ -65,7 +65,7 @@ module Legion
           /InvalidModel/i,
           /model.*not found/i,
           /not authorized/i,
-          /marketplace/i
+          /AWS Marketplace/i
         ].freeze
 
         MAX_NATIVE_TOOL_ROUNDS = 200

@@ -52,7 +52,7 @@ module Legion
       end
 
       def flush_spool
-        return 0 unless File.exist?(SPOOL_FILE)
+        return 0 unless File.exist?(spool_file_path)
 
         event_class = metering_event_class
         unless event_class && transport_connected?
@@ -60,7 +60,22 @@ module Legion
           return 0
         end
 
-        events = read_spool
+        # Read and truncate atomically under the mutex so no events written
+        # between read and truncate can be silently lost.
+        events = SPOOL_MUTEX.synchronize do
+          path = spool_file_path
+          return 0 unless File.exist?(path)
+
+          lines = File.readlines(path, chomp: true)
+          parsed = lines.filter_map do |line|
+            next if line.strip.empty?
+
+            Legion::JSON.load(line)
+          end
+          File.write(path, '')
+          parsed
+        end
+
         return 0 if events.empty?
 
         batch_sleep = spool_settings[:flush_batch_sleep] || 0.0
@@ -72,7 +87,6 @@ module Legion
           sleep(batch_sleep) if batch_sleep.positive? && index < events.size - 1
         end
 
-        truncate_spool
         log.info("[llm][metering] flush_spool flushed=#{flushed}")
         flushed
       rescue StandardError => e
@@ -162,7 +176,7 @@ module Legion
           ensure_spool_dir
           enforce_max_events
           line = Legion::JSON.dump(event)
-          File.open(SPOOL_FILE, 'a') { |f| f.puts(line) }
+          File.open(spool_file_path, 'a') { |f| f.puts(line) }
         end
         log.debug("[llm][metering] spool_event written provider=#{event[:provider]} model=#{event[:model_id]}")
       rescue StandardError => e
@@ -171,9 +185,10 @@ module Legion
 
       def read_spool
         SPOOL_MUTEX.synchronize do
-          return [] unless File.exist?(SPOOL_FILE)
+          path = spool_file_path
+          return [] unless File.exist?(path)
 
-          lines = File.readlines(SPOOL_FILE, chomp: true)
+          lines = File.readlines(path, chomp: true)
           lines.filter_map do |line|
             next if line.strip.empty?
 
@@ -187,32 +202,46 @@ module Legion
 
       def truncate_spool
         SPOOL_MUTEX.synchronize do
-          File.write(SPOOL_FILE, '') if File.exist?(SPOOL_FILE)
+          path = spool_file_path
+          File.write(path, '') if File.exist?(path)
         end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.metering.truncate_spool')
       end
 
       def enforce_max_events
-        return unless File.exist?(SPOOL_FILE)
+        path = spool_file_path
+        return unless File.exist?(path)
 
         max = spool_settings[:max_events] || 10_000
-        lines = File.readlines(SPOOL_FILE, chomp: true)
+        lines = File.readlines(path, chomp: true)
         return if lines.size < max
 
         # Drop oldest events to make room
         trimmed = lines.last(max - 1)
-        File.write(SPOOL_FILE, trimmed.map { |l| "#{l}\n" }.join)
+        File.write(path, trimmed.map { |l| "#{l}\n" }.join)
         log.debug("[llm][metering] enforce_max_events trimmed=#{lines.size - trimmed.size} max=#{max}")
       end
 
       def ensure_spool_dir
-        FileUtils.mkdir_p(SPOOL_DIR)
+        FileUtils.mkdir_p(spool_dir_path)
       end
 
       def spool_settings
         settings = Legion::LLM::Settings.value(:metering, :spool, default: {})
         settings.is_a?(Hash) ? settings : {}
+      end
+
+      # Resolve spool file path at call time, honouring operator-configured
+      # paths (e.g. for containerised deployments where $HOME is not writable).
+      # Falls back to the compile-time SPOOL_FILE constant.
+      def spool_file_path
+        configured = spool_settings[:path]
+        configured && !configured.to_s.strip.empty? ? configured.to_s : SPOOL_FILE
+      end
+
+      def spool_dir_path
+        File.dirname(spool_file_path)
       end
 
       # Backward-compat: resolve old Legion::LLM::Metering::Exchange, ::Event
