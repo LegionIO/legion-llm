@@ -32,7 +32,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     context 'when @request.tools is an empty array []' do
-      it 'does not add registry tools' do
+      it 'adds registry tools in addition to the empty client list' do
         extensions_mod = Module.new do
           define_singleton_method(:tools) do
             [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
@@ -44,7 +44,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stub_const('Legion::Settings::Extensions', extensions_mod)
 
         executor = described_class.new(request_empty_tools)
-        expect(executor.send(:native_tool_definitions)).to eq([])
+        expect(executor.send(:native_tool_definitions).map(&:name)).to include('registry_tool')
       end
 
       it 'injects requested deferred registry tools from metadata' do

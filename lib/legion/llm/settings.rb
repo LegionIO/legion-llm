@@ -476,7 +476,7 @@ module Legion
         {
           scan_depth:       10,
           tool_limit:       25,
-          local_tool_limit: 10
+          local_tool_limit: 100
         }
       end
 

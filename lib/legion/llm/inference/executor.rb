@@ -4,6 +4,7 @@ require 'concurrent'
 require 'faraday'
 
 require_relative '../publisher_identity'
+require_relative 'native_tool_loop'
 require_relative 'route_attempts'
 
 module Legion
@@ -11,6 +12,7 @@ module Legion
     module Inference
       class Executor
         include Legion::Logging::Helper
+        include NativeToolLoop
         include RouteAttempts
         include Steps::Logging
         include Steps::Rbac
@@ -383,8 +385,15 @@ module Legion
         end
 
         def apply_routing_resolution(state, resolution)
+          provider_changed = resolution.provider && resolution.provider != state[:provider]
           state[:provider] = resolution.provider
-          state[:instance] = resolution.instance || state[:instance]
+          state[:instance] = if resolution.instance
+                               resolution.instance
+                             elsif provider_changed
+                               nil
+                             else
+                               state[:instance]
+                             end
           state[:model] = resolution.model
           state[:tier] = resolution.tier
           state[:offering_id] = resolution.offering_id || state[:offering_id]
@@ -649,43 +658,23 @@ module Legion
             offering_metadata: @resolved_offering_metadata
           }
           options[:tools] = native_dispatch_tools if native_dispatch_tools.any?
+          options[:tool_prefs] = native_tool_prefs if native_dispatch_tools.any? && native_tool_prefs
+          options[:thinking] = native_dispatch_thinking if native_dispatch_thinking
           options.compact
         end
 
         def native_dispatch_chat_options
           opts = { model: @resolved_model, provider: @resolved_provider }
           opts[:instance] = @resolved_instance if @resolved_instance
-          opts[:thinking] = @request.thinking if @request.thinking
+          opts[:thinking] = native_dispatch_thinking if native_dispatch_thinking
           opts.compact
         end
 
-        def execute_native_tool_loop
-          messages = native_dispatch_messages.dup
-          max_rounds = llm_setting(:max_tool_rounds, MAX_NATIVE_TOOL_ROUNDS).to_i
-          max_rounds = MAX_NATIVE_TOOL_ROUNDS unless max_rounds.positive?
-          round = 0
-          log.debug "[llm][executor] action=native_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
+        def native_dispatch_thinking
+          return @request.thinking if @request.thinking
+          return { enabled: false } if @resolved_provider.to_s == 'vllm' && native_dispatch_tools.any?
 
-          loop do
-            result = dispatch_provider_request(capability: :chat, operation: :chat, messages: messages)
-            result = Call::NativeResponseAdapter.coerce_result(result)
-            tool_calls = Array(result[:tool_calls]).map { |tool_call| normalize_native_tool_call(tool_call) }
-            if tool_calls.empty?
-              log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=no_tool_calls"
-              return result
-            end
-            return client_passthrough_tool_loop_result(result, tool_calls, round) if tool_calls.any? { |tool_call| client_passthrough_tool_call?(tool_call) }
-
-            round += 1
-            tool_names = tool_calls.map { |tc| tc[:name] }.join(',')
-            log.debug "[llm][executor] action=native_tool_loop.round round=#{round} tool_count=#{tool_calls.size} tools=#{tool_names}"
-            raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds" if round > max_rounds
-
-            messages << native_assistant_tool_message(result, tool_calls)
-            tool_calls.each do |tool_call|
-              messages << native_tool_result_message(tool_call, dispatch_native_tool_call(tool_call, round))
-            end
-          end
+          nil
         end
 
         def native_dispatch_tools
@@ -704,9 +693,7 @@ module Legion
         end
 
         def registry_tool_injection_requested?
-          return true unless @request.tools.is_a?(Array) && @request.tools.empty?
-
-          requested_deferred_tool_names.any?
+          !(@request.respond_to?(:suppress_tools) && @request.suppress_tools)
         end
 
         def add_native_tool_definition(definitions, tool)
@@ -732,15 +719,22 @@ module Legion
         def add_registry_tool_definitions(definitions)
           return unless registry_tool_sources_available?
 
+          count_before = definitions.size
           add_settings_extensions_tool_definitions(definitions)
+          count_after = definitions.size
+          log.info(
+            "[llm][tools] registry_injection count_before=#{count_before} count_after=#{count_after} " \
+            "added=#{count_after - count_before} limit=#{registry_tool_limit}"
+          )
         rescue StandardError => e
           @warnings << "Tool definition error: #{e.message}"
-          handle_exception(e, level: :warn, operation: 'llm.pipeline.native_registry_tools')
+          handle_exception(e, level: :error, operation: 'llm.pipeline.native_registry_tools')
         end
 
         def add_settings_extensions_tool_definitions(definitions)
-          injected_names = definitions.map(&:name)
+          existing_names = definitions.map(&:name)
           inject_limit = registry_tool_limit
+          registry_added = 0
 
           always_entries = Legion::Settings::Extensions.filter_tools(deferred: false)
           gaia_entries = gaia_advisory_tool_entries
@@ -752,7 +746,7 @@ module Legion
                         end
 
           prioritized.each do |entry|
-            break if inject_limit && injected_names.size >= inject_limit
+            break if inject_limit && registry_added >= inject_limit
 
             definition = if entry.is_a?(Hash) && entry[:name]
                            Types::ToolDefinition.from_registry_entry(entry)
@@ -760,16 +754,17 @@ module Legion
                            Types::ToolDefinition.from_tool_class(entry)
                          end
             next if gaia_tool_suppressed?(definition.name)
-            next if injected_names.include?(definition.name)
+            next if existing_names.include?(definition.name)
 
             tool_class = entry.is_a?(Hash) ? entry[:tool_class] : entry
             @injected_tool_map[definition.name] = tool_class if tool_class
             @native_tool_source_map[definition.name] = definition.source
             definitions << definition
-            injected_names << definition.name
+            existing_names << definition.name
+            registry_added += 1
           end
 
-          add_requested_deferred_tool_definitions_from_settings(definitions, injected_names)
+          add_requested_deferred_tool_definitions_from_settings(definitions, existing_names)
         end
 
         def add_requested_deferred_tool_definitions_from_settings(definitions, injected_names)
@@ -1043,13 +1038,8 @@ module Legion
           record_provider_response
         end
 
-        def execute_provider_request_stream_native(&block)
-          result = dispatch_provider_request(
-            capability:   :stream,
-            operation:    :chat,
-            messages:     native_dispatch_messages,
-            stream_block: block
-          )
+        def execute_provider_request_stream_native(&)
+          result = execute_native_streaming_tool_loop(&)
           merge_response_offering_metadata(result[:metadata])
           @raw_response = Call::NativeResponseAdapter.new(result)
         end

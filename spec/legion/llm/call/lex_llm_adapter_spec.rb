@@ -152,6 +152,8 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       block.call(llm_namespace::Chunk.new(role: :assistant, content: 'hel', model_id: model.id))
       block.call(llm_namespace::Chunk.new(role: :assistant, content: 'lo', model_id: model.id,
                                           input_tokens: 7, output_tokens: 3))
+      llm_namespace::Message.new(role: :assistant, content: 'hello', model_id: model.id,
+                                 input_tokens: 7, output_tokens: 3)
     end
 
     yielded = []
@@ -163,6 +165,45 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result[:result]).to eq('hello')
     expect(result[:model]).to eq('model-a')
     expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
+  end
+
+  it 'uses the final streamed provider message for accumulated tool calls' do
+    provider_class.define_method(:complete) do |_messages, model:, **, &block|
+      block.call(
+        llm_namespace::Chunk.new(
+          role:       :assistant,
+          content:    nil,
+          model_id:   model.id,
+          tool_calls: {
+            'legion_tool' => llm_namespace::ToolCall.new(
+              id:        'call-1',
+              name:      'legion_tool',
+              arguments: ''
+            )
+          }
+        )
+      )
+
+      llm_namespace::Message.new(
+        role:          :assistant,
+        content:       nil,
+        model_id:      model.id,
+        tool_calls:    {
+          legion_tool: llm_namespace::ToolCall.new(
+            id:        'call-1',
+            name:      'legion_tool',
+            arguments: { 'chat_id' => 'chat-123' }
+          )
+        },
+        input_tokens:  7,
+        output_tokens: 3
+      )
+    end
+
+    result = adapter.stream(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
+
+    expect(result[:tool_calls].fetch(:legion_tool).arguments).to eq('chat_id' => 'chat-123')
+    expect(result[:stop_reason]).to eq(:tool_use)
   end
 
   it 'accumulates plain string streaming thinking chunks' do

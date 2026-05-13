@@ -105,7 +105,7 @@ module Legion
 
           runner = Kernel.const_get(runner_path)
           fn = source[:function].to_sym
-          result = runner.send(fn, **(tool_call[:arguments] || {}))
+          result = runner.send(fn, **symbolize_keys(tool_call[:arguments] || {}))
           { status: :success, result: result }
         end
 

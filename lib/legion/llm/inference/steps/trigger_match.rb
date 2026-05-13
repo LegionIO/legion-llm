@@ -13,12 +13,9 @@ module Legion
 
           def step_trigger_match
             start_time = nil
-            unless defined?(::Legion::Tools::TriggerIndex)
-              log_step_debug(:trigger_match, :skipped, reason: :trigger_index_unavailable)
-              return
-            end
-            if ::Legion::Tools::TriggerIndex.empty?
-              log_step_debug(:trigger_match, :skipped, reason: :trigger_index_empty)
+            unless Legion::Settings::Extensions.respond_to?(:tools)
+              log_step_debug(:trigger_match, :skipped, reason: :settings_extensions_unavailable)
+              log_trigger_match(:skipped, reason: :settings_extensions_unavailable)
               return
             end
 
@@ -32,10 +29,12 @@ module Legion
             end
             log_step_debug(:trigger_match, :scanning, word_count: word_set.size)
 
-            matched, per_word = ::Legion::Tools::TriggerIndex.match(word_set)
+            matched, per_word = settings_extension_tool_matches(word_set)
+            pre_filter_count = matched.size
             subtract_always_loaded(matched)
             if matched.empty?
               log_step_debug(:trigger_match, :no_matches)
+              log_trigger_match(:no_matches, word_count: word_set.size, pre_filter_count: pre_filter_count)
               return
             end
 
@@ -46,8 +45,8 @@ module Legion
                                  rank_and_cap(matched, per_word, limit)
                                end
 
+            names = @triggered_tools.map { |tool| trigger_tool_name(tool) }
             if @triggered_tools.any?
-              names = @triggered_tools.map(&:tool_name)
               @enrichments['tool:trigger_match'] = {
                 content:   "#{@triggered_tools.size} tools matched via trigger words",
                 data:      { tool_count: @triggered_tools.size, tool_names: names },
@@ -57,6 +56,9 @@ module Legion
 
             record_trigger_match_timeline(@triggered_tools.size, start_time)
             log_step_debug(:trigger_match, :matched, matched_count: matched.size, injected_count: @triggered_tools.size, limit: limit)
+            log_trigger_match(:matched, word_count: word_set.size, matched_count: matched.size,
+                                        injected_count: @triggered_tools.size, limit: limit,
+                                        names: names)
           rescue StandardError => e
             @warnings << "Trigger match error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.trigger_match')
@@ -83,13 +85,44 @@ module Legion
             text.downcase.gsub(/[^a-z ]/, ' ').split.to_set
           end
 
+          def settings_extension_tool_matches(word_set)
+            matched = Set.new
+            per_word = Hash.new { |hash, word| hash[word] = Set.new }
+
+            Array(Legion::Settings::Extensions.tools).each do |entry|
+              next unless entry.is_a?(Hash)
+
+              tool_words = trigger_words_for_entry(entry)
+              matching_words = word_set & tool_words
+              next if matching_words.empty?
+
+              matched << entry
+              matching_words.each { |word| per_word[word] << entry }
+            end
+
+            [matched, per_word]
+          end
+
+          def trigger_words_for_entry(entry)
+            values = Array(entry[:trigger_words])
+            values << trigger_tool_name_for_word_match(entry[:name])
+            values << entry[:extension]
+            values << entry[:runner]
+            values << entry[:function]
+            normalize_message_words(values.compact.join(' '))
+          end
+
+          def trigger_tool_name_for_word_match(name)
+            name.to_s.sub(/\Alegion[-_]/, '')
+          end
+
           def rank_and_cap(matched, per_word, limit)
             scores = Hash.new(0)
             per_word.each_value do |tools|
               tools.each { |tool| scores[tool] += 1 }
             end
             matched.to_a
-                   .sort_by { |tool| [-scores[tool], tool.tool_name] }
+                   .sort_by { |tool| [-scores[tool], trigger_tool_name(tool)] }
                    .first(limit)
           end
 
@@ -100,8 +133,18 @@ module Legion
             end
 
             always = Legion::Settings::Extensions.filter_tools(deferred: false).map { |t| t[:name] }
-            matched.reject! { |tool| always.include?(tool.tool_name) }
+            matched.reject! { |tool| always.include?(trigger_tool_name(tool)) }
             log_step_debug(:trigger_match, :always_loaded_filtered, always_loaded_count: always.size, remaining_count: matched.size)
+          end
+
+          def trigger_tool_name(tool)
+            if tool.is_a?(Hash)
+              (tool[:name] || tool['name']).to_s
+            elsif tool.respond_to?(:tool_name)
+              tool.tool_name.to_s
+            else
+              tool.to_s
+            end
           end
 
           def trigger_scan_depth
@@ -123,6 +166,25 @@ module Legion
             default
           end
 
+          def log_trigger_match(action, **fields)
+            payload = fields.map { |key, value| "#{key}=#{format_trigger_log_value(value)}" }.join(' ')
+            log.info(
+              "[llm][tools][trigger] action=#{action} request_id=#{@request.id} " \
+              "conversation_id=#{@request.conversation_id || 'none'} #{payload}".strip
+            )
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.steps.trigger_match.log')
+          end
+
+          def format_trigger_log_value(value)
+            case value
+            when Array
+              value.map(&:to_s).first(20).join(',')
+            else
+              value
+            end
+          end
+
           def record_trigger_match_timeline(count, start_time = nil)
             return unless @timeline.respond_to?(:record)
 
@@ -130,7 +192,7 @@ module Legion
             @timeline.record(
               category: :enrichment, key: 'tool:trigger_match',
               direction: :inbound, detail: "#{count} tools matched via trigger words",
-              from: 'trigger_index', to: 'pipeline',
+              from: 'settings_extensions', to: 'pipeline',
               duration_ms: duration
             )
           end

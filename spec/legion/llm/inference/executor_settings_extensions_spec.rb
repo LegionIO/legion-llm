@@ -107,6 +107,27 @@ RSpec.describe Legion::LLM::Inference::Executor do
       expect(source_map['legion_read_file'][:type]).to eq(:registry)
       expect(source_map['legion_read_file'][:extension]).to eq('lex-node')
     end
+
+    it 'applies the local tool limit only to registry-added tools' do
+      stub_const('Legion::Settings::Extensions', extensions_mod)
+      Legion::Settings[:llm][:tool_trigger][:local_tool_limit] = 1
+      client_tools = [
+        Legion::LLM::Types::ToolDefinition.build(name: 'client_one', description: 'Client one'),
+        Legion::LLM::Types::ToolDefinition.build(name: 'client_two', description: 'Client two')
+      ]
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        tools:    client_tools,
+        routing:  { provider: :vllm, model: 'qwen3.6-27b' }
+      )
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :vllm)
+
+      names = executor.send(:native_tool_definitions).map(&:name)
+
+      expect(names).to include('client_one', 'client_two', 'legion_read_file')
+      expect(names).not_to include('legion_write_file')
+    end
   end
 
   describe '#add_registry_tool_definitions when Settings::Extensions has no tools' do

@@ -29,7 +29,7 @@ module Legion
                                                            .count { |m| (m[:role] || m['role']).to_s == 'user' }
 
             # MUST be second — captures trigger_match results before sticky re-injection
-            @freshly_triggered_keys = @triggered_tools.map { |t| "#{t.extension}_#{t.runner}" }.uniq
+            @freshly_triggered_keys = @triggered_tools.map { |t| triggered_tool_runner_key(t) }.uniq
 
             state          = Inference::Conversation.read_sticky_state(conv_id)
             runners        = state[:sticky_runners] || {}
@@ -68,6 +68,16 @@ module Legion
           rescue StandardError => e
             @warnings << "sticky_runners error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.step_sticky_runners')
+          end
+
+          private
+
+          def triggered_tool_runner_key(tool)
+            if tool.is_a?(Hash)
+              "#{tool[:extension]}_#{tool[:runner]}"
+            else
+              "#{tool.extension}_#{tool.runner}"
+            end
           end
         end
       end

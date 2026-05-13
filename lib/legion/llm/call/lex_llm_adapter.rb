@@ -36,7 +36,7 @@ module Legion
 
         def stream(model:, messages:, **opts, &block)
           chunks = []
-          provider.stream_chat(
+          response = provider.stream_chat(
             messages:    normalize_messages(messages, system: opts[:system]),
             tools:       normalize_tools(opts[:tools]),
             temperature: opts[:temperature],
@@ -51,7 +51,11 @@ module Legion
             block&.call(chunk)
           end
 
-          chunk_response(chunks, offering_metadata: opts[:offering_metadata])
+          if response
+            message_response(response, offering_metadata: opts[:offering_metadata])
+          else
+            chunk_response(chunks, offering_metadata: opts[:offering_metadata])
+          end
         end
 
         def embed(model:, text:, dimensions: nil, **opts)
@@ -158,8 +162,8 @@ module Legion
             message_hash = normalize_hash(message)
             message_class.new(
               role:         message_hash[:role] || :user,
-              content:      message_hash[:content].to_s,
-              tool_calls:   message_hash[:tool_calls],
+              content:      normalize_message_content(message_hash[:content]),
+              tool_calls:   normalize_message_tool_calls(message_hash[:tool_calls]),
               tool_call_id: message_hash[:tool_call_id]
             )
           end
@@ -220,6 +224,47 @@ module Legion
           return value.transform_keys(&:to_sym) if value.respond_to?(:transform_keys)
 
           { role: :user, content: value }
+        end
+
+        def normalize_message_content(content)
+          return content if content.nil? || content.is_a?(String)
+          return content if content.respond_to?(:attachments)
+
+          if content.is_a?(Array)
+            text_parts = content.filter_map { |part| text_part_content(part) }
+            return text_parts.join("\n\n") unless text_parts.empty?
+          end
+
+          text_part_content(content) || content.to_s
+        end
+
+        def text_part_content(part)
+          return unless part.respond_to?(:transform_keys)
+
+          normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+          return unless normalized[:type].to_s == 'text'
+
+          normalized[:text].to_s
+        end
+
+        def normalize_message_tool_calls(tool_calls)
+          return tool_calls unless tool_calls.is_a?(Array)
+
+          tool_calls.filter_map do |tool_call|
+            normalized = normalize_hash(tool_call)
+            name = normalized[:name]
+            next if name.to_s.empty?
+
+            arguments = normalized[:arguments] || {}
+            [
+              name.to_sym,
+              lex_llm_namespace::ToolCall.new(
+                id:        normalized[:id],
+                name:      name.to_s,
+                arguments: arguments
+              )
+            ]
+          end.to_h
         end
 
         def message_response(response, offering_metadata: nil)

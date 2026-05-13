@@ -27,24 +27,23 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
 
   before do
     Legion::Settings[:llm][:tool_trigger] = { scan_depth: 10, tool_limit: 50 }
-    # Remove TriggerIndex constant between examples to avoid bleed-through
-    hide_const('Legion::Tools::TriggerIndex') if defined?(Legion::Tools::TriggerIndex)
+    hide_const('Legion::Settings::Extensions') if defined?(Legion::Settings::Extensions)
   end
 
   describe '#step_trigger_match' do
-    context 'when TriggerIndex is not defined' do
+    context 'when Settings::Extensions is not defined' do
       it 'returns without doing anything' do
-        expect(step.step_trigger_match).to be_nil
+        step.step_trigger_match
         expect(step.triggered_tools).to be_empty
         expect(step.enrichments).to be_empty
       end
     end
 
-    context 'when TriggerIndex is defined but empty' do
+    context 'when Settings::Extensions has no tools' do
       before do
-        stub_const('Legion::Tools::TriggerIndex', Module.new do
-          def self.empty? = true
-          def self.match(_words) = [Set.new, {}]
+        stub_const('Legion::Settings::Extensions', Module.new do
+          def self.tools = []
+          def self.filter_tools(**) = []
         end)
       end
 
@@ -54,35 +53,23 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
       end
     end
 
-    context 'when TriggerIndex has matches' do
-      let(:tool_a) do
-        Class.new do
-          def self.tool_name = 'github_list_prs'
-        end
-      end
-      let(:tool_b) do
-        Class.new do
-          def self.tool_name = 'github_create_pr'
-        end
-      end
+    context 'when Settings::Extensions has matches' do
+      let(:tool_a) { { name: 'github_list_prs', extension: 'lex-github', runner: 'pull_requests', function: 'list' } }
+      let(:tool_b) { { name: 'github_create_pr', extension: 'lex-github', runner: 'pull_requests', function: 'create' } }
 
       before do
         ta = tool_a
         tb = tool_b
-        stub_const('Legion::Tools::TriggerIndex', Module.new do
-          define_singleton_method(:empty?) { false }
-          define_singleton_method(:match) do |_words|
-            matched = Set.new([ta, tb])
-            per_word = { 'github' => Set.new([ta, tb]), 'pull' => Set.new([ta]) }
-            [matched, per_word]
-          end
+        stub_const('Legion::Settings::Extensions', Module.new do
+          define_singleton_method(:tools) { [ta, tb] }
+          define_singleton_method(:filter_tools) { |**| [] }
         end)
       end
 
       it 'populates triggered_tools' do
         step.step_trigger_match
         expect(step.triggered_tools).not_to be_empty
-        expect(step.triggered_tools.map(&:tool_name)).to include('github_list_prs', 'github_create_pr')
+        expect(step.triggered_tools.map { |tool| tool[:name] }).to include('github_list_prs', 'github_create_pr')
       end
 
       it 'records enrichment entry' do
@@ -103,22 +90,16 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
     context 'when matches exceed tool_limit' do
       let(:tools) do
         (1..15).map do |i|
-          Class.new do
-            define_singleton_method(:tool_name) { "tool_#{i.to_s.rjust(2, '0')}" }
-          end
+          { name: "tool_#{i.to_s.rjust(2, '0')}", trigger_words: %w[github pull requests] }
         end
       end
 
       before do
         ts = tools
         Legion::Settings[:llm][:tool_trigger] = { scan_depth: 2, tool_limit: 5 }
-        stub_const('Legion::Tools::TriggerIndex', Module.new do
-          define_singleton_method(:empty?) { false }
-          define_singleton_method(:match) do |_words|
-            matched = Set.new(ts)
-            per_word = { 'query' => Set.new(ts.first(10)), 'search' => Set.new(ts.last(8)) }
-            [matched, per_word]
-          end
+        stub_const('Legion::Settings::Extensions', Module.new do
+          define_singleton_method(:tools) { ts }
+          define_singleton_method(:filter_tools) { |**| [] }
         end)
       end
 
@@ -129,29 +110,16 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
     end
 
     context 'when always_loaded tools overlap' do
-      let(:tool_always) do
-        Class.new do
-          def self.tool_name = 'always_tool'
-        end
-      end
-      let(:tool_deferred) do
-        Class.new do
-          def self.tool_name = 'deferred_tool'
-        end
-      end
+      let(:tool_always) { { name: 'always_tool', trigger_words: %w[github] } }
+      let(:tool_deferred) { { name: 'deferred_tool', trigger_words: %w[github] } }
 
       before do
         ta = tool_always
         td = tool_deferred
-        stub_const('Legion::Tools::TriggerIndex', Module.new do
-          define_singleton_method(:empty?) { false }
-          define_singleton_method(:match) do |_words|
-            matched = Set.new([ta, td])
-            per_word = { 'query' => Set.new([ta, td]) }
-            [matched, per_word]
-          end
-        end)
         extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [ta, td]
+          end
           define_singleton_method(:filter_tools) do |**criteria|
             if criteria[:deferred] == false
               [{ name: 'always_tool' }]
@@ -165,8 +133,8 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
 
       it 'excludes always-loaded tools from triggered_tools' do
         step.step_trigger_match
-        expect(step.triggered_tools.map(&:tool_name)).not_to include('always_tool')
-        expect(step.triggered_tools.map(&:tool_name)).to include('deferred_tool')
+        expect(step.triggered_tools.map { |tool| tool[:name] }).not_to include('always_tool')
+        expect(step.triggered_tools.map { |tool| tool[:name] }).to include('deferred_tool')
       end
     end
 
@@ -174,9 +142,9 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
       let(:messages) { [{ role: :user, content: '' }] }
 
       before do
-        stub_const('Legion::Tools::TriggerIndex', Module.new do
-          def self.empty? = false
-          def self.match(_words) = [Set.new, {}]
+        stub_const('Legion::Settings::Extensions', Module.new do
+          def self.tools = [{ name: 'github_list_prs', trigger_words: %w[github] }]
+          def self.filter_tools(**) = []
         end)
       end
 

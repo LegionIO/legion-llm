@@ -3,6 +3,34 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Tools::Dispatcher do
+  describe '.dispatch' do
+    it 'symbolizes extension tool arguments before invoking runner keywords' do
+      runner = Module.new do
+        define_singleton_method(:deploy) { |chat_id:| { chat_id: chat_id } }
+      end
+      stub_const('Legion::Extensions', Module.new) unless defined?(Legion::Extensions)
+      stub_const('Legion::Extensions::Deploy', Module.new)
+      stub_const('Legion::Extensions::Deploy::Runners', Module.new)
+      stub_const('Legion::Extensions::Deploy::Runners::Release', runner)
+
+      result = described_class.dispatch(
+        tool_call: {
+          name:      'legion_deploy',
+          arguments: { 'chat_id' => 'chat-123' }
+        },
+        source:    {
+          type:     :extension,
+          lex:      'lex-deploy',
+          runner:   'Release',
+          function: 'deploy'
+        }
+      )
+
+      expect(result[:status]).to eq(:success)
+      expect(result[:result]).to eq(chat_id: 'chat-123')
+    end
+  end
+
   describe '.check_registry_override' do
     context 'when Legion::Settings::Extensions is defined with find_tool' do
       let(:extensions_mod) do
