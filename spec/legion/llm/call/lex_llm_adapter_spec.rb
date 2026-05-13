@@ -206,6 +206,49 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result[:stop_reason]).to eq(:tool_use)
   end
 
+  it 'builds fallback streamed responses from accumulated chunk state' do
+    provider_class.define_method(:complete) do |_messages, model:, **, &block|
+      block.call(llm_namespace::Chunk.new(role: :assistant, content: 'run ', model_id: model.id,
+                                          input_tokens: 7, output_tokens: 1))
+      block.call(
+        llm_namespace::Chunk.new(
+          role:          :assistant,
+          content:       'tool',
+          model_id:      model.id,
+          tool_calls:    {
+            legion_tool: llm_namespace::ToolCall.new(
+              id:        'call-1',
+              name:      'legion_tool',
+              arguments: { 'chat_id' => 'chat-123' }
+            )
+          },
+          input_tokens:  7,
+          output_tokens: 3
+        )
+      )
+      nil
+    end
+
+    result = adapter.stream(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
+
+    expect(result[:result]).to eq('run tool')
+    expect(result[:model]).to eq('model-a')
+    expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
+    expect(result[:tool_calls].fetch(:legion_tool).arguments).to eq('chat_id' => 'chat-123')
+    expect(result[:stop_reason]).to eq(:tool_use)
+  end
+
+  it 'does not retain stream chunk objects in fallback state' do
+    chunk = lex_llm_test_namespace::Chunk.new(role: :assistant, content: 'hello', model_id: 'model-a',
+                                              input_tokens: 7, output_tokens: 3)
+    accumulator = adapter.send(:build_stream_accumulator)
+
+    adapter.send(:accumulate_stream_chunk, accumulator, chunk)
+
+    expect(accumulator).not_to have_key(:chunks)
+    expect(accumulator.values).not_to include(chunk)
+  end
+
   it 'accumulates plain string streaming thinking chunks' do
     chunk_class = Struct.new(:content, :model_id, :input_tokens, :output_tokens,
                              :cached_tokens, :cache_creation_tokens, :thinking,

@@ -6,6 +6,8 @@
 - Preserve accumulated streamed native tool-call arguments from lex-llm provider responses instead of rebuilding final responses from partial stream chunks.
 - Symbolize extension tool arguments before invoking runner keyword methods so JSON string keys such as `chat_id` satisfy Ruby keyword parameters.
 - Match tool triggers from `Legion::Settings::Extensions` registry entries and keep registry tools injectable alongside client tools with better diagnostics.
+- Skip trigger matching cleanly when `Legion::Settings::Extensions` is not loaded instead of warning through a rescued `NameError`.
+- Accumulate only stream fallback state in the lex-llm adapter instead of retaining every streamed chunk when providers return final messages.
 - Apply explicit vLLM tool-name forcing only on the first native tool-loop round, allowing follow-up automatic tool calls after the requested tool returns.
 
 ## [0.9.19] - 2026-05-11

@@ -13,7 +13,8 @@ module Legion
 
           def step_trigger_match
             start_time = nil
-            unless Legion::Settings::Extensions.respond_to?(:tools)
+            extensions = settings_extensions
+            unless extensions.respond_to?(:tools)
               log_step_debug(:trigger_match, :skipped, reason: :settings_extensions_unavailable)
               log_trigger_match(:skipped, reason: :settings_extensions_unavailable)
               return
@@ -29,9 +30,9 @@ module Legion
             end
             log_step_debug(:trigger_match, :scanning, word_count: word_set.size)
 
-            matched, per_word = settings_extension_tool_matches(word_set)
+            matched, per_word = settings_extension_tool_matches(word_set, extensions)
             pre_filter_count = matched.size
-            subtract_always_loaded(matched)
+            subtract_always_loaded(matched, extensions)
             if matched.empty?
               log_step_debug(:trigger_match, :no_matches)
               log_trigger_match(:no_matches, word_count: word_set.size, pre_filter_count: pre_filter_count)
@@ -85,11 +86,18 @@ module Legion
             text.downcase.gsub(/[^a-z ]/, ' ').split.to_set
           end
 
-          def settings_extension_tool_matches(word_set)
+          def settings_extensions
+            return unless defined?(Legion::Settings::Extensions)
+
+            Legion::Settings::Extensions
+          end
+
+          def settings_extension_tool_matches(word_set, extensions = settings_extensions)
             matched = Set.new
             per_word = Hash.new { |hash, word| hash[word] = Set.new }
+            return [matched, per_word] unless extensions.respond_to?(:tools)
 
-            Array(Legion::Settings::Extensions.tools).each do |entry|
+            Array(extensions.tools).each do |entry|
               next unless entry.is_a?(Hash)
 
               tool_words = trigger_words_for_entry(entry)
@@ -126,13 +134,13 @@ module Legion
                    .first(limit)
           end
 
-          def subtract_always_loaded(matched)
-            unless Legion::Settings::Extensions.respond_to?(:filter_tools)
+          def subtract_always_loaded(matched, extensions = settings_extensions)
+            unless extensions.respond_to?(:filter_tools)
               log_step_debug(:trigger_match, :always_loaded_filter_skipped, reason: :settings_extensions_unavailable)
               return
             end
 
-            always = Legion::Settings::Extensions.filter_tools(deferred: false).map { |t| t[:name] }
+            always = extensions.filter_tools(deferred: false).map { |t| t[:name] }
             matched.reject! { |tool| always.include?(trigger_tool_name(tool)) }
             log_step_debug(:trigger_match, :always_loaded_filtered, always_loaded_count: always.size, remaining_count: matched.size)
           end

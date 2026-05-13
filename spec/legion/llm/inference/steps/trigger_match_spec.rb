@@ -36,6 +36,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
         step.step_trigger_match
         expect(step.triggered_tools).to be_empty
         expect(step.enrichments).to be_empty
+        expect(step.warnings).to be_empty
       end
     end
 
