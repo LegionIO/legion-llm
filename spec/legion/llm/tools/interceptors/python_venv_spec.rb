@@ -35,6 +35,8 @@ RSpec.describe Legion::LLM::Tools::Interceptors::PythonVenv do
     context 'when venv is available' do
       before do
         allow(described_class).to receive(:venv_available?).and_return(true)
+        allow(described_class).to receive(:python_path).and_return("#{venv_dir}/bin/python3")
+        allow(described_class).to receive(:pip_path).and_return("#{venv_dir}/bin/pip3")
       end
 
       it 'rewrites python3 to venv path' do
@@ -99,6 +101,7 @@ RSpec.describe Legion::LLM::Tools::Interceptors::PythonVenv do
 
     it 'intercepts python tool calls end-to-end' do
       allow(described_class).to receive(:venv_available?).and_return(true)
+      allow(described_class).to receive(:python_path).and_return("#{venv_dir}/bin/python3")
       described_class.register!
 
       result = Legion::LLM::Tools::Interceptor.intercept('python', command: 'python3 hello.py')

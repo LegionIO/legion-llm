@@ -43,6 +43,11 @@ module Legion
 
               tools = raw_tools || []
               validate_tools!(tools) unless tools.empty?
+              raw_tool_count = raw_tools.is_a?(Array) ? raw_tools.size : 0
+              log.debug(
+                "[llm][api][tools] action=request_tools_received request_id=#{request_id} " \
+                "has_tools=#{body.key?(:tools)} raw_tools_class=#{raw_tools&.class} raw_tools_count=#{raw_tool_count}"
+              )
 
               caller_identity = identity_canonical_name(env)
               last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last

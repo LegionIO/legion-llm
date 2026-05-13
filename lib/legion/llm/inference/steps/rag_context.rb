@@ -318,6 +318,8 @@ module Legion
           end
 
           def positive_integer(value)
+            return nil if value.nil?
+
             integer = Integer(value)
             integer.positive? ? integer : nil
           rescue ArgumentError, TypeError => e

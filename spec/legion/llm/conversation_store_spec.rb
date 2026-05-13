@@ -30,6 +30,15 @@ RSpec.describe Legion::LLM::Inference::Conversation do
       expect(msg[:provider]).to eq(:anthropic)
       expect(msg[:input_tokens]).to eq(10)
     end
+
+    it 'does not write messages through Legion::Data' do
+      stub_const('Legion::Data', Class.new)
+      allow(Legion::Data).to receive(:connection)
+
+      described_class.append('conv_1', role: :user, content: 'hello')
+
+      expect(Legion::Data).not_to have_received(:connection)
+    end
   end
 
   describe '.messages' do
@@ -73,15 +82,11 @@ RSpec.describe Legion::LLM::Inference::Conversation do
       expect(result[:deferred_tool_calls]).to eq(3)
     end
 
-    it 'loads sticky_state from persistent storage when the conversation is not in memory' do
-      allow(described_class).to receive(:db_available?).and_return(true)
-      allow(described_class).to receive(:db_load_sticky_state)
-        .with('evicted-conv')
-        .and_return({ deferred_tool_calls: 4 })
-
+    it 'returns frozen empty hash when conversation is not in memory' do
       result = described_class.read_sticky_state('evicted-conv')
 
-      expect(result[:deferred_tool_calls]).to eq(4)
+      expect(result).to eq({})
+      expect(result).to be_frozen
     end
   end
 
@@ -93,12 +98,13 @@ RSpec.describe Legion::LLM::Inference::Conversation do
 
     it 'persists state to an in-memory conversation' do
       described_class.append('conv-sticky-3', role: :user, content: 'hi')
-      allow(described_class).to receive(:db_available?).and_return(true)
-      allow(described_class).to receive(:db_persist_sticky_state)
+      stub_const('Legion::Data', Class.new)
+      allow(Legion::Data).to receive(:connection)
+
       described_class.write_sticky_state('conv-sticky-3', { deferred_tool_calls: 7 })
+
       expect(described_class.read_sticky_state('conv-sticky-3')[:deferred_tool_calls]).to eq(7)
-      expect(described_class).to have_received(:db_persist_sticky_state)
-        .with('conv-sticky-3', { deferred_tool_calls: 7 })
+      expect(Legion::Data).not_to have_received(:connection)
     end
 
     it 'replaces the entire sticky_state slot (not a merge)' do

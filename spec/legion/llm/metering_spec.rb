@@ -34,24 +34,19 @@ RSpec.describe Legion::LLM::Metering do
       expect(described_class.emit(event)).to eq(:published)
     end
 
-    it 'returns :spooled when spool available and transport down' do
+    it 'drops when transport is unavailable even if a data spool exists' do
       stub_const('Legion::Data::Spool', Class.new)
-      spool = double('spool')
-      allow(Legion::Data::Spool).to receive(:for).and_return(spool)
-      allow(spool).to receive(:count).and_return(0)
-      allow(spool).to receive(:write)
+      allow(Legion::Data::Spool).to receive(:for)
 
-      expect(described_class.emit(event)).to eq(:spooled)
+      expect(described_class.emit(event)).to eq(:dropped)
+      expect(Legion::Data::Spool).not_to have_received(:for)
     end
 
-    it 'drops new metering events when the spool cap is reached' do
+    it 'does not write metering events to a data spool' do
       stub_const('Legion::Data::Spool', Class.new)
-      spool = double('spool')
+      spool = double('spool', count: 0)
       allow(Legion::Data::Spool).to receive(:for).and_return(spool)
-      allow(spool).to receive(:count).with(:metering).and_return(1)
-      allow(Legion::LLM::Settings).to receive(:value)
-        .with(:metering, :spool, :max_events, default: described_class::DEFAULT_SPOOL_MAX)
-        .and_return(1)
+      allow(spool).to receive(:write)
 
       expect(spool).not_to receive(:write)
       expect(described_class.emit(event)).to eq(:dropped)

@@ -31,6 +31,7 @@ module Legion
           scheduling:                scheduling_defaults,
           rag:                       rag_defaults,
           rag_guard:                 rag_guard_defaults,
+          gaia:                      gaia_defaults,
           embedding:                 embedding_defaults,
           conversation:              conversation_defaults,
           telemetry:                 telemetry_defaults,
@@ -392,6 +393,12 @@ module Legion
         }
       end
 
+      def self.gaia_defaults
+        {
+          advisory_enabled: true
+        }
+      end
+
       def self.embedding_defaults
         {
           dimension:                    1024,
@@ -476,7 +483,7 @@ module Legion
         {
           scan_depth:       10,
           tool_limit:       25,
-          local_tool_limit: 10
+          local_tool_limit: 100
         }
       end
 

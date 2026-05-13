@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
+require 'legion/llm/tools/special'
+
 module Legion
   module LLM
     module Tools
       module Interceptors
         module PythonVenv
           VENV_DIR = (ENV['LEGION_PYTHON_VENV'] || File.expand_path('~/.legionio/python')).freeze
-          PYTHON   = "#{VENV_DIR}/bin/python3".freeze
-          PIP      = "#{VENV_DIR}/bin/pip3".freeze
 
           TOOL_PATTERN = /\A(python3?|pip3?)\z/i
 
@@ -24,7 +24,7 @@ module Legion
           end
 
           def venv_available?
-            File.exist?("#{VENV_DIR}/pyvenv.cfg")
+            Special.python_available? || File.exist?("#{VENV_DIR}/pyvenv.cfg")
           end
 
           def rewrite(**args)
@@ -38,8 +38,16 @@ module Legion
 
           def rewrite_command(command)
             command
-              .sub(/\Apython3(\s|\z)/, "#{PYTHON}\\1")
-              .sub(/\Apip3(\s|\z)/,    "#{PIP}\\1")
+              .sub(/\Apython3?(\s|\z)/, "#{python_path}\\1")
+              .sub(/\Apip3?(\s|\z)/,    "#{pip_path}\\1")
+          end
+
+          def python_path
+            Special.python_path || "#{VENV_DIR}/bin/python3"
+          end
+
+          def pip_path
+            Special.pip_path || "#{VENV_DIR}/bin/pip3"
           end
         end
       end

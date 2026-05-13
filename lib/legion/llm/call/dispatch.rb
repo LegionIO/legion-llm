@@ -250,6 +250,14 @@ module Legion
           ext = Registry.for(provider, instance: instance)
           return ext if ext
 
+          if instance && instance.to_s != 'default'
+            ext = Registry.for(provider, instance: :default)
+            if ext
+              log.warn("[llm][native] instance_fallback provider=#{provider} requested=#{instance} using=default")
+              return ext
+            end
+          end
+
           instance_suffix = instance ? "/#{instance}" : ''
           log.error("[llm][native] provider_not_registered provider=#{provider}#{instance_suffix}")
           raise Legion::LLM::ProviderError,
@@ -296,7 +304,6 @@ module Legion
 
           tool_calls = normalize_tool_calls(raw[:tool_calls] || raw['tool_calls'] || raw[:tools] || raw['tools'] || result)
           stop_reason = raw[:stop_reason] || raw['stop_reason'] || (tool_calls.any? ? :tool_use : nil)
-
           {
             result:      result,
             model:       raw[:model] || raw['model'],

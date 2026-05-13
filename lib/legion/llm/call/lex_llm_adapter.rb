@@ -35,8 +35,8 @@ module Legion
         end
 
         def stream(model:, messages:, **opts, &block)
-          chunks = []
-          provider.stream_chat(
+          accumulator = build_stream_accumulator
+          response = provider.stream_chat(
             messages:    normalize_messages(messages, system: opts[:system]),
             tools:       normalize_tools(opts[:tools]),
             temperature: opts[:temperature],
@@ -47,11 +47,15 @@ module Legion
             tool_prefs:  opts[:tool_prefs],
             model:       model_info(model, offering_metadata: opts[:offering_metadata])
           ) do |chunk|
-            chunks << chunk
+            accumulate_stream_chunk(accumulator, chunk)
             block&.call(chunk)
           end
 
-          chunk_response(chunks, offering_metadata: opts[:offering_metadata])
+          if response
+            message_response(response, offering_metadata: opts[:offering_metadata])
+          else
+            chunk_response(accumulator, offering_metadata: opts[:offering_metadata])
+          end
         end
 
         def embed(model:, text:, dimensions: nil, **opts)
@@ -158,8 +162,8 @@ module Legion
             message_hash = normalize_hash(message)
             message_class.new(
               role:         message_hash[:role] || :user,
-              content:      message_hash[:content].to_s,
-              tool_calls:   message_hash[:tool_calls],
+              content:      normalize_message_content(message_hash[:content]),
+              tool_calls:   normalize_message_tool_calls(message_hash[:tool_calls]),
               tool_call_id: message_hash[:tool_call_id]
             )
           end
@@ -222,6 +226,47 @@ module Legion
           { role: :user, content: value }
         end
 
+        def normalize_message_content(content)
+          return content if content.nil? || content.is_a?(String)
+          return content if content.respond_to?(:attachments)
+
+          if content.is_a?(Array)
+            text_parts = content.filter_map { |part| text_part_content(part) }
+            return text_parts.join("\n\n") unless text_parts.empty?
+          end
+
+          text_part_content(content) || content.to_s
+        end
+
+        def text_part_content(part)
+          return unless part.respond_to?(:transform_keys)
+
+          normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+          return unless normalized[:type].to_s == 'text'
+
+          normalized[:text].to_s
+        end
+
+        def normalize_message_tool_calls(tool_calls)
+          return tool_calls unless tool_calls.is_a?(Array)
+
+          tool_calls.filter_map do |tool_call|
+            normalized = normalize_hash(tool_call)
+            name = normalized[:name]
+            next if name.to_s.empty?
+
+            arguments = normalized[:arguments] || {}
+            [
+              name.to_sym,
+              lex_llm_namespace::ToolCall.new(
+                id:        normalized[:id],
+                name:      name.to_s,
+                arguments: arguments
+              )
+            ]
+          end.to_h
+        end
+
         def message_response(response, offering_metadata: nil)
           {
             result:      response.content,
@@ -234,19 +279,52 @@ module Legion
           }.compact
         end
 
-        def chunk_response(chunks, offering_metadata: nil)
-          last = chunks.reverse.find { |chunk| chunk.respond_to?(:input_tokens) }
-          tool_calls = chunks.filter_map { |chunk| chunk.tool_calls if chunk.respond_to?(:tool_calls) }.reduce({}) do |memo, calls|
-            memo.merge(calls || {})
-          end
+        def build_stream_accumulator
           {
-            result:      chunks.filter_map(&:content).join,
-            model:       last&.model_id,
+            content:            +'',
+            model:              nil,
+            usage:              {},
+            raw:                nil,
+            tool_calls:         {},
+            thinking_text:      +'',
+            thinking_signature: nil
+          }
+        end
+
+        def accumulate_stream_chunk(accumulator, chunk)
+          accumulator[:content] << chunk.content.to_s if chunk.respond_to?(:content) && !chunk.content.nil?
+          accumulate_stream_usage(accumulator, chunk)
+          accumulator[:tool_calls].merge!(chunk.tool_calls || {}) if chunk.respond_to?(:tool_calls)
+          accumulate_stream_thinking(accumulator, chunk)
+        end
+
+        def accumulate_stream_usage(accumulator, chunk)
+          return unless chunk.respond_to?(:input_tokens)
+
+          accumulator[:model] = chunk.model_id if chunk.respond_to?(:model_id)
+          accumulator[:usage] = usage_hash(chunk)
+          accumulator[:raw] = chunk.raw if chunk.respond_to?(:raw)
+        end
+
+        def accumulate_stream_thinking(accumulator, chunk)
+          return unless chunk.respond_to?(:thinking)
+
+          thinking = normalize_thinking_value(chunk.thinking)
+          content = thinking[:content]
+          accumulator[:thinking_text] << content.to_s unless content.nil?
+          accumulator[:thinking_signature] ||= thinking[:signature]
+        end
+
+        def chunk_response(accumulator, offering_metadata: nil)
+          tool_calls = accumulator[:tool_calls]
+          {
+            result:      accumulator[:content],
+            model:       accumulator[:model],
             tool_calls:  tool_calls.empty? ? nil : tool_calls,
             stop_reason: tool_calls.empty? ? nil : :tool_use,
-            thinking:    stream_thinking_hash(chunks),
-            usage:       last ? usage_hash(last) : {},
-            metadata:    response_metadata(last, offering_metadata: offering_metadata)
+            thinking:    stream_thinking_hash(accumulator),
+            usage:       accumulator[:usage],
+            metadata:    response_metadata(accumulator[:raw], offering_metadata: offering_metadata)
           }.compact
         end
 
@@ -284,15 +362,11 @@ module Legion
           }
         end
 
-        def stream_thinking_hash(chunks)
-          thinking_parts = chunks.filter_map do |chunk|
-            normalize_thinking_value(chunk.thinking) if chunk.respond_to?(:thinking)
-          end
-          thinking_text = thinking_parts.filter_map { |part| part[:content] }.join
-          signature = thinking_parts.find { |part| part[:signature] }&.dig(:signature)
+        def stream_thinking_hash(accumulator)
+          thinking_text = accumulator[:thinking_text]
           return nil if thinking_text.empty?
 
-          { content: thinking_text, signature: signature, enabled: true }.compact
+          { content: thinking_text, signature: accumulator[:thinking_signature], enabled: true }.compact
         end
 
         def thinking_hash(response)
@@ -325,7 +399,8 @@ module Legion
 
         def response_metadata(response = nil, offering_metadata: nil)
           metadata = normalize_offering_metadata(offering_metadata)
-          raw = response.respond_to?(:raw) ? response.raw : nil
+          raw = response.is_a?(Hash) ? response : nil
+          raw ||= response.raw if response.respond_to?(:raw)
           metadata[:raw_model] = raw['model'] if raw.is_a?(Hash) && raw['model']
           metadata.empty? ? {} : { offering: metadata }
         end

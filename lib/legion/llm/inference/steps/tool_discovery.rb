@@ -73,7 +73,8 @@ module Legion
 
             log.info(
               "[llm][tools] discover request_id=#{@request.id} " \
-              "settings_extensions_tools=#{entries.size}"
+              "settings_extensions_always=#{entries.size} " \
+              "settings_extensions_total=#{Array(Legion::Settings::Extensions.tools).size}"
             )
           end
 

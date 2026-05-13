@@ -328,6 +328,35 @@ RSpec.describe 'Legion::LLM::Embeddings' do
       expect(result[:model]).to eq('custom-model')
       expect(result[:provider]).to eq(:bedrock)
     end
+
+    it 'chunks oversized Ollama embedding input before provider dispatch' do
+      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+      Legion::Settings[:llm][:embedding][:ollama_context_chars]['mxbai-embed-large'] = 10
+
+      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
+        hash_including(
+          provider: :ollama,
+          model:    'mxbai-embed-large',
+          text:     [('a' * 10), ('a' * 10), ('a' * 10)]
+        )
+      ).and_return(
+        native_embed_response(
+          vectors:      [
+            Array.new(1024, 1.0),
+            Array.new(1024, 3.0),
+            Array.new(1024, 5.0)
+          ],
+          input_tokens: 30
+        )
+      )
+
+      result = Legion::LLM::Embeddings.generate(text: 'a' * 30)
+
+      expect(result[:vector].first).to eq(3.0)
+      expect(result[:chunks]).to eq(3)
+      expect(result[:tokens]).to eq(30)
+    end
   end
 
   describe '.generate dimension enforcement' do
@@ -595,6 +624,33 @@ RSpec.describe Legion::LLM::Embeddings do
       expect(results.size).to eq(2)
       expect(results.first[:vector].size).to eq(1024)
       expect(results.last[:index]).to eq(1)
+    end
+
+    it 'chunks oversized batch entries without sending oversized array inputs to the provider' do
+      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
+      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+      Legion::Settings[:llm][:embedding][:ollama_context_chars]['mxbai-embed-large'] = 10
+
+      dispatched_texts = []
+      allow(Legion::LLM::Call::Dispatch).to receive(:call) do |args|
+        dispatched_texts << args[:text]
+        if args[:text].is_a?(Array)
+          native_embed_response(
+            vectors:      args[:text].each_index.map { |index| Array.new(1024, index + 1.0) },
+            input_tokens: 30
+          )
+        else
+          native_embed_response(vectors: [Array.new(1024, 0.5)], input_tokens: 1)
+        end
+      end
+
+      results = described_class.generate_batch(texts: ['short', 'b' * 30])
+
+      expect(dispatched_texts).to eq(['short', [('b' * 10), ('b' * 10), ('b' * 10)]])
+      expect(results.size).to eq(2)
+      expect(results.first[:index]).to eq(0)
+      expect(results.last[:index]).to eq(1)
+      expect(results.last[:chunks]).to eq(3)
     end
 
     it 'handles batch errors gracefully' do

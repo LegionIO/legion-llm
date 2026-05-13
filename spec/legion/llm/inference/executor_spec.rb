@@ -306,8 +306,9 @@ confidence: 0.9 }],
         executor.instance_variable_set(:@resolved_provider, :vllm)
         executor.instance_variable_set(:@triggered_tools, triggered_entries)
         names = executor.send(:native_tool_definitions).map(&:name)
+        registry_names = names - Legion::LLM::Tools::Special.pinned_definitions.map(&:name)
 
-        expect(names).to eq(%w[legion_triggered_0 legion_triggered_1])
+        expect(registry_names).to eq(%w[legion_triggered_0 legion_triggered_1])
       end
 
       it 'prioritizes GAIA hinted tools before triggered tools for local providers' do
@@ -342,7 +343,8 @@ confidence: 0.9 }],
         executor.enrichments['gaia:advisory'] = { data: { tool_hint: ['legion_hinted'] } }
 
         names = executor.send(:native_tool_definitions).map(&:name)
-        expect(names).to eq(['legion_hinted'])
+        registry_names = names - Legion::LLM::Tools::Special.pinned_definitions.map(&:name)
+        expect(registry_names).to eq(['legion_hinted'])
       end
     end
   end

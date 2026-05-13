@@ -1,5 +1,39 @@
 # Legion LLM Changelog
 
+## [0.9.22] - 2026-05-12
+
+### Added
+- Pin `legion_list_special_tools` before client and registry tools so models can inspect Legion special tools and the current `Legion::Settings::Extensions` inventory.
+- Surface special Ruby runtime execution with current process/PATH environment metadata, and add Legion-managed Python and pip tools when `legionio setup python` is available.
+
+### Changed
+- Route Python command interception through the same Legion Python runtime detection used by special tool injection.
+- Replace ad hoc `/api/llm/inference` tool-payload debug prints with structured debug logging.
+
+### Fixed
+- Chunk Ollama embedding requests according to configured model context limits and aggregate chunk vectors so large Apollo knowledge-capture documents do not exceed provider context windows.
+
+## [0.9.21] - 2026-05-12
+
+### Fixed
+- Route metering strictly through `legion-transport`, dropping events when transport is unavailable instead of writing metric events to `Legion::Data::Spool`.
+- Keep override confidence database access read-only by removing `Legion::Data::Local` upserts from `legion-llm`.
+- Stop conversation history and sticky state from writing directly to `Legion::Data` tables.
+
+## [0.9.20] - 2026-05-12
+
+### Added
+- Added `llm.gaia.advisory_enabled`, defaulting to `true`, so GAIA pre-request advisory shaping can be disabled without code changes.
+
+### Fixed
+- Preserve accumulated streamed native tool-call arguments from lex-llm provider responses instead of rebuilding final responses from partial stream chunks.
+- Symbolize extension tool arguments before invoking runner keyword methods so JSON string keys such as `chat_id` satisfy Ruby keyword parameters.
+- Match tool triggers from `Legion::Settings::Extensions` registry entries and keep registry tools injectable alongside client tools with better diagnostics.
+- Skip trigger matching cleanly when `Legion::Settings::Extensions` is not loaded instead of warning through a rescued `NameError`.
+- Accumulate only stream fallback state in the lex-llm adapter instead of retaining every streamed chunk when providers return final messages.
+- Apply explicit vLLM tool-name forcing only on the first native tool-loop round, allowing follow-up automatic tool calls after the requested tool returns.
+- Ignore absent GAIA advisory context-window limits when sizing RAG retrieval instead of routing nil through debug exception handling.
+
 ## [0.9.19] - 2026-05-11
 
 ### Added

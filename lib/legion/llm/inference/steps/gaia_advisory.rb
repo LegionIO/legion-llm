@@ -11,6 +11,10 @@ module Legion
           include Steps::Logging
 
           def step_gaia_advisory
+            if Legion::LLM::Settings.value(:gaia, :advisory_enabled, default: true) == false
+              log_step_debug(:gaia_advisory, :skipped, reason: :disabled_by_settings)
+              return
+            end
             unless defined?(::Legion::Gaia) && ::Legion::Gaia.started?
               log_step_debug(:gaia_advisory, :skipped, reason: :gaia_unavailable)
               @warnings << 'GAIA unavailable for pre-request shaping'
