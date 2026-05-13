@@ -24,6 +24,41 @@ RSpec.describe Legion::LLM::Inference::Executor do
   end
 
   describe '#native_tool_definitions' do
+    before do
+      allow(Legion::LLM::Tools::Special).to receive(:python_available?).and_return(false)
+      allow(Legion::LLM::Tools::Special).to receive(:ruby_path).and_return('/usr/bin/ruby')
+    end
+
+    it 'pins the Legion special tool inventory before all other tools' do
+      extensions_mod = Module.new do
+        define_singleton_method(:tools) do
+          [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
+        end
+        define_singleton_method(:filter_tools) do |**criteria|
+          criteria[:deferred] == false ? tools : []
+        end
+      end
+      stub_const('Legion::Settings::Extensions', extensions_mod)
+
+      executor = described_class.new(request_with_tools)
+      names = executor.send(:native_tool_definitions).map(&:name)
+
+      expect(names.first).to eq(Legion::LLM::Tools::Special::LIST_SPECIAL_TOOLS_NAME)
+      expect(names.index('ruby')).to be < names.index('my_tool')
+      expect(names.index('my_tool')).to be < names.index('registry_tool')
+    end
+
+    it 'injects python and pip defaults when Legion Python is available' do
+      allow(Legion::LLM::Tools::Special).to receive(:python_available?).and_return(true)
+      allow(Legion::LLM::Tools::Special).to receive(:python_path).and_return('/legion/python/bin/python3')
+      allow(Legion::LLM::Tools::Special).to receive(:pip_path).and_return('/legion/python/bin/pip')
+
+      executor = described_class.new(request_empty_tools)
+      names = executor.send(:native_tool_definitions).map(&:name)
+
+      expect(names).to include('python', 'pip')
+    end
+
     context 'when @request.tools is a non-empty array' do
       it 'includes request tools as native definitions' do
         executor = described_class.new(request_with_tools)

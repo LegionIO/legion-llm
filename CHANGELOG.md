@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.9.22] - 2026-05-12
+
+### Added
+- Pin `legion_list_special_tools` before client and registry tools so models can inspect Legion special tools and the current `Legion::Settings::Extensions` inventory.
+- Surface special Ruby runtime execution with current process/PATH environment metadata, and add Legion-managed Python and pip tools when `legionio setup python` is available.
+
+### Changed
+- Route Python command interception through the same Legion Python runtime detection used by special tool injection.
+- Replace ad hoc `/api/llm/inference` tool-payload debug prints with structured debug logging.
+
 ## [0.9.21] - 2026-05-12
 
 ### Fixed

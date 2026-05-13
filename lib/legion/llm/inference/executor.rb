@@ -4,6 +4,7 @@ require 'concurrent'
 require 'faraday'
 
 require_relative '../publisher_identity'
+require_relative '../tools/special'
 require_relative 'native_tool_loop'
 require_relative 'route_attempts'
 
@@ -684,6 +685,7 @@ module Legion
         def native_tool_definitions
           @native_tool_definitions ||= begin
             definitions = []
+            add_pinned_special_tool_definitions(definitions)
             Array(@request.tools).each { |tool| add_native_tool_definition(definitions, tool) }
             add_registry_tool_definitions(definitions) if registry_tool_injection_requested?
             log.debug "[llm][executor] action=native_tool_definitions.built count=#{definitions.size}"
@@ -694,6 +696,15 @@ module Legion
 
         def registry_tool_injection_requested?
           !(@request.respond_to?(:suppress_tools) && @request.suppress_tools)
+        end
+
+        def add_pinned_special_tool_definitions(definitions)
+          Tools::Special.pinned_definitions.each do |definition|
+            next if definitions.any? { |existing| existing.name == definition.name }
+
+            @native_tool_source_map[definition.name] = definition.source
+            definitions << definition
+          end
         end
 
         def add_native_tool_definition(definitions, tool)

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'tools/confidence'
+require_relative 'tools/special'
 require_relative 'tools/dispatcher'
 require_relative 'tools/interceptor'
 

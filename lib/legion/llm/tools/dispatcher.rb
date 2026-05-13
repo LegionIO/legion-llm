@@ -2,6 +2,7 @@
 
 require 'legion/logging/helper'
 require 'legion/llm/tools/interceptor'
+require 'legion/llm/tools/special'
 
 module Legion
   module LLM
@@ -32,6 +33,8 @@ module Legion
                      dispatch_registry(tool_call, source)
                    when :client
                      dispatch_client(tool_call, source)
+                   when :special
+                     dispatch_special(tool_call)
                    when :builtin
                      dispatch_builtin(tool_call, source)
                    else
@@ -128,6 +131,10 @@ module Legion
           helper = Object.new.extend(Legion::LLM::API::Native::ClientToolMethods)
           result = helper.send(:dispatch_client_tool, tool_call[:name].to_s, **symbolize_keys(tool_call[:arguments] || {}))
           { status: :success, result: result }
+        end
+
+        def dispatch_special(tool_call)
+          Special.dispatch(tool_call[:name], **symbolize_keys(tool_call[:arguments] || {}))
         end
 
         def dispatch_builtin(_tool_call, _source)
