@@ -21,17 +21,14 @@ RSpec.describe Legion::LLM::Tools::Confidence do
       expect(described_class.lookup('x')[:confidence]).to eq(1.0)
     end
 
-    it 'warns and schedules L2 retry when database sync fails' do
+    it 'does not write override confidence to Legion::Data::Local' do
       stub_const('Legion::Data::Local', Class.new)
-      allow(Legion::Data::Local).to receive(:upsert).and_raise(StandardError, 'db unavailable')
-      expect(described_class).to receive(:handle_exception).with(
-        instance_of(StandardError),
-        hash_including(level: :warn, operation: 'llm.tools.confidence.sync_l2')
-      )
+      allow(Legion::Data::Local).to receive(:upsert)
 
       described_class.record(tool: 'x', lex: 'lex-x:Y:z', confidence: 0.5)
 
-      expect(described_class.pending_l2_sync).to include('x')
+      expect(Legion::Data::Local).not_to have_received(:upsert)
+      expect(described_class.pending_l2_sync).to eq([])
     end
   end
 
@@ -94,6 +91,15 @@ RSpec.describe Legion::LLM::Tools::Confidence do
   describe '.lookup' do
     it 'returns nil for unknown tools' do
       expect(described_class.lookup('nonexistent')).to be_nil
+    end
+
+    it 'can read existing L2 override confidence when available' do
+      stub_const('Legion::Data::Local', Class.new)
+      allow(Legion::Data::Local).to receive(:query)
+        .with('SELECT * FROM override_confidence WHERE tool = ?', 'from-db')
+        .and_return([{ tool: 'from-db', lex: 'lex-db:Tool:run', confidence: 0.9 }])
+
+      expect(described_class.lookup('from-db')[:confidence]).to eq(0.9)
     end
   end
 

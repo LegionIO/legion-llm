@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.9.21] - 2026-05-12
+
+### Fixed
+- Route metering strictly through `legion-transport`, dropping events when transport is unavailable instead of writing metric events to `Legion::Data::Spool`.
+- Keep override confidence database access read-only by removing `Legion::Data::Local` upserts from `legion-llm`.
+- Stop conversation history and sticky state from writing directly to `Legion::Data` tables.
+
 ## [0.9.20] - 2026-05-12
 
 ### Added
