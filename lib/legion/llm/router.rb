@@ -163,7 +163,11 @@ module Legion
         end
 
         def explicit_resolution(tier, provider, model)
-          registry_entry = provider ? nil : registry_entry_for_tier(tier)
+          registry_entry = if provider
+                             registry_entry_for_provider(provider.to_sym)
+                           else
+                             registry_entry_for_tier(tier)
+                           end
           resolved_provider = provider ? provider.to_sym : (registry_entry&.[](:provider) || default_provider_for_tier(tier))
           resolved_model = model || registry_default_model(registry_entry) || default_model_for_tier(tier)
 
@@ -229,8 +233,11 @@ module Legion
                            memory_checked.reject { |r| excluded_by_caller?(r, normalized_exclude) }
                          end
 
+          # 4.7 Reject rules for models denied by health tracker
+          not_denied = not_excluded.reject { |r| excluded_by_denial?(r) }
+
           # 5. Filter by tier availability
-          final = not_excluded.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
+          final = not_denied.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
 
           log.debug("Router: #{final.size} candidates after filtering (started with #{rules.size})")
 
@@ -301,6 +308,15 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.router.discovery_settings')
           {}
+        end
+
+        def excluded_by_denial?(rule)
+          provider = (rule.target[:provider] || rule.target['provider'])&.to_sym
+          model    = rule.target[:model] || rule.target['model']
+          instance = rule.target[:instance] || rule.target['instance']
+          return false unless provider && model
+
+          health_tracker.model_denied?(provider: provider, model: model, instance: instance)
         end
 
         def excluded_by_caller?(rule, exclude)
@@ -397,22 +413,24 @@ module Legion
           # Fallback to static defaults
           case sym
           when :local, :direct, :fleet
-            'llama3'
+            default_settings_model_for_tier(sym) || 'llama3'
           when :openai_compat
             'gpt-4o'
           when :cloud
-            default_settings_model || 'us.anthropic.claude-sonnet-4-6'
+            default_settings_model_for_tier(sym) || 'us.anthropic.claude-sonnet-4-6'
           when :frontier
-            default_settings_model || 'claude-sonnet-4-6'
+            default_settings_model_for_tier(sym) || 'claude-sonnet-4-6'
           end
         end
 
         def chain_from_defaults(model, provider, max)
           if provider || model || default_settings_provider || default_settings_model
             p = (provider || default_settings_provider)&.to_sym
+            resolved_model = model || registry_default_model(registry_entry_for_provider(p)) ||
+                             default_settings_model || 'claude-sonnet-4-6'
             res = Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                  provider: p || :anthropic,
-                                 model:    model || default_settings_model || 'claude-sonnet-4-6')
+                                 model:    resolved_model)
             return EscalationChain.new(resolutions: [res], max_attempts: max)
           end
 
@@ -512,6 +530,31 @@ module Legion
           Legion::LLM::Settings.value(:default_model)
         end
 
+        def default_settings_model_for_tier(tier)
+          model = default_settings_model
+          return nil if model.nil? || model.to_s.empty?
+
+          provider = default_settings_provider&.to_sym
+          return nil unless provider
+
+          provider_tier = registry_tier_for_default_provider(provider)
+          return model if provider_tier == tier
+
+          nil
+        end
+
+        def registry_tier_for_default_provider(provider)
+          instances = begin
+            Call::Registry.all_instances
+          rescue StandardError
+            []
+          end
+          entry = instances.find { |i| i[:provider] == provider }
+          return registry_tier(provider, entry[:metadata]) if entry
+
+          PROVIDER_TIER.fetch(provider, :cloud)
+        end
+
         def default_settings_provider
           Legion::LLM::Settings.value(:default_provider)
         end
@@ -527,6 +570,17 @@ module Legion
         # Find first registered provider matching a given tier.
         def registry_provider_for_tier(tier)
           registry_entry_for_tier(tier)&.[](:provider)
+        end
+
+        # Find the first registered instance for a specific provider.
+        def registry_entry_for_provider(provider)
+          instances = begin
+            Call::Registry.all_instances
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'router.registry_entry_for_provider')
+            []
+          end
+          instances.find { |entry| entry[:provider] == provider }
         end
 
         # Find a default model from registry for a given tier.

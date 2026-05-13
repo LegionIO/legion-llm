@@ -11,7 +11,7 @@ require_relative 'route_attempts'
 module Legion
   module LLM
     module Inference
-      class Executor
+      class Executor # rubocop:disable Metrics/ClassLength
         include Legion::Logging::Helper
         include NativeToolLoop
         include RouteAttempts
@@ -58,6 +58,15 @@ module Legion
         STEPS = (PRE_PROVIDER_STEPS + %i[provider_call] + POST_PROVIDER_STEPS).freeze
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
+
+        CONFIG_ERROR_PATTERNS = [
+          /ValidationException/,
+          /AccessDeniedException/,
+          /InvalidModel/i,
+          /model.*not found/i,
+          /not authorized/i,
+          /AWS Marketplace/i
+        ].freeze
 
         MAX_NATIVE_TOOL_ROUNDS = 200
         ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, keyword_init: true)
@@ -160,6 +169,7 @@ module Legion
           skipped = 0
           pipeline_start = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
           step_timings = []
+          @step_timing_hash = {}
           STEPS.each do |step|
             if Profile.skip?(@profile, step)
               skipped += 1
@@ -170,9 +180,12 @@ module Legion
             execute_step(step) { send(:"step_#{step}") }
             elapsed_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
             step_timings << "#{step}=#{elapsed_ms}ms"
+            @step_timing_hash[step] = elapsed_ms
             executed += 1
           end
           total_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - pipeline_start) * 1000).round
+          @step_timing_hash[:total] = total_ms
+          @timestamps[:step_timings] = @step_timing_hash
           log.warn("[pipeline][timing] profile=#{@profile} total=#{total_ms}ms executed=#{executed} skipped=#{skipped} #{step_timings.join(' ')}")
           annotate_top_level_span(steps_executed: executed, steps_skipped: skipped)
         end
@@ -547,9 +560,18 @@ module Legion
           duration_ms = ((Time.now - start_time) * 1000).round
           handle_exception(err, level: :warn, handled: handled, operation: operation,
                                provider: resolution.provider, model: resolution.model, duration_ms: duration_ms)
-          Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
-                                       signal: :error, value: 1,
-                                       metadata: { reason: err.class.name, message: err.message })
+          if config_error?(err)
+            Router.health_tracker.deny_model(
+              provider: resolution.provider,
+              model:    resolution.model,
+              instance: resolution.instance,
+              reason:   err.message
+            )
+          else
+            Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+                                         signal: :error, value: 1,
+                                         metadata: { reason: err.class.name, message: err.message })
+          end
           @escalation_history << escalation_attempt_hash(
             resolution,
             outcome:     outcome,
@@ -926,6 +948,12 @@ module Legion
           )
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_error_audit')
+        end
+
+        def config_error?(err)
+          name = err.class.name.to_s
+          msg = err.message.to_s
+          CONFIG_ERROR_PATTERNS.any? { |pat| pat.match?(name) || pat.match?(msg) }
         end
 
         def execute_pre_provider_steps
@@ -1549,7 +1577,12 @@ module Legion
         end
 
         def build_response_routing
-          routing = { provider: @resolved_provider, model: @resolved_model }
+          routing = {
+            provider: @resolved_provider,
+            instance: @resolved_instance,
+            model:    @resolved_model,
+            tier:     @resolved_tier
+          }.compact
           routing[:offering_id] = @resolved_offering_id if @resolved_offering_id
           routing[:offering_metadata] = @resolved_offering_metadata if @resolved_offering_metadata&.any?
 

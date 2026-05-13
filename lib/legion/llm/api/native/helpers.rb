@@ -498,6 +498,26 @@ module Legion
 
                 nil
               end
+
+              define_method(:build_response_metrics) do |pipeline_response|
+                routing = pipeline_response.routing || {}
+                timestamps = pipeline_response.timestamps || {}
+                metrics = {}
+
+                if (latency = routing[:latency_ms])
+                  metrics[:latency_ms] = latency
+                end
+
+                step_timings = timestamps[:step_timings]
+                if step_timings.is_a?(Hash) && step_timings.any?
+                  metrics[:timing] = step_timings
+                  total = step_timings[:total].to_i
+                  external = step_timings[:provider_call].to_i + step_timings[:tool_calls].to_i
+                  metrics[:latency_legionio_ms] = total - external if total.positive?
+                end
+
+                metrics.empty? ? nil : metrics
+              end
             end
 
             log.debug('[llm][api][helpers] shared helpers registered')

@@ -474,7 +474,7 @@ module Legion
           mode:             'auto',
           native_providers: %w[
             ollama vllm anthropic openai gemini mlx
-            bedrock azure_foundry vertex claude
+            bedrock azure_foundry vertex
           ]
         }
       end

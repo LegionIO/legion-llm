@@ -39,15 +39,19 @@ module Legion
         def offerings(filters = {})
           log.debug "[llm][inventory] action=offerings.enter filters=#{filters.keys}"
           normalized_filters = normalize_filter_hash(filters)
+          provider_scope = normalized_filters[:provider]&.to_sym
           list = []
           providers_config.each do |provider_family, config|
             next unless enabled_config?(config)
+            next if provider_scope && provider_family.to_sym != provider_scope
 
             list.concat(provider_offerings(provider_family.to_sym, config))
           end
 
-          list.concat(discovery_offerings)
-          list.concat(native_provider_offerings)
+          native = native_provider_offerings(provider: provider_scope)
+          native_providers = native.map { |o| o[:provider_family]&.to_sym }.uniq
+          list.concat(native)
+          list.concat(discovery_offerings(provider: provider_scope, exclude_providers: native_providers))
           list = dedupe_offerings(list)
           result = filter_offerings(list, normalized_filters)
           log.debug "[llm][inventory] action=offerings.complete total=#{result.size}"
@@ -265,7 +269,7 @@ module Legion
           ))
         end
 
-        def discovery_offerings
+        def discovery_offerings(provider: nil, exclude_providers: [])
           return [] unless defined?(Legion::LLM::Discovery)
 
           cached_models = if Legion::LLM::Discovery.respond_to?(:cached_discovered_models)
@@ -276,6 +280,9 @@ module Legion
 
           cached_models.filter_map do |model_entry|
             provider_family = model_entry[:provider]
+            next if provider && provider_family.to_sym != provider
+            next if exclude_providers.include?(provider_family.to_sym)
+
             config = option(providers_config, provider_family, {})
             next unless enabled_config?(config)
 
@@ -295,11 +302,13 @@ module Legion
           []
         end
 
-        def native_provider_offerings
+        def native_provider_offerings(provider: nil)
           return [] unless defined?(Legion::LLM::Call::Registry)
 
           Legion::LLM::Call::Registry.all_instances.flat_map do |entry|
             provider_name = entry[:provider]
+            next [] if provider && provider_name.to_sym != provider
+
             adapter = entry[:adapter]
             next [] unless adapter.respond_to?(:offerings)
 
@@ -347,7 +356,9 @@ module Legion
 
         def dedupe_offerings(list)
           list.each_with_object({}) do |offering, seen|
-            key = [offering[:provider_family], offering[:provider_instance], offering[:model], offering[:type]]
+            instance = offering[:provider_instance]
+            instance = nil if instance.to_s == 'default'
+            key = [offering[:provider_family], instance, offering[:model], offering[:type]]
             current = seen[key]
             seen[key] = offering if current.nil? || source_priority(offering) > source_priority(current)
           end.values

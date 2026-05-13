@@ -87,7 +87,7 @@ module Legion
             provider_key = entry[:provider].to_sym
             instance_key = entry[:instance].to_sym
 
-            {
+            result = {
               provider:     entry[:provider].to_s,
               instance:     entry[:instance].to_s,
               tier:         entry.dig(:metadata, :tier)&.to_s,
@@ -102,6 +102,9 @@ module Legion
                             end,
               native:       true
             }
+            result[:source] = entry.dig(:metadata, :source) if entry.dig(:metadata, :source)
+            result[:credential_fingerprint] = entry.dig(:metadata, :credential_fingerprint) if entry.dig(:metadata, :credential_fingerprint)
+            result
           end
         end
       end

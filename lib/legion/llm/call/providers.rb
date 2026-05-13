@@ -80,6 +80,8 @@ module Legion
 
         def register_provider_instance(provider_module, family, aliases, instance_id, config)
           normalized_config = normalize_instance_config(config)
+          return if normalized_config[:enabled] == false
+
           registry_config = adapter_instance_config(normalized_config, instance_id)
           metadata = instance_metadata(normalized_config)
           adapter = Call::LexLLMAdapter.new(family, provider_module.provider_class, instance_config: registry_config)
@@ -107,7 +109,11 @@ module Legion
         end
 
         def instance_metadata(config)
-          { tier: config[:tier], capabilities: config[:capabilities] || [] }
+          meta = { tier: config[:tier], capabilities: config[:capabilities] || [] }
+          meta[:default_model] = config[:default_model] if config[:default_model]
+          meta[:source] = config[:source] if config[:source]
+          meta[:credential_fingerprint] = config[:credential_fingerprint] if config[:credential_fingerprint]
+          meta
         end
 
         def safe_provider_family(provider_module)

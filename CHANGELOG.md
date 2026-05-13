@@ -1,5 +1,29 @@
 # Legion LLM Changelog
 
+## [0.9.23] - 2026-05-13
+
+### Added
+- Router: `registry_entry_for_provider` for explicit provider model resolution
+- Router: model denylist (`deny_model`, `model_denied?`, `excluded_by_denial?`) — config errors auto-deny models
+- Executor: config error detection (`CONFIG_ERROR_PATTERNS`) — prevents circuit breaker trips on auth/validation errors
+- Executor: step timing hash on response (`metrics.timing`, `metrics.latency_legionio_ms`)
+- API: `/api/llm/inference` response includes `provider`, `instance`, `tier`, `metrics`
+- API: `/api/llm/providers` surfaces `source` and `credential_fingerprint`
+- Inventory: provider-scoped queries skip unrelated providers
+- Metering: disk-based JSONL spool when transport unavailable (was dropping events)
+- Discovery: `report_discovery_failure` reports connection failures to health tracker
+- Providers: `enabled: false` instances not registered; `default_model` in metadata
+
+### Changed
+- Router: tier-aware model fallback — global default no longer bleeds across providers
+- Inventory: single-source offerings (native_provider preferred over discovery to eliminate duplicates)
+- Inventory: dedup normalizes `"default"` instance name
+- Discovery: concise connection error log (no stacktrace for unreachable providers)
+- Settings: removed `claude` from `native_providers` list
+
+### Fixed
+- Cache spec rewritten to use real `Legion::Cache` instead of fragile stubs
+
 ## [0.9.22] - 2026-05-12
 
 ### Added
