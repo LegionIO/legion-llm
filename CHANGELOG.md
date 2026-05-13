@@ -10,6 +10,9 @@
 - Route Python command interception through the same Legion Python runtime detection used by special tool injection.
 - Replace ad hoc `/api/llm/inference` tool-payload debug prints with structured debug logging.
 
+### Fixed
+- Chunk Ollama embedding requests according to configured model context limits and aggregate chunk vectors so large Apollo knowledge-capture documents do not exceed provider context windows.
+
 ## [0.9.21] - 2026-05-12
 
 ### Fixed
