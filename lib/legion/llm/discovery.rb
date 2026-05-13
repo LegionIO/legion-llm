@@ -141,8 +141,7 @@ module Legion
                 }
               end
             rescue StandardError => e
-              handle_exception(e, level:     :debug,
-                                  operation: "discovery.offerings.#{entry[:provider]}/#{entry[:instance]}")
+              report_discovery_failure(entry, e)
               []
             end
           end
@@ -164,6 +163,28 @@ module Legion
         end
 
         private
+
+        def report_discovery_failure(entry, error)
+          provider = entry[:provider]
+          instance = entry[:instance]
+          connection_error = error.is_a?(Faraday::ConnectionFailed) ||
+                             error.message.match?(/connection refused|connect.*timeout|no route to host/i)
+
+          if connection_error
+            log.warn("[llm][discovery] provider=#{provider} instance=#{instance} unreachable: #{error.message}")
+          else
+            handle_exception(error, level: :warn, handled: true,
+                                    operation: "discovery.offerings.#{provider}/#{instance}")
+          end
+
+          return unless defined?(Router) && Router.respond_to?(:health_tracker)
+
+          Router.health_tracker.report(
+            provider: provider, instance: instance,
+            signal: :error, value: 1,
+            metadata: { reason: error.class.name, source: :discovery }
+          )
+        end
 
         def normalize_offering(offering)
           data = if offering.is_a?(Hash)

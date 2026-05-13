@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'fileutils'
 require_relative 'metering/estimator'
 require_relative 'metering/tracker'
 require_relative 'metering/tokens'
@@ -11,6 +12,10 @@ module Legion
   module LLM
     module Metering
       extend Legion::Logging::Helper
+
+      SPOOL_DIR = File.expand_path('~/.legionio/data/spool/metering')
+      SPOOL_FILE = File.join(SPOOL_DIR, 'events.jsonl').freeze
+      SPOOL_MUTEX = Mutex.new
 
       def self.load_transport
         return unless defined?(Legion::Transport::Message)
@@ -30,8 +35,9 @@ module Legion
           log.info("[llm][metering] published provider=#{event[:provider]} model=#{event[:model_id]}")
           :published
         else
-          log.warn("[llm][metering] dropped provider=#{event[:provider]} model=#{event[:model_id]} reason=transport_unavailable")
-          :dropped
+          spool_event(event)
+          log.info("[llm][metering] spooled provider=#{event[:provider]} model=#{event[:model_id]} reason=transport_unavailable")
+          :spooled
         end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.metering.emit')
@@ -46,8 +52,29 @@ module Legion
       end
 
       def flush_spool
-        log.debug('[llm][metering] spool disabled; metering events are transport-only')
-        0
+        return 0 unless File.exist?(SPOOL_FILE)
+
+        event_class = metering_event_class
+        unless event_class && transport_connected?
+          log.debug('[llm][metering] flush_spool skipped reason=transport_unavailable')
+          return 0
+        end
+
+        events = read_spool
+        return 0 if events.empty?
+
+        batch_sleep = spool_settings[:flush_batch_sleep] || 0.0
+        flushed = 0
+
+        events.each_with_index do |event_data, index|
+          event_class.new(**event_data).publish
+          flushed += 1
+          sleep(batch_sleep) if batch_sleep.positive? && index < events.size - 1
+        end
+
+        truncate_spool
+        log.info("[llm][metering] flush_spool flushed=#{flushed}")
+        flushed
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.metering.flush_spool')
         0
@@ -126,6 +153,66 @@ module Legion
         return hash[string_key] if hash.key?(string_key)
 
         hash[key] if hash.key?(key)
+      end
+
+      # --- Spool internals (private) ---
+
+      def spool_event(event)
+        SPOOL_MUTEX.synchronize do
+          ensure_spool_dir
+          enforce_max_events
+          line = Legion::JSON.dump(event)
+          File.open(SPOOL_FILE, 'a') { |f| f.puts(line) }
+        end
+        log.debug("[llm][metering] spool_event written provider=#{event[:provider]} model=#{event[:model_id]}")
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.metering.spool_event')
+      end
+
+      def read_spool
+        SPOOL_MUTEX.synchronize do
+          return [] unless File.exist?(SPOOL_FILE)
+
+          lines = File.readlines(SPOOL_FILE, chomp: true)
+          lines.filter_map do |line|
+            next if line.strip.empty?
+
+            Legion::JSON.load(line)
+          end
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.metering.read_spool')
+        []
+      end
+
+      def truncate_spool
+        SPOOL_MUTEX.synchronize do
+          File.write(SPOOL_FILE, '') if File.exist?(SPOOL_FILE)
+        end
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.metering.truncate_spool')
+      end
+
+      def enforce_max_events
+        return unless File.exist?(SPOOL_FILE)
+
+        max = spool_settings[:max_events] || 10_000
+        lines = File.readlines(SPOOL_FILE, chomp: true)
+        return if lines.size < max
+
+        # Drop oldest events to make room
+        trimmed = lines.last(max - 1)
+        File.write(SPOOL_FILE, trimmed.map { |l| "#{l}\n" }.join)
+        log.debug("[llm][metering] enforce_max_events trimmed=#{lines.size - trimmed.size} max=#{max}")
+      end
+
+      def ensure_spool_dir
+        FileUtils.mkdir_p(SPOOL_DIR)
+      end
+
+      def spool_settings
+        settings = Legion::LLM::Settings.value(:metering, :spool, default: {})
+        settings.is_a?(Hash) ? settings : {}
       end
 
       # Backward-compat: resolve old Legion::LLM::Metering::Exchange, ::Event

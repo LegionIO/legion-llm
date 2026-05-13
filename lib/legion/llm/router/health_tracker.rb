@@ -19,6 +19,7 @@ module Legion
           @circuits       = {}
           @latency_window = {}
           @handlers       = {}
+          @denied_models  = {}
           @mutex          = Mutex.new
 
           register_default_handlers
@@ -111,6 +112,42 @@ module Legion
           worst_circuit_state(instances)
         end
 
+        # Record that a model is denied for a provider+instance (e.g. AccessDenied).
+        # Excluded from routing until restart or explicit clear.
+        def deny_model(provider:, model:, instance: nil, reason: nil)
+          key = instance ? instance_key(provider, instance) : provider.to_s
+          @mutex.synchronize do
+            @denied_models[key] ||= {}
+            @denied_models[key][model.to_s] = { reason: reason, at: Time.now }
+          end
+          log.warn("Model denied provider=#{key} model=#{model} reason=#{reason}")
+        end
+
+        # Check if a model is denied for a provider+instance.
+        def model_denied?(provider:, model:, instance: nil)
+          key = instance ? instance_key(provider, instance) : provider.to_s
+          @mutex.synchronize do
+            !@denied_models.dig(key, model.to_s).nil?
+          end
+        end
+
+        # List all denied models (for diagnostics).
+        def denied_models
+          @mutex.synchronize { @denied_models.dup }
+        end
+
+        # Clear denied models for a provider (or all if no args).
+        def clear_denied(provider: nil, instance: nil)
+          @mutex.synchronize do
+            if provider
+              key = instance ? instance_key(provider, instance) : provider.to_s
+              @denied_models.delete(key)
+            else
+              @denied_models.clear
+            end
+          end
+        end
+
         # Clears circuit and latency data for a single provider.
         def reset(provider, instance: nil, offering_id: nil)
           key = instance ? instance_key(provider, instance) : health_key(provider, offering_id)
@@ -125,6 +162,7 @@ module Legion
           @mutex.synchronize do
             @circuits.clear
             @latency_window.clear
+            @denied_models.clear
           end
         end
 

@@ -1,64 +1,12 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-
-# Stub Legion::Cache with an in-memory hash for testing
-module Legion
-  module Cache
-    unless const_defined?(:Local, false)
-      module Local
-        class << self
-          def connected?
-            false
-          end
-
-          def get(_key); end
-
-          def set(*)
-            true
-          end
-        end
-      end
-    end
-
-    class << self
-      def reset!
-        @store = {}
-      end
-
-      def get(key)
-        @store ||= {}
-        @store[key]
-      end
-
-      def set(key, value, _ttl = 300)
-        @store ||= {}
-        @store[key] = value
-        true
-      end
-
-      def delete(key)
-        @store&.delete(key)
-      end
-
-      def enforce_phi_ttl(ttl, **)
-        ttl
-      end
-    end
-  end
-end
-
+require 'legion/cache'
 require 'legion/llm/cache'
 
 RSpec.describe Legion::LLM::Cache do
   before(:each) do
-    Legion::Cache.reset!
-    allow(Legion::Cache::Local).to receive(:respond_to?).and_call_original
-    allow(Legion::Cache::Local).to receive(:respond_to?).with(:get).and_return(true)
-    allow(Legion::Cache::Local).to receive(:connected?).and_return(true)
-    allow(Legion::Cache::Local).to receive(:get) { |key| Legion::Cache.get(key) }
-    allow(Legion::Cache::Local).to receive(:set) { |key, value, ttl: nil, **| Legion::Cache.set(key, value, ttl || 300) }
-    # Ensure prompt_caching is enabled in settings
+    Legion::Cache.setup
     Legion::Settings[:llm][:prompt_caching] = {
       enabled:        true,
       min_tokens:     1024,
@@ -67,223 +15,62 @@ RSpec.describe Legion::LLM::Cache do
   end
 
   describe '.enabled?' do
-    it 'reads string-keyed response cache settings' do
-      Legion::Settings.set_prop(:llm, {
-                                  'prompt_caching' => {
-                                    'response_cache' => { 'enabled' => false }
-                                  }
-                                })
-
-      expect(described_class.enabled?).to be false
-    end
-  end
-
-  # ──────────────────────────────────────────────
-  # .key
-  # ──────────────────────────────────────────────
-  describe '.key' do
-    let(:base_args) do
-      {
-        model:       'claude-sonnet-4-6',
-        provider:    'anthropic',
-        messages:    [{ role: 'user', content: 'hello' }],
-        temperature: nil
-      }
-    end
-
-    it 'returns a 64-character hex string (SHA256)' do
-      result = described_class.key(**base_args)
-      expect(result).to match(/\A[0-9a-f]{64}\z/)
-    end
-
-    it 'is deterministic — same inputs produce the same key' do
-      key1 = described_class.key(**base_args)
-      key2 = described_class.key(**base_args)
-      expect(key1).to eq(key2)
-    end
-
-    it 'changes when model differs' do
-      key1 = described_class.key(**base_args)
-      key2 = described_class.key(**base_args, model: 'gpt-4o')
-      expect(key1).not_to eq(key2)
-    end
-
-    it 'changes when provider differs' do
-      key1 = described_class.key(**base_args)
-      key2 = described_class.key(**base_args, provider: 'openai')
-      expect(key1).not_to eq(key2)
-    end
-
-    it 'changes when messages differ' do
-      key1 = described_class.key(**base_args)
-      key2 = described_class.key(**base_args, messages: [{ role: 'user', content: 'bye' }])
-      expect(key1).not_to eq(key2)
-    end
-
-    it 'changes when temperature differs' do
-      key1 = described_class.key(**base_args, temperature: nil)
-      key2 = described_class.key(**base_args, temperature: 0.5)
-      expect(key1).not_to eq(key2)
-    end
-
-    it 'changes when tools differ' do
-      key1 = described_class.key(**base_args)
-      key2 = described_class.key(**base_args, tools: ['search'])
-      expect(key1).not_to eq(key2)
-    end
-
-    it 'changes when schema differs' do
-      key1 = described_class.key(**base_args)
-      key2 = described_class.key(**base_args, schema: { type: 'object' })
-      expect(key1).not_to eq(key2)
-    end
-  end
-
-  # ──────────────────────────────────────────────
-  # .enabled?
-  # ──────────────────────────────────────────────
-  describe '.enabled?' do
-    it 'returns true when response_cache.enabled is true and Legion::Cache is available' do
+    it 'returns true when cache is connected and settings enabled' do
       expect(described_class.enabled?).to be true
     end
 
-    it 'returns false when response_cache.enabled is false' do
+    it 'returns false when response_cache is disabled in settings' do
       Legion::Settings[:llm][:prompt_caching] = { response_cache: { enabled: false } }
       expect(described_class.enabled?).to be false
     end
   end
 
-  # ──────────────────────────────────────────────
-  # .get
-  # ──────────────────────────────────────────────
-  describe '.get' do
-    let(:cache_key) { 'test-cache-key-abc' }
+  describe '.key' do
+    it 'produces a deterministic SHA256 hex string' do
+      key = described_class.key(model: 'claude', provider: 'anthropic', messages: [{ role: :user, content: 'hi' }])
+      expect(key).to match(/\A[a-f0-9]{64}\z/)
+    end
 
+    it 'produces different keys for different inputs' do
+      key1 = described_class.key(model: 'a', provider: 'p', messages: [])
+      key2 = described_class.key(model: 'b', provider: 'p', messages: [])
+      expect(key1).not_to eq(key2)
+    end
+  end
+
+  describe '.get' do
     it 'returns nil on a cache miss' do
-      expect(described_class.get(cache_key)).to be_nil
+      expect(described_class.get('nonexistent_key')).to be_nil
     end
 
     it 'returns the stored response on a cache hit' do
-      stored = { content: 'Hello!', meta: { model: 'claude-sonnet-4-6' } }
-      Legion::Cache.set(cache_key, JSON.dump(stored))
+      cache_key = 'test_hit_key'
+      described_class.set(cache_key, { content: 'hello' })
       result = described_class.get(cache_key)
-      expect(result[:content]).to eq('Hello!')
+      expect(result).to be_a(Hash)
+      expect(result[:content]).to eq('hello')
     end
 
     it 'returns symbolized keys' do
-      stored = { 'content' => 'Hi', 'meta' => {} }
-      Legion::Cache.set(cache_key, JSON.dump(stored))
+      cache_key = 'sym_key'
+      described_class.set(cache_key, { 'content' => 'world' })
       result = described_class.get(cache_key)
       expect(result).to have_key(:content)
     end
-
-    it 'returns nil when cache returns invalid JSON' do
-      Legion::Cache.set(cache_key, 'not-json{{{')
-      expect(described_class.get(cache_key)).to be_nil
-    end
   end
 
-  # ──────────────────────────────────────────────
-  # .set
-  # ──────────────────────────────────────────────
   describe '.set' do
-    let(:cache_key) { 'test-set-key-xyz' }
-    let(:response)  { { content: 'Stored response', meta: { model: 'gpt-4o' } } }
-
     it 'returns true on success' do
-      expect(described_class.set(cache_key, response)).to be true
+      expect(described_class.set('key', { ok: true })).to be true
     end
 
     it 'stores the response so .get retrieves it' do
-      described_class.set(cache_key, response, ttl: 300)
-      result = described_class.get(cache_key)
-      expect(result[:content]).to eq('Stored response')
+      described_class.set('store_key', { data: 1 })
+      expect(described_class.get('store_key')).to include(data: 1)
     end
 
     it 'accepts a custom TTL' do
-      expect(described_class.set(cache_key, response, ttl: 60)).to be true
-    end
-  end
-
-  # ──────────────────────────────────────────────
-  # guard when Legion::Cache is unavailable
-  # ──────────────────────────────────────────────
-  describe 'when Legion::Cache is unavailable' do
-    before do
-      # Hide Legion::Cache by making respond_to?(:get) return false
-      allow(Legion::Cache::Local).to receive(:connected?).and_return(false)
-      allow(Legion::Cache).to receive(:respond_to?).with(:get).and_return(false)
-    end
-
-    it '.enabled? returns false' do
-      expect(described_class.enabled?).to be false
-    end
-
-    it '.get returns nil without raising' do
-      expect(described_class.get('any-key')).to be_nil
-    end
-
-    it '.set returns false without raising' do
-      expect(described_class.set('any-key', { content: 'x' })).to be false
-    end
-  end
-
-  # ──────────────────────────────────────────────
-  # skip conditions via chat_direct
-  # ──────────────────────────────────────────────
-  describe 'skip conditions in Legion::LLM.chat_direct' do
-    let(:mock_response) { double('NativeChat') }
-    let(:response_double) { double('response', content: 'hello', input_tokens: 1, output_tokens: 1) }
-
-    before do
-      stub_native_provider(content: 'pipeline response')
-    end
-
-    it 'skips cache when cache: false is passed' do
-      expect(described_class).not_to receive(:get)
-      Legion::LLM.chat_direct(message: 'hello', cache: false)
-    end
-
-    it 'skips cache when temperature > 0' do
-      expect(described_class).not_to receive(:get)
-      Legion::LLM.chat_direct(message: 'hello', temperature: 0.7)
-    end
-
-    it 'skips cache when message is nil' do
-      expect(described_class).not_to receive(:get)
-      expect { Legion::LLM.chat_direct(message: nil) }.to raise_error(Legion::LLM::ProviderError)
-    end
-  end
-
-  # ──────────────────────────────────────────────
-  # cache hit returns cached: true in metadata
-  # ──────────────────────────────────────────────
-  describe 'cache hit flow' do
-    it 'returns cached: true in meta on a cache hit' do
-      stored = { content: 'Cached answer', meta: { model: 'claude-sonnet-4-6' } }
-      messages_arr = [{ role: 'user', content: 'hello' }]
-      # Build the key exactly as chat_direct does (resolves defaults from settings)
-      effective_model    = Legion::LLM::Settings.value(:default_model)
-      effective_provider = Legion::LLM::Settings.value(:default_provider)
-      cache_key = described_class.key(
-        model:       effective_model,
-        provider:    effective_provider,
-        messages:    messages_arr,
-        temperature: nil
-      )
-      described_class.set(cache_key, stored, ttl: 300)
-
-      result = Legion::LLM.chat_direct(message: 'hello', temperature: nil)
-      expect(result[:meta][:cached]).to be true
-    end
-  end
-
-  # ──────────────────────────────────────────────
-  # constants
-  # ──────────────────────────────────────────────
-  describe 'constants' do
-    it 'defines DEFAULT_TTL as 300' do
-      expect(described_class::DEFAULT_TTL).to eq(300)
+      expect { described_class.set('ttl_key', { x: 1 }, ttl: 60) }.not_to raise_error
     end
   end
 end

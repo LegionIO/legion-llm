@@ -28,9 +28,9 @@ RSpec.describe Legion::LLM::Inference::Steps::Metering do
   end
 
   describe '.publish_or_spool' do
-    it 'returns :dropped when no transport or spool' do
+    it 'returns :spooled when transport unavailable' do
       result = described_class.publish_or_spool({ model_id: 'test' })
-      expect(result).to eq(:dropped)
+      expect(result).to eq(:spooled)
     end
 
     it 'warns when the metering event is dropped' do

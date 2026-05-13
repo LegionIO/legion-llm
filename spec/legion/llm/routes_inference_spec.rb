@@ -178,13 +178,14 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       double(
         'pipeline_response',
         message:         { role: :assistant, content: content },
-        routing:         { provider: 'anthropic', model: 'claude-test' },
+        routing:         { provider: 'anthropic', model: 'claude-test', instance: 'default', tier: :cloud },
         tokens:          Legion::LLM::Usage.new(input_tokens: 7, output_tokens: 3),
         tools:           tools,
         enrichments:     {},
         stop:            { reason: stop_reason },
         timeline:        timeline,
         thinking:        thinking,
+        timestamps:      { step_timings: { provider_call: 100, total: 150 } },
         conversation_id: 'conv_test'
       )
     end
