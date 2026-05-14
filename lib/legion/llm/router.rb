@@ -60,9 +60,9 @@ module Legion
         # @param model    [String, nil] explicit model override
         # @param provider [Symbol, nil] explicit provider override
         # @return [Resolution, nil]
-        def resolve(intent: nil, tier: nil, model: nil, provider: nil, exclude: {})
-          log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider}"
-          return explicit_resolution(tier, provider, model) if tier
+        def resolve(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, exclude: {})
+          log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider} instance=#{instance}"
+          return explicit_resolution(tier, provider, model, instance) if tier || provider || instance
 
           return nil unless routing_enabled? && intent
 
@@ -81,10 +81,10 @@ module Legion
           resolution || arbitrage_fallback(intent)
         end
 
-        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil, exclude: {})
+        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, max_escalations: nil, exclude: {})
           log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations}"
           max = max_escalations || escalation_max_attempts
-          return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model)], max_attempts: max) if tier
+          return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model, instance)], max_attempts: max) if tier || provider || instance
           return chain_from_defaults(model, provider, max) unless routing_enabled? && intent
 
           chain_from_intent(intent, max, exclude: exclude)
@@ -162,20 +162,22 @@ module Legion
           Resolution.new(tier: tier, provider: provider, model: model, rule: 'arbitrage_fallback')
         end
 
-        def explicit_resolution(tier, provider, model)
+        def explicit_resolution(tier, provider, model, instance = nil)
           registry_entry = if provider
                              registry_entry_for_provider(provider.to_sym)
-                           else
+                           elsif tier
                              registry_entry_for_tier(tier)
                            end
           resolved_provider = provider ? provider.to_sym : (registry_entry&.[](:provider) || default_provider_for_tier(tier))
-          resolved_model = model || registry_default_model(registry_entry) || default_model_for_tier(tier)
+          resolved_model    = model || registry_default_model(registry_entry) || (tier && default_model_for_tier(tier))
+          resolved_instance = instance || registry_entry&.[](:instance)
+          resolved_tier     = tier || PROVIDER_TIER.fetch(resolved_provider, :frontier)
 
           Resolution.new(
-            tier:     tier,
+            tier:     resolved_tier,
             provider: resolved_provider,
             model:    resolved_model,
-            instance: registry_entry&.[](:instance),
+            instance: resolved_instance,
             rule:     'explicit',
             metadata: registry_resolution_metadata(registry_entry)
           )

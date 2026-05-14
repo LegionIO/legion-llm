@@ -367,7 +367,7 @@ module Legion
             state[:tier] = @proactive_tier_assignment[:tier]
             state[:intent] = merge_routing_intent(state[:intent], @proactive_tier_assignment[:intent])
             log.info "[llm][routing] action=forced_tier source=#{@proactive_tier_assignment[:source]} tier=#{state[:tier]}"
-          elsif @proactive_tier_assignment && !state[:tier] && !state[:intent]
+          elsif @proactive_tier_assignment && !state[:tier] && !state[:intent] && !state[:instance]
             state[:tier] = @proactive_tier_assignment[:tier]
             state[:intent] = @proactive_tier_assignment[:intent]
           end
@@ -390,11 +390,13 @@ module Legion
               tier:            state[:tier],
               model:           state[:model],
               provider:        state[:provider],
+              instance:        state[:instance],
               max_escalations: pipeline_escalation_max_attempts
             )
             @escalation_chain.primary
           else
-            Router.resolve(intent: state[:intent], tier: state[:tier], model: state[:model], provider: state[:provider])
+            Router.resolve(intent: state[:intent], tier: state[:tier], model: state[:model],
+                           provider: state[:provider], instance: state[:instance])
           end
         end
 
