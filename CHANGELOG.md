@@ -6,6 +6,7 @@
 - API: `instance` from POST body was silently dropped — never forwarded into routing hash
 - Executor: Gaia advisory tier assignment no longer overrides explicit `provider`+`instance` from caller
 - Executor: `instance` now passed through `routing_resolution_for` to `Router.resolve`/`resolve_chain`
+- Executor: `build_default_escalation_chain` now passes resolved provider/instance/model — previously ignored them and built a full auto chain, routing to vllm/fleet instead of the requested provider
 - Router: `resolve`/`resolve_chain` accept `instance:` param; short-circuit to `explicit_resolution` when `provider` or `instance` is set (not just `tier`)
 - Router: `explicit_resolution` honors caller-supplied instance instead of always pulling from registry; infers tier from `PROVIDER_TIER` when not explicitly given
 
