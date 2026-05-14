@@ -588,7 +588,12 @@ module Legion
         end
 
         def build_default_escalation_chain
-          Router.resolve_chain(max_escalations: pipeline_escalation_max_attempts)
+          Router.resolve_chain(
+            provider:        @resolved_provider,
+            instance:        @resolved_instance,
+            model:           @resolved_model,
+            max_escalations: pipeline_escalation_max_attempts
+          )
         end
 
         def escalation_attempt_hash(resolution, outcome:, failures:, duration_ms:)
