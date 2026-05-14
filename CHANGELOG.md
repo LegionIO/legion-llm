@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.9.24] - 2026-05-14
+
+### Fixed
+- API: `instance` from POST body was silently dropped — never forwarded into routing hash
+- Executor: Gaia advisory tier assignment no longer overrides explicit `provider`+`instance` from caller
+- Executor: `instance` now passed through `routing_resolution_for` to `Router.resolve`/`resolve_chain`
+- Router: `resolve`/`resolve_chain` accept `instance:` param; short-circuit to `explicit_resolution` when `provider` or `instance` is set (not just `tier`)
+- Router: `explicit_resolution` honors caller-supplied instance instead of always pulling from registry; infers tier from `PROVIDER_TIER` when not explicitly given
+
 ## [0.9.23] - 2026-05-13
 
 ### Added
