@@ -478,14 +478,15 @@ module Legion
         end
 
         def run_provider_call_with_escalation
-          chain = @escalation_chain || build_default_escalation_chain
+          @escalation_chain ||= build_default_escalation_chain
+          chain = @escalation_chain
           threshold = pipeline_escalation_quality_threshold
           quality_check = @request.extra[:quality_check]
           succeeded = false
           tried = []
           log.debug "[llm][executor] action=escalation.enter chain_size=#{chain.size} threshold=#{threshold}"
 
-          primary_tier = @escalation_chain&.primary&.tier
+          primary_tier = @escalation_chain.primary&.tier
 
           chain.each do |resolution|
             next if tried.any? { |t| t[:provider] == resolution.provider && t[:instance] == resolution.instance && t[:model] == resolution.model }

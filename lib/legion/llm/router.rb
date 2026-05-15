@@ -148,7 +148,7 @@ module Legion
 
         def explicit_resolution(tier, provider, model, instance = nil)
           registry_entry = if provider
-                             registry_entry_for_provider(provider.to_sym)
+                             registry_entry_for_provider(provider.to_sym, instance: instance&.to_sym)
                            elsif tier
                              registry_entry_for_tier(tier)
                            end
@@ -586,14 +586,23 @@ module Legion
         end
 
         # Find the first registered instance for a specific provider.
-        def registry_entry_for_provider(provider)
+        # When +instance+ is given, prefers the entry whose :instance matches;
+        # falls back to the first provider entry if no exact match is found.
+        def registry_entry_for_provider(provider, instance: nil)
           instances = begin
             Call::Registry.all_instances
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'router.registry_entry_for_provider')
             []
           end
-          instances.find { |entry| entry[:provider] == provider }
+          provider_entries = instances.select { |entry| entry[:provider] == provider }
+          return nil if provider_entries.empty?
+
+          if instance
+            provider_entries.find { |entry| entry[:instance] == instance } || provider_entries.first
+          else
+            provider_entries.first
+          end
         end
 
         # Find a default model from registry for a given tier.

@@ -257,6 +257,10 @@ module Legion
         end
 
         def defined_method_access(obj, key)
+          # Prefer named accessor (covers Data structs like Types::ContentBlock).
+          key_sym = key.respond_to?(:to_sym) ? key.to_sym : key
+          return obj.public_send(key_sym) if obj.respond_to?(key_sym)
+
           obj[key]
         rescue TypeError, NoMethodError, KeyError
           begin
