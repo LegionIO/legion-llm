@@ -9,9 +9,15 @@ module Legion
       class Curator
         include Legion::Logging::Helper
 
-        CURATED_KEY    = :__curated__
-        THINKING_OPEN  = '<thinking>'
-        THINKING_CLOSE = '</thinking>'
+        CURATED_KEY = :__curated__
+
+        # All known provider thinking tag variants.
+        # Anthropic: <thinking>…</thinking>
+        # DeepSeek / Qwen / Ollama / vLLM inline: <think>…</think>
+        THINKING_TAG_PAIRS = [
+          ['<thinking>', '</thinking>'],
+          ['<think>',    '</think>']
+        ].freeze
 
         def initialize(conversation_id:)
           @conversation_id = conversation_id
@@ -196,18 +202,27 @@ module Legion
         end
 
         def strip_thinking_tags(text)
-          result = +''
+          result = text
+          THINKING_TAG_PAIRS.each do |open_tag, close_tag|
+            result = strip_tag_pair(result, open_tag, close_tag)
+          end
+          result
+        end
+
+        def strip_tag_pair(text, open_tag, close_tag)
+          out = +''
           pos = 0
           while pos < text.length
-            open_idx = text.index(THINKING_OPEN, pos)
+            open_idx = text.index(open_tag, pos)
             break unless open_idx
 
-            result << text[pos...open_idx]
-            close_idx = text.index(THINKING_CLOSE, open_idx + THINKING_OPEN.length)
-            pos = close_idx ? close_idx + THINKING_CLOSE.length : text.length
+            out << text[pos...open_idx]
+            close_idx = text.index(close_tag, open_idx + open_tag.length)
+            pos = close_idx ? close_idx + close_tag.length : text.length
           end
-          result << text[pos..] if pos < text.length
-          result
+          out << text[pos..] if pos < text.length
+          # Strip any unclosed open tag left at the end (provider died mid-stream).
+          out.sub(/#{Regexp.escape(open_tag)}.*\z/m, '').strip
         end
 
         def curate_message(msg, assistant_response)
