@@ -261,11 +261,13 @@ module Legion
           key_sym = key.respond_to?(:to_sym) ? key.to_sym : key
           return obj.public_send(key_sym) if obj.respond_to?(key_sym)
 
+          str_key = key.to_s
           obj[key]
         rescue TypeError, NoMethodError, KeyError
           begin
-            obj[key.to_s]
+            obj[str_key]
           rescue TypeError, NoMethodError, KeyError
+            log.debug "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} — no accessor, no [] support, returning nil"
             nil
           end
         end
