@@ -397,6 +397,32 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
     end
   end
 
+  describe '#positive_integer' do
+    let(:step) do
+      klass.new(Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'hi' }]))
+    end
+
+    it 'returns nil for nil without raising TypeError (#122)' do
+      expect(step.send(:positive_integer, nil)).to be_nil
+    end
+
+    it 'returns nil for empty string without raising (#122)' do
+      expect(step.send(:positive_integer, '')).to be_nil
+    end
+
+    it 'returns the integer for a valid positive value' do
+      expect(step.send(:positive_integer, 42)).to eq(42)
+    end
+
+    it 'returns nil for zero' do
+      expect(step.send(:positive_integer, 0)).to be_nil
+    end
+
+    it 'returns nil for a non-numeric string' do
+      expect(step.send(:positive_integer, 'abc')).to be_nil
+    end
+  end
+
   describe '#apollo_available? with Legion::Apollo' do
     it 'returns true when Legion::Apollo is started' do
       apollo = Module.new do
