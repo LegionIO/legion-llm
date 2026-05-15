@@ -849,6 +849,53 @@ confidence: 0.9 }],
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
       expect(executor.instance_variable_get(:@resolved_instance)).to be_nil
     end
+
+    it 'routes the LegionIO placeholder without applying configured provider defaults' do
+      Legion::Settings[:llm][:default_provider] = 'vllm'
+      Legion::Settings[:llm][:default_instance] = 'apollo'
+      Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      resolution = Legion::LLM::Router::Resolution.new(
+        tier: :frontier, provider: :anthropic, model: 'claude-sonnet-4-6', rule: 'auto:test'
+      )
+      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 3)
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { provider: 'vllm', instance: 'apollo', model: 'legionio' }
+      )
+      executor = described_class.new(request)
+
+      executor.send(:step_routing)
+
+      expect(Legion::LLM::Router).to have_received(:resolve_chain).with(
+        hash_including(intent: hash_including(capability: :chat), provider: nil, instance: nil, model: nil)
+      )
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
+      expect(executor.instance_variable_get(:@resolved_instance)).to be_nil
+      expect(executor.instance_variable_get(:@resolved_model)).to eq('claude-sonnet-4-6')
+    end
+
+    it 'still uses the router chain for the LegionIO placeholder when rule routing is unavailable' do
+      resolution = Legion::LLM::Router::Resolution.new(
+        tier: :frontier, provider: :openai, model: 'gpt-5.4', rule: 'auto_chain'
+      )
+      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 3)
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'legionio' }
+      )
+      executor = described_class.new(request)
+
+      executor.send(:step_routing)
+
+      expect(Legion::LLM::Router).to have_received(:resolve_chain)
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:openai)
+      expect(executor.instance_variable_get(:@resolved_model)).to eq('gpt-5.4')
+    end
   end
 
   describe 'tool_event_handler events' do

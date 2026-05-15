@@ -9,6 +9,11 @@ module Legion
         module Models
           extend Legion::Logging::Helper
 
+          AUTO_ROUTING_MODEL_ID = 'legionio'
+          AUTO_ROUTING_MODEL_DISPLAY = 'LegionIO'
+          AUTO_ROUTING_OFFERING_ID = 'legionio:auto:inference:legionio'
+          AUTO_ROUTING_CAPABILITIES = %w[auto_routing chat completion json_schema tools].freeze
+
           def self.registered(app)
             log.debug('[llm][api][models] registering model inventory routes')
 
@@ -18,6 +23,7 @@ module Legion
 
               filters = Legion::LLM::API::Native::Models.request_filters(params)
               offerings = Legion::LLM::Inventory.offerings(filters)
+              offerings = Legion::LLM::API::Native::Models.with_auto_routing_offering(offerings, filters)
 
               json_response({
                               models:    Legion::LLM::API::Native::Models.model_summaries(offerings),
@@ -34,7 +40,9 @@ module Legion
               log.debug("[llm][api][models] action=get_model id=#{model_id}")
               require_llm!
 
-              offerings = Legion::LLM::Inventory.offerings(model: model_id)
+              filters = { model: model_id }
+              offerings = Legion::LLM::Inventory.offerings(filters)
+              offerings = Legion::LLM::API::Native::Models.with_auto_routing_offering(offerings, filters)
               halt json_error('model_not_found', "Model '#{model_id}' not found", status_code: 404) unless offerings.any?
 
               json_response({
@@ -88,7 +96,7 @@ module Legion
           end
 
           def self.summarize_model(model, offerings)
-            {
+            summary = {
               id:             model.to_s,
               types:          offerings.map { |offering| offering[:type].to_s }.uniq.sort,
               providers:      offerings.map { |offering| offering[:provider_family] }.uniq.sort,
@@ -99,6 +107,12 @@ module Legion
               max_context:    offerings.filter_map { |offering| offering.dig(:limits, :context_window) }.max,
               enabled:        offerings.any? { |offering| offering[:enabled] != false }
             }
+            if auto_routing_model?(model)
+              summary[:display_name] = AUTO_ROUTING_MODEL_DISPLAY
+              summary[:auto_route] = true
+              summary[:default] = true
+            end
+            summary
           end
 
           def self.summary(offerings)
@@ -109,6 +123,64 @@ module Legion
               by_type:         offerings.group_by { |offering| offering[:type].to_s }
                                         .transform_values(&:size)
             }
+          end
+
+          def self.with_auto_routing_offering(offerings, filters = {})
+            return offerings unless auto_routing_offering_matches?(filters)
+            return offerings if offerings.any? { |offering| auto_routing_model?(offering[:model]) }
+
+            [auto_routing_offering, *offerings]
+          end
+
+          def self.auto_routing_offering
+            {
+              id:                    AUTO_ROUTING_OFFERING_ID,
+              offering_id:           AUTO_ROUTING_OFFERING_ID,
+              model:                 AUTO_ROUTING_MODEL_ID,
+              display_name:          AUTO_ROUTING_MODEL_DISPLAY,
+              model_family:          'legionio',
+              canonical_model_alias: AUTO_ROUTING_MODEL_ID,
+              type:                  :inference,
+              provider_family:       'legionio',
+              provider_instance:     'auto',
+              instance_id:           'auto',
+              tier:                  :auto,
+              transport:             :internal,
+              enabled:               true,
+              capabilities:          AUTO_ROUTING_CAPABILITIES,
+              limits:                {},
+              health:                { circuit_state: 'available' },
+              metadata:              { auto_route: true, placeholder: true, display_name: AUTO_ROUTING_MODEL_DISPLAY },
+              routing_metadata:      { strategy: 'auto' },
+              source:                'static'
+            }
+          end
+
+          def self.auto_routing_offering_matches?(filters)
+            normalized = request_filters(filters)
+            type = normalized[:type]
+            return false if type && !type.to_s.empty? && type.to_s != 'inference' && type.to_s != 'chat'
+
+            provider = normalized[:provider]
+            return false if provider && !provider.to_s.empty? && !%w[legionio auto].include?(provider.to_s.downcase)
+
+            instance = normalized[:instance_id]
+            return false if instance && !instance.to_s.empty? && !%w[auto legionio].include?(instance.to_s.downcase)
+
+            model = normalized[:model] || normalized[:offering_id]
+            return false if model && !model.to_s.empty? && !auto_routing_model?(model) && model.to_s != AUTO_ROUTING_OFFERING_ID
+
+            family = normalized[:model_family]
+            return false if family && !family.to_s.empty? && family.to_s.downcase != 'legionio'
+
+            capability = normalized[:capability]
+            return false if capability && !AUTO_ROUTING_CAPABILITIES.include?(capability.to_s)
+
+            true
+          end
+
+          def self.auto_routing_model?(model)
+            model.to_s.strip.downcase == AUTO_ROUTING_MODEL_ID
           end
         end
       end

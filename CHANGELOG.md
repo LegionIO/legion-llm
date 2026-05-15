@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.9.28] - 2026-05-15
+
+### Added
+- API: `/api/llm/models` now surfaces a static `LegionIO` model (`id: legionio`) as the default auto-routing placeholder.
+
+### Changed
+- Routing: `model: "legionio"` clears explicit provider/model/instance/tier routing and sends the request through the router chain using the configured default intent.
+- Routing: default tier priority now includes `direct` between `local` and `fleet`, and discovery-generated rule scores honor `routing.tier_priority`.
+
+### Fixed
+- Prompt dispatch: provider-inferable model-only calls such as `gpt-5.4` infer the provider instead of pairing the model with `llm.default_provider`.
+
 ## [0.9.27] - 2026-05-15
 
 ### Fixed

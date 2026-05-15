@@ -186,7 +186,7 @@ RSpec.describe Legion::LLM::Settings do
 
     it 'defines tier_priority in correct order' do
       routing = described_class.routing_defaults
-      expect(routing[:tier_priority]).to eq(%w[local fleet openai_compat cloud frontier])
+      expect(routing[:tier_priority]).to eq(%w[local direct fleet openai_compat cloud frontier])
     end
 
     # ─── 5. Includes health config with circuit_breaker sub-hash ──────────────

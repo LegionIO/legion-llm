@@ -87,6 +87,17 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
       expect(priorities).to eq(priorities.sort.reverse)
     end
 
+    it 'uses configured tier priority when scoring generated rules' do
+      Legion::Settings[:llm][:routing][:tier_priority] = %w[direct local fleet cloud frontier]
+      direct_first = described_class.generate(
+        ollama: { default: { models: [{ name: 'local-model' }] } },
+        vllm:   { apollo: { models: [{ name: 'direct-model', tier: 'direct' }] } }
+      )
+
+      first_chat_rule = direct_first.find { |rule| rule[:when][:capability] == :chat }
+      expect(first_chat_rule[:then][:tier]).to eq(:direct)
+    end
+
     it 'skips cloud providers not in DISCOVERABLE_PROVIDERS' do
       cloud_discovered = { bedrock: { default: { models: [{ name: 'claude-v3' }] } } }
       cloud_rules = described_class.generate(cloud_discovered)

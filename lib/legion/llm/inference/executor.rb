@@ -376,7 +376,8 @@ module Legion
             offering_metadata: normalize_offering_metadata(@request.routing[:offering_metadata] ||
                                                            @request.routing[:offering]),
             intent:            @request.extra[:intent],
-            tier:              @request.extra[:tier]
+            tier:              @request.extra[:tier],
+            auto_route:        @request.extra[:auto_route]
           }
         end
 
@@ -397,7 +398,9 @@ module Legion
 
         def resolve_routing_state(state)
           explicit = state[:provider] || state[:instance] || state[:model]
-          return state unless (state[:intent] || state[:tier] || explicit) && defined?(Router) && Router.routing_enabled?
+          auto_route = state[:auto_route] == true
+          return state unless (state[:intent] || state[:tier] || explicit || auto_route) && defined?(Router)
+          return state unless auto_route || Router.routing_enabled?
 
           resolution = routing_resolution_for(state)
           return state unless resolution
@@ -406,7 +409,7 @@ module Legion
         end
 
         def routing_resolution_for(state)
-          if pipeline_escalation_enabled?
+          if state[:auto_route] == true || pipeline_escalation_enabled?
             @escalation_chain = Router.resolve_chain(
               intent:          state[:intent],
               tier:            state[:tier],

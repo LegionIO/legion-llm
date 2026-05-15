@@ -3,6 +3,9 @@
 module Legion
   module LLM
     module Inference
+      AUTO_ROUTING_MODEL_KEY = 'legionio'
+      AUTO_ROUTING_MODEL_ALIASES = [AUTO_ROUTING_MODEL_KEY].freeze
+
       Request = ::Data.define(
         :id, :conversation_id, :idempotency_key, :schema_version,
         :system, :messages, :tools, :tool_choice,
@@ -14,6 +17,11 @@ module Legion
         :billing, :test, :modality, :hooks
       ) do
         def self.build(**kwargs)
+          routing, extra = normalize_auto_routing(
+            kwargs.fetch(:routing, { provider: nil, model: nil }),
+            kwargs.fetch(:extra, {})
+          )
+
           new(
             id:               kwargs[:id] || "req_#{SecureRandom.hex(12)}",
             conversation_id:  kwargs[:conversation_id],
@@ -23,7 +31,7 @@ module Legion
             messages:         kwargs.fetch(:messages, []),
             tools:            kwargs.key?(:tools) ? kwargs[:tools] : nil,
             tool_choice:      kwargs.fetch(:tool_choice, { mode: :auto }),
-            routing:          kwargs.fetch(:routing, { provider: nil, model: nil }),
+            routing:          routing,
             tokens:           kwargs.fetch(:tokens, { max: 4096 }),
             stop:             kwargs.fetch(:stop, { sequences: [] }),
             generation:       kwargs.fetch(:generation, {}),
@@ -35,7 +43,7 @@ module Legion
             cache:            kwargs.fetch(:cache, { strategy: :default, cacheable: true }),
             priority:         kwargs.fetch(:priority, :normal),
             ttl:              kwargs[:ttl],
-            extra:            kwargs.fetch(:extra, {}),
+            extra:            extra,
             metadata:         kwargs.fetch(:metadata, {}),
             enrichments:      kwargs.fetch(:enrichments, {}),
             predictions:      kwargs.fetch(:predictions, {}),
@@ -109,6 +117,41 @@ module Legion
           }
           build_args[:id] = request_id if request_id
           build(**build_args)
+        end
+
+        def self.auto_routing_model?(model)
+          Legion::LLM::Inference::AUTO_ROUTING_MODEL_ALIASES.include?(model.to_s.strip.downcase)
+        end
+
+        def self.default_auto_routing_intent
+          routing = Legion::LLM::Settings.value(:routing, default: {})
+          intent = Legion::LLM::Settings.config_value(routing, :default_intent, {})
+          intent = intent.is_a?(Hash) ? normalize_hash(intent) : {}
+          intent.merge(capability: :chat)
+        rescue StandardError
+          { capability: :chat }
+        end
+
+        def self.normalize_auto_routing(routing, extra)
+          normalized_routing = normalize_hash(routing)
+          normalized_extra = normalize_hash(extra)
+          return [normalized_routing, normalized_extra] unless auto_routing_model?(normalized_routing[:model])
+
+          normalized_routing = { provider: nil, model: nil }
+          normalized_extra = normalized_extra.dup
+          normalized_extra.delete(:tier)
+          normalized_extra[:intent] ||= default_auto_routing_intent
+          normalized_extra[:auto_route] = true
+          normalized_extra[:requested_model_alias] = Legion::LLM::Inference::AUTO_ROUTING_MODEL_KEY
+          [normalized_routing, normalized_extra]
+        end
+
+        def self.normalize_hash(value)
+          return {} unless value.is_a?(Hash)
+
+          value.each_with_object({}) do |(key, hash_value), normalized|
+            normalized[key.respond_to?(:to_sym) ? key.to_sym : key] = hash_value
+          end
         end
       end
     end
