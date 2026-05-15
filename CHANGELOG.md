@@ -14,6 +14,7 @@
 - Executor: provider-tier lookup failures are logged and return nil instead of silently defaulting to `:cloud`.
 - LexLLMAdapter: optional content-block accessor fallbacks now capture and debug-log probe errors instead of bare-rescuing them.
 - Auto routing: unresolved `legionio` requests now raise a clear provider error instead of falling back to configured defaults.
+- Routing: model-only requests stay on provider inference while explicit provider/instance/tier requests still get registry defaults without requiring rule routing.
 
 ## [0.9.27] - 2026-05-15
 

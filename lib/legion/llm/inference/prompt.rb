@@ -39,6 +39,7 @@ module Legion
                      cache: nil,
                      quality_check: nil,
                      **)
+          routing_explicit = { provider: !provider.nil?, model: !model.nil?, tier: !tier.nil? }
           resolved_provider = provider
           resolved_model = model
           auto_route = Inference::Request.auto_routing_model?(resolved_model)
@@ -60,22 +61,23 @@ module Legion
           resolved_model ||= llm_setting(:default_model) unless auto_route
 
           request(message,
-                  provider:        resolved_provider,
-                  model:           resolved_model,
-                  intent:          intent,
-                  tier:            tier,
-                  schema:          schema,
-                  tools:           tools,
-                  escalate:        escalate,
-                  max_escalations: max_escalations,
-                  thinking:        thinking,
-                  temperature:     temperature,
-                  max_tokens:      max_tokens,
-                  tracing:         tracing,
-                  agent:           agent,
-                  caller:          caller,
-                  cache:           cache,
-                  quality_check:   quality_check,
+                  provider:         resolved_provider,
+                  model:            resolved_model,
+                  intent:           intent,
+                  tier:             tier,
+                  schema:           schema,
+                  tools:            tools,
+                  escalate:         escalate,
+                  max_escalations:  max_escalations,
+                  thinking:         thinking,
+                  temperature:      temperature,
+                  max_tokens:       max_tokens,
+                  tracing:          tracing,
+                  agent:            agent,
+                  caller:           caller,
+                  cache:            cache,
+                  quality_check:    quality_check,
+                  routing_explicit: routing_explicit,
                   **)
         end
 

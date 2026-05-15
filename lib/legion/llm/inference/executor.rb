@@ -375,16 +375,22 @@ module Legion
         end
 
         def routing_request_state
+          routing_explicit = @request.extra[:routing_explicit]
+          instance = @request.routing[:instance] || @request.routing[:instance_id] || @request.routing[:provider_instance]
+          tier = @request.extra[:tier]
           {
             provider:          @request.routing[:provider],
-            instance:          @request.routing[:instance] || @request.routing[:instance_id] || @request.routing[:provider_instance],
+            instance:          instance,
             model:             @request.routing[:model],
             offering_id:       @request.routing[:offering_id] || @request.routing[:id],
             offering_metadata: normalize_offering_metadata(@request.routing[:offering_metadata] ||
                                                            @request.routing[:offering]),
             intent:            @request.extra[:intent],
-            tier:              @request.extra[:tier],
-            auto_route:        @request.extra[:auto_route]
+            tier:              tier,
+            auto_route:        @request.extra[:auto_route],
+            provider_explicit: routing_field_explicit?(routing_explicit, :provider, @request.routing[:provider]),
+            instance_explicit: routing_field_explicit?(routing_explicit, :instance, instance),
+            tier_explicit:     routing_field_explicit?(routing_explicit, :tier, tier)
           }
         end
 
@@ -393,21 +399,25 @@ module Legion
           # caller-supplied tier/intent. Advisory assignments only fill blanks.
           if @proactive_tier_assignment&.dig(:forced)
             state[:tier] = @proactive_tier_assignment[:tier]
+            state[:tier_explicit] = true
             state[:intent] = merge_routing_intent(state[:intent], @proactive_tier_assignment[:intent])
             log.info "[llm][routing] action=forced_tier source=#{@proactive_tier_assignment[:source]} tier=#{state[:tier]}"
           elsif @proactive_tier_assignment && !state[:tier] && !state[:intent] && !state[:instance] &&
                 !state[:provider] && !state[:model]
             state[:tier] = @proactive_tier_assignment[:tier]
+            state[:tier_explicit] = true
             state[:intent] = @proactive_tier_assignment[:intent]
           end
           state
         end
 
         def resolve_routing_state(state)
-          explicit = state[:provider] || state[:instance] || state[:model]
+          return state unless defined?(Router)
+
+          explicit_route = state[:provider_explicit] || state[:instance_explicit] || state[:tier_explicit]
           auto_route = state[:auto_route] == true
-          return state unless (state[:intent] || state[:tier] || explicit || auto_route) && defined?(Router)
-          return state unless auto_route || Router.routing_enabled?
+          intent_route = state[:intent] && Router.routing_enabled?
+          return state unless explicit_route || auto_route || intent_route
 
           resolution = routing_resolution_for(state)
           return state unless resolution
@@ -416,7 +426,7 @@ module Legion
         end
 
         def routing_resolution_for(state)
-          if state[:auto_route] == true || pipeline_escalation_enabled?
+          if state[:auto_route] == true || (state[:intent] && pipeline_escalation_enabled?)
             @escalation_chain = Router.resolve_chain(
               intent:                 state[:intent],
               tier:                   state[:tier],
@@ -455,6 +465,13 @@ module Legion
             duration_ms: 0, timestamp: Time.now
           }
           state
+        end
+
+        def routing_field_explicit?(flags, key, value)
+          return false if value.nil? || value.to_s.empty?
+          return true unless flags.is_a?(Hash)
+
+          flags.fetch(key, flags.fetch(key.to_s, true)) == true
         end
 
         def step_request_normalization
