@@ -26,7 +26,7 @@ module Legion
           anthropic: :frontier
         }.freeze
 
-        TIER_WEIGHT = { local: 100, fleet: 80, cloud: 60, frontier: 40 }.freeze
+        DEFAULT_TIER_PRIORITY = %i[local direct fleet openai_compat cloud frontier].freeze
 
         module_function
 
@@ -50,7 +50,7 @@ module Legion
                              extract_field(model_data, 'tier')&.to_sym ||
                              tier
                 capability = embedding_model?(model_data) ? :embed : :chat
-                priority = (TIER_WEIGHT[model_tier] || 80) - order
+                priority = tier_weight(model_tier) - order
                 rules << build_rule(provider, instance_id, model_data, capability, model_tier, priority)
                 rules << build_rule(provider, instance_id, model_data, :stream, model_tier, priority) if capability == :chat
                 order += 1
@@ -91,7 +91,7 @@ module Legion
             next unless default_model
 
             model_data = { name: default_model }
-            priority = TIER_WEIGHT[tier] || 40
+            priority = tier_weight(tier)
             rules << build_rule(provider_name, :default, model_data, :chat, tier, priority)
             rules << build_rule(provider_name, :default, model_data, :stream, tier, priority)
           end
@@ -134,6 +134,26 @@ module Legion
           return nil unless model_data.is_a?(Hash)
 
           model_data[field] || model_data[field.to_s]
+        end
+
+        def tier_weight(tier)
+          tier_sym = tier.respond_to?(:to_sym) ? tier.to_sym : tier
+          index = tier_priority.index(tier_sym)
+          return 0 unless index
+
+          (tier_priority.length - index) * 100
+        end
+
+        def tier_priority
+          configured = Legion::LLM::Settings.value(:routing, :tier_priority, default: DEFAULT_TIER_PRIORITY)
+          normalized = Array(configured).filter_map do |tier|
+            tier.to_sym if tier.respond_to?(:to_sym)
+          end
+          normalized = DEFAULT_TIER_PRIORITY if normalized.empty?
+          (normalized + DEFAULT_TIER_PRIORITY).uniq
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'rule_generator.tier_priority')
+          DEFAULT_TIER_PRIORITY
         end
 
         def extension_providers

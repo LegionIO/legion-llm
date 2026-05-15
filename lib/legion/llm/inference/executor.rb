@@ -159,9 +159,11 @@ module Legion
           return meta[:tier].to_sym if meta.is_a?(Hash) && meta[:tier]
           return Router.provider_tier(provider) if defined?(Router) && Router.respond_to?(:provider_tier)
 
-          Router::PROVIDER_TIER.fetch(provider.to_sym, :cloud) if defined?(Router::PROVIDER_TIER)
-        rescue StandardError
-          :cloud
+          Router::PROVIDER_TIER.fetch(provider.to_sym, nil) if defined?(Router::PROVIDER_TIER)
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.inferred_provider_tier',
+                              provider: provider)
+          nil
         end
 
         def execute_steps
@@ -326,12 +328,17 @@ module Legion
           log.debug "[llm][executor] action=step_routing.enter requested_provider=#{@request.routing[:provider]} requested_model=#{@request.routing[:model]}"
           @timestamps[:routing_start] = Time.now
           state = resolve_routing_state(apply_proactive_tier_assignment(routing_request_state))
+          auto_route = state[:auto_route] == true
 
           @resolved_provider = state[:provider] ||
                                (state[:model] && Router.infer_provider_for_model(state[:model])) ||
-                               llm_setting(:default_provider)
-          @resolved_instance = state[:instance] || llm_setting(:default_instance)
-          @resolved_model = state[:model] || llm_setting(:default_model)
+                               (llm_setting(:default_provider) unless auto_route)
+          @resolved_instance = resolve_provider_instance(state[:instance], @resolved_provider)
+          @resolved_model = state[:model] || (llm_setting(:default_model) unless auto_route)
+          if auto_route && (@resolved_provider.nil? || @resolved_model.nil?)
+            raise ProviderError, 'Auto routing could not resolve an available LLM provider/model'
+          end
+
           @resolved_tier = state[:tier]&.to_sym || inferred_provider_tier(@resolved_provider)
           @resolved_offering_id = state[:offering_id]
           @resolved_offering_metadata = state[:offering_metadata]
@@ -347,16 +354,43 @@ module Legion
           )
         end
 
+        def resolve_provider_instance(requested_instance, provider)
+          return provider_scoped_instance(requested_instance, provider, preserve_unknown: true) if requested_instance
+
+          provider_scoped_instance(llm_setting(:default_instance), provider, preserve_unknown: false)
+        end
+
+        def provider_scoped_instance(instance, provider, preserve_unknown:)
+          return nil if instance.nil? || instance.to_s.empty? || provider.nil? || provider.to_s.empty?
+
+          provider_sym = provider.to_sym
+          instance_sym = instance.to_sym
+          return instance_sym if Call::Registry.registered?(provider_sym, instance: instance_sym)
+          return nil if Call::Registry.registered?(provider_sym)
+
+          preserve_unknown ? instance_sym : nil
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.provider_scoped_instance')
+          preserve_unknown ? instance : nil
+        end
+
         def routing_request_state
+          routing_explicit = @request.extra[:routing_explicit]
+          instance = @request.routing[:instance] || @request.routing[:instance_id] || @request.routing[:provider_instance]
+          tier = @request.extra[:tier]
           {
             provider:          @request.routing[:provider],
-            instance:          @request.routing[:instance] || @request.routing[:instance_id] || @request.routing[:provider_instance],
+            instance:          instance,
             model:             @request.routing[:model],
             offering_id:       @request.routing[:offering_id] || @request.routing[:id],
             offering_metadata: normalize_offering_metadata(@request.routing[:offering_metadata] ||
                                                            @request.routing[:offering]),
             intent:            @request.extra[:intent],
-            tier:              @request.extra[:tier]
+            tier:              tier,
+            auto_route:        @request.extra[:auto_route],
+            provider_explicit: routing_field_explicit?(routing_explicit, :provider, @request.routing[:provider]),
+            instance_explicit: routing_field_explicit?(routing_explicit, :instance, instance),
+            tier_explicit:     routing_field_explicit?(routing_explicit, :tier, tier)
           }
         end
 
@@ -365,17 +399,25 @@ module Legion
           # caller-supplied tier/intent. Advisory assignments only fill blanks.
           if @proactive_tier_assignment&.dig(:forced)
             state[:tier] = @proactive_tier_assignment[:tier]
+            state[:tier_explicit] = true
             state[:intent] = merge_routing_intent(state[:intent], @proactive_tier_assignment[:intent])
             log.info "[llm][routing] action=forced_tier source=#{@proactive_tier_assignment[:source]} tier=#{state[:tier]}"
-          elsif @proactive_tier_assignment && !state[:tier] && !state[:intent]
+          elsif @proactive_tier_assignment && !state[:tier] && !state[:intent] && !state[:instance] &&
+                !state[:provider] && !state[:model]
             state[:tier] = @proactive_tier_assignment[:tier]
+            state[:tier_explicit] = true
             state[:intent] = @proactive_tier_assignment[:intent]
           end
           state
         end
 
         def resolve_routing_state(state)
-          return state unless (state[:intent] || state[:tier]) && defined?(Router) && Router.routing_enabled?
+          return state unless defined?(Router)
+
+          explicit_route = state[:provider_explicit] || state[:instance_explicit] || state[:tier_explicit]
+          auto_route = state[:auto_route] == true
+          intent_route = state[:intent] && Router.routing_enabled?
+          return state unless explicit_route || auto_route || intent_route
 
           resolution = routing_resolution_for(state)
           return state unless resolution
@@ -384,17 +426,20 @@ module Legion
         end
 
         def routing_resolution_for(state)
-          if pipeline_escalation_enabled?
+          if state[:auto_route] == true || (state[:intent] && pipeline_escalation_enabled?)
             @escalation_chain = Router.resolve_chain(
-              intent:          state[:intent],
-              tier:            state[:tier],
-              model:           state[:model],
-              provider:        state[:provider],
-              max_escalations: pipeline_escalation_max_attempts
+              intent:                 state[:intent],
+              tier:                   state[:tier],
+              model:                  state[:model],
+              provider:               state[:provider],
+              instance:               state[:instance],
+              max_escalations:        pipeline_escalation_max_attempts,
+              allow_default_fallback: state[:auto_route] != true
             )
             @escalation_chain.primary
           else
-            Router.resolve(intent: state[:intent], tier: state[:tier], model: state[:model], provider: state[:provider])
+            Router.resolve(intent: state[:intent], tier: state[:tier], model: state[:model],
+                           provider: state[:provider], instance: state[:instance])
           end
         end
 
@@ -420,6 +465,13 @@ module Legion
             duration_ms: 0, timestamp: Time.now
           }
           state
+        end
+
+        def routing_field_explicit?(flags, key, value)
+          return false if value.nil? || value.to_s.empty?
+          return true unless flags.is_a?(Hash)
+
+          flags.fetch(key, flags.fetch(key.to_s, true)) == true
         end
 
         def step_request_normalization
@@ -476,33 +528,21 @@ module Legion
         end
 
         def run_provider_call_with_escalation
-          chain = @escalation_chain || build_default_escalation_chain
+          @escalation_chain ||= build_default_escalation_chain
+          chain = @escalation_chain
           threshold = pipeline_escalation_quality_threshold
           quality_check = @request.extra[:quality_check]
           succeeded = false
+          tried = []
           log.debug "[llm][executor] action=escalation.enter chain_size=#{chain.size} threshold=#{threshold}"
 
+          primary_tier = @escalation_chain.primary&.tier
+
           chain.each do |resolution|
-            start_time = Time.now
-            @resolved_provider = resolution.provider
-            @resolved_instance = resolution.instance
-            @resolved_model = resolution.model
-            @resolved_tier = resolution.tier
-            @resolved_offering_id = resolution.offering_id
-            @resolved_offering_metadata = resolution.offering_metadata
-            succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
+            next if tried.any? { |t| t[:provider] == resolution.provider && t[:instance] == resolution.instance && t[:model] == resolution.model }
+
+            succeeded = run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier)
             break if succeeded
-          rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
-            record_escalation_failure(e, resolution, start_time,
-                                      outcome: :auth_error, operation: 'llm.pipeline.escalation_attempt.auth',
-                                      handled: true)
-          rescue Legion::LLM::RateLimitError => e
-            record_escalation_failure(e, resolution, start_time,
-                                      outcome: :rate_limited, operation: 'llm.pipeline.escalation_attempt.rate_limit',
-                                      handled: true)
-          rescue StandardError => e
-            record_escalation_failure(e, resolution, start_time, outcome:   :error,
-                                                                 operation: 'llm.pipeline.escalation_attempt')
           end
           return if succeeded
 
@@ -511,6 +551,58 @@ module Legion
             status: 'escalation_exhausted'
           )
           raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed"
+        end
+
+        def run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier)
+          move_type = if tried.empty?
+                        :primary
+                      elsif resolution.tier == primary_tier
+                        :lateral
+                      else
+                        :escalation
+                      end
+          log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} model=#{resolution.model} tier=#{resolution.tier}"
+
+          start_time = Time.now
+          @resolved_provider = resolution.provider
+          @resolved_instance = resolution.instance
+          @resolved_model = resolution.model
+          @resolved_tier = resolution.tier
+          @resolved_offering_id = resolution.offering_id
+          @resolved_offering_metadata = resolution.offering_metadata
+          succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model } unless succeeded
+          succeeded
+        rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+          record_escalation_failure(e, resolution, start_time,
+                                    outcome:   :auth_error,
+                                    operation: 'llm.pipeline.escalation_attempt.auth',
+                                    handled:   true)
+          false
+        rescue Legion::LLM::ContextOverflow => e
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+          record_escalation_failure(e, resolution, start_time,
+                                    outcome:   :context_overflow,
+                                    operation: 'llm.pipeline.escalation_attempt.context_overflow',
+                                    handled:   true)
+          log.warn "[llm][escalation] context_overflow provider=#{resolution.provider} " \
+                   "model=#{resolution.model} — skipping same-tier, seeking larger context window"
+          skip_same_tier!(resolution, tried)
+          false
+        rescue Legion::LLM::RateLimitError => e
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+          record_escalation_failure(e, resolution, start_time,
+                                    outcome:   :rate_limited,
+                                    operation: 'llm.pipeline.escalation_attempt.rate_limit',
+                                    handled:   true)
+          false
+        rescue StandardError => e
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+          record_escalation_failure(e, resolution, start_time,
+                                    outcome:   :error,
+                                    operation: 'llm.pipeline.escalation_attempt')
+          false
         end
 
         def attempt_escalation(resolution, threshold, quality_check, start_time)
@@ -586,7 +678,64 @@ module Legion
         end
 
         def build_default_escalation_chain
-          Router.resolve_chain(max_escalations: pipeline_escalation_max_attempts)
+          primary = Router.explicit_resolution(@resolved_tier, @resolved_provider, @resolved_model, @resolved_instance)
+          fallbacks = build_fallback_resolutions(
+            exclude_provider: @resolved_provider,
+            exclude_instance: @resolved_instance,
+            primary_tier:     @resolved_tier
+          )
+          resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
+          Router::EscalationChain.new(resolutions: resolutions, max_attempts: pipeline_escalation_max_attempts)
+        end
+
+        def build_fallback_resolutions(exclude_provider: nil, exclude_instance: nil, primary_tier: nil)
+          tier_rank = Router::TIER_RANK
+          primary_rank = primary_tier ? (tier_rank[primary_tier.to_sym] || 99) : 99
+
+          candidates = Call::Registry.all_instances.filter_map do |entry|
+            next if entry[:provider] == exclude_provider&.to_sym && entry[:instance] == (exclude_instance&.to_sym || :default)
+            next if entry[:provider] == exclude_provider&.to_sym && exclude_instance.nil?
+
+            model = Router.send(:registry_default_model, entry)
+            next unless model
+
+            tier = Router::PROVIDER_TIER.fetch(entry[:provider], :frontier)
+            Router::Resolution.new(
+              tier:     tier,
+              provider: entry[:provider],
+              instance: entry[:instance] == :default ? nil : entry[:instance],
+              model:    model,
+              rule:     'escalation_fallback'
+            )
+          end
+
+          # Lateral alternatives (same tier) come first; escalations (higher tier) follow;
+          # lower-ranked tiers are appended last.
+          candidates.sort_by do |r|
+            r_rank = tier_rank[r.tier] || 99
+            rank_diff = r_rank - primary_rank
+            bucket = if rank_diff.zero?
+                       0
+                     elsif rank_diff.positive?
+                       1
+                     else
+                       2
+                     end
+            [bucket, r_rank]
+          end
+        end
+
+        def skip_same_tier!(failed_resolution, tried)
+          chain = @escalation_chain
+          return unless chain.respond_to?(:each)
+
+          chain.each do |r|
+            next if r.tier != failed_resolution.tier
+            next if tried.any? { |t| t[:provider] == r.provider && t[:instance] == r.instance && t[:model] == r.model }
+
+            log.debug "[llm][escalation] action=skip_same_tier provider=#{r.provider} model=#{r.model} tier=#{r.tier} reason=context_overflow"
+            tried << { provider: r.provider, instance: r.instance, model: r.model }
+          end
         end
 
         def escalation_attempt_hash(resolution, outcome:, failures:, duration_ms:)

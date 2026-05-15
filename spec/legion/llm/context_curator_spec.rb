@@ -140,6 +140,54 @@ RSpec.describe Legion::LLM::Context::Curator do
         expect(curator.strip_thinking(msg)).to eq(msg)
       end
     end
+
+    context 'message contains a <think> block (DeepSeek/Qwen/Ollama)' do
+      let(:content) { "<think>Internal chain of thought from DeepSeek.</think>\nAnswer here." }
+      let(:msg) { { role: :assistant, content: content } }
+
+      it 'removes <think> block and marks curated' do
+        result = curator.strip_thinking(msg)
+        expect(result[:content]).not_to include('<think>')
+        expect(result[:content]).to include('Answer here.')
+        expect(result[:curated]).to be true
+      end
+    end
+
+    context 'message contains both <thinking> and <think> blocks' do
+      let(:content) { '<thinking>Anthropic block.</thinking> <think>Ollama block.</think> Final.' }
+      let(:msg) { { role: :assistant, content: content } }
+
+      it 'removes both variants' do
+        result = curator.strip_thinking(msg)
+        expect(result[:content]).not_to include('<thinking>')
+        expect(result[:content]).not_to include('<think>')
+        expect(result[:content]).to include('Final.')
+      end
+    end
+
+    context 'message has an unclosed <think> tag (provider died mid-stream)' do
+      let(:content) { "Preamble.\n<think>Reasoning that never finished" }
+      let(:msg) { { role: :assistant, content: content } }
+
+      it 'strips the unclosed tag and trailing content' do
+        result = curator.strip_thinking(msg)
+        expect(result[:content]).to include('Preamble.')
+        expect(result[:content]).not_to include('<think>')
+        expect(result[:curated]).to be true
+      end
+    end
+
+    context 'message has an unclosed <thinking> tag' do
+      let(:content) { "Before.\n<thinking>Partial reasoning" }
+      let(:msg) { { role: :assistant, content: content } }
+
+      it 'strips the unclosed tag and trailing content' do
+        result = curator.strip_thinking(msg)
+        expect(result[:content]).to include('Before.')
+        expect(result[:content]).not_to include('<thinking>')
+        expect(result[:curated]).to be true
+      end
+    end
   end
 
   # --- exchange folding ---

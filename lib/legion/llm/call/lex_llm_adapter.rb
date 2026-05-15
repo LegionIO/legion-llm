@@ -239,12 +239,49 @@ module Legion
         end
 
         def text_part_content(part)
-          return unless part.respond_to?(:transform_keys)
+          return part if part.is_a?(String)
 
-          normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-          return unless normalized[:type].to_s == 'text'
+          if part.respond_to?(:transform_keys)
+            normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+            return unless normalized[:type].to_s == 'text'
 
-          normalized[:text].to_s
+            return normalized[:text].to_s
+          end
+
+          # Data structs expose named readers (type/text) without necessarily implementing [].
+          # Try named accessor path first; fall through to [] / fetch for plain hashes/structs.
+          if part.respond_to?(:type) || part.respond_to?(:text)
+            type = (part.respond_to?(:type) ? part.type.to_s : '')
+            text = part.respond_to?(:text) ? part.text : nil
+            return text.to_s if type == 'text' || (type.empty? && !text.nil?)
+
+            return nil
+          end
+
+          return unless part.respond_to?(:[]) || part.respond_to?(:fetch)
+
+          type = (defined_method_access(part, :type) || '').to_s
+          text = defined_method_access(part, :text)
+          text.to_s if type == 'text' || (type.empty? && !text.nil?)
+        end
+
+        def defined_method_access(obj, key)
+          # Prefer named accessor (covers Data structs like Types::ContentBlock).
+          key_sym = key.respond_to?(:to_sym) ? key.to_sym : key
+          return obj.public_send(key_sym) if obj.respond_to?(key_sym)
+
+          str_key = key.to_s
+          obj[key]
+        rescue TypeError, NoMethodError, KeyError => e
+          log.debug "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} " \
+                    "fallback=string_key error=#{e.class}: #{e.message}"
+          begin
+            obj[str_key]
+          rescue TypeError, NoMethodError, KeyError => fallback_error
+            log.debug "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} " \
+                      "fallback=none error=#{fallback_error.class}: #{fallback_error.message}"
+            nil
+          end
         end
 
         def normalize_message_tool_calls(tool_calls)

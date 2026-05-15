@@ -43,6 +43,20 @@ RSpec.describe Legion::LLM::Inference::Request do
       req2 = described_class.build(messages: [])
       expect(req1.id).not_to eq(req2.id)
     end
+
+    it 'normalizes the LegionIO placeholder model into automatic routing' do
+      req = described_class.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { provider: 'anthropic', instance: 'apollo', model: 'LegionIO' },
+        extra:    { tier: 'frontier' }
+      )
+
+      expect(req.routing).to eq({ provider: nil, model: nil })
+      expect(req.extra[:tier]).to be_nil
+      expect(req.extra[:intent]).to include(capability: :chat)
+      expect(req.extra[:auto_route]).to be(true)
+      expect(req.extra[:requested_model_alias]).to eq('legionio')
+    end
   end
 
   describe '.from_chat_args' do

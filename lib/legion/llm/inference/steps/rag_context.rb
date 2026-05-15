@@ -319,6 +319,7 @@ module Legion
 
           def positive_integer(value)
             return nil if value.nil?
+            return nil if value.respond_to?(:empty?) && value.empty?
 
             integer = Integer(value)
             integer.positive? ? integer : nil

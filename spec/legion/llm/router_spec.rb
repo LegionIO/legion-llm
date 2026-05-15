@@ -209,6 +209,15 @@ RSpec.describe Legion::LLM::Router do
       expect(result.model).to eq('claude-3-haiku')
     end
 
+    it 'falls back to the provider registry instance when an explicit instance is not registered for that provider' do
+      Legion::LLM::Call::Registry.register(:vllm, Module.new, instance: :apollo)
+      Legion::LLM::Call::Registry.register(:anthropic, Module.new, metadata: { default_model: 'claude-sonnet-4-6' })
+
+      result = described_class.resolve(provider: :anthropic, instance: :apollo, model: 'claude-sonnet-4-6')
+
+      expect(result.instance).to eq(:default)
+    end
+
     it 'falls back to default provider for tier when provider is nil' do
       result = described_class.resolve(tier: :local)
       expect(result.provider).to eq(:ollama)

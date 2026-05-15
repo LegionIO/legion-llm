@@ -67,6 +67,51 @@ RSpec.describe Legion::LLM::Prompt do
       end
     end
 
+    context 'when a caller passes only a provider-inferable model' do
+      before do
+        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+        Legion::Settings[:llm][:default_provider] = 'vllm'
+        Legion::Settings[:llm][:default_instance] = 'apollo'
+        Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
+      end
+
+      it 'infers the model provider instead of combining it with the default provider' do
+        result = described_class.dispatch('Hello', model: 'gpt-5.4')
+
+        expect(result.routing[:provider]).to eq(:openai)
+        expect(result.routing[:model]).to eq('gpt-5.4')
+      end
+    end
+
+    context 'when a caller passes the LegionIO placeholder model' do
+      let(:resolution) do
+        Legion::LLM::Router::Resolution.new(
+          tier: :frontier, provider: :anthropic, model: 'claude-sonnet-4-6', rule: 'auto:test'
+        )
+      end
+
+      before do
+        Legion::Settings[:llm][:default_provider] = 'vllm'
+        Legion::Settings[:llm][:default_instance] = 'apollo'
+        Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
+        Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+        chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 3)
+        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
+        allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+      end
+
+      it 'routes through the router instead of using configured defaults' do
+        result = described_class.dispatch('Hello', model: 'legionio')
+
+        expect(Legion::LLM::Router).to have_received(:resolve_chain).with(
+          hash_including(intent: hash_including(capability: :chat), provider: nil, instance: nil, model: nil)
+        )
+        expect(result.routing[:provider]).to eq(:anthropic)
+        expect(result.routing[:instance]).to be_nil
+        expect(result.routing[:model]).to eq('claude-sonnet-4-6')
+      end
+    end
+
     context 'when defaults are string-keyed' do
       before do
         allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)

@@ -108,7 +108,7 @@ module Legion
                 id:              request_id,
                 messages:        messages,
                 system:          body[:system],
-                routing:         { provider: provider, model: model },
+                routing:         { provider: provider, model: model, instance: body[:instance] }.compact,
                 tools:           tool_declarations,
                 caller:          effective_caller,
                 conversation_id: conversation_id,

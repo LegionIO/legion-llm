@@ -298,6 +298,74 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
                                                 ])
   end
 
+  context 'Anthropic-style structured content blocks in messages (#123)' do
+    it 'flattens symbol-keyed text blocks to a plain string' do
+      messages_seen = nil
+      provider_class.define_method(:complete) do |messages, **|
+        messages_seen = messages
+        llm_namespace::Message.new(role: :assistant, content: 'ok', input_tokens: 1, output_tokens: 1)
+      end
+
+      adapter.chat(
+        model:    'model-a',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'tell me a dad joke' }] }]
+      )
+
+      expect(messages_seen.first.content).to eq('tell me a dad joke')
+    end
+
+    it 'flattens string-keyed text blocks to a plain string' do
+      messages_seen = nil
+      provider_class.define_method(:complete) do |messages, **|
+        messages_seen = messages
+        llm_namespace::Message.new(role: :assistant, content: 'ok', input_tokens: 1, output_tokens: 1)
+      end
+
+      adapter.chat(
+        model:    'model-a',
+        messages: [{ role: 'user', content: [{ 'type' => 'text', 'text' => 'tell me a dad joke' }] }]
+      )
+
+      expect(messages_seen.first.content).to eq('tell me a dad joke')
+    end
+
+    it 'joins multiple text blocks' do
+      messages_seen = nil
+      provider_class.define_method(:complete) do |messages, **|
+        messages_seen = messages
+        llm_namespace::Message.new(role: :assistant, content: 'ok', input_tokens: 1, output_tokens: 1)
+      end
+
+      adapter.chat(
+        model:    'model-a',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'part one' }, { type: 'text', text: 'part two' }] }]
+      )
+
+      expect(messages_seen.first.content).to eq("part one\n\npart two")
+    end
+
+    it 'skips non-text blocks (tool_use) and returns remaining text' do
+      messages_seen = nil
+      provider_class.define_method(:complete) do |messages, **|
+        messages_seen = messages
+        llm_namespace::Message.new(role: :assistant, content: 'ok', input_tokens: 1, output_tokens: 1)
+      end
+
+      adapter.chat(
+        model:    'model-a',
+        messages: [{
+          role:    'user',
+          content: [
+            { type: 'text', text: 'hello' },
+            { type: 'tool_use', id: 'tu_1', name: 'search', input: {} }
+          ]
+        }]
+      )
+
+      expect(messages_seen.first.content).to eq('hello')
+    end
+  end
+
   it 'raises provider failures for the caller to classify' do
     provider_class.define_method(:complete) do |_messages, **|
       raise 'provider failed'

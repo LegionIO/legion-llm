@@ -39,8 +39,17 @@ module Legion
                      cache: nil,
                      quality_check: nil,
                      **)
+          routing_explicit = { provider: !provider.nil?, model: !model.nil?, tier: !tier.nil? }
           resolved_provider = provider
           resolved_model = model
+          auto_route = Inference::Request.auto_routing_model?(resolved_model)
+
+          if auto_route
+            resolved_provider = nil
+            intent ||= Inference::Request.default_auto_routing_intent
+          elsif resolved_provider.nil? && resolved_model && defined?(Router)
+            resolved_provider = Router.infer_provider_for_model(resolved_model)
+          end
 
           if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && Router.routing_enabled? && (intent || tier)
             resolution = Router.resolve(intent: intent, tier: tier, exclude: exclude)
@@ -48,26 +57,27 @@ module Legion
             resolved_model = resolution&.model
           end
 
-          resolved_provider ||= llm_setting(:default_provider)
-          resolved_model ||= llm_setting(:default_model)
+          resolved_provider ||= llm_setting(:default_provider) unless auto_route
+          resolved_model ||= llm_setting(:default_model) unless auto_route
 
           request(message,
-                  provider:        resolved_provider,
-                  model:           resolved_model,
-                  intent:          intent,
-                  tier:            tier,
-                  schema:          schema,
-                  tools:           tools,
-                  escalate:        escalate,
-                  max_escalations: max_escalations,
-                  thinking:        thinking,
-                  temperature:     temperature,
-                  max_tokens:      max_tokens,
-                  tracing:         tracing,
-                  agent:           agent,
-                  caller:          caller,
-                  cache:           cache,
-                  quality_check:   quality_check,
+                  provider:         resolved_provider,
+                  model:            resolved_model,
+                  intent:           intent,
+                  tier:             tier,
+                  schema:           schema,
+                  tools:            tools,
+                  escalate:         escalate,
+                  max_escalations:  max_escalations,
+                  thinking:         thinking,
+                  temperature:      temperature,
+                  max_tokens:       max_tokens,
+                  tracing:          tracing,
+                  agent:            agent,
+                  caller:           caller,
+                  cache:            cache,
+                  quality_check:    quality_check,
+                  routing_explicit: routing_explicit,
                   **)
         end
 
@@ -90,7 +100,8 @@ module Legion
                     cache: nil,
                     quality_check: nil,
                     **)
-          if provider.nil? || model.nil?
+          auto_route = Inference::Request.auto_routing_model?(model)
+          if !auto_route && (provider.nil? || model.nil?)
             raise LLMError, "Prompt.request: provider and model must be set (got provider=#{provider.inspect}, model=#{model.inspect}). " \
                             'Configure Legion::Settings[:llm][:default_provider] and [:default_model], or pass them explicitly.'
           end

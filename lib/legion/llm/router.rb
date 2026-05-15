@@ -18,6 +18,7 @@ module Legion
                         gemini: :cloud, azure: :cloud, ollama: :local, vllm: :fleet }.freeze
       PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
       TIER_EXTERNAL = Set[:cloud, :frontier, :openai_compat].freeze
+      TIER_RANK = { local: 0, direct: 1, fleet: 2, openai_compat: 3, cloud: 4, frontier: 5 }.freeze
 
       OLLAMA_MODEL_PATTERN = %r{[:/]}
 
@@ -60,9 +61,9 @@ module Legion
         # @param model    [String, nil] explicit model override
         # @param provider [Symbol, nil] explicit provider override
         # @return [Resolution, nil]
-        def resolve(intent: nil, tier: nil, model: nil, provider: nil, exclude: {})
-          log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider}"
-          return explicit_resolution(tier, provider, model) if tier
+        def resolve(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, exclude: {})
+          log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider} instance=#{instance}"
+          return explicit_resolution(tier, provider, model, instance) if tier || provider || instance
 
           return nil unless routing_enabled? && intent
 
@@ -81,13 +82,14 @@ module Legion
           resolution || arbitrage_fallback(intent)
         end
 
-        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil, exclude: {})
+        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, max_escalations: nil,
+                          exclude: {}, allow_default_fallback: true)
           log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations}"
           max = max_escalations || escalation_max_attempts
-          return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model)], max_attempts: max) if tier
-          return chain_from_defaults(model, provider, max) unless routing_enabled? && intent
+          return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model, instance)], max_attempts: max) if tier || provider || instance
+          return chain_from_defaults(model, provider, max, allow_default_fallback: allow_default_fallback) unless routing_enabled? && intent
 
-          chain_from_intent(intent, max, exclude: exclude)
+          chain_from_intent(intent, max, exclude: exclude, allow_default_fallback: allow_default_fallback)
         end
 
         def health_tracker
@@ -145,6 +147,34 @@ module Legion
           true
         end
 
+        def explicit_resolution(tier, provider, model, instance = nil)
+          registry_entry = if provider
+                             registry_entry_for_provider(provider.to_sym, instance: instance&.to_sym)
+                           elsif tier
+                             registry_entry_for_tier(tier)
+                           end
+          resolved_provider = if provider
+                                provider.to_sym
+                              else
+                                registry_entry&.[](:provider) ||
+                                  (tier && default_provider_for_tier(tier)) ||
+                                  default_settings_provider&.to_sym ||
+                                  :anthropic
+                              end
+          resolved_model    = model || registry_default_model(registry_entry) || (tier && default_model_for_tier(tier))
+          resolved_instance = registry_entry&.[](:instance) || instance
+          resolved_tier     = tier || PROVIDER_TIER.fetch(resolved_provider, :frontier)
+
+          Resolution.new(
+            tier:     resolved_tier,
+            provider: resolved_provider,
+            model:    resolved_model,
+            instance: resolved_instance,
+            rule:     'explicit',
+            metadata: registry_resolution_metadata(registry_entry)
+          )
+        end
+
         private
 
         def arbitrage_fallback(intent)
@@ -160,25 +190,6 @@ module Legion
           tier = PROVIDER_TIER.fetch(provider, :cloud)
           log.debug("Router: arbitrage fallback selected model=#{model} provider=#{provider} tier=#{tier}")
           Resolution.new(tier: tier, provider: provider, model: model, rule: 'arbitrage_fallback')
-        end
-
-        def explicit_resolution(tier, provider, model)
-          registry_entry = if provider
-                             registry_entry_for_provider(provider.to_sym)
-                           else
-                             registry_entry_for_tier(tier)
-                           end
-          resolved_provider = provider ? provider.to_sym : (registry_entry&.[](:provider) || default_provider_for_tier(tier))
-          resolved_model = model || registry_default_model(registry_entry) || default_model_for_tier(tier)
-
-          Resolution.new(
-            tier:     tier,
-            provider: resolved_provider,
-            model:    resolved_model,
-            instance: registry_entry&.[](:instance),
-            rule:     'explicit',
-            metadata: registry_resolution_metadata(registry_entry)
-          )
         end
 
         def merge_defaults(intent)
@@ -423,19 +434,22 @@ module Legion
           end
         end
 
-        def chain_from_defaults(model, provider, max)
-          if provider || model || default_settings_provider || default_settings_model
+        def chain_from_defaults(model, provider, max, allow_default_fallback: true)
+          if provider || model || (allow_default_fallback && (default_settings_provider || default_settings_model))
             p = (provider || default_settings_provider)&.to_sym
             resolved_model = model || registry_default_model(registry_entry_for_provider(p)) ||
                              default_settings_model || 'claude-sonnet-4-6'
-            res = Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
-                                 provider: p || :anthropic,
-                                 model:    resolved_model)
-            return EscalationChain.new(resolutions: [res], max_attempts: max)
+            primary = Resolution.new(tier:     PROVIDER_TIER.fetch(p || :anthropic, :frontier),
+                                     provider: p || :anthropic,
+                                     model:    resolved_model)
+            # Append remaining registered providers as fallbacks (sorted by tier rank)
+            fallbacks = enabled_provider_chain.reject { |r| r.provider == primary.provider }
+            resolutions = ([primary] + fallbacks).uniq { |r| [r.provider, r.instance, r.model] }
+            return EscalationChain.new(resolutions: resolutions, max_attempts: max)
           end
 
           resolutions = enabled_provider_chain
-          if resolutions.empty?
+          if resolutions.empty? && allow_default_fallback
             p = default_settings_provider&.to_sym || :anthropic
             resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
@@ -475,7 +489,7 @@ module Legion
           end
         end
 
-        def chain_from_intent(intent, max, exclude: {})
+        def chain_from_intent(intent, max, exclude: {}, allow_default_fallback: true)
           merged     = intent ? merge_defaults(intent) : {}
           rules      = load_rules
           candidates = select_candidates(rules, merged, exclude: exclude)
@@ -484,7 +498,7 @@ module Legion
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
           resolutions = resolutions.uniq { |r| [r.provider, r.model] }
           resolutions = enabled_provider_chain if resolutions.empty?
-          if resolutions.empty?
+          if resolutions.empty? && allow_default_fallback
             p = default_settings_provider&.to_sym || :anthropic
             resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
@@ -573,14 +587,23 @@ module Legion
         end
 
         # Find the first registered instance for a specific provider.
-        def registry_entry_for_provider(provider)
+        # When +instance+ is given, prefers the entry whose :instance matches;
+        # falls back to the first provider entry if no exact match is found.
+        def registry_entry_for_provider(provider, instance: nil)
           instances = begin
             Call::Registry.all_instances
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'router.registry_entry_for_provider')
             []
           end
-          instances.find { |entry| entry[:provider] == provider }
+          provider_entries = instances.select { |entry| entry[:provider] == provider }
+          return nil if provider_entries.empty?
+
+          if instance
+            provider_entries.find { |entry| entry[:instance] == instance } || provider_entries.first
+          else
+            provider_entries.first
+          end
         end
 
         # Find a default model from registry for a given tier.

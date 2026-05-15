@@ -94,6 +94,15 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
       expect(chain.primary.model).to eq('claude-sonnet-4-6')
     end
 
+    it 'can suppress settings default fallback for strict auto routing' do
+      chain = Legion::LLM::Router.resolve_chain(
+        intent:                 { capability: :basic },
+        allow_default_fallback: false
+      )
+
+      expect(chain).to be_empty
+    end
+
     it 'returns a multi-provider chain from registry-registered providers' do
       Legion::Settings.set_prop(:llm, {
                                   'discovery' => { 'enabled' => false },

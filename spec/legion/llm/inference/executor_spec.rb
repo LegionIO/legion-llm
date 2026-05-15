@@ -831,6 +831,141 @@ confidence: 0.9 }],
     end
   end
 
+  describe 'provider-scoped instance defaults' do
+    it 'does not fall back to cloud when provider tier inference fails' do
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { provider: :custom, model: 'custom-model' }
+      )
+      executor = described_class.new(request)
+      allow(Legion::LLM::Call::Registry).to receive(:metadata_for).and_raise(StandardError, 'metadata unavailable')
+      expect(executor).to receive(:handle_exception).with(
+        kind_of(StandardError),
+        hash_including(level: :warn, handled: true, operation: 'llm.pipeline.inferred_provider_tier')
+      ).and_call_original
+
+      expect(executor.send(:inferred_provider_tier, :custom)).to be_nil
+    end
+
+    it 'does not apply a global default instance to a model inferred for another provider' do
+      Legion::Settings[:llm][:default_provider] = 'vllm'
+      Legion::Settings[:llm][:default_instance] = 'apollo'
+      Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
+      Legion::LLM::Call::Registry.register(:vllm, Module.new, instance: :apollo)
+      Legion::LLM::Call::Registry.register(:anthropic, Module.new)
+      sonnet_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'claude-sonnet-4-6' }
+      )
+      executor = described_class.new(sonnet_request)
+
+      executor.send(:step_routing)
+
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
+      expect(executor.instance_variable_get(:@resolved_instance)).to be_nil
+    end
+
+    it 'keeps model-only requests out of router chains so provider inference wins' do
+      Legion::Settings[:llm][:default_provider] = 'anthropic'
+      Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
+      expect(Legion::LLM::Router).not_to receive(:resolve)
+      expect(Legion::LLM::Router).not_to receive(:resolve_chain)
+      gpt_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'gpt-5.4' }
+      )
+      executor = described_class.new(gpt_request)
+
+      executor.send(:step_routing)
+
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:openai)
+      expect(executor.instance_variable_get(:@resolved_model)).to eq('gpt-5.4')
+    end
+
+    it 'applies explicit provider registry defaults even when rule routing is disabled' do
+      Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+      Legion::LLM::Call::Registry.register(:vllm, Module.new, metadata: { default_model: 'qwen3.6-27b' })
+      provider_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { provider: :vllm }
+      )
+      executor = described_class.new(provider_request)
+
+      executor.send(:step_routing)
+
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:vllm)
+      expect(executor.instance_variable_get(:@resolved_model)).to eq('qwen3.6-27b')
+    end
+
+    it 'routes the LegionIO placeholder without applying configured provider defaults' do
+      Legion::Settings[:llm][:default_provider] = 'vllm'
+      Legion::Settings[:llm][:default_instance] = 'apollo'
+      Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      resolution = Legion::LLM::Router::Resolution.new(
+        tier: :frontier, provider: :anthropic, model: 'claude-sonnet-4-6', rule: 'auto:test'
+      )
+      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 3)
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { provider: 'vllm', instance: 'apollo', model: 'legionio' }
+      )
+      executor = described_class.new(request)
+
+      executor.send(:step_routing)
+
+      expect(Legion::LLM::Router).to have_received(:resolve_chain).with(
+        hash_including(intent: hash_including(capability: :chat), provider: nil, instance: nil, model: nil)
+      )
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
+      expect(executor.instance_variable_get(:@resolved_instance)).to be_nil
+      expect(executor.instance_variable_get(:@resolved_model)).to eq('claude-sonnet-4-6')
+    end
+
+    it 'still uses the router chain for the LegionIO placeholder when rule routing is unavailable' do
+      resolution = Legion::LLM::Router::Resolution.new(
+        tier: :frontier, provider: :openai, model: 'gpt-5.4', rule: 'auto_chain'
+      )
+      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 3)
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'legionio' }
+      )
+      executor = described_class.new(request)
+
+      executor.send(:step_routing)
+
+      expect(Legion::LLM::Router).to have_received(:resolve_chain)
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:openai)
+      expect(executor.instance_variable_get(:@resolved_model)).to eq('gpt-5.4')
+    end
+
+    it 'does not fall back to configured defaults when LegionIO auto routing has no available route' do
+      Legion::Settings[:llm][:default_provider] = 'anthropic'
+      Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(
+        Legion::LLM::Router::EscalationChain.new(resolutions: [])
+      )
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'legionio' }
+      )
+      executor = described_class.new(request)
+
+      expect { executor.send(:step_routing) }.to raise_error(
+        Legion::LLM::ProviderError,
+        /Auto routing could not resolve/
+      )
+    end
+  end
+
   describe 'tool_event_handler events' do
     let(:events) { [] }
     let(:executor) do

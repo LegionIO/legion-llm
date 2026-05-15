@@ -1,5 +1,60 @@
 # Legion LLM Changelog
 
+## [0.9.28] - 2026-05-15
+
+### Added
+- API: `/api/llm/models` now surfaces a static `LegionIO` model (`id: legionio`) as the default auto-routing placeholder.
+
+### Changed
+- Routing: `model: "legionio"` clears explicit provider/model/instance/tier routing and sends the request through the router chain using the configured default intent.
+- Routing: default tier priority now includes `direct` between `local` and `fleet`, and discovery-generated rule scores honor `routing.tier_priority`.
+
+### Fixed
+- Prompt dispatch: provider-inferable model-only calls such as `gpt-5.4` infer the provider instead of pairing the model with `llm.default_provider`.
+- Executor: provider-tier lookup failures are logged and return nil instead of silently defaulting to `:cloud`.
+- LexLLMAdapter: optional content-block accessor fallbacks now capture and debug-log probe errors instead of bare-rescuing them.
+- Auto routing: unresolved `legionio` requests now raise a clear provider error instead of falling back to configured defaults.
+- Routing: model-only requests stay on provider inference while explicit provider/instance/tier requests still get registry defaults without requiring rule routing.
+
+## [0.9.27] - 2026-05-15
+
+### Fixed
+- Router/Executor: provider-scoped instance resolution no longer applies a global `llm.default_instance` to models inferred for another provider; invalid explicit instances now fall back to that provider's registered default instance instead of dispatching to an unregistered `provider/instance` pair.
+
+## [0.9.26] - 2026-05-15
+
+### Fixed
+- Discovery: `detect_embedding_from_registry` no longer sets `@can_embed = true` when no model is resolvable — adds `first_embedding_model_for(provider, instance)` as a third fallback scanning the discovered model catalog; returns `false` (allowing legacy probe to run) when all three sources yield nothing (#121)
+- RagContext: `positive_integer` no longer raises `TypeError` when `value` is nil or an empty string — adds empty-string guard before `Kernel#Integer()` call so GAIA advisory `context_window: nil` does not abort the inference pipeline (#122)
+- LexLLMAdapter: `text_part_content` now handles Anthropic-style `[{type:"text", text:"…"}]` content block arrays — flattens them to plain text instead of calling `.to_s` on the array, preventing Ruby array literals from leaking into provider prompts (#123)
+- Embeddings/Discovery: `embedding_config_value` and `embedding_settings` now accept the deprecated plural `"embeddings"` key alongside the canonical singular `"embedding"` key, emitting a deprecation warning; fixes silent misconfiguration when users follow doc examples that used the plural spelling (#124)
+
+## [0.9.25] - 2026-05-14
+
+### Added
+- Router: `TIER_RANK` constant — ordered quality ranking of tiers (local → direct → fleet → openai_compat → cloud → frontier)
+- Router: `explicit_resolution` promoted to public — callable directly from executor without `send`
+- Router: `chain_from_defaults` appends all registered fallback providers after the primary so the chain has real alternatives to escalate to (previously single-entry when a default provider was configured)
+- Executor: `run_escalation_resolution` extracted from escalation loop — encapsulates per-attempt dispatch, error rescue, and `tried[]` tracking
+- Executor: `skip_same_tier!` — on `ContextOverflow`, immediately skips all remaining same-tier candidates and routes to a higher-tier provider with a larger context window
+- Executor: lateral vs. escalation move classification in per-attempt log line (`move=lateral` for same-tier, `move=escalation` for higher-tier)
+
+### Fixed
+- Router: `explicit_resolution` handles nil `provider` and nil `tier` without raising `NoMethodError`
+- Executor: `build_fallback_resolutions` sorts lateral alternatives (same-tier) before escalation candidates (higher-tier) — tries other instances at the same tier before promoting to a more expensive one
+- Executor: deduplication in escalation loop is fully safe — `tried` entry is recorded on all rescue paths and on quality failure
+- EscalationChain: `padded_resolutions` no longer pads the list by repeating the last resolution — only real distinct options are tried
+
+## [0.9.24] - 2026-05-14
+
+### Fixed
+- API: `instance` from POST body was silently dropped — never forwarded into routing hash
+- Executor: Gaia advisory tier assignment no longer overrides explicit `provider`+`instance` from caller
+- Executor: `instance` now passed through `routing_resolution_for` to `Router.resolve`/`resolve_chain`
+- Executor: `build_default_escalation_chain` now passes resolved provider/instance/model — previously ignored them and built a full auto chain, routing to vllm/fleet instead of the requested provider
+- Router: `resolve`/`resolve_chain` accept `instance:` param; short-circuit to `explicit_resolution` when `provider` or `instance` is set (not just `tier`)
+- Router: `explicit_resolution` honors caller-supplied instance instead of always pulling from registry; infers tier from `PROVIDER_TIER` when not explicitly given
+
 ## [0.9.23] - 2026-05-13
 
 ### Added

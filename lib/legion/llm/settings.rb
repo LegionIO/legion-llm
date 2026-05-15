@@ -305,7 +305,7 @@ module Legion
       def self.routing_defaults
         {
           enabled:        true,
-          tier_priority:  %w[local fleet openai_compat cloud frontier],
+          tier_priority:  %w[local direct fleet openai_compat cloud frontier],
           default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
           tiers:          {
             local:         { provider: 'ollama' },
