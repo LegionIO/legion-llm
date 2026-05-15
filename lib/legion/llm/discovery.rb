@@ -257,7 +257,7 @@ module Legion
           provider  = best[:provider]
           instance  = best[:instance]
           resolved  = best.dig(:metadata, :default_model) ||
-                      Settings.value(:embedding, :default_model) ||
+                      embedding_settings[:default_model] ||
                       first_embedding_model_for(provider, instance)
 
           unless resolved.to_s.length.positive?
@@ -292,9 +292,10 @@ module Legion
         end
 
         def first_embedding_model_for(provider, instance)
+          embedding_caps = %w[embedding embeddings embed].freeze
           cached_discovered_models.find do |m|
             m[:provider].to_s == provider.to_s && m[:instance].to_s == instance.to_s &&
-              Array(m[:capabilities]).intersect?(%i[embedding embeddings embed])
+              Array(m[:capabilities]).any? { |c| embedding_caps.include?(c.to_s) }
           end&.dig(:model)
         end
 

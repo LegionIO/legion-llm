@@ -367,7 +367,8 @@ module Legion
             state[:tier] = @proactive_tier_assignment[:tier]
             state[:intent] = merge_routing_intent(state[:intent], @proactive_tier_assignment[:intent])
             log.info "[llm][routing] action=forced_tier source=#{@proactive_tier_assignment[:source]} tier=#{state[:tier]}"
-          elsif @proactive_tier_assignment && !state[:tier] && !state[:intent] && !state[:instance]
+          elsif @proactive_tier_assignment && !state[:tier] && !state[:intent] && !state[:instance] &&
+                !state[:provider] && !state[:model]
             state[:tier] = @proactive_tier_assignment[:tier]
             state[:intent] = @proactive_tier_assignment[:intent]
           end
@@ -375,7 +376,8 @@ module Legion
         end
 
         def resolve_routing_state(state)
-          return state unless (state[:intent] || state[:tier]) && defined?(Router) && Router.routing_enabled?
+          explicit = state[:provider] || state[:instance] || state[:model]
+          return state unless (state[:intent] || state[:tier] || explicit) && defined?(Router) && Router.routing_enabled?
 
           resolution = routing_resolution_for(state)
           return state unless resolution
@@ -659,8 +661,20 @@ module Legion
             )
           end
 
-          # Lateral alternatives (same tier) come first; escalations (higher tier) follow
-          candidates.sort_by { |r| [(tier_rank[r.tier] || 99) <=> primary_rank, tier_rank[r.tier] || 99] }
+          # Lateral alternatives (same tier) come first; escalations (higher tier) follow;
+          # lower-ranked tiers are appended last.
+          candidates.sort_by do |r|
+            r_rank = tier_rank[r.tier] || 99
+            rank_diff = r_rank - primary_rank
+            bucket = if rank_diff.zero?
+                       0
+                     elsif rank_diff.positive?
+                       1
+                     else
+                       2
+                     end
+            [bucket, r_rank]
+          end
         end
 
         def skip_same_tier!(failed_resolution, tried)

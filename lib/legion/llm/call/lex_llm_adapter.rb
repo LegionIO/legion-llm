@@ -248,7 +248,16 @@ module Legion
             return normalized[:text].to_s
           end
 
-          # Data structs and other objects with [] / fetch access (e.g. Types::ContentBlock)
+          # Data structs expose named readers (type/text) without necessarily implementing [].
+          # Try named accessor path first; fall through to [] / fetch for plain hashes/structs.
+          if part.respond_to?(:type) || part.respond_to?(:text)
+            type = (part.respond_to?(:type) ? part.type.to_s : '')
+            text = part.respond_to?(:text) ? part.text : nil
+            return text.to_s if type == 'text' || (type.empty? && !text.nil?)
+
+            return nil
+          end
+
           return unless part.respond_to?(:[]) || part.respond_to?(:fetch)
 
           type = (defined_method_access(part, :type) || '').to_s
