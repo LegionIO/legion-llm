@@ -122,12 +122,23 @@ module Legion
 
           def resolve_provider
             LLM.embedding_provider ||
-              Legion::LLM::Settings.value(:embedding, :provider)&.to_sym
+              embedding_config_value(:provider)&.to_sym
           end
 
           def resolve_model
             LLM.embedding_model ||
-              Legion::LLM::Settings.value(:embedding, :default_model)
+              embedding_config_value(:default_model)
+          end
+
+          def embedding_config_value(key)
+            v = Legion::LLM::Settings.value(:embedding, key)
+            return v unless v.nil?
+
+            plural = Legion::LLM::Settings.value(:embeddings, key)
+            if !plural.nil?
+              log.warn "[llm][embeddings] settings key \"embeddings.#{key}\" (plural) is deprecated — rename to \"embedding.#{key}\""
+            end
+            plural
           end
 
           def coerce_text(value)

@@ -217,6 +217,28 @@ RSpec.describe '.detect_embedding_capability' do
     end
   end
 
+  context 'when embedding settings use deprecated plural "embeddings" key (#124)' do
+    before do
+      Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
+      Legion::Settings[:llm].delete(:embedding)
+      Legion::Settings[:llm][:embeddings] = {
+        provider_fallback: %w[ollama],
+        ollama_preferred:  %w[nomic-embed-text]
+      }
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
+        .and_return(false)
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
+        .with('nomic-embed-text', provider: :ollama).and_return(true)
+    end
+
+    it 'reads embedding settings from plural key with deprecation warning' do
+      expect(Legion::LLM::Discovery.log).to receive(:warn).with(/deprecated/).at_least(:once)
+      Legion::LLM::Discovery.detect_embedding_capability
+      expect(Legion::LLM.can_embed?).to be true
+      expect(Legion::LLM.embedding_model).to eq('nomic-embed-text')
+    end
+  end
+
   context 'when embedding discovery settings were loaded from JSON string keys' do
     before do
       Legion::Settings[:extensions][:llm] = {
@@ -696,6 +718,27 @@ RSpec.describe Legion::LLM::Embeddings do
       Legion::LLM.instance_variable_set(:@embedding_model, nil)
       Legion::Settings[:llm][:embedding][:default_model] = 'amazon.titan-embed-text-v2:0'
       expect(described_class.default_model).to eq('amazon.titan-embed-text-v2:0')
+    end
+
+    context 'plural embeddings key back-compat (#124)' do
+      before do
+        Legion::LLM.instance_variable_set(:@embedding_model, nil)
+        Legion::LLM.instance_variable_set(:@embedding_provider, nil)
+        Legion::Settings[:llm].delete(:embedding)
+        Legion::Settings[:llm][:embeddings] = { default_model: 'nomic-embed-text', provider: 'ollama' }
+      end
+
+      it 'reads default_model from plural embeddings key with deprecation warning' do
+        expect(described_class).to receive(:log).at_least(:once).and_return(
+          double('log', warn: nil, debug: nil, info: nil)
+        )
+        expect(described_class.default_model).to eq('nomic-embed-text')
+      end
+
+      it 'reads provider from plural embeddings key' do
+        allow(described_class).to receive(:log).and_return(double('log', warn: nil, debug: nil, info: nil))
+        expect(described_class.send(:resolve_provider)).to eq(:ollama)
+      end
     end
   end
 end

@@ -413,7 +413,17 @@ module Legion
         end
 
         def embedding_settings
-          Legion::LLM::Settings.config_value(llm_settings, :embedding, {})
+          settings = llm_settings
+          result = Legion::LLM::Settings.config_value(settings, :embedding)
+          return result if result.is_a?(Hash) && !result.empty?
+
+          plural = Legion::LLM::Settings.config_value(settings, :embeddings)
+          if plural.is_a?(Hash) && !plural.empty?
+            log.warn '[llm][discovery] settings key "embeddings" (plural) is deprecated — rename to "embedding" (singular)'
+            return plural
+          end
+
+          result || {}
         end
 
         def providers_settings
