@@ -152,7 +152,7 @@ module Legion
           normalized = DEFAULT_TIER_PRIORITY if normalized.empty?
           (normalized + DEFAULT_TIER_PRIORITY).uniq
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'rule_generator.tier_priority')
+          handle_exception(e, level: :warn, handled: true, operation: 'rule_generator.tier_priority')
           DEFAULT_TIER_PRIORITY
         end
 

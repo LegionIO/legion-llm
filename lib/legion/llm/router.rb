@@ -82,13 +82,14 @@ module Legion
           resolution || arbitrage_fallback(intent)
         end
 
-        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, max_escalations: nil, exclude: {})
+        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, max_escalations: nil,
+                          exclude: {}, allow_default_fallback: true)
           log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations}"
           max = max_escalations || escalation_max_attempts
           return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model, instance)], max_attempts: max) if tier || provider || instance
-          return chain_from_defaults(model, provider, max) unless routing_enabled? && intent
+          return chain_from_defaults(model, provider, max, allow_default_fallback: allow_default_fallback) unless routing_enabled? && intent
 
-          chain_from_intent(intent, max, exclude: exclude)
+          chain_from_intent(intent, max, exclude: exclude, allow_default_fallback: allow_default_fallback)
         end
 
         def health_tracker
@@ -433,8 +434,8 @@ module Legion
           end
         end
 
-        def chain_from_defaults(model, provider, max)
-          if provider || model || default_settings_provider || default_settings_model
+        def chain_from_defaults(model, provider, max, allow_default_fallback: true)
+          if provider || model || (allow_default_fallback && (default_settings_provider || default_settings_model))
             p = (provider || default_settings_provider)&.to_sym
             resolved_model = model || registry_default_model(registry_entry_for_provider(p)) ||
                              default_settings_model || 'claude-sonnet-4-6'
@@ -448,7 +449,7 @@ module Legion
           end
 
           resolutions = enabled_provider_chain
-          if resolutions.empty?
+          if resolutions.empty? && allow_default_fallback
             p = default_settings_provider&.to_sym || :anthropic
             resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
@@ -488,7 +489,7 @@ module Legion
           end
         end
 
-        def chain_from_intent(intent, max, exclude: {})
+        def chain_from_intent(intent, max, exclude: {}, allow_default_fallback: true)
           merged     = intent ? merge_defaults(intent) : {}
           rules      = load_rules
           candidates = select_candidates(rules, merged, exclude: exclude)
@@ -497,7 +498,7 @@ module Legion
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
           resolutions = resolutions.uniq { |r| [r.provider, r.model] }
           resolutions = enabled_provider_chain if resolutions.empty?
-          if resolutions.empty?
+          if resolutions.empty? && allow_default_fallback
             p = default_settings_provider&.to_sym || :anthropic
             resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,

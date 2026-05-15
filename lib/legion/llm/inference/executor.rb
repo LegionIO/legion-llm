@@ -161,7 +161,7 @@ module Legion
 
           Router::PROVIDER_TIER.fetch(provider.to_sym, nil) if defined?(Router::PROVIDER_TIER)
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.inferred_provider_tier',
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.inferred_provider_tier',
                               provider: provider)
           nil
         end
@@ -328,12 +328,17 @@ module Legion
           log.debug "[llm][executor] action=step_routing.enter requested_provider=#{@request.routing[:provider]} requested_model=#{@request.routing[:model]}"
           @timestamps[:routing_start] = Time.now
           state = resolve_routing_state(apply_proactive_tier_assignment(routing_request_state))
+          auto_route = state[:auto_route] == true
 
           @resolved_provider = state[:provider] ||
                                (state[:model] && Router.infer_provider_for_model(state[:model])) ||
-                               llm_setting(:default_provider)
+                               (llm_setting(:default_provider) unless auto_route)
           @resolved_instance = resolve_provider_instance(state[:instance], @resolved_provider)
-          @resolved_model = state[:model] || llm_setting(:default_model)
+          @resolved_model = state[:model] || (llm_setting(:default_model) unless auto_route)
+          if auto_route && (@resolved_provider.nil? || @resolved_model.nil?)
+            raise ProviderError, 'Auto routing could not resolve an available LLM provider/model'
+          end
+
           @resolved_tier = state[:tier]&.to_sym || inferred_provider_tier(@resolved_provider)
           @resolved_offering_id = state[:offering_id]
           @resolved_offering_metadata = state[:offering_metadata]
@@ -413,12 +418,13 @@ module Legion
         def routing_resolution_for(state)
           if state[:auto_route] == true || pipeline_escalation_enabled?
             @escalation_chain = Router.resolve_chain(
-              intent:          state[:intent],
-              tier:            state[:tier],
-              model:           state[:model],
-              provider:        state[:provider],
-              instance:        state[:instance],
-              max_escalations: pipeline_escalation_max_attempts
+              intent:                 state[:intent],
+              tier:                   state[:tier],
+              model:                  state[:model],
+              provider:               state[:provider],
+              instance:               state[:instance],
+              max_escalations:        pipeline_escalation_max_attempts,
+              allow_default_fallback: state[:auto_route] != true
             )
             @escalation_chain.primary
           else

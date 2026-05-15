@@ -839,6 +839,10 @@ confidence: 0.9 }],
       )
       executor = described_class.new(request)
       allow(Legion::LLM::Call::Registry).to receive(:metadata_for).and_raise(StandardError, 'metadata unavailable')
+      expect(executor).to receive(:handle_exception).with(
+        kind_of(StandardError),
+        hash_including(level: :warn, handled: true, operation: 'llm.pipeline.inferred_provider_tier')
+      ).and_call_original
 
       expect(executor.send(:inferred_provider_tier, :custom)).to be_nil
     end
@@ -906,6 +910,25 @@ confidence: 0.9 }],
       expect(Legion::LLM::Router).to have_received(:resolve_chain)
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:openai)
       expect(executor.instance_variable_get(:@resolved_model)).to eq('gpt-5.4')
+    end
+
+    it 'does not fall back to configured defaults when LegionIO auto routing has no available route' do
+      Legion::Settings[:llm][:default_provider] = 'anthropic'
+      Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(
+        Legion::LLM::Router::EscalationChain.new(resolutions: [])
+      )
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'legionio' }
+      )
+      executor = described_class.new(request)
+
+      expect { executor.send(:step_routing) }.to raise_error(
+        Legion::LLM::ProviderError,
+        /Auto routing could not resolve/
+      )
     end
   end
 

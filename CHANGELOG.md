@@ -13,6 +13,7 @@
 - Prompt dispatch: provider-inferable model-only calls such as `gpt-5.4` infer the provider instead of pairing the model with `llm.default_provider`.
 - Executor: provider-tier lookup failures are logged and return nil instead of silently defaulting to `:cloud`.
 - LexLLMAdapter: optional content-block accessor fallbacks now capture and debug-log probe errors instead of bare-rescuing them.
+- Auto routing: unresolved `legionio` requests now raise a clear provider error instead of falling back to configured defaults.
 
 ## [0.9.27] - 2026-05-15
 
