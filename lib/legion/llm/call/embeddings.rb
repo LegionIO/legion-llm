@@ -135,9 +135,7 @@ module Legion
             return v unless v.nil?
 
             plural = Legion::LLM::Settings.value(:embeddings, key)
-            if !plural.nil?
-              log.warn "[llm][embeddings] settings key \"embeddings.#{key}\" (plural) is deprecated — rename to \"embedding.#{key}\""
-            end
+            log.warn "[llm][embeddings] settings key \"embeddings.#{key}\" (plural) is deprecated — rename to \"embedding.#{key}\"" unless plural.nil?
             plural
           end
 
