@@ -482,9 +482,23 @@ module Legion
           threshold = pipeline_escalation_quality_threshold
           quality_check = @request.extra[:quality_check]
           succeeded = false
+          tried = []
           log.debug "[llm][executor] action=escalation.enter chain_size=#{chain.size} threshold=#{threshold}"
 
+          primary_tier = @escalation_chain&.primary&.tier
+
           chain.each do |resolution|
+            next if tried.any? { |t| t[:provider] == resolution.provider && t[:instance] == resolution.instance && t[:model] == resolution.model }
+
+            move_type = if tried.empty?
+                          :primary
+                        elsif resolution.tier == primary_tier
+                          :lateral
+                        else
+                          :escalation
+                        end
+            log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} model=#{resolution.model} tier=#{resolution.tier}"
+
             start_time = Time.now
             @resolved_provider = resolution.provider
             @resolved_instance = resolution.instance
@@ -494,15 +508,29 @@ module Legion
             @resolved_offering_metadata = resolution.offering_metadata
             succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
             break if succeeded
+            # Quality failure: record as tried so the same resolution is not re-attempted via a
+            # different position in the chain (de-dup), but it may still appear later in the chain
+            # if the caller built the chain with repetition.
+            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
           rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
+            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
             record_escalation_failure(e, resolution, start_time,
                                       outcome: :auth_error, operation: 'llm.pipeline.escalation_attempt.auth',
                                       handled: true)
+          rescue Legion::LLM::ContextOverflow => e
+            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+            record_escalation_failure(e, resolution, start_time,
+                                      outcome: :context_overflow, operation: 'llm.pipeline.escalation_attempt.context_overflow',
+                                      handled: true)
+            log.warn "[llm][escalation] context_overflow provider=#{resolution.provider} model=#{resolution.model} — skipping same-tier, seeking larger context window"
+            skip_same_tier!(resolution, tried)
           rescue Legion::LLM::RateLimitError => e
+            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
             record_escalation_failure(e, resolution, start_time,
                                       outcome: :rate_limited, operation: 'llm.pipeline.escalation_attempt.rate_limit',
                                       handled: true)
           rescue StandardError => e
+            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
             record_escalation_failure(e, resolution, start_time, outcome:   :error,
                                                                  operation: 'llm.pipeline.escalation_attempt')
           end
@@ -588,12 +616,50 @@ module Legion
         end
 
         def build_default_escalation_chain
-          Router.resolve_chain(
-            provider:        @resolved_provider,
-            instance:        @resolved_instance,
-            model:           @resolved_model,
-            max_escalations: pipeline_escalation_max_attempts
-          )
+          primary = Router.explicit_resolution(@resolved_tier, @resolved_provider, @resolved_model, @resolved_instance)
+          fallbacks = build_fallback_resolutions(exclude_provider: @resolved_provider,
+                                                 exclude_instance: @resolved_instance,
+                                                 primary_tier: @resolved_tier)
+          resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
+          Router::EscalationChain.new(resolutions: resolutions, max_attempts: pipeline_escalation_max_attempts)
+        end
+
+        def build_fallback_resolutions(exclude_provider: nil, exclude_instance: nil, primary_tier: nil)
+          tier_rank = Router::TIER_RANK
+          primary_rank = primary_tier ? (tier_rank[primary_tier.to_sym] || 99) : 99
+
+          candidates = Call::Registry.all_instances.filter_map do |entry|
+            next if entry[:provider] == exclude_provider&.to_sym && entry[:instance] == (exclude_instance&.to_sym || :default)
+            next if entry[:provider] == exclude_provider&.to_sym && exclude_instance.nil?
+
+            model = Router.send(:registry_default_model, entry)
+            next unless model
+
+            tier = Router::PROVIDER_TIER.fetch(entry[:provider], :frontier)
+            Router::Resolution.new(
+              tier:     tier,
+              provider: entry[:provider],
+              instance: entry[:instance] == :default ? nil : entry[:instance],
+              model:    model,
+              rule:     'escalation_fallback'
+            )
+          end
+
+          # Lateral alternatives (same tier) come first; escalations (higher tier) follow
+          candidates.sort_by { |r| [(tier_rank[r.tier] || 99) <=> primary_rank, tier_rank[r.tier] || 99] }
+        end
+
+        def skip_same_tier!(failed_resolution, tried)
+          chain = @escalation_chain
+          return unless chain.respond_to?(:each)
+
+          chain.each do |r|
+            next if r.tier != failed_resolution.tier
+            next if tried.any? { |t| t[:provider] == r.provider && t[:instance] == r.instance && t[:model] == r.model }
+
+            log.debug "[llm][escalation] action=skip_same_tier provider=#{r.provider} model=#{r.model} tier=#{r.tier} reason=context_overflow"
+            tried << { provider: r.provider, instance: r.instance, model: r.model }
+          end
         end
 
         def escalation_attempt_hash(resolution, outcome:, failures:, duration_ms:)

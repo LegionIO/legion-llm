@@ -39,10 +39,8 @@ module Legion
 
         def padded_resolutions
           return [] if @resolutions.empty?
-          return @resolutions.first(@max_attempts) if @resolutions.size >= @max_attempts
 
-          last = @resolutions.last
-          (@resolutions + Array.new(@max_attempts - @resolutions.size) { last }).first(@max_attempts)
+          @resolutions.first(@max_attempts)
         end
       end
     end

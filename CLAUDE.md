@@ -745,6 +745,26 @@ These rules are enforced across all legion-llm code. Violations will be caught i
 - **Advanced signals**: Budget tracking, GPU utilization monitoring, per-tenant spend limits
 - **Fleet auto-scaling**: Dynamic worker pool sizing based on queue depth and latency
 
+## Provider Registration & Model Resolution
+
+- `discover_instances` in each lex-llm-* must include `default_model` in returned config — it flows to registry metadata via `instance_metadata` in `call/providers.rb`
+- Router resolves models via: `registry_entry_for_provider(provider)` → `registry_default_model(entry)` → `metadata[:default_model]`
+- `enabled: false` on an instance config prevents registration — checked in `register_provider_instance`
+- `PROVIDER_DEFAULT_MODEL` does NOT belong in legion-llm — each provider owns its default in its own extension
+- Inventory calls `native_provider_offerings` (full metadata) and excludes `discovery_offerings` for providers with native adapters
+
+## Metering Spool
+
+- Events spool to `~/.legionio/data/spool/metering/events.jsonl` when AMQP transport is unavailable
+- Thread-safe (SPOOL_MUTEX), capped at `settings[:metering][:spool][:max_events]` (default 10K)
+- `flush_spool` publishes spooled events when transport reconnects; `lex-llm-ledger` actor triggers it
+
+## Health Tracker
+
+- `deny_model(provider:, model:, instance:)` — permanently excludes a model from routing (in-memory, until restart)
+- Config errors (ValidationException, AccessDenied, marketplace) trigger deny instead of circuit breaker
+- Discovery connection failures report `:error` to health tracker — circuit opens after threshold
+
 ---
 
 **Maintained By**: Matthew Iverson (@Esity)

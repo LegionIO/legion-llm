@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.9.25] - 2026-05-14
+
+### Added
+- Router: `TIER_RANK` constant — ordered quality ranking of tiers (local → direct → fleet → openai_compat → cloud → frontier)
+- Executor: `skip_same_tier!` — on `ContextOverflow`, immediately skips all remaining same-tier candidates and routes to a higher-tier provider with a larger context window
+- Executor: lateral vs. escalation move classification in per-attempt log line (`move=lateral` for same-tier, `move=escalation` for higher-tier)
+
+### Fixed
+- Executor: `build_fallback_resolutions` now sorts lateral alternatives (same-tier) before escalation candidates (higher-tier), ensuring the router tries other instances on the same tier before promoting to a more expensive tier
+- Executor: deduplication in escalation loop is now fully safe — `tried` entry is recorded on both success-break and every rescue path
+- EscalationChain: `padded_resolutions` no longer pads the list by repeating the last resolution — only real distinct options are tried
+
 ## [0.9.24] - 2026-05-14
 
 ### Fixed
