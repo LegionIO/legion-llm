@@ -330,7 +330,7 @@ module Legion
           @resolved_provider = state[:provider] ||
                                (state[:model] && Router.infer_provider_for_model(state[:model])) ||
                                llm_setting(:default_provider)
-          @resolved_instance = state[:instance] || llm_setting(:default_instance)
+          @resolved_instance = resolve_provider_instance(state[:instance], @resolved_provider)
           @resolved_model = state[:model] || llm_setting(:default_model)
           @resolved_tier = state[:tier]&.to_sym || inferred_provider_tier(@resolved_provider)
           @resolved_offering_id = state[:offering_id]
@@ -345,6 +345,26 @@ module Legion
             direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
             from: 'router', to: 'pipeline'
           )
+        end
+
+        def resolve_provider_instance(requested_instance, provider)
+          return provider_scoped_instance(requested_instance, provider, preserve_unknown: true) if requested_instance
+
+          provider_scoped_instance(llm_setting(:default_instance), provider, preserve_unknown: false)
+        end
+
+        def provider_scoped_instance(instance, provider, preserve_unknown:)
+          return nil if instance.nil? || instance.to_s.empty? || provider.nil? || provider.to_s.empty?
+
+          provider_sym = provider.to_sym
+          instance_sym = instance.to_sym
+          return instance_sym if Call::Registry.registered?(provider_sym, instance: instance_sym)
+          return nil if Call::Registry.registered?(provider_sym)
+
+          preserve_unknown ? instance_sym : nil
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.provider_scoped_instance')
+          preserve_unknown ? instance : nil
         end
 
         def routing_request_state

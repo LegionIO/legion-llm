@@ -161,7 +161,7 @@ module Legion
                                   :anthropic
                               end
           resolved_model    = model || registry_default_model(registry_entry) || (tier && default_model_for_tier(tier))
-          resolved_instance = instance || registry_entry&.[](:instance)
+          resolved_instance = registry_entry&.[](:instance) || instance
           resolved_tier     = tier || PROVIDER_TIER.fetch(resolved_provider, :frontier)
 
           Resolution.new(

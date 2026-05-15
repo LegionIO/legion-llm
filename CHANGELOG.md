@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.27] - 2026-05-15
+
+### Fixed
+- Router/Executor: provider-scoped instance resolution no longer applies a global `llm.default_instance` to models inferred for another provider; invalid explicit instances now fall back to that provider's registered default instance instead of dispatching to an unregistered `provider/instance` pair.
+
 ## [0.9.26] - 2026-05-15
 
 ### Fixed

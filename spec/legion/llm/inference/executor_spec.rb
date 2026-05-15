@@ -831,6 +831,26 @@ confidence: 0.9 }],
     end
   end
 
+  describe 'provider-scoped instance defaults' do
+    it 'does not apply a global default instance to a model inferred for another provider' do
+      Legion::Settings[:llm][:default_provider] = 'vllm'
+      Legion::Settings[:llm][:default_instance] = 'apollo'
+      Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
+      Legion::LLM::Call::Registry.register(:vllm, Module.new, instance: :apollo)
+      Legion::LLM::Call::Registry.register(:anthropic, Module.new)
+      sonnet_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'claude-sonnet-4-6' }
+      )
+      executor = described_class.new(sonnet_request)
+
+      executor.send(:step_routing)
+
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
+      expect(executor.instance_variable_get(:@resolved_instance)).to be_nil
+    end
+  end
+
   describe 'tool_event_handler events' do
     let(:events) { [] }
     let(:executor) do

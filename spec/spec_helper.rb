@@ -2,6 +2,7 @@
 
 require 'simplecov'
 require 'base64'
+ENV['LEGION_DNS_BOOTSTRAP'] = 'false'
 SimpleCov.start do
   add_filter '/spec/'
 end
@@ -9,7 +10,7 @@ end
 require 'webmock/rspec'
 
 require 'legion/logging'
-Legion::Logging.setup(level: 'error')
+Legion::Logging.setup(level: 'fatal', log_file: File::NULL, log_stdout: false, async: false, color: false)
 require 'legion/settings'
 
 require 'legion/json'
@@ -66,6 +67,7 @@ RSpec.configure do |config|
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
     Legion::Settings.merge_settings('transport', Legion::Transport::Settings.default) if
       defined?(Legion::Transport::Settings)
+    Legion::Settings[:logging][:level] = :fatal
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
     # Seed the extensions[:llm] path so specs can write provider configs there
     Legion::Settings[:extensions][:llm] ||= {}
