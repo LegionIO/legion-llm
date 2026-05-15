@@ -52,7 +52,8 @@ module Legion
           Legion::Extensions::Llm.constants(false).filter_map do |const_name|
             mod = Legion::Extensions::Llm.const_get(const_name, false)
             provider_module?(mod) ? mod : nil
-          rescue NameError
+          rescue NameError => e
+            log.debug "[llm][providers] action=discover_provider_modules const=#{const_name} error=#{e.class} — #{e.message}"
             nil
           end
         end
@@ -120,7 +121,8 @@ module Legion
           return nil unless provider_module&.const_defined?(:PROVIDER_FAMILY, false)
 
           provider_module::PROVIDER_FAMILY
-        rescue StandardError
+        rescue StandardError => e
+          log.debug "[llm][providers] action=safe_provider_family error=#{e.class} — #{e.message}"
           nil
         end
 

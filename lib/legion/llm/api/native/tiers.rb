@@ -232,7 +232,8 @@ module Legion
             return 'unknown' unless tracker
 
             tracker.circuit_state(provider_name.to_sym, instance: instance_name.to_sym).to_s
-          rescue StandardError
+          rescue StandardError => e
+            log.debug "[llm][tiers] action=offering_instance_health provider=#{provider_name} instance=#{instance_name} error=#{e.class} — #{e.message}"
             'unknown'
           end
         end

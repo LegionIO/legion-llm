@@ -431,7 +431,8 @@ module Legion
         def curated_payload(entry)
           parsed = Legion::JSON.parse(entry[:content].to_s)
           parsed.is_a?(Hash) ? parsed : {}
-        rescue Legion::JSON::ParseError
+        rescue Legion::JSON::ParseError => e
+          log.debug "[llm][curator] action=curated_payload conversation_id=#{@conversation_id} error=#{e.class} — #{e.message}"
           {}
         end
 
