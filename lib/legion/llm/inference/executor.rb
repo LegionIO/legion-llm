@@ -159,9 +159,11 @@ module Legion
           return meta[:tier].to_sym if meta.is_a?(Hash) && meta[:tier]
           return Router.provider_tier(provider) if defined?(Router) && Router.respond_to?(:provider_tier)
 
-          Router::PROVIDER_TIER.fetch(provider.to_sym, :cloud) if defined?(Router::PROVIDER_TIER)
-        rescue StandardError
-          :cloud
+          Router::PROVIDER_TIER.fetch(provider.to_sym, nil) if defined?(Router::PROVIDER_TIER)
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.inferred_provider_tier',
+                              provider: provider)
+          nil
         end
 
         def execute_steps

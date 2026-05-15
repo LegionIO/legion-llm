@@ -832,6 +832,17 @@ confidence: 0.9 }],
   end
 
   describe 'provider-scoped instance defaults' do
+    it 'does not fall back to cloud when provider tier inference fails' do
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { provider: :custom, model: 'custom-model' }
+      )
+      executor = described_class.new(request)
+      allow(Legion::LLM::Call::Registry).to receive(:metadata_for).and_raise(StandardError, 'metadata unavailable')
+
+      expect(executor.send(:inferred_provider_tier, :custom)).to be_nil
+    end
+
     it 'does not apply a global default instance to a model inferred for another provider' do
       Legion::Settings[:llm][:default_provider] = 'vllm'
       Legion::Settings[:llm][:default_instance] = 'apollo'

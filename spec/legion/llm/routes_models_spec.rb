@@ -38,6 +38,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
+      expect(body[:data][:models].first).to include(id: 'legionio', display_name: 'LegionIO')
       expect(body[:data][:models]).to include(
         hash_including(id: 'legionio', display_name: 'LegionIO', auto_route: true, default: true)
       )

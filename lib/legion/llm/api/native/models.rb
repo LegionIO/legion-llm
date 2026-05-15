@@ -92,7 +92,7 @@ module Legion
             summaries = offerings.group_by { |offering| offering[:model] }.map do |model, rows|
               summarize_model(model, rows)
             end
-            summaries.sort_by { |model| model[:id] }
+            summaries.sort_by { |model| [auto_routing_model?(model[:id]) ? 0 : 1, model[:id]] }
           end
 
           def self.summarize_model(model, offerings)

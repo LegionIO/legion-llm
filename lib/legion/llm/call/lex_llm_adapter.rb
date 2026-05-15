@@ -272,11 +272,14 @@ module Legion
 
           str_key = key.to_s
           obj[key]
-        rescue TypeError, NoMethodError, KeyError
+        rescue TypeError, NoMethodError, KeyError => e
+          log.debug "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} " \
+                    "fallback=string_key error=#{e.class}: #{e.message}"
           begin
             obj[str_key]
-          rescue TypeError, NoMethodError, KeyError
-            log.debug "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} — no accessor, no [] support, returning nil"
+          rescue TypeError, NoMethodError, KeyError => fallback_error
+            log.debug "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} " \
+                      "fallback=none error=#{fallback_error.class}: #{fallback_error.message}"
             nil
           end
         end
