@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.9.26] - 2026-05-15
+
+### Fixed
+- Discovery: `detect_embedding_from_registry` no longer sets `@can_embed = true` when no model is resolvable — adds `first_embedding_model_for(provider, instance)` as a third fallback scanning the discovered model catalog; returns `false` (allowing legacy probe to run) when all three sources yield nothing (#121)
+- RagContext: `positive_integer` no longer raises `TypeError` when `value` is nil or an empty string — adds empty-string guard before `Kernel#Integer()` call so GAIA advisory `context_window: nil` does not abort the inference pipeline (#122)
+- LexLLMAdapter: `text_part_content` now handles Anthropic-style `[{type:"text", text:"…"}]` content block arrays — flattens them to plain text instead of calling `.to_s` on the array, preventing Ruby array literals from leaking into provider prompts (#123)
+- Embeddings/Discovery: `embedding_config_value` and `embedding_settings` now accept the deprecated plural `"embeddings"` key alongside the canonical singular `"embedding"` key, emitting a deprecation warning; fixes silent misconfiguration when users follow doc examples that used the plural spelling (#124)
+
 ## [0.9.25] - 2026-05-14
 
 ### Added

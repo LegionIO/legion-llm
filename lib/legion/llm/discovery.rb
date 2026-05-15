@@ -261,7 +261,8 @@ module Legion
                       first_embedding_model_for(provider, instance)
 
           unless resolved.to_s.length.positive?
-            log.debug "[llm][discovery] action=detect_embedding_from_registry no_model_resolved provider=#{provider} instance=#{instance} — falling through to legacy probe"
+            log.debug '[llm][discovery] action=detect_embedding_from_registry no_model_resolved ' \
+                      "provider=#{provider} instance=#{instance} — falling through to legacy probe"
             return false
           end
 
@@ -293,7 +294,7 @@ module Legion
         def first_embedding_model_for(provider, instance)
           cached_discovered_models.find do |m|
             m[:provider].to_s == provider.to_s && m[:instance].to_s == instance.to_s &&
-              (Array(m[:capabilities]) & %i[embedding embeddings embed]).any?
+              Array(m[:capabilities]).intersect?(%i[embedding embeddings embed])
           end&.dig(:model)
         end
 
