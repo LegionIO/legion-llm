@@ -4,12 +4,16 @@
 
 ### Added
 - Router: `TIER_RANK` constant — ordered quality ranking of tiers (local → direct → fleet → openai_compat → cloud → frontier)
+- Router: `explicit_resolution` promoted to public — callable directly from executor without `send`
+- Router: `chain_from_defaults` appends all registered fallback providers after the primary so the chain has real alternatives to escalate to (previously single-entry when a default provider was configured)
+- Executor: `run_escalation_resolution` extracted from escalation loop — encapsulates per-attempt dispatch, error rescue, and `tried[]` tracking
 - Executor: `skip_same_tier!` — on `ContextOverflow`, immediately skips all remaining same-tier candidates and routes to a higher-tier provider with a larger context window
 - Executor: lateral vs. escalation move classification in per-attempt log line (`move=lateral` for same-tier, `move=escalation` for higher-tier)
 
 ### Fixed
-- Executor: `build_fallback_resolutions` now sorts lateral alternatives (same-tier) before escalation candidates (higher-tier), ensuring the router tries other instances on the same tier before promoting to a more expensive tier
-- Executor: deduplication in escalation loop is now fully safe — `tried` entry is recorded on both success-break and every rescue path
+- Router: `explicit_resolution` handles nil `provider` and nil `tier` without raising `NoMethodError`
+- Executor: `build_fallback_resolutions` sorts lateral alternatives (same-tier) before escalation candidates (higher-tier) — tries other instances at the same tier before promoting to a more expensive one
+- Executor: deduplication in escalation loop is fully safe — `tried` entry is recorded on all rescue paths and on quality failure
 - EscalationChain: `padded_resolutions` no longer pads the list by repeating the last resolution — only real distinct options are tried
 
 ## [0.9.24] - 2026-05-14

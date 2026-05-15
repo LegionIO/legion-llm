@@ -153,13 +153,13 @@ module Legion
                              registry_entry_for_tier(tier)
                            end
           resolved_provider = if provider
-                               provider.to_sym
-                             else
-                               registry_entry&.[](:provider) ||
-                                 (tier && default_provider_for_tier(tier)) ||
-                                 default_settings_provider&.to_sym ||
-                                 :anthropic
-                             end
+                                provider.to_sym
+                              else
+                                registry_entry&.[](:provider) ||
+                                  (tier && default_provider_for_tier(tier)) ||
+                                  default_settings_provider&.to_sym ||
+                                  :anthropic
+                              end
           resolved_model    = model || registry_default_model(registry_entry) || (tier && default_model_for_tier(tier))
           resolved_instance = instance || registry_entry&.[](:instance)
           resolved_tier     = tier || PROVIDER_TIER.fetch(resolved_provider, :frontier)

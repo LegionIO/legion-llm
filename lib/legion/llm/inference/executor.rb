@@ -490,49 +490,8 @@ module Legion
           chain.each do |resolution|
             next if tried.any? { |t| t[:provider] == resolution.provider && t[:instance] == resolution.instance && t[:model] == resolution.model }
 
-            move_type = if tried.empty?
-                          :primary
-                        elsif resolution.tier == primary_tier
-                          :lateral
-                        else
-                          :escalation
-                        end
-            log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} model=#{resolution.model} tier=#{resolution.tier}"
-
-            start_time = Time.now
-            @resolved_provider = resolution.provider
-            @resolved_instance = resolution.instance
-            @resolved_model = resolution.model
-            @resolved_tier = resolution.tier
-            @resolved_offering_id = resolution.offering_id
-            @resolved_offering_metadata = resolution.offering_metadata
-            succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
+            succeeded = run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier)
             break if succeeded
-            # Quality failure: record as tried so the same resolution is not re-attempted via a
-            # different position in the chain (de-dup), but it may still appear later in the chain
-            # if the caller built the chain with repetition.
-            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-          rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
-            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-            record_escalation_failure(e, resolution, start_time,
-                                      outcome: :auth_error, operation: 'llm.pipeline.escalation_attempt.auth',
-                                      handled: true)
-          rescue Legion::LLM::ContextOverflow => e
-            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-            record_escalation_failure(e, resolution, start_time,
-                                      outcome: :context_overflow, operation: 'llm.pipeline.escalation_attempt.context_overflow',
-                                      handled: true)
-            log.warn "[llm][escalation] context_overflow provider=#{resolution.provider} model=#{resolution.model} — skipping same-tier, seeking larger context window"
-            skip_same_tier!(resolution, tried)
-          rescue Legion::LLM::RateLimitError => e
-            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-            record_escalation_failure(e, resolution, start_time,
-                                      outcome: :rate_limited, operation: 'llm.pipeline.escalation_attempt.rate_limit',
-                                      handled: true)
-          rescue StandardError => e
-            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-            record_escalation_failure(e, resolution, start_time, outcome:   :error,
-                                                                 operation: 'llm.pipeline.escalation_attempt')
           end
           return if succeeded
 
@@ -541,6 +500,58 @@ module Legion
             status: 'escalation_exhausted'
           )
           raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed"
+        end
+
+        def run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier)
+          move_type = if tried.empty?
+                        :primary
+                      elsif resolution.tier == primary_tier
+                        :lateral
+                      else
+                        :escalation
+                      end
+          log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} model=#{resolution.model} tier=#{resolution.tier}"
+
+          start_time = Time.now
+          @resolved_provider = resolution.provider
+          @resolved_instance = resolution.instance
+          @resolved_model = resolution.model
+          @resolved_tier = resolution.tier
+          @resolved_offering_id = resolution.offering_id
+          @resolved_offering_metadata = resolution.offering_metadata
+          succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model } unless succeeded
+          succeeded
+        rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+          record_escalation_failure(e, resolution, start_time,
+                                    outcome:   :auth_error,
+                                    operation: 'llm.pipeline.escalation_attempt.auth',
+                                    handled:   true)
+          false
+        rescue Legion::LLM::ContextOverflow => e
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+          record_escalation_failure(e, resolution, start_time,
+                                    outcome:   :context_overflow,
+                                    operation: 'llm.pipeline.escalation_attempt.context_overflow',
+                                    handled:   true)
+          log.warn "[llm][escalation] context_overflow provider=#{resolution.provider} " \
+                   "model=#{resolution.model} — skipping same-tier, seeking larger context window"
+          skip_same_tier!(resolution, tried)
+          false
+        rescue Legion::LLM::RateLimitError => e
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+          record_escalation_failure(e, resolution, start_time,
+                                    outcome:   :rate_limited,
+                                    operation: 'llm.pipeline.escalation_attempt.rate_limit',
+                                    handled:   true)
+          false
+        rescue StandardError => e
+          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+          record_escalation_failure(e, resolution, start_time,
+                                    outcome:   :error,
+                                    operation: 'llm.pipeline.escalation_attempt')
+          false
         end
 
         def attempt_escalation(resolution, threshold, quality_check, start_time)
@@ -617,9 +628,11 @@ module Legion
 
         def build_default_escalation_chain
           primary = Router.explicit_resolution(@resolved_tier, @resolved_provider, @resolved_model, @resolved_instance)
-          fallbacks = build_fallback_resolutions(exclude_provider: @resolved_provider,
-                                                 exclude_instance: @resolved_instance,
-                                                 primary_tier: @resolved_tier)
+          fallbacks = build_fallback_resolutions(
+            exclude_provider: @resolved_provider,
+            exclude_instance: @resolved_instance,
+            primary_tier:     @resolved_tier
+          )
           resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
           Router::EscalationChain.new(resolutions: resolutions, max_attempts: pipeline_escalation_max_attempts)
         end
