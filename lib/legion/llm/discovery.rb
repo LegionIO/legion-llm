@@ -254,11 +254,21 @@ module Legion
           end
           return false unless best
 
-          @embedding_provider = best[:provider]
-          @embedding_model = best.dig(:metadata, :default_model) ||
-                             Settings.value(:embedding, :default_model)
-          @embedding_instance = best[:instance]
-          @can_embed = true
+          provider  = best[:provider]
+          instance  = best[:instance]
+          resolved  = best.dig(:metadata, :default_model) ||
+                      Settings.value(:embedding, :default_model) ||
+                      first_embedding_model_for(provider, instance)
+
+          unless resolved.to_s.length.positive?
+            log.debug "[llm][discovery] action=detect_embedding_from_registry no_model_resolved provider=#{provider} instance=#{instance} — falling through to legacy probe"
+            return false
+          end
+
+          @embedding_provider = provider
+          @embedding_model    = resolved
+          @embedding_instance = instance
+          @can_embed          = true
           @embedding_fallback_chain = build_registry_embedding_fallback(embedding_instances)
 
           log.info "[llm][discovery] embedding available provider=#{@embedding_provider} " \
@@ -278,6 +288,13 @@ module Legion
               instance: i[:instance]
             }
           end
+        end
+
+        def first_embedding_model_for(provider, instance)
+          cached_discovered_models.find do |m|
+            m[:provider].to_s == provider.to_s && m[:instance].to_s == instance.to_s &&
+              (Array(m[:capabilities]) & %i[embedding embeddings embed]).any?
+          end&.dig(:model)
         end
 
         def find_embedding_provider(embedding_settings)

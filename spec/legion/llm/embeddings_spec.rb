@@ -149,6 +149,23 @@ RSpec.describe '.detect_embedding_capability' do
       Legion::LLM::Discovery.detect_embedding_capability
       expect(Legion::LLM::Discovery.embedding_model).to eq('text-embedding-3-small')
     end
+
+    it 'falls back to discovered model catalog when Settings has no default_model (#121)' do
+      Legion::LLM::Discovery.instance_variable_set(
+        :@discovered_models_cache,
+        [{ provider: :openai, instance: :default, model: 'text-embedding-ada-002', capabilities: [:embedding] }]
+      )
+      Legion::LLM::Discovery.detect_embedding_capability
+      expect(Legion::LLM::Discovery.can_embed?).to be true
+      expect(Legion::LLM::Discovery.embedding_model).to eq('text-embedding-ada-002')
+    end
+
+    it 'returns false and does not set can_embed when no model is resolvable (#121)' do
+      Legion::LLM::Discovery.instance_variable_set(:@discovered_models_cache, [])
+      Legion::LLM::Discovery.detect_embedding_capability
+      # No model in metadata, settings, or catalog → falls through to legacy probe
+      expect(Legion::LLM::Discovery.can_embed?).to be false
+    end
   end
 
   context 'when Registry has no embedding-capable instances' do
