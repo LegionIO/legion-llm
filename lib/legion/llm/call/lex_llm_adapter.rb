@@ -239,12 +239,31 @@ module Legion
         end
 
         def text_part_content(part)
-          return unless part.respond_to?(:transform_keys)
+          return part if part.is_a?(String)
 
-          normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-          return unless normalized[:type].to_s == 'text'
+          if part.respond_to?(:transform_keys)
+            normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+            return unless normalized[:type].to_s == 'text'
 
-          normalized[:text].to_s
+            return normalized[:text].to_s
+          end
+
+          # Data structs and other objects with [] / fetch access (e.g. Types::ContentBlock)
+          return unless part.respond_to?(:[]) || part.respond_to?(:fetch)
+
+          type = (defined_method_access(part, :type) || '').to_s
+          text = defined_method_access(part, :text)
+          text.to_s if type == 'text' || (type.empty? && !text.nil?)
+        end
+
+        def defined_method_access(obj, key)
+          obj[key]
+        rescue TypeError, NoMethodError, KeyError
+          begin
+            obj[key.to_s]
+          rescue TypeError, NoMethodError, KeyError
+            nil
+          end
         end
 
         def normalize_message_tool_calls(tool_calls)
