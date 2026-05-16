@@ -15,10 +15,10 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
       default: {
         models: [
           { 'name' => 'llama3.1:8b', 'size' => 4_700_000_000,
-            'capabilities' => %i[completion tools], 'context_length' => 131_072,
+            'capabilities' => %i[completion streaming tools], 'context_length' => 131_072,
             'parameter_count' => 8_000_000_000 },
           { 'name' => 'qwen2.5:32b', 'size' => 20_000_000_000,
-            'capabilities' => %i[completion vision tools thinking], 'context_length' => 262_144 },
+            'capabilities' => %i[completion streaming vision tools thinking], 'context_length' => 262_144 },
           { 'name' => 'nomic-embed-text', 'size' => 274_000_000,
             'capabilities' => [:embedding], 'context_length' => 8_192 }
         ]
@@ -56,15 +56,24 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
       expect(embed_rules.first[:when]).to eq({ capability: :embed })
     end
 
-    it 'generates chat + stream rules for inference models' do
+    it 'generates chat, stream, and tools rules for capable inference models' do
       llama_rules = rules.select { |r| r[:name].include?('llama3.1:8b') }
       capabilities = llama_rules.map { |r| r[:when][:capability] }
-      expect(capabilities).to contain_exactly(:chat, :stream)
+      expect(capabilities).to contain_exactly(:chat, :stream, :tools)
     end
 
     it 'does not generate stream rules for embedding models' do
       embed_stream = rules.select { |r| r[:name].include?('nomic-embed-text') && r[:when][:capability] == :stream }
       expect(embed_stream).to be_empty
+    end
+
+    it 'does not generate stream rules when discovered capabilities exclude streaming' do
+      no_stream_rules = described_class.generate(
+        ollama: { local: { models: [{ name: 'no-stream-model', capabilities: %i[completion tools] }] } }
+      )
+
+      capabilities = no_stream_rules.map { |r| r[:when][:capability] }
+      expect(capabilities).to contain_exactly(:chat, :tools)
     end
 
     it 'assigns :local tier for ollama models' do
@@ -89,6 +98,17 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
 
     it 'uses configured tier priority when scoring generated rules' do
       Legion::Settings[:llm][:routing][:tier_priority] = %w[direct local fleet cloud frontier]
+      direct_first = described_class.generate(
+        ollama: { default: { models: [{ name: 'local-model' }] } },
+        vllm:   { apollo: { models: [{ name: 'direct-model', tier: 'direct' }] } }
+      )
+
+      first_chat_rule = direct_first.find { |rule| rule[:when][:capability] == :chat }
+      expect(first_chat_rule[:then][:tier]).to eq(:direct)
+    end
+
+    it 'uses top-level tier_order when scoring generated rules' do
+      Legion::Settings[:llm][:tier_order] = %w[direct local cloud frontier]
       direct_first = described_class.generate(
         ollama: { default: { models: [{ name: 'local-model' }] } },
         vllm:   { apollo: { models: [{ name: 'direct-model', tier: 'direct' }] } }
@@ -217,6 +237,19 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         expect(rule[:then][:model_capabilities]).to eq(%i[completion vision tools thinking])
       end
 
+      it 'normalizes function_calling capability aliases to tools' do
+        aliased = described_class.build_rule(
+          :vllm,
+          :apollo,
+          { name: 'qwen-tools', capabilities: %i[completion streaming function_calling] },
+          :chat,
+          :direct,
+          100
+        )
+
+        expect(aliased[:then][:model_capabilities]).to include(:function_calling, :tools)
+      end
+
       it 'includes context_length in the target' do
         expect(rule[:then][:context_length]).to eq(262_144)
       end
@@ -236,7 +269,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
 
     it 'includes model_capabilities from ollama enrichment' do
       llama_rule = rules.find { |r| r[:name].include?('llama3.1:8b') && r[:when][:capability] == :chat }
-      expect(llama_rule[:then][:model_capabilities]).to eq(%i[completion tools])
+      expect(llama_rule[:then][:model_capabilities]).to eq(%i[completion streaming tools])
     end
 
     it 'includes context_length from ollama enrichment' do

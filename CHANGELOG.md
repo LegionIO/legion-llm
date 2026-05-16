@@ -1,5 +1,19 @@
 # Legion LLM Changelog
 
+## [0.9.29] - 2026-05-16
+
+### Added
+- Routing: generated discovery rules now expose `:tools` capability rules for tool-capable models and normalize provider aliases such as `function_calling`/`functions`.
+
+### Changed
+- Routing: automatic routing honors top-level `llm.tier_order` before routing-specific tier priority settings.
+- Routing: stream requests with injected native tools now require both `streaming` and `tools` model capabilities before selecting a target.
+
+### Fixed
+- Router: required model capabilities filter out non-tool-capable candidates instead of selecting a local model that later rejects tool payloads.
+- Executor: streaming provider calls now use the escalation chain, so provider errors like "does not support tools" can move to the next routed model.
+- Executor: synthetic routing requirements no longer make model-only or explicit-provider requests bypass provider inference or registry defaults.
+
 ## [0.9.28] - 2026-05-15
 
 ### Added

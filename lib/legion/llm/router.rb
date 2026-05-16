@@ -19,6 +19,14 @@ module Legion
       PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
       TIER_EXTERNAL = Set[:cloud, :frontier, :openai_compat].freeze
       TIER_RANK = { local: 0, direct: 1, fleet: 2, openai_compat: 3, cloud: 4, frontier: 5 }.freeze
+      CAPABILITY_ALIASES = {
+        function_calling: :tools,
+        functions:        :tools,
+        tool:             :tools,
+        tool_use:         :tools,
+        stream:           :streaming,
+        stream_chat:      :streaming
+      }.freeze
 
       OLLAMA_MODEL_PATTERN = %r{[:/]}
 
@@ -118,6 +126,22 @@ module Legion
           @health_tracker = nil
           @auto_rules = []
           @auto_rules_populated = false
+        end
+
+        def tier_priority
+          configured = Legion::LLM::Settings.value(:tier_order, default: nil)
+          configured = routing_settings[:tier_order] if configured.nil? || Array(configured).empty?
+          configured = routing_settings[:tier_priority] if configured.nil? || Array(configured).empty?
+          normalized = Array(configured).filter_map { |tier| tier.to_sym if tier.respond_to?(:to_sym) }
+          normalized = TIER_RANK.keys if normalized.empty?
+          (normalized + TIER_RANK.keys).uniq
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'router.tier_priority')
+          TIER_RANK.keys
+        end
+
+        def tier_rank
+          tier_priority.each_with_index.to_h
         end
 
         # Check whether a tier can be used right now.
@@ -227,16 +251,19 @@ module Legion
           # 3. Filter by schedule
           scheduled = matched.select(&:within_schedule?)
 
-          # 4. Reject rules excluded by active constraints
-          unconstrained = scheduled.reject { |r| excluded_by_constraint?(r, constraints) }
+          # 4. Reject rules that cannot satisfy required model capabilities
+          capable = scheduled.select { |r| satisfies_required_capabilities?(r, intent) }
 
-          # 4.5 Reject Ollama rules where model is not pulled or doesn't fit
+          # 5. Reject rules excluded by active constraints
+          unconstrained = capable.reject { |r| excluded_by_constraint?(r, constraints) }
+
+          # 5.5 Reject Ollama rules where model is not pulled or doesn't fit
           discovered = unconstrained.reject { |r| excluded_by_discovery?(r) }
 
-          # 4.55 Reject local-tier rules where model exceeds available memory
+          # 5.55 Reject local-tier rules where model exceeds available memory
           memory_checked = discovered.reject { |r| excluded_by_memory?(r) }
 
-          # 4.6 Reject rules matching caller-provided exclude list
+          # 5.6 Reject rules matching caller-provided exclude list
           normalized_exclude = exclude.is_a?(Hash) ? exclude : {}
           not_excluded = if normalized_exclude.empty?
                            memory_checked
@@ -244,15 +271,46 @@ module Legion
                            memory_checked.reject { |r| excluded_by_caller?(r, normalized_exclude) }
                          end
 
-          # 4.7 Reject rules for models denied by health tracker
+          # 5.7 Reject rules for models denied by health tracker
           not_denied = not_excluded.reject { |r| excluded_by_denial?(r) }
 
-          # 5. Filter by tier availability
+          # 6. Filter by tier availability
           final = not_denied.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
 
           log.debug("Router: #{final.size} candidates after filtering (started with #{rules.size})")
 
           final
+        end
+
+        def satisfies_required_capabilities?(rule, intent)
+          required = required_capabilities(intent)
+          return true if required.empty?
+
+          rule_capabilities = normalize_capabilities(rule.target[:model_capabilities] || rule.target['model_capabilities'] ||
+                                                     rule.target[:capabilities] || rule.target['capabilities'])
+          return false if rule_capabilities.empty?
+
+          required.all? { |capability| rule_capabilities.include?(capability) }
+        end
+
+        def required_capabilities(intent)
+          return [] unless intent.is_a?(Hash)
+
+          normalized = intent.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+          normalize_capabilities(normalized[:required_capabilities] || normalized[:requires])
+        end
+
+        def normalize_capabilities(capabilities)
+          Array(capabilities).compact.each_with_object([]) do |capability, normalized|
+            next unless capability.respond_to?(:to_s)
+
+            capability_sym = capability.to_s.downcase.strip.to_sym
+            next if capability_sym.to_s.empty?
+
+            normalized << capability_sym
+            alias_sym = CAPABILITY_ALIASES[capability_sym]
+            normalized << alias_sym if alias_sym
+          end.uniq
         end
 
         def excluded_by_constraint?(rule, constraints)
@@ -474,8 +532,15 @@ module Legion
             seen[pname] ||= entry
           end
 
-          # Build resolutions in PROVIDER_ORDER
-          PROVIDER_ORDER.filter_map do |pname|
+          # Build resolutions ordered by configured tier priority, preserving provider preference inside a tier.
+          provider_index = PROVIDER_ORDER.each_with_index.to_h
+          sorted_entries = seen.values.sort_by do |entry|
+            tier = registry_tier(entry[:provider], entry[:metadata])
+            [tier_rank.fetch(tier, 99), provider_index.fetch(entry[:provider], PROVIDER_ORDER.size)]
+          end
+
+          sorted_entries.filter_map do |entry|
+            pname = entry[:provider]
             entry = seen[pname]
             next unless entry
 

@@ -122,6 +122,35 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       expect(call_count).to eq(2)
     end
 
+    it 'retries streaming provider errors through the escalation chain' do
+      streaming_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
+        stream:   true
+      )
+
+      chunk = Struct.new(:content).new(good_content)
+      call_count = 0
+      allow(Legion::LLM::Call::Dispatch).to receive(:call) do |provider:, **, &block|
+        call_count += 1
+        raise Legion::LLM::ProviderError, 'does not support tools' if provider == :bedrock
+
+        block&.call(chunk)
+        native_dispatch_result(content: good_content)
+      end
+
+      streamed_chunks = []
+      result = Legion::LLM::Inference::Executor.new(streaming_request).call_stream do |stream_chunk|
+        streamed_chunks << stream_chunk.content
+      end
+
+      expect(result).to be_a(Legion::LLM::Inference::Response)
+      expect(result.message[:content]).to eq(good_content)
+      expect(streamed_chunks).to eq([good_content])
+      expect(call_count).to eq(2)
+      expect(result.routing[:provider]).to eq(:anthropic)
+    end
+
     it 'raises EscalationExhausted when all attempts fail' do
       allow(Legion::LLM::Call::Dispatch).to receive(:call) do
         raise Legion::LLM::ProviderError, 'always fails'

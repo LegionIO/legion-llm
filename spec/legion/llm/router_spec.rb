@@ -150,6 +150,41 @@ RSpec.describe Legion::LLM::Router do
       # basic-fallback cost_multiplier 1.0 -> cost_bonus = 0 -> effective = 10
       expect(result.rule).to eq('basic-local')
     end
+
+    it 'requires declared model capabilities when the intent asks for them' do
+      rules_with_capabilities = [
+        {
+          name:     'stream-local-no-tools',
+          when:     { capability: 'stream' },
+          then:     {
+            tier:               'local',
+            provider:           'ollama',
+            model:              'hf.co/unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL',
+            model_capabilities: %i[completion streaming]
+          },
+          priority: 200
+        },
+        {
+          name:     'stream-direct-tools',
+          when:     { capability: 'stream' },
+          then:     {
+            tier:               'direct',
+            provider:           'vllm',
+            instance:           'apollo',
+            model:              'qwen3.6-27b',
+            model_capabilities: %i[completion streaming tools]
+          },
+          priority: 100
+        }
+      ]
+      configure_routing(rules: rules_with_capabilities)
+
+      result = described_class.resolve(intent: { capability: 'stream', required_capabilities: %i[tools streaming] })
+
+      expect(result.rule).to eq('stream-direct-tools')
+      expect(result.provider).to eq(:vllm)
+      expect(result.instance).to eq(:apollo)
+    end
   end
 
   # ─── 5. Fills missing intent dimensions from defaults ─────────────────────────

@@ -160,8 +160,12 @@ module Legion
           end
 
           def self.tier_priority
+            return Legion::LLM::Router.tier_priority if defined?(Legion::LLM::Router)
+
             routing_config = Legion::LLM::Settings.value(:routing) || {}
-            Array(routing_config[:tier_priority] || %w[local fleet openai_compat cloud frontier])
+            top_level = Legion::LLM::Settings.value(:tier_order, default: nil)
+            Array(top_level || routing_config[:tier_order] || routing_config[:tier_priority] ||
+                  %w[local direct fleet openai_compat cloud frontier])
           end
 
           def self.privacy_mode?
