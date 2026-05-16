@@ -27,6 +27,14 @@ module Legion
         }.freeze
 
         DEFAULT_TIER_PRIORITY = %i[local direct fleet openai_compat cloud frontier].freeze
+        CAPABILITY_ALIASES = {
+          function_calling: :tools,
+          functions:        :tools,
+          tool:             :tools,
+          tool_use:         :tools,
+          stream:           :streaming,
+          stream_chat:      :streaming
+        }.freeze
 
         module_function
 
@@ -52,7 +60,10 @@ module Legion
                 capability = embedding_model?(model_data) ? :embed : :chat
                 priority = tier_weight(model_tier) - order
                 rules << build_rule(provider, instance_id, model_data, capability, model_tier, priority)
-                rules << build_rule(provider, instance_id, model_data, :stream, model_tier, priority) if capability == :chat
+                if capability == :chat
+                  rules << build_rule(provider, instance_id, model_data, :stream, model_tier, priority) if supports_streaming?(model_data)
+                  rules << build_rule(provider, instance_id, model_data, :tools, model_tier, priority) if supports_tools?(model_data)
+                end
                 order += 1
               end
             end
@@ -125,9 +136,37 @@ module Legion
           return nil unless model_data.is_a?(Hash)
 
           caps = model_data[:capabilities] || model_data['capabilities']
-          return caps if caps.is_a?(Array) && caps.any?
+          normalized = normalize_capabilities(caps)
+          return normalized if normalized.any?
 
           nil
+        end
+
+        def supports_streaming?(model_data)
+          capabilities = extract_capabilities(model_data)
+          return true if capabilities.nil?
+
+          capabilities.include?(:streaming)
+        end
+
+        def supports_tools?(model_data)
+          capabilities = extract_capabilities(model_data)
+          return false if capabilities.nil?
+
+          capabilities.include?(:tools)
+        end
+
+        def normalize_capabilities(capabilities)
+          Array(capabilities).compact.each_with_object([]) do |capability, normalized|
+            next unless capability.respond_to?(:to_s)
+
+            capability_sym = capability.to_s.downcase.strip.to_sym
+            next if capability_sym.to_s.empty?
+
+            normalized << capability_sym
+            alias_sym = CAPABILITY_ALIASES[capability_sym]
+            normalized << alias_sym if alias_sym
+          end.uniq
         end
 
         def extract_field(model_data, field)
@@ -145,7 +184,9 @@ module Legion
         end
 
         def tier_priority
-          configured = Legion::LLM::Settings.value(:routing, :tier_priority, default: DEFAULT_TIER_PRIORITY)
+          configured = Legion::LLM::Settings.value(:tier_order, default: nil)
+          configured = Legion::LLM::Settings.value(:routing, :tier_order, default: nil) if blank_array?(configured)
+          configured = Legion::LLM::Settings.value(:routing, :tier_priority, default: DEFAULT_TIER_PRIORITY) if blank_array?(configured)
           normalized = Array(configured).filter_map do |tier|
             tier.to_sym if tier.respond_to?(:to_sym)
           end
@@ -154,6 +195,10 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'rule_generator.tier_priority')
           DEFAULT_TIER_PRIORITY
+        end
+
+        def blank_array?(value)
+          Array(value).empty?
         end
 
         def extension_providers

@@ -376,6 +376,7 @@ module Legion
 
         def routing_request_state
           routing_explicit = @request.extra[:routing_explicit]
+          request_intent = @request.extra[:intent]
           instance = @request.routing[:instance] || @request.routing[:instance_id] || @request.routing[:provider_instance]
           tier = @request.extra[:tier]
           {
@@ -385,13 +386,73 @@ module Legion
             offering_id:       @request.routing[:offering_id] || @request.routing[:id],
             offering_metadata: normalize_offering_metadata(@request.routing[:offering_metadata] ||
                                                            @request.routing[:offering]),
-            intent:            @request.extra[:intent],
+            intent:            routing_intent_for_request(request_intent),
+            intent_explicit:   routing_intent_present?(request_intent),
             tier:              tier,
             auto_route:        @request.extra[:auto_route],
             provider_explicit: routing_field_explicit?(routing_explicit, :provider, @request.routing[:provider]),
             instance_explicit: routing_field_explicit?(routing_explicit, :instance, instance),
             tier_explicit:     routing_field_explicit?(routing_explicit, :tier, tier)
           }
+        end
+
+        def routing_intent_present?(intent)
+          intent.is_a?(Hash) && intent.any?
+        end
+
+        def routing_intent_for_request(intent)
+          normalized = if intent.is_a?(Hash)
+                         intent.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+                       else
+                         {}
+                       end
+          required = normalize_required_capabilities(
+            normalized.delete(:required_capabilities) || normalized.delete(:requires)
+          )
+
+          if @request.stream == true
+            normalized[:capability] = :stream if stream_routable_capability?(normalized[:capability])
+            required << :streaming
+          end
+
+          required << :tools if native_tools_requested_for_routing?
+          normalized[:required_capabilities] = required.uniq if required.any?
+          normalized
+        end
+
+        def stream_routable_capability?(capability)
+          capability.nil? || %i[chat completion stream].include?(capability.to_s.downcase.to_sym)
+        end
+
+        def native_tools_requested_for_routing?
+          Array(@request.tools).any? ||
+            requested_deferred_tool_names.any? ||
+            @triggered_tools.any? ||
+            Tools::Special.pinned_definitions.any?
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.routing_tools_required')
+          false
+        end
+
+        def normalize_required_capabilities(capabilities)
+          aliases = {
+            function_calling: :tools,
+            functions:        :tools,
+            tool:             :tools,
+            tool_use:         :tools,
+            stream:           :streaming,
+            stream_chat:      :streaming
+          }
+          Array(capabilities).compact.each_with_object([]) do |capability, normalized|
+            next unless capability.respond_to?(:to_s)
+
+            capability_sym = capability.to_s.downcase.strip.to_sym
+            next if capability_sym.to_s.empty?
+
+            normalized << capability_sym
+            alias_sym = aliases[capability_sym]
+            normalized << alias_sym if alias_sym
+          end.uniq
         end
 
         def apply_proactive_tier_assignment(state)
@@ -416,7 +477,7 @@ module Legion
 
           explicit_route = state[:provider_explicit] || state[:instance_explicit] || state[:tier_explicit]
           auto_route = state[:auto_route] == true
-          intent_route = state[:intent] && Router.routing_enabled?
+          intent_route = state[:intent_explicit] && state[:intent] && Router.routing_enabled?
           return state unless explicit_route || auto_route || intent_route
 
           resolution = routing_resolution_for(state)
@@ -426,7 +487,7 @@ module Legion
         end
 
         def routing_resolution_for(state)
-          if state[:auto_route] == true || (state[:intent] && pipeline_escalation_enabled?)
+          if state[:auto_route] == true || (state[:intent_explicit] && state[:intent] && pipeline_escalation_enabled?)
             @escalation_chain = Router.resolve_chain(
               intent:                 state[:intent],
               tier:                   state[:tier],
@@ -527,13 +588,14 @@ module Legion
           end
         end
 
-        def run_provider_call_with_escalation
+        def run_provider_call_with_escalation(stream_block: nil)
           @escalation_chain ||= build_default_escalation_chain
           chain = @escalation_chain
           threshold = pipeline_escalation_quality_threshold
           quality_check = @request.extra[:quality_check]
           succeeded = false
           tried = []
+          @last_escalation_error = nil
           log.debug "[llm][executor] action=escalation.enter chain_size=#{chain.size} threshold=#{threshold}"
 
           primary_tier = @escalation_chain.primary&.tier
@@ -541,10 +603,12 @@ module Legion
           chain.each do |resolution|
             next if tried.any? { |t| t[:provider] == resolution.provider && t[:instance] == resolution.instance && t[:model] == resolution.model }
 
-            succeeded = run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier)
+            succeeded = run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier,
+                                                  stream_block: stream_block)
             break if succeeded
           end
           return if succeeded
+          raise @last_escalation_error if chain.size <= 1 && @last_escalation_error
 
           emit_error_audit(
             EscalationExhausted.new("All #{@escalation_history.size} attempts failed"),
@@ -553,7 +617,7 @@ module Legion
           raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed"
         end
 
-        def run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier)
+        def run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier, stream_block: nil)
           move_type = if tried.empty?
                         :primary
                       elsif resolution.tier == primary_tier
@@ -570,7 +634,7 @@ module Legion
           @resolved_tier = resolution.tier
           @resolved_offering_id = resolution.offering_id
           @resolved_offering_metadata = resolution.offering_metadata
-          succeeded = attempt_escalation(resolution, threshold, quality_check, start_time)
+          succeeded = attempt_escalation(resolution, threshold, quality_check, start_time, stream_block: stream_block)
           tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model } unless succeeded
           succeeded
         rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
@@ -605,14 +669,19 @@ module Legion
           false
         end
 
-        def attempt_escalation(resolution, threshold, quality_check, start_time)
+        def attempt_escalation(resolution, threshold, quality_check, start_time, stream_block: nil)
           @current_escalation_context = {
             attempt:      @escalation_history.size + 1,
             max_attempts: @escalation_chain&.max_attempts
           }.compact
-          execute_provider_request
+          if stream_block
+            execute_provider_request_stream(&stream_block)
+            result = Quality::Checker::QualityResult.new(passed: true, failures: [])
+          else
+            execute_provider_request
+            result = Quality::Checker.check(@raw_response, quality_threshold: threshold, quality_check: quality_check)
+          end
           duration_ms = ((Time.now - start_time) * 1000).round
-          result = Quality::Checker.check(@raw_response, quality_threshold: threshold, quality_check: quality_check)
           outcome = result.passed ? :success : :quality_failure
           @timeline.record(
             category: :provider, key: 'escalation:attempt', direction: :internal,
@@ -649,6 +718,7 @@ module Legion
         end
 
         def record_escalation_failure(err, resolution, start_time, outcome:, operation:, handled: false)
+          @last_escalation_error = err
           duration_ms = ((Time.now - start_time) * 1000).round
           handle_exception(err, level: :warn, handled: handled, operation: operation,
                                provider: resolution.provider, model: resolution.model, duration_ms: duration_ms)
@@ -689,7 +759,7 @@ module Legion
         end
 
         def build_fallback_resolutions(exclude_provider: nil, exclude_instance: nil, primary_tier: nil)
-          tier_rank = Router::TIER_RANK
+          tier_rank = Router.tier_rank
           primary_rank = primary_tier ? (tier_rank[primary_tier.to_sym] || 99) : 99
 
           candidates = Call::Registry.all_instances.filter_map do |entry|
@@ -1168,10 +1238,15 @@ module Legion
 
         private :async_post_enabled?
 
-        def step_provider_call_stream(&)
+        def step_provider_call_stream(&block)
+          if pipeline_escalation_enabled?
+            run_provider_call_with_escalation(stream_block: block)
+            return
+          end
+
           providers_tried = []
           begin
-            execute_provider_request_stream(&)
+            execute_provider_request_stream(&block)
           rescue Legion::LLM::AuthError, Faraday::UnauthorizedError, Faraday::ForbiddenError => e
             try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.auth',
                                                       reason: 'auth_failed', error_class: Legion::LLM::AuthError)

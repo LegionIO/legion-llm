@@ -35,6 +35,15 @@ module Legion
         chat:      %i[chat completion tools json_schema]
       }.freeze
 
+      CAPABILITY_ALIASES = {
+        function_calling: :tools,
+        functions:        :tools,
+        tool:             :tools,
+        tool_use:         :tools,
+        stream:           :streaming,
+        stream_chat:      :streaming
+      }.freeze
+
       class << self
         def offerings(filters = {})
           log.debug "[llm][inventory] action=offerings.enter filters=#{filters.keys}"
@@ -216,7 +225,16 @@ module Legion
 
         def normalize_capabilities(capabilities, type)
           raw = capabilities || DEFAULT_CAPABILITIES.fetch(type, DEFAULT_CAPABILITIES[:inference])
-          Array(raw).map(&:to_s).uniq.sort
+          Array(raw).compact.each_with_object([]) do |capability, normalized|
+            next unless capability.respond_to?(:to_s)
+
+            capability_sym = capability.to_s.downcase.strip.to_sym
+            next if capability_sym.to_s.empty?
+
+            normalized << capability_sym
+            alias_sym = CAPABILITY_ALIASES[capability_sym]
+            normalized << alias_sym if alias_sym
+          end.uniq.map(&:to_s).sort
         end
 
         def normalize_type(value)
