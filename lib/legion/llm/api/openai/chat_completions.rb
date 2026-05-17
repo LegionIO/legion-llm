@@ -123,7 +123,7 @@ module Legion
                 name:        t[:name].to_s,
                 description: t[:description].to_s,
                 parameters:  t[:parameters] || {},
-                source:      { type: :client, executable: false }
+                source:      { type: :client, executable: true }
               )
             rescue StandardError => e
               tool_name = t.is_a?(Hash) ? t[:name] : nil

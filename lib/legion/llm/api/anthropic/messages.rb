@@ -149,7 +149,7 @@ module Legion
                   name:        tname,
                   description: tdesc,
                   parameters:  tschema,
-                  source:      { type: :client, executable: false }
+                  source:      { type: :client, executable: true }
                 )
               rescue StandardError => e
                 log.warn("[llm][api][anthropic][messages] build_tool_classes failed name=#{tname} error=#{e.message}")
