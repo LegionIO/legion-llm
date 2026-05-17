@@ -537,6 +537,7 @@ confidence: 0.9 }],
         messages:        [{ role: :user, content: 'lookup teams chat' }],
         system:          'Use available tools.',
         routing:         { provider: :vllm, model: 'qwen3.6-27b' },
+        metadata:        { client_tool_passthrough: true },
         tools:           [
           {
             name:        'legion_lookup',
@@ -676,7 +677,8 @@ confidence: 0.9 }],
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'use client tool' }],
         routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
-        tools:    [client_tool]
+        tools:    [client_tool],
+        metadata: { client_tool_passthrough: true }
       )
       register_native_chat do
         { content: '', tool_calls: [{ id: 'call_1', name: 'mcp_servers', arguments: '' }], usage: {} }

@@ -939,6 +939,23 @@ module Legion
           !(@request.respond_to?(:suppress_tools) && @request.suppress_tools)
         end
 
+        def client_tool_passthrough_enabled?
+          return false unless @request.respond_to?(:metadata)
+
+          metadata = @request.metadata || {}
+          value = metadata[:client_tool_passthrough] || metadata['client_tool_passthrough']
+          value == true
+        end
+
+        def non_executable_client_tool?(definition)
+          source = definition.respond_to?(:source) ? definition.source : {}
+          return false unless source.is_a?(Hash)
+
+          source_type = source[:type] || source['type']
+          executable = source.key?(:executable) ? source[:executable] : source['executable']
+          source_type.respond_to?(:to_sym) && source_type.to_sym == :client && executable != true
+        end
+
         def add_pinned_special_tool_definitions(definitions)
           Tools::Special.pinned_definitions.each do |definition|
             next if definitions.any? { |existing| existing.name == definition.name }
@@ -957,6 +974,14 @@ module Legion
                        else
                          Types::ToolDefinition.from_tool_class(tool)
                        end
+          if non_executable_client_tool?(definition) && !client_tool_passthrough_enabled?
+            log.info(
+              "[llm][tools][inject] action=client_tool_skipped request_id=#{request_log_value(:id, 'unknown')} " \
+              "conversation_id=#{request_log_value(:conversation_id, 'none') || 'none'} name=#{definition.name} " \
+              'reason=client_passthrough_not_enabled'
+            )
+            return
+          end
           return if gaia_tool_suppressed?(definition.name)
           return if definitions.any? { |existing| existing.name == definition.name }
 
