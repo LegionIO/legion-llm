@@ -383,6 +383,26 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       )
     end
 
+    it 'does not set client_tool_passthrough in metadata when flag is absent' do
+      captured = nil
+      response = make_pipeline_response
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+
+      allow(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        captured = kwargs
+        :req
+      end
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+
+      response = post_json('/api/llm/inference', {
+                             messages: [{ role: 'user', content: 'hello' }],
+                             tools:    [{ name: 'client_shell', description: 'Client shell', parameters: {} }]
+                           })
+
+      expect(response.status).to eq(200)
+      expect(captured[:metadata]).not_to have_key(:client_tool_passthrough)
+    end
+
     it 'returns sync tool_calls from the pipeline response' do
       tool_call = { id: 'tc_1', name: 'legion_tools', arguments: { query: 'status' } }
       response = make_pipeline_response(content: 'tool response', tools: [tool_call], stop_reason: :tool_use)
