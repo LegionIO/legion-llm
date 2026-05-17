@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.30] - 2026-05-16
+
+### Fixed
+- Tools: API-submitted client tools are no longer advertised to providers unless callers explicitly opt into client-tool passthrough, preventing incomplete tool calls from ending streaming responses.
+
 ## [0.9.29] - 2026-05-16
 
 ### Added

@@ -64,6 +64,41 @@ RSpec.describe Legion::LLM::Inference::Executor do
         executor = described_class.new(request_with_tools)
         expect(executor.send(:native_tool_definitions).map(&:name)).to include('my_tool')
       end
+
+      it 'skips non-executable client tools unless passthrough is explicitly enabled' do
+        client_tool = Legion::LLM::Types::ToolDefinition.build(
+          name:        'client_shell',
+          description: 'Client shell',
+          source:      { type: :client, executable: false }
+        )
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'use client shell' }],
+          tools:    [client_tool],
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+        )
+
+        executor = described_class.new(request)
+
+        expect(executor.send(:native_tool_definitions).map(&:name)).not_to include('client_shell')
+      end
+
+      it 'includes non-executable client tools when passthrough is explicitly enabled' do
+        client_tool = Legion::LLM::Types::ToolDefinition.build(
+          name:        'client_shell',
+          description: 'Client shell',
+          source:      { type: :client, executable: false }
+        )
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'use client shell' }],
+          tools:    [client_tool],
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+          metadata: { client_tool_passthrough: true }
+        )
+
+        executor = described_class.new(request)
+
+        expect(executor.send(:native_tool_definitions).map(&:name)).to include('client_shell')
+      end
     end
 
     context 'when @request.tools is an empty array []' do
