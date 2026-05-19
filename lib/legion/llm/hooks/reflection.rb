@@ -176,13 +176,13 @@ module Legion
             )
             log.info("[llm][reflection] published via=transport model=#{model} type=#{entry[:type]}")
           elsif apollo_direct?
-            Legion::Extensions::Apollo::Runners::Ingest.ingest(
+            Legion::Extensions::Apollo::Runners::Request.ingest(
               content:          entry[:content],
               content_type:     entry[:type].to_s,
               knowledge_domain: 'reflection',
               confidence:       entry[:confidence],
               source_agent:     "llm:#{model}",
-              metadata:         { submitted_by: Legion::LLM::PublisherIdentity.requested_by }
+              source_channel:   'reflection_hook'
             )
             log.info("[llm][reflection] published via=direct model=#{model} type=#{entry[:type]}")
           end
@@ -236,7 +236,7 @@ module Legion
         private_class_method :apollo_transport?
 
         def apollo_direct?
-          defined?(Legion::Extensions::Apollo::Runners::Ingest)
+          defined?(Legion::Extensions::Apollo::Runners::Request)
         end
         private_class_method :apollo_direct?
       end
