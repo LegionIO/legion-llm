@@ -1,5 +1,23 @@
 # Legion LLM Changelog
 
+## [0.9.31] - 2026-05-18
+
+### Added
+- Tools: `legion_list_all_tools` pinned special tool for full extension tool discovery with extension/deferred filters
+- RAG: debug logging for per-result confidence scores and content_type distribution
+- RAG: `exclude_source_agents` setting to filter noisy bulk-ingest sources from context injection
+- Settings: `client_tool_passthrough` configurable via `Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough]`
+
+### Changed
+- RAG: `min_confidence` default raised from 0.5 to 0.85 (reduces irrelevant context)
+- RAG: default exclusion list: teams-api-ingest, unknown, teams-entity-extractor, legion-interlink
+
+### Fixed
+- Executor: enrichment injection (system prompt + RAG) cached on first tool loop pass; subsequent rounds reuse cache
+- Client tool passthrough: per-request explicit false now correctly disables (was broken by || on false values)
+- Tool audit publishing deferred to post-metering flush (async, non-blocking)
+
+
 ## [0.9.30] - 2026-05-16
 
 ### Fixed
