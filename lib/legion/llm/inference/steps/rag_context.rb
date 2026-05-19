@@ -89,6 +89,13 @@ module Legion
               return
             end
 
+            scores = entries.filter_map { |e| e[:confidence] || e[:distance] }.map { |s| s.is_a?(Numeric) ? s.round(3) : s }
+            log.debug(
+              "[llm][steps][rag_context] action=results_scored request_id=#{request_log_value(:id, 'unknown')} " \
+              "strategy=#{strategy} count=#{entries.size} scores=#{scores.inspect} " \
+              "types=#{entries.map { |e| e[:content_type] }.compact.tally.inspect}"
+            )
+
             @enrichments['rag:context_retrieval'] = {
               content:   "#{Legion::LLM::Settings.config_value(result, :count)} entries retrieved via #{strategy}",
               data:      { entries: entries, strategy: strategy, count: Legion::LLM::Settings.config_value(result, :count) },
@@ -160,14 +167,30 @@ module Legion
           def apollo_retrieve(query:, strategy:)
             full_limit    = rag_setting(:full_limit, 10)
             compact_limit = rag_setting(:compact_limit, 5)
-            confidence    = rag_setting(:min_confidence, 0.5)
+            confidence    = rag_setting(:min_confidence, 0.85)
             limit = apply_gaia_context_limit(strategy == :rag_compact ? compact_limit : full_limit,
                                              strategy: strategy)
             log_step_debug(:rag_context, :apollo_query, strategy: strategy, limit: limit, min_confidence: confidence)
 
             general = apollo_retrieve_general(query: query, limit: limit, confidence: confidence)
             history = apollo_retrieve_conversation_history(query: query, limit: limit, confidence: confidence)
-            merge_apollo_results(general, history)
+            result = merge_apollo_results(general, history)
+            filter_excluded_source_agents(result)
+          end
+
+          def filter_excluded_source_agents(result)
+            excluded = Array(rag_setting(:exclude_source_agents, []))
+            return result if excluded.empty?
+
+            entries = Array(result[:entries])
+            filtered = entries.reject { |e| excluded.include?(e[:source_agent].to_s) }
+            if filtered.size < entries.size
+              log.debug(
+                "[llm][steps][rag_context] action=source_agent_filter excluded=#{entries.size - filtered.size} " \
+                "remaining=#{filtered.size} agents=#{excluded.inspect}"
+              )
+            end
+            result.merge(entries: filtered, count: filtered.size)
           end
 
           def apollo_retrieve_general(query:, limit:, confidence:)

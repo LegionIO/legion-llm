@@ -16,6 +16,7 @@ module Legion
         extend Legion::Logging::Helper
 
         LIST_SPECIAL_TOOLS_NAME = 'legion_list_special_tools'
+        LIST_ALL_TOOLS_NAME = 'legion_list_all_tools'
         DEFAULT_TIMEOUT_MS = 120_000
         MAX_TIMEOUT_MS = 600_000
         PYTHON_PACKAGES = %w[
@@ -34,7 +35,7 @@ module Legion
         module_function
 
         def pinned_definitions
-          definitions = [special_tools_definition, ruby_definition]
+          definitions = [special_tools_definition, all_tools_definition, ruby_definition]
           definitions.concat(python_definitions) if python_available?
           definitions
         end
@@ -43,6 +44,8 @@ module Legion
           case normalize_tool_name(tool_name)
           when LIST_SPECIAL_TOOLS_NAME
             { status: :success, result: Legion::JSON.dump(inventory) }
+          when LIST_ALL_TOOLS_NAME
+            { status: :success, result: Legion::JSON.dump(all_tools_inventory(**args)) }
           when 'ruby'
             dispatch_runtime('ruby', ruby_path, **args)
           when 'python', 'python3'
@@ -63,6 +66,32 @@ module Legion
             settings_extensions_tools: settings_extensions_tools,
             runtime:                   runtime_inventory
           }
+        end
+
+        def all_tools_inventory(**args)
+          tools = settings_extensions_tools
+          extension_filter = args[:extension] || args['extension']
+          deferred_filter = args.key?(:deferred) ? args[:deferred] : args['deferred']
+
+          if extension_filter
+            normalized_filter = extension_filter.to_s.tr('-', '_').delete_prefix('lex_')
+            tools = tools.select { |t| t[:extension].to_s.tr('-', '_').delete_prefix('lex_').include?(normalized_filter) }
+          end
+
+          tools = tools.select { |t| t[:deferred] == deferred_filter } unless deferred_filter.nil?
+
+          grouped = tools.group_by { |t| t[:extension] || 'unknown' }
+          {
+            total:      tools.size,
+            extensions: grouped.transform_values do |ext_tools|
+              ext_tools.group_by { |t| t[:runner] || 'default' }.transform_values do |runner_tools|
+                runner_tools.map { |t| { name: t[:name], description: t[:description], deferred: t[:deferred] } }
+              end
+            end
+          }
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.special.all_tools_inventory')
+          { total: 0, extensions: {}, error: e.message }
         end
 
         def python_available?
@@ -112,6 +141,22 @@ module Legion
               properties: {}
             },
             source:      { type: :special, handler: :settings_extensions_inventory, pinned: true }
+          )
+        end
+
+        def all_tools_definition
+          Types::ToolDefinition.build(
+            name:        LIST_ALL_TOOLS_NAME,
+            description: 'List ALL registered Legion tools from all loaded extensions, grouped by extension and runner. ' \
+                         'Use this to discover what tools are available for a specific domain (e.g. Teams, Apollo, identity).',
+            parameters:  {
+              type:       'object',
+              properties: {
+                extension: { type: 'string', description: 'Filter by extension name (e.g. "microsoft_teams", "apollo"). Omit for all.' },
+                deferred:  { type: 'boolean', description: 'Filter by deferred status. Omit for all.' }
+              }
+            },
+            source:      { type: :special, handler: :all_tools_inventory, pinned: true }
           )
         end
 

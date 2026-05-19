@@ -377,12 +377,13 @@ module Legion
           enabled:                       true,
           full_limit:                    10,
           compact_limit:                 5,
-          min_confidence:                0.5,
+          min_confidence:                0.85,
           utilization_compact_threshold: 0.7,
           utilization_skip_threshold:    0.9,
           conversation_history_enabled:  false,
           trivial_max_chars:             20,
-          trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank]
+          trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank],
+          exclude_source_agents:         %w[teams-api-ingest unknown teams-entity-extractor legion-interlink]
         }
       end
 
@@ -481,9 +482,10 @@ module Legion
 
       def self.tool_trigger_defaults
         {
-          scan_depth:       10,
-          tool_limit:       25,
-          local_tool_limit: 100
+          scan_depth:              10,
+          tool_limit:              25,
+          local_tool_limit:        100,
+          client_tool_passthrough: false
         }
       end
 

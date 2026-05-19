@@ -102,6 +102,7 @@ module Legion
           @sticky_turn_snapshot = nil
           @pending_tool_history = Concurrent::Array.new
           @pending_tool_history_mutex = Mutex.new
+          @deferred_tool_audits = []
           @injected_tool_map = {}
           @native_tool_source_map = {}
           @freshly_triggered_keys = []
@@ -889,10 +890,14 @@ module Legion
         end
 
         def native_dispatch_options
-          injected_system = EnrichmentInjector.inject(
-            system:      @request.system,
-            enrichments: @enrichments
-          )
+          injected_system = if @native_tool_loop_round.to_i > 0
+                              @cached_injected_system
+                            else
+                              @cached_injected_system = EnrichmentInjector.inject(
+                                system:      @request.system,
+                                enrichments: @enrichments
+                              )
+                            end
 
           options = {
             system:            injected_system,
@@ -940,11 +945,13 @@ module Legion
         end
 
         def client_tool_passthrough_enabled?
-          return false unless @request.respond_to?(:metadata)
+          if @request.respond_to?(:metadata)
+            metadata = @request.metadata || {}
+            value = metadata.key?(:client_tool_passthrough) ? metadata[:client_tool_passthrough] : metadata['client_tool_passthrough']
+            return value if [true, false].include?(value)
+          end
 
-          metadata = @request.metadata || {}
-          value = metadata[:client_tool_passthrough] || metadata['client_tool_passthrough']
-          value == true
+          Legion::LLM::Settings.value(:tool_trigger, :client_tool_passthrough) != false
         end
 
         def non_executable_client_tool?(definition)
@@ -1426,28 +1433,52 @@ module Legion
         end
 
         def publish_tool_audit(tc_id, tc_name, result_str, is_error, duration_ms, started_at, finished_at)
-          Legion::LLM::Audit.emit_tools(
-            request_id:      @request.id,
-            conversation_id: @request.conversation_id,
-            exchange_id:     @exchange_id,
-            tool_name:       tc_name,
-            tool_call:       {
-              id:          tc_id,
-              name:        tc_name,
-              status:      is_error ? :error : :success,
-              duration_ms: duration_ms,
-              started_at:  started_at,
-              finished_at: finished_at
-            },
-            result:          result_str[0, 4096],
-            caller:          @request.caller,
-            classification:  @request.classification,
-            tracing:         @tracing,
-            timestamp:       finished_at,
-            request_type:    'tool'
-          )
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.pipeline.publish_tool_audit', tool_name: tc_name)
+          @deferred_tool_audits << {
+            tc_id: tc_id, tc_name: tc_name, result_str: result_str,
+            is_error: is_error, duration_ms: duration_ms,
+            started_at: started_at, finished_at: finished_at
+          }
+        end
+
+        def flush_deferred_tool_audits
+          return if @deferred_tool_audits.empty?
+
+          audits = @deferred_tool_audits.dup
+          @deferred_tool_audits.clear
+
+          request_id      = @request.id
+          conversation_id = @request.conversation_id
+          exchange_id     = @exchange_id
+          caller_data     = @request.caller
+          classification  = @request.classification
+          tracing         = @tracing
+
+          Concurrent::Promises.future do
+            audits.each do |audit|
+              Legion::LLM::Audit.emit_tools(
+                request_id:      request_id,
+                conversation_id: conversation_id,
+                exchange_id:     exchange_id,
+                tool_name:       audit[:tc_name],
+                tool_call:       {
+                  id:          audit[:tc_id],
+                  name:        audit[:tc_name],
+                  status:      audit[:is_error] ? :error : :success,
+                  duration_ms: audit[:duration_ms],
+                  started_at:  audit[:started_at],
+                  finished_at: audit[:finished_at]
+                },
+                result:          audit[:result_str][0, 4096],
+                caller:          caller_data,
+                classification:  classification,
+                tracing:         tracing,
+                timestamp:       audit[:finished_at],
+                request_type:    'tool'
+              )
+            rescue StandardError => e
+              Legion::Logging.log.warn("[llm][pipeline] publish_tool_audit failed tool=#{audit[:tc_name]}: #{e.message}")
+            end
+          end
         end
 
         def tool_call_field(tool_call, field)
@@ -1642,6 +1673,7 @@ module Legion
             routing_reason:    @audit.dig(:'routing:provider_selection', :data, :reason)
           )
           Steps::Metering.publish_or_spool(event)
+          flush_deferred_tool_audits
         rescue StandardError => e
           @warnings << "metering error: #{e.message}"
           handle_exception(e, level: :warn, operation: 'llm.pipeline.step_metering')
