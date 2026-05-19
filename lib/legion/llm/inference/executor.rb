@@ -890,7 +890,7 @@ module Legion
         end
 
         def native_dispatch_options
-          injected_system = if @native_tool_loop_round.to_i > 0
+          injected_system = if @native_tool_loop_round.to_i.positive?
                               @cached_injected_system
                             else
                               @cached_injected_system = EnrichmentInjector.inject(
