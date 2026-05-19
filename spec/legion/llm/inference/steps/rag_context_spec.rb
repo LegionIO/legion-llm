@@ -27,7 +27,8 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       utilization_compact_threshold: 0.7,
       utilization_skip_threshold:    0.9,
       trivial_max_chars:             20,
-      trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank]
+      trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank],
+      exclude_source_agents:         []
     }
   end
 

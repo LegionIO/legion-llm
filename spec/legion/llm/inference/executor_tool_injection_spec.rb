@@ -65,7 +65,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         expect(executor.send(:native_tool_definitions).map(&:name)).to include('my_tool')
       end
 
-      it 'skips non-executable client tools unless passthrough is explicitly enabled' do
+      it 'skips non-executable client tools when passthrough is explicitly disabled' do
         client_tool = Legion::LLM::Types::ToolDefinition.build(
           name:        'client_shell',
           description: 'Client shell',
@@ -74,7 +74,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
         request = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'use client shell' }],
           tools:    [client_tool],
-          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+          metadata: { client_tool_passthrough: false }
         )
 
         executor = described_class.new(request)
