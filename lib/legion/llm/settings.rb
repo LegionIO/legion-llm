@@ -40,6 +40,7 @@ module Legion
           debate:                    debate_defaults,
           provider_layer:            provider_layer_defaults,
           tool_trigger:              tool_trigger_defaults,
+          tools:                     tools_defaults,
           api:                       api_defaults,
           compliance:                compliance_defaults,
           skills:                    skills_defaults,
@@ -486,6 +487,13 @@ module Legion
           tool_limit:              25,
           local_tool_limit:        100,
           client_tool_passthrough: false
+        }
+      end
+
+      def self.tools_defaults
+        {
+          client_whitelist: [],
+          client_blacklist: []
         }
       end
 

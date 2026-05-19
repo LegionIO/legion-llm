@@ -963,6 +963,15 @@ module Legion
           source_type.respond_to?(:to_sym) && source_type.to_sym == :client && executable != true
         end
 
+        def client_tool_filtered?(name)
+          whitelist = Array(Legion::LLM::Settings.value(:tools, :client_whitelist))
+          blacklist = Array(Legion::LLM::Settings.value(:tools, :client_blacklist))
+
+          return true if whitelist.any? && !whitelist.include?(name.to_s)
+
+          blacklist.include?(name.to_s)
+        end
+
         def add_pinned_special_tool_definitions(definitions)
           Tools::Special.pinned_definitions.each do |definition|
             next if definitions.any? { |existing| existing.name == definition.name }
@@ -981,13 +990,16 @@ module Legion
                        else
                          Types::ToolDefinition.from_tool_class(tool)
                        end
-          if non_executable_client_tool?(definition) && !client_tool_passthrough_enabled?
-            log.info(
-              "[llm][tools][inject] action=client_tool_skipped request_id=#{request_log_value(:id, 'unknown')} " \
-              "conversation_id=#{request_log_value(:conversation_id, 'none') || 'none'} name=#{definition.name} " \
-              'reason=client_passthrough_not_enabled'
-            )
-            return
+          if non_executable_client_tool?(definition)
+            unless client_tool_passthrough_enabled?
+              log.info(
+                "[llm][tools][inject] action=client_tool_skipped request_id=#{request_log_value(:id, 'unknown')} " \
+                "conversation_id=#{request_log_value(:conversation_id, 'none') || 'none'} name=#{definition.name} " \
+                'reason=client_passthrough_not_enabled'
+              )
+              return
+            end
+            return if client_tool_filtered?(definition.name)
           end
           return if gaia_tool_suppressed?(definition.name)
           return if definitions.any? { |existing| existing.name == definition.name }
