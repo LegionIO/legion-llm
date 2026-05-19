@@ -91,7 +91,7 @@ module Legion
 
             scores = entries.filter_map { |e| e[:confidence] || e[:distance] }.map { |s| s.is_a?(Numeric) ? s.round(3) : s }
             log.debug(
-              "[llm][steps][rag_context] action=results_scored request_id=#{request_log_value(:id, 'unknown')} " \
+              "[llm][steps][rag_context] action=results_scored request_id=#{@request&.id || 'unknown'} " \
               "strategy=#{strategy} count=#{entries.size} scores=#{scores.inspect} " \
               "types=#{entries.map { |e| e[:content_type] }.compact.tally.inspect}"
             )
