@@ -485,7 +485,7 @@ module Legion
           scan_depth:              10,
           tool_limit:              25,
           local_tool_limit:        100,
-          client_tool_passthrough: false
+          client_tool_passthrough: true
         }
       end
 
