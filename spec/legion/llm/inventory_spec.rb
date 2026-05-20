@@ -4,6 +4,7 @@ require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inventory do
   before do
+    Legion::LLM::Inventory.invalidate_offerings_cache!
     allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
     allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
   end

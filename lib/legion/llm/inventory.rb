@@ -45,10 +45,50 @@ module Legion
       }.freeze
 
       class << self
+        OFFERINGS_TTL_SECONDS = 30
+
         def offerings(filters = {})
           log.debug "[llm][inventory] action=offerings.enter filters=#{filters.keys}"
           normalized_filters = normalize_filter_hash(filters)
-          provider_scope = normalized_filters[:provider]&.to_sym
+          all = cached_offerings(provider_scope: normalized_filters[:provider]&.to_sym)
+          result = filter_offerings(all, normalized_filters)
+          log.debug "[llm][inventory] action=offerings.complete total=#{result.size}"
+          result
+        rescue NameError, ArgumentError, TypeError => e
+          handle_exception(e, level: :error, handled: false, operation: 'llm.inventory.offerings')
+          raise
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.offerings')
+          []
+        end
+
+        def invalidate_offerings_cache!
+          @offerings_cache = nil
+          @offerings_cache_at = nil
+        end
+
+        def providers
+          offerings.group_by { |offering| offering[:provider_family] }
+        end
+
+        private
+
+        def cached_offerings(provider_scope: nil)
+          now = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+          if @offerings_cache && @offerings_cache_at && (now - @offerings_cache_at) < OFFERINGS_TTL_SECONDS
+            list = @offerings_cache
+          else
+            list = build_all_offerings(provider_scope: nil)
+            @offerings_cache = list
+            @offerings_cache_at = now
+          end
+
+          return list unless provider_scope
+
+          list.select { |o| o[:provider_family]&.to_sym == provider_scope }
+        end
+
+        def build_all_offerings(provider_scope: nil)
           list = []
           providers_config.each do |provider_family, config|
             next unless enabled_config?(config)
@@ -61,23 +101,8 @@ module Legion
           native_providers = native.map { |o| o[:provider_family]&.to_sym }.uniq
           list.concat(native)
           list.concat(discovery_offerings(provider: provider_scope, exclude_providers: native_providers))
-          list = dedupe_offerings(list)
-          result = filter_offerings(list, normalized_filters)
-          log.debug "[llm][inventory] action=offerings.complete total=#{result.size}"
-          result
-        rescue NameError, ArgumentError, TypeError => e
-          handle_exception(e, level: :error, handled: false, operation: 'llm.inventory.offerings')
-          raise
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.offerings')
-          []
+          dedupe_offerings(list)
         end
-
-        def providers
-          offerings.group_by { |offering| offering[:provider_family] }
-        end
-
-        private
 
         def providers_config
           ext = Legion::Settings[:extensions]
