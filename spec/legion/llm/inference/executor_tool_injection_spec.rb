@@ -102,7 +102,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
 
       it 'filters passthrough client tools with the default blacklist' do
-        tools = %w[sudo git ls grep].map do |name|
+        tools = ['sudo', 'git', 'ls', 'grep', 'legion', 'legionio', 'legionio do', 'legionio/legion',
+                 'legionio_do'].map do |name|
           Legion::LLM::Types::ToolDefinition.build(
             name:        name,
             description: "#{name} client tool",
@@ -119,7 +120,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         names = executor.send(:native_tool_definitions).map(&:name)
 
         expect(names).to include('git', 'ls', 'grep')
-        expect(names).not_to include('sudo')
+        expect(names).not_to include('sudo', 'legion', 'legionio', 'legioniodo', 'legioniolegion', 'legionio_do')
       end
 
       it 'filters passthrough client tools with an explicit whitelist' do
@@ -168,6 +169,30 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
         expect(names).to include('git')
         expect(names).not_to include('sudo')
+      end
+
+      it 'deduplicates client Python binary aliases against native special Python tools' do
+        allow(Legion::LLM::Tools::Special).to receive(:python_available?).and_return(true)
+        allow(Legion::LLM::Tools::Special).to receive(:python_path).and_return('/legion/python/bin/python3')
+        allow(Legion::LLM::Tools::Special).to receive(:pip_path).and_return('/legion/python/bin/pip3')
+        tools = %w[python3 pip3].map do |name|
+          Legion::LLM::Types::ToolDefinition.build(
+            name:        name,
+            description: "#{name} client tool",
+            source:      { type: :client, executable: false }
+          )
+        end
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'use python tools' }],
+          tools:    tools,
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+        )
+
+        executor = described_class.new(request)
+        names = executor.send(:native_tool_definitions).map(&:name)
+
+        expect(names).to include('python', 'pip')
+        expect(names).not_to include('python3', 'pip3')
       end
     end
 

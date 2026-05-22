@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.40] - 2026-05-22
+
+### Added
+- Settings: client tool passthrough blacklist now blocks Legion launcher-style client tools such as `legion`, `legionio`, `legionio do`, and `legionio/legion` by default, including sanitized tool-name variants.
+- Tools: client `python3` and `pip3` passthrough definitions deduplicate against Legion's native `python` and `pip` special tools when the managed Python runtime is injected.
+
 ## [0.9.39] - 2026-05-22
 
 ### Added

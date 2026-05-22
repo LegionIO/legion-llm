@@ -963,24 +963,38 @@ module Legion
         end
 
         def client_tool_passthrough_allowed?(definition)
-          name = definition.name.to_s.strip.downcase
+          names = client_tool_passthrough_name_variants(definition)
           whitelist = client_tool_passthrough_list(:client_tool_passthrough_whitelist)
           blacklist = client_tool_passthrough_list(:client_tool_passthrough_blacklist)
 
-          return false if whitelist.any? && !whitelist.include?(name)
-          return false if blacklist.include?(name)
+          return false if whitelist.any? && !names.intersect?(whitelist)
+          return false if names.intersect?(blacklist)
 
           true
         end
 
         def client_tool_passthrough_list(key)
           defaults = {
-            client_tool_passthrough_whitelist: [],
-            client_tool_passthrough_blacklist: %w[sudo visudo su]
+            client_tool_passthrough_whitelist: Legion::LLM::Settings::CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT,
+            client_tool_passthrough_blacklist: Legion::LLM::Settings::CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT
           }
-          Array(Legion::LLM::Settings.value(:tool_trigger, key, default: defaults.fetch(key))).map do |entry|
-            entry.to_s.strip.downcase
-          end.reject(&:empty?)
+          Array(Legion::LLM::Settings.value(:tool_trigger, key, default: defaults.fetch(key))).flat_map do |entry|
+            client_tool_policy_variants(entry)
+          end.uniq
+        end
+
+        def client_tool_passthrough_name_variants(definition)
+          source = definition.respond_to?(:source) ? definition.source : {}
+          raw_name = source[:raw_name] || source['raw_name'] if source.is_a?(Hash)
+          [definition.name, raw_name].compact.flat_map { |name| client_tool_policy_variants(name) }.uniq
+        end
+
+        def client_tool_policy_variants(value)
+          raw = value.to_s.strip.downcase
+          sanitized = Types::ToolDefinition.sanitize_tool_name(value).downcase
+          compact = raw.gsub(/[^a-z0-9]/, '')
+
+          [raw, sanitized, compact].reject(&:empty?).uniq
         end
 
         def non_executable_client_tool?(definition)
@@ -1027,7 +1041,7 @@ module Legion
             return
           end
           return if gaia_tool_suppressed?(definition.name)
-          return if definitions.any? { |existing| existing.name == definition.name }
+          return if native_tool_definition_duplicate?(definitions, definition)
 
           @injected_tool_map[definition.name] = definition.source[:tool_class] if definition.source[:tool_class]
           @native_tool_source_map[definition.name] = definition.source
@@ -1050,6 +1064,23 @@ module Legion
         rescue StandardError => e
           @warnings << "Tool definition error: #{e.message}"
           handle_exception(e, level: :error, operation: 'llm.pipeline.native_registry_tools')
+        end
+
+        def native_tool_definition_duplicate?(definitions, definition)
+          candidate_names = native_tool_definition_name_variants(definition)
+          definitions.any? do |existing|
+            native_tool_definition_name_variants(existing).intersect?(candidate_names)
+          end
+        end
+
+        def native_tool_definition_name_variants(definition)
+          variants = client_tool_passthrough_name_variants(definition)
+          source = definition.respond_to?(:source) ? definition.source : {}
+          source_type = source[:type] || source['type'] if source.is_a?(Hash)
+          if source_type.respond_to?(:to_sym) && source_type.to_sym == :special
+            variants += Tools::Special.aliases_for(definition.name).flat_map { |name| client_tool_policy_variants(name) }
+          end
+          variants.uniq
         end
 
         def add_settings_extensions_tool_definitions(definitions)

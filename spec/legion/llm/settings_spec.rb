@@ -12,7 +12,9 @@ RSpec.describe Legion::LLM::Settings do
     it 'defaults client tool passthrough on with an empty whitelist and shell escalation blacklist' do
       expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough)).to be true
       expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough_whitelist)).to eq([])
-      expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough_blacklist)).to eq(%w[sudo visudo su])
+      expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough_blacklist)).to eq(
+        ['sudo', 'visudo', 'su', 'legion', 'legionio', 'legionio do', 'legionio/legion']
+      )
     end
   end
 

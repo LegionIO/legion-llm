@@ -8,6 +8,10 @@ module Legion
     module Settings
       extend Legion::Logging::Helper
 
+      CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT = ['sudo', 'visudo', 'su', 'legion', 'legionio', 'legionio do',
+                                                   'legionio/legion'].freeze
+      CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT = [].freeze
+
       def self.default
         model_override = ENV.fetch('ANTHROPIC_MODEL', nil)
         {
@@ -486,8 +490,8 @@ module Legion
           tool_limit:                        25,
           local_tool_limit:                  100,
           client_tool_passthrough:           true,
-          client_tool_passthrough_whitelist: [],
-          client_tool_passthrough_blacklist: %w[sudo visudo su]
+          client_tool_passthrough_whitelist: CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT.dup,
+          client_tool_passthrough_blacklist: CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT.dup
         }
       end
 
