@@ -124,6 +124,14 @@ module Legion
           build_response
         end
 
+        def call_responses(body:, stream: false, &)
+          log.debug "[llm][executor] action=call_responses request_id=#{@request.id} profile=#{@profile} stream=#{stream}"
+          execute_pre_provider_steps
+          execute_provider_request_responses(body: body, stream: stream, &)
+          execute_post_provider_steps
+          build_response
+        end
+
         private
 
         def llm_setting(key, default = nil)
@@ -1337,6 +1345,30 @@ module Legion
           result = execute_native_streaming_tool_loop(&)
           merge_response_offering_metadata(result[:metadata])
           @raw_response = Call::NativeResponseAdapter.new(result)
+        end
+
+        def execute_provider_request_responses(body:, stream:, &block)
+          @timestamps[:provider_start] = Time.now
+          @timeline.record(
+            category: :provider, key: 'provider:request_sent',
+            exchange_id: @exchange_id, direction: :outbound,
+            detail: "responses from #{@resolved_provider}",
+            from: 'pipeline', to: "provider:#{@resolved_provider}"
+          )
+
+          raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless use_native_dispatch?(@resolved_provider)
+
+          result = dispatch_responses_request(
+            body:         body,
+            messages:     native_dispatch_messages,
+            stream:       stream,
+            stream_block: block
+          )
+          merge_response_offering_metadata(result[:metadata])
+          @raw_response = Call::NativeResponseAdapter.new(result)
+
+          @timestamps[:provider_end] = Time.now
+          record_provider_response
         end
 
         def normalize_message_content(content)

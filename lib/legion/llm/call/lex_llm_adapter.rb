@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'event_stream_parser'
 require 'legion/logging/helper'
 
 module Legion
@@ -55,6 +56,24 @@ module Legion
             message_response(response, offering_metadata: opts[:offering_metadata])
           else
             chunk_response(accumulator, offering_metadata: opts[:offering_metadata])
+          end
+        end
+
+        def responses(model:, body:, messages:, stream: false, **opts, &)
+          payload = build_responses_payload(
+            body:     body,
+            model:    model,
+            messages: messages,
+            stream:   stream,
+            system:   opts[:system],
+            tools:    opts[:tools]
+          )
+
+          if stream
+            stream_responses_payload(payload, offering_metadata: opts[:offering_metadata], &)
+          else
+            response = provider.connection.post(responses_url, payload)
+            responses_hash_response(response.body, offering_metadata: opts[:offering_metadata])
           end
         end
 
@@ -134,6 +153,207 @@ module Legion
           else
             provider.image(**args.except(:headers))
           end
+        end
+
+        def responses_url = '/v1/responses'
+
+        def build_responses_payload(body:, model:, messages:, stream:, system: nil, tools: nil)
+          payload = normalize_hash(body).dup
+          payload[:model] = model
+          payload[:stream] = stream
+          payload[:input] = responses_input(messages)
+
+          system_content = normalize_response_system(system)
+          payload[:instructions] = system_content if present_system?(system_content)
+
+          formatted_tools = responses_tools(tools)
+          payload[:tools] = formatted_tools if formatted_tools.any?
+
+          deep_compact(payload)
+        end
+
+        def responses_input(messages)
+          Array(messages).map do |message|
+            normalized = normalize_hash(message)
+            if normalized[:role].to_s == 'tool'
+              next({
+                type:    'function_call_output',
+                call_id: normalized[:tool_call_id].to_s,
+                output:  normalize_message_content(normalized[:content]).to_s
+              })
+            end
+
+            {
+              role:         normalized[:role]&.to_s || 'user',
+              content:      normalize_message_content(normalized[:content]).to_s,
+              tool_call_id: normalized[:tool_call_id]
+            }.compact
+          end
+        end
+
+        def normalize_response_system(system)
+          return nil if system.nil?
+          return system[:content] || system['content'] if system.is_a?(Hash)
+
+          system.to_s
+        end
+
+        def responses_tools(tools)
+          normalize_tools(tools).values.map do |tool|
+            {
+              type:        'function',
+              name:        tool.name.to_s,
+              description: tool.description.to_s,
+              parameters:  tool.params_schema || { type: 'object', properties: {} }
+            }
+          end
+        end
+
+        def deep_compact(value)
+          case value
+          when Hash
+            value.each_with_object({}) do |(key, hash_value), compacted|
+              compact_value = deep_compact(hash_value)
+              compacted[key] = compact_value unless compact_value.nil?
+            end
+          when Array
+            value.map { |entry| deep_compact(entry) }.compact
+          else
+            value
+          end
+        end
+
+        def stream_responses_payload(payload, offering_metadata: nil, &block)
+          accumulator = build_responses_stream_accumulator
+          parser = EventStreamParser::Parser.new
+
+          response = provider.connection.post(responses_url, payload) do |req|
+            req.headers['Accept'] = 'text/event-stream'
+            attach_responses_stream_handler(req, parser, accumulator, block)
+          end
+
+          responses_stream_response(accumulator, response.body, offering_metadata: offering_metadata)
+        end
+
+        def build_responses_stream_accumulator
+          {
+            content:   +'',
+            model:     nil,
+            usage:     {},
+            completed: nil,
+            raw:       nil
+          }
+        end
+
+        def attach_responses_stream_handler(req, parser, accumulator, block)
+          handler = proc do |chunk, *_args|
+            parser.feed(chunk) do |_event, data|
+              handle_responses_stream_data(data, accumulator, block)
+            end
+          end
+
+          if req.options.respond_to?(:on_data=)
+            req.options.on_data = handler
+          else
+            req.options[:on_data] = handler
+          end
+        end
+
+        def handle_responses_stream_data(data, accumulator, block)
+          return if data == '[DONE]'
+
+          parsed = Legion::JSON.parse(data, symbolize_names: false)
+          return unless parsed.is_a?(Hash)
+
+          accumulator[:raw] = parsed
+          case parsed['type']
+          when 'response.output_text.delta'
+            accumulate_responses_text_delta(parsed, accumulator, block)
+          when 'response.completed'
+            response = parsed['response'] || {}
+            accumulator[:completed] = response
+            accumulator[:model] = response['model'] if response['model']
+            accumulator[:usage] = responses_usage(response['usage'])
+          end
+        end
+
+        def accumulate_responses_text_delta(parsed, accumulator, block)
+          delta = parsed['delta'].to_s
+          return if delta.empty?
+
+          accumulator[:content] << delta
+          block&.call(
+            lex_llm_namespace::Chunk.new(
+              role:     :assistant,
+              content:  delta,
+              model_id: parsed['model'],
+              raw:      parsed,
+              tokens:   nil
+            )
+          )
+        end
+
+        def responses_stream_response(accumulator, response_body, offering_metadata: nil)
+          completed = accumulator[:completed] || {}
+          content = accumulator[:content]
+          content = extract_responses_text(completed) if content.empty?
+
+          {
+            result:   content,
+            model:    accumulator[:model] || completed['model'],
+            usage:    accumulator[:usage],
+            metadata: response_metadata(completed.empty? ? response_body : completed, offering_metadata: offering_metadata)
+          }.compact
+        end
+
+        def responses_hash_response(body, offering_metadata: nil)
+          normalized = normalize_string_hash(body)
+          {
+            result:   extract_responses_text(normalized),
+            model:    normalized['model'],
+            usage:    responses_usage(normalized['usage']),
+            metadata: response_metadata(normalized, offering_metadata: offering_metadata)
+          }.compact
+        end
+
+        def normalize_string_hash(value)
+          return value.map { |entry| normalize_string_hash(entry) } if value.is_a?(Array)
+          return {} unless value.respond_to?(:each_pair)
+
+          value.each_with_object({}) do |(key, hash_value), normalized|
+            normalized[key.to_s] = normalize_string_hash_value(hash_value)
+          end
+        end
+
+        def normalize_string_hash_value(value)
+          return normalize_string_hash(value) if value.respond_to?(:each_pair)
+          return value.map { |entry| normalize_string_hash_value(entry) } if value.is_a?(Array)
+
+          value
+        end
+
+        def extract_responses_text(body)
+          return body['output_text'].to_s if body['output_text']
+
+          Array(body['output']).flat_map do |item|
+            Array(item['content']).filter_map do |content|
+              next unless %w[output_text text].include?(content['type'].to_s)
+
+              content['text']
+            end
+          end.join
+        end
+
+        def responses_usage(usage)
+          usage = normalize_string_hash(usage)
+          input = usage['input_tokens'] || usage['prompt_tokens']
+          output = usage['output_tokens'] || usage['completion_tokens']
+          {
+            input_tokens:       input.to_i,
+            output_tokens:      output.to_i,
+            cache_read_tokens:  usage.dig('input_tokens_details', 'cached_tokens').to_i,
+            cache_write_tokens: usage.dig('input_tokens_details', 'cache_creation_tokens').to_i
+          }
         end
 
         def model_info(model, offering_metadata: nil)
