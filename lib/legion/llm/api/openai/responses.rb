@@ -257,9 +257,14 @@ module Legion
 
           def self.extract_token(tokens, key)
             return 0 if tokens.nil?
-            return (tokens[key] || tokens[key.to_s] || 0).to_i if tokens.is_a?(Hash)
 
             method_name = { input: :input_tokens, output: :output_tokens }[key]
+
+            if tokens.is_a?(Hash)
+              return (tokens[method_name] || tokens[method_name.to_s] ||
+                      tokens[key] || tokens[key.to_s] || 0).to_i
+            end
+
             return tokens.public_send(method_name).to_i if method_name && tokens.respond_to?(method_name)
 
             0
