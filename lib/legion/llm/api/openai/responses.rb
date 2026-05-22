@@ -182,38 +182,39 @@ module Legion
           def self.stream_response(out, executor, request_id:, model:) # rubocop:disable Metrics/MethodLength
             created_at = Time.now.to_i
             seq = 0
+            in_progress_response = { id: request_id, object: 'response', created_at: created_at,
+                                     status: 'in_progress', model: model, output: [], usage: nil }
 
             # response.created — envelope matches gateway format: { type:, response:, sequence_number: }
-            out << "event: response.created\ndata: #{Legion::JSON.dump({
+            out << sse_event('response.created', {
               type:            'response.created',
               sequence_number: seq += 1,
-              response:        { id: request_id, object: 'response', created_at: created_at,
-                                 status: 'in_progress', model: model, output: [], usage: nil }
-            })}\n\n"
+              response:        in_progress_response
+            })
 
-            out << "event: response.in_progress\ndata: #{Legion::JSON.dump({
+            out << sse_event('response.in_progress', {
               type:            'response.in_progress',
               sequence_number: seq += 1,
-              response:        { id: request_id, object: 'response', created_at: created_at,
-                                 status: 'in_progress', model: model, output: [], usage: nil }
-            })}\n\n"
+              response:        in_progress_response
+            })
 
             msg_id = "msg_#{SecureRandom.hex(12)}"
-            out << "event: response.output_item.added\ndata: #{Legion::JSON.dump({
+            out << sse_event('response.output_item.added', {
               type:            'response.output_item.added',
               sequence_number: seq += 1,
               output_index:    0,
-              item:            { id: msg_id, type: 'message', role: 'assistant', content: [], status: 'in_progress' }
-            })}\n\n"
+              item:            { id: msg_id, type: 'message', role: 'assistant',
+                                 content: [], status: 'in_progress' }
+            })
 
-            out << "event: response.content_part.added\ndata: #{Legion::JSON.dump({
+            out << sse_event('response.content_part.added', {
               type:            'response.content_part.added',
               sequence_number: seq += 1,
               output_index:    0,
               content_index:   0,
               item_id:         msg_id,
               part:            { type: 'output_text', text: '', annotations: [] }
-            })}\n\n"
+            })
 
             full_text = +''
 
@@ -222,14 +223,14 @@ module Legion
               next if text.empty?
 
               full_text << text
-              out << "event: response.output_text.delta\ndata: #{Legion::JSON.dump({
+              out << sse_event('response.output_text.delta', {
                 type:            'response.output_text.delta',
                 sequence_number: seq += 1,
                 output_index:    0,
                 content_index:   0,
                 item_id:         msg_id,
                 delta:           text
-              })}\n\n"
+              })
             end
 
             routing = pipeline_response.routing || {}
@@ -237,43 +238,52 @@ module Legion
             resolved_model = (routing[:model] || routing['model'] || model).to_s
             usage = build_usage(tokens)
 
-            out << "event: response.output_text.done\ndata: #{Legion::JSON.dump({
+            out << sse_event('response.output_text.done', {
               type:            'response.output_text.done',
               sequence_number: seq += 1,
               output_index:    0,
               content_index:   0,
               item_id:         msg_id,
               text:            full_text
-            })}\n\n"
+            })
 
-            out << "event: response.content_part.done\ndata: #{Legion::JSON.dump({
+            out << sse_event('response.content_part.done', {
               type:            'response.content_part.done',
               sequence_number: seq += 1,
               output_index:    0,
               content_index:   0,
               item_id:         msg_id,
               part:            { type: 'output_text', text: full_text, annotations: [] }
-            })}\n\n"
+            })
 
-            out << "event: response.output_item.done\ndata: #{Legion::JSON.dump({
+            completed_item = { id: msg_id, type: 'message', role: 'assistant', status: 'completed',
+                               content: [{ type: 'output_text', text: full_text, annotations: [] }] }
+            out << sse_event('response.output_item.done', {
               type:            'response.output_item.done',
               sequence_number: seq += 1,
               output_index:    0,
-              item:            { id: msg_id, type: 'message', role: 'assistant', status: 'completed',
-                                 content: [{ type: 'output_text', text: full_text, annotations: [] }] }
-            })}\n\n"
+              item:            completed_item
+            })
 
-            out << "event: response.completed\ndata: #{Legion::JSON.dump({
+            out << sse_event('response.completed', {
               type:            'response.completed',
               sequence_number: seq + 1,
-              response:        { id: request_id, object: 'response', created_at: created_at,
-                                 status: 'completed', model: resolved_model,
-                                 output: [{ id: msg_id, type: 'message', role: 'assistant', status: 'completed',
-                                            content: [{ type: 'output_text', text: full_text, annotations: [] }] }],
-                                 usage: usage }
-            })}\n\n"
+              response:        {
+                id:         request_id,
+                object:     'response',
+                created_at: created_at,
+                status:     'completed',
+                model:      resolved_model,
+                output:     [completed_item],
+                usage:      usage
+              }
+            })
 
             log.info("[llm][api][openai][responses] action=stream_complete request_id=#{request_id} model=#{resolved_model}")
+          end
+
+          def self.sse_event(name, payload)
+            "event: #{name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
           end
 
           def self.build_output_tool_calls(pipeline_response)

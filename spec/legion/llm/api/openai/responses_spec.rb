@@ -124,9 +124,9 @@ RSpec.describe Legion::LLM::API::OpenAI::Responses do
       completed_payload = out[/event: response.completed\ndata: (.+)\n\n/, 1]
       completed = Legion::JSON.parse(completed_payload, symbolize_names: true)
 
-      expect(completed[:id]).to eq('resp_stream')
-      expect(completed[:model]).to eq('gpt-4o')
-      expect(completed[:usage]).to eq(
+      expect(completed[:response][:id]).to eq('resp_stream')
+      expect(completed[:response][:model]).to eq('gpt-4o')
+      expect(completed[:response][:usage]).to eq(
         input_tokens:  12,
         output_tokens: 7,
         total_tokens:  19
