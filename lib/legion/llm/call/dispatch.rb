@@ -168,6 +168,7 @@ module Legion
         CAPABILITY_METHODS = {
           chat:         :chat,
           stream:       :stream,
+          responses:    :responses,
           embed:        :embed,
           image:        :image,
           count_tokens: :count_tokens

@@ -51,8 +51,12 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
         { status: live ? 'healthy' : 'unknown', ready: live }
       end
 
+      def connection
+        self.class.connection || super
+      end
+
       class << self
-        attr_accessor :last_embed_call
+        attr_accessor :connection, :last_embed_call
       end
     end
   end
@@ -165,6 +169,79 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result[:result]).to eq('hello')
     expect(result[:model]).to eq('model-a')
     expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
+  end
+
+  it 'calls upstream Responses API for non-streaming responses' do
+    connection = Class.new do
+      attr_reader :url, :payload
+
+      def post(url, payload)
+        @url = url
+        @payload = payload
+        response_body = {
+          'model'  => 'gpt-5.4',
+          'output' => [
+            { 'content' => [{ 'type' => 'output_text', 'text' => 'hi' }] }
+          ],
+          'usage'  => { 'input_tokens' => 8, 'output_tokens' => 5 }
+        }
+        Struct.new(:body).new(response_body)
+      end
+    end.new
+    provider_class.connection = connection
+
+    result = adapter.responses(
+      model:    'gpt-5.4',
+      body:     { input: 'say hi', stream: false },
+      messages: [{ role: 'user', content: 'say hi' }]
+    )
+
+    expect(connection.url).to eq('/v1/responses')
+    expect(connection.payload).to include(model: 'gpt-5.4', stream: false)
+    expect(connection.payload[:input]).to eq([{ role: 'user', content: 'say hi' }])
+    expect(result[:result]).to eq('hi')
+    expect(result[:usage]).to include(input_tokens: 8, output_tokens: 5)
+  ensure
+    provider_class.connection = nil
+  end
+
+  it 'streams upstream Responses API deltas and captures completed usage' do
+    connection = Class.new do
+      attr_reader :payload
+
+      def post(_url, payload)
+        @payload = payload
+        options = Struct.new(:on_data, keyword_init: true).new
+        request = Struct.new(:headers, :options, keyword_init: true).new(headers: {}, options: options)
+        yield request
+        request.options.on_data.call(sse('response.output_text.delta', type: 'response.output_text.delta', delta: 'hi'))
+        request.options.on_data.call(sse('response.completed',
+                                         type:     'response.completed',
+                                         response: { model: 'gpt-5.4', usage: { input_tokens: 8, output_tokens: 5 } }))
+        Struct.new(:body).new(nil)
+      end
+
+      def sse(event, payload)
+        "event: #{event}\ndata: #{Legion::JSON.dump(payload)}\n\n"
+      end
+    end.new
+    provider_class.connection = connection
+
+    yielded = []
+    result = adapter.responses(
+      model:    'gpt-5.4',
+      body:     { input: 'say hi', stream: true },
+      stream:   true,
+      messages: [{ role: 'user', content: 'say hi' }]
+    ) { |chunk| yielded << chunk.content }
+
+    expect(connection.payload).to include(model: 'gpt-5.4', stream: true)
+    expect(yielded).to eq(['hi'])
+    expect(result[:result]).to eq('hi')
+    expect(result[:model]).to eq('gpt-5.4')
+    expect(result[:usage]).to include(input_tokens: 8, output_tokens: 5)
+  ensure
+    provider_class.connection = nil
   end
 
   it 'uses the final streamed provider message for accumulated tool calls' do

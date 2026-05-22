@@ -76,13 +76,13 @@ module Legion
                         'X-Accel-Buffering' => 'no'
 
                 stream do |out|
-                  Responses.stream_response(out, executor, request_id: request_id, model: model)
+                  Responses.stream_response(out, executor, request_id: request_id, model: model, upstream_body: body)
                 rescue StandardError => e
                   handle_exception(e, level: :error, handled: false, operation: 'llm.api.openai.responses.stream', request_id: request_id)
                   out << "event: error\ndata: #{Legion::JSON.dump({ type: 'server_error', message: e.message })}\n\n"
                 end
               else
-                pipeline_response = executor.call
+                pipeline_response = executor.call_responses(body: body, stream: false)
                 response_body = Responses.format_response(pipeline_response, request_id: request_id, model: model)
 
                 log.info("[llm][api][openai][responses] action=complete request_id=#{request_id} model=#{response_body[:model]}")
@@ -179,7 +179,7 @@ module Legion
             }
           end
 
-          def self.stream_response(out, executor, request_id:, model:) # rubocop:disable Metrics/MethodLength
+          def self.stream_response(out, executor, request_id:, model:, upstream_body: nil) # rubocop:disable Metrics/MethodLength
             created_at = Time.now.to_i
             seq = 0
             in_progress_response = { id: request_id, object: 'response', created_at: created_at,
@@ -218,7 +218,7 @@ module Legion
 
             full_text = +''
 
-            pipeline_response = executor.call_stream do |chunk|
+            pipeline_response = call_streaming_executor(executor, upstream_body: upstream_body) do |chunk|
               text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
               next if text.empty?
 
@@ -280,6 +280,14 @@ module Legion
                              })
 
             log.info("[llm][api][openai][responses] action=stream_complete request_id=#{request_id} model=#{resolved_model}")
+          end
+
+          def self.call_streaming_executor(executor, upstream_body: nil, &block)
+            if upstream_body && executor.respond_to?(:call_responses)
+              executor.call_responses(body: upstream_body, stream: true, &block)
+            else
+              executor.call_stream(&block)
+            end
           end
 
           def self.sse_event(name, payload)

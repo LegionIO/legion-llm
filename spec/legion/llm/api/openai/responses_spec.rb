@@ -132,6 +132,35 @@ RSpec.describe Legion::LLM::API::OpenAI::Responses do
         total_tokens:  19
       )
     end
+
+    it 'uses Responses upstream executor path when an upstream body is provided' do
+      pipeline_response = double(
+        'PipelineResponse',
+        routing: { model: 'gpt-5.4' },
+        tokens:  { input_tokens: 8, output_tokens: 5 }
+      )
+      executor = double('Executor')
+      out = +''
+
+      allow(executor).to receive(:respond_to?).with(:call_responses).and_return(true)
+      allow(executor).to receive(:call_responses) do |body:, stream:, &block|
+        block.call('hi')
+        expect(body).to eq(input: 'say hi', stream: true)
+        expect(stream).to be(true)
+        pipeline_response
+      end
+
+      described_class.stream_response(
+        out,
+        executor,
+        request_id:    'resp_stream',
+        model:         'gpt-5.4',
+        upstream_body: { input: 'say hi', stream: true }
+      )
+
+      expect(executor).to have_received(:call_responses)
+      expect(out).to include('event: response.completed')
+    end
   end
 
   describe '.extract_token' do

@@ -22,6 +22,10 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         { content: 'streamed response', usage: { input_tokens: 8, output_tokens: 4 } }
       end
 
+      def responses(model:, body:, messages:, stream:, **) # rubocop:disable Lint/UnusedMethodArgument
+        { content: 'responses response', usage: { input_tokens: 11, output_tokens: 6 } }
+      end
+
       def image(model:, prompt:, size:, **) # rubocop:disable Lint/UnusedMethodArgument
         { result: [{ url: 'https://images.invalid/generated.png' }], model: model, usage: {} }
       end
@@ -60,6 +64,16 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
       expect(result[:result]).to eq('streamed response')
       expect(result[:usage].output_tokens).to eq(4)
       expect(chunks).to eq(['chunk'])
+    end
+
+    it 'dispatches responses capability — calls ext.responses' do
+      result = described_class.call(
+        provider: :ollama, capability: :responses, instance: :local,
+        model: 'llama3', body: { input: 'hi' }, messages: [{ role: 'user', content: 'hi' }], stream: false
+      )
+
+      expect(result[:result]).to eq('responses response')
+      expect(result[:usage].input_tokens).to eq(11)
     end
 
     it 'dispatches image capability — calls ext.image' do
