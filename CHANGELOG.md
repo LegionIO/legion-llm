@@ -6,6 +6,11 @@
 - API: OpenAI Responses streaming now resolves token counts from both `:input` / `:output` aliases and explicit `:input_tokens` / `:output_tokens` keys across hash-backed and object-backed usage payloads, so `response.completed` reports accurate usage for Codex-compatible streams
 - Providers: `LexLLMAdapter` now falls back to provider `usage`, `raw[:usage]`, and Legion-native `raw[:data][:input_tokens]` / `raw[:data][:output_tokens]` shapes when direct streaming token readers are zero or absent
 
+## [0.9.34] - 2026-05-22
+
+### Fixed
+- API: `extract_token` now correctly reads `:input_tokens` / `:output_tokens` hash keys from `pipeline_response.tokens`, fixing `input_tokens: 0` in streaming `response.completed` events (caused Codex CLI `stream disconnected before completion` error)
+
 ## [0.9.33] - 2026-05-22
 
 ### Added

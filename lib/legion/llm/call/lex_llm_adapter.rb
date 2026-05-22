@@ -403,8 +403,6 @@ module Legion
 
         def token_usage_signal?(response, usage)
           usage.values.any?(&:positive?) ||
-            response.respond_to?(:usage) ||
-            response.respond_to?(:raw) ||
             response.respond_to?(:input_tokens) ||
             response.respond_to?(:output_tokens)
         end
@@ -413,6 +411,8 @@ module Legion
           current = existing.is_a?(Hash) ? existing : {}
           latest = incoming.is_a?(Hash) ? incoming : {}
 
+          # Uses max so that a zero-valued chunk later in the stream doesn't
+          # overwrite a valid count already captured from an earlier chunk.
           {
             input_tokens:       [current[:input_tokens].to_i, latest[:input_tokens].to_i].max,
             output_tokens:      [current[:output_tokens].to_i, latest[:output_tokens].to_i].max,
