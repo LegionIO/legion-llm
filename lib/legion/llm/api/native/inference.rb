@@ -28,7 +28,7 @@ module Legion
               conversation_id = body[:conversation_id]
               request_id      = body[:request_id] || SecureRandom.uuid
               include_thinking = body[:include_thinking] == true
-              client_tool_passthrough = body[:client_tool_passthrough] == true
+              client_tool_passthrough = body[:client_tool_passthrough] if [true, false].include?(body[:client_tool_passthrough])
 
               unless messages.is_a?(Array)
                 halt 400, { 'Content-Type' => 'application/json' },
@@ -105,7 +105,7 @@ module Legion
               extra = {}
               extra[:tier] = tier.to_sym if tier
               metadata = { requested_tools: requested_tools }
-              metadata[:client_tool_passthrough] = true if client_tool_passthrough
+              metadata[:client_tool_passthrough] = client_tool_passthrough unless client_tool_passthrough.nil?
               metadata[:client_tool_request_count] = tools.size if tools.any?
 
               pipeline_request = Legion::LLM::Inference::Request.build(

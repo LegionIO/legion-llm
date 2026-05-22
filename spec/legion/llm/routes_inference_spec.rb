@@ -358,7 +358,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(captured[:metadata]).to eq(requested_tools: ['legion.test.extra'])
     end
 
-    it 'requires explicit opt-in for API client tool passthrough metadata' do
+    it 'passes explicit API client tool passthrough metadata' do
       captured = nil
       response = make_pipeline_response
       executor = instance_double('Legion::LLM::Inference::Executor', call: response)
@@ -379,6 +379,31 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(captured[:metadata]).to include(
         requested_tools:           [],
         client_tool_passthrough:   true,
+        client_tool_request_count: 1
+      )
+    end
+
+    it 'passes explicit API client tool passthrough false metadata' do
+      captured = nil
+      response = make_pipeline_response
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+
+      allow(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        captured = kwargs
+        :req
+      end
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+
+      response = post_json('/api/llm/inference', {
+                             messages:                [{ role: 'user', content: 'hello' }],
+                             tools:                   [{ name: 'client_shell', description: 'Client shell', parameters: {} }],
+                             client_tool_passthrough: false
+                           })
+
+      expect(response.status).to eq(200)
+      expect(captured[:metadata]).to include(
+        requested_tools:           [],
+        client_tool_passthrough:   false,
         client_tool_request_count: 1
       )
     end

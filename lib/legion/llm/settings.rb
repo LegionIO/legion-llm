@@ -482,10 +482,12 @@ module Legion
 
       def self.tool_trigger_defaults
         {
-          scan_depth:              10,
-          tool_limit:              25,
-          local_tool_limit:        100,
-          client_tool_passthrough: false
+          scan_depth:                        10,
+          tool_limit:                        25,
+          local_tool_limit:                  100,
+          client_tool_passthrough:           true,
+          client_tool_passthrough_whitelist: [],
+          client_tool_passthrough_blacklist: %w[sudo visudo su]
         }
       end
 

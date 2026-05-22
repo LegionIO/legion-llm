@@ -8,6 +8,12 @@ RSpec.describe Legion::LLM::Settings do
     it 'enables GAIA advisory by default' do
       expect(described_class.default.dig(:gaia, :advisory_enabled)).to be true
     end
+
+    it 'defaults client tool passthrough on with an empty whitelist and shell escalation blacklist' do
+      expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough)).to be true
+      expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough_whitelist)).to eq([])
+      expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough_blacklist)).to eq(%w[sudo visudo su])
+    end
   end
 
   describe '.value' do

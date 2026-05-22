@@ -962,6 +962,27 @@ module Legion
           Legion::LLM::Settings.value(:tool_trigger, :client_tool_passthrough) != false
         end
 
+        def client_tool_passthrough_allowed?(definition)
+          name = definition.name.to_s.strip.downcase
+          whitelist = client_tool_passthrough_list(:client_tool_passthrough_whitelist)
+          blacklist = client_tool_passthrough_list(:client_tool_passthrough_blacklist)
+
+          return false if whitelist.any? && !whitelist.include?(name)
+          return false if blacklist.include?(name)
+
+          true
+        end
+
+        def client_tool_passthrough_list(key)
+          defaults = {
+            client_tool_passthrough_whitelist: [],
+            client_tool_passthrough_blacklist: %w[sudo visudo su]
+          }
+          Array(Legion::LLM::Settings.value(:tool_trigger, key, default: defaults.fetch(key))).map do |entry|
+            entry.to_s.strip.downcase
+          end.reject(&:empty?)
+        end
+
         def non_executable_client_tool?(definition)
           source = definition.respond_to?(:source) ? definition.source : {}
           return false unless source.is_a?(Hash)
@@ -994,6 +1015,14 @@ module Legion
               "[llm][tools][inject] action=client_tool_skipped request_id=#{request_log_value(:id, 'unknown')} " \
               "conversation_id=#{request_log_value(:conversation_id, 'none') || 'none'} name=#{definition.name} " \
               'reason=client_passthrough_not_enabled'
+            )
+            return
+          end
+          if non_executable_client_tool?(definition) && !client_tool_passthrough_allowed?(definition)
+            log.info(
+              "[llm][tools][inject] action=client_tool_skipped request_id=#{request_log_value(:id, 'unknown')} " \
+              "conversation_id=#{request_log_value(:conversation_id, 'none') || 'none'} name=#{definition.name} " \
+              'reason=client_passthrough_policy'
             )
             return
           end

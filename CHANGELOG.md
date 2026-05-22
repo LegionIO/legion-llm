@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.39] - 2026-05-22
+
+### Added
+- Settings: `client_tool_passthrough_whitelist` and `client_tool_passthrough_blacklist` now filter non-executable client tools before native provider dispatch; `client_tool_passthrough` defaults to enabled, explicit API true/false overrides are preserved, the default blacklist blocks `sudo`, `visudo`, and `su`, and the default whitelist is empty.
+
 ## [0.9.38] - 2026-05-22
 
 ### Fixed

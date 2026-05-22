@@ -100,6 +100,75 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
         expect(executor.send(:native_tool_definitions).map(&:name)).to include('client_shell')
       end
+
+      it 'filters passthrough client tools with the default blacklist' do
+        tools = %w[sudo git ls grep].map do |name|
+          Legion::LLM::Types::ToolDefinition.build(
+            name:        name,
+            description: "#{name} client tool",
+            source:      { type: :client, executable: false }
+          )
+        end
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'use client tools' }],
+          tools:    tools,
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+        )
+
+        executor = described_class.new(request)
+        names = executor.send(:native_tool_definitions).map(&:name)
+
+        expect(names).to include('git', 'ls', 'grep')
+        expect(names).not_to include('sudo')
+      end
+
+      it 'filters passthrough client tools with an explicit whitelist' do
+        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough_whitelist] = %w[git grep]
+        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough_blacklist] = []
+        tools = %w[git ls grep].map do |name|
+          Legion::LLM::Types::ToolDefinition.build(
+            name:        name,
+            description: "#{name} client tool",
+            source:      { type: :client, executable: false }
+          )
+        end
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'use client tools' }],
+          tools:    tools,
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+          metadata: { client_tool_passthrough: true }
+        )
+
+        executor = described_class.new(request)
+        names = executor.send(:native_tool_definitions).map(&:name)
+
+        expect(names).to include('git', 'grep')
+        expect(names).not_to include('ls')
+      end
+
+      it 'lets the blacklist win over the whitelist for passthrough client tools' do
+        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough_whitelist] = %w[git sudo]
+        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough_blacklist] = %w[sudo]
+        tools = %w[git sudo].map do |name|
+          Legion::LLM::Types::ToolDefinition.build(
+            name:        name,
+            description: "#{name} client tool",
+            source:      { type: :client, executable: false }
+          )
+        end
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'use client tools' }],
+          tools:    tools,
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+          metadata: { client_tool_passthrough: true }
+        )
+
+        executor = described_class.new(request)
+        names = executor.send(:native_tool_definitions).map(&:name)
+
+        expect(names).to include('git')
+        expect(names).not_to include('sudo')
+      end
     end
 
     context 'when @request.tools is an empty array []' do
