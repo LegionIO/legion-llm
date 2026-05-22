@@ -190,6 +190,9 @@ module Legion
           raise Legion::LLM::ProviderError, "unsupported capability: #{capability}" unless method_name
 
           ext = fetch_extension!(provider, instance: instance)
+          if ext.respond_to?(:supports?) && !ext.supports?(cap_sym)
+            raise Legion::LLM::ProviderError, "unsupported capability #{capability} for provider #{provider}"
+          end
 
           log.info("[llm][dispatch] capability=#{cap_sym} provider=#{provider} " \
                    "instance=#{instance || 'default'} model=#{model}")

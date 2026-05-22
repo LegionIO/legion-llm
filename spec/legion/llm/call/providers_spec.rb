@@ -48,8 +48,9 @@ RSpec.describe Legion::LLM::Call::Providers do
 
     expect(adapter).to be_a(Legion::LLM::Call::LexLLMAdapter)
     expect(adapter.instance_variable_get(:@instance_config)).to eq(
-      base_url:    'http://localhost:11434',
-      instance_id: :local
+      base_url:     'http://localhost:11434',
+      capabilities: %i[chat embed],
+      instance_id:  :local
     )
     expect(metadata).to eq(tier: :local, capabilities: %i[chat embed])
   end

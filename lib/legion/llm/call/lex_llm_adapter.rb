@@ -11,11 +11,13 @@ module Legion
         include Legion::Logging::Helper
 
         METADATA_KEYS = %i[tier capabilities enabled].freeze
+        RESPONSES_PROVIDER_FAMILIES = %i[openai vllm].freeze
 
         def initialize(provider_name, provider_class, instance_config: {})
           @provider_name = provider_name.to_sym
           @provider_class = provider_class
           @instance_config = instance_config
+          @capabilities = Array(instance_config[:capabilities] || instance_config['capabilities']).map(&:to_sym)
           @lex_llm_namespace = resolve_lex_llm_namespace
         end
 
@@ -60,6 +62,8 @@ module Legion
         end
 
         def responses(model:, body:, messages:, stream: false, **opts, &)
+          raise Legion::LLM::ProviderError, "Responses API dispatch is not supported for #{provider_name}" unless supports?(:responses)
+
           payload = build_responses_payload(
             body:     body,
             model:    model,
@@ -75,6 +79,12 @@ module Legion
             response = provider.connection.post(responses_url, payload)
             responses_hash_response(response.body, offering_metadata: opts[:offering_metadata])
           end
+        end
+
+        def supports?(capability)
+          return true unless capability.to_sym == :responses
+
+          @capabilities.include?(:responses) || RESPONSES_PROVIDER_FAMILIES.include?(provider_name)
         end
 
         def embed(model:, text:, dimensions: nil, **opts)
@@ -161,7 +171,7 @@ module Legion
           payload = normalize_hash(body).dup
           payload[:model] = model
           payload[:stream] = stream
-          payload[:input] = responses_input(messages)
+          payload[:input] = responses_payload_input(payload, messages)
 
           system_content = normalize_response_system(system)
           payload[:instructions] = system_content if present_system?(system_content)
@@ -185,10 +195,39 @@ module Legion
 
             {
               role:         normalized[:role]&.to_s || 'user',
-              content:      normalize_message_content(normalized[:content]).to_s,
+              content:      responses_message_content(normalized[:content]),
               tool_call_id: normalized[:tool_call_id]
             }.compact
           end
+        end
+
+        def responses_payload_input(payload, messages)
+          return payload[:input] if payload.key?(:input)
+          return payload['input'] if payload.key?('input')
+
+          responses_input(messages)
+        end
+
+        def responses_message_content(content)
+          return content if content.nil? || content.is_a?(String)
+
+          if content.is_a?(Array)
+            parts = content.filter_map { |part| responses_content_part(part) }
+            return parts unless parts.empty?
+          end
+
+          text_part_content(content) || content.to_s
+        end
+
+        def responses_content_part(part)
+          return { type: 'input_text', text: part } if part.is_a?(String)
+          return part unless part.respond_to?(:transform_keys)
+
+          normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+          type = normalized[:type].to_s
+          return { type: type, text: normalized[:text].to_s } if %w[input_text output_text text].include?(type)
+
+          part
         end
 
         def normalize_response_system(system)
@@ -463,7 +502,7 @@ module Legion
 
           if part.respond_to?(:transform_keys)
             normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-            return unless normalized[:type].to_s == 'text'
+            return unless %w[input_text output_text text].include?(normalized[:type].to_s)
 
             return normalized[:text].to_s
           end

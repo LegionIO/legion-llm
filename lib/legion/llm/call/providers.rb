@@ -104,7 +104,7 @@ module Legion
         end
 
         def adapter_instance_config(config, instance_id)
-          config.except(:tier, :capabilities).tap do |registry_config|
+          config.except(:tier).tap do |registry_config|
             registry_config[:instance_id] ||= instance_id
           end
         end

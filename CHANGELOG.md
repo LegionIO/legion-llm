@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.9.38] - 2026-05-22
+
+### Fixed
+- API: OpenAI Responses upstream dispatch now preserves Responses `input_text` / `output_text` content parts instead of stringifying them through chat-message normalization.
+- Providers: native `:responses` dispatch is gated to providers or instances that explicitly support the Responses API, preventing non-Responses providers from receiving `/v1/responses` traffic just because the adapter has a helper method.
+- Packaging: `event_stream_parser` is now a direct runtime dependency because `legion-llm` requires it for Responses SSE parsing.
+
 ## [0.9.37] - 2026-05-22
 
 ### Changed
