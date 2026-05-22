@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.46] - 2026-05-22
+
+### Fixed
+- API: returned client passthrough tool calls now keep the existing streaming `tool-call` event name while carrying `clientPassthrough` and `requiresToolResult` metadata, preserving current client execution behavior.
+
 ## [0.9.45] - 2026-05-22
 
 ### Fixed

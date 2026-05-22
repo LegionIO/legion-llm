@@ -391,7 +391,7 @@ module Legion
                     "conversation_id=#{conversation_id || 'none'} tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
                     "args_class=#{(tool_call[:arguments] || tool_call['arguments'] || {}).class}"
                   )
-                  emit_sse_event(stream, 'client-tool-call', returned_client_tool_call_payload(tool_call, tool_call_id, tool_name))
+                  emit_sse_event(stream, 'tool-call', returned_client_tool_call_payload(tool_call, tool_call_id, tool_name))
                   emitted += 1
                 end
 
