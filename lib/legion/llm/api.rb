@@ -15,6 +15,7 @@ require_relative 'api/translators/openai_response'
 require_relative 'api/openai/chat_completions'
 require_relative 'api/openai/models'
 require_relative 'api/openai/embeddings'
+require_relative 'api/openai/responses'
 require_relative 'api/translators/anthropic_request'
 require_relative 'api/translators/anthropic_response'
 require_relative 'api/anthropic/messages'
@@ -41,6 +42,7 @@ module Legion
         OpenAI::ChatCompletions.registered(app)
         OpenAI::Models.registered(app)
         OpenAI::Embeddings.registered(app)
+        OpenAI::Responses.registered(app)
         Anthropic::Messages.registered(app)
         log.debug('[llm][api] all routes registered')
       end
