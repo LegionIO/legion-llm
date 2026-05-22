@@ -2128,16 +2128,22 @@ module Legion
         end
 
         def response_tool_calls
-          # Prefer typed ToolCall objects from pending history (already built during execution)
+          raw_tool_calls = @raw_response.respond_to?(:tool_calls) ? @raw_response.tool_calls : nil
+          return build_response_tool_calls(raw_tool_calls) if raw_tool_calls&.any?
+
+          # Fall back to typed ToolCall objects from pending history when the final
+          # model response completed after server-side tool execution.
           typed_from_history = @pending_tool_history
                                .filter_map { |entry| entry[:typed_call] }
           return typed_from_history if typed_from_history.any?
 
-          return [] unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls
+          []
+        end
 
+        def build_response_tool_calls(tool_calls)
           tool_timeline = build_tool_timeline_index
 
-          Array(@raw_response.tool_calls).map do |tool_call|
+          Array(tool_calls).map do |tool_call|
             tc_id   = tool_call[:id] || tool_call['id']
             tc_name = tool_call[:name] || tool_call['name']
             tc_args = tool_call[:arguments] || tool_call['arguments'] || {}

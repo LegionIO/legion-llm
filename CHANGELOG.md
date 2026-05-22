@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.43] - 2026-05-22
+
+### Fixed
+- Tools: responses that end on client passthrough after prior server-side tool execution now return the current passthrough tool call instead of replaying the earlier executed tool from pending history.
+
 ## [0.9.42] - 2026-05-22
 
 ### Fixed

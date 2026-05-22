@@ -716,6 +716,42 @@ confidence: 0.9 }],
       expect(systems[1]).to include('Tool-use continuation rule')
       expect(systems[1]).to include('Do not say you will use a tool unless you are actually making the tool call')
     end
+
+    it 'returns current client passthrough tool calls after prior server-side tool execution' do
+      client_tool = Legion::LLM::Types::ToolDefinition.build(
+        name:        'git',
+        description: 'Git client tool',
+        source:      { type: :client, executable: false }
+      )
+      mixed_tool_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'run git status' }],
+        routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+        tools:    [
+          {
+            name:        'lookup',
+            description: 'Lookup',
+            parameters:  { type: 'object', properties: {} },
+            source:      { type: :registry, tool_class: server_tool_class }
+          },
+          client_tool
+        ]
+      )
+      call_count = 0
+      register_native_chat do
+        call_count += 1
+        if call_count == 1
+          { content: '', tool_calls: [{ id: 'tc_lookup', name: 'lookup', arguments: {} }], usage: {} }
+        else
+          { content: 'using git', tool_calls: [{ id: 'tc_git', name: 'git', arguments: { command: 'status' } }], usage: {} }
+        end
+      end
+
+      response = described_class.new(mixed_tool_request).call
+
+      expect(response.tools.map(&:name)).to eq(['git'])
+      expect(response.tools.first.id).to eq('tc_git')
+      expect(response.tools.first.arguments).to eq(command: 'status')
+    end
   end
 
   describe 'string-keyed routing settings' do
