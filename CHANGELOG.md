@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.32] - 2026-05-21
+
+### Changed
+- Inventory: offerings cached in-process with 30s TTL — `/api/llm/models` returns instantly after first call instead of doing 81+ sequential cache round-trips per provider instance
+- Boot: `Discovery.run` removed from `Legion::LLM.start` — discovery is now deferred to provider-owned actors (non-blocking boot)
+
 ## [0.9.31] - 2026-05-18
 
 ### Added
@@ -12,7 +18,6 @@
 ### Changed
 - RAG: `min_confidence` default raised from 0.5 to 0.85 (reduces irrelevant context)
 - RAG: default exclusion list: teams-api-ingest, unknown, teams-entity-extractor, legion-interlink
-- Inventory: offerings cached in-process with 30s TTL — `/api/llm/models` returns instantly after first call instead of doing 81+ sequential cache round-trips per provider instance
 
 ### Fixed
 - Executor: enrichment injection (system prompt + RAG) cached on first tool loop pass; subsequent rounds reuse cache
