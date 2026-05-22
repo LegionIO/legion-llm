@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.34] - 2026-05-22
+
+### Fixed
+- API: `extract_token` now correctly reads `:input_tokens` / `:output_tokens` hash keys from `pipeline_response.tokens`, fixing `input_tokens: 0` in streaming `response.completed` events (caused Codex CLI `stream disconnected before completion` error)
+
 ## [0.9.33] - 2026-05-22
 
 ### Added
