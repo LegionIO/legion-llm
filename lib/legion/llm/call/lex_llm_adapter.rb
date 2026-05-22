@@ -461,7 +461,7 @@ module Legion
           return nil unless source.respond_to?(:key?)
 
           value = hash_value(source, key)
-          value.to_i unless value.nil?
+          value&.to_i
         rescue StandardError => e
           log.debug "[llm][adapter] action=extract_metric_value key=#{key} class=#{source.class} error=#{e.class}: #{e.message}"
           nil
