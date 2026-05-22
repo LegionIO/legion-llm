@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.36] - 2026-05-22
+
+### Fixed
+- Providers: `LexLLMAdapter` now preserves streamed token usage from the upstream `llm-gateway.uhg.com` Responses API payload added in LegionIO/legion-llm#130, including gateway-shaped `usage`, `raw[:data]`, and `raw[:response][:usage]` token fields, so LegionIO `response.completed.usage.input_tokens` no longer collapses to `0`
+
 ## [0.9.35] - 2026-05-22
 
 ### Fixed

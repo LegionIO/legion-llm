@@ -266,6 +266,93 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result[:thinking]).to eq(content: 'internal reasoning', enabled: true)
   end
 
+  it 'extracts token usage from raw data when direct token readers are zero' do
+    response_class = Struct.new(
+      :input_tokens, :output_tokens, :cached_tokens, :cache_creation_tokens, :usage, :raw,
+      keyword_init: true
+    )
+    response = response_class.new(
+      input_tokens:         0,
+      output_tokens:        5,
+      cached_tokens:        0,
+      cache_creation_tokens: 0,
+      usage:                nil,
+      raw:                  { data: { input_tokens: 9, output_tokens: 5 } }
+    )
+
+    expect(adapter.send(:usage_hash, response)).to eq(
+      input_tokens:       9,
+      output_tokens:      5,
+      cache_read_tokens:  0,
+      cache_write_tokens: 0
+    )
+  end
+
+  it 'extracts token usage from gateway response usage hashes' do
+    response_class = Struct.new(
+      :input_tokens, :output_tokens, :cached_tokens, :cache_creation_tokens, :usage,
+      keyword_init: true
+    )
+    response = response_class.new(
+      input_tokens:         0,
+      output_tokens:        0,
+      cached_tokens:        0,
+      cache_creation_tokens: 0,
+      usage:                {
+        input_tokens:           8,
+        input_tokens_details:   { cached_tokens: 0 },
+        output_tokens:          6,
+        output_tokens_details:  { reasoning_tokens: 0 },
+        total_tokens:           14
+      }
+    )
+
+    expect(adapter.send(:usage_hash, response)).to eq(
+      input_tokens:       8,
+      output_tokens:      6,
+      cache_read_tokens:  0,
+      cache_write_tokens: 0
+    )
+  end
+
+  it 'extracts token usage from prompt/completion token usage hashes' do
+    response_class = Struct.new(
+      :input_tokens, :output_tokens, :cached_tokens, :cache_creation_tokens, :usage,
+      keyword_init: true
+    )
+    response = response_class.new(
+      input_tokens:         0,
+      output_tokens:        0,
+      cached_tokens:        0,
+      cache_creation_tokens: 0,
+      usage:                { prompt_tokens: 11, completion_tokens: 4 }
+    )
+
+    expect(adapter.send(:usage_hash, response)).to eq(
+      input_tokens:       11,
+      output_tokens:      4,
+      cache_read_tokens:  0,
+      cache_write_tokens: 0
+    )
+  end
+
+  it 'merges stream usage from raw fallback data even when chunks omit input_tokens readers' do
+    chunk_class = Struct.new(:content, :model_id, :usage, :raw, keyword_init: true)
+    accumulator = adapter.send(:build_stream_accumulator)
+    chunk = chunk_class.new(
+      content:  'hi',
+      model_id: 'model-a',
+      usage:    nil,
+      raw:      { response: { usage: { input_tokens: 8, output_tokens: 2 } } }
+    )
+
+    adapter.send(:accumulate_stream_usage, accumulator, chunk)
+
+    expect(accumulator[:usage]).to include(input_tokens: 8, output_tokens: 2)
+    expect(accumulator[:model]).to eq('model-a')
+    expect(accumulator[:raw]).to eq(response: { usage: { input_tokens: 8, output_tokens: 2 } })
+  end
+
   it 'estimates token count for non-hash message inputs' do
     result = adapter.count_tokens(model: 'model-a', messages: ['hello world'])
 
