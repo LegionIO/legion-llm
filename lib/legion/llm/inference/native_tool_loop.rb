@@ -114,9 +114,25 @@ module Legion
           text = latest_user_text.to_s.downcase
           return if text.empty?
 
-          native_dispatch_tools.keys.map(&:to_s).find do |tool_name|
-            text.include?(tool_name.downcase)
+          native_dispatch_tools.keys.map(&:to_s).sort_by { |tool_name| -tool_name.length }.find do |tool_name|
+            explicit_tool_name_mentioned?(text, tool_name)
           end
+        end
+
+        def explicit_tool_name_mentioned?(text, tool_name)
+          explicit_tool_name_candidates(tool_name).any? do |candidate|
+            text.match?(/(?<![[:alnum:]_-])#{Regexp.escape(candidate)}(?![[:alnum:]_-])/)
+          end
+        end
+
+        def explicit_tool_name_candidates(tool_name)
+          normalized_name = tool_name.to_s.downcase
+          [
+            normalized_name,
+            normalized_name.tr('_-', ' '),
+            normalized_name.tr('_', '-'),
+            normalized_name.tr('-', '_')
+          ].reject(&:empty?).uniq
         end
 
         def latest_user_text

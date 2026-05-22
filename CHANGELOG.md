@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.45] - 2026-05-22
+
+### Fixed
+- Tools: vLLM explicit tool-choice matching now uses tool-name boundaries, so paths like `/rubymine/...` no longer force the `ruby` tool when the user asked for `git`.
+
 ## [0.9.44] - 2026-05-22
 
 ### Fixed

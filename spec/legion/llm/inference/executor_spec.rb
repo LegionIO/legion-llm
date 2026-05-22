@@ -752,6 +752,34 @@ confidence: 0.9 }],
       expect(response.tools.first.id).to eq('tc_git')
       expect(response.tools.first.arguments).to eq(command: 'status')
     end
+
+    it 'chooses the explicit client tool instead of matching tool names inside paths' do
+      client_tool = Legion::LLM::Types::ToolDefinition.build(
+        name:        'git',
+        description: 'Git client tool',
+        source:      { type: :client, executable: false }
+      )
+      path_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'run git status inside /Users/matt.iverson@optum.com/rubymine/legion/LegionIO' }],
+        routing:  { provider: :vllm, model: 'qwen3.6-27b' },
+        tools:    [client_tool]
+      )
+      executor = described_class.new(path_request)
+      executor.instance_variable_set(:@resolved_provider, :vllm)
+
+      expect(executor.send(:native_tool_prefs)).to include(choice: 'git')
+    end
+
+    it 'still chooses the Ruby tool when Ruby is explicitly requested' do
+      ruby_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'run ruby -v' }],
+        routing:  { provider: :vllm, model: 'qwen3.6-27b' }
+      )
+      executor = described_class.new(ruby_request)
+      executor.instance_variable_set(:@resolved_provider, :vllm)
+
+      expect(executor.send(:native_tool_prefs)).to include(choice: 'ruby')
+    end
   end
 
   describe 'string-keyed routing settings' do
