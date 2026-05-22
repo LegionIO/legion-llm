@@ -3,8 +3,9 @@
 ## [0.9.35] - 2026-05-22
 
 ### Fixed
-- API: OpenAI Responses streaming now resolves token counts from both `:input` / `:output` aliases and explicit `:input_tokens` / `:output_tokens` keys across hash-backed and object-backed usage payloads, so `response.completed` reports accurate usage for Codex-compatible streams
-- Providers: `LexLLMAdapter` now falls back to provider `usage`, `raw[:usage]`, and Legion-native `raw[:data][:input_tokens]` / `raw[:data][:output_tokens]` shapes when direct streaming token readers are zero or absent
+- API: OpenAI Responses streaming now emits the full gateway-compatible SSE envelope format (`{ type:, response:, sequence_number: }` for lifecycle events, `{ type:, item_id:, ... }` for content events), matching `llm-gateway.uhg.com` wire format exactly so Codex CLI accepts the stream
+- API: `response.completed` now correctly includes `usage.input_tokens` from `pipeline_response.tokens` via `build_usage` helper; token aliases (`:input`/`:input_tokens`, `:output`/`:output_tokens`) resolved across hash and object-backed payloads
+- API: Added missing `response.in_progress` and `response.content_part.*` SSE events to streaming sequence
 
 ## [0.9.34] - 2026-05-22
 

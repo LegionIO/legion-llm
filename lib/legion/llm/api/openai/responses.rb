@@ -179,12 +179,41 @@ module Legion
             }
           end
 
-          def self.stream_response(out, executor, request_id:, model:)
-            out << "event: response.created\ndata: #{Legion::JSON.dump({ id: request_id, object: 'response', status: 'in_progress' })}\n\n"
+          def self.stream_response(out, executor, request_id:, model:) # rubocop:disable Metrics/MethodLength
+            created_at = Time.now.to_i
+            seq = 0
+
+            # response.created — envelope matches gateway format: { type:, response:, sequence_number: }
+            out << "event: response.created\ndata: #{Legion::JSON.dump({
+              type:            'response.created',
+              sequence_number: seq += 1,
+              response:        { id: request_id, object: 'response', created_at: created_at,
+                                 status: 'in_progress', model: model, output: [], usage: nil }
+            })}\n\n"
+
+            out << "event: response.in_progress\ndata: #{Legion::JSON.dump({
+              type:            'response.in_progress',
+              sequence_number: seq += 1,
+              response:        { id: request_id, object: 'response', created_at: created_at,
+                                 status: 'in_progress', model: model, output: [], usage: nil }
+            })}\n\n"
 
             msg_id = "msg_#{SecureRandom.hex(12)}"
-            item_event = { type: 'message', id: msg_id, role: 'assistant', content: [], status: 'in_progress' }
-            out << "event: response.output_item.added\ndata: #{Legion::JSON.dump({ output_index: 0, item: item_event })}\n\n"
+            out << "event: response.output_item.added\ndata: #{Legion::JSON.dump({
+              type:            'response.output_item.added',
+              sequence_number: seq += 1,
+              output_index:    0,
+              item:            { id: msg_id, type: 'message', role: 'assistant', content: [], status: 'in_progress' }
+            })}\n\n"
+
+            out << "event: response.content_part.added\ndata: #{Legion::JSON.dump({
+              type:            'response.content_part.added',
+              sequence_number: seq += 1,
+              output_index:    0,
+              content_index:   0,
+              item_id:         msg_id,
+              part:            { type: 'output_text', text: '', annotations: [] }
+            })}\n\n"
 
             full_text = +''
 
@@ -193,30 +222,56 @@ module Legion
               next if text.empty?
 
               full_text << text
-              delta_event = { content_index: 0, delta: text }
-              out << "event: response.output_text.delta\ndata: #{Legion::JSON.dump(delta_event)}\n\n"
+              out << "event: response.output_text.delta\ndata: #{Legion::JSON.dump({
+                type:            'response.output_text.delta',
+                sequence_number: seq += 1,
+                output_index:    0,
+                content_index:   0,
+                item_id:         msg_id,
+                delta:           text
+              })}\n\n"
             end
 
             routing = pipeline_response.routing || {}
-            tokens = pipeline_response.tokens || {}
+            tokens  = pipeline_response.tokens || {}
             resolved_model = (routing[:model] || routing['model'] || model).to_s
+            usage = build_usage(tokens)
 
-            out << "event: response.output_text.done\ndata: #{Legion::JSON.dump({ content_index: 0, text: full_text })}\n\n"
-            done_item = {
-              output_index: 0,
-              item:         { type: 'message', id: msg_id, role: 'assistant',
-                              content: [{ type: 'output_text', text: full_text }], status: 'completed' }
-            }
-            out << "event: response.output_item.done\ndata: #{Legion::JSON.dump(done_item)}\n\n"
+            out << "event: response.output_text.done\ndata: #{Legion::JSON.dump({
+              type:            'response.output_text.done',
+              sequence_number: seq += 1,
+              output_index:    0,
+              content_index:   0,
+              item_id:         msg_id,
+              text:            full_text
+            })}\n\n"
 
-            done_data = {
-              id:     request_id,
-              object: 'response',
-              model:  resolved_model,
-              status: 'completed',
-              usage:  build_usage(tokens)
-            }
-            out << "event: response.completed\ndata: #{Legion::JSON.dump(done_data)}\n\n"
+            out << "event: response.content_part.done\ndata: #{Legion::JSON.dump({
+              type:            'response.content_part.done',
+              sequence_number: seq += 1,
+              output_index:    0,
+              content_index:   0,
+              item_id:         msg_id,
+              part:            { type: 'output_text', text: full_text, annotations: [] }
+            })}\n\n"
+
+            out << "event: response.output_item.done\ndata: #{Legion::JSON.dump({
+              type:            'response.output_item.done',
+              sequence_number: seq += 1,
+              output_index:    0,
+              item:            { id: msg_id, type: 'message', role: 'assistant', status: 'completed',
+                                 content: [{ type: 'output_text', text: full_text, annotations: [] }] }
+            })}\n\n"
+
+            out << "event: response.completed\ndata: #{Legion::JSON.dump({
+              type:            'response.completed',
+              sequence_number: seq + 1,
+              response:        { id: request_id, object: 'response', created_at: created_at,
+                                 status: 'completed', model: resolved_model,
+                                 output: [{ id: msg_id, type: 'message', role: 'assistant', status: 'completed',
+                                            content: [{ type: 'output_text', text: full_text, annotations: [] }] }],
+                                 usage: usage }
+            })}\n\n"
 
             log.info("[llm][api][openai][responses] action=stream_complete request_id=#{request_id} model=#{resolved_model}")
           end
