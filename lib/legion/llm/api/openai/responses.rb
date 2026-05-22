@@ -282,11 +282,11 @@ module Legion
             log.info("[llm][api][openai][responses] action=stream_complete request_id=#{request_id} model=#{resolved_model}")
           end
 
-          def self.call_streaming_executor(executor, upstream_body: nil, &block)
+          def self.call_streaming_executor(executor, upstream_body: nil, &)
             if upstream_body && executor.respond_to?(:call_responses)
-              executor.call_responses(body: upstream_body, stream: true, &block)
+              executor.call_responses(body: upstream_body, stream: true, &)
             else
-              executor.call_stream(&block)
+              executor.call_stream(&)
             end
           end
 

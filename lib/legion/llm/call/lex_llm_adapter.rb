@@ -59,18 +59,18 @@ module Legion
           end
         end
 
-        def responses(model:, body:, messages:, stream: false, **opts, &block)
+        def responses(model:, body:, messages:, stream: false, **opts, &)
           payload = build_responses_payload(
-            body: body,
-            model: model,
+            body:     body,
+            model:    model,
             messages: messages,
-            stream: stream,
-            system: opts[:system],
-            tools: opts[:tools]
+            stream:   stream,
+            system:   opts[:system],
+            tools:    opts[:tools]
           )
 
           if stream
-            stream_responses_payload(payload, offering_metadata: opts[:offering_metadata], &block)
+            stream_responses_payload(payload, offering_metadata: opts[:offering_metadata], &)
           else
             response = provider.connection.post(responses_url, payload)
             responses_hash_response(response.body, offering_metadata: opts[:offering_metadata])

@@ -124,10 +124,10 @@ module Legion
           build_response
         end
 
-        def call_responses(body:, stream: false, &block)
+        def call_responses(body:, stream: false, &)
           log.debug "[llm][executor] action=call_responses request_id=#{@request.id} profile=#{@profile} stream=#{stream}"
           execute_pre_provider_steps
-          execute_provider_request_responses(body: body, stream: stream, &block)
+          execute_provider_request_responses(body: body, stream: stream, &)
           execute_post_provider_steps
           build_response
         end
@@ -1356,9 +1356,7 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
-          unless use_native_dispatch?(@resolved_provider)
-            raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}"
-          end
+          raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless use_native_dispatch?(@resolved_provider)
 
           result = dispatch_responses_request(
             body:         body,
