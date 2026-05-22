@@ -347,6 +347,18 @@ module Legion
                 stream << "event: #{event_name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
               end
 
+              define_method(:returned_client_tool_call_payload) do |tool_call, tool_call_id, tool_name|
+                {
+                  toolCallId:         tool_call_id,
+                  toolName:           tool_name,
+                  args:               tool_call[:arguments] || tool_call['arguments'] || {},
+                  clientPassthrough:  true,
+                  requiresToolResult: true,
+                  status:             'requires_client_execution',
+                  timestamp:          Time.now.utc.iso8601
+                }
+              end
+
               define_method(:emit_response_tool_call_events) do |stream, pipeline_response|
                 tool_calls = extract_tool_calls(pipeline_response)
                 return if tool_calls.empty?
@@ -379,12 +391,7 @@ module Legion
                     "conversation_id=#{conversation_id || 'none'} tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
                     "args_class=#{(tool_call[:arguments] || tool_call['arguments'] || {}).class}"
                   )
-                  emit_sse_event(stream, 'tool-call', {
-                                   toolCallId: tool_call_id,
-                                   toolName:   tool_name,
-                                   args:       tool_call[:arguments] || tool_call['arguments'] || {},
-                                   timestamp:  Time.now.utc.iso8601
-                                 })
+                  emit_sse_event(stream, 'client-tool-call', returned_client_tool_call_payload(tool_call, tool_call_id, tool_name))
                   emitted += 1
                 end
 

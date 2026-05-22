@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.44] - 2026-05-22
+
+### Fixed
+- API: streaming client passthrough tool calls now emit `client-tool-call` with explicit client execution metadata instead of a server-execution `tool-call`, preventing clients from waiting for an impossible same-stream server tool result.
+- Settings: default client passthrough blacklist now blocks computer-use session/control tools plus Aithena and cron plugin tools so provider calls do not hand off internal UI/plugin controls as executable client tools.
+
 ## [0.9.43] - 2026-05-22
 
 ### Fixed

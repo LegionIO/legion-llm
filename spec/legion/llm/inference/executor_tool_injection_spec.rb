@@ -103,7 +103,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
       it 'filters passthrough client tools with the default blacklist' do
         tools = ['sudo', 'git', 'ls', 'grep', 'legion', 'legionio', 'legionio do', 'legionio/legion',
-                 'legionio_do'].map do |name|
+                 'legionio_do', 'computer_use_session', 'plugin__aithena__recall',
+                 'plugin__cron__run_now'].map do |name|
           Legion::LLM::Types::ToolDefinition.build(
             name:        name,
             description: "#{name} client tool",
@@ -120,7 +121,10 @@ RSpec.describe Legion::LLM::Inference::Executor do
         names = executor.send(:native_tool_definitions).map(&:name)
 
         expect(names).to include('git', 'ls', 'grep')
-        expect(names).not_to include('sudo', 'legion', 'legionio', 'legioniodo', 'legioniolegion', 'legionio_do')
+        expect(names).not_to include(
+          'sudo', 'legion', 'legionio', 'legioniodo', 'legioniolegion', 'legionio_do',
+          'computer_use_session', 'plugin__aithena__recall', 'plugin__cron__run_now'
+        )
       end
 
       it 'filters passthrough client tools with an explicit whitelist' do
