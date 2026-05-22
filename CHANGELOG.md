@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.47] - 2026-05-22
+
+### Fixed
+- API: streaming client passthrough tool calls now stay only on the terminal `done.tool_calls` payload instead of emitting a live `tool-call` event that makes clients wait for an impossible same-stream `tool-result`.
+
 ## [0.9.46] - 2026-05-22
 
 ### Fixed

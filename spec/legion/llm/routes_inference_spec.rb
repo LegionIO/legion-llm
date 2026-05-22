@@ -527,7 +527,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.body).to include('event: done')
     end
 
-    it 'streams returned client tool calls when the server does not execute them' do
+    it 'returns client tool calls in done without live tool events when the server does not execute them' do
       tool_call = { id: 'call_client_1', name: 'web_search', arguments: { query: 'legion tools' } }
       response = make_pipeline_response(content: '', tools: [tool_call], stop_reason: :tool_use)
       executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
@@ -544,13 +544,11 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       )
 
       expect(response.status).to eq(200)
-      expect(response.body).to include('event: tool-call')
-      expect(response.body).to include('"toolCallId":"call_client_1"')
-      expect(response.body).to include('"toolName":"web_search"')
-      expect(response.body).to include('"args":{"query":"legion tools"}')
-      expect(response.body).to include('"clientPassthrough":true')
-      expect(response.body).to include('"requiresToolResult":true')
-      expect(response.body).to include('"status":"requires_client_execution"')
+      expect(response.body).not_to include('event: tool-call')
+      expect(response.body).to include('"tool_calls":[{')
+      expect(response.body).to include('"id":"call_client_1"')
+      expect(response.body).to include('"name":"web_search"')
+      expect(response.body).to include('"arguments":{"query":"legion tools"}')
       expect(response.body).to include('"stop_reason":"tool_use"')
       expect(response.body).to include('"requires_tool_result":true')
       expect(response.body).to include('event: done')

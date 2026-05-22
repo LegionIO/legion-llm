@@ -359,7 +359,7 @@ module Legion
                 }
               end
 
-              define_method(:emit_response_tool_call_events) do |stream, pipeline_response|
+              define_method(:emit_response_tool_call_events) do |_stream, pipeline_response|
                 tool_calls = extract_tool_calls(pipeline_response)
                 return if tool_calls.empty?
 
@@ -371,7 +371,7 @@ module Legion
                   data[:tool_call_id] || data['tool_call_id']
                 end
 
-                emitted = 0
+                done_only = 0
                 skipped_timeline = 0
                 request_id = pipeline_response.respond_to?(:request_id) ? pipeline_response.request_id : 'unknown'
                 conversation_id = pipeline_response.respond_to?(:conversation_id) ? pipeline_response.conversation_id : 'none'
@@ -387,19 +387,18 @@ module Legion
                   next if tool_name.to_s.empty?
 
                   log.info(
-                    "[llm][api][tools] action=returned_tool_call_sse request_id=#{request_id || 'unknown'} " \
+                    "[llm][api][tools] action=returned_tool_call_done_only request_id=#{request_id || 'unknown'} " \
                     "conversation_id=#{conversation_id || 'none'} tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
                     "args_class=#{(tool_call[:arguments] || tool_call['arguments'] || {}).class}"
                   )
-                  emit_sse_event(stream, 'tool-call', returned_client_tool_call_payload(tool_call, tool_call_id, tool_name))
-                  emitted += 1
+                  done_only += 1
                 end
 
                 names = tool_calls.map { |tool_call| tool_call[:name] || tool_call['name'] }.compact
                 names = names.first(30).join(',') + (names.size > 30 ? ",+#{names.size - 30}more" : '')
                 log.info(
                   "[llm][api][tools] action=returned_tool_calls_complete request_id=#{request_id || 'unknown'} " \
-                  "conversation_id=#{conversation_id || 'none'} total=#{tool_calls.size} emitted=#{emitted} " \
+                  "conversation_id=#{conversation_id || 'none'} total=#{tool_calls.size} done_only=#{done_only} " \
                   "skipped_timeline=#{skipped_timeline} names=#{names.empty? ? 'none' : names}"
                 )
               end
