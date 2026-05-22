@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.33] - 2026-05-22
+
+### Added
+- API: OpenAI Responses API endpoint (`POST /v1/responses` and `POST /api/llm/inference/v1/responses`) for Codex CLI compatibility
+- API: Supports streaming (SSE with `response.*` events), tool declarations, and `instructions` parameter
+
 ## [0.9.31] - 2026-05-18
 
 ### Added
