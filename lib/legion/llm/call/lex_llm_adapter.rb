@@ -336,10 +336,11 @@ module Legion
         end
 
         def accumulate_stream_usage(accumulator, chunk)
-          return unless chunk.respond_to?(:input_tokens)
+          usage = usage_hash(chunk)
+          return unless token_usage_signal?(chunk, usage)
 
           accumulator[:model] = chunk.model_id if chunk.respond_to?(:model_id)
-          accumulator[:usage] = usage_hash(chunk)
+          accumulator[:usage] = merge_usage_hash(accumulator[:usage], usage)
           accumulator[:raw] = chunk.raw if chunk.respond_to?(:raw)
         end
 
@@ -392,11 +393,87 @@ module Legion
 
         def usage_hash(response)
           {
-            input_tokens:       response.input_tokens.to_i,
-            output_tokens:      response.output_tokens.to_i,
-            cache_read_tokens:  response.cached_tokens.to_i,
-            cache_write_tokens: response.cache_creation_tokens.to_i
+            input_tokens:       extract_token_metric(response, :input_tokens, :prompt_tokens),
+            output_tokens:      extract_token_metric(response, :output_tokens, :completion_tokens),
+            cache_read_tokens:  extract_token_metric(response, :cache_read_tokens, :cached_tokens),
+            cache_write_tokens: extract_token_metric(response, :cache_write_tokens, :cache_creation_tokens)
           }
+        end
+
+        def token_usage_signal?(response, usage)
+          usage.values.any?(&:positive?) ||
+            response.respond_to?(:usage) ||
+            response.respond_to?(:raw) ||
+            response.respond_to?(:input_tokens) ||
+            response.respond_to?(:output_tokens)
+        end
+
+        def merge_usage_hash(existing, incoming)
+          current = existing.is_a?(Hash) ? existing : {}
+          latest = incoming.is_a?(Hash) ? incoming : {}
+
+          {
+            input_tokens:       [current[:input_tokens].to_i, latest[:input_tokens].to_i].max,
+            output_tokens:      [current[:output_tokens].to_i, latest[:output_tokens].to_i].max,
+            cache_read_tokens:  [current[:cache_read_tokens].to_i, latest[:cache_read_tokens].to_i].max,
+            cache_write_tokens: [current[:cache_write_tokens].to_i, latest[:cache_write_tokens].to_i].max
+          }
+        end
+
+        def extract_token_metric(response, canonical_key, legacy_key = nil)
+          values = token_metric_candidates(response, canonical_key, legacy_key)
+          positive = values.find(&:positive?)
+          positive || values.first || 0
+        end
+
+        def token_metric_candidates(response, canonical_key, legacy_key = nil)
+          keys = [canonical_key, legacy_key].compact
+          token_metric_sources(response).flat_map do |source|
+            keys.filter_map { |key| extract_metric_value(source, key) }
+          end
+        end
+
+        def token_metric_sources(response)
+          sources = [response]
+          sources << response.usage if response.respond_to?(:usage)
+          sources << response.raw if response.respond_to?(:raw)
+
+          sources.compact.flat_map { |source| expand_token_metric_source(source) }.compact.uniq
+        end
+
+        def expand_token_metric_source(source, depth = 0)
+          return [] if source.nil?
+          return [source] unless source.respond_to?(:key?) && depth < 3
+
+          nested = [source]
+          nested << hash_value(source, :usage)
+          nested << hash_value(source, :data)
+          nested << hash_value(source, :response)
+          nested.compact.flat_map { |entry| [entry, *expand_token_metric_source(entry, depth + 1)] }
+        end
+
+        def extract_metric_value(source, key)
+          if source.respond_to?(key)
+            value = source.public_send(key)
+            return value.to_i unless value.nil?
+          end
+
+          return nil unless source.respond_to?(:key?)
+
+          value = hash_value(source, key)
+          value&.to_i
+        rescue StandardError => e
+          log.debug "[llm][adapter] action=extract_metric_value key=#{key} class=#{source.class} error=#{e.class}: #{e.message}"
+          nil
+        end
+
+        def hash_value(hash, key)
+          return hash[key] if hash.key?(key)
+
+          string_key = key.to_s
+          return hash[string_key] if hash.key?(string_key)
+
+          nil
         end
 
         def stream_thinking_hash(accumulator)
