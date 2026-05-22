@@ -272,18 +272,18 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       keyword_init: true
     )
     response = response_class.new(
-      input_tokens: 0,
-      output_tokens: 5,
-      cached_tokens: 0,
+      input_tokens:         0,
+      output_tokens:        5,
+      cached_tokens:        0,
       cache_creation_tokens: 0,
-      usage: nil,
-      raw: { data: { input_tokens: 9, output_tokens: 5 } }
+      usage:                nil,
+      raw:                  { data: { input_tokens: 9, output_tokens: 5 } }
     )
 
     expect(adapter.send(:usage_hash, response)).to eq(
-      input_tokens: 9,
-      output_tokens: 5,
-      cache_read_tokens: 0,
+      input_tokens:       9,
+      output_tokens:      5,
+      cache_read_tokens:  0,
       cache_write_tokens: 0
     )
   end
@@ -294,23 +294,23 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       keyword_init: true
     )
     response = response_class.new(
-      input_tokens: 0,
-      output_tokens: 0,
-      cached_tokens: 0,
+      input_tokens:         0,
+      output_tokens:        0,
+      cached_tokens:        0,
       cache_creation_tokens: 0,
-      usage: {
-        input_tokens: 8,
-        input_tokens_details: { cached_tokens: 0 },
-        output_tokens: 6,
+      usage:                {
+        input_tokens:          8,
+        input_tokens_details:  { cached_tokens: 0 },
+        output_tokens:         6,
         output_tokens_details: { reasoning_tokens: 0 },
-        total_tokens: 14
+        total_tokens:          14
       }
     )
 
     expect(adapter.send(:usage_hash, response)).to eq(
-      input_tokens: 8,
-      output_tokens: 6,
-      cache_read_tokens: 0,
+      input_tokens:       8,
+      output_tokens:      6,
+      cache_read_tokens:  0,
       cache_write_tokens: 0
     )
   end
@@ -321,17 +321,17 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       keyword_init: true
     )
     response = response_class.new(
-      input_tokens: 0,
-      output_tokens: 0,
-      cached_tokens: 0,
+      input_tokens:         0,
+      output_tokens:        0,
+      cached_tokens:        0,
       cache_creation_tokens: 0,
-      usage: { prompt_tokens: 11, completion_tokens: 4 }
+      usage:                { prompt_tokens: 11, completion_tokens: 4 }
     )
 
     expect(adapter.send(:usage_hash, response)).to eq(
-      input_tokens: 11,
-      output_tokens: 4,
-      cache_read_tokens: 0,
+      input_tokens:       11,
+      output_tokens:      4,
+      cache_read_tokens:  0,
       cache_write_tokens: 0
     )
   end
@@ -340,10 +340,10 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     chunk_class = Struct.new(:content, :model_id, :usage, :raw, keyword_init: true)
     accumulator = adapter.send(:build_stream_accumulator)
     chunk = chunk_class.new(
-      content: 'hi',
+      content:  'hi',
       model_id: 'model-a',
-      usage: nil,
-      raw: { response: { usage: { input_tokens: 8, output_tokens: 2 } } }
+      usage:    nil,
+      raw:      { response: { usage: { input_tokens: 8, output_tokens: 2 } } }
     )
 
     adapter.send(:accumulate_stream_usage, accumulator, chunk)
