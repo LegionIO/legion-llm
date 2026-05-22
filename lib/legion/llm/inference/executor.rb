@@ -1076,6 +1076,7 @@ module Legion
         def native_tool_definition_name_variants(definition)
           variants = client_tool_passthrough_name_variants(definition)
           source = definition.respond_to?(:source) ? definition.source : {}
+          source_type = nil
           source_type = source[:type] || source['type'] if source.is_a?(Hash)
           if source_type.respond_to?(:to_sym) && source_type.to_sym == :special
             variants += Tools::Special.aliases_for(definition.name).flat_map { |name| client_tool_policy_variants(name) }
