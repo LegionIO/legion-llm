@@ -187,34 +187,34 @@ module Legion
 
             # response.created — envelope matches gateway format: { type:, response:, sequence_number: }
             out << sse_event('response.created', {
-              type:            'response.created',
-              sequence_number: seq += 1,
-              response:        in_progress_response
-            })
+                               type:            'response.created',
+                               sequence_number: seq += 1,
+                               response:        in_progress_response
+                             })
 
             out << sse_event('response.in_progress', {
-              type:            'response.in_progress',
-              sequence_number: seq += 1,
-              response:        in_progress_response
-            })
+                               type:            'response.in_progress',
+                               sequence_number: seq += 1,
+                               response:        in_progress_response
+                             })
 
             msg_id = "msg_#{SecureRandom.hex(12)}"
             out << sse_event('response.output_item.added', {
-              type:            'response.output_item.added',
-              sequence_number: seq += 1,
-              output_index:    0,
-              item:            { id: msg_id, type: 'message', role: 'assistant',
+                               type:            'response.output_item.added',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               item:            { id: msg_id, type: 'message', role: 'assistant',
                                  content: [], status: 'in_progress' }
-            })
+                             })
 
             out << sse_event('response.content_part.added', {
-              type:            'response.content_part.added',
-              sequence_number: seq += 1,
-              output_index:    0,
-              content_index:   0,
-              item_id:         msg_id,
-              part:            { type: 'output_text', text: '', annotations: [] }
-            })
+                               type:            'response.content_part.added',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               content_index:   0,
+                               item_id:         msg_id,
+                               part:            { type: 'output_text', text: '', annotations: [] }
+                             })
 
             full_text = +''
 
@@ -224,13 +224,13 @@ module Legion
 
               full_text << text
               out << sse_event('response.output_text.delta', {
-                type:            'response.output_text.delta',
-                sequence_number: seq += 1,
-                output_index:    0,
-                content_index:   0,
-                item_id:         msg_id,
-                delta:           text
-              })
+                                 type:            'response.output_text.delta',
+                                 sequence_number: seq += 1,
+                                 output_index:    0,
+                                 content_index:   0,
+                                 item_id:         msg_id,
+                                 delta:           text
+                               })
             end
 
             routing = pipeline_response.routing || {}
@@ -239,45 +239,45 @@ module Legion
             usage = build_usage(tokens)
 
             out << sse_event('response.output_text.done', {
-              type:            'response.output_text.done',
-              sequence_number: seq += 1,
-              output_index:    0,
-              content_index:   0,
-              item_id:         msg_id,
-              text:            full_text
-            })
+                               type:            'response.output_text.done',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               content_index:   0,
+                               item_id:         msg_id,
+                               text:            full_text
+                             })
 
             out << sse_event('response.content_part.done', {
-              type:            'response.content_part.done',
-              sequence_number: seq += 1,
-              output_index:    0,
-              content_index:   0,
-              item_id:         msg_id,
-              part:            { type: 'output_text', text: full_text, annotations: [] }
-            })
+                               type:            'response.content_part.done',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               content_index:   0,
+                               item_id:         msg_id,
+                               part:            { type: 'output_text', text: full_text, annotations: [] }
+                             })
 
             completed_item = { id: msg_id, type: 'message', role: 'assistant', status: 'completed',
                                content: [{ type: 'output_text', text: full_text, annotations: [] }] }
             out << sse_event('response.output_item.done', {
-              type:            'response.output_item.done',
-              sequence_number: seq += 1,
-              output_index:    0,
-              item:            completed_item
-            })
+                               type:            'response.output_item.done',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               item:            completed_item
+                             })
 
             out << sse_event('response.completed', {
-              type:            'response.completed',
-              sequence_number: seq + 1,
-              response:        {
-                id:         request_id,
-                object:     'response',
-                created_at: created_at,
-                status:     'completed',
-                model:      resolved_model,
-                output:     [completed_item],
-                usage:      usage
-              }
-            })
+                               type:            'response.completed',
+                               sequence_number: seq + 1,
+                               response:        {
+                                 id:         request_id,
+                                 object:     'response',
+                                 created_at: created_at,
+                                 status:     'completed',
+                                 model:      resolved_model,
+                                 output:     [completed_item],
+                                 usage:      usage
+                               }
+                             })
 
             log.info("[llm][api][openai][responses] action=stream_complete request_id=#{request_id} model=#{resolved_model}")
           end
