@@ -693,6 +693,29 @@ confidence: 0.9 }],
 
       expect(result[:tool_calls].first[:name]).to eq('mcp_servers')
     end
+
+    it 'adds continuation guidance after native tool result rounds' do
+      systems = []
+      call_count = 0
+      register_native_chat do |**opts|
+        systems << opts[:system].to_s
+        call_count += 1
+        if call_count == 1
+          { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
+        else
+          { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+        end
+      end
+      executor = described_class.new(tool_request)
+      executor.instance_variable_set(:@resolved_provider, :anthropic)
+      executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
+
+      executor.send(:execute_native_tool_loop)
+
+      expect(systems.first).not_to include('Tool-use continuation rule')
+      expect(systems[1]).to include('Tool-use continuation rule')
+      expect(systems[1]).to include('Do not say you will use a tool unless you are actually making the tool call')
+    end
   end
 
   describe 'string-keyed routing settings' do
@@ -1023,9 +1046,45 @@ confidence: 0.9 }],
         expect(ev[:tool_name]).to eq('my_tool')
         expect(ev[:result]).to eq('result text')
         expect(ev[:result_size]).to eq('result text'.bytesize)
+        expect(ev[:status]).to eq(:success)
         expect(ev).to have_key(:duration_ms)
         expect(ev).to have_key(:started_at)
         expect(ev).to have_key(:finished_at)
+      end
+
+      it 'marks :tool_result event status as error when dispatch returns an error result' do
+        tool_class = Class.new do
+          define_singleton_method(:tool_name) { 'failing_tool' }
+          define_singleton_method(:description) { 'Failing tool' }
+          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+          define_singleton_method(:call) { |**| { error: 'failed' } }
+        end
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [{ name: 'failing_tool', description: 'Failing tool', input_schema: { type: 'object', properties: {} },
+               tool_class: tool_class, deferred: false }]
+          end
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == false ? tools : []
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+        call_count = 0
+        register_native_chat do
+          call_count += 1
+          if call_count == 1
+            { content: '', tool_calls: [{ id: 'tc_error', name: 'failing_tool', arguments: {} }], usage: {} }
+          else
+            { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+          end
+        end
+        allow(executor).to receive(:step_response_normalization)
+
+        executor.call
+
+        result_events = events.select { |event| event[:type] == :tool_result }
+        expect(result_events.first[:tool_call_id]).to eq('tc_error')
+        expect(result_events.first[:status]).to eq(:error)
       end
 
       it 'truncates result to 4096 bytes in :tool_result event' do

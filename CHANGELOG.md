@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.42] - 2026-05-22
+
+### Fixed
+- Tools: native tool-loop follow-up provider calls now include a continuation instruction that tells models to make another available tool call instead of narrating intent after a failed or incomplete tool result.
+- API: streamed native tool results now include status and emit `tool-error` when the server-side tool execution failed.
+
 ## [0.9.41] - 2026-05-22
 
 ### Fixed

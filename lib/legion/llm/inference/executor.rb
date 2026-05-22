@@ -69,7 +69,7 @@ module Legion
         ].freeze
 
         MAX_NATIVE_TOOL_ROUNDS = 200
-        ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, keyword_init: true)
+        ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, :status, keyword_init: true)
 
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
@@ -912,10 +912,27 @@ module Legion
             offering_id:       @resolved_offering_id,
             offering_metadata: @resolved_offering_metadata
           }
+          options[:system] = native_tool_loop_system(options[:system])
           options[:tools] = native_dispatch_tools if native_dispatch_tools.any?
           options[:tool_prefs] = native_tool_prefs if native_dispatch_tools.any? && native_tool_prefs
           options[:thinking] = native_dispatch_thinking if native_dispatch_thinking
           options.compact
+        end
+
+        def native_tool_loop_system(system)
+          return system unless @native_tool_loop_round.to_i.positive? && native_dispatch_tools.any?
+
+          [system, native_tool_loop_continuation_prompt].compact.join("\n\n")
+        end
+
+        def native_tool_loop_continuation_prompt
+          <<~PROMPT.strip
+            Tool-use continuation rule:
+            - You just received tool results.
+            - If a tool failed or produced incomplete information and another available tool can continue the user's request, call that tool now.
+            - Do not say you will use a tool unless you are actually making the tool call in this response.
+            - Only provide a final answer when no further tool call is needed or possible.
+          PROMPT
         end
 
         def native_dispatch_chat_options
@@ -1166,7 +1183,8 @@ module Legion
               result:       native_tool_result_content(result),
               tool_call_id: normalized_call[:id],
               tool_name:    normalized_call[:name],
-              started_at:   Thread.current[:legion_current_tool_started_at]
+              started_at:   Thread.current[:legion_current_tool_started_at],
+              status:       result[:status] || result['status']
             )
           )
           result
@@ -1489,12 +1507,13 @@ module Legion
           started_at = tool_result.respond_to?(:started_at)   ? tool_result.started_at   : Thread.current[:legion_current_tool_started_at]
           finished_at = Time.now
           raw = tool_result.respond_to?(:result) ? tool_result.result : tool_result
+          status = tool_result.respond_to?(:status) ? tool_result.status : nil
           duration_ms = started_at ? ((finished_at - started_at) * 1000).round : nil
 
           result_str = (raw.is_a?(String) ? raw : raw.to_s)
           result_str = result_str.encode('UTF-8', invalid: :replace, undef: :replace, replace: '�') unless result_str.valid_encoding?
           result_str = result_str.delete("\x00")
-          is_error = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
+          is_error = status.to_s == 'error' || (raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false)
 
           @pending_tool_history_mutex.synchronize do
             entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id && e[:result].nil? }
@@ -1518,7 +1537,7 @@ module Legion
 
           @tool_event_handler&.call(
             type: :tool_result, tool_call_id: tc_id, tool_name: tc_name,
-            result: result_str[0, 4096], result_size: result_str.bytesize,
+            result: result_str[0, 4096], result_size: result_str.bytesize, status: is_error ? :error : :success,
             started_at: started_at, finished_at: finished_at, duration_ms: duration_ms
           )
 

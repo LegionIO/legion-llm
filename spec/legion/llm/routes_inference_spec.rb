@@ -553,6 +553,38 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.body).to include('event: done')
     end
 
+    it 'streams native tool errors when executor tool events report failure' do
+      response = make_pipeline_response(content: 'fallback answer')
+      executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
+      handler = nil
+      allow(executor).to receive(:tool_event_handler=) { |callable| handler = callable }
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:call_stream) do |&block|
+        handler.call(
+          type:         :tool_result,
+          tool_call_id: 'tc_error',
+          tool_name:    'ruby',
+          result:       'command failed',
+          status:       :error
+        )
+        block&.call('fallback answer')
+        response
+      end
+
+      response = post_json(
+        '/api/llm/inference',
+        { messages: [{ role: 'user', content: 'run git status' }], stream: true },
+        'HTTP_ACCEPT' => 'text/event-stream'
+      )
+
+      expect(response.status).to eq(200)
+      expect(response.body).to include('event: tool-error')
+      expect(response.body).to include('"toolName":"ruby"')
+      expect(response.body).to include('"status":"error"')
+    end
+
     it 'flattens structured streaming content blocks into text deltas' do
       response = make_pipeline_response(content: 'Plain reply')
       executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)

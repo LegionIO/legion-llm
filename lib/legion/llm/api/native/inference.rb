@@ -148,10 +148,12 @@ module Legion
                                        timestamp:  Time.now.utc.iso8601
                                      })
                     when :tool_result
-                      emit_sse_event(out, 'tool-result', {
+                      event_name = event[:status].to_s == 'error' ? 'tool-error' : 'tool-result'
+                      emit_sse_event(out, event_name, {
                                        toolCallId: event[:tool_call_id],
                                        toolName:   event[:tool_name],
                                        result:     event[:result],
+                                       status:     event[:status],
                                        timestamp:  Time.now.utc.iso8601
                                      })
                     when :tool_error
