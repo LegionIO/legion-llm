@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.41] - 2026-05-22
+
+### Fixed
+- API: streaming inference `done` events now include `stop_reason` and `requires_tool_result` when client passthrough tool calls must be executed and submitted back by the caller, matching the sync response contract and preventing wrappers from treating tool-use turns as final completions.
+
 ## [0.9.40] - 2026-05-22
 
 ### Added

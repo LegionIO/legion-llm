@@ -442,6 +442,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       body = Legion::JSON.load(response.body)
       expect(body[:data][:tool_calls]).to eq([tool_call])
       expect(body[:data][:stop_reason]).to eq('tool_use')
+      expect(body[:data][:requires_tool_result]).to be true
     end
 
     it 'flattens structured sync content blocks into text' do
@@ -547,6 +548,8 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.body).to include('"toolCallId":"call_client_1"')
       expect(response.body).to include('"toolName":"web_search"')
       expect(response.body).to include('"args":{"query":"legion tools"}')
+      expect(response.body).to include('"stop_reason":"tool_use"')
+      expect(response.body).to include('"requires_tool_result":true')
       expect(response.body).to include('event: done')
     end
 
