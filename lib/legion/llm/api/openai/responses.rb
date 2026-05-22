@@ -168,30 +168,53 @@ module Legion
               status:  'completed'
             }
 
-            input_tokens = extract_token(tokens, :input)
-            output_tokens = extract_token(tokens, :output)
-
             {
               id:         request_id,
               object:     'response',
               created_at: Time.now.to_i,
               model:      resolved_model,
               output:     output,
-              usage:      {
-                input_tokens:  input_tokens,
-                output_tokens: output_tokens,
-                total_tokens:  input_tokens.to_i + output_tokens.to_i
-              },
+              usage:      build_usage(tokens),
               status:     'completed'
             }
           end
 
-          def self.stream_response(out, executor, request_id:, model:)
-            out << "event: response.created\ndata: #{Legion::JSON.dump({ id: request_id, object: 'response', status: 'in_progress' })}\n\n"
+          def self.stream_response(out, executor, request_id:, model:) # rubocop:disable Metrics/MethodLength
+            created_at = Time.now.to_i
+            seq = 0
+            in_progress_response = { id: request_id, object: 'response', created_at: created_at,
+                                     status: 'in_progress', model: model, output: [], usage: nil }
+
+            # response.created — envelope matches gateway format: { type:, response:, sequence_number: }
+            out << sse_event('response.created', {
+                               type:            'response.created',
+                               sequence_number: seq += 1,
+                               response:        in_progress_response
+                             })
+
+            out << sse_event('response.in_progress', {
+                               type:            'response.in_progress',
+                               sequence_number: seq += 1,
+                               response:        in_progress_response
+                             })
 
             msg_id = "msg_#{SecureRandom.hex(12)}"
-            item_event = { type: 'message', id: msg_id, role: 'assistant', content: [], status: 'in_progress' }
-            out << "event: response.output_item.added\ndata: #{Legion::JSON.dump({ output_index: 0, item: item_event })}\n\n"
+            out << sse_event('response.output_item.added', {
+                               type:            'response.output_item.added',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               item:            { id: msg_id, type: 'message', role: 'assistant',
+                                 content: [], status: 'in_progress' }
+                             })
+
+            out << sse_event('response.content_part.added', {
+                               type:            'response.content_part.added',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               content_index:   0,
+                               item_id:         msg_id,
+                               part:            { type: 'output_text', text: '', annotations: [] }
+                             })
 
             full_text = +''
 
@@ -200,38 +223,67 @@ module Legion
               next if text.empty?
 
               full_text << text
-              delta_event = { content_index: 0, delta: text }
-              out << "event: response.output_text.delta\ndata: #{Legion::JSON.dump(delta_event)}\n\n"
+              out << sse_event('response.output_text.delta', {
+                                 type:            'response.output_text.delta',
+                                 sequence_number: seq += 1,
+                                 output_index:    0,
+                                 content_index:   0,
+                                 item_id:         msg_id,
+                                 delta:           text
+                               })
             end
 
             routing = pipeline_response.routing || {}
-            tokens = pipeline_response.tokens || {}
+            tokens  = pipeline_response.tokens || {}
             resolved_model = (routing[:model] || routing['model'] || model).to_s
-            input_tokens = extract_token(tokens, :input)
-            output_tokens = extract_token(tokens, :output)
+            usage = build_usage(tokens)
 
-            out << "event: response.output_text.done\ndata: #{Legion::JSON.dump({ content_index: 0, text: full_text })}\n\n"
-            done_item = {
-              output_index: 0,
-              item:         { type: 'message', id: msg_id, role: 'assistant',
-                              content: [{ type: 'output_text', text: full_text }], status: 'completed' }
-            }
-            out << "event: response.output_item.done\ndata: #{Legion::JSON.dump(done_item)}\n\n"
+            out << sse_event('response.output_text.done', {
+                               type:            'response.output_text.done',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               content_index:   0,
+                               item_id:         msg_id,
+                               text:            full_text
+                             })
 
-            done_data = {
-              id:     request_id,
-              object: 'response',
-              model:  resolved_model,
-              status: 'completed',
-              usage:  {
-                input_tokens:  input_tokens,
-                output_tokens: output_tokens,
-                total_tokens:  input_tokens.to_i + output_tokens.to_i
-              }
-            }
-            out << "event: response.completed\ndata: #{Legion::JSON.dump(done_data)}\n\n"
+            out << sse_event('response.content_part.done', {
+                               type:            'response.content_part.done',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               content_index:   0,
+                               item_id:         msg_id,
+                               part:            { type: 'output_text', text: full_text, annotations: [] }
+                             })
+
+            completed_item = { id: msg_id, type: 'message', role: 'assistant', status: 'completed',
+                               content: [{ type: 'output_text', text: full_text, annotations: [] }] }
+            out << sse_event('response.output_item.done', {
+                               type:            'response.output_item.done',
+                               sequence_number: seq += 1,
+                               output_index:    0,
+                               item:            completed_item
+                             })
+
+            out << sse_event('response.completed', {
+                               type:            'response.completed',
+                               sequence_number: seq + 1,
+                               response:        {
+                                 id:         request_id,
+                                 object:     'response',
+                                 created_at: created_at,
+                                 status:     'completed',
+                                 model:      resolved_model,
+                                 output:     [completed_item],
+                                 usage:      usage
+                               }
+                             })
 
             log.info("[llm][api][openai][responses] action=stream_complete request_id=#{request_id} model=#{resolved_model}")
+          end
+
+          def self.sse_event(name, payload)
+            "event: #{name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
           end
 
           def self.build_output_tool_calls(pipeline_response)
@@ -258,16 +310,55 @@ module Legion
           def self.extract_token(tokens, key)
             return 0 if tokens.nil?
 
-            method_name = { input: :input_tokens, output: :output_tokens }[key]
+            aliases = token_aliases(key)
 
             if tokens.is_a?(Hash)
-              return (tokens[method_name] || tokens[method_name.to_s] ||
-                      tokens[key] || tokens[key.to_s] || 0).to_i
+              aliases.each do |candidate|
+                value = tokens[candidate]
+                value = tokens[candidate.to_s] if value.nil?
+                return value.to_i unless value.nil?
+              end
+
+              return 0
             end
 
-            return tokens.public_send(method_name).to_i if method_name && tokens.respond_to?(method_name)
+            aliases.each do |candidate|
+              method_name = token_method(candidate)
+              return tokens.public_send(method_name).to_i if method_name && tokens.respond_to?(method_name)
+            end
 
             0
+          end
+
+          def self.build_usage(tokens)
+            input_tokens = extract_token(tokens, :input_tokens)
+            output_tokens = extract_token(tokens, :output_tokens)
+
+            {
+              input_tokens:  input_tokens,
+              output_tokens: output_tokens,
+              total_tokens:  input_tokens + output_tokens
+            }
+          end
+
+          def self.token_aliases(key)
+            case key.to_sym
+            when :input, :input_tokens
+              %i[input_tokens input]
+            when :output, :output_tokens
+              %i[output_tokens output]
+            else
+              [key.to_sym]
+            end
+          end
+
+          def self.token_method(key)
+            {
+              input:         :input_tokens,
+              input_tokens:  :input_tokens,
+              output:        :output_tokens,
+              output_tokens: :output_tokens
+            }[key.to_sym]
           end
         end
       end
