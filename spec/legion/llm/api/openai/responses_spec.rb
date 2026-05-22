@@ -103,6 +103,37 @@ RSpec.describe Legion::LLM::API::OpenAI::Responses do
     end
   end
 
+  describe '.stream_response' do
+    it 'emits response.completed usage from object-backed token counts' do
+      pipeline_response = double(
+        'PipelineResponse',
+        routing: { model: 'gpt-4o' },
+        tokens:  Legion::LLM::Usage.new(input_tokens: 12, output_tokens: 7)
+      )
+      executor = double('Executor')
+      out = +''
+
+      allow(executor).to receive(:call_stream) do |&block|
+        block.call('Hello ')
+        block.call('world')
+        pipeline_response
+      end
+
+      described_class.stream_response(out, executor, request_id: 'resp_stream', model: 'fallback-model')
+
+      completed_payload = out[/event: response.completed\ndata: (.+)\n\n/, 1]
+      completed = Legion::JSON.parse(completed_payload, symbolize_names: true)
+
+      expect(completed[:id]).to eq('resp_stream')
+      expect(completed[:model]).to eq('gpt-4o')
+      expect(completed[:usage]).to eq(
+        input_tokens:  12,
+        output_tokens: 7,
+        total_tokens:  19
+      )
+    end
+  end
+
   describe '.extract_token' do
     it 'extracts from hash with symbol keys' do
       expect(described_class.extract_token({ input: 42, output: 10 }, :input)).to eq(42)
@@ -111,6 +142,13 @@ RSpec.describe Legion::LLM::API::OpenAI::Responses do
     it 'extracts from objects responding to methods' do
       usage = Struct.new(:input_tokens, :output_tokens).new(100, 50)
       expect(described_class.extract_token(usage, :input)).to eq(100)
+    end
+
+    it 'extracts object-backed counts when explicit token keys are requested' do
+      usage = Legion::LLM::Usage.new(input_tokens: 100, output_tokens: 50)
+
+      expect(described_class.extract_token(usage, :input_tokens)).to eq(100)
+      expect(described_class.extract_token(usage, :output_tokens)).to eq(50)
     end
 
     it 'returns 0 for nil tokens' do

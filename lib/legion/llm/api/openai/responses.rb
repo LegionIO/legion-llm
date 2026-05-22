@@ -168,20 +168,13 @@ module Legion
               status:  'completed'
             }
 
-            input_tokens = extract_token(tokens, :input)
-            output_tokens = extract_token(tokens, :output)
-
             {
               id:         request_id,
               object:     'response',
               created_at: Time.now.to_i,
               model:      resolved_model,
               output:     output,
-              usage:      {
-                input_tokens:  input_tokens,
-                output_tokens: output_tokens,
-                total_tokens:  input_tokens.to_i + output_tokens.to_i
-              },
+              usage:      build_usage(tokens),
               status:     'completed'
             }
           end
@@ -207,8 +200,6 @@ module Legion
             routing = pipeline_response.routing || {}
             tokens = pipeline_response.tokens || {}
             resolved_model = (routing[:model] || routing['model'] || model).to_s
-            input_tokens = extract_token(tokens, :input)
-            output_tokens = extract_token(tokens, :output)
 
             out << "event: response.output_text.done\ndata: #{Legion::JSON.dump({ content_index: 0, text: full_text })}\n\n"
             done_item = {
@@ -223,11 +214,7 @@ module Legion
               object: 'response',
               model:  resolved_model,
               status: 'completed',
-              usage:  {
-                input_tokens:  input_tokens,
-                output_tokens: output_tokens,
-                total_tokens:  input_tokens.to_i + output_tokens.to_i
-              }
+              usage:  build_usage(tokens)
             }
             out << "event: response.completed\ndata: #{Legion::JSON.dump(done_data)}\n\n"
 
@@ -258,16 +245,55 @@ module Legion
           def self.extract_token(tokens, key)
             return 0 if tokens.nil?
 
-            method_name = { input: :input_tokens, output: :output_tokens }[key]
+            aliases = token_aliases(key)
 
             if tokens.is_a?(Hash)
-              return (tokens[method_name] || tokens[method_name.to_s] ||
-                      tokens[key] || tokens[key.to_s] || 0).to_i
+              aliases.each do |candidate|
+                value = tokens[candidate]
+                value = tokens[candidate.to_s] if value.nil?
+                return value.to_i unless value.nil?
+              end
+
+              return 0
             end
 
-            return tokens.public_send(method_name).to_i if method_name && tokens.respond_to?(method_name)
+            aliases.each do |candidate|
+              method_name = token_method(candidate)
+              return tokens.public_send(method_name).to_i if method_name && tokens.respond_to?(method_name)
+            end
 
             0
+          end
+
+          def self.build_usage(tokens)
+            input_tokens = extract_token(tokens, :input_tokens)
+            output_tokens = extract_token(tokens, :output_tokens)
+
+            {
+              input_tokens:  input_tokens,
+              output_tokens: output_tokens,
+              total_tokens:  input_tokens + output_tokens
+            }
+          end
+
+          def self.token_aliases(key)
+            case key.to_sym
+            when :input, :input_tokens
+              %i[input_tokens input]
+            when :output, :output_tokens
+              %i[output_tokens output]
+            else
+              [key.to_sym]
+            end
+          end
+
+          def self.token_method(key)
+            {
+              input:         :input_tokens,
+              input_tokens:  :input_tokens,
+              output:        :output_tokens,
+              output_tokens: :output_tokens
+            }[key.to_sym]
           end
         end
       end
