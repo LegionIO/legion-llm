@@ -24,6 +24,41 @@ module Legion
           end
         end
 
+        def dispatch_responses_request(body:, messages:, stream:, stream_block: nil)
+          raise Legion::LLM::ProviderError, 'Responses API upstream dispatch is not supported for fleet providers' if fleet_dispatch?
+
+          idempotency_key = next_route_idempotency_key
+          result = Call::Dispatch.call(
+            provider:   @resolved_provider,
+            instance:   @resolved_instance,
+            capability: :responses,
+            model:      @resolved_model,
+            body:       body,
+            messages:   messages,
+            stream:     stream,
+            **native_dispatch_options,
+            &stream_block
+          )
+          record_route_attempt(
+            dispatch_path:   :direct,
+            operation:       :responses,
+            status:          :success,
+            idempotency_key: idempotency_key,
+            selected_lane:   nil
+          )
+          result
+        rescue StandardError => e
+          record_route_attempt(
+            dispatch_path:   :direct,
+            operation:       :responses,
+            status:          :failure,
+            idempotency_key: idempotency_key,
+            selected_lane:   nil,
+            failure_reason:  e.message
+          )
+          raise
+        end
+
         def dispatch_direct_request(capability:, operation:, messages:, stream_block: nil)
           idempotency_key = next_route_idempotency_key
           result = Call::Dispatch.call(

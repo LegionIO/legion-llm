@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.37] - 2026-05-22
+
+### Changed
+- API: OpenAI Responses requests now dispatch to upstream `/v1/responses` through a native `:responses` provider capability instead of adapting Responses input through Chat Completions `stream_chat`, preserving upstream Responses streaming usage from `response.completed.response.usage`
+
 ## [0.9.36] - 2026-05-22
 
 ### Fixed
