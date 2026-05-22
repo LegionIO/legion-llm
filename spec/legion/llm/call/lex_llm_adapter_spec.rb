@@ -272,12 +272,12 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       keyword_init: true
     )
     response = response_class.new(
-      input_tokens:         0,
-      output_tokens:        5,
-      cached_tokens:        0,
+      input_tokens:          0,
+      output_tokens:         5,
+      cached_tokens:         0,
       cache_creation_tokens: 0,
-      usage:                nil,
-      raw:                  { data: { input_tokens: 9, output_tokens: 5 } }
+      usage:                 nil,
+      raw:                   { data: { input_tokens: 9, output_tokens: 5 } }
     )
 
     expect(adapter.send(:usage_hash, response)).to eq(
@@ -294,11 +294,11 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       keyword_init: true
     )
     response = response_class.new(
-      input_tokens:         0,
-      output_tokens:        0,
-      cached_tokens:        0,
+      input_tokens:          0,
+      output_tokens:         0,
+      cached_tokens:         0,
       cache_creation_tokens: 0,
-      usage:                {
+      usage:                 {
         input_tokens:          8,
         input_tokens_details:  { cached_tokens: 0 },
         output_tokens:         6,
@@ -321,11 +321,11 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       keyword_init: true
     )
     response = response_class.new(
-      input_tokens:         0,
-      output_tokens:        0,
-      cached_tokens:        0,
+      input_tokens:          0,
+      output_tokens:         0,
+      cached_tokens:         0,
       cache_creation_tokens: 0,
-      usage:                { prompt_tokens: 11, completion_tokens: 4 }
+      usage:                 { prompt_tokens: 11, completion_tokens: 4 }
     )
 
     expect(adapter.send(:usage_hash, response)).to eq(
