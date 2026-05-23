@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.48] - 2026-05-23
+
+### Fixed
+- API: OpenAI-compatible streaming now emits tool callbacks for both Chat Completions and Responses: `/v1/chat/completions` streams `delta.tool_calls` and finishes with `finish_reason: "tool_calls"`, while `/v1/responses` streams `function_call` output item events and includes them in `response.completed.output`.
+
 ## [0.9.47] - 2026-05-22
 
 ### Fixed

@@ -294,6 +294,35 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       )
     end
 
+    it 'streams OpenAI chat completion tool calls before the terminal tool_calls finish reason' do
+      tool_call = { id: 'call_git_1', name: 'git', arguments: { command: 'status' } }
+      response = make_pipeline_response(content: '', tools: [tool_call], stop_reason: :tool_use)
+      executor = instance_double('Legion::LLM::Inference::Executor')
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:call_stream).and_return(response)
+
+      response = post_json(
+        '/v1/chat/completions',
+        {
+          model:    'gpt-test',
+          stream:   true,
+          messages: [{ role: 'user', content: 'run git status' }],
+          tools:    [{ type: 'function', function: { name: 'git', description: 'Run git', parameters: {} } }]
+        },
+        'HTTP_ACCEPT' => 'text/event-stream'
+      )
+
+      expect(response.status).to eq(200)
+      expect(response.body).to include('"tool_calls":[{')
+      expect(response.body).to include('"id":"call_git_1"')
+      expect(response.body).to include('"name":"git"')
+      expect(response.body).to include('"arguments":"{\\"command\\":\\"status\\"}"')
+      expect(response.body).to include('"finish_reason":"tool_calls"')
+      expect(response.body).to include('data: [DONE]')
+    end
+
     it 'falls back to local process identity when middleware provides generic system caller metadata' do
       captured = nil
       response = make_pipeline_response

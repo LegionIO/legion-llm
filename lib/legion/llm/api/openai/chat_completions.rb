@@ -67,8 +67,22 @@ module Legion
 
                   routing = pipeline_response.routing || {}
                   final_model = (routing[:model] || routing['model'] || model).to_s
+                  tool_calls = Legion::LLM::API::Translators::OpenAIResponse.build_tool_calls(pipeline_response)
+
+                  tool_calls.each_with_index do |tool_call, index|
+                    out << "data: #{Legion::JSON.dump(Legion::LLM::API::Translators::OpenAIResponse.format_stream_tool_call_chunk(
+                                                        tool_call,
+                                                        model:      final_model,
+                                                        request_id: request_id,
+                                                        index:      index
+                                                      ))}\n\n"
+                  end
+
                   done_chunk = Legion::LLM::API::Translators::OpenAIResponse.format_stream_chunk(
-                    nil, model: final_model, request_id: request_id, finish_reason: 'stop'
+                    nil,
+                    model:         final_model,
+                    request_id:    request_id,
+                    finish_reason: tool_calls.empty? ? 'stop' : 'tool_calls'
                   )
                   out << "data: #{Legion::JSON.dump(done_chunk)}\n\n"
                   out << "data: [DONE]\n\n"
