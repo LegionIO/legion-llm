@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.49] - 2026-05-23
+
+### Fixed
+- API: native `/api/llm/inference` client tool requests now use the OpenAI Chat Completions `tool_calls` shape with `type: "function"` and `function.name` / JSON-string `function.arguments`, aligning native sync responses and streaming `done.tool_calls` with the OpenAI-compatible endpoints.
+
 ## [0.9.48] - 2026-05-23
 
 ### Fixed

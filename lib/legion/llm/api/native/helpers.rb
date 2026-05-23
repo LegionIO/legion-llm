@@ -5,6 +5,7 @@ require 'open3'
 require 'time'
 require 'legion/cache/helper'
 require 'legion/logging/helper'
+require 'legion/llm/api/translators/openai_response'
 require 'legion/llm/publisher_identity'
 require 'legion/llm/types'
 
@@ -310,16 +311,7 @@ module Legion
               end
 
               define_method(:extract_tool_calls) do |pipeline_response|
-                tools_data = pipeline_response.tools
-                return [] unless tools_data.is_a?(Array) && !tools_data.empty?
-
-                tools_data.map do |tc|
-                  {
-                    id:        tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id']),
-                    name:      tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'] || tc.to_s),
-                    arguments: tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
-                  }
-                end
+                Legion::LLM::API::Translators::OpenAIResponse.build_tool_calls(pipeline_response)
               end
 
               define_method(:extract_text_content) do |content|
@@ -351,12 +343,27 @@ module Legion
                 {
                   toolCallId:         tool_call_id,
                   toolName:           tool_name,
-                  args:               tool_call[:arguments] || tool_call['arguments'] || {},
+                  args:               openai_tool_call_arguments(tool_call),
                   clientPassthrough:  true,
                   requiresToolResult: true,
                   status:             'requires_client_execution',
                   timestamp:          Time.now.utc.iso8601
                 }
+              end
+
+              define_method(:openai_tool_call_name) do |tool_call|
+                fn = tool_call[:function] || tool_call['function'] || {}
+                fn[:name] || fn['name'] || tool_call[:name] || tool_call['name']
+              end
+
+              define_method(:openai_tool_call_arguments) do |tool_call|
+                fn = tool_call[:function] || tool_call['function'] || {}
+                raw_args = fn[:arguments] || fn['arguments'] || tool_call[:arguments] || tool_call['arguments'] || {}
+                return raw_args unless raw_args.is_a?(String)
+
+                Legion::JSON.parse(raw_args, symbolize_names: true)
+              rescue StandardError
+                raw_args
               end
 
               define_method(:emit_response_tool_call_events) do |_stream, pipeline_response|
@@ -383,18 +390,18 @@ module Legion
                     next
                   end
 
-                  tool_name = tool_call[:name] || tool_call['name']
+                  tool_name = openai_tool_call_name(tool_call)
                   next if tool_name.to_s.empty?
 
                   log.info(
                     "[llm][api][tools] action=returned_tool_call_done_only request_id=#{request_id || 'unknown'} " \
                     "conversation_id=#{conversation_id || 'none'} tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
-                    "args_class=#{(tool_call[:arguments] || tool_call['arguments'] || {}).class}"
+                    "args_class=#{openai_tool_call_arguments(tool_call).class}"
                   )
                   done_only += 1
                 end
 
-                names = tool_calls.map { |tool_call| tool_call[:name] || tool_call['name'] }.compact
+                names = tool_calls.map { |tool_call| openai_tool_call_name(tool_call) }.compact
                 names = names.first(30).join(',') + (names.size > 30 ? ",+#{names.size - 30}more" : '')
                 log.info(
                   "[llm][api][tools] action=returned_tool_calls_complete request_id=#{request_id || 'unknown'} " \

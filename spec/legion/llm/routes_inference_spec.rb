@@ -459,6 +459,15 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
     it 'returns sync tool_calls from the pipeline response' do
       tool_call = { id: 'tc_1', name: 'legion_tools', arguments: { query: 'status' } }
+      openai_tool_call = {
+        id:       'tc_1',
+        type:     'function',
+        index:    0,
+        function: {
+          name:      'legion_tools',
+          arguments: '{"query":"status"}'
+        }
+      }
       response = make_pipeline_response(content: 'tool response', tools: [tool_call], stop_reason: :tool_use)
       executor = instance_double('Legion::LLM::Inference::Executor', call: response)
 
@@ -469,7 +478,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
       expect(response.status).to eq(200)
       body = Legion::JSON.load(response.body)
-      expect(body[:data][:tool_calls]).to eq([tool_call])
+      expect(body[:data][:tool_calls]).to eq([openai_tool_call])
       expect(body[:data][:stop_reason]).to eq('tool_use')
       expect(body[:data][:requires_tool_result]).to be true
     end
@@ -576,8 +585,8 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.body).not_to include('event: tool-call')
       expect(response.body).to include('"tool_calls":[{')
       expect(response.body).to include('"id":"call_client_1"')
-      expect(response.body).to include('"name":"web_search"')
-      expect(response.body).to include('"arguments":{"query":"legion tools"}')
+      expect(response.body).to include('"type":"function"')
+      expect(response.body).to include('"function":{"name":"web_search","arguments":"{\\"query\\":\\"legion tools\\"}"}')
       expect(response.body).to include('"stop_reason":"tool_use"')
       expect(response.body).to include('"requires_tool_result":true')
       expect(response.body).to include('event: done')
