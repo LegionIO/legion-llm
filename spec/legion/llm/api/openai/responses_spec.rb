@@ -161,6 +161,37 @@ RSpec.describe Legion::LLM::API::OpenAI::Responses do
       expect(executor).to have_received(:call_responses)
       expect(out).to include('event: response.completed')
     end
+
+    it 'streams function_call output items from the final pipeline response' do
+      tool_call = double('ToolCall', id: 'call_git_1', name: 'git', arguments: { command: 'status' })
+      pipeline_response = double(
+        'PipelineResponse',
+        routing: { model: 'gpt-4o' },
+        tokens:  { input_tokens: 8, output_tokens: 5 },
+        tools:   [tool_call]
+      )
+      executor = double('Executor')
+      out = +''
+
+      allow(executor).to receive(:call_stream).and_return(pipeline_response)
+
+      described_class.stream_response(out, executor, request_id: 'resp_stream', model: 'fallback-model')
+
+      expect(out).to include('event: response.output_item.added')
+      expect(out).to include('event: response.function_call_arguments.delta')
+      expect(out).to include('event: response.function_call_arguments.done')
+      expect(out).to include('"type":"function_call"')
+      expect(out).to include('"call_id":"call_git_1"')
+      expect(out).to include('"name":"git"')
+      expect(out).to include('"arguments":"{\\"command\\":\\"status\\"}"')
+
+      completed_payload = out[/event: response.completed\ndata: (.+)\n\n/, 1]
+      completed = Legion::JSON.parse(completed_payload, symbolize_names: true)
+      function_calls = completed[:response][:output].select { |item| item[:type] == 'function_call' }
+
+      expect(function_calls.size).to eq(1)
+      expect(function_calls.first[:call_id]).to eq('call_git_1')
+    end
   end
 
   describe '.extract_token' do

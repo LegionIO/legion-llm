@@ -62,6 +62,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
   end
 
   let(:adapter) { described_class.new(:fake_llm, provider_class) }
+  let(:responses_adapter) { described_class.new(:fake_llm, provider_class, instance_config: { capabilities: [:responses] }) }
 
   it 'maps chat dispatch to lex-llm provider completion' do
     result = adapter.chat(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
@@ -190,7 +191,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     end.new
     provider_class.connection = connection
 
-    result = adapter.responses(
+    result = responses_adapter.responses(
       model:    'gpt-5.4',
       body:     { input: 'say hi', stream: false },
       messages: [{ role: 'user', content: 'say hi' }]
@@ -198,11 +199,45 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
 
     expect(connection.url).to eq('/v1/responses')
     expect(connection.payload).to include(model: 'gpt-5.4', stream: false)
-    expect(connection.payload[:input]).to eq([{ role: 'user', content: 'say hi' }])
+    expect(connection.payload[:input]).to eq('say hi')
     expect(result[:result]).to eq('hi')
     expect(result[:usage]).to include(input_tokens: 8, output_tokens: 5)
   ensure
     provider_class.connection = nil
+  end
+
+  it 'preserves Responses input_text content parts when building upstream payloads' do
+    connection = Class.new do
+      attr_reader :payload
+
+      def post(_url, payload)
+        @payload = payload
+        Struct.new(:body).new({
+                                'model'  => 'gpt-5.4',
+                                'output' => [{ 'content' => [{ 'type' => 'output_text', 'text' => 'hi' }] }],
+                                'usage'  => { 'input_tokens' => 8, 'output_tokens' => 5 }
+                              })
+      end
+    end.new
+    provider_class.connection = connection
+
+    responses_adapter.responses(
+      model:    'gpt-5.4',
+      body:     { stream: false },
+      messages: [{ role: 'user', content: [{ type: 'input_text', text: 'say hi' }] }]
+    )
+
+    expect(connection.payload[:input]).to eq(
+      [{ role: 'user', content: [{ type: 'input_text', text: 'say hi' }] }]
+    )
+  ensure
+    provider_class.connection = nil
+  end
+
+  it 'rejects Responses API dispatch for providers without responses capability' do
+    expect do
+      adapter.responses(model: 'model-a', body: { input: 'hi' }, messages: [{ role: 'user', content: 'hi' }])
+    end.to raise_error(Legion::LLM::ProviderError, /Responses API dispatch is not supported/)
   end
 
   it 'streams upstream Responses API deltas and captures completed usage' do
@@ -228,7 +263,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     provider_class.connection = connection
 
     yielded = []
-    result = adapter.responses(
+    result = responses_adapter.responses(
       model:    'gpt-5.4',
       body:     { input: 'say hi', stream: true },
       stream:   true,

@@ -237,6 +237,7 @@ module Legion
             tokens  = pipeline_response.tokens || {}
             resolved_model = (routing[:model] || routing['model'] || model).to_s
             usage = build_usage(tokens)
+            function_calls = build_output_tool_calls(pipeline_response)
 
             out << sse_event('response.output_text.done', {
                                type:            'response.output_text.done',
@@ -265,6 +266,41 @@ module Legion
                                item:            completed_item
                              })
 
+            function_calls.each_with_index do |function_call, index|
+              output_index = index + 1
+              in_progress_item = function_call.merge(status: 'in_progress', arguments: '')
+
+              out << sse_event('response.output_item.added', {
+                                 type:            'response.output_item.added',
+                                 sequence_number: seq += 1,
+                                 output_index:    output_index,
+                                 item:            in_progress_item
+                               })
+
+              out << sse_event('response.function_call_arguments.delta', {
+                                 type:            'response.function_call_arguments.delta',
+                                 sequence_number: seq += 1,
+                                 output_index:    output_index,
+                                 item_id:         function_call[:id],
+                                 delta:           function_call[:arguments]
+                               })
+
+              out << sse_event('response.function_call_arguments.done', {
+                                 type:            'response.function_call_arguments.done',
+                                 sequence_number: seq += 1,
+                                 output_index:    output_index,
+                                 item_id:         function_call[:id],
+                                 arguments:       function_call[:arguments]
+                               })
+
+              out << sse_event('response.output_item.done', {
+                                 type:            'response.output_item.done',
+                                 sequence_number: seq += 1,
+                                 output_index:    output_index,
+                                 item:            function_call
+                               })
+            end
+
             out << sse_event('response.completed', {
                                type:            'response.completed',
                                sequence_number: seq + 1,
@@ -274,7 +310,7 @@ module Legion
                                  created_at: created_at,
                                  status:     'completed',
                                  model:      resolved_model,
-                                 output:     [completed_item],
+                                 output:     [completed_item, *function_calls],
                                  usage:      usage
                                }
                              })

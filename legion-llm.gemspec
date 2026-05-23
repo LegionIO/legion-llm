@@ -26,6 +26,7 @@ Gem::Specification.new do |spec|
   }
 
   spec.add_dependency 'concurrent-ruby'
+  spec.add_dependency 'event_stream_parser', '~> 1'
   spec.add_dependency 'faraday'
   spec.add_dependency 'legion-cache', '>= 1.4.2'
   spec.add_dependency 'legion-json', '>= 1.2.0'

@@ -294,6 +294,35 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       )
     end
 
+    it 'streams OpenAI chat completion tool calls before the terminal tool_calls finish reason' do
+      tool_call = { id: 'call_git_1', name: 'git', arguments: { command: 'status' } }
+      response = make_pipeline_response(content: '', tools: [tool_call], stop_reason: :tool_use)
+      executor = instance_double('Legion::LLM::Inference::Executor')
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:call_stream).and_return(response)
+
+      response = post_json(
+        '/v1/chat/completions',
+        {
+          model:    'gpt-test',
+          stream:   true,
+          messages: [{ role: 'user', content: 'run git status' }],
+          tools:    [{ type: 'function', function: { name: 'git', description: 'Run git', parameters: {} } }]
+        },
+        'HTTP_ACCEPT' => 'text/event-stream'
+      )
+
+      expect(response.status).to eq(200)
+      expect(response.body).to include('"tool_calls":[{')
+      expect(response.body).to include('"id":"call_git_1"')
+      expect(response.body).to include('"name":"git"')
+      expect(response.body).to include('"arguments":"{\\"command\\":\\"status\\"}"')
+      expect(response.body).to include('"finish_reason":"tool_calls"')
+      expect(response.body).to include('data: [DONE]')
+    end
+
     it 'falls back to local process identity when middleware provides generic system caller metadata' do
       captured = nil
       response = make_pipeline_response
@@ -358,7 +387,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(captured[:metadata]).to eq(requested_tools: ['legion.test.extra'])
     end
 
-    it 'requires explicit opt-in for API client tool passthrough metadata' do
+    it 'passes explicit API client tool passthrough metadata' do
       captured = nil
       response = make_pipeline_response
       executor = instance_double('Legion::LLM::Inference::Executor', call: response)
@@ -379,6 +408,31 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(captured[:metadata]).to include(
         requested_tools:           [],
         client_tool_passthrough:   true,
+        client_tool_request_count: 1
+      )
+    end
+
+    it 'passes explicit API client tool passthrough false metadata' do
+      captured = nil
+      response = make_pipeline_response
+      executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+
+      allow(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        captured = kwargs
+        :req
+      end
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+
+      response = post_json('/api/llm/inference', {
+                             messages:                [{ role: 'user', content: 'hello' }],
+                             tools:                   [{ name: 'client_shell', description: 'Client shell', parameters: {} }],
+                             client_tool_passthrough: false
+                           })
+
+      expect(response.status).to eq(200)
+      expect(captured[:metadata]).to include(
+        requested_tools:           [],
+        client_tool_passthrough:   false,
         client_tool_request_count: 1
       )
     end
@@ -405,18 +459,39 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
     it 'returns sync tool_calls from the pipeline response' do
       tool_call = { id: 'tc_1', name: 'legion_tools', arguments: { query: 'status' } }
+      openai_tool_call = {
+        id:       'tc_1',
+        type:     'function',
+        index:    0,
+        function: {
+          name:      'legion_tools',
+          arguments: '{"query":"status"}'
+        }
+      }
       response = make_pipeline_response(content: 'tool response', tools: [tool_call], stop_reason: :tool_use)
       executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+      logger = instance_double('Logger', debug: nil, error: nil, info: nil, warn: nil)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow_any_instance_of(test_app).to receive(:log).and_return(logger)
 
       response = post_json('/api/llm/inference', { messages: [{ role: 'user', content: 'use legion tools' }] })
 
       expect(response.status).to eq(200)
       body = Legion::JSON.load(response.body)
-      expect(body[:data][:tool_calls]).to eq([tool_call])
+      expect(body[:data][:tool_calls]).to eq([openai_tool_call])
       expect(body[:data][:stop_reason]).to eq('tool_use')
+      expect(body[:data][:requires_tool_result]).to be true
+      expect(logger).to have_received(:debug).with(
+        include(
+          '[llm][api][inference] action=response_payload',
+          'stream=false',
+          'kind=json_response',
+          '"tool_calls":[{"id":"tc_1","type":"function","index":0,' \
+          '"function":{"name":"legion_tools","arguments":"{\\"query\\":\\"status\\"}"}}]'
+        )
+      )
     end
 
     it 'flattens structured sync content blocks into text' do
@@ -501,15 +576,17 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.body).to include('event: done')
     end
 
-    it 'streams returned client tool calls when the server does not execute them' do
+    it 'returns client tool calls in done without live tool events when the server does not execute them' do
       tool_call = { id: 'call_client_1', name: 'web_search', arguments: { query: 'legion tools' } }
       response = make_pipeline_response(content: '', tools: [tool_call], stop_reason: :tool_use)
       executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
+      logger = instance_double('Logger', debug: nil, error: nil, info: nil, warn: nil)
       allow(executor).to receive(:tool_event_handler=)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
       allow(executor).to receive(:call_stream).and_return(response)
+      allow_any_instance_of(test_app).to receive(:log).and_return(logger)
 
       response = post_json(
         '/api/llm/inference',
@@ -518,11 +595,55 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       )
 
       expect(response.status).to eq(200)
-      expect(response.body).to include('event: tool-call')
-      expect(response.body).to include('"toolCallId":"call_client_1"')
-      expect(response.body).to include('"toolName":"web_search"')
-      expect(response.body).to include('"args":{"query":"legion tools"}')
+      expect(response.body).not_to include('event: tool-call')
+      expect(response.body).to include('"tool_calls":[{')
+      expect(response.body).to include('"id":"call_client_1"')
+      expect(response.body).to include('"type":"function"')
+      expect(response.body).to include('"function":{"name":"web_search","arguments":"{\\"query\\":\\"legion tools\\"}"}')
+      expect(response.body).to include('"stop_reason":"tool_use"')
+      expect(response.body).to include('"requires_tool_result":true')
       expect(response.body).to include('event: done')
+      expect(logger).to have_received(:debug).with(
+        include(
+          '[llm][api][inference] action=response_payload',
+          'stream=true',
+          'kind=sse_done',
+          '"tool_calls":[{"id":"call_client_1","type":"function","index":0,' \
+          '"function":{"name":"web_search","arguments":"{\\"query\\":\\"legion tools\\"}"}}]'
+        )
+      )
+    end
+
+    it 'streams native tool errors when executor tool events report failure' do
+      response = make_pipeline_response(content: 'fallback answer')
+      executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
+      handler = nil
+      allow(executor).to receive(:tool_event_handler=) { |callable| handler = callable }
+
+      allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
+      allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:call_stream) do |&block|
+        handler.call(
+          type:         :tool_result,
+          tool_call_id: 'tc_error',
+          tool_name:    'ruby',
+          result:       'command failed',
+          status:       :error
+        )
+        block&.call('fallback answer')
+        response
+      end
+
+      response = post_json(
+        '/api/llm/inference',
+        { messages: [{ role: 'user', content: 'run git status' }], stream: true },
+        'HTTP_ACCEPT' => 'text/event-stream'
+      )
+
+      expect(response.status).to eq(200)
+      expect(response.body).to include('event: tool-error')
+      expect(response.body).to include('"toolName":"ruby"')
+      expect(response.body).to include('"status":"error"')
     end
 
     it 'flattens structured streaming content blocks into text deltas' do

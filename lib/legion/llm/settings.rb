@@ -8,6 +8,16 @@ module Legion
     module Settings
       extend Legion::Logging::Helper
 
+      CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT = [
+        'sudo', 'visudo', 'su', 'legion', 'legionio', 'legionio do', 'legionio/legion',
+        'computer_use_session', 'computer_use_control', 'computer_use_session_info',
+        'computer_use_session_message', 'plugin__aithena__recall', 'plugin__aithena__remember',
+        'plugin__aithena__skill_search', 'plugin__aithena__skill_feedback', 'plugin__aithena__memory_stats',
+        'plugin__cron__create', 'plugin__cron__list', 'plugin__cron__get', 'plugin__cron__update',
+        'plugin__cron__delete', 'plugin__cron__get_history', 'plugin__cron__run_now', 'plugin__cron__stop'
+      ].freeze
+      CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT = [].freeze
+
       def self.default
         model_override = ENV.fetch('ANTHROPIC_MODEL', nil)
         {
@@ -482,10 +492,12 @@ module Legion
 
       def self.tool_trigger_defaults
         {
-          scan_depth:              10,
-          tool_limit:              25,
-          local_tool_limit:        100,
-          client_tool_passthrough: false
+          scan_depth:                        10,
+          tool_limit:                        25,
+          local_tool_limit:                  100,
+          client_tool_passthrough:           false,
+          client_tool_passthrough_whitelist: CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT.dup,
+          client_tool_passthrough_blacklist: CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT.dup
         }
       end
 

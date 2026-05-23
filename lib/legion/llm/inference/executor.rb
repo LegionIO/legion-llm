@@ -69,7 +69,7 @@ module Legion
         ].freeze
 
         MAX_NATIVE_TOOL_ROUNDS = 200
-        ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, keyword_init: true)
+        ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, :status, keyword_init: true)
 
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
@@ -912,10 +912,27 @@ module Legion
             offering_id:       @resolved_offering_id,
             offering_metadata: @resolved_offering_metadata
           }
+          options[:system] = native_tool_loop_system(options[:system])
           options[:tools] = native_dispatch_tools if native_dispatch_tools.any?
           options[:tool_prefs] = native_tool_prefs if native_dispatch_tools.any? && native_tool_prefs
           options[:thinking] = native_dispatch_thinking if native_dispatch_thinking
           options.compact
+        end
+
+        def native_tool_loop_system(system)
+          return system unless @native_tool_loop_round.to_i.positive? && native_dispatch_tools.any?
+
+          [system, native_tool_loop_continuation_prompt].compact.join("\n\n")
+        end
+
+        def native_tool_loop_continuation_prompt
+          <<~PROMPT.strip
+            Tool-use continuation rule:
+            - You just received tool results.
+            - If a tool failed or produced incomplete information and another available tool can continue the user's request, call that tool now.
+            - Do not say you will use a tool unless you are actually making the tool call in this response.
+            - Only provide a final answer when no further tool call is needed or possible.
+          PROMPT
         end
 
         def native_dispatch_chat_options
@@ -959,7 +976,42 @@ module Legion
             return value if [true, false].include?(value)
           end
 
-          Legion::LLM::Settings.value(:tool_trigger, :client_tool_passthrough) != false
+          Legion::LLM::Settings.value(:tool_trigger, :client_tool_passthrough) == true
+        end
+
+        def client_tool_passthrough_allowed?(definition)
+          names = client_tool_passthrough_name_variants(definition)
+          whitelist = client_tool_passthrough_list(:client_tool_passthrough_whitelist)
+          blacklist = client_tool_passthrough_list(:client_tool_passthrough_blacklist)
+
+          return false if whitelist.any? && !names.intersect?(whitelist)
+          return false if names.intersect?(blacklist)
+
+          true
+        end
+
+        def client_tool_passthrough_list(key)
+          defaults = {
+            client_tool_passthrough_whitelist: Legion::LLM::Settings::CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT,
+            client_tool_passthrough_blacklist: Legion::LLM::Settings::CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT
+          }
+          Array(Legion::LLM::Settings.value(:tool_trigger, key, default: defaults.fetch(key))).flat_map do |entry|
+            client_tool_policy_variants(entry)
+          end.uniq
+        end
+
+        def client_tool_passthrough_name_variants(definition)
+          source = definition.respond_to?(:source) ? definition.source : {}
+          raw_name = source[:raw_name] || source['raw_name'] if source.is_a?(Hash)
+          [definition.name, raw_name].compact.flat_map { |name| client_tool_policy_variants(name) }.uniq
+        end
+
+        def client_tool_policy_variants(value)
+          raw = value.to_s.strip.downcase
+          sanitized = Types::ToolDefinition.sanitize_tool_name(value).downcase
+          compact = raw.gsub(/[^a-z0-9]/, '')
+
+          [raw, sanitized, compact].reject(&:empty?).uniq
         end
 
         def non_executable_client_tool?(definition)
@@ -997,8 +1049,16 @@ module Legion
             )
             return
           end
+          if non_executable_client_tool?(definition) && !client_tool_passthrough_allowed?(definition)
+            log.info(
+              "[llm][tools][inject] action=client_tool_skipped request_id=#{request_log_value(:id, 'unknown')} " \
+              "conversation_id=#{request_log_value(:conversation_id, 'none') || 'none'} name=#{definition.name} " \
+              'reason=client_passthrough_policy'
+            )
+            return
+          end
           return if gaia_tool_suppressed?(definition.name)
-          return if definitions.any? { |existing| existing.name == definition.name }
+          return if native_tool_definition_duplicate?(definitions, definition)
 
           @injected_tool_map[definition.name] = definition.source[:tool_class] if definition.source[:tool_class]
           @native_tool_source_map[definition.name] = definition.source
@@ -1021,6 +1081,24 @@ module Legion
         rescue StandardError => e
           @warnings << "Tool definition error: #{e.message}"
           handle_exception(e, level: :error, operation: 'llm.pipeline.native_registry_tools')
+        end
+
+        def native_tool_definition_duplicate?(definitions, definition)
+          candidate_names = native_tool_definition_name_variants(definition)
+          definitions.any? do |existing|
+            native_tool_definition_name_variants(existing).intersect?(candidate_names)
+          end
+        end
+
+        def native_tool_definition_name_variants(definition)
+          variants = client_tool_passthrough_name_variants(definition)
+          source = definition.respond_to?(:source) ? definition.source : {}
+          source_type = nil
+          source_type = source[:type] || source['type'] if source.is_a?(Hash)
+          if source_type.respond_to?(:to_sym) && source_type.to_sym == :special
+            variants += Tools::Special.aliases_for(definition.name).flat_map { |name| client_tool_policy_variants(name) }
+          end
+          variants.uniq
         end
 
         def add_settings_extensions_tool_definitions(definitions)
@@ -1105,7 +1183,8 @@ module Legion
               result:       native_tool_result_content(result),
               tool_call_id: normalized_call[:id],
               tool_name:    normalized_call[:name],
-              started_at:   Thread.current[:legion_current_tool_started_at]
+              started_at:   Thread.current[:legion_current_tool_started_at],
+              status:       result[:status] || result['status']
             )
           )
           result
@@ -1428,12 +1507,13 @@ module Legion
           started_at = tool_result.respond_to?(:started_at)   ? tool_result.started_at   : Thread.current[:legion_current_tool_started_at]
           finished_at = Time.now
           raw = tool_result.respond_to?(:result) ? tool_result.result : tool_result
+          status = tool_result.respond_to?(:status) ? tool_result.status : nil
           duration_ms = started_at ? ((finished_at - started_at) * 1000).round : nil
 
           result_str = (raw.is_a?(String) ? raw : raw.to_s)
           result_str = result_str.encode('UTF-8', invalid: :replace, undef: :replace, replace: '�') unless result_str.valid_encoding?
           result_str = result_str.delete("\x00")
-          is_error = raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false
+          is_error = status.to_s == 'error' || (raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false)
 
           @pending_tool_history_mutex.synchronize do
             entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id && e[:result].nil? }
@@ -1457,7 +1537,7 @@ module Legion
 
           @tool_event_handler&.call(
             type: :tool_result, tool_call_id: tc_id, tool_name: tc_name,
-            result: result_str[0, 4096], result_size: result_str.bytesize,
+            result: result_str[0, 4096], result_size: result_str.bytesize, status: is_error ? :error : :success,
             started_at: started_at, finished_at: finished_at, duration_ms: duration_ms
           )
 
@@ -2048,16 +2128,22 @@ module Legion
         end
 
         def response_tool_calls
-          # Prefer typed ToolCall objects from pending history (already built during execution)
+          raw_tool_calls = @raw_response.respond_to?(:tool_calls) ? @raw_response.tool_calls : nil
+          return build_response_tool_calls(raw_tool_calls) if raw_tool_calls&.any?
+
+          # Fall back to typed ToolCall objects from pending history when the final
+          # model response completed after server-side tool execution.
           typed_from_history = @pending_tool_history
                                .filter_map { |entry| entry[:typed_call] }
           return typed_from_history if typed_from_history.any?
 
-          return [] unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls
+          []
+        end
 
+        def build_response_tool_calls(tool_calls)
           tool_timeline = build_tool_timeline_index
 
-          Array(@raw_response.tool_calls).map do |tool_call|
+          Array(tool_calls).map do |tool_call|
             tc_id   = tool_call[:id] || tool_call['id']
             tc_name = tool_call[:name] || tool_call['name']
             tc_args = tool_call[:arguments] || tool_call['arguments'] || {}

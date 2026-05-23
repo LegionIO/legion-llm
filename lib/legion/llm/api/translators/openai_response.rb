@@ -70,6 +70,51 @@ module Legion
             }
           end
 
+          def format_stream_tool_call_chunk(tool_call, model:, request_id:, index:)
+            fn = tool_call.is_a?(Hash) ? (tool_call[:function] || tool_call['function'] || {}) : {}
+            name = tool_call.respond_to?(:name) ? tool_call.name : (tool_call[:name] || tool_call['name'] || fn[:name] || fn['name'])
+            args = if tool_call.respond_to?(:arguments)
+                     tool_call.arguments
+                   else
+                     tool_call[:arguments] || tool_call['arguments'] || fn[:arguments] || fn['arguments'] || {}
+                   end
+            tc_id = tool_call.respond_to?(:id) ? tool_call.id : (tool_call[:id] || tool_call['id'] || "call_#{SecureRandom.hex(8)}")
+
+            format_stream_delta_chunk(
+              {
+                tool_calls: [
+                  {
+                    index:    index,
+                    id:       tc_id,
+                    type:     'function',
+                    function: {
+                      name:      name.to_s,
+                      arguments: args.is_a?(String) ? args : Legion::JSON.dump(args)
+                    }
+                  }
+                ]
+              },
+              model:      model,
+              request_id: request_id
+            )
+          end
+
+          def format_stream_delta_chunk(delta, model:, request_id:, finish_reason: nil)
+            {
+              id:      "chatcmpl-#{request_id.delete('-')}",
+              object:  'chat.completion.chunk',
+              created: Time.now.to_i,
+              model:   model.to_s,
+              choices: [
+                {
+                  index:         0,
+                  delta:         delta,
+                  finish_reason: finish_reason
+                }
+              ]
+            }
+          end
+
           def format_embeddings(vector, model:, input_text:, usage: nil)
             tokens = embedding_token_count(usage, input_text)
 

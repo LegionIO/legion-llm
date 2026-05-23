@@ -19,6 +19,10 @@ module Legion
         LIST_ALL_TOOLS_NAME = 'legion_list_all_tools'
         DEFAULT_TIMEOUT_MS = 120_000
         MAX_TIMEOUT_MS = 600_000
+        TOOL_ALIASES = {
+          'python' => %w[python python3],
+          'pip'    => %w[pip pip3]
+        }.freeze
         PYTHON_PACKAGES = %w[
           python-pptx
           python-docx
@@ -58,6 +62,11 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.special.dispatch', tool_name: tool_name)
           { status: :error, result: e.message }
+        end
+
+        def aliases_for(tool_name)
+          normalized = normalize_tool_name(tool_name)
+          TOOL_ALIASES.fetch(normalized, [normalized])
         end
 
         def inventory

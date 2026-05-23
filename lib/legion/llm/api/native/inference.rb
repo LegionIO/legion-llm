@@ -28,7 +28,7 @@ module Legion
               conversation_id = body[:conversation_id]
               request_id      = body[:request_id] || SecureRandom.uuid
               include_thinking = body[:include_thinking] == true
-              client_tool_passthrough = body[:client_tool_passthrough] == true
+              client_tool_passthrough = body[:client_tool_passthrough] if [true, false].include?(body[:client_tool_passthrough])
 
               unless messages.is_a?(Array)
                 halt 400, { 'Content-Type' => 'application/json' },
@@ -105,7 +105,7 @@ module Legion
               extra = {}
               extra[:tier] = tier.to_sym if tier
               metadata = { requested_tools: requested_tools }
-              metadata[:client_tool_passthrough] = true if client_tool_passthrough
+              metadata[:client_tool_passthrough] = client_tool_passthrough unless client_tool_passthrough.nil?
               metadata[:client_tool_request_count] = tools.size if tools.any?
 
               pipeline_request = Legion::LLM::Inference::Request.build(
@@ -148,10 +148,12 @@ module Legion
                                        timestamp:  Time.now.utc.iso8601
                                      })
                     when :tool_result
-                      emit_sse_event(out, 'tool-result', {
+                      event_name = event[:status].to_s == 'error' ? 'tool-error' : 'tool-result'
+                      emit_sse_event(out, event_name, {
                                        toolCallId: event[:tool_call_id],
                                        toolName:   event[:tool_name],
                                        result:     event[:result],
+                                       status:     event[:status],
                                        timestamp:  Time.now.utc.iso8601
                                      })
                     when :tool_error
@@ -184,20 +186,31 @@ module Legion
 
                   routing = pipeline_response.routing || {}
                   tokens = pipeline_response.tokens || {}
+                  tool_calls = extract_tool_calls(pipeline_response)
+                  stop_reason = pipeline_response.stop&.dig(:reason)&.to_s
                   done_payload = {
-                    request_id:      request_id,
-                    content:         full_text,
-                    model:           (routing[:model] || routing['model']).to_s,
-                    provider:        (routing[:provider] || routing['provider'])&.to_s,
-                    instance:        (routing[:instance] || routing['instance'])&.to_s,
-                    tier:            (routing[:tier] || routing['tier'])&.to_s,
-                    input_tokens:    token_value(tokens, :input),
-                    output_tokens:   token_value(tokens, :output),
-                    tool_calls:      extract_tool_calls(pipeline_response),
-                    conversation_id: pipeline_response.conversation_id,
-                    metrics:         build_response_metrics(pipeline_response)
+                    request_id:           request_id,
+                    content:              full_text,
+                    model:                (routing[:model] || routing['model']).to_s,
+                    provider:             (routing[:provider] || routing['provider'])&.to_s,
+                    instance:             (routing[:instance] || routing['instance'])&.to_s,
+                    tier:                 (routing[:tier] || routing['tier'])&.to_s,
+                    input_tokens:         token_value(tokens, :input),
+                    output_tokens:        token_value(tokens, :output),
+                    tool_calls:           tool_calls,
+                    stop_reason:          stop_reason,
+                    requires_tool_result: stop_reason == 'tool_use' && tool_calls.any?,
+                    conversation_id:      pipeline_response.conversation_id,
+                    metrics:              build_response_metrics(pipeline_response)
                   }.compact
                   done_payload[:thinking] = pipeline_response.thinking if include_thinking && pipeline_response.thinking
+                  log_native_inference_response(
+                    request_id:      request_id,
+                    conversation_id: pipeline_response.conversation_id || conversation_id,
+                    stream:          true,
+                    kind:            'sse_done',
+                    payload:         done_payload
+                  )
                   emit_sse_event(out, 'done', {
                                    **done_payload
                                  })
@@ -227,6 +240,7 @@ module Legion
                 routing = pipeline_response.routing || {}
                 tokens = pipeline_response.tokens || {}
                 tool_calls = extract_tool_calls(pipeline_response)
+                stop_reason = pipeline_response.stop&.dig(:reason)&.to_s
 
                 log.info(
                   "[llm][api][inference] action=completed request_id=#{request_id} " \
@@ -240,21 +254,29 @@ module Legion
                 )
 
                 payload = {
-                  request_id:      request_id,
-                  content:         content,
-                  tool_calls:      tool_calls,
-                  stop_reason:     pipeline_response.stop&.dig(:reason)&.to_s,
-                  model:           (routing[:model] || routing['model']).to_s,
-                  provider:        (routing[:provider] || routing['provider'])&.to_s,
-                  instance:        (routing[:instance] || routing['instance'])&.to_s,
-                  tier:            (routing[:tier] || routing['tier'])&.to_s,
-                  input_tokens:    token_value(tokens, :input),
-                  output_tokens:   token_value(tokens, :output),
-                  conversation_id: pipeline_response.conversation_id,
-                  metrics:         build_response_metrics(pipeline_response)
+                  request_id:           request_id,
+                  content:              content,
+                  tool_calls:           tool_calls,
+                  stop_reason:          stop_reason,
+                  requires_tool_result: stop_reason == 'tool_use' && tool_calls.any?,
+                  model:                (routing[:model] || routing['model']).to_s,
+                  provider:             (routing[:provider] || routing['provider'])&.to_s,
+                  instance:             (routing[:instance] || routing['instance'])&.to_s,
+                  tier:                 (routing[:tier] || routing['tier'])&.to_s,
+                  input_tokens:         token_value(tokens, :input),
+                  output_tokens:        token_value(tokens, :output),
+                  conversation_id:      pipeline_response.conversation_id,
+                  metrics:              build_response_metrics(pipeline_response)
                 }
                 payload[:thinking] = pipeline_response.thinking if include_thinking && pipeline_response.thinking
                 payload.compact!
+                log_native_inference_response(
+                  request_id:      request_id,
+                  conversation_id: pipeline_response.conversation_id || conversation_id,
+                  stream:          false,
+                  kind:            'json_response',
+                  payload:         { data: payload }
+                )
                 json_response(payload, status_code: 200)
               end
             rescue Legion::LLM::AuthError => e

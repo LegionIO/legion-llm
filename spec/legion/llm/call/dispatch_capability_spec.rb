@@ -76,6 +76,24 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
       expect(result[:usage].input_tokens).to eq(11)
     end
 
+    it 'rejects responses capability when an adapter explicitly does not support it' do
+      unsupported = Class.new do
+        def supports?(capability) = capability.to_sym != :responses
+
+        def responses(**)
+          raise 'should not dispatch'
+        end
+      end.new
+      Legion::LLM::Call::Registry.register(:unsupported, unsupported, instance: :local)
+
+      expect do
+        described_class.call(
+          provider: :unsupported, capability: :responses, instance: :local,
+          model: 'model-a', body: { input: 'hi' }, messages: [{ role: 'user', content: 'hi' }], stream: false
+        )
+      end.to raise_error(Legion::LLM::ProviderError, /unsupported capability responses/)
+    end
+
     it 'dispatches image capability — calls ext.image' do
       result = described_class.call(
         provider: :ollama, capability: :image, instance: :local,

@@ -1,5 +1,80 @@
 # Legion LLM Changelog
 
+## [0.9.51] - 2026-05-23
+
+### Changed
+- Settings: `tool_trigger.client_tool_passthrough` now defaults to `false`; callers must opt in with request metadata or a settings override before non-executable client tools are passed through to providers.
+
+## [0.9.50] - 2026-05-23
+
+### Fixed
+- API: native `/api/llm/inference` now debug-logs the exact outward response payload for sync JSON responses and streaming `done` events, making client passthrough tool-call shape visible in runtime logs.
+
+## [0.9.49] - 2026-05-23
+
+### Fixed
+- API: native `/api/llm/inference` client tool requests now use the OpenAI Chat Completions `tool_calls` shape with `type: "function"` and `function.name` / JSON-string `function.arguments`, aligning native sync responses and streaming `done.tool_calls` with the OpenAI-compatible endpoints.
+
+## [0.9.48] - 2026-05-23
+
+### Fixed
+- API: OpenAI-compatible streaming now emits tool callbacks for both Chat Completions and Responses: `/v1/chat/completions` streams `delta.tool_calls` and finishes with `finish_reason: "tool_calls"`, while `/v1/responses` streams `function_call` output item events and includes them in `response.completed.output`.
+
+## [0.9.47] - 2026-05-22
+
+### Fixed
+- API: streaming client passthrough tool calls now stay only on the terminal `done.tool_calls` payload instead of emitting a live `tool-call` event that makes clients wait for an impossible same-stream `tool-result`.
+
+## [0.9.46] - 2026-05-22
+
+### Fixed
+- API: returned client passthrough tool calls now keep the existing streaming `tool-call` event name while carrying `clientPassthrough` and `requiresToolResult` metadata, preserving current client execution behavior.
+
+## [0.9.45] - 2026-05-22
+
+### Fixed
+- Tools: vLLM explicit tool-choice matching now uses tool-name boundaries, so paths like `/rubymine/...` no longer force the `ruby` tool when the user asked for `git`.
+
+## [0.9.44] - 2026-05-22
+
+### Fixed
+- API: streaming client passthrough tool calls now emit `client-tool-call` with explicit client execution metadata instead of a server-execution `tool-call`, preventing clients from waiting for an impossible same-stream server tool result.
+- Settings: default client passthrough blacklist now blocks computer-use session/control tools plus Aithena and cron plugin tools so provider calls do not hand off internal UI/plugin controls as executable client tools.
+
+## [0.9.43] - 2026-05-22
+
+### Fixed
+- Tools: responses that end on client passthrough after prior server-side tool execution now return the current passthrough tool call instead of replaying the earlier executed tool from pending history.
+
+## [0.9.42] - 2026-05-22
+
+### Fixed
+- Tools: native tool-loop follow-up provider calls now include a continuation instruction that tells models to make another available tool call instead of narrating intent after a failed or incomplete tool result.
+- API: streamed native tool results now include status and emit `tool-error` when the server-side tool execution failed.
+
+## [0.9.41] - 2026-05-22
+
+### Fixed
+- API: streaming inference `done` events now include `stop_reason` and `requires_tool_result` when client passthrough tool calls must be executed and submitted back by the caller, matching the sync response contract and preventing wrappers from treating tool-use turns as final completions.
+
+## [0.9.40] - 2026-05-22
+
+### Added
+- Settings: client tool passthrough blacklist now blocks Legion launcher-style client tools such as `legion`, `legionio`, `legionio do`, and `legionio/legion` by default, including sanitized tool-name variants.
+- Tools: client `python3` and `pip3` passthrough definitions deduplicate against Legion's native `python` and `pip` special tools when the managed Python runtime is injected.
+
+## [0.9.39] - 2026-05-22
+
+### Added
+- Settings: `client_tool_passthrough_whitelist` and `client_tool_passthrough_blacklist` now filter non-executable client tools before native provider dispatch; `client_tool_passthrough` defaults to enabled, explicit API true/false overrides are preserved, the default blacklist blocks `sudo`, `visudo`, and `su`, and the default whitelist is empty.
+
+## [0.9.38] - 2026-05-22
+
+### Fixed
+- API: OpenAI Responses upstream dispatch now preserves Responses `input_text` / `output_text` content parts instead of stringifying them through chat-message normalization.
+- Providers: native `:responses` dispatch is gated to providers or instances that explicitly support the Responses API, preventing non-Responses providers from receiving `/v1/responses` traffic just because the adapter has a helper method.
+- Packaging: `event_stream_parser` is now a direct runtime dependency because `legion-llm` requires it for Responses SSE parsing.
+
 ## [0.9.37] - 2026-05-22
 
 ### Changed

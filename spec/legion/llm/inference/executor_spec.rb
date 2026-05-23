@@ -693,6 +693,95 @@ confidence: 0.9 }],
 
       expect(result[:tool_calls].first[:name]).to eq('mcp_servers')
     end
+
+    it 'adds continuation guidance after native tool result rounds' do
+      systems = []
+      call_count = 0
+      register_native_chat do |**opts|
+        systems << opts[:system].to_s
+        call_count += 1
+        if call_count == 1
+          { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
+        else
+          { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+        end
+      end
+      executor = described_class.new(tool_request)
+      executor.instance_variable_set(:@resolved_provider, :anthropic)
+      executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
+
+      executor.send(:execute_native_tool_loop)
+
+      expect(systems.first).not_to include('Tool-use continuation rule')
+      expect(systems[1]).to include('Tool-use continuation rule')
+      expect(systems[1]).to include('Do not say you will use a tool unless you are actually making the tool call')
+    end
+
+    it 'returns current client passthrough tool calls after prior server-side tool execution' do
+      client_tool = Legion::LLM::Types::ToolDefinition.build(
+        name:        'git',
+        description: 'Git client tool',
+        source:      { type: :client, executable: false }
+      )
+      mixed_tool_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'run git status' }],
+        routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+        metadata: { client_tool_passthrough: true },
+        tools:    [
+          {
+            name:        'lookup',
+            description: 'Lookup',
+            parameters:  { type: 'object', properties: {} },
+            source:      { type: :registry, tool_class: server_tool_class }
+          },
+          client_tool
+        ]
+      )
+      call_count = 0
+      register_native_chat do
+        call_count += 1
+        if call_count == 1
+          { content: '', tool_calls: [{ id: 'tc_lookup', name: 'lookup', arguments: {} }], usage: {} }
+        else
+          { content: 'using git', tool_calls: [{ id: 'tc_git', name: 'git', arguments: { command: 'status' } }], usage: {} }
+        end
+      end
+
+      response = described_class.new(mixed_tool_request).call
+
+      expect(response.tools.map(&:name)).to eq(['git'])
+      expect(response.tools.first.id).to eq('tc_git')
+      expect(response.tools.first.arguments).to eq(command: 'status')
+    end
+
+    it 'chooses the explicit client tool instead of matching tool names inside paths' do
+      client_tool = Legion::LLM::Types::ToolDefinition.build(
+        name:        'git',
+        description: 'Git client tool',
+        source:      { type: :client, executable: false }
+      )
+      path_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'run git status inside /Users/matt.iverson@optum.com/rubymine/legion/LegionIO' }],
+        routing:  { provider: :vllm, model: 'qwen3.6-27b' },
+        metadata: { client_tool_passthrough: true },
+        tools:    [client_tool]
+      )
+      executor = described_class.new(path_request)
+      executor.instance_variable_set(:@resolved_provider, :vllm)
+
+      expect(executor.send(:native_tool_prefs)).to include(choice: 'git')
+    end
+
+    it 'still chooses the Ruby tool when Ruby is explicitly requested' do
+      ruby_request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'run ruby -v' }],
+        routing:  { provider: :vllm, model: 'qwen3.6-27b' }
+      )
+      executor = described_class.new(ruby_request)
+      executor.instance_variable_set(:@resolved_provider, :vllm)
+
+      expect(executor.send(:native_tool_prefs)).to include(choice: 'ruby')
+    end
   end
 
   describe 'string-keyed routing settings' do
@@ -1023,9 +1112,45 @@ confidence: 0.9 }],
         expect(ev[:tool_name]).to eq('my_tool')
         expect(ev[:result]).to eq('result text')
         expect(ev[:result_size]).to eq('result text'.bytesize)
+        expect(ev[:status]).to eq(:success)
         expect(ev).to have_key(:duration_ms)
         expect(ev).to have_key(:started_at)
         expect(ev).to have_key(:finished_at)
+      end
+
+      it 'marks :tool_result event status as error when dispatch returns an error result' do
+        tool_class = Class.new do
+          define_singleton_method(:tool_name) { 'failing_tool' }
+          define_singleton_method(:description) { 'Failing tool' }
+          define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
+          define_singleton_method(:call) { |**| { error: 'failed' } }
+        end
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [{ name: 'failing_tool', description: 'Failing tool', input_schema: { type: 'object', properties: {} },
+               tool_class: tool_class, deferred: false }]
+          end
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == false ? tools : []
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+        call_count = 0
+        register_native_chat do
+          call_count += 1
+          if call_count == 1
+            { content: '', tool_calls: [{ id: 'tc_error', name: 'failing_tool', arguments: {} }], usage: {} }
+          else
+            { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+          end
+        end
+        allow(executor).to receive(:step_response_normalization)
+
+        executor.call
+
+        result_events = events.select { |event| event[:type] == :tool_result }
+        expect(result_events.first[:tool_call_id]).to eq('tc_error')
+        expect(result_events.first[:status]).to eq(:error)
       end
 
       it 'truncates result to 4096 bytes in :tool_result event' do
