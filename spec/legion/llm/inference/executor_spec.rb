@@ -726,6 +726,7 @@ confidence: 0.9 }],
       mixed_tool_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'run git status' }],
         routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+        metadata: { client_tool_passthrough: true },
         tools:    [
           {
             name:        'lookup',
@@ -762,6 +763,7 @@ confidence: 0.9 }],
       path_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'run git status inside /Users/matt.iverson@optum.com/rubymine/legion/LegionIO' }],
         routing:  { provider: :vllm, model: 'qwen3.6-27b' },
+        metadata: { client_tool_passthrough: true },
         tools:    [client_tool]
       )
       executor = described_class.new(path_request)

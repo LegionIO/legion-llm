@@ -83,6 +83,23 @@ RSpec.describe Legion::LLM::Inference::Executor do
         expect(executor.send(:native_tool_definitions).map(&:name)).not_to include('client_shell')
       end
 
+      it 'skips non-executable client tools by default' do
+        client_tool = Legion::LLM::Types::ToolDefinition.build(
+          name:        'client_shell',
+          description: 'Client shell',
+          source:      { type: :client, executable: false }
+        )
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'use client shell' }],
+          tools:    [client_tool],
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+        )
+
+        executor = described_class.new(request)
+
+        expect(executor.send(:native_tool_definitions).map(&:name)).not_to include('client_shell')
+      end
+
       it 'includes non-executable client tools when passthrough is explicitly enabled' do
         client_tool = Legion::LLM::Types::ToolDefinition.build(
           name:        'client_shell',
@@ -101,7 +118,25 @@ RSpec.describe Legion::LLM::Inference::Executor do
         expect(executor.send(:native_tool_definitions).map(&:name)).to include('client_shell')
       end
 
-      it 'filters passthrough client tools with the default blacklist' do
+      it 'includes non-executable client tools when the setting is enabled' do
+        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough] = true
+        client_tool = Legion::LLM::Types::ToolDefinition.build(
+          name:        'client_shell',
+          description: 'Client shell',
+          source:      { type: :client, executable: false }
+        )
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'use client shell' }],
+          tools:    [client_tool],
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+        )
+
+        executor = described_class.new(request)
+
+        expect(executor.send(:native_tool_definitions).map(&:name)).to include('client_shell')
+      end
+
+      it 'filters explicitly enabled passthrough client tools with the default blacklist' do
         tools = ['sudo', 'git', 'ls', 'grep', 'legion', 'legionio', 'legionio do', 'legionio/legion',
                  'legionio_do', 'computer_use_session', 'plugin__aithena__recall',
                  'plugin__cron__run_now'].map do |name|
@@ -114,7 +149,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
         request = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'use client tools' }],
           tools:    tools,
-          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+          metadata: { client_tool_passthrough: true }
         )
 
         executor = described_class.new(request)
@@ -189,7 +225,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
         request = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'use python tools' }],
           tools:    tools,
-          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+          metadata: { client_tool_passthrough: true }
         )
 
         executor = described_class.new(request)

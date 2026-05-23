@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.51] - 2026-05-23
+
+### Changed
+- Settings: `tool_trigger.client_tool_passthrough` now defaults to `false`; callers must opt in with request metadata or a settings override before non-executable client tools are passed through to providers.
+
 ## [0.9.50] - 2026-05-23
 
 ### Fixed

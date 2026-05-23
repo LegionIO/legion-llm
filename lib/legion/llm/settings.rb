@@ -495,7 +495,7 @@ module Legion
           scan_depth:                        10,
           tool_limit:                        25,
           local_tool_limit:                  100,
-          client_tool_passthrough:           true,
+          client_tool_passthrough:           false,
           client_tool_passthrough_whitelist: CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT.dup,
           client_tool_passthrough_blacklist: CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT.dup
         }

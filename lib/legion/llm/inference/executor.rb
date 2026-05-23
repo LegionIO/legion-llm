@@ -976,7 +976,7 @@ module Legion
             return value if [true, false].include?(value)
           end
 
-          Legion::LLM::Settings.value(:tool_trigger, :client_tool_passthrough) != false
+          Legion::LLM::Settings.value(:tool_trigger, :client_tool_passthrough) == true
         end
 
         def client_tool_passthrough_allowed?(definition)
