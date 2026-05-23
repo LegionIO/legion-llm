@@ -204,6 +204,13 @@ module Legion
                     metrics:              build_response_metrics(pipeline_response)
                   }.compact
                   done_payload[:thinking] = pipeline_response.thinking if include_thinking && pipeline_response.thinking
+                  log_native_inference_response(
+                    request_id:      request_id,
+                    conversation_id: pipeline_response.conversation_id || conversation_id,
+                    stream:          true,
+                    kind:            'sse_done',
+                    payload:         done_payload
+                  )
                   emit_sse_event(out, 'done', {
                                    **done_payload
                                  })
@@ -263,6 +270,13 @@ module Legion
                 }
                 payload[:thinking] = pipeline_response.thinking if include_thinking && pipeline_response.thinking
                 payload.compact!
+                log_native_inference_response(
+                  request_id:      request_id,
+                  conversation_id: pipeline_response.conversation_id || conversation_id,
+                  stream:          false,
+                  kind:            'json_response',
+                  payload:         { data: payload }
+                )
                 json_response(payload, status_code: 200)
               end
             rescue Legion::LLM::AuthError => e

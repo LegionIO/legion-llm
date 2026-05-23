@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.50] - 2026-05-23
+
+### Fixed
+- API: native `/api/llm/inference` now debug-logs the exact outward response payload for sync JSON responses and streaming `done` events, making client passthrough tool-call shape visible in runtime logs.
+
 ## [0.9.49] - 2026-05-23
 
 ### Fixed

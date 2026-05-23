@@ -339,6 +339,18 @@ module Legion
                 stream << "event: #{event_name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
               end
 
+              define_method(:log_native_inference_response) do |request_id:, conversation_id:, stream:, kind:, payload:|
+                log.debug(
+                  "[llm][api][inference] action=response_payload request_id=#{request_id || 'unknown'} " \
+                  "conversation_id=#{conversation_id || 'none'} stream=#{stream} kind=#{kind} " \
+                  "payload=#{Legion::JSON.dump(payload)}"
+                )
+              rescue StandardError => e
+                handle_exception(e, level: :debug, handled: true,
+                                    operation: 'llm.api.inference.response_payload_log',
+                                    request_id: request_id)
+              end
+
               define_method(:returned_client_tool_call_payload) do |tool_call, tool_call_id, tool_name|
                 {
                   toolCallId:         tool_call_id,

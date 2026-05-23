@@ -470,9 +470,11 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       }
       response = make_pipeline_response(content: 'tool response', tools: [tool_call], stop_reason: :tool_use)
       executor = instance_double('Legion::LLM::Inference::Executor', call: response)
+      logger = instance_double('Logger', debug: nil, error: nil, info: nil, warn: nil)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow_any_instance_of(test_app).to receive(:log).and_return(logger)
 
       response = post_json('/api/llm/inference', { messages: [{ role: 'user', content: 'use legion tools' }] })
 
@@ -481,6 +483,15 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(body[:data][:tool_calls]).to eq([openai_tool_call])
       expect(body[:data][:stop_reason]).to eq('tool_use')
       expect(body[:data][:requires_tool_result]).to be true
+      expect(logger).to have_received(:debug).with(
+        include(
+          '[llm][api][inference] action=response_payload',
+          'stream=false',
+          'kind=json_response',
+          '"tool_calls":[{"id":"tc_1","type":"function","index":0,' \
+          '"function":{"name":"legion_tools","arguments":"{\\"query\\":\\"status\\"}"}}]'
+        )
+      )
     end
 
     it 'flattens structured sync content blocks into text' do
@@ -569,11 +580,13 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       tool_call = { id: 'call_client_1', name: 'web_search', arguments: { query: 'legion tools' } }
       response = make_pipeline_response(content: '', tools: [tool_call], stop_reason: :tool_use)
       executor = instance_double('Legion::LLM::Inference::Executor', tool_event_handler: nil)
+      logger = instance_double('Logger', debug: nil, error: nil, info: nil, warn: nil)
       allow(executor).to receive(:tool_event_handler=)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
       allow(executor).to receive(:call_stream).and_return(response)
+      allow_any_instance_of(test_app).to receive(:log).and_return(logger)
 
       response = post_json(
         '/api/llm/inference',
@@ -590,6 +603,15 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.body).to include('"stop_reason":"tool_use"')
       expect(response.body).to include('"requires_tool_result":true')
       expect(response.body).to include('event: done')
+      expect(logger).to have_received(:debug).with(
+        include(
+          '[llm][api][inference] action=response_payload',
+          'stream=true',
+          'kind=sse_done',
+          '"tool_calls":[{"id":"call_client_1","type":"function","index":0,' \
+          '"function":{"name":"web_search","arguments":"{\\"query\\":\\"legion tools\\"}"}}]'
+        )
+      )
     end
 
     it 'streams native tool errors when executor tool events report failure' do
