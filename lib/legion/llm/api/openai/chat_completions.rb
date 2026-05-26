@@ -24,30 +24,65 @@ module Legion
                                                   type: 'invalid_request_error', param: 'messages', code: nil } })
               end
 
-              request_id = SecureRandom.uuid
+              request_id = body[:request_id] || SecureRandom.uuid
               normalized = Legion::LLM::API::Translators::OpenAIRequest.normalize(body)
               model = normalized[:model] || Legion::LLM::Settings.value(:default_model) || 'default'
               streaming = normalized[:stream] == true
-              # Support reasoning/thinking tokens. Opt-in via `include_reasoning: true` in the
-              # request body (mirrors the native API's `include_thinking` flag).
               include_reasoning = body[:include_reasoning] == true || body[:include_thinking] == true
 
-              log.info("[llm][api][openai][chat_completions] action=accepted request_id=#{request_id} " \
-                       "model=#{model} stream=#{streaming} reasoning=#{include_reasoning}")
+              # ── Extended fields (parity with native /api/llm/inference) ──────────
+              # Accepted from request body OR X-Legion-* headers (headers take precedence
+              # for simple scalar values, body for complex objects like requested_tools).
+              conversation_id = env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id]
+              provider = env['HTTP_X_LEGION_PROVIDER'] || body[:provider]
+              tier = env['HTTP_X_LEGION_TIER'] || body[:tier]
+              instance = env['HTTP_X_LEGION_INSTANCE'] || body[:instance]
+              cwd = env['HTTP_X_LEGION_CWD'] || body[:cwd]
+              requested_tools = body[:requested_tools] || []
+              client_tool_passthrough = if env.key?('HTTP_X_LEGION_CLIENT_TOOL_PASSTHROUGH')
+                                          env['HTTP_X_LEGION_CLIENT_TOOL_PASSTHROUGH'] == 'true'
+                                        elsif [true, false].include?(body[:client_tool_passthrough])
+                                          body[:client_tool_passthrough]
+                                        end
+              caller_context = body[:caller]
+
+              log.info('[llm][api][openai][chat_completions] action=accepted ' \
+                       "request_id=#{request_id} model=#{model} stream=#{streaming} " \
+                       "conversation_id=#{conversation_id || 'none'} tier=#{tier || 'auto'}")
 
               tool_declarations = Legion::LLM::API::OpenAI::ChatCompletions.build_openai_tool_classes(normalized[:tools])
 
-              effective_caller = build_server_caller(source: 'openai_compat', path: request.path, env: env)
+              # ── Gaia ingest (mirrors native endpoint pre-pipeline awareness) ────
+              Legion::LLM::API::OpenAI::ChatCompletions.gaia_ingest(
+                body[:messages], request_id, identity_canonical_name(env)
+              )
+
+              effective_caller = build_server_caller(
+                source: 'openai_compat', path: request.path, env: env,
+                caller_context: caller_context
+              )
+
+              # ── Build request with full pipeline field set ───────────────────────
+              extra = {}
+              extra[:tier] = tier.to_sym if tier
+              extra[:cwd] = cwd if cwd
+
+              metadata = { requested_tools: requested_tools }
+              metadata[:client_tool_passthrough] = client_tool_passthrough unless client_tool_passthrough.nil?
+              metadata[:client_tool_request_count] = normalized[:tools]&.size if normalized[:tools]&.any?
 
               inference_request = Legion::LLM::Inference::Request.build(
-                id:       request_id,
-                messages: normalized[:messages],
-                system:   normalized[:system],
-                routing:  { model: model },
-                tools:    tool_declarations,
-                caller:   effective_caller,
-                stream:   streaming,
-                cache:    { strategy: :default, cacheable: true }
+                id:              request_id,
+                messages:        normalized[:messages],
+                system:          normalized[:system],
+                routing:         { provider: provider, model: model, instance: instance }.compact,
+                tools:           tool_declarations,
+                caller:          effective_caller,
+                conversation_id: conversation_id,
+                metadata:        metadata.compact,
+                stream:          streaming,
+                cache:           { strategy: :default, cacheable: true },
+                extra:           extra.empty? ? {} : extra
               )
 
               executor = Legion::LLM::Inference::Executor.new(inference_request)
@@ -81,7 +116,6 @@ module Legion
                     )
                     out << "data: #{Legion::JSON.dump(tc_chunk)}\n\n"
                   end
-
                   done_chunk = Legion::LLM::API::Translators::OpenAIResponse.format_stream_chunk(
                     nil, model: final_model, request_id: request_id,
                     finish_reason: tool_calls.empty? ? 'stop' : 'tool_calls'
@@ -201,6 +235,28 @@ module Legion
               completion_tokens: output_count,
               total_tokens:      input_count + output_count
             }
+          end
+
+          # Pre-pipeline Gaia ingest — mirrors the native endpoint's awareness update.
+          # Feeds the latest user prompt into Gaia so advisory/context is fresh.
+          def self.gaia_ingest(messages, request_id, caller_identity)
+            return unless defined?(Legion::Gaia) && Legion::Gaia.respond_to?(:started?) && Legion::Gaia.started?
+
+            last_user = Array(messages).select { |m| (m[:role] || m['role']).to_s == 'user' }.last
+            prompt = (last_user || {})[:content] || (last_user || {})['content'] || ''
+            return if prompt.to_s.empty?
+
+            frame = Legion::Gaia::InputFrame.new(
+              content:      prompt.to_s,
+              channel_id:   :api,
+              content_type: :text,
+              auth_context: { identity: caller_identity },
+              metadata:     { source_type: :human_direct, salience: 0.9 }
+            )
+            Legion::Gaia.ingest(frame)
+            log.debug("[llm][api][openai][chat_completions] action=gaia_ingest request_id=#{request_id}")
+          rescue StandardError => e
+            log.warn("[llm][api][openai][chat_completions] gaia_ingest failed: #{e.message}")
           end
         end
       end

@@ -3,7 +3,10 @@
 ## [0.9.52] - 2026-05-26
 
 ### Added
-- API: `/v1/chat/completions` now supports reasoning/thinking token streaming via `include_reasoning: true` (or `include_thinking: true`) in the request body. Emits `reasoning_content` delta chunks in OpenAI format (matching o1/o3 reasoning model convention). Non-streaming responses include `reasoning_content` in the message body. Final streaming chunk includes `usage` stats when reasoning is enabled.
+- API: `/v1/chat/completions` now has full pipeline feature parity with the native `/api/llm/inference` endpoint — routing, escalation, RAG context injection, Gaia advisory, knowledge capture, tool discovery, sticky runners, confidence scoring, metering, and debate all activate when the relevant fields are provided.
+- API: `/v1/chat/completions` accepts extended fields via request body (`conversation_id`, `provider`, `tier`, `instance`, `cwd`, `requested_tools`, `client_tool_passthrough`, `caller`) or via `X-Legion-*` headers (`X-Legion-Conversation-Id`, `X-Legion-Provider`, `X-Legion-Tier`, `X-Legion-Instance`, `X-Legion-Cwd`, `X-Legion-Client-Tool-Passthrough`). Headers take precedence for scalar values.
+- API: `/v1/chat/completions` now performs pre-pipeline Gaia ingest (mirrors native endpoint awareness).
+- API: `/v1/chat/completions` reasoning/thinking token streaming via `include_reasoning: true` (or `include_thinking: true`). Emits `reasoning_content` delta chunks in OpenAI format. Non-streaming responses include `reasoning_content` in the message body.
 
 ## [0.9.51] - 2026-05-23
 
