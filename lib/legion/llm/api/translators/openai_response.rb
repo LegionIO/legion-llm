@@ -20,7 +20,7 @@ module Legion
 
           module_function
 
-          def format_chat_completion(pipeline_response, model:, request_id: nil)
+          def format_chat_completion(pipeline_response, model:, request_id: nil, include_reasoning: false)
             request_id ||= SecureRandom.uuid
             routing = pipeline_response.routing || {}
             tokens = pipeline_response.tokens || {}
@@ -36,6 +36,20 @@ module Legion
 
             message_body = { role: 'assistant', content: content }
             message_body[:tool_calls] = tool_calls unless tool_calls.empty?
+
+            # Include reasoning/thinking content in the response when requested.
+            # Uses the `reasoning_content` field convention from OpenAI's reasoning models.
+            if include_reasoning && pipeline_response.respond_to?(:thinking) && pipeline_response.thinking
+              thinking_data = pipeline_response.thinking
+              reasoning_text = if thinking_data.is_a?(Hash)
+                                 thinking_data[:content] || thinking_data['content']
+                               elsif thinking_data.respond_to?(:content)
+                                 thinking_data.content
+                               else
+                                 thinking_data.to_s
+                               end
+              message_body[:reasoning_content] = reasoning_text.to_s unless reasoning_text.to_s.empty?
+            end
 
             {
               id:      "chatcmpl-#{request_id.delete('-')}",

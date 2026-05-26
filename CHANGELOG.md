@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.52] - 2026-05-26
+
+### Added
+- API: `/v1/chat/completions` now supports reasoning/thinking token streaming via `include_reasoning: true` (or `include_thinking: true`) in the request body. Emits `reasoning_content` delta chunks in OpenAI format (matching o1/o3 reasoning model convention). Non-streaming responses include `reasoning_content` in the message body. Final streaming chunk includes `usage` stats when reasoning is enabled.
+
 ## [0.9.51] - 2026-05-23
 
 ### Changed

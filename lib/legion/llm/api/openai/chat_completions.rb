@@ -28,8 +28,11 @@ module Legion
               normalized = Legion::LLM::API::Translators::OpenAIRequest.normalize(body)
               model = normalized[:model] || Legion::LLM::Settings.value(:default_model) || 'default'
               streaming = normalized[:stream] == true
+              # Support reasoning/thinking tokens. Opt-in via `include_reasoning: true` in the
+              # request body (mirrors the native API's `include_thinking` flag).
+              include_reasoning = body[:include_reasoning] == true || body[:include_thinking] == true
 
-              log.info("[llm][api][openai][chat_completions] action=accepted request_id=#{request_id} model=#{model} stream=#{streaming}")
+              log.info("[llm][api][openai][chat_completions] action=accepted request_id=#{request_id} model=#{model} stream=#{streaming} reasoning=#{include_reasoning}")
 
               tool_declarations = Legion::LLM::API::OpenAI::ChatCompletions.build_openai_tool_classes(normalized[:tools])
 
@@ -56,6 +59,19 @@ module Legion
 
                 stream do |out|
                   pipeline_response = executor.call_stream do |chunk|
+                    # Emit reasoning/thinking deltas before content deltas.
+                    # Uses OpenAI's reasoning_content field convention (used by o1/o3 models).
+                    if include_reasoning && chunk.respond_to?(:thinking)
+                      thinking_text = Legion::LLM::API::OpenAI::ChatCompletions.extract_chunk_text(chunk.thinking)
+                      unless thinking_text.empty?
+                        reasoning_chunk = Legion::LLM::API::Translators::OpenAIResponse.format_stream_delta_chunk(
+                          { reasoning_content: thinking_text },
+                          model: model, request_id: request_id
+                        )
+                        out << "data: #{Legion::JSON.dump(reasoning_chunk)}\n\n"
+                      end
+                    end
+
                     text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
                     next if text.empty?
 
@@ -78,12 +94,26 @@ module Legion
                                                       ))}\n\n"
                   end
 
+                  # Include usage stats in the final chunk when reasoning is enabled
+                  # (mirrors OpenAI's behavior with reasoning models).
                   done_chunk = Legion::LLM::API::Translators::OpenAIResponse.format_stream_chunk(
                     nil,
                     model:         final_model,
                     request_id:    request_id,
                     finish_reason: tool_calls.empty? ? 'stop' : 'tool_calls'
                   )
+                  if include_reasoning
+                    tokens = pipeline_response.tokens || {}
+                    input_count = Legion::LLM::API::Translators::OpenAIResponse
+                                    .extract_token_count(tokens, :input).to_i
+                    output_count = Legion::LLM::API::Translators::OpenAIResponse
+                                     .extract_token_count(tokens, :output).to_i
+                    done_chunk[:usage] = {
+                      prompt_tokens:     input_count,
+                      completion_tokens: output_count,
+                      total_tokens:      input_count + output_count
+                    }
+                  end
                   out << "data: #{Legion::JSON.dump(done_chunk)}\n\n"
                   out << "data: [DONE]\n\n"
 
@@ -96,7 +126,8 @@ module Legion
               else
                 pipeline_response = executor.call
                 response_body = Legion::LLM::API::Translators::OpenAIResponse.format_chat_completion(
-                  pipeline_response, model: model, request_id: request_id
+                  pipeline_response, model: model, request_id: request_id,
+                  include_reasoning: include_reasoning
                 )
 
                 log.info("[llm][api][openai][chat_completions] action=complete request_id=#{request_id} model=#{response_body[:model]}")
@@ -144,6 +175,26 @@ module Legion
               handle_exception(e, level: :warn, handled: true, operation: "llm.api.openai.build_tool.#{tool_name || 'unknown'}")
               nil
             end
+          end
+
+          # Extract text content from a thinking chunk value.
+          # Handles the various shapes the chunk.thinking field can take:
+          #   - Hash with :content or :text key
+          #   - Object with .content or .text method
+          #   - Raw string
+          def self.extract_chunk_text(value)
+            return '' if value.nil?
+            return value.to_s if value.is_a?(String)
+
+            if value.is_a?(Hash)
+              text = value[:content] || value['content'] || value[:text] || value['text']
+              return text.to_s if text
+            end
+
+            return value.content.to_s if value.respond_to?(:content) && value.content
+            return value.text.to_s if value.respond_to?(:text) && value.text
+
+            value.to_s
           end
         end
       end
