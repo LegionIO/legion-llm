@@ -30,25 +30,12 @@ module Legion
               streaming = normalized[:stream] == true
               include_reasoning = body[:include_reasoning] == true || body[:include_thinking] == true
 
-              # ── Extended fields (parity with native /api/llm/inference) ──────────
-              # Accepted from request body OR X-Legion-* headers (headers take precedence
-              # for simple scalar values, body for complex objects like requested_tools).
-              conversation_id = env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id]
-              provider = env['HTTP_X_LEGION_PROVIDER'] || body[:provider]
-              tier = env['HTTP_X_LEGION_TIER'] || body[:tier]
-              instance = env['HTTP_X_LEGION_INSTANCE'] || body[:instance]
-              cwd = env['HTTP_X_LEGION_CWD'] || body[:cwd]
-              requested_tools = body[:requested_tools] || []
-              client_tool_passthrough = if env.key?('HTTP_X_LEGION_CLIENT_TOOL_PASSTHROUGH')
-                                          env['HTTP_X_LEGION_CLIENT_TOOL_PASSTHROUGH'] == 'true'
-                                        elsif [true, false].include?(body[:client_tool_passthrough])
-                                          body[:client_tool_passthrough]
-                                        end
-              caller_context = body[:caller]
+              # ── Extended fields + pipeline request (parity with native) ─────────
+              ext = Legion::LLM::API::OpenAI::ChatCompletions.extract_extended_fields(body, env)
 
               log.info('[llm][api][openai][chat_completions] action=accepted ' \
                        "request_id=#{request_id} model=#{model} stream=#{streaming} " \
-                       "conversation_id=#{conversation_id || 'none'} tier=#{tier || 'auto'}")
+                       "conversation_id=#{ext[:conversation_id] || 'none'} tier=#{ext[:tier] || 'auto'}")
 
               tool_declarations = Legion::LLM::API::OpenAI::ChatCompletions.build_openai_tool_classes(normalized[:tools])
 
@@ -59,30 +46,13 @@ module Legion
 
               effective_caller = build_server_caller(
                 source: 'openai_compat', path: request.path, env: env,
-                caller_context: caller_context
+                caller_context: ext[:caller_context]
               )
 
-              # ── Build request with full pipeline field set ───────────────────────
-              extra = {}
-              extra[:tier] = tier.to_sym if tier
-              extra[:cwd] = cwd if cwd
-
-              metadata = { requested_tools: requested_tools }
-              metadata[:client_tool_passthrough] = client_tool_passthrough unless client_tool_passthrough.nil?
-              metadata[:client_tool_request_count] = normalized[:tools]&.size if normalized[:tools]&.any?
-
-              inference_request = Legion::LLM::Inference::Request.build(
-                id:              request_id,
-                messages:        normalized[:messages],
-                system:          normalized[:system],
-                routing:         { provider: provider, model: model, instance: instance }.compact,
-                tools:           tool_declarations,
-                caller:          effective_caller,
-                conversation_id: conversation_id,
-                metadata:        metadata.compact,
-                stream:          streaming,
-                cache:           { strategy: :default, cacheable: true },
-                extra:           extra.empty? ? {} : extra
+              inference_request = Legion::LLM::API::OpenAI::ChatCompletions.build_inference_request(
+                request_id: request_id, normalized: normalized, model: model,
+                tool_declarations: tool_declarations, caller: effective_caller,
+                streaming: streaming, ext: ext
               )
 
               executor = Legion::LLM::Inference::Executor.new(inference_request)
@@ -165,6 +135,52 @@ module Legion
             end
 
             log.debug('[llm][api][openai][chat_completions] POST /v1/chat/completions registered')
+          end
+
+          # Extract extended pipeline fields from body + X-Legion-* headers.
+          # Headers take precedence for scalar values; body for complex objects.
+          def self.extract_extended_fields(body, env)
+            ctp = if env.key?('HTTP_X_LEGION_CLIENT_TOOL_PASSTHROUGH')
+                    env['HTTP_X_LEGION_CLIENT_TOOL_PASSTHROUGH'] == 'true'
+                  elsif [true, false].include?(body[:client_tool_passthrough])
+                    body[:client_tool_passthrough]
+                  end
+
+            {
+              conversation_id:         env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id],
+              provider:                env['HTTP_X_LEGION_PROVIDER'] || body[:provider],
+              tier:                    env['HTTP_X_LEGION_TIER'] || body[:tier],
+              instance:                env['HTTP_X_LEGION_INSTANCE'] || body[:instance],
+              cwd:                     env['HTTP_X_LEGION_CWD'] || body[:cwd],
+              requested_tools:         body[:requested_tools] || [],
+              client_tool_passthrough: ctp,
+              caller_context:          body[:caller]
+            }
+          end
+
+          # Build the Inference::Request with full pipeline field set.
+          def self.build_inference_request(request_id:, normalized:, model:, tool_declarations:, caller:, streaming:, ext:)
+            extra = {}
+            extra[:tier] = ext[:tier].to_sym if ext[:tier]
+            extra[:cwd] = ext[:cwd] if ext[:cwd]
+
+            metadata = { requested_tools: ext[:requested_tools] }
+            metadata[:client_tool_passthrough] = ext[:client_tool_passthrough] unless ext[:client_tool_passthrough].nil?
+            metadata[:client_tool_request_count] = normalized[:tools]&.size if normalized[:tools]&.any?
+
+            Legion::LLM::Inference::Request.build(
+              id:              request_id,
+              messages:        normalized[:messages],
+              system:          normalized[:system],
+              routing:         { provider: ext[:provider], model: model, instance: ext[:instance] }.compact,
+              tools:           tool_declarations,
+              caller:          caller,
+              conversation_id: ext[:conversation_id],
+              metadata:        metadata.compact,
+              stream:          streaming,
+              cache:           { strategy: :default, cacheable: true },
+              extra:           extra.empty? ? {} : extra
+            )
           end
 
           def self.build_openai_tool_classes(tools)
