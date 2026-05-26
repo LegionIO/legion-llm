@@ -58,7 +58,7 @@ module Legion
                         'Connection'        => 'keep-alive',
                         'X-Accel-Buffering' => 'no'
 
-                stream do |out| # rubocop:disable Metrics/BlockLength
+                stream do |out|
                   pipeline_response = executor.call_stream do |chunk|
                     Legion::LLM::API::OpenAI::ChatCompletions.emit_reasoning_delta(
                       out, chunk, model, request_id, include_reasoning
@@ -91,7 +91,7 @@ module Legion
                   )
                   out << "data: #{Legion::JSON.dump(done_chunk)}\n\n"
                   out << "data: [DONE]\n\n"
-                  log.info("[llm][api][openai][chat_completions] action=stream_complete " \
+                  log.info('[llm][api][openai][chat_completions] action=stream_complete ' \
                            "request_id=#{request_id} model=#{final_model}")
                 rescue StandardError => e
                   handle_exception(e, level: :error, handled: false,
