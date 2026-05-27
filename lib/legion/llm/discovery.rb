@@ -266,6 +266,12 @@ module Legion
             return false
           end
 
+          unless verify_embedding(provider, resolved)
+            log.debug "[llm][discovery] action=detect_embedding_from_registry verify_failed " \
+                      "provider=#{provider} model=#{resolved} — falling through to legacy probe"
+            return false
+          end
+
           @embedding_provider = provider
           @embedding_model    = resolved
           @embedding_instance = instance
@@ -324,7 +330,7 @@ module Legion
 
         def verify_embedding(provider, model)
           log.debug "[llm][discovery] verify_embedding provider=#{provider} model=#{model}"
-          return true if provider == :ollama
+          return model_available?(model, provider: :ollama) if provider == :ollama
           return true if provider == :azure
           return false unless provider_supports_embeddings?(provider)
           return true unless model

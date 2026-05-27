@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.9.52] - 2026-05-27
+
+### Fixed
+- Discovery: `verify_embedding` now checks `model_available?` for Ollama instead of blindly returning true — prevents `can_embed?` from reporting true when the embedding model (e.g. `mxbai-embed-large`) hasn't been pulled on the local node
+- Discovery: `detect_embedding_from_registry` now calls `verify_embedding` before setting `@can_embed = true`, closing a gap where registry-declared capability metadata was trusted without verifying the model exists locally
+
 ## [0.9.51] - 2026-05-23
 
 ### Changed

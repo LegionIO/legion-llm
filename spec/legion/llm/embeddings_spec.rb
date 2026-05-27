@@ -69,6 +69,8 @@ RSpec.describe '.detect_embedding_capability' do
         instance: :gpu_box,
         metadata: { capabilities: [:embedding], tier: 'local', default_model: 'mxbai-embed-large' }
       )
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
+        .with('mxbai-embed-large', provider: :ollama).and_return(true)
     end
 
     it 'selects the registry instance as primary embedding provider' do
@@ -118,6 +120,8 @@ RSpec.describe '.detect_embedding_capability' do
         instance: :fleet_gpu,
         metadata: { capabilities: [:embedding], tier: 'fleet', default_model: 'bge-large' }
       )
+      allow(Legion::LLM::Discovery).to receive(:model_available?)
+        .with('mxbai-embed-large', provider: :ollama).and_return(true)
     end
 
     it 'picks the best tier (local) over cloud and fleet' do
