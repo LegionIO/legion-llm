@@ -267,7 +267,7 @@ module Legion
           end
 
           unless verify_embedding(provider, resolved)
-            log.debug "[llm][discovery] action=detect_embedding_from_registry verify_failed " \
+            log.debug '[llm][discovery] action=detect_embedding_from_registry verify_failed ' \
                       "provider=#{provider} model=#{resolved} — falling through to legacy probe"
             return false
           end
