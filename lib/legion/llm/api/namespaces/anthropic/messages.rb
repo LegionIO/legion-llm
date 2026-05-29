@@ -31,7 +31,7 @@ module Legion
               require 'legion/llm/inference/request' unless defined?(Legion::LLM::Inference::Request)
               require 'legion/llm/inference/executor' unless defined?(Legion::LLM::Inference::Executor)
 
-              tool_defs = build_tool_definitions(normalized[:tools] || [], executable: true)
+              tool_defs = build_tool_definitions(normalized[:tools] || [], executable: false)
 
               pipeline_request = Legion::LLM::Inference::Request.build(
                 id:       request_id,

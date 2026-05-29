@@ -83,7 +83,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         expect(executor.send(:native_tool_definitions).map(&:name)).not_to include('client_shell')
       end
 
-      it 'skips non-executable client tools by default' do
+      it 'passes through non-executable client tools by default' do
         client_tool = Legion::LLM::Types::ToolDefinition.build(
           name:        'client_shell',
           description: 'Client shell',
@@ -97,7 +97,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
         executor = described_class.new(request)
 
-        expect(executor.send(:native_tool_definitions).map(&:name)).not_to include('client_shell')
+        expect(executor.send(:native_tool_definitions).map(&:name)).to include('client_shell')
       end
 
       it 'includes non-executable client tools when passthrough is explicitly enabled' do

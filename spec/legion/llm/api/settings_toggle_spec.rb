@@ -10,7 +10,7 @@ RSpec.describe 'Legion::LLM::Settings api.use_namespaces toggle' do
     end
 
     it 'is accessible via Settings.value' do
-      result = Legion::LLM::Settings.value(:api, :use_namespaces, default: false)
+      result = Legion::LLM::Settings.value(:api, :use_namespaces)
       expect(result).to eq(false)
     end
 
