@@ -32,8 +32,21 @@ module Legion
             log.debug('[llm][api][namespaces] openai namespace registration pending')
           end
 
-          def self.register_anthropic(_app)
-            log.debug('[llm][api][namespaces] anthropic namespace registration pending')
+          def self.register_anthropic(app)
+            require_relative 'anthropic/messages'
+            require_relative 'anthropic/messages/count_tokens'
+            require_relative 'anthropic/messages/batches'
+            # NOTE: anthropic/models.rb is a format helper only — no routes to register.
+            # The /v1/models namespace is owned by OpenAI::Models (Phase 2A) which branches
+            # on anthropic_client?(env) to emit Anthropic-format responses.
+
+            app.namespace '/v1/messages' do
+              register Namespaces::Anthropic::Messages
+              register Namespaces::Anthropic::Messages::CountTokens
+              namespace('/batches') { register Namespaces::Anthropic::Messages::Batches }
+            end
+
+            log.debug('[llm][api][namespaces] anthropic namespaces registered')
           end
         end
       end
