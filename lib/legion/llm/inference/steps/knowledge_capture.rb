@@ -53,7 +53,7 @@ module Legion
           def local_capture_enabled?
             defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.knowledge_capture.local_capture_enabled')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture.local_capture_enabled')
             false
           end
 

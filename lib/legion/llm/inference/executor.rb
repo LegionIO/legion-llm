@@ -1829,7 +1829,7 @@ module Legion
           end
           estimated
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.estimate_cost')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.estimate_cost')
           nil
         end
 
@@ -2040,7 +2040,7 @@ module Legion
 
           result
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.build_response_tokens')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.build_response_tokens')
           @extracted_tokens
         end
 
@@ -2060,7 +2060,7 @@ module Legion
           payload[:config] = @request.thinking if @request.thinking
           payload
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.extract_thinking')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.extract_thinking')
           nil
         end
 
@@ -2096,7 +2096,7 @@ module Legion
             strategy:     @request.respond_to?(:cache) ? @request.cache : nil
           }
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.build_response_cache')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.build_response_cache')
           {}
         end
 
@@ -2111,7 +2111,7 @@ module Legion
           features[:enrichments]    = true if @enrichments&.any?
           features.empty? ? nil : features
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.build_response_features')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.build_response_features')
           nil
         end
 

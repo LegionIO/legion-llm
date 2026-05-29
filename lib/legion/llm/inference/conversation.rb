@@ -111,7 +111,7 @@ module Legion
             entry = tail.last
             Legion::JSON.parse(entry[:content])
           rescue Legion::JSON::ParseError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.conversation.metadata_json_parse')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.conversation.metadata_json_parse')
             nil
           end
 

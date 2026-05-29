@@ -177,7 +177,7 @@ module Legion
               args.respond_to?(:to_h) ? args.to_h : {}
             end
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.step_sticky_persist.normalize_args')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.step_sticky_persist.normalize_args')
             {}
           end
 

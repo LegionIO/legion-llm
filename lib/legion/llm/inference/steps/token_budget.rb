@@ -21,7 +21,7 @@ module Legion
             raise
           rescue StandardError => e
             @warnings << { type: :token_budget_check_failed, message: e.message }
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.token_budget')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.token_budget')
           end
 
           private

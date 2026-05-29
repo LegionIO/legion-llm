@@ -564,10 +564,12 @@ module Legion
           return nil unless obj.respond_to?(:key?) || obj.respond_to?(:fetch)
 
           obj[key_sym]
-        rescue TypeError, NoMethodError, KeyError
+        rescue TypeError, NoMethodError, KeyError => e
+          log.warn "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} error=#{e.class}: #{e.message}"
           begin
             obj[key.to_s]
-          rescue TypeError, NoMethodError, KeyError
+          rescue TypeError, NoMethodError, KeyError => fallback_error
+            log.warn "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} fallback_failed error=#{fallback_error.class}: #{fallback_error.message}"
             nil
           end
         end
@@ -751,7 +753,7 @@ module Legion
           value = hash_value(source, key)
           value&.to_i
         rescue StandardError => e
-          log.debug "[llm][adapter] action=extract_metric_value key=#{key} class=#{source.class} error=#{e.class}: #{e.message}"
+          log.warn "[llm][adapter] action=extract_metric_value key=#{key} class=#{source.class} error=#{e.class}: #{e.message}"
           nil
         end
 

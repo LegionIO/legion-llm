@@ -181,7 +181,7 @@ module Legion
               "conversation_id=#{@request.conversation_id || 'none'} #{payload}".strip
             )
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.steps.trigger_match.log')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.trigger_match.log')
           end
 
           def format_trigger_log_value(value)

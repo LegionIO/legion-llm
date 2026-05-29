@@ -347,7 +347,7 @@ module Legion
             integer = Integer(value)
             integer.positive? ? integer : nil
           rescue ArgumentError, TypeError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.steps.rag_context.positive_integer')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.rag_context.positive_integer')
             nil
           end
         end

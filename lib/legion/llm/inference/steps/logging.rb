@@ -24,7 +24,7 @@ module Legion
           rescue StandardError => e
             return unless respond_to?(:handle_exception, true)
 
-            handle_exception(e, level: :debug, handled: true,
+            handle_exception(e, level: :warn, handled: true,
                                 operation: 'llm.pipeline.steps.logging', step: step, action: action)
           end
 

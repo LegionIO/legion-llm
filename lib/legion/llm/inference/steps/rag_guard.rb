@@ -69,7 +69,7 @@ module Legion
           def rag_guard_settings
             Legion::LLM::Settings.value(:rag_guard, default: {})
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.rag_guard.settings')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_guard.settings')
             {}
           end
 

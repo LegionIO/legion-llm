@@ -94,7 +94,7 @@ module Legion
 
             builder.call(audit || {}, enrichments || {})
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.span_annotator.attributes_for', step: step_name)
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.span_annotator.attributes_for', step: step_name)
             {}
           end
         end
