@@ -30,6 +30,21 @@ module Legion
 
             :openai
           end
+
+          def require_data!
+            return if data_subsystem_available?
+
+            halt 503, { 'Content-Type' => 'application/json' },
+                 Legion::JSON.dump({ error: { code:    'data_required',
+                                              message: 'Legion::Data is required for this operation',
+                                              type:    'server_error' } })
+          end
+
+          def data_subsystem_available?
+            defined?(Legion::Data) && Legion::Data.respond_to?(:connected?) && Legion::Data.connected?
+          rescue StandardError
+            false
+          end
         end
       end
     end
