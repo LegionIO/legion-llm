@@ -140,6 +140,22 @@ module Legion
               namespace('/speech')         { register Namespaces::OpenAI::Audio::Speech }
             end
 
+            require_relative 'openai/vector_stores'
+            require_relative 'openai/vector_stores/files'
+            require_relative 'openai/vector_stores/file_batches'
+
+            app.helpers Namespaces::OpenAI::VectorStores
+            app.helpers Namespaces::OpenAI::VectorStores::Files
+            app.helpers Namespaces::OpenAI::VectorStores::FileBatches
+
+            app.namespace '/v1/vector_stores' do
+              register Namespaces::OpenAI::VectorStores
+            end
+            app.namespace '/v1/vector_stores/:vector_store_id' do
+              register Namespaces::OpenAI::VectorStores::Files
+              register Namespaces::OpenAI::VectorStores::FileBatches
+            end
+
             log.debug('[llm][api][namespaces] openai namespaces registered')
           end
 
