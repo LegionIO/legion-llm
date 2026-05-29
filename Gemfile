@@ -37,5 +37,6 @@ group :test do
   gem 'rubocop-legion'
   gem 'simplecov'
   gem 'sinatra'
+  gem 'rack-test', '~> 2.0'
   gem 'webmock'
 end
