@@ -117,16 +117,16 @@ RSpec.describe 'Namespaces::OpenAI::Moderations' do
              'CONTENT_TYPE' => 'application/json'
         body = Legion::JSON.load(last_response.body)
         cats = body[:results].first[:categories]
-        expect(cats).to have_key(:'hate')
+        expect(cats).to have_key(:hate)
         expect(cats).to have_key(:'hate/threatening')
-        expect(cats).to have_key(:'harassment')
+        expect(cats).to have_key(:harassment)
         expect(cats).to have_key(:'harassment/threatening')
         expect(cats).to have_key(:'self-harm')
         expect(cats).to have_key(:'self-harm/intent')
         expect(cats).to have_key(:'self-harm/instructions')
-        expect(cats).to have_key(:'sexual')
+        expect(cats).to have_key(:sexual)
         expect(cats).to have_key(:'sexual/minors')
-        expect(cats).to have_key(:'violence')
+        expect(cats).to have_key(:violence)
         expect(cats).to have_key(:'violence/graphic')
       end
 
@@ -166,7 +166,7 @@ RSpec.describe 'Namespaces::OpenAI::Moderations' do
 
       it 'returns one result per input element' do
         post '/v1/moderations',
-             Legion::JSON.dump({ input: ['Hello', 'World'] }),
+             Legion::JSON.dump({ input: %w[Hello World] }),
              'CONTENT_TYPE' => 'application/json'
         expect(last_response.status).to eq(200)
         body = Legion::JSON.load(last_response.body)
@@ -408,8 +408,8 @@ RSpec.describe 'Namespaces::OpenAI::Moderations' do
              'sexual/minors=false(0.0001), violence=false(0.0002), violence/graphic=false(0.0001)'
       result = Legion::LLM::API::Namespaces::OpenAI::Moderations.parse_moderation_response(text)
       expect(result[:flagged]).to be false
-      expect(result[:categories][:'hate']).to be false
-      expect(result[:category_scores][:'hate']).to eq(0.0001)
+      expect(result[:categories][:hate]).to be false
+      expect(result[:category_scores][:hate]).to eq(0.0001)
     end
 
     it 'parses a flagged structured response' do
@@ -419,8 +419,8 @@ RSpec.describe 'Namespaces::OpenAI::Moderations' do
              'sexual/minors=false(0.0001), violence=false(0.0002), violence/graphic=false(0.0001)'
       result = Legion::LLM::API::Namespaces::OpenAI::Moderations.parse_moderation_response(text)
       expect(result[:flagged]).to be true
-      expect(result[:categories][:'hate']).to be true
-      expect(result[:category_scores][:'hate']).to eq(0.9500)
+      expect(result[:categories][:hate]).to be true
+      expect(result[:category_scores][:hate]).to eq(0.9500)
     end
 
     it 'returns safe defaults when response is unparseable' do

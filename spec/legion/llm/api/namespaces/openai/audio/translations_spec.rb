@@ -50,11 +50,11 @@ RSpec.describe 'Namespaces::OpenAI::Audio::Translations' do
       let(:mock_response) do
         double(
           'PipelineResponse',
-          message:  { content: 'This is the English translation of the audio.' },
-          routing:  { model: 'whisper-1', provider: :openai },
-          tokens:   { input: 0, output: 10 },
-          tools:    nil,
-          stop:     { reason: 'stop' }
+          message: { content: 'This is the English translation of the audio.' },
+          routing: { model: 'whisper-1', provider: :openai },
+          tokens:  { input: 0, output: 10 },
+          tools:   nil,
+          stop:    { reason: 'stop' }
         )
       end
 

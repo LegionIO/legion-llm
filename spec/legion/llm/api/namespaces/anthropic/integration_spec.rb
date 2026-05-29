@@ -18,8 +18,9 @@ RSpec.describe 'Anthropic Namespace Integration' do
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
     allow(Legion::LLM::Inventory).to receive(:offerings).and_return([
-      { model: 'legionio', type: :inference, provider_family: 'legionio', instance_id: 'auto', capabilities: %w[chat tools], limits: {}, enabled: true }
-    ])
+                                                                      { model: 'legionio', type: :inference, provider_family: 'legionio', instance_id: 'auto',
+capabilities: %w[chat tools], limits: {}, enabled: true }
+                                                                    ])
   end
 
   it 'responds to POST /v1/messages' do

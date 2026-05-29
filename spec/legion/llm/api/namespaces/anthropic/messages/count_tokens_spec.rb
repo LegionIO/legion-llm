@@ -26,8 +26,8 @@ RSpec.describe 'Namespaces::Anthropic::Messages::CountTokens' do
   describe 'POST /v1/messages/count_tokens' do
     let(:request_body) do
       {
-        model: 'claude-sonnet-4-6',
-        messages: [{ role: 'user', content: 'Hello, how are you doing today?' }],
+        model:      'claude-sonnet-4-6',
+        messages:   [{ role: 'user', content: 'Hello, how are you doing today?' }],
         max_tokens: 1024
       }
     end

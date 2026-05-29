@@ -76,7 +76,7 @@ RSpec.describe 'Legion::LLM::API::Auth' do
 
     it 'returns Anthropic error shape for x-api-key + anthropic-version requests' do
       get '/v1/models', {}, {
-        'HTTP_X_API_KEY'     => 'bad-key',
+        'HTTP_X_API_KEY'         => 'bad-key',
         'HTTP_ANTHROPIC_VERSION' => '2023-06-01'
       }
       expect(last_response.status).to eq(401)

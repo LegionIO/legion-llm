@@ -29,7 +29,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Tiers' do
 
   let(:tiers_tree) do
     {
-      'local' => {
+      'local'    => {
         available: true,
         providers: {
           'ollama' => {

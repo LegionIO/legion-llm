@@ -39,8 +39,8 @@ RSpec.describe 'Codex CLI conformance', :integration do
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
     allow(Legion::LLM::Inventory).to receive(:offerings).and_return([
-                                                                       { model: 'legionio', provider_family: 'legion', type: :inference }
-                                                                     ])
+                                                                      { model: 'legionio', provider_family: 'legion', type: :inference }
+                                                                    ])
     allow(Legion::LLM::Inference::Request).to receive(:build).and_return(double('Request'))
     allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(
       double('Executor').tap do |ex|
@@ -75,7 +75,7 @@ RSpec.describe 'Codex CLI conformance', :integration do
                              stream:       true,
                              instructions: 'You are a Ruby expert.'
                            }),
-         'CONTENT_TYPE'     => 'application/json',
+         'CONTENT_TYPE'       => 'application/json',
          'HTTP_AUTHORIZATION' => 'Bearer any-key'
 
     expect(last_response.status).to eq(200)

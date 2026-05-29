@@ -26,6 +26,7 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores::FileBatches' do
   let(:mock_data_module) do
     Module.new do
       extend Legion::Logging::Helper
+
       def self.connected?
         true
       end
@@ -101,7 +102,7 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores::FileBatches' do
 
     it 'returns 404 when vector store not found' do
       allow(mock_ds).to receive(:first).and_return(nil)
-      post "/v1/vector_stores/vs_missing/file_batches",
+      post '/v1/vector_stores/vs_missing/file_batches',
            Legion::JSON.dump({ file_ids: ['file-abc123'] }),
            'CONTENT_TYPE' => 'application/json'
       expect(last_response.status).to eq(404)
@@ -115,7 +116,7 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores::FileBatches' do
       end
 
       post "/v1/vector_stores/#{store_id}/file_batches",
-           Legion::JSON.dump({ file_ids: ['file-abc123', 'file-def456'] }),
+           Legion::JSON.dump({ file_ids: %w[file-abc123 file-def456] }),
            'CONTENT_TYPE' => 'application/json'
       expect(last_response.status).to eq(200)
       body = Legion::JSON.load(last_response.body)

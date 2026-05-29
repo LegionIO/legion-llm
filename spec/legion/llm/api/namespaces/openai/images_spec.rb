@@ -52,11 +52,11 @@ RSpec.describe 'Namespaces::OpenAI::Images' do
       let(:mock_response) do
         double(
           'PipelineResponse',
-          message:  { content: nil, images: [{ b64_json: Base64.strict_encode64('fake_image_data') }] },
-          routing:  { model: 'dall-e-3', provider: :openai },
-          tokens:   { input: 5, output: 0 },
-          tools:    nil,
-          stop:     { reason: 'stop' }
+          message: { content: nil, images: [{ b64_json: Base64.strict_encode64('fake_image_data') }] },
+          routing: { model: 'dall-e-3', provider: :openai },
+          tokens:  { input: 5, output: 0 },
+          tools:   nil,
+          stop:    { reason: 'stop' }
         )
       end
 
@@ -142,11 +142,11 @@ RSpec.describe 'Namespaces::OpenAI::Images' do
       let(:mock_response) do
         double(
           'PipelineResponse',
-          message:  { content: nil, images: [{ b64_json: Base64.strict_encode64('edited_image') }] },
-          routing:  { model: 'dall-e-2', provider: :openai },
-          tokens:   { input: 5, output: 0 },
-          tools:    nil,
-          stop:     { reason: 'stop' }
+          message: { content: nil, images: [{ b64_json: Base64.strict_encode64('edited_image') }] },
+          routing: { model: 'dall-e-2', provider: :openai },
+          tokens:  { input: 5, output: 0 },
+          tools:   nil,
+          stop:    { reason: 'stop' }
         )
       end
 
@@ -216,11 +216,11 @@ RSpec.describe 'Namespaces::OpenAI::Images' do
       let(:mock_response) do
         double(
           'PipelineResponse',
-          message:  { content: nil, images: [{ b64_json: Base64.strict_encode64('variation') }] },
-          routing:  { model: 'dall-e-2', provider: :openai },
-          tokens:   { input: 0, output: 0 },
-          tools:    nil,
-          stop:     { reason: 'stop' }
+          message: { content: nil, images: [{ b64_json: Base64.strict_encode64('variation') }] },
+          routing: { model: 'dall-e-2', provider: :openai },
+          tokens:  { input: 0, output: 0 },
+          tools:   nil,
+          stop:    { reason: 'stop' }
         )
       end
 

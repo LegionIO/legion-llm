@@ -30,7 +30,7 @@ RSpec.describe 'Phase 7 namespace registration wiring' do
         Legion::LLM::API::Namespaces::OpenAI::VectorStores::FileBatches
       ].each do |mod|
         expect(mod.singleton_class.ancestors).to include(Sinatra::Extension),
-          "Expected #{mod} to extend Sinatra::Extension"
+                                                 "Expected #{mod} to extend Sinatra::Extension"
       end
     end
   end

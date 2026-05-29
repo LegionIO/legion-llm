@@ -40,8 +40,8 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Registration' do
 
     it 'mounts all 8 native namespace route prefixes' do
       Legion::LLM::API::Namespaces::Registration.registered(app)
-      get_paths  = ((app.routes['GET']  || []).map { |r| r[0].to_s }).to_set
-      post_paths = ((app.routes['POST'] || []).map { |r| r[0].to_s }).to_set
+      get_paths  = (app.routes['GET']  || []).to_set { |r| r[0].to_s }
+      post_paths = (app.routes['POST'] || []).to_set { |r| r[0].to_s }
 
       expect(get_paths).to include('/api/llm/providers')
       expect(get_paths).to include('/api/llm/instances')

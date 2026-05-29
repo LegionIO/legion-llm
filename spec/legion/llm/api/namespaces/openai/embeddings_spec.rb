@@ -51,7 +51,7 @@ RSpec.describe 'Namespaces::OpenAI::Embeddings' do
 
     it 'handles array input by using first element' do
       post '/v1/embeddings',
-           Legion::JSON.dump({ input: ['Hello', 'world'], model: 'legionio' }),
+           Legion::JSON.dump({ input: %w[Hello world], model: 'legionio' }),
            'CONTENT_TYPE' => 'application/json'
       expect(last_response.status).to eq(200)
       expect(Legion::LLM).to have_received(:embed).with('Hello', model: 'legionio')

@@ -24,9 +24,9 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
       Legion::LLM::Inference::Response,
       message: { content: 'Hello! How can I help you?' },
       routing: { model: 'claude-sonnet-4-6', provider: :anthropic },
-      tokens: { input: 10, output: 8 },
-      tools: nil,
-      stop: { reason: 'end_turn' }
+      tokens:  { input: 10, output: 8 },
+      tools:   nil,
+      stop:    { reason: 'end_turn' }
     )
   end
 
@@ -38,8 +38,8 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
   describe 'POST /v1/messages (non-streaming)' do
     let(:request_body) do
       {
-        model: 'claude-sonnet-4-6',
-        messages: [{ role: 'user', content: 'Hello' }],
+        model:      'claude-sonnet-4-6',
+        messages:   [{ role: 'user', content: 'Hello' }],
         max_tokens: 1024
       }
     end
@@ -138,10 +138,10 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
   describe 'POST /v1/messages (streaming)' do
     let(:request_body) do
       {
-        model: 'claude-sonnet-4-6',
-        messages: [{ role: 'user', content: 'Hello' }],
+        model:      'claude-sonnet-4-6',
+        messages:   [{ role: 'user', content: 'Hello' }],
         max_tokens: 1024,
-        stream: true
+        stream:     true
       }
     end
 
@@ -160,7 +160,7 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
     it 'returns text/event-stream content type' do
       post '/v1/messages', Legion::JSON.dump(request_body),
            'CONTENT_TYPE' => 'application/json',
-           'HTTP_ACCEPT' => 'text/event-stream'
+           'HTTP_ACCEPT'  => 'text/event-stream'
       expect(last_response.content_type).to include('text/event-stream')
     end
 
@@ -168,7 +168,7 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
     it 'emits message_start event first' do
       post '/v1/messages', Legion::JSON.dump(request_body),
            'CONTENT_TYPE' => 'application/json',
-           'HTTP_ACCEPT' => 'text/event-stream'
+           'HTTP_ACCEPT'  => 'text/event-stream'
       events = last_response.body.scan(/^event: (.+)$/).flatten
       expect(events.first).to eq('message_start')
     end
@@ -176,7 +176,7 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
     it 'emits content_block_start and ping before content_block_delta' do
       post '/v1/messages', Legion::JSON.dump(request_body),
            'CONTENT_TYPE' => 'application/json',
-           'HTTP_ACCEPT' => 'text/event-stream'
+           'HTTP_ACCEPT'  => 'text/event-stream'
       events = last_response.body.scan(/^event: (.+)$/).flatten
       delta_idx = events.index('content_block_delta')
       expect(events.index('content_block_start')).to be < delta_idx
@@ -186,7 +186,7 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
     it 'emits message_stop event last' do
       post '/v1/messages', Legion::JSON.dump(request_body),
            'CONTENT_TYPE' => 'application/json',
-           'HTTP_ACCEPT' => 'text/event-stream'
+           'HTTP_ACCEPT'  => 'text/event-stream'
       events = last_response.body.scan(/^event: (.+)$/).flatten
       expect(events.last).to eq('message_stop')
     end
@@ -194,7 +194,7 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
     it 'emits content_block_delta for text chunks' do
       post '/v1/messages', Legion::JSON.dump(request_body),
            'CONTENT_TYPE' => 'application/json',
-           'HTTP_ACCEPT' => 'text/event-stream'
+           'HTTP_ACCEPT'  => 'text/event-stream'
       expect(last_response.body).to include('event: content_block_delta')
       expect(last_response.body).to include('text_delta')
     end
@@ -202,7 +202,7 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
     it 'emits ping event' do
       post '/v1/messages', Legion::JSON.dump(request_body),
            'CONTENT_TYPE' => 'application/json',
-           'HTTP_ACCEPT' => 'text/event-stream'
+           'HTTP_ACCEPT'  => 'text/event-stream'
       expect(last_response.body).to include('event: ping')
     end
   end

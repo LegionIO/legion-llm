@@ -56,11 +56,11 @@ RSpec.describe 'Namespaces::OpenAI::Audio::Speech' do
       let(:mock_response) do
         double(
           'PipelineResponse',
-          message:  { content: nil, audio_binary: fake_audio_bytes, audio_format: 'mp3' },
-          routing:  { model: 'tts-1', provider: :openai },
-          tokens:   { input: 5, output: 0 },
-          tools:    nil,
-          stop:     { reason: 'stop' }
+          message: { content: nil, audio_binary: fake_audio_bytes, audio_format: 'mp3' },
+          routing: { model: 'tts-1', provider: :openai },
+          tokens:  { input: 5, output: 0 },
+          tools:   nil,
+          stop:    { reason: 'stop' }
         )
       end
 
@@ -172,11 +172,11 @@ RSpec.describe 'Namespaces::OpenAI::Audio::Speech' do
       it 'falls back to synthesized binary when provider returns text content' do
         text_response = double(
           'PipelineResponse',
-          message:  { content: 'SYNTHESIZED_AUDIO_PLACEHOLDER', audio_binary: nil, audio_format: nil },
-          routing:  { model: 'tts-1', provider: :local },
-          tokens:   { input: 5, output: 0 },
-          tools:    nil,
-          stop:     { reason: 'stop' }
+          message: { content: 'SYNTHESIZED_AUDIO_PLACEHOLDER', audio_binary: nil, audio_format: nil },
+          routing: { model: 'tts-1', provider: :local },
+          tokens:  { input: 5, output: 0 },
+          tools:   nil,
+          stop:    { reason: 'stop' }
         )
         allow(Legion::LLM::Inference::Executor).to receive_message_chain(:new, :call).and_return(text_response)
 

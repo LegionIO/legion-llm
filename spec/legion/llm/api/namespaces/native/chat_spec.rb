@@ -56,7 +56,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Chat' do
     it 'returns 201 with response content' do
       post '/api/llm/chat',
            Legion::JSON.dump({ message: 'hello' }),
-           'CONTENT_TYPE' => 'application/json',
+           'CONTENT_TYPE'       => 'application/json',
            'HTTP_X_LEGION_SYNC' => 'true'
       expect(last_response.status).to eq(201)
       result = Legion::JSON.load(last_response.body)
@@ -75,7 +75,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Chat' do
     it 'includes meta with model and token counts' do
       post '/api/llm/chat',
            Legion::JSON.dump({ message: 'hello' }),
-           'CONTENT_TYPE' => 'application/json',
+           'CONTENT_TYPE'       => 'application/json',
            'HTTP_X_LEGION_SYNC' => 'true'
       result = Legion::JSON.load(last_response.body)
       expect(result[:data][:meta]).to be_a(Hash)
@@ -87,7 +87,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Chat' do
       ).and_return(mock_response)
       post '/api/llm/chat',
            Legion::JSON.dump({ message: 'hello', model: 'llama3.2', provider: 'anthropic' }),
-           'CONTENT_TYPE' => 'application/json',
+           'CONTENT_TYPE'       => 'application/json',
            'HTTP_X_LEGION_SYNC' => 'true'
       expect(last_response.status).to eq(201)
     end

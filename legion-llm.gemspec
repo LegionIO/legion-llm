@@ -35,7 +35,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'legion-transport', '>= 1.4.14'
   spec.add_dependency 'lex-knowledge'
   spec.add_dependency 'lex-llm', '>= 0.4.3'
-  spec.add_runtime_dependency 'sinatra-contrib', '>= 2.0'
   spec.add_dependency 'pdf-reader'
+  spec.add_dependency 'sinatra-contrib', '>= 2.0'
   spec.add_dependency 'tzinfo', '>= 2.0'
 end

@@ -17,8 +17,8 @@ RSpec.describe 'Claude Code Drop-in Conformance' do
 
   let(:claude_code_headers) do
     {
-      'CONTENT_TYPE' => 'application/json',
-      'HTTP_X_API_KEY' => 'legion',
+      'CONTENT_TYPE'           => 'application/json',
+      'HTTP_X_API_KEY'         => 'legion',
       'HTTP_ANTHROPIC_VERSION' => '2023-06-01'
     }
   end
@@ -32,9 +32,9 @@ RSpec.describe 'Claude Code Drop-in Conformance' do
       instance_double(Legion::LLM::Inference::Response,
                       message: { content: 'I can help with that.' },
                       routing: { model: 'legionio', provider: :anthropic },
-                      tokens: { input: 15, output: 6 },
-                      tools: nil,
-                      stop: { reason: 'end_turn' })
+                      tokens:  { input: 15, output: 6 },
+                      tools:   nil,
+                      stop:    { reason: 'end_turn' })
     end
 
     before do
@@ -63,9 +63,9 @@ RSpec.describe 'Claude Code Drop-in Conformance' do
     it 'accepts system as top-level param (not a message)' do
       post '/v1/messages',
            Legion::JSON.dump({
-                               model: 'legionio',
-                               system: 'You are a coding assistant.',
-                               messages: [{ role: 'user', content: 'explain this code' }],
+                               model:      'legionio',
+                               system:     'You are a coding assistant.',
+                               messages:   [{ role: 'user', content: 'explain this code' }],
                                max_tokens: 4096
                              }),
            claude_code_headers
@@ -75,10 +75,11 @@ RSpec.describe 'Claude Code Drop-in Conformance' do
     it 'accepts tools with input_schema (not parameters)' do
       post '/v1/messages',
            Legion::JSON.dump({
-                               model: 'legionio',
-                               messages: [{ role: 'user', content: 'read file.rb' }],
+                               model:      'legionio',
+                               messages:   [{ role: 'user', content: 'read file.rb' }],
                                max_tokens: 4096,
-                               tools: [{ name: 'Read', description: 'Read a file', input_schema: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } }]
+                               tools:      [{ name: 'Read', description: 'Read a file',
+input_schema: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } }]
                              }),
            claude_code_headers
       expect(last_response.status).to eq(200)
@@ -113,9 +114,9 @@ RSpec.describe 'Claude Code Drop-in Conformance' do
       mock_response = instance_double(Legion::LLM::Inference::Response,
                                       message: { content: 'Done.' },
                                       routing: { model: 'legionio' },
-                                      tokens: { input: 10, output: 4 },
-                                      tools: nil,
-                                      stop: { reason: 'end_turn' })
+                                      tokens:  { input: 10, output: 4 },
+                                      tools:   nil,
+                                      stop:    { reason: 'end_turn' })
       allow(mock_response).to receive(:respond_to?).and_return(true)
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
       allow(mock_executor).to receive(:call_stream).and_yield(

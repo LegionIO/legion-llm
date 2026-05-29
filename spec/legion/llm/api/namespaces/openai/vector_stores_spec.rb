@@ -41,6 +41,7 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores' do
   let(:mock_data_module) do
     Module.new do
       extend Legion::Logging::Helper
+
       def self.connected?
         true
       end

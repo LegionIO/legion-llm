@@ -25,9 +25,9 @@ RSpec.describe 'Namespaces::OpenAI::Models' do
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
     allow(Legion::LLM::Inventory).to receive(:offerings).and_return([
-                                                                       { model: 'legionio', provider_family: 'legion', type: :inference },
-                                                                       { model: 'llama3.2', provider_family: 'ollama', type: :inference }
-                                                                     ])
+                                                                      { model: 'legionio', provider_family: 'legion', type: :inference },
+                                                                      { model: 'llama3.2', provider_family: 'ollama', type: :inference }
+                                                                    ])
   end
 
   describe 'GET /v1/models' do
@@ -43,9 +43,9 @@ RSpec.describe 'Namespaces::OpenAI::Models' do
 
     it 'deduplicates models with same id' do
       allow(Legion::LLM::Inventory).to receive(:offerings).and_return([
-                                                                         { model: 'legionio', provider_family: 'legion', type: :inference },
-                                                                         { model: 'legionio', provider_family: 'legion', type: :inference }
-                                                                       ])
+                                                                        { model: 'legionio', provider_family: 'legion', type: :inference },
+                                                                        { model: 'legionio', provider_family: 'legion', type: :inference }
+                                                                      ])
       get '/v1/models'
       body = Legion::JSON.load(last_response.body)
       expect(body[:data].map { |m| m[:id] }.tally['legionio']).to eq(1)

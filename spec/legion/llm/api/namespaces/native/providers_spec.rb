@@ -30,9 +30,9 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
   let(:registry_instances) do
     [
       {
-        provider:  :ollama,
-        instance:  :local,
-        metadata:  {
+        provider: :ollama,
+        instance: :local,
+        metadata: {
           tier:         :local,
           capabilities: [:chat],
           source:       'ollama_discovery'

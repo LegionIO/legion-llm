@@ -26,6 +26,7 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores::Files' do
   let(:mock_data_module) do
     Module.new do
       extend Legion::Logging::Helper
+
       def self.connected?
         true
       end
@@ -39,15 +40,15 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores::Files' do
 
   let(:vsf_row) do
     {
-      id:                   'vsf_file0001aabbccdd',
-      vector_store_id:      store_id,
-      file_id:              'file-abc123',
-      status:               'completed',
-      usage_bytes:          1024,
+      id:                     'vsf_file0001aabbccdd',
+      vector_store_id:        store_id,
+      file_id:                'file-abc123',
+      status:                 'completed',
+      usage_bytes:            1024,
       chunking_strategy_json: '{"type":"auto"}',
-      attributes_json:      '{}',
-      last_error_json:      nil,
-      created_at:           now_ts
+      attributes_json:        '{}',
+      last_error_json:        nil,
+      created_at:             now_ts
     }
   end
 
@@ -89,7 +90,7 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores::Files' do
 
     it 'returns 404 when vector store not found' do
       allow(mock_ds).to receive(:first).and_return(nil)
-      post "/v1/vector_stores/vs_missing/files",
+      post '/v1/vector_stores/vs_missing/files',
            Legion::JSON.dump({ file_id: 'file-abc123' }),
            'CONTENT_TYPE' => 'application/json'
       expect(last_response.status).to eq(404)
@@ -103,8 +104,8 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores::Files' do
       end
       allow(mock_db).to receive(:table_exists?).and_return(false)
       allow(Legion::LLM::Call::Embeddings).to receive(:generate_batch).and_return([
-        { vector: [0.1, 0.2, 0.3], model: 'nomic-embed-text', provider: :ollama }
-      ])
+                                                                                    { vector: [0.1, 0.2, 0.3], model: 'nomic-embed-text', provider: :ollama }
+                                                                                  ])
 
       post "/v1/vector_stores/#{store_id}/files",
            Legion::JSON.dump({ file_id: 'file-abc123' }),

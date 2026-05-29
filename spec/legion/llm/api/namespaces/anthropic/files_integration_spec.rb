@@ -24,8 +24,8 @@ RSpec.describe 'Anthropic Files Integration' do
 
   let(:anthropic_headers) do
     {
-      'HTTP_X_API_KEY'          => 'legion',
-      'HTTP_ANTHROPIC_VERSION'  => '2023-06-01'
+      'HTTP_X_API_KEY'         => 'legion',
+      'HTTP_ANTHROPIC_VERSION' => '2023-06-01'
     }
   end
 
