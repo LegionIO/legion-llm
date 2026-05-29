@@ -116,6 +116,7 @@ module Legion
             require_relative 'anthropic/messages'
             require_relative 'anthropic/messages/count_tokens'
             require_relative 'anthropic/messages/batches'
+            require_relative 'anthropic/files'
             # NOTE: anthropic/models.rb is a format helper only — no routes to register.
             # The /v1/models namespace is owned by OpenAI::Models (Phase 2A) which branches
             # on anthropic_client?(env) to emit Anthropic-format responses.
@@ -124,6 +125,10 @@ module Legion
               register Namespaces::Anthropic::Messages
               register Namespaces::Anthropic::Messages::CountTokens
               namespace('/batches') { register Namespaces::Anthropic::Messages::Batches }
+            end
+
+            app.namespace '/v1/files' do
+              register Namespaces::Anthropic::Files
             end
 
             log.debug('[llm][api][namespaces] anthropic namespaces registered')
