@@ -425,7 +425,18 @@ module Legion
           provider = (rule.target[:provider] || rule.target['provider'])&.to_sym
           offering_id = rule.target[:offering_id] || rule.target['offering_id']
           cost_bonus = (1.0 - rule.cost_multiplier) * 10
-          rule.priority + health_tracker.adjustment(provider, offering_id: offering_id) + cost_bonus
+          tier_bonus = tier_priority_bonus(rule)
+          rule.priority + health_tracker.adjustment(provider, offering_id: offering_id) + cost_bonus + tier_bonus
+        end
+
+        def tier_priority_bonus(rule)
+          tier = (rule.target[:tier] || rule.target['tier'])&.to_sym
+          return 0 unless tier
+
+          index = tier_rank[tier]
+          return 0 unless index
+
+          (tier_priority.size - index) * 100
         end
 
         def routing_settings
