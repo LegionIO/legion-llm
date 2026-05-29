@@ -75,8 +75,7 @@ module Legion
 
           def self.extract_routing(body)
             {
-              model:    body[:model],
-              provider: :anthropic
+              model: body[:model]
             }
           end
 
