@@ -37,11 +37,84 @@ module Legion
 
           def self.extract_messages(body)
             raw = body[:messages] || []
-            raw.map do |m|
-              role    = (m[:role] || m['role']).to_sym
-              content = m[:content] || m['content']
-              { role: role, content: normalize_content(content) }
+            raw.flat_map { |m| normalize_message(m) }
+          end
+
+          def self.normalize_message(m)
+            role    = (m[:role] || m['role']).to_sym
+            content = m[:content] || m['content']
+
+            case role
+            when :assistant
+              normalize_assistant_message(content)
+            when :user
+              normalize_user_message(content)
+            else
+              [{ role: role, content: extract_text_content(content) }]
             end
+          end
+
+          def self.normalize_assistant_message(content)
+            return [{ role: :assistant, content: content }] if content.is_a?(String)
+            return [{ role: :assistant, content: content.to_s }] unless content.is_a?(Array)
+
+            text_parts = []
+            tool_calls = []
+
+            content.each do |block|
+              bs = block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
+              type = (bs[:type] || '').to_s
+              case type
+              when 'text'
+                text_parts << bs[:text].to_s
+              when 'tool_use'
+                tool_calls << { id: bs[:id], name: bs[:name], arguments: bs[:input] || {} }
+              end
+            end
+
+            msg = { role: :assistant, content: text_parts.join }
+            msg[:tool_calls] = tool_calls if tool_calls.any?
+            [msg]
+          end
+
+          def self.normalize_user_message(content)
+            return [{ role: :user, content: content }] if content.is_a?(String)
+            return [{ role: :user, content: content.to_s }] unless content.is_a?(Array)
+
+            messages = []
+            text_parts = []
+
+            content.each do |block|
+              bs = block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
+              type = (bs[:type] || '').to_s
+              case type
+              when 'text'
+                text_parts << bs[:text].to_s
+              when 'tool_result'
+                if text_parts.any?
+                  messages << { role: :user, content: text_parts.join("\n\n") }
+                  text_parts = []
+                end
+                result_content = bs[:content]
+                result_content = extract_text_content(result_content) if result_content.is_a?(Array)
+                messages << { role: :tool, tool_call_id: bs[:tool_use_id], content: result_content.to_s }
+              else
+                text_parts << bs.to_s
+              end
+            end
+
+            messages << { role: :user, content: text_parts.join } if text_parts.any?
+            messages.empty? ? [{ role: :user, content: '' }] : messages
+          end
+
+          def self.extract_text_content(content)
+            return content if content.is_a?(String)
+            return content.to_s unless content.is_a?(Array)
+
+            content.filter_map do |block|
+              bs = block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
+              bs[:text].to_s if (bs[:type] || '').to_s == 'text'
+            end.join
           end
 
           def self.extract_system(body)
@@ -79,29 +152,9 @@ module Legion
             }
           end
 
-          def self.normalize_content(content)
-            return content if content.is_a?(String)
-            return content unless content.is_a?(Array)
-
-            parts = content.map do |block|
-              bs = block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
-              type = bs[:type].to_s
-              case type
-              when 'text'
-                bs[:text].to_s
-              when 'tool_result'
-                { type: :tool_result, tool_use_id: bs[:tool_use_id], content: bs[:content] }
-              when 'tool_use'
-                { type: :tool_use, id: bs[:id], name: bs[:name], input: bs[:input] }
-              else
-                bs
-              end
-            end
-            parts.all?(String) ? parts.join : parts
-          end
-
           private_class_method :extract_messages, :extract_system, :extract_tools,
-                               :extract_routing, :normalize_content
+                               :extract_routing, :normalize_message, :normalize_assistant_message,
+                               :normalize_user_message, :extract_text_content
         end
       end
     end
