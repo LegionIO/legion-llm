@@ -184,8 +184,11 @@ module Legion
             0
           end
 
-          private_class_method :extract_content, :extract_tool_calls, :format_stop_reason,
-                               :format_usage, :token_count
+          private_class_method :extract_content, :format_usage
+
+          class << self
+            public :extract_tool_calls, :format_stop_reason, :token_count
+          end
         end
       end
     end

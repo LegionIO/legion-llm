@@ -55,9 +55,8 @@ module Legion
 
                 stream do |out|
                   full_text = +''
+                  text_block_opened = false
 
-                  # Emit opening events BEFORE any content_block_delta events.
-                  # message_start must be the very first event the client receives.
                   out << "event: message_start\ndata: #{Legion::JSON.dump({
                                                                             type:    'message_start',
                                                                             message: {
@@ -67,43 +66,55 @@ module Legion
                       usage: { input_tokens: 0, output_tokens: 0 }
                                                                             }
                                                                           })}\n\n"
-                  out << "event: content_block_start\ndata: #{Legion::JSON.dump({
-                                                                                  type: 'content_block_start', index: 0,
-                    content_block: { type: 'text', text: '' }
-                                                                                })}\n\n"
-                  out << "event: ping\ndata: #{Legion::JSON.dump({ type: 'ping' })}\n\n"
 
-                  # Stream content_block_delta events live as chunks arrive.
                   pipeline_response = executor.call_stream do |chunk|
                     text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
                     next if text.empty?
+
+                    unless text_block_opened
+                      out << "event: content_block_start\ndata: #{Legion::JSON.dump({
+                                                                                      type: 'content_block_start', index: 0,
+                        content_block: { type: 'text', text: '' }
+                                                                                    })}\n\n"
+                      out << "event: ping\ndata: #{Legion::JSON.dump({ type: 'ping' })}\n\n"
+                      text_block_opened = true
+                    end
 
                     full_text << text
                     delta_event = Legion::LLM::API::Translators::AnthropicResponse.format_chunk(text)
                     out << "event: content_block_delta\ndata: #{Legion::JSON.dump(delta_event)}\n\n"
                   end
 
-                  # Emit closing events AFTER all deltas. Filter streaming_events to
-                  # the tail events. Skip message_start, ping, and text content_block_delta
-                  # since those were already emitted above. For content_block_start, skip
-                  # only the first text block (index 0) — tool_use blocks at higher indices
-                  # must be emitted here. Allow input_json_delta content_block_delta events
-                  # for tool arguments.
-                  skip_prefix = Set['message_start', 'ping']
-                  events = Legion::LLM::API::Translators::AnthropicResponse.streaming_events(
-                    pipeline_response, model: model, request_id: request_id, full_text: full_text
-                  )
-                  events.each do |event_name, payload|
-                    if event_name == 'content_block_start'
-                      next if payload[:index].to_i.zero?
-                    elsif event_name == 'content_block_delta'
-                      next unless payload.dig(:delta, :type) == 'input_json_delta'
-                    elsif skip_prefix.include?(event_name)
-                      next
-                    end
+                  translator = Legion::LLM::API::Translators::AnthropicResponse
+                  tool_calls = translator.extract_tool_calls(pipeline_response)
+                  tokens = pipeline_response.respond_to?(:tokens) ? pipeline_response.tokens : nil
+                  stop_reason = tool_calls.any? ? 'tool_use' : translator.format_stop_reason(pipeline_response)
+                  content_index = 0
 
-                    out << "event: #{event_name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
+                  if text_block_opened
+                    out << "event: content_block_stop\ndata: #{Legion::JSON.dump({ type: 'content_block_stop', index: 0 })}\n\n"
+                    content_index = 1
                   end
+
+                  tool_calls.each do |tc|
+                    out << "event: content_block_start\ndata: #{Legion::JSON.dump({
+                                                                                    type: 'content_block_start', index: content_index,
+                      content_block: { type: 'tool_use', id: tc[:id] || "toolu_#{SecureRandom.hex(12)}", name: tc[:name], input: {} }
+                                                                                  })}\n\n"
+                    out << "event: content_block_delta\ndata: #{Legion::JSON.dump({
+                                                                                    type: 'content_block_delta', index: content_index,
+                      delta: { type: 'input_json_delta', partial_json: Legion::JSON.dump(tc[:arguments] || {}) }
+                                                                                  })}\n\n"
+                    out << "event: content_block_stop\ndata: #{Legion::JSON.dump({ type: 'content_block_stop', index: content_index })}\n\n"
+                    content_index += 1
+                  end
+
+                  out << "event: message_delta\ndata: #{Legion::JSON.dump({
+                                                                            type: 'message_delta',
+                    delta: { stop_reason: stop_reason, stop_sequence: nil },
+                    usage: { output_tokens: translator.token_count(tokens, :output) }
+                                                                          })}\n\n"
+                  out << "event: message_stop\ndata: #{Legion::JSON.dump({ type: 'message_stop' })}\n\n"
                 rescue StandardError => e
                   handle_exception(e, level: :error, handled: false, operation: 'llm.ns.anthropic.messages.stream', request_id: request_id)
                   out << "event: error\ndata: #{Legion::JSON.dump({ type: 'error', error: { type: 'api_error', message: e.message } })}\n\n"
