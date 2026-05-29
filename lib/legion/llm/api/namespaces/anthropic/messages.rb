@@ -82,15 +82,23 @@ module Legion
                   end
 
                   # Emit closing events AFTER all deltas. Filter streaming_events to
-                  # only the tail (content_block_stop, message_delta, message_stop).
-                  # Skip message_start, content_block_start, ping, content_block_delta
-                  # since those were already emitted above.
-                  tail_events = %w[content_block_stop message_delta message_stop]
+                  # the tail events. Skip message_start, ping, and text content_block_delta
+                  # since those were already emitted above. For content_block_start, skip
+                  # only the first text block (index 0) — tool_use blocks at higher indices
+                  # must be emitted here. Allow input_json_delta content_block_delta events
+                  # for tool arguments.
+                  skip_prefix = Set['message_start', 'ping']
                   events = Legion::LLM::API::Translators::AnthropicResponse.streaming_events(
                     pipeline_response, model: model, request_id: request_id, full_text: full_text
                   )
                   events.each do |event_name, payload|
-                    next unless tail_events.include?(event_name)
+                    if event_name == 'content_block_start'
+                      next if payload[:index].to_i.zero?
+                    elsif event_name == 'content_block_delta'
+                      next unless payload.dig(:delta, :type) == 'input_json_delta'
+                    elsif skip_prefix.include?(event_name)
+                      next
+                    end
 
                     out << "event: #{event_name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
                   end
