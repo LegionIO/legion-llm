@@ -151,6 +151,9 @@ module Legion
           end
 
           def self.format_stop_reason(pipeline_response)
+            tool_calls = extract_tool_calls(pipeline_response)
+            return 'tool_use' if tool_calls.any?
+
             return 'end_turn' unless pipeline_response.respond_to?(:stop)
 
             stop = pipeline_response.stop
