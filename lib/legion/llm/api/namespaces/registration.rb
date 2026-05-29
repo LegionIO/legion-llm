@@ -28,8 +28,24 @@ module Legion
             log.debug('[llm][api][namespaces] native namespace registration pending')
           end
 
-          def self.register_openai(_app)
-            log.debug('[llm][api][namespaces] openai namespace registration pending')
+          def self.register_openai(app)
+            log.debug('[llm][api][namespaces] registering openai namespaces')
+
+            require_relative 'openai/responses'
+            require_relative 'openai/chat/completions'
+            require_relative 'openai/chat/messages'
+            require_relative 'openai/models'
+            require_relative 'openai/embeddings'
+            require_relative 'openai/completions'
+
+            app.register OpenAI::Responses
+            app.register OpenAI::Chat::Completions
+            app.register OpenAI::Chat::Messages
+            app.register OpenAI::Models
+            app.register OpenAI::Embeddings
+            app.register OpenAI::Completions
+
+            log.debug('[llm][api][namespaces] openai namespaces registered')
           end
 
           def self.register_anthropic(app)
