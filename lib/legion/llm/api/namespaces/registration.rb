@@ -174,9 +174,11 @@ module Legion
               namespace('/batches') { register Namespaces::Anthropic::Messages::Batches }
             end
 
-            app.namespace '/v1/files' do
-              register Namespaces::Anthropic::Files
-            end
+            # NOTE: /v1/files is owned by OpenAI::Files (registered first).
+            # Anthropic::Files is available for standalone Anthropic-only deployments
+            # but is NOT mounted here to avoid route conflicts. When both protocols
+            # are active, OpenAI::Files handles /v1/files for all clients.
+            # detect_client(env) branching for file ID format is a future enhancement.
 
             log.debug('[llm][api][namespaces] anthropic namespaces registered')
           end

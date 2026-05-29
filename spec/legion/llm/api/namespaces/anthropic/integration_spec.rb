@@ -50,11 +50,9 @@ capabilities: %w[chat tools], limits: {}, enabled: true }
     expect(last_response.status).to eq(200)
   end
 
-  # /v1/models is handled by OpenAI::Models (Phase 2A) — no separate Anthropic route.
-  # Anthropic clients get Anthropic-format responses via anthropic_client?(env) branch.
-  # Skipped until Phase 2A registers the /v1/models namespace.
-  xit 'responds to GET /v1/models (any client)' do
-    get '/v1/models'
+  # /v1/models is handled by OpenAI::Models (Phase 2A) with detect_client branching.
+  it 'responds to GET /v1/models (any client)' do
+    get '/v1/models', {}, { 'HTTP_ANTHROPIC_VERSION' => '2023-06-01' }
     expect(last_response.status).to eq(200)
   end
 end

@@ -3,7 +3,8 @@
 require 'spec_helper'
 require 'rack/test'
 require 'sinatra/base'
-require 'legion/llm/api/namespaces/registration'
+require 'sinatra/namespace'
+require 'legion/llm/api/namespaces/helpers'
 require 'legion/llm/api/namespaces/anthropic/files'
 
 RSpec.describe 'Anthropic Files Integration' do
@@ -12,9 +13,11 @@ RSpec.describe 'Anthropic Files Integration' do
   let(:app) do
     Legion::LLM::API::Namespaces::Anthropic::Files.reset_metadata_store!
     klass = Class.new(Sinatra::Base) do
+      register Sinatra::Namespace
+      helpers Legion::LLM::API::Namespaces::Helpers
       set :host_authorization, permitted: :any
+      namespace('/v1/files') { register Legion::LLM::API::Namespaces::Anthropic::Files }
     end
-    Legion::LLM::API::Namespaces::Registration.registered(klass)
     klass
   end
 

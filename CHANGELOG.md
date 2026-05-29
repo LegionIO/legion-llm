@@ -1,5 +1,50 @@
 # Legion LLM Changelog
 
+## [0.10.0] - 2026-05-29
+
+### Added
+- **Sinatra Namespace API** — complete API refactor using `sinatra-contrib` namespaces with thin route blocks. Enabled via `settings[:llm][:api][:use_namespaces] = true`.
+- **OpenAI-compatible endpoints (full surface):**
+  - `POST /v1/responses` — Responses API with typed SSE streaming (Codex CLI drop-in)
+  - `GET/DELETE /v1/responses/:id`, `POST /:id/cancel`, `GET /:id/input_items`
+  - `POST /v1/chat/completions` — streaming (`data: [DONE]`) and sync
+  - `GET/POST/DELETE /v1/chat/completions/:id`, `GET /v1/chat/completions/:id/messages`
+  - `GET /v1/models`, `GET /v1/models/:id` — with Anthropic format branching via `detect_client`
+  - `POST /v1/embeddings`, `POST /v1/completions` (legacy)
+  - `POST /v1/images/generations`, `/edits`, `/variations`
+  - `POST /v1/audio/transcriptions`, `/translations`, `/speech`
+  - `POST /v1/moderations`
+  - `POST/GET /v1/conversations`, CRUD + items
+  - `POST/GET /v1/batches`, cancel
+  - `POST/GET /v1/files`, content download, delete
+  - `POST /v1/uploads`, parts, cancel, complete
+  - `POST/GET /v1/vector_stores`, search, files, file batches
+- **Anthropic-compatible endpoints (full surface):**
+  - `POST /v1/messages` — Messages API with correct SSE event ordering (Claude Code drop-in)
+  - `POST /v1/messages/count_tokens` — token estimation
+  - `POST/GET/DELETE /v1/messages/batches` — full batch CRUD + JSONL results
+  - `GET /v1/models` — Anthropic format via detect_client header branching
+  - Anthropic files namespace (standalone deployment mode)
+- **Native namespace endpoints** — all `/api/llm/*` routes ported to namespace pattern
+- **SharedHelpers module** (`lib/legion/llm/api/shared_helpers.rb`) — extracted from `native/helpers.rb`, shared by both legacy and namespace routes
+- **TokenEstimation module** (`lib/legion/llm/token_estimation.rb`) — character-based token counting for `count_tokens` endpoint
+- **Client detection** — `detect_client(env)` determines OpenAI vs Anthropic client from headers (anthropic-version, x-api-key)
+- **Auth middleware** — now returns format-appropriate error shapes (OpenAI vs Anthropic) based on detected client
+- **VectorStore::Storage** — table DDL, cosine similarity, chunk_text utilities for vector store endpoints
+- **Codex CLI conformance tests** — verifies exact streaming event order for drop-in compatibility
+- **Claude Code conformance tests** — verifies exact SSE event order, tool use, system prompt handling
+
+### Changed
+- `sinatra-contrib` added as runtime dependency (>= 2.0)
+- `rack-test` added to development dependencies
+- API registration now conditional: `use_namespaces: true` uses `Namespaces::Registration`, `false` (default) uses legacy flat routes
+- All namespace inference routes go through full 18-step `Inference::Executor` pipeline (Gaia, RAG, metering, audit, escalation, RBAC, tools, etc.)
+
+### Fixed
+- Auth before filter returns Anthropic-shaped error for Anthropic clients (was always OpenAI-shaped)
+- Anthropic streaming event order: `message_start` now emitted before any `content_block_delta` events
+- `/v1/models` path conflict resolved — single handler with client detection branching
+
 ## [0.9.52] - 2026-05-27
 
 ### Fixed
