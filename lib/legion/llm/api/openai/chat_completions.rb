@@ -11,7 +11,7 @@ module Legion
         module ChatCompletions
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+          def self.registered(app)
             log.debug('[llm][api][openai][chat_completions] registering POST /v1/chat/completions + /api/llm/inference/v1/chat/completions')
 
             handler = build_handler
