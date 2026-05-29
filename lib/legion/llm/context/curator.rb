@@ -83,7 +83,7 @@ module Legion
 
           summary = heuristic_tool_summary(content, tool_name_from(msg))
           log.debug "[llm][curator] action=distill_tool_result conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} summary_chars=#{summary.length}"
+                    "original_chars=#{content.length} summary_chars=#{summary.length} summary=#{summary[0, 200]}"
           msg.merge(content: summary, curated: true, original_content: content)
         end
 
@@ -98,7 +98,7 @@ module Legion
           return msg if stripped == content || stripped.empty?
 
           log.debug "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} stripped_chars=#{stripped.length}"
+                    "original_chars=#{content.length} stripped_chars=#{stripped.length} result=#{stripped[0, 200]}"
           msg.merge(content: stripped, curated: true, original_content: content)
         end
 
