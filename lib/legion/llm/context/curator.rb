@@ -28,12 +28,23 @@ module Legion
         def curate_turn(turn_messages:, assistant_response:)
           return unless enabled?
 
+          current_turn_count = Array(turn_messages).size + (assistant_response ? 1 : 0)
+
           Thread.new do
-            curated = turn_messages.map { |msg| curate_message(msg, assistant_response) }
-            store_curated(@conversation_id, curated)
+            all_messages = Inference::Conversation.messages(@conversation_id)
+            older = if current_turn_count.positive? && all_messages.size > current_turn_count
+                     all_messages[0...-current_turn_count]
+                   else
+                     []
+                   end
+
+            if older.any?
+              curated = older.map { |msg| curate_message(msg, assistant_response) }
+              store_curated(@conversation_id, curated)
+            end
             @curated_messages = nil
           rescue StandardError => e
-            handle_exception(e, level: :warn)
+            handle_exception(e, level: :warn, operation: 'llm.context_curator.curate_turn')
           end
         end
 
@@ -83,7 +94,9 @@ module Legion
 
           summary = heuristic_tool_summary(content, tool_name_from(msg))
           log.debug "[llm][curator] action=distill_tool_result conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} summary_chars=#{summary.length} summary=#{summary[0, 200]}"
+                    "original_chars=#{content.length} summary_chars=#{summary.length}\n" \
+                    "  BEFORE: #{content}\n" \
+                    "  AFTER:  #{summary}"
           msg.merge(content: summary, curated: true, original_content: content)
         end
 
@@ -98,7 +111,9 @@ module Legion
           return msg if stripped == content || stripped.empty?
 
           log.debug "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} stripped_chars=#{stripped.length} result=#{stripped[0, 200]}"
+                    "original_chars=#{content.length} stripped_chars=#{stripped.length}\n" \
+                    "  BEFORE: #{content}\n" \
+                    "  AFTER:  #{stripped}"
           msg.merge(content: stripped, curated: true, original_content: content)
         end
 
