@@ -414,6 +414,7 @@ module Legion
           message_class = lex_llm_namespace::Message
           raw_messages = Array(messages)
           raw_messages = prepend_or_merge_system(raw_messages, system) if present_system?(system)
+          raw_messages = consolidate_system_messages(raw_messages)
 
           raw_messages.map do |message|
             next message if message.is_a?(message_class)
@@ -425,6 +426,34 @@ module Legion
               tool_calls:   normalize_message_tool_calls(message_hash[:tool_calls]),
               tool_call_id: message_hash[:tool_call_id]
             )
+          end
+        end
+
+        def consolidate_system_messages(raw_messages)
+          system_parts = []
+          non_system = []
+
+          raw_messages.each do |msg|
+            role = if msg.is_a?(Hash)
+                     (msg[:role] || msg['role']).to_s
+                   elsif msg.respond_to?(:role)
+                     msg.role.to_s
+                   else
+                     'user'
+                   end
+
+            if role == 'system'
+              content = msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg.content
+              system_parts << content.to_s
+            else
+              non_system << msg
+            end
+          end
+
+          if system_parts.any?
+            [{ role: :system, content: system_parts.join("\n\n") }] + non_system
+          else
+            non_system
           end
         end
 
