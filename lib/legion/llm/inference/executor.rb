@@ -425,8 +425,26 @@ module Legion
           end
 
           required << :tools if native_tools_requested_for_routing?
+          required << :vision if request_has_vision_content?
           normalized[:required_capabilities] = required.uniq if required.any?
           normalized
+        end
+
+        def request_has_vision_content?
+          return true if @request.modality == :vision
+
+          @request.messages.any? do |msg|
+            content = msg[:content] || msg['content']
+            next false unless content.is_a?(Array)
+
+            content.any? do |block|
+              next false unless block.is_a?(Hash)
+
+              type = (block[:type] || block['type']).to_s
+              type == 'image' || type == 'image_url' ||
+                (block[:source] && (block.dig(:source, :type) || block.dig(:source, 'type')).to_s == 'base64')
+            end
+          end
         end
 
         def stream_routable_capability?(capability)

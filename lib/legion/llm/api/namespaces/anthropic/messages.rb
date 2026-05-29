@@ -32,6 +32,7 @@ module Legion
               require 'legion/llm/inference/executor' unless defined?(Legion::LLM::Inference::Executor)
 
               tool_defs = build_tool_definitions(normalized[:tools] || [], executable: false)
+              modality = detect_modality(normalized[:messages])
 
               pipeline_request = Legion::LLM::Inference::Request.build(
                 id:       request_id,
@@ -41,6 +42,7 @@ module Legion
                 tools:    tool_defs,
                 caller:   build_server_caller(source: 'anthropic_compat', path: request.path, env: env),
                 stream:   streaming,
+                modality: modality,
                 cache:    { strategy: :default, cacheable: true }
               )
 

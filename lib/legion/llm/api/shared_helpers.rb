@@ -398,6 +398,24 @@ module Legion
             requested_by: identity_caller_hash(env).fetch(:requested_by)
           }.merge(safe_caller_fields)
         end
+
+        def detect_modality(messages)
+          return nil unless messages.is_a?(Array)
+
+          messages.each do |msg|
+            content = msg[:content] || msg['content']
+            next unless content.is_a?(Array)
+
+            content.each do |block|
+              b = block.is_a?(Hash) ? block : next
+              type = (b[:type] || b['type']).to_s
+              return :vision if %w[image image_url].include?(type)
+              return :vision if b[:source] && (b.dig(:source, :type) || b.dig(:source, 'type')).to_s == 'base64'
+            end
+          end
+
+          nil
+        end
       end
     end
   end
