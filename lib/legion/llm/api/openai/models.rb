@@ -11,9 +11,9 @@ module Legion
           extend Legion::Logging::Helper
 
           def self.registered(app)
-            log.debug('[llm][api][openai][models] registering GET /v1/models and GET /v1/models/:id')
+            log.debug('[llm][api][openai][models] registering GET /v1/models + /api/llm/inference/v1/models routes')
 
-            app.get '/v1/models' do
+            list_handler = proc do
               log.debug('[llm][api][openai][models] action=list')
               require_llm!
 
@@ -28,7 +28,7 @@ module Legion
                    Legion::JSON.dump({ error: { message: e.message, type: 'server_error' } })
             end
 
-            app.get '/v1/models/:id' do
+            get_handler = proc do
               model_id = params[:id]
               log.debug("[llm][api][openai][models] action=get id=#{model_id}")
               require_llm!
@@ -52,7 +52,12 @@ module Legion
                    Legion::JSON.dump({ error: { message: e.message, type: 'server_error' } })
             end
 
-            log.debug('[llm][api][openai][models] GET /v1/models routes registered')
+            app.get('/v1/models') { instance_exec(&list_handler) }
+            app.get('/api/llm/inference/v1/models') { instance_exec(&list_handler) }
+            app.get('/v1/models/:id') { instance_exec(&get_handler) }
+            app.get('/api/llm/inference/v1/models/:id') { instance_exec(&get_handler) }
+
+            log.debug('[llm][api][openai][models] routes registered')
           end
 
           def self.build_model_list

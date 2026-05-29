@@ -11,10 +11,19 @@ module Legion
         module ChatCompletions
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
-            log.debug('[llm][api][openai][chat_completions] registering POST /v1/chat/completions')
+          def self.registered(app)
+            log.debug('[llm][api][openai][chat_completions] registering POST /v1/chat/completions + /api/llm/inference/v1/chat/completions')
 
-            app.post '/v1/chat/completions' do # rubocop:disable Metrics/BlockLength
+            handler = build_handler
+
+            app.post('/v1/chat/completions') { instance_exec(&handler) }
+            app.post('/api/llm/inference/v1/chat/completions') { instance_exec(&handler) }
+
+            log.debug('[llm][api][openai][chat_completions] routes registered')
+          end
+
+          def self.build_handler # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+            proc do # rubocop:disable Metrics/BlockLength
               require_llm!
               body = parse_request_body
 
@@ -121,8 +130,6 @@ module Legion
               halt 500, { 'Content-Type' => 'application/json' },
                    Legion::JSON.dump({ error: { message: e.message, type: 'server_error' } })
             end
-
-            log.debug('[llm][api][openai][chat_completions] POST /v1/chat/completions registered')
           end
 
           def self.build_openai_tool_classes(tools)
