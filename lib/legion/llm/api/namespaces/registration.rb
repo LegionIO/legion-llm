@@ -111,6 +111,35 @@ module Legion
             app.register OpenAI::Completions
             app.register OpenAI::Moderations
 
+            require_relative 'openai/conversations'
+            require_relative 'openai/conversations/items'
+            require_relative 'openai/batches'
+            require_relative 'openai/files'
+            require_relative 'openai/uploads'
+            require_relative 'openai/uploads/parts'
+
+            app.register OpenAI::Conversations
+            app.register OpenAI::Conversations::Items
+            app.register OpenAI::Batches
+            app.register OpenAI::Files
+            app.register OpenAI::Uploads
+            app.register OpenAI::Uploads::Parts
+
+            require_relative 'openai/images'
+            require_relative 'openai/audio/transcriptions'
+            require_relative 'openai/audio/translations'
+            require_relative 'openai/audio/speech'
+
+            app.namespace '/v1/images' do
+              register Namespaces::OpenAI::Images
+            end
+
+            app.namespace '/v1/audio' do
+              namespace('/transcriptions') { register Namespaces::OpenAI::Audio::Transcriptions }
+              namespace('/translations')   { register Namespaces::OpenAI::Audio::Translations }
+              namespace('/speech')         { register Namespaces::OpenAI::Audio::Speech }
+            end
+
             log.debug('[llm][api][namespaces] openai namespaces registered')
           end
 

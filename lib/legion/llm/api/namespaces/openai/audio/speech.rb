@@ -31,7 +31,7 @@ module Legion
                 'pcm'  => 'audio/pcm'
               }.freeze
 
-              private_constant :VALID_VOICES, :VALID_FORMATS, :AUDIO_CONTENT_TYPES
+              private_constant :VALID_VOICES, :VALID_FORMATS
 
               def self.capable_provider_available?
                 instances = begin
@@ -49,7 +49,8 @@ module Legion
                 false
               end
 
-              def self.extract_audio_bytes(pipeline_response, _response_format:)
+              def self.extract_audio_bytes(pipeline_response, response_format:)
+                _ = response_format # unused, retained for contract stability
                 raw_msg = pipeline_response.message
                 msg = raw_msg.respond_to?(:transform_keys) ? raw_msg.transform_keys(&:to_sym) : {}
 
