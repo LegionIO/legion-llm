@@ -101,6 +101,7 @@ module Legion
             require_relative 'openai/models'
             require_relative 'openai/embeddings'
             require_relative 'openai/completions'
+            require_relative 'openai/moderations'
 
             app.register OpenAI::Responses
             app.register OpenAI::Chat::Completions
@@ -108,6 +109,7 @@ module Legion
             app.register OpenAI::Models
             app.register OpenAI::Embeddings
             app.register OpenAI::Completions
+            app.register OpenAI::Moderations
 
             log.debug('[llm][api][namespaces] openai namespaces registered')
           end
