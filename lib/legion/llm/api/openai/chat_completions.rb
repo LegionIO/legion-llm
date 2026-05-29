@@ -91,7 +91,13 @@ module Legion
                     nil,
                     model:         final_model,
                     request_id:    request_id,
-                    finish_reason: tool_calls.empty? ? 'stop' : 'tool_calls'
+                    finish_reason: tool_calls.empty? ? 'stop' : 'tool_calls',
+                    usage:         {
+                      prompt_tokens:     Legion::LLM::API::Translators::OpenAIResponse.extract_token_count(pipeline_response.tokens, :input),
+                      completion_tokens: Legion::LLM::API::Translators::OpenAIResponse.extract_token_count(pipeline_response.tokens, :output),
+                      total_tokens:      Legion::LLM::API::Translators::OpenAIResponse.extract_token_count(pipeline_response.tokens, :input).to_i +
+                                         Legion::LLM::API::Translators::OpenAIResponse.extract_token_count(pipeline_response.tokens, :output).to_i
+                    }
                   )
                   out << "data: #{Legion::JSON.dump(done_chunk)}\n\n"
                   out << "data: [DONE]\n\n"

@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.9.54] - 2026-05-29
+
+### Fixed
+- API: OpenAI-compatible streaming responses now include `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`) in the final done-chunk, allowing the Vercel AI SDK `step-finish` event to propagate token counts to clients (fixes empty Tokens display in Kai's response info popup)
+
 ## [0.9.53] - 2026-05-29
 
 ### Added
