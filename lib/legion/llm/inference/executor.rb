@@ -962,7 +962,6 @@ module Legion
 
         def native_dispatch_thinking
           return @request.thinking if @request.thinking
-          return { enabled: false } if @resolved_provider.to_s == 'vllm' && native_dispatch_tools.any?
 
           nil
         end

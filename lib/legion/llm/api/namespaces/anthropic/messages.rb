@@ -38,7 +38,7 @@ module Legion
                 id:       request_id,
                 messages: normalized[:messages],
                 system:   normalized[:system],
-                routing:  { model: 'legionio' },
+                routing:  {},
                 tools:    tool_defs,
                 caller:   build_server_caller(source: 'anthropic_compat', path: request.path, env: env),
                 stream:   streaming,
