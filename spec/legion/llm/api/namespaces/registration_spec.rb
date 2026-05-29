@@ -23,6 +23,35 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Registration' do
       expect(test_app).to respond_to(:require_llm!)
       expect(test_app).to respond_to(:detect_client)
     end
+
+    it 'mounts native providers namespace' do
+      Legion::LLM::API::Namespaces::Registration.registered(app)
+      routes = app.routes['GET'] || []
+      route_patterns = routes.map { |r| r[0].to_s }
+      expect(route_patterns).to include('/api/llm/providers')
+    end
+
+    it 'mounts native inference namespace' do
+      Legion::LLM::API::Namespaces::Registration.registered(app)
+      routes = app.routes['POST'] || []
+      route_patterns = routes.map { |r| r[0].to_s }
+      expect(route_patterns).to include('/api/llm/inference')
+    end
+
+    it 'mounts all 8 native namespace route prefixes' do
+      Legion::LLM::API::Namespaces::Registration.registered(app)
+      get_paths  = ((app.routes['GET']  || []).map { |r| r[0].to_s }).to_set
+      post_paths = ((app.routes['POST'] || []).map { |r| r[0].to_s }).to_set
+
+      expect(get_paths).to include('/api/llm/providers')
+      expect(get_paths).to include('/api/llm/instances')
+      expect(get_paths).to include('/api/llm/models')
+      expect(get_paths).to include('/api/llm/offerings')
+      expect(get_paths).to include('/api/llm/routing')
+      expect(get_paths).to include('/api/llm/tiers')
+      expect(post_paths).to include('/api/llm/chat')
+      expect(post_paths).to include('/api/llm/inference')
+    end
   end
 
   describe 'register_openai' do

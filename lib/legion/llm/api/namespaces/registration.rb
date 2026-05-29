@@ -24,8 +24,72 @@ module Legion
             log.debug('[llm][api][namespaces] all namespace routes registered')
           end
 
-          def self.register_native(_app)
-            log.debug('[llm][api][namespaces] native namespace registration pending')
+          def self.register_native(app)
+            log.debug('[llm][api][namespaces] registering native routes')
+
+            require_relative 'native/providers'
+            require_relative 'native/instances'
+            require_relative 'native/models'
+            require_relative 'native/offerings'
+            require_relative 'native/routing'
+            require_relative 'native/tiers'
+            require_relative 'native/chat'
+            require_relative 'native/inference'
+
+            app.namespace '/api/llm/providers' do
+              register Namespaces::Native::Providers
+            end
+
+            app.namespace '/api/llm/instances' do
+              register Namespaces::Native::Instances
+            end
+
+            app.namespace '/api/llm/models' do
+              register Namespaces::Native::Models
+            end
+
+            # Cross-namespace route: /api/llm/providers/:name/models
+            # Must be registered at full path, not inside either namespace
+            app.get '/api/llm/providers/:name/models' do
+              provider = params[:name]
+              log.debug("[llm][api][namespaces][models] action=list_provider_models provider=#{provider}")
+              require_llm!
+
+              filters = Legion::LLM::API::Native::Models.request_filters(params).merge(provider: provider)
+              offerings = Legion::LLM::Inventory.offerings(filters)
+
+              json_response({
+                              provider:  provider,
+                              models:    Legion::LLM::API::Native::Models.model_summaries(offerings),
+                              offerings: offerings,
+                              summary:   Legion::LLM::API::Native::Models.summary(offerings)
+                            })
+            rescue StandardError => e
+              handle_exception(e, level: :error, handled: true, operation: 'llm.api.models.provider')
+              json_error('model_inventory_error', e.message, status_code: 500)
+            end
+
+            app.namespace '/api/llm/offerings' do
+              register Namespaces::Native::Offerings
+            end
+
+            app.namespace '/api/llm/routing' do
+              register Namespaces::Native::Routing
+            end
+
+            app.namespace '/api/llm/tiers' do
+              register Namespaces::Native::Tiers
+            end
+
+            app.namespace '/api/llm/chat' do
+              register Namespaces::Native::Chat
+            end
+
+            app.namespace '/api/llm/inference' do
+              register Namespaces::Native::Inference
+            end
+
+            log.debug('[llm][api][namespaces] native routes registered')
           end
 
           def self.register_openai(app)
