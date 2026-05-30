@@ -9,9 +9,9 @@ module Legion
         extend Legion::Logging::Helper
 
         def self.registered(app)
-          log.debug('[llm][api][auth] registering /v1/* before filter')
+          log.debug('[llm][api][auth] registering /v1/* and /api/llm/inference/v1/* before filters')
 
-          app.before '/v1/*' do
+          auth_check = proc do
             log.debug("[llm][api][auth] before filter action=check path=#{request.path_info}")
             next unless auth_enabled?
 
@@ -30,6 +30,10 @@ module Legion
 
             log.debug("[llm][api][auth] action=authorized path=#{request.path_info}")
           end
+
+          app.before('/api/llm/inference/v1/*', &auth_check)
+
+          app.before('/v1/*', &auth_check)
 
           app.helpers do
             define_method(:auth_enabled?) do
@@ -57,7 +61,7 @@ module Legion
             end
           end
 
-          log.debug('[llm][api][auth] /v1/* before filter registered')
+          log.debug('[llm][api][auth] /v1/* and /api/llm/inference/v1/* before filters registered')
         rescue StandardError => e
           handle_exception(e, level: :error, handled: false, operation: 'llm.api.auth.register')
         end

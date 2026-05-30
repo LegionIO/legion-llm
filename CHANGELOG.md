@@ -65,6 +65,17 @@
 - Anthropic streaming event order: `message_start` now emitted before any `content_block_delta` events
 - `/v1/models` path conflict resolved — single handler with client detection branching
 
+## [0.9.54] - 2026-05-29
+
+### Fixed
+- API: OpenAI-compatible streaming responses now include `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`) in the final done-chunk, allowing the Vercel AI SDK `step-finish` event to propagate token counts to clients (fixes empty Tokens display in Kai's response info popup)
+
+## [0.9.53] - 2026-05-29
+
+### Added
+- API: OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`, `/v1/responses`) are now also available under the `/api/llm/inference/v1/` prefix, allowing Mastra `openai-compatible` providers to use `http://127.0.0.1:4567/api/llm/inference` as the base URL — consistent with the Claude and Codex client routing patches in legion-interlink
+- API: auth `before` filter extended to cover `/api/llm/inference/v1/*` in addition to `/v1/*`
+
 ## [0.9.52] - 2026-05-27
 
 ### Fixed

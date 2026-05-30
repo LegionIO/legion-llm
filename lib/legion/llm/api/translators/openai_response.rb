@@ -57,17 +57,19 @@ module Legion
             }
           end
 
-          def format_stream_chunk(delta_text, model:, request_id:, finish_reason: nil)
+          def format_stream_chunk(delta_text, model:, request_id:, finish_reason: nil, usage: nil)
             choice = { index: 0, delta: {}, finish_reason: finish_reason }
             choice[:delta][:content] = delta_text if delta_text && !delta_text.empty?
 
-            {
+            chunk = {
               id:      "chatcmpl-#{request_id.delete('-')}",
               object:  'chat.completion.chunk',
               created: Time.now.to_i,
               model:   model.to_s,
               choices: [choice]
             }
+            chunk[:usage] = usage if usage
+            chunk
           end
 
           def format_stream_tool_call_chunk(tool_call, model:, request_id:, index:)
