@@ -72,7 +72,7 @@ module Legion
                         'Connection'        => 'keep-alive',
                         'X-Accel-Buffering' => 'no'
 
-                stream do |out|
+                stream do |out| # rubocop:disable Metrics/BlockLength
                   pipeline_response = executor.call_stream do |chunk|
                     Legion::LLM::API::OpenAI::ChatCompletions.emit_reasoning_delta(
                       out, chunk, model, request_id, include_reasoning
