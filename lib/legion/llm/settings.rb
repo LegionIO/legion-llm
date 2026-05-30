@@ -385,9 +385,9 @@ module Legion
       def self.rag_defaults
         {
           enabled:                       true,
-          full_limit:                    10,
-          compact_limit:                 5,
-          min_confidence:                0.85,
+          full_limit:                    5,
+          compact_limit:                 3,
+          min_confidence:                0.92,
           utilization_compact_threshold: 0.7,
           utilization_skip_threshold:    0.9,
           conversation_history_enabled:  false,

@@ -1,5 +1,25 @@
 # Legion LLM Changelog
 
+## [0.10.1] - 2026-05-29
+
+### Fixed
+- **Anthropic message format translation** — `AnthropicRequest` translator now properly converts `tool_use` content blocks to `tool_calls` arrays and `tool_result` blocks to `role: :tool` messages. This was the root cause of vLLM outputting JSON blobs instead of calling tools — it was receiving malformed messages with raw Anthropic content block hashes in the content field.
+- **Streaming tool_use event ordering** — Rewrote namespace streaming to emit tool_use content blocks inline after stream completes. Text `content_block_start` is deferred until actual text arrives, matching real Anthropic API behavior for tool-only responses.
+- **Curator current-turn preservation** — `curate_turn` now only curates messages older than the current turn. `apply_curation_pipeline` preserves recent turns by counting user messages (`preserve_recent_turns` setting, default 2). Prevents the model from losing context of its recent work.
+- **LexLLMAdapter TypeError flood** — Guarded `text_part_content` and `defined_method_access` against Array inputs. Flattened nested content arrays before iterating.
+- **Rescue log levels** — All rescue blocks in inference steps, executor, dispatch, and adapter now use `:warn` or `:error` (never `:debug`). Caught exceptions should be visible.
+- **Thinking override removed** — No longer forces `thinking: { enabled: false }` for vLLM with tools. Lets the model use its thinking template properly.
+- **Model routing hardcode removed** — Anthropic namespace no longer hardcodes `routing: { model: 'legionio' }`. Uses daemon default_provider/default_model from settings.
+
+### Changed
+- **RAG defaults** — `min_confidence` 0.85 → 0.92, `full_limit` 10 → 5, `compact_limit` 5 → 3. Tighter relevance threshold, fewer context injections.
+- **AnthropicResponse translator** — `extract_tool_calls`, `format_stop_reason`, `token_count` are now public methods (needed by streaming handler).
+- **Message.build debug log removed** — Fired dozens of times per request with no diagnostic value.
+- **format_chunk log** — Now includes actual text content and index for debugging stream flow.
+- **Curator debug logs** — Show full before/after content (no truncation).
+- **Request info log** — Namespace handler logs message count, char count, estimated tokens, and tool count at request start.
+- **Stream completion log** — Logs tool_calls count, stop_reason, and text length after streaming.
+
 ## [0.10.0] - 2026-05-29
 
 ### Added

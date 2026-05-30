@@ -46,6 +46,13 @@ module Legion
                 cache:    { strategy: :default, cacheable: true }
               )
 
+              msg_count = normalized[:messages].size
+              msg_chars = normalized[:messages].sum { |m| (m[:content].is_a?(String) ? m[:content] : m[:content].to_s).length }
+              est_tokens = (msg_chars / 4.0).ceil
+              log.info "[llm][api][anthropic] action=request request_id=#{request_id} " \
+                       "messages=#{msg_count} chars=#{msg_chars} est_tokens=#{est_tokens} " \
+                       "tools=#{tool_defs.size} stream=#{streaming}"
+
               executor = Legion::LLM::Inference::Executor.new(pipeline_request)
               model = body[:model]
 
@@ -91,6 +98,10 @@ module Legion
                   stop_reason = tool_calls.any? ? 'tool_use' : translator.format_stop_reason(pipeline_response)
                   content_index = 0
 
+                  log.info "[llm][api][anthropic] action=stream_post request_id=#{request_id} " \
+                           "tool_calls=#{tool_calls.size} stop_reason=#{stop_reason} " \
+                           "text_block_opened=#{text_block_opened} full_text_length=#{full_text.length}"
+
                   if text_block_opened
                     out << "event: content_block_stop\ndata: #{Legion::JSON.dump({ type: 'content_block_stop', index: 0 })}\n\n"
                     content_index = 1
@@ -110,11 +121,12 @@ module Legion
                   end
 
                   out << "event: message_delta\ndata: #{Legion::JSON.dump({
-                                                                            type: 'message_delta',
-                    delta: { stop_reason: stop_reason, stop_sequence: nil },
-                    usage: { output_tokens: translator.token_count(tokens, :output) }
+                                                                            type:  'message_delta',
+                                                                            delta: { stop_reason: stop_reason, stop_sequence: nil },
+                                                                            usage: { output_tokens: translator.token_count(tokens, :output) }
                                                                           })}\n\n"
                   out << "event: message_stop\ndata: #{Legion::JSON.dump({ type: 'message_stop' })}\n\n"
+                  log.info "[llm][api][anthropic] action=stream_complete request_id=#{request_id} stop_reason=#{stop_reason}"
                 rescue StandardError => e
                   handle_exception(e, level: :error, handled: false, operation: 'llm.ns.anthropic.messages.stream', request_id: request_id)
                   out << "event: error\ndata: #{Legion::JSON.dump({ type: 'error', error: { type: 'api_error', message: e.message } })}\n\n"

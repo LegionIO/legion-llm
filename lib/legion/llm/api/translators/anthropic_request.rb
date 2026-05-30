@@ -40,9 +40,9 @@ module Legion
             raw.flat_map { |m| normalize_message(m) }
           end
 
-          def self.normalize_message(m)
-            role    = (m[:role] || m['role']).to_sym
-            content = m[:content] || m['content']
+          def self.normalize_message(msg)
+            role    = (msg[:role] || msg['role']).to_sym
+            content = msg[:content] || msg['content']
 
             case role
             when :assistant

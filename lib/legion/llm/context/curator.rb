@@ -33,10 +33,10 @@ module Legion
           Thread.new do
             all_messages = Inference::Conversation.messages(@conversation_id)
             older = if current_turn_count.positive? && all_messages.size > current_turn_count
-                     all_messages[0...-current_turn_count]
-                   else
-                     []
-                   end
+                      all_messages[0...-current_turn_count]
+                    else
+                      []
+                    end
 
             if older.any?
               curated = older.map { |msg| curate_message(msg, assistant_response) }
@@ -94,9 +94,9 @@ module Legion
 
           summary = heuristic_tool_summary(content, tool_name_from(msg))
           log.debug "[llm][curator] action=distill_tool_result conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} summary_chars=#{summary.length}\n" \
-                    "  BEFORE: #{content}\n" \
-                    "  AFTER:  #{summary}"
+                    "original_chars=#{content.length} summary_chars=#{summary.length}\n  " \
+                    "BEFORE: #{content}\n  " \
+                    "AFTER:  #{summary}"
           msg.merge(content: summary, curated: true, original_content: content)
         end
 
@@ -111,9 +111,9 @@ module Legion
           return msg if stripped == content || stripped.empty?
 
           log.debug "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} stripped_chars=#{stripped.length}\n" \
-                    "  BEFORE: #{content}\n" \
-                    "  AFTER:  #{stripped}"
+                    "original_chars=#{content.length} stripped_chars=#{stripped.length}\n  " \
+                    "BEFORE: #{content}\n  " \
+                    "AFTER:  #{stripped}"
           msg.merge(content: stripped, curated: true, original_content: content)
         end
 
@@ -332,7 +332,7 @@ module Legion
           user_indices = messages.each_with_index.filter_map { |msg, i| i if msg[:role].to_s == 'user' }
           return 0 if user_indices.size <= preserve_turns
 
-          user_indices[-(preserve_turns)]
+          user_indices[-preserve_turns]
         end
 
         def apply_structural_curation_pipeline(messages)

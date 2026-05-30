@@ -569,7 +569,8 @@ module Legion
           begin
             obj[key.to_s]
           rescue TypeError, NoMethodError, KeyError => fallback_error
-            log.warn "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} fallback_failed error=#{fallback_error.class}: #{fallback_error.message}"
+            log.warn "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} " \
+                     "fallback_failed error=#{fallback_error.class}: #{fallback_error.message}"
             nil
           end
         end
