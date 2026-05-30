@@ -34,16 +34,27 @@ module Legion
               tool_defs = build_tool_definitions(normalized[:tools] || [], executable: false)
               modality = detect_modality(normalized[:messages])
 
+              conv_id = env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id]
+              ext_provider = env['HTTP_X_LEGION_PROVIDER'] || body[:provider]
+              ext_tier = env['HTTP_X_LEGION_TIER'] || body[:tier]
+              ext_instance = env['HTTP_X_LEGION_INSTANCE'] || body[:instance]
+
+              routing = { provider: ext_provider, instance: ext_instance }.compact
+              extra = {}
+              extra[:tier] = ext_tier.to_sym if ext_tier
+
               pipeline_request = Legion::LLM::Inference::Request.build(
-                id:       request_id,
-                messages: normalized[:messages],
-                system:   normalized[:system],
-                routing:  {},
-                tools:    tool_defs,
-                caller:   build_server_caller(source: 'anthropic_compat', path: request.path, env: env),
-                stream:   streaming,
-                modality: modality,
-                cache:    { strategy: :default, cacheable: true }
+                id:              request_id,
+                messages:        normalized[:messages],
+                system:          normalized[:system],
+                routing:         routing,
+                tools:           tool_defs,
+                caller:          build_server_caller(source: 'anthropic_compat', path: request.path, env: env),
+                conversation_id: conv_id,
+                stream:          streaming,
+                modality:        modality,
+                cache:           { strategy: :default, cacheable: true },
+                extra:           extra.empty? ? {} : extra
               )
 
               msg_count = normalized[:messages].size
