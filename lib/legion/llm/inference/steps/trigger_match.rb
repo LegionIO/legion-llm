@@ -76,7 +76,17 @@ module Legion
               next unless (msg[:role] || msg['role']).to_s == 'user'
 
               content = msg[:content] || msg['content']
-              content.is_a?(Array) ? content.filter_map { |c| c.is_a?(String) ? c : (c.is_a?(Hash) ? (c[:text] || c['text']) : nil) }.join(' ') : content.to_s
+              if content.is_a?(Array)
+                content.filter_map do |c|
+                  if c.is_a?(String)
+                    c
+                  else
+                    (c.is_a?(Hash) ? (c[:text] || c['text']) : nil)
+                  end
+                end.join(' ')
+              else
+                content.to_s
+              end
             end.join(' ')
           end
 
