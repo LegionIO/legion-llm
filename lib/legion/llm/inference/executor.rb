@@ -983,7 +983,19 @@ module Legion
         end
 
         def registry_tool_injection_requested?
-          !(@request.respond_to?(:suppress_tools) && @request.suppress_tools)
+          return false if @request.respond_to?(:suppress_tools) && @request.suppress_tools
+          return false if client_tools_only?
+
+          true
+        end
+
+        def client_tools_only?
+          return false unless client_tool_passthrough_enabled?
+
+          Array(@request.tools).any? do |tool|
+            source = tool.respond_to?(:source) ? tool.source : {}
+            source.is_a?(Hash) && source[:type] == :client
+          end
         end
 
         def client_tool_passthrough_enabled?
