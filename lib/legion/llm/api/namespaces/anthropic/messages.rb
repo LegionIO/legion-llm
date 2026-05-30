@@ -109,6 +109,22 @@ module Legion
                   stop_reason = tool_calls.any? ? 'tool_use' : translator.format_stop_reason(pipeline_response)
                   content_index = 0
 
+                  if !text_block_opened && tool_calls.empty?
+                    msg = pipeline_response.message
+                    fallback_text = msg.is_a?(Hash) ? (msg[:content] || msg['content']).to_s : ''
+                    unless fallback_text.empty?
+                      out << "event: content_block_start\ndata: #{Legion::JSON.dump({
+                                                                                      type: 'content_block_start', index: 0,
+                        content_block: { type: 'text', text: '' }
+                                                                                    })}\n\n"
+                      out << "event: content_block_delta\ndata: #{Legion::JSON.dump({
+                                                                                      type: 'content_block_delta', index: 0,
+                        delta: { type: 'text_delta', text: fallback_text }
+                                                                                    })}\n\n"
+                      text_block_opened = true
+                    end
+                  end
+
                   log.info "[llm][api][anthropic] action=stream_post request_id=#{request_id} " \
                            "tool_calls=#{tool_calls.size} stop_reason=#{stop_reason} " \
                            "text_block_opened=#{text_block_opened} full_text_length=#{full_text.length}"
