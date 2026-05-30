@@ -200,6 +200,7 @@ module Legion
                 return [] unless tools.is_a?(Array) && !tools.empty?
 
                 tools.filter_map do |tool|
+                  t = nil
                   t = tool.respond_to?(:transform_keys) ? tool.transform_keys(&:to_sym) : tool
                   next unless t[:name].to_s.length.positive?
 
@@ -210,7 +211,8 @@ module Legion
                     source:      { type: :client, executable: true }
                   )
                 rescue StandardError => e
-                  log.warn("[llm][api][namespaces][openai][chat] build_tool failed name=#{t[:name]} error=#{e.message}")
+                  tool_name = t.is_a?(Hash) ? t[:name] : nil
+                  log.warn("[llm][api][namespaces][openai][chat] build_tool failed name=#{tool_name} error=#{e.message}")
                   nil
                 end
               end

@@ -191,6 +191,7 @@ module Legion
               return [] unless tools.is_a?(Array) && !tools.empty?
 
               tools.filter_map do |tool|
+                fn = nil
                 t  = tool.respond_to?(:transform_keys) ? tool.transform_keys(&:to_sym) : tool
                 fn = t[:function] || t
                 fn = fn.transform_keys(&:to_sym) if fn.respond_to?(:transform_keys)
@@ -203,7 +204,8 @@ module Legion
                   source:      { type: :client, executable: true }
                 )
               rescue StandardError => e
-                Legion::Logging::Helper.log.warn("[llm][api][namespaces][openai][responses] build_tool failed name=#{fn[:name]} error=#{e.message}")
+                tool_name = fn.is_a?(Hash) ? fn[:name] : nil
+                Legion::Logging::Helper.log.warn("[llm][api][namespaces][openai][responses] build_tool failed name=#{tool_name} error=#{e.message}")
                 nil
               end
             end
