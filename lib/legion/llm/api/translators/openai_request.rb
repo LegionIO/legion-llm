@@ -42,15 +42,41 @@ module Legion
               m = msg.respond_to?(:transform_keys) ? msg.transform_keys(&:to_sym) : msg
               role = m[:role].to_s
 
-              if role == 'system'
+              case role
+              when 'system'
                 system_content = extract_content(m[:content])
-                log.debug('[llm][translator][openai_request] action=extracted_system')
+              when 'assistant'
+                entry = { role: role, content: extract_content(m[:content]) }
+                entry[:tool_calls] = normalize_assistant_tool_calls(m[:tool_calls]) if m[:tool_calls]
+                messages << entry
+              when 'tool'
+                messages << { role: role, content: extract_content(m[:content]), tool_call_id: m[:tool_call_id] }.compact
               else
                 messages << { role: role, content: extract_content(m[:content]) }
               end
             end
 
             [messages, system_content]
+          end
+
+          def normalize_assistant_tool_calls(tool_calls)
+            return nil unless tool_calls.is_a?(Array) && tool_calls.any?
+
+            tool_calls.filter_map do |tc|
+              tc = tc.transform_keys(&:to_sym) if tc.respond_to?(:transform_keys)
+              fn = tc[:function]
+              fn = fn.transform_keys(&:to_sym) if fn.respond_to?(:transform_keys)
+              next unless fn.is_a?(Hash)
+
+              {
+                id:        tc[:id],
+                name:      fn[:name].to_s,
+                arguments: fn[:arguments].is_a?(String) ? Legion::JSON.parse(fn[:arguments]) : (fn[:arguments] || {})
+              }
+            rescue StandardError => e
+              log.warn("[llm][translator][openai_request] action=normalize_tool_call error=#{e.message}")
+              nil
+            end
           end
 
           def extract_content(content)
