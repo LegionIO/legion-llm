@@ -1,5 +1,9 @@
 # Legion LLM Changelog
 
+## [0.10.2] - 2026-05-30
+
+### Fixed
+- **Registry tool injection disabled for client passthrough** — When `client_tool_passthrough` is enabled and the request has client-sourced tools (Claude Code, Codex, Kai), Legion no longer injects internal registry tools (`exec_filesystem_mv`, `legion-apollo-*`, etc.) into the payload. This fixes the first-turn garbage output where Qwen3 would output raw tool definition JSON instead of responding normally.
 
 ## [0.10.1] - 2026-05-29
 
