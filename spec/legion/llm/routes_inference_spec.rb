@@ -210,6 +210,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
     before do
       Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+      Legion::Settings[:llm][:api][:use_namespaces] = false
       allow(Legion::LLM).to receive(:started?).and_return(true)
     end
 

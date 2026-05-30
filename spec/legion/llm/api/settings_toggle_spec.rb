@@ -4,14 +4,14 @@ require 'spec_helper'
 
 RSpec.describe 'Legion::LLM::Settings api.use_namespaces toggle' do
   describe 'default settings' do
-    it 'defaults use_namespaces to false' do
+    it 'defaults use_namespaces to true' do
       defaults = Legion::LLM::Settings.default
-      expect(defaults[:api][:use_namespaces]).to eq(false)
+      expect(defaults[:api][:use_namespaces]).to eq(true)
     end
 
     it 'is accessible via Settings.value' do
       result = Legion::LLM::Settings.value(:api, :use_namespaces)
-      expect(result).to eq(false)
+      expect(result).to eq(true)
     end
 
     it 'does not break existing api.auth defaults' do

@@ -516,7 +516,7 @@ module Legion
 
       def self.api_defaults
         {
-          use_namespaces: false,
+          use_namespaces: true,
           auth:           {
             enabled:      false,
             api_keys:     [],
