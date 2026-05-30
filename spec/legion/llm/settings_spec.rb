@@ -9,8 +9,8 @@ RSpec.describe Legion::LLM::Settings do
       expect(described_class.default.dig(:gaia, :advisory_enabled)).to be true
     end
 
-    it 'defaults client tool passthrough off with an empty whitelist and shell escalation blacklist' do
-      expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough)).to be false
+    it 'defaults client tool passthrough on with an empty whitelist and shell escalation blacklist' do
+      expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough)).to be true
       expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough_whitelist)).to eq([])
       blacklist = described_class.default.dig(:tool_trigger, :client_tool_passthrough_blacklist)
       expect(blacklist).to include(

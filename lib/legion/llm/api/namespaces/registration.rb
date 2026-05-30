@@ -1,0 +1,189 @@
+# frozen_string_literal: true
+
+require 'sinatra/base'
+require 'sinatra/namespace'
+require 'legion/logging/helper'
+require_relative 'helpers'
+
+module Legion
+  module LLM
+    module API
+      module Namespaces
+        module Registration
+          extend Legion::Logging::Helper
+
+          def self.registered(app)
+            log.debug('[llm][api][namespaces] registering namespace routes')
+            app.register Sinatra::Namespace
+            app.helpers Helpers
+
+            register_native(app)
+            register_openai(app)
+            register_anthropic(app)
+
+            log.debug('[llm][api][namespaces] all namespace routes registered')
+          end
+
+          def self.register_native(app)
+            log.debug('[llm][api][namespaces] registering native routes')
+
+            require_relative 'native/providers'
+            require_relative 'native/instances'
+            require_relative 'native/models'
+            require_relative 'native/offerings'
+            require_relative 'native/routing'
+            require_relative 'native/tiers'
+            require_relative 'native/chat'
+            require_relative 'native/inference'
+
+            app.namespace '/api/llm/providers' do
+              register Namespaces::Native::Providers
+            end
+
+            app.namespace '/api/llm/instances' do
+              register Namespaces::Native::Instances
+            end
+
+            app.namespace '/api/llm/models' do
+              register Namespaces::Native::Models
+            end
+
+            # Cross-namespace route: /api/llm/providers/:name/models
+            # Must be registered at full path, not inside either namespace
+            app.get '/api/llm/providers/:name/models' do
+              provider = params[:name]
+              log.debug("[llm][api][namespaces][models] action=list_provider_models provider=#{provider}")
+              require_llm!
+
+              filters = Legion::LLM::API::Native::Models.request_filters(params).merge(provider: provider)
+              offerings = Legion::LLM::Inventory.offerings(filters)
+
+              json_response({
+                              provider:  provider,
+                              models:    Legion::LLM::API::Native::Models.model_summaries(offerings),
+                              offerings: offerings,
+                              summary:   Legion::LLM::API::Native::Models.summary(offerings)
+                            })
+            rescue StandardError => e
+              handle_exception(e, level: :error, handled: true, operation: 'llm.api.models.provider')
+              json_error('model_inventory_error', e.message, status_code: 500)
+            end
+
+            app.namespace '/api/llm/offerings' do
+              register Namespaces::Native::Offerings
+            end
+
+            app.namespace '/api/llm/routing' do
+              register Namespaces::Native::Routing
+            end
+
+            app.namespace '/api/llm/tiers' do
+              register Namespaces::Native::Tiers
+            end
+
+            app.namespace '/api/llm/chat' do
+              register Namespaces::Native::Chat
+            end
+
+            app.namespace '/api/llm/inference' do
+              register Namespaces::Native::Inference
+            end
+
+            log.debug('[llm][api][namespaces] native routes registered')
+          end
+
+          def self.register_openai(app)
+            log.debug('[llm][api][namespaces] registering openai namespaces')
+
+            require_relative 'openai/responses'
+            require_relative 'openai/chat/completions'
+            require_relative 'openai/chat/messages'
+            require_relative 'openai/models'
+            require_relative 'openai/embeddings'
+            require_relative 'openai/completions'
+            require_relative 'openai/moderations'
+
+            app.register OpenAI::Responses
+            app.register OpenAI::Chat::Completions
+            app.register OpenAI::Chat::Messages
+            app.register OpenAI::Models
+            app.register OpenAI::Embeddings
+            app.register OpenAI::Completions
+            app.register OpenAI::Moderations
+
+            require_relative 'openai/conversations'
+            require_relative 'openai/conversations/items'
+            require_relative 'openai/batches'
+            require_relative 'openai/files'
+            require_relative 'openai/uploads'
+            require_relative 'openai/uploads/parts'
+
+            app.register OpenAI::Conversations
+            app.register OpenAI::Conversations::Items
+            app.register OpenAI::Batches
+            app.register OpenAI::Files
+            app.register OpenAI::Uploads
+            app.register OpenAI::Uploads::Parts
+
+            require_relative 'openai/images'
+            require_relative 'openai/audio/transcriptions'
+            require_relative 'openai/audio/translations'
+            require_relative 'openai/audio/speech'
+
+            app.namespace '/v1/images' do
+              register Namespaces::OpenAI::Images
+            end
+
+            app.namespace '/v1/audio' do
+              namespace('/transcriptions') { register Namespaces::OpenAI::Audio::Transcriptions }
+              namespace('/translations')   { register Namespaces::OpenAI::Audio::Translations }
+              namespace('/speech')         { register Namespaces::OpenAI::Audio::Speech }
+            end
+
+            require_relative 'openai/vector_stores'
+            require_relative 'openai/vector_stores/files'
+            require_relative 'openai/vector_stores/file_batches'
+
+            app.helpers Namespaces::OpenAI::VectorStores
+            app.helpers Namespaces::OpenAI::VectorStores::Files
+            app.helpers Namespaces::OpenAI::VectorStores::FileBatches
+
+            app.namespace '/v1/vector_stores' do
+              register Namespaces::OpenAI::VectorStores
+            end
+            app.namespace '/v1/vector_stores/:vector_store_id' do
+              register Namespaces::OpenAI::VectorStores::Files
+              register Namespaces::OpenAI::VectorStores::FileBatches
+            end
+
+            log.debug('[llm][api][namespaces] openai namespaces registered')
+          end
+
+          def self.register_anthropic(app)
+            require_relative 'anthropic/messages'
+            require_relative 'anthropic/messages/count_tokens'
+            require_relative 'anthropic/messages/batches'
+            require_relative 'anthropic/files'
+            # NOTE: anthropic/models.rb is a format helper only — no routes to register.
+            # The /v1/models namespace is owned by OpenAI::Models (Phase 2A) which branches
+            # on anthropic_client?(env) to emit Anthropic-format responses.
+
+            app.namespace '/v1/messages' do
+              register Namespaces::Anthropic::Messages
+              register Namespaces::Anthropic::Messages::CountTokens
+              namespace('/batches') { register Namespaces::Anthropic::Messages::Batches }
+            end
+
+            # NOTE: /v1/files is owned by OpenAI::Files (registered first).
+            # Anthropic::Files is available for standalone Anthropic-only deployments
+            # but is NOT mounted here to avoid route conflicts. When both protocols
+            # are active, OpenAI::Files handles /v1/files for all clients.
+            # detect_client(env) branching for file ID format is a future enhancement.
+
+            log.debug('[llm][api][namespaces] anthropic namespaces registered')
+          end
+        end
+      end
+    end
+  end
+end

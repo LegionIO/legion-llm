@@ -1,5 +1,71 @@
 # Legion LLM Changelog
 
+
+## [0.10.1] - 2026-05-29
+
+### Fixed
+- **Anthropic message format translation** — `AnthropicRequest` translator now properly converts `tool_use` content blocks to `tool_calls` arrays and `tool_result` blocks to `role: :tool` messages. This was the root cause of vLLM outputting JSON blobs instead of calling tools — it was receiving malformed messages with raw Anthropic content block hashes in the content field.
+- **Streaming tool_use event ordering** — Rewrote namespace streaming to emit tool_use content blocks inline after stream completes. Text `content_block_start` is deferred until actual text arrives, matching real Anthropic API behavior for tool-only responses.
+- **Curator current-turn preservation** — `curate_turn` now only curates messages older than the current turn. `apply_curation_pipeline` preserves recent turns by counting user messages (`preserve_recent_turns` setting, default 2). Prevents the model from losing context of its recent work.
+- **LexLLMAdapter TypeError flood** — Guarded `text_part_content` and `defined_method_access` against Array inputs. Flattened nested content arrays before iterating.
+- **Rescue log levels** — All rescue blocks in inference steps, executor, dispatch, and adapter now use `:warn` or `:error` (never `:debug`). Caught exceptions should be visible.
+- **Thinking override removed** — No longer forces `thinking: { enabled: false }` for vLLM with tools. Lets the model use its thinking template properly.
+- **Model routing hardcode removed** — Anthropic namespace no longer hardcodes `routing: { model: 'legionio' }`. Uses daemon default_provider/default_model from settings.
+
+### Changed
+- **RAG defaults** — `min_confidence` 0.85 → 0.92, `full_limit` 10 → 5, `compact_limit` 5 → 3. Tighter relevance threshold, fewer context injections.
+- **AnthropicResponse translator** — `extract_tool_calls`, `format_stop_reason`, `token_count` are now public methods (needed by streaming handler).
+- **Message.build debug log removed** — Fired dozens of times per request with no diagnostic value.
+- **format_chunk log** — Now includes actual text content and index for debugging stream flow.
+- **Curator debug logs** — Show full before/after content (no truncation).
+- **Request info log** — Namespace handler logs message count, char count, estimated tokens, and tool count at request start.
+- **Stream completion log** — Logs tool_calls count, stop_reason, and text length after streaming.
+
+## [0.10.0] - 2026-05-29
+
+### Added
+- **Sinatra Namespace API** — complete API refactor using `sinatra-contrib` namespaces with thin route blocks. Enabled via `settings[:llm][:api][:use_namespaces] = true`.
+- **OpenAI-compatible endpoints (full surface):**
+  - `POST /v1/responses` — Responses API with typed SSE streaming (Codex CLI drop-in)
+  - `GET/DELETE /v1/responses/:id`, `POST /:id/cancel`, `GET /:id/input_items`
+  - `POST /v1/chat/completions` — streaming (`data: [DONE]`) and sync
+  - `GET/POST/DELETE /v1/chat/completions/:id`, `GET /v1/chat/completions/:id/messages`
+  - `GET /v1/models`, `GET /v1/models/:id` — with Anthropic format branching via `detect_client`
+  - `POST /v1/embeddings`, `POST /v1/completions` (legacy)
+  - `POST /v1/images/generations`, `/edits`, `/variations`
+  - `POST /v1/audio/transcriptions`, `/translations`, `/speech`
+  - `POST /v1/moderations`
+  - `POST/GET /v1/conversations`, CRUD + items
+  - `POST/GET /v1/batches`, cancel
+  - `POST/GET /v1/files`, content download, delete
+  - `POST /v1/uploads`, parts, cancel, complete
+  - `POST/GET /v1/vector_stores`, search, files, file batches
+- **Anthropic-compatible endpoints (full surface):**
+  - `POST /v1/messages` — Messages API with correct SSE event ordering (Claude Code drop-in)
+  - `POST /v1/messages/count_tokens` — token estimation
+  - `POST/GET/DELETE /v1/messages/batches` — full batch CRUD + JSONL results
+  - `GET /v1/models` — Anthropic format via detect_client header branching
+  - Anthropic files namespace (standalone deployment mode)
+- **Native namespace endpoints** — all `/api/llm/*` routes ported to namespace pattern
+- **SharedHelpers module** (`lib/legion/llm/api/shared_helpers.rb`) — extracted from `native/helpers.rb`, shared by both legacy and namespace routes
+- **TokenEstimation module** (`lib/legion/llm/token_estimation.rb`) — character-based token counting for `count_tokens` endpoint
+- **Client detection** — `detect_client(env)` determines OpenAI vs Anthropic client from headers (anthropic-version, x-api-key)
+- **Auth middleware** — now returns format-appropriate error shapes (OpenAI vs Anthropic) based on detected client
+- **VectorStore::Storage** — table DDL, cosine similarity, chunk_text utilities for vector store endpoints
+- **Codex CLI conformance tests** — verifies exact streaming event order for drop-in compatibility
+- **Claude Code conformance tests** — verifies exact SSE event order, tool use, system prompt handling
+
+### Changed
+- `sinatra-contrib` added as runtime dependency (>= 2.0)
+- `rack-test` added to development dependencies
+- API registration now conditional: `use_namespaces: true` uses `Namespaces::Registration`, `false` (default) uses legacy flat routes
+- All namespace inference routes go through full 18-step `Inference::Executor` pipeline (Gaia, RAG, metering, audit, escalation, RBAC, tools, etc.)
+
+### Fixed
+- Auth before filter returns Anthropic-shaped error for Anthropic clients (was always OpenAI-shaped)
+- Anthropic streaming event order: `message_start` now emitted before any `content_block_delta` events
+- `/v1/models` path conflict resolved — single handler with client detection branching
+
 ## [0.9.54] - 2026-05-29
 
 ### Fixed
@@ -12,6 +78,12 @@
 - API: auth `before` filter extended to cover `/api/llm/inference/v1/*` in addition to `/v1/*`
 
 ## [0.9.52] - 2026-05-27
+
+### Added
+- API: `/v1/chat/completions` now has full pipeline feature parity with the native `/api/llm/inference` endpoint — routing, escalation, RAG context injection, Gaia advisory, knowledge capture, tool discovery, sticky runners, confidence scoring, metering, and debate all activate when the relevant fields are provided.
+- API: `/v1/chat/completions` accepts extended fields via request body (`conversation_id`, `provider`, `tier`, `instance`, `cwd`, `requested_tools`, `client_tool_passthrough`, `caller`) or via `X-Legion-*` headers (`X-Legion-Conversation-Id`, `X-Legion-Provider`, `X-Legion-Tier`, `X-Legion-Instance`, `X-Legion-Cwd`, `X-Legion-Client-Tool-Passthrough`). Headers take precedence for scalar values.
+- API: `/v1/chat/completions` now performs pre-pipeline Gaia ingest (mirrors native endpoint awareness).
+- API: `/v1/chat/completions` reasoning/thinking token streaming via `include_reasoning: true` (or `include_thinking: true`). Emits `reasoning_content` delta chunks in OpenAI format. Non-streaming responses include `reasoning_content` in the message body.
 
 ### Fixed
 - Discovery: `verify_embedding` now checks `model_available?` for Ollama instead of blindly returning true — prevents `can_embed?` from reporting true when the embedding model (e.g. `mxbai-embed-large`) hasn't been pulled on the local node

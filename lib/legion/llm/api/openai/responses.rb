@@ -110,21 +110,46 @@ module Legion
           end
 
           def self.normalize_input_array(input)
-            input.filter_map do |item|
-              item = item.transform_keys(&:to_sym) if item.respond_to?(:transform_keys)
+            messages = []
+            pending_tool_calls = []
 
+            input.each do |item|
+              item = item.transform_keys(&:to_sym) if item.respond_to?(:transform_keys)
               case item[:type]&.to_s
+              when 'function_call'
+                pending_tool_calls << {
+                  id:        item[:call_id] || item[:id],
+                  name:      item[:name].to_s,
+                  arguments: item[:arguments].is_a?(String) ? item[:arguments] : Legion::JSON.dump(item[:arguments] || {})
+                }
               when 'function_call_output'
-                { role: 'tool', tool_call_id: item[:call_id], content: item[:output].to_s }
+                flush_pending_tool_calls(messages, pending_tool_calls)
+                messages << { role: 'tool', tool_call_id: item[:call_id], content: item[:output].to_s }
               else
+                flush_pending_tool_calls(messages, pending_tool_calls)
                 role = item[:role]&.to_s
                 next unless role
 
                 content = item[:content]
                 content = content.to_s if content && !content.is_a?(Array)
-                { role: role, content: content }.compact
+                messages << { role: role, content: content }.compact
               end
             end
+            flush_pending_tool_calls(messages, pending_tool_calls)
+            messages
+          end
+
+          def self.flush_pending_tool_calls(messages, pending)
+            return if pending.empty?
+
+            messages << {
+              role:       'assistant',
+              content:    '',
+              tool_calls: pending.map do |tc|
+                { id: tc[:id], type: 'function', function: { name: tc[:name], arguments: tc[:arguments] } }
+              end
+            }
+            pending.clear
           end
 
           def self.build_tool_declarations(tools)

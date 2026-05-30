@@ -20,8 +20,12 @@ module Legion
 
             unless valid_token?(token)
               log.warn("[llm][api][auth] action=rejected reason=invalid_token path=#{request.path_info}")
-              halt 401, { 'Content-Type' => 'application/json' },
-                   Legion::JSON.dump({ error: { message: 'Invalid API key', type: 'authentication_error' } })
+              error_body = if Auth.anthropic_client?(request.env)
+                             { type: 'error', error: { type: 'authentication_error', message: 'Invalid API key' } }
+                           else
+                             { error: { message: 'Invalid API key', type: 'authentication_error' } }
+                           end
+              halt 401, { 'Content-Type' => 'application/json' }, Legion::JSON.dump(error_body)
             end
 
             log.debug("[llm][api][auth] action=authorized path=#{request.path_info}")
@@ -60,6 +64,14 @@ module Legion
           log.debug('[llm][api][auth] /v1/* and /api/llm/inference/v1/* before filters registered')
         rescue StandardError => e
           handle_exception(e, level: :error, handled: false, operation: 'llm.api.auth.register')
+        end
+
+        # Detects whether the incoming request is from an Anthropic SDK client.
+        # Anthropic clients set anthropic-version header, or use x-api-key without a Bearer token.
+        def self.anthropic_client?(env)
+          return true if env['HTTP_ANTHROPIC_VERSION']
+
+          env['HTTP_X_API_KEY'] && !env['HTTP_AUTHORIZATION']&.match?(/\ABearer\s+/i)
         end
       end
     end

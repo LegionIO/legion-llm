@@ -15,7 +15,6 @@ module Legion
         extend Legion::Logging::Helper
 
         def self.build(**kwargs)
-          log.debug("[types][message] action=build role=#{kwargs[:role]} id=#{kwargs[:id]}")
           new(
             id:              kwargs[:id] || "msg_#{SecureRandom.hex(12)}",
             parent_id:       kwargs[:parent_id],

@@ -12,7 +12,7 @@ module Legion
 
           # Format internal pipeline response into Anthropic Messages API shape.
           def self.format(pipeline_response, model:, request_id: nil)
-            log.debug('[llm][translator][anthropic_response] action=format')
+            log.debug("[llm][api][anthropic] action=format request_id=#{request_id} model=#{model}")
 
             msg     = pipeline_response.message
             content = extract_content(msg, pipeline_response)
@@ -36,7 +36,7 @@ module Legion
           # Emit Anthropic streaming events for a single text chunk.
           # Returns the SSE lines for the delta event.
           def self.format_chunk(text, index: 0)
-            log.debug('[llm][translator][anthropic_response] action=format_chunk')
+            log.debug("[llm][api][anthropic] action=format_chunk index=#{index} text=#{text[0, 80]}")
             {
               type:  'content_block_delta',
               index: index,
@@ -47,7 +47,7 @@ module Legion
           # Ordered sequence of SSE event hashes for a complete streaming response.
           # Caller emits each via emit_sse_event.
           def self.streaming_events(pipeline_response, model:, request_id: nil, full_text: '')
-            log.debug('[llm][translator][anthropic_response] action=streaming_events')
+            log.debug("[llm][api][anthropic] action=streaming_events request_id=#{request_id} text_length=#{full_text.length}")
 
             tokens  = pipeline_response.respond_to?(:tokens) ? pipeline_response.tokens : nil
             routing = pipeline_response.respond_to?(:routing) ? (pipeline_response.routing || {}) : {}
@@ -151,6 +151,9 @@ module Legion
           end
 
           def self.format_stop_reason(pipeline_response)
+            tool_calls = extract_tool_calls(pipeline_response)
+            return 'tool_use' if tool_calls.any?
+
             return 'end_turn' unless pipeline_response.respond_to?(:stop)
 
             stop = pipeline_response.stop
@@ -181,8 +184,11 @@ module Legion
             0
           end
 
-          private_class_method :extract_content, :extract_tool_calls, :format_stop_reason,
-                               :format_usage, :token_count
+          private_class_method :extract_content, :format_usage
+
+          class << self
+            public :extract_tool_calls, :format_stop_reason, :token_count
+          end
         end
       end
     end

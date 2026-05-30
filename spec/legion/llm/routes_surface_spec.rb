@@ -10,6 +10,11 @@ end
 
 if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
   RSpec.describe 'LLM API route surface' do
+    before do
+      Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+      Legion::Settings[:llm][:api][:use_namespaces] = false
+    end
+
     let(:test_app) do
       Class.new(Sinatra::Base) do
         set :show_exceptions, false

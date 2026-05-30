@@ -414,6 +414,7 @@ module Legion
           message_class = lex_llm_namespace::Message
           raw_messages = Array(messages)
           raw_messages = prepend_or_merge_system(raw_messages, system) if present_system?(system)
+          raw_messages = consolidate_system_messages(raw_messages)
 
           raw_messages.map do |message|
             next message if message.is_a?(message_class)
@@ -425,6 +426,34 @@ module Legion
               tool_calls:   normalize_message_tool_calls(message_hash[:tool_calls]),
               tool_call_id: message_hash[:tool_call_id]
             )
+          end
+        end
+
+        def consolidate_system_messages(raw_messages)
+          system_parts = []
+          non_system = []
+
+          raw_messages.each do |msg|
+            role = if msg.is_a?(Hash)
+                     (msg[:role] || msg['role']).to_s
+                   elsif msg.respond_to?(:role)
+                     msg.role.to_s
+                   else
+                     'user'
+                   end
+
+            if role == 'system'
+              content = msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg.content
+              system_parts << content.to_s
+            else
+              non_system << msg
+            end
+          end
+
+          if system_parts.any?
+            [{ role: :system, content: system_parts.join("\n\n") }] + non_system
+          else
+            non_system
           end
         end
 
@@ -490,7 +519,8 @@ module Legion
           return content if content.respond_to?(:attachments)
 
           if content.is_a?(Array)
-            text_parts = content.filter_map { |part| text_part_content(part) }
+            flat = content.flatten
+            text_parts = flat.filter_map { |part| text_part_content(part) }
             return text_parts.join("\n\n") unless text_parts.empty?
           end
 
@@ -499,6 +529,7 @@ module Legion
 
         def text_part_content(part)
           return part if part.is_a?(String)
+          return nil if part.is_a?(Array)
 
           if part.respond_to?(:transform_keys)
             normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
@@ -525,20 +556,21 @@ module Legion
         end
 
         def defined_method_access(obj, key)
-          # Prefer named accessor (covers Data structs like Types::ContentBlock).
+          return nil if obj.nil? || obj.is_a?(Array)
+
           key_sym = key.respond_to?(:to_sym) ? key.to_sym : key
           return obj.public_send(key_sym) if obj.respond_to?(key_sym)
 
-          str_key = key.to_s
-          obj[key]
+          return nil unless obj.respond_to?(:key?) || obj.respond_to?(:fetch)
+
+          obj[key_sym]
         rescue TypeError, NoMethodError, KeyError => e
-          log.debug "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} " \
-                    "fallback=string_key error=#{e.class}: #{e.message}"
+          log.warn "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} error=#{e.class}: #{e.message}"
           begin
-            obj[str_key]
+            obj[key.to_s]
           rescue TypeError, NoMethodError, KeyError => fallback_error
-            log.debug "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} " \
-                      "fallback=none error=#{fallback_error.class}: #{fallback_error.message}"
+            log.warn "[llm][adapter] action=defined_method_access key=#{key} class=#{obj.class} " \
+                     "fallback_failed error=#{fallback_error.class}: #{fallback_error.message}"
             nil
           end
         end
@@ -722,7 +754,7 @@ module Legion
           value = hash_value(source, key)
           value&.to_i
         rescue StandardError => e
-          log.debug "[llm][adapter] action=extract_metric_value key=#{key} class=#{source.class} error=#{e.class}: #{e.message}"
+          log.warn "[llm][adapter] action=extract_metric_value key=#{key} class=#{source.class} error=#{e.class}: #{e.message}"
           nil
         end
 

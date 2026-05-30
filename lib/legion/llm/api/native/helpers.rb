@@ -346,7 +346,7 @@ module Legion
                   "payload=#{Legion::JSON.dump(payload)}"
                 )
               rescue StandardError => e
-                handle_exception(e, level: :debug, handled: true,
+                handle_exception(e, level: :warn, handled: true,
                                     operation: 'llm.api.inference.response_payload_log',
                                     request_id: request_id)
               end

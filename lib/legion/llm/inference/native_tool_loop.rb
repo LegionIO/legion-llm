@@ -145,7 +145,8 @@ module Legion
           return content.to_s unless content.is_a?(Array)
 
           content.filter_map do |part|
-            next unless part.respond_to?(:[])
+            next part if part.is_a?(String)
+            next unless part.is_a?(Hash)
 
             part[:text] || part['text']
           end.join(' ')
