@@ -1,0 +1,260 @@
+# frozen_string_literal: true
+
+require 'securerandom'
+require 'sinatra/base'
+require 'sinatra/namespace'
+require 'legion/logging/helper'
+require 'legion/llm/api/translators/openai_response'
+
+module Legion
+  module LLM
+    module API
+      module Namespaces
+        module Native
+          module Inference
+            extend Legion::Logging::Helper
+
+            def self.registered(ns_context) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+              log.debug('[llm][api][namespaces][inference] registering routes')
+
+              ns_context.post '' do # rubocop:disable Metrics/BlockLength
+                require_llm!
+                body = parse_request_body
+                validate_required!(body, :messages)
+
+                messages            = body[:messages]
+                raw_tools           = body[:tools]
+                requested_tools     = body[:requested_tools] || []
+                model               = body[:model]
+                provider            = body[:provider]
+                tier                = body[:tier]
+                caller_context      = body[:caller]
+                conversation_id     = body[:conversation_id]
+                request_id          = body[:request_id] || SecureRandom.uuid
+                include_thinking    = body[:include_thinking] == true
+                client_tool_passthrough = body[:client_tool_passthrough] if [true, false].include?(body[:client_tool_passthrough])
+
+                unless messages.is_a?(Array)
+                  halt 400, { 'Content-Type' => 'application/json' },
+                       Legion::JSON.dump({ error: { code: 'invalid_messages', message: 'messages must be an array' } })
+                end
+
+                unless raw_tools.nil? || raw_tools.is_a?(Array)
+                  halt 400, { 'Content-Type' => 'application/json' },
+                       Legion::JSON.dump({ error: { code: 'invalid_tools', message: 'tools must be an array' } })
+                end
+
+                tools = raw_tools || []
+                tool_declarations = build_tool_definitions(tools)
+                raw_tool_count = raw_tools.is_a?(Array) ? raw_tools.size : 0
+                log.debug(
+                  "[llm][api][namespaces][inference] action=request_tools_received request_id=#{request_id} " \
+                  "has_tools=#{body.key?(:tools)} raw_tools_count=#{raw_tool_count}"
+                )
+
+                last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
+                prompt    = (last_user || {})[:content] || (last_user || {})['content'] || ''
+
+                route_t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+
+                if defined?(Legion::Gaia) && Legion::Gaia.respond_to?(:started?) && Legion::Gaia.started? && prompt.to_s.length.positive?
+                  begin
+                    gaia_t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+                    frame = Legion::Gaia::InputFrame.new(
+                      content:      prompt,
+                      channel_id:   :api,
+                      content_type: :text,
+                      metadata:     { source_type: :human_direct, salience: 0.9 }
+                    )
+                    Legion::Gaia.ingest(frame)
+                    gaia_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - gaia_t0) * 1000).round
+                    log.debug("[llm][api][namespaces][inference] action=gaia_ingest duration_ms=#{gaia_ms} request_id=#{request_id}")
+                  rescue StandardError => e
+                    handle_exception(e, level: :warn, handled: true, operation: 'llm.api.inference.gaia_ingest', request_id: request_id)
+                  end
+                end
+
+                streaming = body[:stream] == true && request.preferred_type.to_s.include?('text/event-stream')
+                effective_caller = build_server_caller(source: 'api', path: request.path, env: env,
+                                                       caller_context: caller_context)
+                caller_summary = [effective_caller[:source], effective_caller[:path]].compact.join(':')
+                log.info(
+                  "[llm][api][namespaces][inference] action=accepted request_id=#{request_id} " \
+                  "conversation_id=#{conversation_id || 'none'} caller=#{caller_summary} " \
+                  "messages=#{messages.size} client_tools=#{tools.size} " \
+                  "requested_tier=#{tier || 'auto'} requested_model=#{model || 'auto'} stream=#{streaming}"
+                )
+
+                require 'legion/llm/inference/request' unless defined?(Legion::LLM::Inference::Request)
+                require 'legion/llm/inference/executor' unless defined?(Legion::LLM::Inference::Executor)
+
+                extra = {}
+                extra[:tier] = tier.to_sym if tier
+                metadata = { requested_tools: requested_tools }
+                metadata[:client_tool_passthrough] = client_tool_passthrough unless client_tool_passthrough.nil?
+                metadata[:client_tool_request_count] = tools.size if tools.any?
+
+                pipeline_request = Legion::LLM::Inference::Request.build(
+                  id:              request_id,
+                  messages:        messages,
+                  system:          body[:system],
+                  routing:         { provider: provider, model: model, instance: body[:instance] }.compact,
+                  tools:           tool_declarations,
+                  caller:          effective_caller,
+                  conversation_id: conversation_id,
+                  metadata:        metadata,
+                  stream:          streaming,
+                  cache:           { strategy: :default, cacheable: true },
+                  extra:           extra
+                )
+
+                setup_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - route_t0) * 1000).round
+                log.debug("[llm][api][namespaces][inference] action=pipeline_setup duration_ms=#{setup_ms} request_id=#{request_id}")
+
+                executor = Legion::LLM::Inference::Executor.new(pipeline_request)
+
+                if streaming
+                  content_type 'text/event-stream'
+                  headers 'Cache-Control'     => 'no-cache',
+                          'Connection'        => 'keep-alive',
+                          'X-Accel-Buffering' => 'no'
+
+                  stream do |out| # rubocop:disable Metrics/BlockLength
+                    full_text = +''
+
+                    executor.tool_event_handler = lambda { |event|
+                      case event[:type]
+                      when :tool_call
+                        emit_sse_event(out, 'tool-call', {
+                                         toolCallId: event[:tool_call_id],
+                                         toolName:   event[:tool_name],
+                                         args:       event[:arguments],
+                                         timestamp:  Time.now.utc.iso8601
+                                       })
+                      when :tool_result
+                        event_name = event[:status].to_s == 'error' ? 'tool-error' : 'tool-result'
+                        emit_sse_event(out, event_name, {
+                                         toolCallId: event[:tool_call_id],
+                                         toolName:   event[:tool_name],
+                                         result:     event[:result],
+                                         status:     event[:status],
+                                         timestamp:  Time.now.utc.iso8601
+                                       })
+                      when :tool_error
+                        emit_sse_event(out, 'tool-error', {
+                                         toolCallId: event[:tool_call_id],
+                                         toolName:   event[:tool_name],
+                                         result:     event[:error],
+                                         status:     'error',
+                                         timestamp:  Time.now.utc.iso8601
+                                       })
+                      end
+                    }
+
+                    pipeline_response = executor.call_stream do |chunk|
+                      thinking = extract_text_content(chunk.thinking) if chunk.respond_to?(:thinking)
+                      emit_sse_event(out, 'thinking-delta', { delta: thinking }) if include_thinking && !thinking.to_s.empty?
+
+                      text = extract_text_content(chunk.respond_to?(:content) ? chunk.content : chunk)
+                      next if text.empty?
+
+                      full_text << text
+                      emit_sse_event(out, 'text-delta', { delta: text })
+                    end
+
+                    tool_calls  = Legion::LLM::API::Translators::OpenAIResponse.build_tool_calls(pipeline_response)
+                    enrichments = pipeline_response.enrichments
+                    emit_sse_event(out, 'enrichment', enrichments) if enrichments.is_a?(Hash) && !enrichments.empty?
+
+                    routing     = pipeline_response.routing || {}
+                    tokens      = pipeline_response.tokens || {}
+                    stop_reason = pipeline_response.stop&.dig(:reason)&.to_s
+                    done_payload = {
+                      request_id:           request_id,
+                      content:              full_text,
+                      model:                (routing[:model] || routing['model']).to_s,
+                      provider:             (routing[:provider] || routing['provider'])&.to_s,
+                      instance:             (routing[:instance] || routing['instance'])&.to_s,
+                      tier:                 (routing[:tier] || routing['tier'])&.to_s,
+                      input_tokens:         token_value(tokens, :input),
+                      output_tokens:        token_value(tokens, :output),
+                      tool_calls:           tool_calls,
+                      stop_reason:          stop_reason,
+                      requires_tool_result: stop_reason == 'tool_use' && tool_calls.any?,
+                      conversation_id:      pipeline_response.conversation_id
+                    }.compact
+                    done_payload[:thinking] = pipeline_response.thinking if include_thinking && pipeline_response.thinking
+                    emit_sse_event(out, 'done', done_payload)
+
+                    log.info(
+                      "[llm][api][namespaces][inference] action=completed request_id=#{request_id} " \
+                      "model=#{routing[:model] || 'unknown'} stream=true " \
+                      "input_tokens=#{token_value(tokens, :input) || 0} output_tokens=#{token_value(tokens, :output) || 0}"
+                    )
+                  rescue StandardError => e
+                    handle_exception(e, level: :error, handled: false, operation: 'llm.api.inference.stream', request_id: request_id)
+                    emit_sse_event(out, 'error', { code: 'stream_error', message: e.message })
+                  end
+                else
+                  exec_t0           = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+                  pipeline_response = executor.call
+                  exec_ms           = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - exec_t0) * 1000).round
+                  log.debug("[llm][api][namespaces][inference] action=executor_call duration_ms=#{exec_ms} request_id=#{request_id}")
+
+                  raw_msg     = pipeline_response.message
+                  content     = extract_text_content(raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg)
+                  routing     = pipeline_response.routing || {}
+                  tokens      = pipeline_response.tokens || {}
+                  tool_calls  = Legion::LLM::API::Translators::OpenAIResponse.build_tool_calls(pipeline_response)
+                  stop_reason = pipeline_response.stop&.dig(:reason)&.to_s
+
+                  log.info(
+                    "[llm][api][namespaces][inference] action=completed request_id=#{request_id} " \
+                    "model=#{routing[:model] || routing['model'] || 'unknown'} " \
+                    "input_tokens=#{token_value(tokens, :input) || 0} output_tokens=#{token_value(tokens, :output) || 0} " \
+                    "tool_calls=#{tool_calls.size} stop_reason=#{stop_reason || 'unknown'} stream=false"
+                  )
+
+                  payload = {
+                    request_id:           request_id,
+                    content:              content,
+                    tool_calls:           tool_calls,
+                    stop_reason:          stop_reason,
+                    requires_tool_result: stop_reason == 'tool_use' && tool_calls.any?,
+                    model:                (routing[:model] || routing['model']).to_s,
+                    provider:             (routing[:provider] || routing['provider'])&.to_s,
+                    instance:             (routing[:instance] || routing['instance'])&.to_s,
+                    tier:                 (routing[:tier] || routing['tier'])&.to_s,
+                    input_tokens:         token_value(tokens, :input),
+                    output_tokens:        token_value(tokens, :output),
+                    conversation_id:      pipeline_response.conversation_id
+                  }
+                  payload[:thinking] = pipeline_response.thinking if include_thinking && pipeline_response.thinking
+                  payload.compact!
+                  json_response(payload, status_code: 200)
+                end
+              rescue Legion::LLM::AuthError => e
+                handle_exception(e, level: :error, handled: true, operation: 'llm.api.inference.auth', request_id: request_id)
+                json_error('auth_error', e.message, status_code: 401)
+              rescue Legion::LLM::RateLimitError => e
+                handle_exception(e, level: :error, handled: true, operation: 'llm.api.inference.rate_limit', request_id: request_id)
+                json_error('rate_limit', e.message, status_code: 429)
+              rescue Legion::LLM::TokenBudgetExceeded => e
+                handle_exception(e, level: :error, handled: true, operation: 'llm.api.inference.budget', request_id: request_id)
+                json_error('token_budget_exceeded', e.message, status_code: 413)
+              rescue Legion::LLM::ProviderDown, Legion::LLM::ProviderError => e
+                handle_exception(e, level: :error, handled: true, operation: 'llm.api.inference.provider', request_id: request_id)
+                json_error('provider_error', e.message, status_code: 502)
+              rescue StandardError => e
+                handle_exception(e, level: :error, handled: false, operation: 'llm.api.inference', request_id: request_id)
+                json_error('inference_error', e.message, status_code: 500)
+              end
+
+              log.debug('[llm][api][namespaces][inference] routes registered')
+            end
+          end
+        end
+      end
+    end
+  end
+end

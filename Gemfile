@@ -30,6 +30,7 @@ group :test do
     gem provider_gem, path: provider_path if Dir.exist?(provider_path)
   end
 
+  gem 'rack-test', '~> 2.0'
   gem 'rake'
   gem 'rspec'
   gem 'rspec_junit_formatter'

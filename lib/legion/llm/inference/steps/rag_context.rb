@@ -165,9 +165,9 @@ module Legion
           end
 
           def apollo_retrieve(query:, strategy:)
-            full_limit    = rag_setting(:full_limit, 10)
-            compact_limit = rag_setting(:compact_limit, 5)
-            confidence    = rag_setting(:min_confidence, 0.85)
+            full_limit    = rag_setting(:full_limit, 5)
+            compact_limit = rag_setting(:compact_limit, 3)
+            confidence    = rag_setting(:min_confidence, 0.92)
             limit = apply_gaia_context_limit(strategy == :rag_compact ? compact_limit : full_limit,
                                              strategy: strategy)
             log_step_debug(:rag_context, :apollo_query, strategy: strategy, limit: limit, min_confidence: confidence)
@@ -347,7 +347,7 @@ module Legion
             integer = Integer(value)
             integer.positive? ? integer : nil
           rescue ArgumentError, TypeError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.steps.rag_context.positive_integer')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.rag_context.positive_integer')
             nil
           end
         end

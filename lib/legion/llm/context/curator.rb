@@ -28,12 +28,23 @@ module Legion
         def curate_turn(turn_messages:, assistant_response:)
           return unless enabled?
 
+          current_turn_count = Array(turn_messages).size + (assistant_response ? 1 : 0)
+
           Thread.new do
-            curated = turn_messages.map { |msg| curate_message(msg, assistant_response) }
-            store_curated(@conversation_id, curated)
+            all_messages = Inference::Conversation.messages(@conversation_id)
+            older = if current_turn_count.positive? && all_messages.size > current_turn_count
+                      all_messages[0...-current_turn_count]
+                    else
+                      []
+                    end
+
+            if older.any?
+              curated = older.map { |msg| curate_message(msg, assistant_response) }
+              store_curated(@conversation_id, curated)
+            end
             @curated_messages = nil
           rescue StandardError => e
-            handle_exception(e, level: :warn)
+            handle_exception(e, level: :warn, operation: 'llm.context_curator.curate_turn')
           end
         end
 
@@ -83,7 +94,9 @@ module Legion
 
           summary = heuristic_tool_summary(content, tool_name_from(msg))
           log.debug "[llm][curator] action=distill_tool_result conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} summary_chars=#{summary.length}"
+                    "original_chars=#{content.length} summary_chars=#{summary.length}\n  " \
+                    "BEFORE: #{content}\n  " \
+                    "AFTER:  #{summary}"
           msg.merge(content: summary, curated: true, original_content: content)
         end
 
@@ -98,7 +111,9 @@ module Legion
           return msg if stripped == content || stripped.empty?
 
           log.debug "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} stripped_chars=#{stripped.length}"
+                    "original_chars=#{content.length} stripped_chars=#{stripped.length}\n  " \
+                    "BEFORE: #{content}\n  " \
+                    "AFTER:  #{stripped}"
           msg.merge(content: stripped, curated: true, original_content: content)
         end
 
@@ -285,17 +300,39 @@ module Legion
         end
 
         # Apply heuristic curation pipeline to a set of messages.
+        # Preserves messages from the most recent N user turns from tool distillation
+        # so the model retains full context of recent work.
         def apply_curation_pipeline(messages)
           return messages if messages.nil? || messages.empty?
 
-          result = messages.map { |msg| strip_thinking(msg) }
-          result = result.map { |msg| distill_tool_result(msg) }
+          preserve_turns = setting(:preserve_recent_turns, 2).to_i
+          preserve_turns = 1 unless preserve_turns.positive?
+
+          split_idx = find_preserve_split(messages, preserve_turns)
+
+          if split_idx.positive?
+            older = messages[0...split_idx]
+            recent = messages[split_idx..]
+            curated_older = older.map { |msg| strip_thinking(msg) }
+            curated_older = curated_older.map { |msg| distill_tool_result(msg) }
+            result = curated_older + recent.map { |msg| strip_thinking(msg) }
+          else
+            result = messages.map { |msg| strip_thinking(msg) }
+          end
+
           result = fold_resolved_exchanges(result)
           result = evict_superseded(result)
           dedup_similar(result)
         rescue StandardError => e
           handle_exception(e, level: :warn)
           messages
+        end
+
+        def find_preserve_split(messages, preserve_turns)
+          user_indices = messages.each_with_index.filter_map { |msg, i| i if msg[:role].to_s == 'user' }
+          return 0 if user_indices.size <= preserve_turns
+
+          user_indices[-preserve_turns]
         end
 
         def apply_structural_curation_pipeline(messages)

@@ -166,7 +166,7 @@ module Legion
               arguments.respond_to?(:to_h) ? arguments.to_h : {}
             end
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.normalize_tool_arguments')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.normalize_tool_arguments')
             {}
           end
 
@@ -194,7 +194,7 @@ module Legion
               "requested_tools=#{requested_deferred_tool_names.size}"
             )
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.log_tool_injection_skip')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.log_tool_injection_skip')
           end
 
           def log_native_tool_definitions(definitions)
@@ -206,7 +206,7 @@ module Legion
               "requested_tools=#{requested_deferred_tool_names.size} names=#{format_tool_names(definitions.map(&:name))}"
             )
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.log_native_tool_definitions')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.log_native_tool_definitions')
           end
 
           def format_tool_source_counts(definitions)

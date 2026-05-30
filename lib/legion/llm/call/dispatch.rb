@@ -367,7 +367,7 @@ module Legion
           parsed = Legion::JSON.parse(arguments)
           parsed.is_a?(Hash) ? parsed : {}
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.dispatch.parse_arguments')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.dispatch.parse_arguments')
           {}
         end
       end

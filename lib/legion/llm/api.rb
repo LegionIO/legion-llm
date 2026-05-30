@@ -19,6 +19,7 @@ require_relative 'api/openai/responses'
 require_relative 'api/translators/anthropic_request'
 require_relative 'api/translators/anthropic_response'
 require_relative 'api/anthropic/messages'
+require_relative 'api/namespaces/registration'
 
 require 'legion/logging/helper'
 
@@ -28,7 +29,24 @@ module Legion
       extend Legion::Logging::Helper
 
       def self.registered(app)
-        log.debug('[llm][api] registering all routes')
+        if Legion::LLM::Settings.value(:api, :use_namespaces, default: false)
+          log.debug('[llm][api] routing=namespaces registering via Namespaces::Registration')
+          Namespaces::Registration.registered(app)
+        else
+          log.debug('[llm][api] routing=legacy registering flat route chain')
+          register_legacy(app)
+        end
+        log.debug('[llm][api] all routes registered')
+      end
+
+      def self.register_routes
+        return unless defined?(Legion::API) && Legion::API.respond_to?(:register_library_routes)
+
+        Legion::API.register_library_routes('llm', self)
+        log.debug('[llm][api] routes registered with Legion::API')
+      end
+
+      def self.register_legacy(app)
         Auth.registered(app)
         Native::Helpers.registered(app)
         Native::Inference.registered(app)
@@ -44,15 +62,8 @@ module Legion
         OpenAI::Embeddings.registered(app)
         OpenAI::Responses.registered(app)
         Anthropic::Messages.registered(app)
-        log.debug('[llm][api] all routes registered')
       end
-
-      def self.register_routes
-        return unless defined?(Legion::API) && Legion::API.respond_to?(:register_library_routes)
-
-        Legion::API.register_library_routes('llm', self)
-        log.debug('[llm][api] routes registered with Legion::API')
-      end
+      private_class_method :register_legacy
     end
 
     Routes = API

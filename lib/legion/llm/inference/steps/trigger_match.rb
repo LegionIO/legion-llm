@@ -76,7 +76,17 @@ module Legion
               next unless (msg[:role] || msg['role']).to_s == 'user'
 
               content = msg[:content] || msg['content']
-              content.is_a?(Array) ? content.map { |c| c[:text] || c['text'] }.join(' ') : content.to_s
+              if content.is_a?(Array)
+                content.filter_map do |c|
+                  if c.is_a?(String)
+                    c
+                  else
+                    (c.is_a?(Hash) ? (c[:text] || c['text']) : nil)
+                  end
+                end.join(' ')
+              else
+                content.to_s
+              end
             end.join(' ')
           end
 
@@ -181,7 +191,7 @@ module Legion
               "conversation_id=#{@request.conversation_id || 'none'} #{payload}".strip
             )
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.pipeline.steps.trigger_match.log')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.trigger_match.log')
           end
 
           def format_trigger_log_value(value)

@@ -266,6 +266,12 @@ module Legion
             return false
           end
 
+          unless verify_embedding(provider, resolved)
+            log.debug '[llm][discovery] action=detect_embedding_from_registry verify_failed ' \
+                      "provider=#{provider} model=#{resolved} — falling through to legacy probe"
+            return false
+          end
+
           @embedding_provider = provider
           @embedding_model    = resolved
           @embedding_instance = instance
@@ -324,16 +330,9 @@ module Legion
 
         def verify_embedding(provider, model)
           log.debug "[llm][discovery] verify_embedding provider=#{provider} model=#{model}"
-          return true if provider == :ollama
-          return true if provider == :azure
-          return false unless provider_supports_embeddings?(provider)
           return true unless model
 
-          start_time = Time.now
-          Call::Dispatch.call(provider: provider, capability: :embed, model: model, text: 'health check')
-          elapsed = ((Time.now - start_time) * 1000).round
-          log.info "[llm][discovery] embedding health check ok provider=#{provider} model=#{model} elapsed_ms=#{elapsed}"
-          true
+          model_available?(model, provider: provider)
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.discovery.verify_embedding', provider: provider, model: model)
           false

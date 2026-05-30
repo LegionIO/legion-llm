@@ -284,7 +284,7 @@ module Legion
 
             {}
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'debate.extension_providers')
+            handle_exception(e, level: :warn, handled: true, operation: 'debate.extension_providers')
             {}
           end
 

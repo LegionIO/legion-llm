@@ -11,10 +11,19 @@ module Legion
         module ChatCompletions
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
-            log.debug('[llm][api][openai][chat_completions] registering POST /v1/chat/completions')
+          def self.registered(app)
+            log.debug('[llm][api][openai][chat_completions] registering POST /v1/chat/completions + /api/llm/inference/v1/chat/completions')
 
-            app.post '/v1/chat/completions' do # rubocop:disable Metrics/BlockLength
+            handler = build_handler
+
+            app.post('/v1/chat/completions') { instance_exec(&handler) }
+            app.post('/api/llm/inference/v1/chat/completions') { instance_exec(&handler) }
+
+            log.debug('[llm][api][openai][chat_completions] routes registered')
+          end
+
+          def self.build_handler # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+            proc do # rubocop:disable Metrics/BlockLength
               require_llm!
               body = parse_request_body
 
@@ -87,8 +96,16 @@ module Legion
                     out << "data: #{Legion::JSON.dump(tc_chunk)}\n\n"
                   end
                   done_chunk = Legion::LLM::API::Translators::OpenAIResponse.format_stream_chunk(
-                    nil, model: final_model, request_id: request_id,
-                    finish_reason: tool_calls.empty? ? 'stop' : 'tool_calls'
+                    nil,
+                    model:         final_model,
+                    request_id:    request_id,
+                    finish_reason: tool_calls.empty? ? 'stop' : 'tool_calls',
+                    usage:         {
+                      prompt_tokens:     Legion::LLM::API::Translators::OpenAIResponse.extract_token_count(pipeline_response.tokens, :input),
+                      completion_tokens: Legion::LLM::API::Translators::OpenAIResponse.extract_token_count(pipeline_response.tokens, :output),
+                      total_tokens:      Legion::LLM::API::Translators::OpenAIResponse.extract_token_count(pipeline_response.tokens, :input).to_i +
+                                         Legion::LLM::API::Translators::OpenAIResponse.extract_token_count(pipeline_response.tokens, :output).to_i
+                    }
                   )
                   Legion::LLM::API::OpenAI::ChatCompletions.append_usage_stats(
                     done_chunk, pipeline_response, include_reasoning
@@ -133,8 +150,6 @@ module Legion
               halt 500, { 'Content-Type' => 'application/json' },
                    Legion::JSON.dump({ error: { message: e.message, type: 'server_error' } })
             end
-
-            log.debug('[llm][api][openai][chat_completions] POST /v1/chat/completions registered')
           end
 
           # Extract extended pipeline fields from body + X-Legion-* headers.

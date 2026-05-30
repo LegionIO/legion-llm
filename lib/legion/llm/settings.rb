@@ -385,9 +385,9 @@ module Legion
       def self.rag_defaults
         {
           enabled:                       true,
-          full_limit:                    10,
-          compact_limit:                 5,
-          min_confidence:                0.85,
+          full_limit:                    5,
+          compact_limit:                 3,
+          min_confidence:                0.92,
           utilization_compact_threshold: 0.7,
           utilization_skip_threshold:    0.9,
           conversation_history_enabled:  false,
@@ -495,7 +495,7 @@ module Legion
           scan_depth:                        10,
           tool_limit:                        25,
           local_tool_limit:                  100,
-          client_tool_passthrough:           false,
+          client_tool_passthrough:           true,
           client_tool_passthrough_whitelist: CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT.dup,
           client_tool_passthrough_blacklist: CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT.dup
         }
@@ -516,7 +516,8 @@ module Legion
 
       def self.api_defaults
         {
-          auth: {
+          use_namespaces: true,
+          auth:           {
             enabled:      false,
             api_keys:     [],
             pass_through: false

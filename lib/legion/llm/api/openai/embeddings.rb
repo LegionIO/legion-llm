@@ -10,9 +10,18 @@ module Legion
           extend Legion::Logging::Helper
 
           def self.registered(app)
-            log.debug('[llm][api][openai][embeddings] registering POST /v1/embeddings')
+            log.debug('[llm][api][openai][embeddings] registering POST /v1/embeddings + /api/llm/inference/v1/embeddings')
 
-            app.post '/v1/embeddings' do
+            handler = build_handler
+
+            app.post('/v1/embeddings') { instance_exec(&handler) }
+            app.post('/api/llm/inference/v1/embeddings') { instance_exec(&handler) }
+
+            log.debug('[llm][api][openai][embeddings] routes registered')
+          end
+
+          def self.build_handler
+            proc do
               require_llm!
               body = parse_request_body
 
@@ -57,8 +66,6 @@ module Legion
               halt 500, { 'Content-Type' => 'application/json' },
                    Legion::JSON.dump({ error: { message: e.message, type: 'server_error' } })
             end
-
-            log.debug('[llm][api][openai][embeddings] POST /v1/embeddings registered')
           end
         end
       end
