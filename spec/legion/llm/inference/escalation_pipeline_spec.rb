@@ -7,7 +7,7 @@ require 'legion/llm/router/escalation/chain'
 
 RSpec.describe 'Pipeline escalation via step_provider_call' do
   let(:good_content) { 'This is a sufficiently long and varied response that passes all quality checks easily' }
-  let(:short_content) { 'ok' }
+  let(:short_content) { '' }
 
   let(:request) do
     Legion::LLM::Inference::Request.build(

@@ -86,20 +86,18 @@ RSpec.describe Legion::LLM::Quality::Confidence::Scorer do
         expect(result.signals[:empty]).to be true
       end
 
-      it 'applies a refusal penalty' do
-        refusal_text = "I can't help with that request.#{' padding' * 30}"
+      it 'does not penalize refusal (check disabled)' do
+        refusal_text = "I can't help with that request but I can offer alternatives for your consideration instead."
         result = described_class.score(make_response(refusal_text), quality_threshold: 1)
-        expect(result.signals[:refusal]).to be true
-        expect(result.score).to be < 1.0
+        expect(result.signals[:refusal]).to be_nil
+        expect(result.score).to eq(1.0)
       end
 
-      it 'applies a truncation penalty' do
-        # Content must be >= 100 chars, end with word chars (not punctuation/close brackets)
-        # to trigger the truncation heuristic.
+      it 'does not penalize truncation (check disabled)' do
         truncated = "This is a response that appears to be cut off in the middle of a word like somethi#{'x' * 25}"
         result = described_class.score(make_response(truncated), quality_threshold: 1)
-        expect(result.signals[:truncated]).to be true
-        expect(result.score).to be < 1.0
+        expect(result.signals[:truncated]).to be_nil
+        expect(result.score).to eq(1.0)
       end
 
       it 'applies a repetition penalty' do
@@ -109,10 +107,10 @@ RSpec.describe Legion::LLM::Quality::Confidence::Scorer do
         expect(result.score).to be < 1.0
       end
 
-      it 'applies a too_short penalty' do
+      it 'does not penalize too_short (check disabled)' do
         result = described_class.score(make_response('ok'), quality_threshold: 100)
-        expect(result.signals[:too_short]).to be true
-        expect(result.score).to be < 1.0
+        expect(result.signals[:too_short]).to be_nil
+        expect(result.score).to eq(1.0)
       end
 
       it 'applies a json_parse_failure penalty when json_expected' do
@@ -130,35 +128,24 @@ RSpec.describe Legion::LLM::Quality::Confidence::Scorer do
         expect(result_json.signals[:structured_output_valid]).to be true
       end
 
-      it 'penalises hedging language' do
-        hedged = "I think this might work. Perhaps you should try. #{' word' * 20}."
+      it 'does not penalize hedging (check disabled)' do
+        hedged = 'I think this might work. Perhaps you should try a different approach to solve the problem at hand.'
         result = described_class.score(make_response(hedged), quality_threshold: 1)
-        expect(result.signals[:hedging]).to be_a(Integer)
-        expect(result.signals[:hedging]).to be > 0
-        expect(result.score).to be < 1.0
+        expect(result.signals[:hedging]).to be_nil
+        expect(result.score).to eq(1.0)
       end
 
-      it 'caps hedging penalty at 0.3' do
+      it 'hedging cap is irrelevant (check disabled)' do
         # Build content with many unique hedge phrases to avoid repetition detection.
         hedges = [
           'I think this is correct.',
           'I believe this may apply.',
-          'It seems like it could work.',
-          'Perhaps this is the answer.',
-          'Maybe we should try this approach.',
-          'I am not certain about this result.',
-          'It appears to be accurate.',
-          'Possibly this is the right path.',
-          'I assume this is valid.',
-          'Probably the best solution here.',
-          'I guess we can proceed this way.',
-          'Could be the intended behavior.'
+          'It seems like it could work.'
         ]
         heavily_hedged = hedges.join(' ')
         result = described_class.score(make_response(heavily_hedged), quality_threshold: 1)
-        # Penalty is capped at 0.3 for hedging; score should still be >= 0.7
-        expect(result.score).to be >= 0.7
-        expect(result.signals[:hedging]).to be > 0
+        expect(result.score).to eq(1.0)
+        expect(result.signals[:hedging]).to be_nil
       end
 
       it 'uses a pre-computed quality_result to avoid redundant checks' do

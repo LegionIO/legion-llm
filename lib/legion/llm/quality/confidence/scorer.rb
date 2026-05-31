@@ -120,7 +120,7 @@ module Legion
               # We clamp at -5 so very negative values still map to > 0.
               Math.exp([avg_lp, -5.0].max)
             rescue StandardError => e
-              handle_exception(e, level: :debug, operation: 'llm.confidence_scorer.extract_logprobs')
+              handle_exception(e, level: :warn, operation: 'llm.confidence_scorer.extract_logprobs')
               nil
             end
 
@@ -133,7 +133,7 @@ module Legion
               lp ||= raw_response.metadata&.dig(:logprobs) if klass.method_defined?(:metadata)
               lp
             rescue StandardError => e
-              handle_exception(e, level: :debug, operation: 'llm.confidence_scorer.probe_logprobs')
+              handle_exception(e, level: :warn, operation: 'llm.confidence_scorer.probe_logprobs')
               nil
             end
 
@@ -159,11 +159,13 @@ module Legion
                   penalty += weight.abs
                 end
 
-                hedges = count_hedges(content)
-                if hedges.positive?
-                  hedge_penalty = [hedges * 0.05, 0.3].min
-                  signals[:hedging] = hedges
-                  penalty += hedge_penalty
+                if quality_setting(:hedging, false)
+                  hedges = count_hedges(content)
+                  if hedges.positive?
+                    hedge_penalty = [hedges * 0.05, 0.3].min
+                    signals[:hedging] = hedges
+                    penalty += hedge_penalty
+                  end
                 end
 
                 if options[:json_expected] && !failures.include?(:json_parse_failure)
@@ -181,12 +183,18 @@ module Legion
 
               failures = []
               threshold = options.fetch(:quality_threshold, Quality::Checker::DEFAULT_QUALITY_THRESHOLD)
-              failures << :too_short if content.length < threshold
-              failures << :truncated if truncated?(content)
-              failures << :refusal   if refusal?(content)
+              failures << :too_short if quality_setting(:too_short, false) && content.length < threshold
+              failures << :truncated if quality_setting(:truncated, false) && truncated?(content)
+              failures << :refusal if quality_setting(:refusal, false) && refusal?(content)
               failures << :repetition if repetitive?(content)
               failures << :json_parse_failure if options[:json_expected] && !valid_json?(content)
               failures
+            end
+
+            def quality_setting(key, default)
+              Legion::LLM::Settings.value(:quality, key)
+            rescue StandardError
+              default
             end
 
             def truncated?(content)
@@ -219,7 +227,7 @@ module Legion
               Legion::JSON.parse(content, symbolize_names: false)
               true
             rescue Legion::JSON::ParseError => e
-              handle_exception(e, level: :debug, handled: true, operation: 'llm.confidence.valid_json')
+              handle_exception(e, level: :warn, handled: true, operation: 'llm.confidence.valid_json')
               false
             end
 

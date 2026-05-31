@@ -30,16 +30,23 @@ module Legion
             failures << :empty_response if content.nil? || content.strip.empty?
 
             unless failures.include?(:empty_response)
-              failures << :too_short if content.length < quality_threshold
+              failures << :too_short if quality_setting(:too_short, false) && content.length < quality_threshold
               failures << :repetition if repetitive?(content)
-              failures << :truncated if truncated?(content)
-              failures << :refusal if refusal?(content)
+              failures << :truncated if quality_setting(:truncated, false) && truncated?(content)
+              failures << :refusal if quality_setting(:refusal, false) && refusal?(content)
               failures << :json_parse_failure if json_expected && !valid_json?(content)
             end
 
             failures << :custom_check_failed if quality_check.respond_to?(:call) && !quality_check.call(response)
 
             QualityResult.new(passed: failures.empty?, failures: failures)
+          end
+
+          def quality_setting(key, default)
+            settings = Legion::LLM::Settings.value(:quality, key)
+            settings.nil? ? default : settings
+          rescue StandardError
+            default
           end
 
           private
@@ -75,7 +82,7 @@ module Legion
             Legion::JSON.parse(content, symbolize_names: false)
             true
           rescue Legion::JSON::ParseError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :warn)
             false
           end
         end
