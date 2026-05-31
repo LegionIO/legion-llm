@@ -260,21 +260,7 @@ module Legion
 
           register_handler(:quality_failure) do |payload|
             key = payload[:provider]
-            ensure_circuit(key)
-            circuit = @circuits[key]
-
-            if circuit_state_for_key(key) == :half_open
-              circuit[:state]     = :open
-              circuit[:opened_at] = Time.now
-              log.warn("Circuit half_open->open for provider=#{key} (quality failure during probe)")
-            else
-              circuit[:failures] += 0.5
-              if circuit[:failures] >= @failure_threshold
-                circuit[:state]     = :open
-                circuit[:opened_at] = Time.now
-                log.warn("Circuit closed->open for provider=#{key} (quality failures=#{circuit[:failures]})")
-              end
-            end
+            log.info("[health_tracker] quality_failure provider=#{key} (ignored — does not affect circuit state)")
           end
 
           register_handler(:latency) do |payload|

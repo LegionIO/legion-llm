@@ -728,17 +728,8 @@ module Legion
         end
 
         def report_escalation_quality_failure(resolution, result)
-          Router.health_tracker.report(
-            provider:    resolution.provider,
-            instance:    resolution.instance,
-            offering_id: resolution.offering_id,
-            signal:      :quality_failure,
-            value:       1,
-            metadata:    {
-              model:    resolution.model,
-              failures: Array(result.failures)
-            }
-          )
+          log.warn "[llm][escalation] quality_failure provider=#{resolution.provider} " \
+                   "model=#{resolution.model} failures=#{Array(result.failures).join(',')}"
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.pipeline.escalation_attempt.health_report',
                               provider: resolution.provider, model: resolution.model)

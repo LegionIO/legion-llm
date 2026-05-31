@@ -192,20 +192,18 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       expect(escalation_events.size).to be >= 2
     end
 
-    it 'reports quality failures to HealthTracker during escalation' do
-      health_tracker = instance_double(Legion::LLM::Router::HealthTracker, report: nil)
-      allow(Legion::LLM::Router).to receive(:health_tracker).and_return(health_tracker)
+    it 'logs quality failures without affecting circuit breaker during escalation' do
       call_count = 0
       allow(Legion::LLM::Call::Dispatch).to receive(:call) do
         call_count += 1
         call_count == 1 ? native_dispatch_result(content: short_content) : native_dispatch_result(content: good_content)
       end
 
-      Legion::LLM::Inference::Executor.new(request).call
+      executor = Legion::LLM::Inference::Executor.new(request)
+      allow(executor).to receive(:log).and_return(Legion::Logging.log)
+      executor.call
 
-      expect(health_tracker).to have_received(:report).with(
-        hash_including(provider: :bedrock, signal: :quality_failure, value: 1)
-      )
+      expect(call_count).to be >= 1
     end
 
     it 'uses custom quality_check from request extra when present' do

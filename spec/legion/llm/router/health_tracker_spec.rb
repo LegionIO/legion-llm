@@ -372,22 +372,15 @@ RSpec.describe Legion::LLM::Router::HealthTracker do
   # ─── 15. quality_failure signal ──────────────────────────────────────────────
 
   describe ':quality_failure signal' do
-    it 'increments failures at half weight' do
-      tracker.report(provider: :test, signal: :quality_failure, value: 1)
-      expect(tracker.circuit_state(:test)).to eq(:closed)
-      5.times { tracker.report(provider: :test, signal: :quality_failure, value: 1) }
-      expect(tracker.circuit_state(:test)).to eq(:open)
-    end
-
-    it 'does not trip circuit with fewer than threshold equivalent failures' do
-      4.times { tracker.report(provider: :test, signal: :quality_failure, value: 1) }
+    it 'does not affect circuit state (quality failures are informational only)' do
+      10.times { tracker.report(provider: :test, signal: :quality_failure, value: 1) }
       expect(tracker.circuit_state(:test)).to eq(:closed)
     end
 
-    it 'combines with hard errors toward threshold' do
+    it 'does not combine with hard errors toward threshold' do
       2.times { tracker.report(provider: :test, signal: :error, value: 1) }
-      2.times { tracker.report(provider: :test, signal: :quality_failure, value: 1) }
-      expect(tracker.circuit_state(:test)).to eq(:open)
+      10.times { tracker.report(provider: :test, signal: :quality_failure, value: 1) }
+      expect(tracker.circuit_state(:test)).to eq(:closed)
     end
   end
 
