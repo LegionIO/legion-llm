@@ -754,7 +754,7 @@ confidence: 0.9 }],
       expect(response.tools.first.arguments).to eq(command: 'status')
     end
 
-    it 'chooses the explicit client tool instead of matching tool names inside paths' do
+    it 'skips explicit tool choice for client passthrough requests' do
       client_tool = Legion::LLM::Types::ToolDefinition.build(
         name:        'git',
         description: 'Git client tool',
@@ -769,7 +769,7 @@ confidence: 0.9 }],
       executor = described_class.new(path_request)
       executor.instance_variable_set(:@resolved_provider, :vllm)
 
-      expect(executor.send(:native_tool_prefs)).to include(choice: 'git')
+      expect(executor.send(:native_tool_prefs)).to include(choice: :auto)
     end
 
     it 'still chooses the Ruby tool when Ruby is explicitly requested' do

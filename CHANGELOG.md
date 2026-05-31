@@ -4,6 +4,7 @@
 
 ### Fixed
 - **Registry tool injection disabled for client passthrough** — When `client_tool_passthrough` is enabled and the request has client-sourced tools (Claude Code, Codex, Kai), Legion no longer injects internal registry tools (`exec_filesystem_mv`, `legion-apollo-*`, etc.) into the payload. This fixes the first-turn garbage output where Qwen3 would output raw tool definition JSON instead of responding normally.
+- **Explicit tool_choice scanning disabled for passthrough** — The vLLM-specific heuristic that scans user message text for tool names and forces `tool_choice` was matching tool names (e.g., "Workflow") inside Claude Code's system prompt (CLAUDE.md embedded in user content). Now skips for client passthrough and messages longer than 500 chars.
 
 ## [0.10.1] - 2026-05-29
 

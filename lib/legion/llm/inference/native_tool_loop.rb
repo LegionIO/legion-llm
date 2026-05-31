@@ -110,9 +110,10 @@ module Legion
 
         def explicit_native_tool_choice
           return unless @resolved_provider.to_s == 'vllm'
+          return if client_tools_only?
 
           text = latest_user_text.to_s.downcase
-          return if text.empty?
+          return if text.empty? || text.length > 500
 
           native_dispatch_tools.keys.map(&:to_s).sort_by { |tool_name| -tool_name.length }.find do |tool_name|
             explicit_tool_name_mentioned?(text, tool_name)
