@@ -68,7 +68,6 @@ module Legion
           /AWS Marketplace/i
         ].freeze
 
-        MAX_NATIVE_TOOL_ROUNDS = 200
         ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, :status, keyword_init: true)
 
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)

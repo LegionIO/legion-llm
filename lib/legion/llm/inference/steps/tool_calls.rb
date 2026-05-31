@@ -11,8 +11,6 @@ module Legion
           include Legion::Logging::Helper
           include Steps::Logging
 
-          MAX_TOOL_LOOPS = 10
-
           # rubocop:disable Metrics/MethodLength, Metrics/BlockLength
           def step_tool_calls
             unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
@@ -21,6 +19,12 @@ module Legion
             end
 
             tool_calls = @raw_response.tool_calls
+            max_per_turn = llm_setting(:max_tool_calls_per_turn, 10).to_i
+            if max_per_turn.positive? && tool_calls.size > max_per_turn
+              log.warn "[llm][tool_calls] action=cap_per_turn request_id=#{@request.id} " \
+                       "total=#{tool_calls.size} limit=#{max_per_turn} dropped=#{tool_calls.size - max_per_turn}"
+              tool_calls = tool_calls.first(max_per_turn)
+            end
             log_step_debug(:tool_calls, :start, tool_call_count: tool_calls.size)
             log.info(
               "[llm][tools] detected request_id=#{@request.id} " \

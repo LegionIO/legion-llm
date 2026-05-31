@@ -174,7 +174,7 @@ module Legion
           end
 
           def trigger_tool_limit
-            tool_trigger_setting(:tool_limit, 50)
+            tool_trigger_setting(:tool_limit, 25)
           end
 
           def tool_trigger_setting(key, default = nil)

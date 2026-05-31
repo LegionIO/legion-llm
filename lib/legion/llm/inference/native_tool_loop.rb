@@ -8,8 +8,8 @@ module Legion
 
         def execute_native_tool_loop
           messages = native_dispatch_messages.dup
-          max_rounds = llm_setting(:max_tool_rounds, self.class::MAX_NATIVE_TOOL_ROUNDS).to_i
-          max_rounds = self.class::MAX_NATIVE_TOOL_ROUNDS unless max_rounds.positive?
+          max_rounds = llm_setting(:max_tool_rounds, 200).to_i
+          max_rounds = 200 unless max_rounds.positive?
           round = 0
           log.debug "[llm][executor] action=native_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
 
@@ -47,8 +47,8 @@ module Legion
 
         def execute_native_streaming_tool_loop(&block)
           messages = native_dispatch_messages.dup
-          max_rounds = llm_setting(:max_tool_rounds, self.class::MAX_NATIVE_TOOL_ROUNDS).to_i
-          max_rounds = self.class::MAX_NATIVE_TOOL_ROUNDS unless max_rounds.positive?
+          max_rounds = llm_setting(:max_tool_rounds, 200).to_i
+          max_rounds = 200 unless max_rounds.positive?
           round = 0
           log.debug "[llm][executor] action=native_streaming_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
 
