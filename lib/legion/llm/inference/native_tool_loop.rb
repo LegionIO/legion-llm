@@ -37,8 +37,12 @@ module Legion
             end
 
             messages << native_assistant_tool_message(result, tool_calls)
-            tool_calls.each do |tool_call|
+            execute, deferred = split_tool_calls_by_cap(tool_calls, round)
+            execute.each do |tool_call|
               messages << native_tool_result_message(tool_call, dispatch_native_tool_call(tool_call, round))
+            end
+            deferred.each do |tool_call|
+              messages << native_tool_result_message(tool_call, deferred_tool_call_result(tool_call))
             end
           end
         ensure
@@ -81,12 +85,33 @@ module Legion
             end
 
             messages << native_assistant_tool_message(result, tool_calls)
-            tool_calls.each do |tool_call|
+            execute, deferred = split_tool_calls_by_cap(tool_calls, round)
+            execute.each do |tool_call|
               messages << native_tool_result_message(tool_call, dispatch_native_tool_call(tool_call, round))
+            end
+            deferred.each do |tool_call|
+              messages << native_tool_result_message(tool_call, deferred_tool_call_result(tool_call))
             end
           end
         ensure
           @native_tool_loop_round = nil
+        end
+
+        def split_tool_calls_by_cap(tool_calls, round)
+          max_per_turn = llm_setting(:max_tool_calls_per_turn, 10).to_i
+          return [tool_calls, []] unless max_per_turn.positive? && tool_calls.size > max_per_turn
+
+          log.warn "[llm][native_tool_loop] action=cap_per_turn round=#{round} " \
+                   "total=#{tool_calls.size} limit=#{max_per_turn} deferred=#{tool_calls.size - max_per_turn}"
+          [tool_calls.first(max_per_turn), tool_calls[max_per_turn..]]
+        end
+
+        def deferred_tool_call_result(tool_call)
+          {
+            status: :error,
+            result: "Tool call deferred: too many concurrent tool calls this turn. Please retry #{tool_call[:name]} on your next turn.",
+            duration_ms: 0
+          }
         end
 
         def native_tool_prefs
