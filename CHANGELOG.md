@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.10.3] - 2026-05-31
+
+### Fixed
+- **DaemonClient HTTPS support** — `http_get` and `http_post` now set `http.use_ssl = true` when the daemon URL scheme is `https://`. Previously, all daemon communication was plain HTTP, silently failing for HTTPS URLs or sending credentials in cleartext.
+- **Context compression guard against preserve_recent: 0** — `auto_compact` now enforces a minimum `preserve_recent` of 1. A value of 0 would compact the entire conversation including the latest messages, producing empty context.
+- **Context curator thread safety** — `curate_turn` and `curated_messages` now synchronize on a per-instance `@curation_mutex`. Concurrent turns could race on `@curated_messages`, causing stale or nil curation state.
+- **Recursive compaction guard** — `maybe_compact_history` now uses `Thread.current[:legion_compacting]` to prevent infinite recursion when `Context::Compressor.auto_compact` triggers its own LLM summarization call, which would recursively trigger compaction again.
+- **Metering::Tokens unbounded memory growth** — `TokenTracker#record` now evicts oldest entries when the store exceeds `MAX_ENTRIES` (10,000). Long-running high-throughput processes would leak memory.
+- **Tool timeline index per-call resolution** — `build_tool_timeline_index` now tracks per-tool-name call counts and produces keys like `"read_file:2"` for repeated calls. `build_response_tool_calls` matches each tool call to its corresponding timeline entry, fixing wrong duration/status when the same tool is called multiple times in a round.
+- **Streaming escalation quality bypass documented** — Added explicit comment noting that streaming escalation attempts always pass quality check because in-flight stream quality-checking is not supported.
+
 ## [0.10.2] - 2026-05-30
 
 ### Fixed

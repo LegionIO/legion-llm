@@ -273,6 +273,10 @@ module Legion
         end
 
         def maybe_compact_history(conv_id, history)
+          # Guard against recursive compaction: if this thread is already compacting,
+          # skip to prevent infinite loops when compressor calls back into chat_direct
+          return history if Thread.current[:legion_compacting]
+
           conv_settings = llm_setting(:conversation, {})
           return history unless Legion::LLM::Settings.config_value(conv_settings, :auto_compact)
 
@@ -283,11 +287,13 @@ module Legion
           estimated = Context::Compressor.estimate_tokens(history)
           return history unless estimated >= threshold
 
-          compact = Context::Compressor.auto_compact(
-            history,
-            target_tokens:   target_tokens,
-            preserve_recent: preserve_recent
-          )
+          Thread.current[:legion_compacting] = true
+          begin
+            compact = Context::Compressor.auto_compact(
+              history,
+              target_tokens:   target_tokens,
+              preserve_recent: preserve_recent
+            )
 
           Conversation.replace(conv_id, compact)
 
@@ -299,6 +305,9 @@ module Legion
           )
 
           compact
+          ensure
+            Thread.current[:legion_compacting] = nil
+          end
         end
 
         def step_tier_assignment
@@ -703,6 +712,10 @@ module Legion
           }.compact
           if stream_block
             execute_provider_request_stream(&stream_block)
+            # NOTE: Streaming escalation attempts always pass quality check (B-05).
+            # Quality-checking a stream in-flight is not supported; the first provider
+            # in the chain wins for streaming requests. If quality gating is required
+            # for streaming, handle it at the caller level.
             result = Quality::Checker::QualityResult.new(passed: true, failures: [])
           else
             execute_provider_request
@@ -2163,12 +2176,17 @@ module Legion
         def build_response_tool_calls(tool_calls)
           tool_timeline = build_tool_timeline_index
 
+          # Track per-tool-name call order so each tool call maps to its timeline entry
+          call_index = Hash.new(0)
+
           Array(tool_calls).map do |tool_call|
             tc_id   = tool_call[:id] || tool_call['id']
             tc_name = tool_call[:name] || tool_call['name']
             tc_args = tool_call[:arguments] || tool_call['arguments'] || {}
 
-            timeline_data = tool_timeline[tc_name] || {}
+            call_index[tc_name] += 1
+            entry_key = call_index[tc_name] > 1 ? "#{tc_name}:#{call_index[tc_name]}" : tc_name
+            timeline_data = tool_timeline[entry_key] || tool_timeline[tc_name] || {}
 
             Types::ToolCall.build(
               id:          tc_id,
@@ -2185,13 +2203,17 @@ module Legion
 
         def build_tool_timeline_index
           index = {}
+          call_counts = Hash.new(0)
           @timeline.events.each do |event|
             key = event[:key]
             data = event[:data] || {}
 
             if key&.start_with?('tool:execute:')
               tool_name = key.sub('tool:execute:', '')
-              index[tool_name] = {
+              call_counts[tool_name] += 1
+              entry_key = call_counts[tool_name] > 1 ? "#{tool_name}:#{call_counts[tool_name]}" : tool_name
+              index[entry_key] = {
+                tool_name: tool_name,
                 exchange_id: event[:exchange_id],
                 source:      data[:source],
                 status:      data[:status],
@@ -2199,7 +2221,9 @@ module Legion
               }
             elsif key&.start_with?('tool:result:')
               tool_name = key.sub('tool:result:', '')
-              index[tool_name][:result] = data[:result] if index[tool_name]
+              # Match result to the most recent execute entry for this tool
+              entry_key = (call_counts[tool_name] > 1 ? "#{tool_name}:#{call_counts[tool_name]}" : tool_name)
+              index[entry_key][:result] = data[:result] if index[entry_key]
             end
           end
 

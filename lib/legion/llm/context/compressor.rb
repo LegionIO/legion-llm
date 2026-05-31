@@ -97,6 +97,7 @@ module Legion
           end
 
           def auto_compact(messages, target_tokens:, preserve_recent: 10)
+            preserve_recent = 1 unless preserve_recent.to_i.positive?
             return messages if messages.size <= preserve_recent
 
             recent = messages.last(preserve_recent)

@@ -22,6 +22,7 @@ module Legion
         def initialize(conversation_id:)
           @conversation_id = conversation_id
           @curated_messages = nil
+          @curation_mutex = Mutex.new
         end
 
         # Called async after each turn completes — zero latency impact.
@@ -42,7 +43,7 @@ module Legion
               curated = older.map { |msg| curate_message(msg, assistant_response) }
               store_curated(@conversation_id, curated)
             end
-            @curated_messages = nil
+            @curation_mutex.synchronize { @curated_messages = nil }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.context_curator.curate_turn')
           end
@@ -53,7 +54,9 @@ module Legion
         def curated_messages
           return nil unless enabled?
 
-          @curated_messages ||= load_curated(@conversation_id)
+          @curation_mutex.synchronize do
+            @curated_messages ||= load_curated(@conversation_id)
+          end
         end
 
         # Drops older conversation turns from the prompt window after archiving
