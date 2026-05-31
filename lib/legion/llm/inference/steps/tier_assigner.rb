@@ -51,6 +51,12 @@ module Legion
             when :low, :background
               log.info("[llm][routing] tier_assigned source=priority tier=local priority=#{priority}")
               { tier: :local, intent: { cost: :minimize }, source: :priority }
+            else
+              log.debug(
+                '[llm][steps][tier_assigner] action=no_assignment ' \
+                "caller=#{caller&.dig(:requested_by, :identity) || 'none'} priority=#{priority || 'none'}"
+              )
+              nil
             end
           end
 

@@ -16,11 +16,13 @@ module Legion
             request = @request
             enrichments = @enrichments
             local_enabled = local_capture_enabled?
-            log_step_debug(
+            content_chars = response&.message&.dig(:content).to_s.length
+            log_step_info(
               :knowledge_capture,
               :dispatch_async,
               local_enabled:       local_enabled,
-              writeback_available: defined?(Legion::Extensions::Apollo::Helpers::Writeback)
+              writeback_available: defined?(Legion::Extensions::Apollo::Helpers::Writeback),
+              response_chars:      content_chars
             )
 
             Thread.new do

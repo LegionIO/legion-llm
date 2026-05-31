@@ -93,6 +93,10 @@ module Legion
               end
             end
 
+            if removed.positive?
+              log.info("[llm][compressor] action=deduplicate_messages removed=#{removed} " \
+                       "original_count=#{messages.size} kept=#{kept.size}")
+            end
             { messages: kept, removed: removed, original_count: messages.size }
           end
 
@@ -103,6 +107,7 @@ module Legion
             recent = messages.last(preserve_recent)
             older  = messages[0..-(preserve_recent + 1)]
 
+            tokens_before = estimate_tokens(messages)
             summarized = summarize_messages(older, max_tokens: target_tokens / 2)
 
             compaction_msg = {
@@ -120,7 +125,12 @@ module Legion
               content: summarized[:summary]
             }
 
-            [compaction_msg, summary_msg, *recent].flatten
+            result = [compaction_msg, summary_msg, *recent].flatten
+            tokens_after = estimate_tokens(result)
+            log.info("[llm][compressor] action=auto_compact messages_before=#{messages.size} " \
+                     "messages_after=#{result.size} tokens_before=#{tokens_before} " \
+                     "tokens_after=#{tokens_after} tokens_saved=#{tokens_before - tokens_after}")
+            result
           end
 
           def estimate_tokens(messages)

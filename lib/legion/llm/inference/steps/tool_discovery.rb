@@ -48,11 +48,13 @@ module Legion
               log_step_debug(:tool_discovery, :registry_skipped, reason: :settings_extensions_unavailable)
               return
             end
-            unless Array(Legion::Settings::Extensions.tools).any?
+            total_registered = Array(Legion::Settings::Extensions.tools).size
+            unless total_registered.positive?
               log_step_debug(:tool_discovery, :registry_skipped, reason: :no_registered_tools)
               return
             end
 
+            log_step_debug(:tool_discovery, :registry_available, total_registered: total_registered)
             discover_settings_extensions_tools
           rescue StandardError => e
             @warnings << "Registry tool discovery error: #{e.message}"
@@ -104,6 +106,7 @@ module Legion
                 source:      tool[:source]
               }
             end
+            log_step_info(:tool_discovery, :client_tools_added, count: tools.size)
           rescue StandardError => e
             @warnings << "Client tool discovery error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.tool_discovery.client')

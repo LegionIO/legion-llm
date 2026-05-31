@@ -54,6 +54,11 @@ module Legion
           end
 
           def handle_low_confidence
+            log.warn(
+              "[llm][steps][confidence_scoring] action=low_confidence request_id=#{@request&.id || 'none'} " \
+              "score=#{@confidence_score.score.round(3)} band=#{@confidence_score.band} " \
+              "source=#{@confidence_score.source} provider=#{@resolved_provider || 'none'} model=#{@resolved_model || 'none'}"
+            )
             warning = {
               type:   :low_confidence,
               score:  @confidence_score.score,

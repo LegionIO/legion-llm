@@ -14,16 +14,18 @@ module Legion
 
         def dispatch(tool_call:, source:, exchange_id: nil)
           start_time = Time.now
-          log.debug "[llm][tools] action=dispatch.enter tool=#{tool_call[:name]} source_type=#{source[:type]} exchange_id=#{exchange_id}"
+          log.debug "[llm][tools_dispatcher] action=dispatch.enter tool=#{tool_call[:name]} source_type=#{source[:type]} exchange_id=#{exchange_id}"
 
           if source[:type] == :mcp
             override = check_override(tool_call[:name])
             if override
+              log.warn "[llm][tools_dispatcher] action=source_overridden tool=#{tool_call[:name]} from=mcp:#{source[:server]} to=#{override[:type]}"
               overridden_source = source
               source = override.merge(overridden_from: overridden_source)
             end
           end
 
+          log.info "[llm][tools_dispatcher] action=dispatch_path tool=#{tool_call[:name]} path=#{source[:type]} exchange_id=#{exchange_id}"
           result = case source[:type]
                    when :mcp
                      dispatch_mcp(tool_call, source)
@@ -42,15 +44,25 @@ module Legion
                    end
 
           duration_ms = ((Time.now - start_time) * 1000).to_i
-          log.debug "[llm][tools] action=dispatch.complete tool=#{tool_call[:name]} status=#{result[:status]} duration_ms=#{duration_ms}"
+          if result[:status] == :error
+            err_detail = (result[:error] || result[:result]).to_s[0..200]
+            log.warn "[llm][tools_dispatcher] action=dispatch_failed tool=#{tool_call[:name]} " \
+                     "path=#{source[:type]} duration_ms=#{duration_ms} error=#{err_detail}"
+          else
+            log.info "[llm][tools_dispatcher] action=dispatch.complete tool=#{tool_call[:name]} " \
+                     "path=#{source[:type]} status=#{result[:status]} duration_ms=#{duration_ms}"
+          end
           result.merge(
             source:      source,
             exchange_id: exchange_id,
             duration_ms: duration_ms
           )
         rescue StandardError => e
+          duration_ms = ((Time.now - start_time) * 1000).to_i
+          log.warn "[llm][tools_dispatcher] action=dispatch_exception tool=#{tool_call[:name]} " \
+                   "path=#{source&.[](:type)} duration_ms=#{duration_ms} error=#{e.class}:#{e.message[0..200]}"
           handle_exception(e, level: :warn, operation: 'llm.tools.dispatcher.dispatch_tool_call', tool_name: tool_call[:name])
-          { status: :error, error: e.message, source: source, exchange_id: exchange_id }
+          { status: :error, error: e.message, source: source, exchange_id: exchange_id, duration_ms: duration_ms }
         end
 
         def check_override(tool_name)

@@ -85,6 +85,7 @@ module Legion
                 source:      tool[:source]
               }
             end
+            log_step_info(:mcp_discovery, :client_tools_added, count: tools.size)
           rescue StandardError => e
             @warnings << "Client tool discovery error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.mcp_discovery.client')

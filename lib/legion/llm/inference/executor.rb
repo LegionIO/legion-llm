@@ -632,7 +632,7 @@ module Legion
           succeeded = false
           tried = []
           @last_escalation_error = nil
-          log.debug "[llm][executor] action=escalation.enter chain_size=#{chain.size} threshold=#{threshold}"
+          log.debug "[llm][executor] action=escalation.enter chain_size=#{chain.size} threshold=#{threshold} max_attempts=#{chain.max_attempts}"
 
           primary_tier = @escalation_chain.primary&.tier
 
@@ -646,6 +646,7 @@ module Legion
           return if succeeded
           raise @last_escalation_error if chain.size <= 1 && @last_escalation_error
 
+          log.warn "[llm][escalation] action=exhausted attempts=#{@escalation_history.size} chain_size=#{chain.size}"
           emit_error_audit(
             EscalationExhausted.new("All #{@escalation_history.size} attempts failed"),
             status: 'escalation_exhausted'
@@ -661,7 +662,12 @@ module Legion
                       else
                         :escalation
                       end
-          log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} model=#{resolution.model} tier=#{resolution.tier}"
+          prev_provider = @resolved_provider
+          prev_tier = @resolved_tier
+          log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} model=#{resolution.model} tier=#{resolution.tier} attempt=#{tried.size + 1}"
+          if move_type == :escalation && %i[local fleet vllm].include?(prev_tier) && %i[cloud frontier].include?(resolution.tier)
+            log.warn "[llm][escalation] action=tier_upgrade from_tier=#{prev_tier} from_provider=#{prev_provider} to_tier=#{resolution.tier} to_provider=#{resolution.provider} to_model=#{resolution.model}"
+          end
 
           start_time = Time.now
           @resolved_provider = resolution.provider
@@ -723,6 +729,7 @@ module Legion
           end
           duration_ms = ((Time.now - start_time) * 1000).round
           outcome = result.passed ? :success : :quality_failure
+          log.debug "[llm][escalation] action=attempt_result provider=#{resolution.provider} model=#{resolution.model} outcome=#{outcome} duration_ms=#{duration_ms}"
           @timeline.record(
             category: :provider, key: 'escalation:attempt', direction: :internal,
             detail: "attempt #{@escalation_history.size + 1}: #{resolution.provider}:#{resolution.model} => #{outcome}",
@@ -786,7 +793,10 @@ module Legion
             primary_tier:     @resolved_tier
           )
           resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
-          Router::EscalationChain.new(resolutions: resolutions, max_attempts: pipeline_escalation_max_attempts)
+          chain = Router::EscalationChain.new(resolutions: resolutions, max_attempts: pipeline_escalation_max_attempts)
+          log.debug "[llm][escalation] action=chain_built size=#{chain.size} max_attempts=#{chain.max_attempts} " \
+                    "primary=#{primary&.provider}:#{primary&.model} fallbacks=#{fallbacks.size}"
+          chain
         end
 
         def build_fallback_resolutions(exclude_provider: nil, exclude_instance: nil, primary_tier: nil)
@@ -1211,6 +1221,14 @@ module Legion
             source:      source,
             exchange_id: Tracing.exchange_id
           )
+          if result[:status] == :error
+            err_detail = (result[:error] || result[:result]).to_s[0..200]
+            log.warn "[llm][native_tool_loop] action=tool_call_failed round=#{round} " \
+                     "tool=#{normalized_call[:name]} source_type=#{source[:type]} error=#{err_detail}"
+          else
+            log.info "[llm][native_tool_loop] action=tool_result_received round=#{round} " \
+                     "tool=#{normalized_call[:name]} status=#{result[:status]} duration_ms=#{result[:duration_ms]}"
+          end
           emit_tool_result_event(
             ToolResultEvent.new(
               result:       native_tool_result_content(result),
@@ -1328,28 +1346,41 @@ module Legion
         end
 
         def execute_pre_provider_steps
-          log.debug "[llm][executor] action=pre_provider_steps.enter step_count=#{PRE_PROVIDER_STEPS.size}"
+          log.debug "[llm][executor] action=pre_provider_steps.enter step_count=#{PRE_PROVIDER_STEPS.size} profile=#{@profile}"
+          skipped = []
           PRE_PROVIDER_STEPS.each do |step|
-            next if Profile.skip?(@profile, step)
+            if Profile.skip?(@profile, step)
+              skipped << step
+              next
+            end
 
             execute_step(step) { send(:"step_#{step}") }
           end
-          log.debug '[llm][executor] action=pre_provider_steps.complete'
+          log.debug "[llm][executor] action=pre_provider_steps.complete executed=#{PRE_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}" if skipped.any?
+          log.debug '[llm][executor] action=pre_provider_steps.complete' if skipped.empty?
         end
 
         def execute_post_provider_steps
           async = async_post_enabled?
-          log.debug "[llm][executor] action=post_provider_steps.enter async=#{async} step_count=#{POST_PROVIDER_STEPS.size}"
+          log.debug "[llm][executor] action=post_provider_steps.enter async=#{async} step_count=#{POST_PROVIDER_STEPS.size} profile=#{@profile}"
           if async
             execute_post_provider_steps_mixed
           else
+            skipped = []
             POST_PROVIDER_STEPS.each do |step|
-              next if Profile.skip?(@profile, step)
+              if Profile.skip?(@profile, step)
+                skipped << step
+                next
+              end
 
               execute_step(step) { send(:"step_#{step}") }
             end
+            if skipped.any?
+              log.debug "[llm][executor] action=post_provider_steps.complete executed=#{POST_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}"
+            else
+              log.debug '[llm][executor] action=post_provider_steps.complete'
+            end
           end
-          log.debug '[llm][executor] action=post_provider_steps.complete'
         end
 
         def execute_post_provider_steps_mixed
@@ -1733,10 +1764,18 @@ module Legion
             provider: @resolved_provider, model: @resolved_model,
             fallback_provider: fallback&.dig(:provider)
           )
-          raise error_class, "#{@resolved_provider}:#{@resolved_model} #{reason} — #{error.message}" unless fallback
+          unless fallback
+            log.warn "[llm][fallback] action=no_fallback_available provider=#{@resolved_provider} model=#{@resolved_model} reason=#{reason} error=#{error.class.name}"
+            raise error_class, "#{@resolved_provider}:#{@resolved_model} #{reason} — #{error.message}"
+          end
 
-          log.warn "[pipeline] #{@resolved_provider}:#{@resolved_model} #{reason} (#{error.message}), " \
-                   "falling back to #{fallback[:provider]}:#{fallback[:model]}"
+          from_tier = @resolved_tier
+          to_tier = inferred_provider_tier(fallback[:provider])
+          log.warn "[llm][fallback] action=provider_switch from_provider=#{@resolved_provider} from_model=#{@resolved_model} " \
+                   "to_provider=#{fallback[:provider]} to_model=#{fallback[:model]} reason=#{reason}"
+          if %i[local fleet vllm].include?(from_tier) && %i[cloud frontier].include?(to_tier)
+            log.warn "[llm][fallback] action=tier_upgrade from_tier=#{from_tier} to_tier=#{to_tier} reason=#{reason}"
+          end
           from_provider = @resolved_provider
           from_model = @resolved_model
           @resolved_provider = fallback[:provider]

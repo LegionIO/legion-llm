@@ -120,20 +120,34 @@ module Legion
             native_source = @native_tool_source_map&.[](tool_key) || @native_tool_source_map&.[](tool_name)
             if native_source
               registry_tool = @injected_tool_map&.[](tool_key) || @injected_tool_map&.[](tool_name)
-              return native_source.merge(tool_class: registry_tool) if native_source[:type] == :registry && registry_tool
+              if native_source[:type] == :registry && registry_tool
+                log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=native_registry"
+                return native_source.merge(tool_class: registry_tool)
+              end
 
+              log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=native_map type=#{native_source[:type]}"
               return native_source
             end
 
             mcp_tool = @discovered_tools&.find { |t| t[:name].to_s == tool_key }
-            return mcp_tool[:source] if mcp_tool
+            if mcp_tool
+              log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=mcp server=#{mcp_tool[:source][:server]}"
+              return mcp_tool[:source]
+            end
 
             registry_tool = @injected_tool_map&.[](tool_key) || @injected_tool_map&.[](tool_name)
-            return { type: :registry, tool_class: registry_tool } if registry_tool
+            if registry_tool
+              log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=injected_registry"
+              return { type: :registry, tool_class: registry_tool }
+            end
 
             override = ToolDispatcher.check_override(tool_key)
-            return override if override
+            if override
+              log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=override type=#{override[:type]}"
+              return override
+            end
 
+            log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=builtin"
             { type: :builtin }
           end
 
@@ -261,12 +275,20 @@ module Legion
           end
 
           def log_tool_call_result(tool_call_id, tool_name, result)
-            log.info(
-              "[llm][tools] result request_id=#{@request.id} " \
-              "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
-              "status=#{result[:status]} duration_ms=#{result[:duration_ms]} " \
-              "result_class=#{result[:result].class} result_chars=#{result_size(result[:result])}"
-            )
+            if result[:status] == :error
+              log.warn(
+                "[llm][tool_calls] action=tool_call_failed request_id=#{@request.id} " \
+                "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
+                "duration_ms=#{result[:duration_ms]} error=#{(result[:error] || result[:result]).to_s[0..200]}"
+              )
+            else
+              log.info(
+                "[llm][tools] result request_id=#{@request.id} " \
+                "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
+                "status=#{result[:status]} duration_ms=#{result[:duration_ms]} " \
+                "result_class=#{result[:result].class} result_chars=#{result_size(result[:result])}"
+              )
+            end
             log_step_debug(
               :tool_calls,
               :result,

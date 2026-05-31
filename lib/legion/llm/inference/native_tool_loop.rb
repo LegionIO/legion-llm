@@ -22,12 +22,19 @@ module Legion
               log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=no_tool_calls"
               return result
             end
-            return client_passthrough_tool_loop_result(result, tool_calls, round) if tool_calls.any? { |tool_call| client_passthrough_tool_call?(tool_call) }
+            if tool_calls.any? { |tool_call| client_passthrough_tool_call?(tool_call) }
+              passthrough_names = tool_calls.select { |tc| client_passthrough_tool_call?(tc) }.map { |tc| tc[:name] }.join(',')
+              log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} tools=#{passthrough_names}"
+              return client_passthrough_tool_loop_result(result, tool_calls, round)
+            end
 
             round += 1
             tool_names = tool_calls.map { |tc| tc[:name] }.join(',')
             log.debug "[llm][executor] action=native_tool_loop.round round=#{round} tool_count=#{tool_calls.size} tools=#{tool_names}"
-            raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds" if round > max_rounds
+            if round > max_rounds
+              log.warn "[llm][native_tool_loop] action=max_rounds_exceeded max_rounds=#{max_rounds} last_tools=#{tool_names}"
+              raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds"
+            end
 
             messages << native_assistant_tool_message(result, tool_calls)
             tool_calls.each do |tool_call|
@@ -59,12 +66,19 @@ module Legion
               log.debug "[llm][executor] action=native_streaming_tool_loop.complete rounds=#{round} reason=no_tool_calls"
               return result
             end
-            return client_passthrough_tool_loop_result(result, tool_calls, round) if tool_calls.any? { |tool_call| client_passthrough_tool_call?(tool_call) }
+            if tool_calls.any? { |tool_call| client_passthrough_tool_call?(tool_call) }
+              passthrough_names = tool_calls.select { |tc| client_passthrough_tool_call?(tc) }.map { |tc| tc[:name] }.join(',')
+              log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} tools=#{passthrough_names}"
+              return client_passthrough_tool_loop_result(result, tool_calls, round)
+            end
 
             round += 1
             tool_names = tool_calls.map { |tc| tc[:name] }.join(',')
             log.debug "[llm][executor] action=native_streaming_tool_loop.round round=#{round} tool_count=#{tool_calls.size} tools=#{tool_names}"
-            raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds" if round > max_rounds
+            if round > max_rounds
+              log.warn "[llm][native_tool_loop] action=max_rounds_exceeded max_rounds=#{max_rounds} last_tools=#{tool_names}"
+              raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds"
+            end
 
             messages << native_assistant_tool_message(result, tool_calls)
             tool_calls.each do |tool_call|
@@ -95,10 +109,18 @@ module Legion
           normalized_choice = normalize_native_tool_choice(choice) if choice
           if normalized_choice.to_s == 'auto'
             explicit_choice = explicit_native_tool_choice
-            normalized_choice = explicit_choice if explicit_choice && @native_tool_loop_round.to_i.zero?
+            if explicit_choice && @native_tool_loop_round.to_i.zero?
+              if client_tools_only?
+                log.warn "[llm][native_tool_loop] action=tool_choice_forced_passthrough forced_tool=#{explicit_choice} provider=#{@resolved_provider}"
+              else
+                log.info "[llm][native_tool_loop] action=tool_choice_forced forced_tool=#{explicit_choice} provider=#{@resolved_provider}"
+              end
+              normalized_choice = explicit_choice
+            end
           end
           prefs[:choice] = normalized_choice if normalized_choice
           prefs[:calls] = calls if calls
+          log.debug "[llm][native_tool_loop] action=tool_prefs_resolved choice=#{prefs[:choice] || 'none'} calls=#{prefs[:calls] || 'none'}" unless prefs.empty?
           prefs.empty? ? nil : prefs
         end
 
@@ -115,9 +137,11 @@ module Legion
           text = latest_user_text.to_s.downcase
           return if text.empty? || text.length > 500
 
-          native_dispatch_tools.keys.map(&:to_s).sort_by { |tool_name| -tool_name.length }.find do |tool_name|
+          match = native_dispatch_tools.keys.map(&:to_s).sort_by { |tool_name| -tool_name.length }.find do |tool_name|
             explicit_tool_name_mentioned?(text, tool_name)
           end
+          log.info "[llm][native_tool_loop] action=explicit_tool_choice_matched tool=#{match} text_length=#{text.length}" if match
+          match
         end
 
         def explicit_tool_name_mentioned?(text, tool_name)

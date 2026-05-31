@@ -30,16 +30,37 @@ module Legion
             failures << :empty_response if content.nil? || content.strip.empty?
 
             unless failures.include?(:empty_response)
-              failures << :too_short if quality_setting(:too_short, false) && content.length < quality_threshold
-              failures << :repetition if repetitive?(content)
-              failures << :truncated if quality_setting(:truncated, false) && truncated?(content)
-              failures << :refusal if quality_setting(:refusal, false) && refusal?(content)
-              failures << :json_parse_failure if json_expected && !valid_json?(content)
+              if quality_setting(:too_short, false) && content.length < quality_threshold
+                failures << :too_short
+                log.debug "[llm][quality] check=too_short result=fail content_length=#{content.length} threshold=#{quality_threshold}"
+              end
+              if repetitive?(content)
+                failures << :repetition
+                log.debug "[llm][quality] check=repetition result=fail content_length=#{content.length}"
+              end
+              if quality_setting(:truncated, false) && truncated?(content)
+                failures << :truncated
+                log.debug "[llm][quality] check=truncated result=fail"
+              end
+              if quality_setting(:refusal, false) && refusal?(content)
+                failures << :refusal
+                log.debug "[llm][quality] check=refusal result=fail"
+              end
+              if json_expected && !valid_json?(content)
+                failures << :json_parse_failure
+                log.debug "[llm][quality] check=json_parse result=fail"
+              end
             end
 
             failures << :custom_check_failed if quality_check.respond_to?(:call) && !quality_check.call(response)
 
-            QualityResult.new(passed: failures.empty?, failures: failures)
+            result = QualityResult.new(passed: failures.empty?, failures: failures)
+            if result.passed
+              log.info "[llm][quality] action=check result=passed content_length=#{content.to_s.length}"
+            else
+              log.warn "[llm][quality] action=check result=failed failures=#{failures.join(',')}"
+            end
+            result
           end
 
           def quality_setting(key, default)

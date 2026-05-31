@@ -68,24 +68,30 @@ module Legion
               bands = resolve_bands(options[:confidence_bands])
 
               if (caller_score = options[:confidence_score])
-                return Score.build(
+                result = Score.build(
                   score:   caller_score.to_f,
                   bands:   bands,
                   source:  :caller_provided,
                   signals: { caller_provided: caller_score.to_f }
                 )
+                log.debug "[llm][confidence] action=score source=caller_provided score=#{result.score} band=#{result.band}"
+                return result
               end
 
               if (lp = extract_logprobs(raw_response))
-                return Score.build(
+                result = Score.build(
                   score:   lp,
                   bands:   bands,
                   source:  :logprobs,
                   signals: { avg_logprob: lp }
                 )
+                log.debug "[llm][confidence] action=score source=logprobs score=#{result.score} band=#{result.band}"
+                return result
               end
 
-              heuristic_score(raw_response, bands: bands, options: options)
+              result = heuristic_score(raw_response, bands: bands, options: options)
+              log.debug "[llm][confidence] action=score source=heuristic score=#{result.score} band=#{result.band}"
+              result
             end
 
             private
