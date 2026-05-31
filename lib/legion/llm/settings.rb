@@ -26,7 +26,7 @@ module Legion
           pipeline_enabled:          true,
           pipeline_async_post_steps: true,
           max_tool_rounds:           200,
-          max_tool_calls_per_turn:   10,
+          max_tool_calls_per_turn:   50,
           default_model:             model_override,
           default_provider:          nil,
           system_baseline:           system_baseline_default,

@@ -98,7 +98,7 @@ module Legion
         end
 
         def split_tool_calls_by_cap(tool_calls, round)
-          max_per_turn = llm_setting(:max_tool_calls_per_turn, 10).to_i
+          max_per_turn = llm_setting(:max_tool_calls_per_turn, 50).to_i
           return [tool_calls, []] unless max_per_turn.positive? && tool_calls.size > max_per_turn
 
           log.warn "[llm][native_tool_loop] action=cap_per_turn round=#{round} " \
