@@ -137,6 +137,16 @@ module Legion
                            "tool_calls=#{tool_calls.size} stop_reason=#{stop_reason} " \
                            "text_block_opened=#{text_block_opened} full_text_length=#{full_text.length}"
 
+                  if !text_block_opened && tool_calls.empty? && full_text.empty?
+                    log.warn "[llm][api][anthropic] action=empty_response request_id=#{request_id} " \
+                             "model=#{model} — provider returned no content, signaling overloaded"
+                    out << "event: error\ndata: #{Legion::JSON.dump({
+                      type: 'error', error: { type: 'overloaded_error',
+                      message: 'Model returned empty response. Please retry.' }
+                    })}\n\n"
+                    next
+                  end
+
                   if text_block_opened
                     out << "event: content_block_stop\ndata: #{Legion::JSON.dump({ type: 'content_block_stop', index: 0 })}\n\n"
                     content_index = 1
