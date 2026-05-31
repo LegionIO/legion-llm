@@ -63,6 +63,15 @@ module Legion
               log.info "[llm][api][anthropic] action=request request_id=#{request_id} " \
                        "messages=#{msg_count} chars=#{msg_chars} est_tokens=#{est_tokens} " \
                        "tools=#{tool_defs.size} stream=#{streaming}"
+              normalized[:messages].each_with_index do |m, i|
+                role = m[:role]
+                content = m[:content].is_a?(String) ? m[:content] : m[:content].to_s
+                tc = m[:tool_calls]
+                tcid = m[:tool_call_id]
+                log.debug "[llm][api][anthropic] action=request_msg idx=#{i} role=#{role} " \
+                          "content_length=#{content.length} content_preview=#{content[0, 120]} " \
+                          "tool_calls=#{tc&.size || 0} tool_call_id=#{tcid}"
+              end
 
               executor = Legion::LLM::Inference::Executor.new(pipeline_request)
               model = body[:model]
@@ -110,8 +119,7 @@ module Legion
                   content_index = 0
 
                   if !text_block_opened && tool_calls.empty?
-                    msg = pipeline_response.message
-                    fallback_text = msg.is_a?(Hash) ? (msg[:content] || msg['content']).to_s : ''
+                    fallback_text = extract_fallback_text(pipeline_response)
                     unless fallback_text.empty?
                       out << "event: content_block_start\ndata: #{Legion::JSON.dump({
                                                                                       type: 'content_block_start', index: 0,
@@ -196,6 +204,21 @@ module Legion
 
                 halt 400, { 'Content-Type' => 'application/json' },
                      Legion::JSON.dump({ type: 'error', error: { type: 'invalid_request_error', message: "missing required fields: #{missing.join(', ')}" } })
+              end
+
+              def extract_fallback_text(pipeline_response)
+                msg = pipeline_response.message
+                text = msg.is_a?(Hash) ? (msg[:content] || msg['content']).to_s : ''
+                return text unless text.empty?
+                return '' unless pipeline_response.respond_to?(:thinking) && pipeline_response.thinking
+
+                thinking_data = pipeline_response.thinking
+                thinking_content = if thinking_data.is_a?(Hash)
+                                     thinking_data[:content] || thinking_data['content']
+                                   elsif thinking_data.respond_to?(:content)
+                                     thinking_data.content
+                                   end
+                thinking_content.to_s.strip
               end
             end
           end
