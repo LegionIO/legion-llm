@@ -169,7 +169,8 @@ module Legion
                   out << "event: message_delta\ndata: #{Legion::JSON.dump({
                                                                             type:  'message_delta',
                                                                             delta: { stop_reason: stop_reason, stop_sequence: nil },
-                                                                            usage: { output_tokens: translator.token_count(tokens, :output) }
+                                                                            usage: { input_tokens: translator.token_count(tokens, :input),
+                                                                                     output_tokens: translator.token_count(tokens, :output) }
                                                                           })}\n\n"
                   out << "event: message_stop\ndata: #{Legion::JSON.dump({ type: 'message_stop' })}\n\n"
                   log.info "[llm][api][anthropic] action=stream_complete request_id=#{request_id} stop_reason=#{stop_reason}"
