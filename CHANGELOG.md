@@ -1,5 +1,18 @@
 # Legion LLM Changelog
 
+## [0.10.3] - 2026-05-31
+
+### Fixed
+- **TRANSLATION-BUG-01**: Anthropic `tool_result` content blocks preserved as arrays — multimodal tool results (images) no longer flattened to string.
+- **TRANSLATION-BUG-03**: Anthropic `stop_reason` properly maps `content_filter`; distinguishes `stop` with/without `stop_sequence`.
+- **TRANSLATION-BUG-04**: OpenAI `map_finish_reason` returns `error` for unknown stop reasons instead of `stop` (errors no longer disguised as success).
+- **TRANSLATION-BUG-05**: OpenAI `extract_content` preserves `image_url` and non-text content parts — vision input no longer silently dropped.
+- **TRANSLATION-BUG-06**: Anthropic streaming `content_block_start` includes tool arguments in `input` field (was empty `{}`).
+- **TRANSLATION-BUG-09**: Anthropic system prompt `cache_control` metadata preserved when present — prompt caching no longer silently disabled.
+- **TRANSLATION-BUG-10**: Stable `tool_call_id` generated when OpenAI client sends nil — multi-turn tool chains no longer break.
+- **TRANSLATION-BUG-11**: OpenAI translator uses symbol roles (`:user`, `:assistant`) matching Anthropic — executor symbol comparisons now work.
+- **TRANSLATION-BUG-12**: Unsupported OpenAI tool types (`code_interpreter`, `file_search`) logged at debug instead of silent drop.
+
 ## [0.10.2] - 2026-05-30
 
 ### Fixed
