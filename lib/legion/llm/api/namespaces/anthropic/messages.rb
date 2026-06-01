@@ -142,9 +142,9 @@ module Legion
                     log.warn "[llm][api][anthropic] action=empty_response request_id=#{request_id} " \
                              "model=#{model} text_block_opened=#{text_block_opened} — provider returned no content, signaling overloaded"
                     out << "event: error\ndata: #{Legion::JSON.dump({
-                      type: 'error', error: { type: 'overloaded_error',
-                      message: 'Model returned empty response. Please retry.' }
-                    })}\n\n"
+                                                                      type: 'error', error: { type:    'overloaded_error',
+                                                                                              message: 'Model returned empty response. Please retry.' }
+                                                                    })}\n\n"
                     next
                   end
 
@@ -169,7 +169,7 @@ module Legion
                   out << "event: message_delta\ndata: #{Legion::JSON.dump({
                                                                             type:  'message_delta',
                                                                             delta: { stop_reason: stop_reason, stop_sequence: nil },
-                                                                            usage: { input_tokens: translator.token_count(tokens, :input),
+                                                                            usage: { input_tokens:  translator.token_count(tokens, :input),
                                                                                      output_tokens: translator.token_count(tokens, :output) }
                                                                           })}\n\n"
                   out << "event: message_stop\ndata: #{Legion::JSON.dump({ type: 'message_stop' })}\n\n"

@@ -140,15 +140,9 @@ module Legion
             conversation_id: response.conversation_id
           }
 
-          if request.respond_to?(:message_id) && request.message_id
-            ctx[:message_id] = request.message_id
-          end
-          if request.respond_to?(:message_seq) && request.message_seq
-            ctx[:message_seq] = request.message_seq
-          end
-          if request.respond_to?(:parent_message_id) && request.parent_message_id
-            ctx[:parent_message_id] = request.parent_message_id
-          end
+          ctx[:message_id] = request.message_id if request.respond_to?(:message_id) && request.message_id
+          ctx[:message_seq] = request.message_seq if request.respond_to?(:message_seq) && request.message_seq
+          ctx[:parent_message_id] = request.parent_message_id if request.respond_to?(:parent_message_id) && request.parent_message_id
 
           ctx.compact
         end
@@ -163,10 +157,10 @@ module Legion
           return {} unless provider_payload.is_a?(Hash)
 
           {
-            actual_cost_usd: hash_value(provider_payload, :estimated_cost_usd) || hash_value(provider_payload, :cost_usd),
-            actual_input_tokens: hash_value(provider_payload, :input_tokens),
+            actual_cost_usd:      hash_value(provider_payload, :estimated_cost_usd) || hash_value(provider_payload, :cost_usd),
+            actual_input_tokens:  hash_value(provider_payload, :input_tokens),
             actual_output_tokens: hash_value(provider_payload, :output_tokens),
-            model_version: hash_value(provider_payload, :model_version) || hash_value(provider_payload, :model)
+            model_version:        hash_value(provider_payload, :model_version) || hash_value(provider_payload, :model)
           }.compact
         end
 

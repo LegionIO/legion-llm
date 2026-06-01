@@ -86,9 +86,7 @@ module Legion
                      "model=#{resolution.model} rule=#{resolution.rule}"
           end
 
-          unless resolution
-            log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size}"
-          end
+          log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size}" unless resolution
           resolution || arbitrage_fallback(intent)
         end
 

@@ -469,10 +469,10 @@ RSpec.describe Legion::LLM::Context::Curator do
 
     it 'never raises even if curation fails internally' do
       allow(curator).to receive(:store_curated).and_raise(StandardError, 'storage failure')
-      expect {
+      expect do
         curator.curate_turn(turn_messages: [{ role: :user, content: 'test' }], assistant_response: 'response')
         sleep 0.1
-      }.not_to raise_error
+      end.not_to raise_error
     end
   end
 
