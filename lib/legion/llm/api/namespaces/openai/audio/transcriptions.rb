@@ -25,7 +25,8 @@ module Legion
               def self.capable_provider_available?
                 instances = begin
                   Legion::LLM::Call::Registry.all_instances
-                rescue StandardError
+                rescue StandardError => e
+                  log.debug "[llm][api][openai][audio][transcriptions] action=registry_fallback error=#{e.class} message=#{e.message}"
                   []
                 end
                 instances.any? do |entry|

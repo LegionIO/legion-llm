@@ -34,7 +34,7 @@ module Legion
               tool_defs = build_tool_definitions(normalized[:tools] || [], executable: false)
               modality = detect_modality(normalized[:messages])
 
-              conv_id = env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id]
+              conv_id = env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id] || "conv_#{SecureRandom.hex(8)}"
               ext_provider = env['HTTP_X_LEGION_PROVIDER'] || body[:provider]
               ext_tier = env['HTTP_X_LEGION_TIER'] || body[:tier]
               ext_instance = env['HTTP_X_LEGION_INSTANCE'] || body[:instance]
@@ -78,7 +78,8 @@ module Legion
 
               if streaming
                 content_type 'text/event-stream'
-                headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive', 'X-Accel-Buffering' => 'no'
+                headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive',
+                        'X-Accel-Buffering' => 'no', 'X-Legion-Conversation-Id' => conv_id
 
                 stream do |out|
                   full_text = +''
@@ -137,9 +138,9 @@ module Legion
                            "tool_calls=#{tool_calls.size} stop_reason=#{stop_reason} " \
                            "text_block_opened=#{text_block_opened} full_text_length=#{full_text.length}"
 
-                  if !text_block_opened && tool_calls.empty? && full_text.empty?
+                  if tool_calls.empty? && full_text.empty?
                     log.warn "[llm][api][anthropic] action=empty_response request_id=#{request_id} " \
-                             "model=#{model} — provider returned no content, signaling overloaded"
+                             "model=#{model} text_block_opened=#{text_block_opened} — provider returned no content, signaling overloaded"
                     out << "event: error\ndata: #{Legion::JSON.dump({
                       type: 'error', error: { type: 'overloaded_error',
                       message: 'Model returned empty response. Please retry.' }
@@ -182,6 +183,7 @@ module Legion
                   pipeline_response, model: model, request_id: request_id
                 )
 
+                headers 'X-Legion-Conversation-Id' => conv_id
                 content_type :json
                 status 200
                 Legion::JSON.dump(formatted)

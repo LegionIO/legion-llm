@@ -70,6 +70,8 @@ module Legion
           # @param messages [Array<Hash>] messages with :role and :content keys
           # @param threshold [Float] similarity threshold (0.0-1.0) above which messages are considered duplicates
           # @return [Hash] { messages: Array, removed: Integer, original_count: Integer }
+          DEDUP_WINDOW = 20
+
           def deduplicate_messages(messages, threshold: 0.85)
             return { messages: [], removed: 0, original_count: 0 } if messages.nil? || messages.empty?
 
@@ -80,7 +82,8 @@ module Legion
               content = msg[:content].to_s
               next kept.unshift(msg) if content.length < 20
 
-              duplicate = kept.any? do |existing|
+              window = kept.first(DEDUP_WINDOW)
+              duplicate = window.any? do |existing|
                 next false unless existing[:role] == msg[:role]
 
                 jaccard_similarity(content, existing[:content].to_s) >= threshold

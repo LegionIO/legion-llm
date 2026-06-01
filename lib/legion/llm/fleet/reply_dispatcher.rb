@@ -23,7 +23,8 @@ module Legion
           @pending[correlation_id] = { future: future, expected: normalize_hash(expected || {}) }
           ensure_consumer
           future
-        rescue StandardError
+        rescue StandardError => e
+          log.debug "[llm][fleet][reply_dispatcher] action=register_cleanup correlation_id=#{correlation_id} error=#{e.class} message=#{e.message}"
           @pending.delete(correlation_id)
           raise
         end

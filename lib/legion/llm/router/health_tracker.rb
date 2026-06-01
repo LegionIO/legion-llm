@@ -20,7 +20,7 @@ module Legion
           @latency_window = {}
           @handlers       = {}
           @denied_models  = {}
-          @mutex          = Mutex.new
+          @mutex          = Monitor.new
 
           register_default_handlers
         end
@@ -42,24 +42,20 @@ module Legion
           log.debug "[llm][health_tracker] action=signal_received provider=#{provider} instance=#{instance || 'all'} signal=#{sym} value=#{value}"
 
           if instance
-            # Instance-specific tracking
             payload = build_payload(provider: provider, instance: instance,
                                     key: instance_key(provider, instance),
                                     offering_id: offering_id, signal: sym,
                                     value: value, metadata: metadata)
             @mutex.synchronize { handler.call(payload) }
           else
-            # Check if we have tracked instances for this provider; if so, broadcast
             instances = known_instances(provider)
             if instances.empty?
-              # No instances tracked — use provider-level key (backward compat)
               payload = build_payload(provider: provider, instance: nil,
                                       key: health_key(provider, offering_id),
                                       offering_id: offering_id, signal: sym,
                                       value: value, metadata: metadata)
               @mutex.synchronize { handler.call(payload) }
             else
-              # Broadcast to all known instances of this provider
               @mutex.synchronize do
                 instances.each do |inst_key|
                   payload = build_payload(provider: provider, instance: nil,

@@ -32,7 +32,7 @@ module Legion
           current_turn_count = Array(turn_messages).size + (assistant_response ? 1 : 0)
           log.debug "[llm][curator] action=curate_turn conversation_id=#{@conversation_id} turn_messages=#{current_turn_count}"
 
-          Thread.new do
+          Inference::Executor::ASYNC_THREAD_POOL.post do
             all_messages = Inference::Conversation.messages(@conversation_id)
             older = if current_turn_count.positive? && all_messages.size > current_turn_count
                       all_messages[0...-current_turn_count]

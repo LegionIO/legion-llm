@@ -25,7 +25,7 @@ module Legion
               response_chars:      content_chars
             )
 
-            Thread.new do
+            Executor::ASYNC_THREAD_POOL.post do
               if defined?(Legion::Extensions::Apollo::Helpers::Writeback)
                 log_step_debug(:knowledge_capture, :writeback_route)
                 Legion::Extensions::Apollo::Helpers::Writeback.evaluate_and_route(
@@ -59,6 +59,8 @@ module Legion
             false
           end
 
+          EMBED_MAX_CHARS = 2000
+
           def ingest_to_local(response:)
             unless response
               log_step_debug(:knowledge_capture, :local_ingest_skipped, reason: :no_response)
@@ -70,6 +72,8 @@ module Legion
               log_step_debug(:knowledge_capture, :local_ingest_skipped, reason: :empty_content)
               return
             end
+
+            content = content[0, EMBED_MAX_CHARS] if content.length > EMBED_MAX_CHARS
 
             model = response.routing[:model].to_s
             tags  = ['llm_response', model].reject(&:empty?)

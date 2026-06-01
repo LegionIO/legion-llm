@@ -50,9 +50,9 @@ module Legion
         ].freeze
 
         POST_PROVIDER_STEPS = %i[
-          response_normalization metering debate confidence_scoring
+          response_normalization post_response metering debate confidence_scoring
           tool_calls sticky_persist
-          context_store post_response knowledge_capture response_return
+          context_store knowledge_capture response_return
         ].freeze
 
         STEPS = (PRE_PROVIDER_STEPS + %i[provider_call] + POST_PROVIDER_STEPS).freeze
@@ -766,7 +766,7 @@ module Legion
               instance: resolution.instance,
               reason:   err.message
             )
-          else
+          elsif !context_overflow_error?(err)
             Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
                                          signal: :error, value: 1,
                                          metadata: { reason: err.class.name, message: err.message })
@@ -925,7 +925,141 @@ module Legion
         end
 
         def native_dispatch_messages
-          apply_conversation_breakpoint(@request.messages)
+          messages = apply_conversation_breakpoint(@request.messages)
+          rejected = messages.count { |m| empty_assistant_message?(m) }
+          if rejected.positive?
+            log.warn "[llm][executor] action=strip_empty_assistants request_id=#{@request.id} removed=#{rejected}"
+            messages = messages.reject { |m| empty_assistant_message?(m) }
+          end
+          messages = strip_thinking_from_history(messages)
+          messages = trim_oversized_tool_results(messages)
+          enforce_context_window(messages)
+        end
+
+        def enforce_context_window(messages)
+          context_window = resolved_context_window
+          return messages unless context_window&.positive?
+
+          threshold = (context_window * 0.90).to_i
+          estimated = estimate_message_tokens(messages)
+          return messages if estimated <= threshold
+
+          log.warn "[llm][executor] action=context_compaction request_id=#{@request.id} " \
+                   "estimated_tokens=#{estimated} context_window=#{context_window} threshold=#{threshold}"
+
+          preserve_after = last_user_message_index(messages)
+          recent = messages[preserve_after..]
+          older = messages[0...preserve_after]
+
+          target_tokens = threshold - estimate_message_tokens(recent)
+          compacted = compact_to_fit(older, target_tokens)
+
+          log.info "[llm][executor] action=context_compaction_complete request_id=#{@request.id} " \
+                   "before=#{messages.size} after=#{compacted.size + recent.size} " \
+                   "tokens_before=#{estimated} tokens_after=#{estimate_message_tokens(compacted + recent)}"
+          compacted + recent
+        end
+
+        def compact_to_fit(messages, target_tokens)
+          return messages if estimate_message_tokens(messages) <= target_tokens
+
+          messages = messages.reject do |msg|
+            role = (msg[:role] || msg['role']).to_s
+            role == 'tool' && (msg[:content] || msg['content']).to_s.length > 500
+          end.map do |msg|
+            role = (msg[:role] || msg['role']).to_s
+            next msg unless role == 'tool'
+
+            content = (msg[:content] || msg['content']).to_s
+            content.length > 200 ? msg.merge(content: "#{content[0, 200]}\n[compacted]") : msg
+          end
+
+          return messages if estimate_message_tokens(messages) <= target_tokens
+
+          half = messages.size / 2
+          messages.last(half)
+        end
+
+        def resolved_context_window
+          @resolved_offering_metadata&.dig(:limits, :context_window) ||
+            @resolved_offering_metadata&.dig(:context_window) ||
+            @resolved_offering_metadata&.dig('limits', 'context_window')
+        end
+
+        def estimate_message_tokens(messages)
+          messages.sum { |m| ((m[:content] || m['content']).to_s.length / 4.0).ceil }
+        end
+
+        def strip_thinking_from_history(messages)
+          preserve_after = last_user_message_index(messages)
+          stripped_count = 0
+          result = messages.each_with_index.map do |msg, idx|
+            next msg if idx >= preserve_after
+            next msg unless (msg[:role] || msg['role']).to_s == 'assistant'
+
+            content = msg[:content] || msg['content']
+            next msg unless content.is_a?(String) && content.include?('<think')
+
+            cleaned = content.gsub(%r{<think(?:ing)?>.*?</think(?:ing)?>}m, '').strip
+            next msg if cleaned == content
+
+            stripped_count += 1
+            msg.merge(content: cleaned)
+          end
+
+          if stripped_count.positive?
+            log.info "[llm][executor] action=strip_thinking_history request_id=#{@request.id} stripped=#{stripped_count}"
+          end
+          result
+        end
+
+        def trim_oversized_tool_results(messages)
+          max_chars = llm_setting(:tool_result_max_dispatch_chars, 4000).to_i
+          return messages unless max_chars.positive?
+
+          preserve_after = last_user_message_index(messages)
+          trimmed_count = 0
+          result = messages.each_with_index.map do |msg, idx|
+            next msg if idx >= preserve_after
+            next msg unless tool_result_message?(msg)
+
+            content = msg[:content] || msg['content']
+            next msg unless content.is_a?(String) && content.length > max_chars
+
+            trimmed_count += 1
+            msg.merge(content: "#{content[0, max_chars]}\n[truncated — #{content.length} chars total]")
+          end
+
+          if trimmed_count.positive?
+            log.info "[llm][executor] action=trim_tool_results request_id=#{@request.id} trimmed=#{trimmed_count} " \
+                     "max_chars=#{max_chars} preserved_after=#{preserve_after}"
+          end
+          result
+        end
+
+        def last_user_message_index(messages)
+          messages.rindex { |m| (m[:role] || m['role']).to_s == 'user' } || messages.size
+        end
+
+        def tool_result_message?(msg)
+          return false unless msg.is_a?(Hash)
+
+          role = (msg[:role] || msg['role']).to_s
+          role == 'tool' || msg.key?(:tool_call_id) || msg.key?('tool_call_id')
+        end
+
+        def empty_assistant_message?(msg)
+          return false unless msg.is_a?(Hash)
+          return false unless (msg[:role] || msg['role']).to_s == 'assistant'
+
+          content = msg[:content] || msg['content']
+          has_content = content.is_a?(String) ? !content.strip.empty? : !content.nil?
+          return false if has_content
+
+          tool_calls = msg[:tool_calls] || msg['tool_calls']
+          return false if tool_calls.is_a?(Array) && tool_calls.any?
+
+          true
         end
 
         def native_dispatch_options
@@ -1344,6 +1478,11 @@ module Legion
           CONFIG_ERROR_PATTERNS.any? { |pat| pat.match?(name) || pat.match?(msg) }
         end
 
+        def context_overflow_error?(err)
+          err.is_a?(Legion::LLM::ContextOverflow) ||
+            err.class.name.to_s.include?('ContextLength')
+        end
+
         def execute_pre_provider_steps
           log.debug "[llm][executor] action=pre_provider_steps.enter step_count=#{PRE_PROVIDER_STEPS.size} profile=#{@profile}"
           skipped = []
@@ -1630,7 +1769,7 @@ module Legion
 
           Concurrent::Promises.future do
             audits.each do |audit|
-              Legion::LLM::Audit.emit_tools(
+              event = {
                 request_id:      request_id,
                 conversation_id: conversation_id,
                 exchange_id:     exchange_id,
@@ -1649,11 +1788,20 @@ module Legion
                 tracing:         tracing,
                 timestamp:       audit[:finished_at],
                 request_type:    'tool'
-              )
+              }
+              Legion::LLM::Audit.emit_tools(event)
             rescue StandardError => e
-              Legion::Logging.log.warn("[llm][pipeline] publish_tool_audit failed tool=#{audit[:tc_name]}: #{e.message}")
+              Legion::Logging.log.warn("[llm][pipeline] publish_tool_audit failed tool=#{audit[:tc_name]}: #{e.message} — spooling")
+              spool_failed_tool_audit(event)
             end
           end
+        end
+
+        def spool_failed_tool_audit(event)
+          spoolable = (event || {}).merge(event_type: 'tool_audit', spooled_at: Time.now.iso8601)
+          Legion::LLM::Metering.send(:spool_event, spoolable)
+        rescue StandardError => e
+          Legion::Logging.log.warn("[llm][pipeline] spool_failed_tool_audit failed: #{e.message}")
         end
 
         def tool_call_field(tool_call, field)
@@ -1831,7 +1979,8 @@ module Legion
                             0
                           end
           agent = request_agent_context
-          cost_usd = estimate_cost(input_tokens, output_tokens)
+          actual_cost = @audit.dig(:'provider:response', :data, :estimated_cost_usd)
+          cost_usd = actual_cost || estimate_cost(input_tokens, output_tokens)
           log.debug("[pipeline][metering] action=build provider=#{@resolved_provider} model=#{@resolved_model} input=#{input_tokens} output=#{output_tokens}")
           event = Steps::Metering.build_event(
             provider:          @resolved_provider,
@@ -1839,7 +1988,7 @@ module Legion
             offering_id:       @resolved_offering_id,
             offering_metadata: @resolved_offering_metadata,
             tier:              tier,
-            request_type:      'chat',
+            request_type:      @request.respond_to?(:request_type) ? @request.request_type : (@request.respond_to?(:metadata) && @request.metadata.is_a?(Hash) ? (@request.metadata[:task] || @request.metadata[:request_type] || 'chat') : 'chat'),
             input_tokens:      input_tokens,
             output_tokens:     output_tokens,
             latency_ms:        latency_ms,
@@ -1911,7 +2060,9 @@ module Legion
         end
 
         def metering_identity
-          Legion::LLM::PublisherIdentity.current
+          return Legion::LLM::PublisherIdentity.current unless @request.caller.is_a?(Hash) && @request.caller.any?
+
+          @request.caller
         end
 
         def step_context_store

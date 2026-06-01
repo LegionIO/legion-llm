@@ -17,6 +17,11 @@ module Legion
               return
             end
 
+            if @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
+              log_step_debug(:confidence_scoring, :skipped, reason: :tool_use_response)
+              return
+            end
+
             opts = {
               json_expected:     @request.response_format&.dig(:type) == :json,
               quality_threshold: @request.extra&.dig(:quality_threshold),

@@ -83,7 +83,8 @@ module Legion
 
         def auth_setting(key, default:)
           Legion::LLM::Settings.value(:fleet, :auth, key, default: default)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::LLM.log.debug "[llm][fleet][token_issuer] action=auth_setting_fallback key=#{key} error=#{e.class} message=#{e.message}"
           default
         end
 

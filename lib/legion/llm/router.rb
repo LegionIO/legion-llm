@@ -638,7 +638,8 @@ module Legion
         def registry_tier_for_default_provider(provider)
           instances = begin
             Call::Registry.all_instances
-          rescue StandardError
+          rescue StandardError => e
+            log.debug "[llm][router] action=registry_tier_fallback error=#{e.class} message=#{e.message}"
             []
           end
           entry = instances.find { |i| i[:provider] == provider }

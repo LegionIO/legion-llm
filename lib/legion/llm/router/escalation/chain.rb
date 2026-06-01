@@ -23,7 +23,7 @@ module Legion
         def each(&)
           return enum_for(:each) unless block_given?
 
-          padded_resolutions.each(&)
+          capped_resolutions.each(&)
         end
 
         def size
@@ -40,7 +40,7 @@ module Legion
 
         private
 
-        def padded_resolutions
+        def capped_resolutions
           return [] if @resolutions.empty?
 
           @resolutions.first(@max_attempts)

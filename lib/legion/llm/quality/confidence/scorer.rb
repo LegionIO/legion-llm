@@ -151,7 +151,7 @@ module Legion
               # Use pre-computed QualityResult when available to avoid duplicate work.
               quality_result = options[:quality_result]
 
-              if content.strip.empty?
+              if content.to_s.strip.empty?
                 signals[:empty] = true
                 penalty += HEURISTIC_WEIGHTS[:empty].abs
               else
@@ -185,7 +185,7 @@ module Legion
             end
 
             def detect_failures(content, options)
-              return [] if content.strip.empty?
+              return [] if content.to_s.strip.empty?
 
               failures = []
               threshold = options.fetch(:quality_threshold, Quality::Checker::DEFAULT_QUALITY_THRESHOLD)
@@ -199,7 +199,8 @@ module Legion
 
             def quality_setting(key, default)
               Legion::LLM::Settings.value(:quality, key)
-            rescue StandardError
+            rescue StandardError => e
+              log.debug "[llm][quality][confidence][scorer] action=quality_setting_fallback key=#{key} error=#{e.class} message=#{e.message}"
               default
             end
 
