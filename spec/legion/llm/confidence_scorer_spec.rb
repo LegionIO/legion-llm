@@ -202,6 +202,7 @@ RSpec.describe Legion::LLM::Quality::Confidence::Scorer do
         allow(bare_response).to receive(:respond_to?).with(:content).and_return(false)
         allow(bare_response).to receive(:respond_to?).with(:logprobs).and_return(false)
         allow(bare_response).to receive(:respond_to?).with(:metadata).and_return(false)
+        allow(bare_response).to receive(:respond_to?).with(:tool_calls).and_return(false)
         result = described_class.score(bare_response)
         expect(result.score).to eq(0.0)
       end

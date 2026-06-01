@@ -95,7 +95,7 @@ module Legion
         def dispatch_fleet_request(operation:, messages:, stream_block: nil)
           idempotency_key = next_route_idempotency_key
           selected_lane = fleet_selected_lane(operation)
-          log.info "[llm][route_attempts] action=fleet_dispatch provider=#{@resolved_provider} model=#{@resolved_model} lane=#{selected_lane} operation=#{operation}"
+          log.info "[llm][route_attempts] action=fleet_dispatch provider=#{@resolved_provider} model=#{@resolved_model} lane=#{selected_lane} operation=#{operation}" # rubocop:disable Layout/LineLength
           result = Fleet::Dispatcher.dispatch(
             operation:       operation,
             routing_key:     selected_lane,
@@ -104,7 +104,7 @@ module Legion
           )
           if result[:success] == false || result['success'] == false
             failure_reason = result[:error] || result['error'] || 'fleet_error'
-            log.warn "[llm][route_attempts] action=fleet_failed provider=#{@resolved_provider} model=#{@resolved_model} lane=#{selected_lane} reason=#{failure_reason}"
+            log.warn "[llm][route_attempts] action=fleet_failed provider=#{@resolved_provider} model=#{@resolved_model} lane=#{selected_lane} reason=#{failure_reason}" # rubocop:disable Layout/LineLength
             record_route_attempt(
               dispatch_path:   :fleet,
               operation:       operation,

@@ -25,6 +25,8 @@ module Legion
           connected:                      false,
           pipeline_enabled:               true,
           pipeline_async_post_steps:      true,
+          context_window:                 262_144,
+          max_output_tokens:              16_384,
           max_tool_rounds:                200,
           max_tool_calls_per_turn:        50,
           tool_result_max_dispatch_chars: 4000,

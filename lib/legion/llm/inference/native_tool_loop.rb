@@ -108,8 +108,8 @@ module Legion
 
         def deferred_tool_call_result(tool_call)
           {
-            status: :error,
-            result: "Tool call deferred: too many concurrent tool calls this turn. Please retry #{tool_call[:name]} on your next turn.",
+            status:      :error,
+            result:      "Tool call deferred: too many concurrent tool calls this turn. Please retry #{tool_call[:name]} on your next turn.",
             duration_ms: 0
           }
         end

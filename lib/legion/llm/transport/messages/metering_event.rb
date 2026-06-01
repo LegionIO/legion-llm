@@ -11,12 +11,14 @@ module Legion
           def exchange    = Legion::LLM::Transport::Exchanges::Metering
           def routing_key = "metering.#{@options[:request_type]}"
           def priority    = 0
+
           def encrypt?
             Legion::LLM::Settings.value(:compliance, :encrypt_metering) == true
           rescue StandardError
             false
           end
-          def expiration  = nil
+
+          def expiration = nil
 
           def headers
             super.merge(tier_header)

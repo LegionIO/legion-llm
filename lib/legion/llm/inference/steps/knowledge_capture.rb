@@ -50,6 +50,8 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture')
           end
 
+          EMBED_MAX_CHARS = 2000
+
           private
 
           def local_capture_enabled?
@@ -58,8 +60,6 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture.local_capture_enabled')
             false
           end
-
-          EMBED_MAX_CHARS = 2000
 
           def ingest_to_local(response:)
             unless response

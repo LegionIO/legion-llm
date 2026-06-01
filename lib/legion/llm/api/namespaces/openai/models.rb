@@ -3,6 +3,7 @@
 require 'time'
 require 'legion/logging/helper'
 require 'legion/llm/api/namespaces/helpers'
+require 'legion/llm/api/native/models'
 require 'legion/llm/api/translators/openai_response'
 
 module Legion
@@ -81,10 +82,14 @@ module Legion
             end
 
             def self.build_openai_model_list
-              models = Legion::LLM::Inventory.offerings(type: :inference).map do |offering|
+              offerings = Legion::LLM::Inventory.offerings(type: :inference)
+              offerings = Legion::LLM::API::Native::Models.with_auto_routing_offering(offerings, {})
+
+              models = offerings.map do |offering|
                 Legion::LLM::API::Translators::OpenAIResponse.format_model_object(
                   offering[:model],
-                  owned_by: offering[:provider_family]
+                  owned_by: offering[:provider_family],
+                  limits:   offering[:limits]
                 )
               end
               seen = {}
@@ -99,12 +104,15 @@ module Legion
             end
 
             def self.openai_to_anthropic_model(openai_model)
-              {
+              model = {
+                type:         'model',
                 id:           openai_model[:id],
                 display_name: openai_model[:id],
-                created_at:   Time.at(openai_model[:created] || Time.now.to_i).utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                type:         'model'
+                created_at:   Time.at(openai_model[:created] || Time.now.to_i).utc.strftime('%Y-%m-%dT%H:%M:%SZ')
               }
+              model[:max_input_tokens] = openai_model[:context_window] if openai_model[:context_window]
+              model[:max_tokens] = openai_model[:max_output_tokens] if openai_model[:max_output_tokens]
+              model
             end
           end
         end

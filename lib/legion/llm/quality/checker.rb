@@ -41,15 +41,15 @@ module Legion
               end
               if quality_setting(:truncated, false) && truncated?(content)
                 failures << :truncated
-                log.debug "[llm][quality] check=truncated result=fail"
+                log.debug '[llm][quality] check=truncated result=fail'
               end
               if quality_setting(:refusal, false) && refusal?(content)
                 failures << :refusal
-                log.debug "[llm][quality] check=refusal result=fail"
+                log.debug '[llm][quality] check=refusal result=fail'
               end
               if json_expected && !valid_json?(content)
                 failures << :json_parse_failure
-                log.debug "[llm][quality] check=json_parse result=fail"
+                log.debug '[llm][quality] check=json_parse result=fail'
               end
             end
 

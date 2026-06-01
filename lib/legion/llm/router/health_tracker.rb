@@ -240,7 +240,7 @@ module Legion
               if circuit[:failures] >= @failure_threshold
                 circuit[:state]     = :open
                 circuit[:opened_at] = Time.now
-                log.warn("[llm][health_tracker] action=circuit_state_change from=closed to=open provider=#{key} failures=#{circuit[:failures]} threshold=#{@failure_threshold}")
+                log.warn("[llm][health_tracker] action=circuit_state_change from=closed to=open provider=#{key} failures=#{circuit[:failures]} threshold=#{@failure_threshold}") # rubocop:disable Layout/LineLength
               end
             end
           end
@@ -253,9 +253,7 @@ module Legion
             circuit[:failures]  = 0
             circuit[:state]     = :closed
             circuit[:opened_at] = nil
-            if prev_state != :closed
-              log.info("[llm][health_tracker] action=circuit_state_change from=#{prev_state} to=closed provider=#{key}")
-            end
+            log.info("[llm][health_tracker] action=circuit_state_change from=#{prev_state} to=closed provider=#{key}") if prev_state != :closed
           end
 
           register_handler(:quality_failure) do |payload|

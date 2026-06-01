@@ -15,7 +15,7 @@ module Legion
             def self.registered(app)
               log.debug('[llm][api][namespaces][openai][embeddings] registering routes')
 
-              app.post '/v1/embeddings' do
+              app.post '/v1/embeddings' do # rubocop:disable Metrics/BlockLength
                 require_llm!
                 body  = parse_request_body
                 input = body[:input]

@@ -59,6 +59,8 @@ module Legion
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
+        THINKING_TAG_PATTERN = %r{<think(?:ing)?>((?:[^<]|<(?!/think(?:ing)?>))*?)</think(?:ing)?>}m
+
         CONFIG_ERROR_PATTERNS = [
           /ValidationException/,
           /AccessDeniedException/,
@@ -108,30 +110,51 @@ module Legion
         end
 
         def call
+          set_log_context
           log.debug "[llm][executor] action=call request_id=#{@request.id} profile=#{@profile}"
           execute_steps
           build_response
+        ensure
+          clear_log_context
         end
 
         def call_stream(&block)
           return call unless block
 
+          set_log_context
           log.debug "[llm][executor] action=call_stream request_id=#{@request.id} profile=#{@profile}"
           execute_pre_provider_steps
           step_provider_call_stream(&block)
           execute_post_provider_steps
           build_response
+        ensure
+          clear_log_context
         end
 
         def call_responses(body:, stream: false, &)
+          set_log_context
           log.debug "[llm][executor] action=call_responses request_id=#{@request.id} profile=#{@profile} stream=#{stream}"
           execute_pre_provider_steps
           execute_provider_request_responses(body: body, stream: stream, &)
           execute_post_provider_steps
           build_response
+        ensure
+          clear_log_context
         end
 
         private
+
+        def set_log_context
+          Thread.current[:legion_log_request_id] = @request.id
+          Thread.current[:legion_log_conv_id] = @request.conversation_id
+        end
+
+        def clear_log_context
+          Thread.current[:legion_log_request_id] = nil
+          Thread.current[:legion_log_conv_id] = nil
+          Thread.current[:legion_log_exchange_id] = nil
+          Thread.current[:legion_log_chain_id] = nil
+        end
 
         def llm_setting(key, default = nil)
           Legion::LLM::Settings.config_value(Legion::LLM::Settings.current_settings, key, default)
@@ -216,13 +239,15 @@ module Legion
 
         def step_conversation_uuid
           if @request.conversation_id
+            Thread.current[:legion_log_conv_id] = @request.conversation_id
             log.debug "[llm][executor] action=step_conversation_uuid existing=#{@request.conversation_id}"
             return
           end
 
           new_id = "conv_#{SecureRandom.hex(8)}"
-          log.debug "[llm][executor] action=step_conversation_uuid generated=#{new_id}"
           @request = @request.with(conversation_id: new_id)
+          Thread.current[:legion_log_conv_id] = new_id
+          log.debug "[llm][executor] action=step_conversation_uuid generated=#{new_id}"
         end
 
         def step_context_load
@@ -296,16 +321,16 @@ module Legion
               preserve_recent: preserve_recent
             )
 
-          Conversation.replace(conv_id, compact)
+            Conversation.replace(conv_id, compact)
 
-          @timeline.record(
-            category: :internal, key: 'context:compacted',
-            direction: :internal,
-            detail: "compacted #{history.size} messages (#{estimated} est. tokens) -> #{compact.size}",
-            from: 'compressor', to: 'pipeline'
-          )
+            @timeline.record(
+              category: :internal, key: 'context:compacted',
+              direction: :internal,
+              detail: "compacted #{history.size} messages (#{estimated} est. tokens) -> #{compact.size}",
+              from: 'compressor', to: 'pipeline'
+            )
 
-          compact
+            compact
           ensure
             Thread.current[:legion_compacting] = nil
           end
@@ -574,6 +599,7 @@ module Legion
 
         def step_request_normalization
           @exchange_id = Tracing.exchange_id
+          Thread.current[:legion_log_exchange_id] = @exchange_id
         end
 
         def step_provider_call
@@ -665,9 +691,12 @@ module Legion
                       end
           prev_provider = @resolved_provider
           prev_tier = @resolved_tier
-          log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} model=#{resolution.model} tier=#{resolution.tier} attempt=#{tried.size + 1}"
+          log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} " \
+                   "model=#{resolution.model} tier=#{resolution.tier} attempt=#{tried.size + 1}"
           if move_type == :escalation && %i[local fleet vllm].include?(prev_tier) && %i[cloud frontier].include?(resolution.tier)
-            log.warn "[llm][escalation] action=tier_upgrade from_tier=#{prev_tier} from_provider=#{prev_provider} to_tier=#{resolution.tier} to_provider=#{resolution.provider} to_model=#{resolution.model}"
+            log.warn "[llm][escalation] action=tier_upgrade from_tier=#{prev_tier} " \
+                     "from_provider=#{prev_provider} to_tier=#{resolution.tier} " \
+                     "to_provider=#{resolution.provider} to_model=#{resolution.model}"
           end
 
           start_time = Time.now
@@ -730,7 +759,7 @@ module Legion
           end
           duration_ms = ((Time.now - start_time) * 1000).round
           outcome = result.passed ? :success : :quality_failure
-          log.debug "[llm][escalation] action=attempt_result provider=#{resolution.provider} model=#{resolution.model} outcome=#{outcome} duration_ms=#{duration_ms}"
+          log.debug "[llm][escalation] action=attempt_result provider=#{resolution.provider} model=#{resolution.model} outcome=#{outcome} duration_ms=#{duration_ms}" # rubocop:disable Layout/LineLength
           @timeline.record(
             category: :provider, key: 'escalation:attempt', direction: :internal,
             detail: "attempt #{@escalation_history.size + 1}: #{resolution.provider}:#{resolution.model} => #{outcome}",
@@ -965,10 +994,11 @@ module Legion
         def compact_to_fit(messages, target_tokens)
           return messages if estimate_message_tokens(messages) <= target_tokens
 
-          messages = messages.reject do |msg|
+          filtered = messages.reject do |msg|
             role = (msg[:role] || msg['role']).to_s
             role == 'tool' && (msg[:content] || msg['content']).to_s.length > 500
-          end.map do |msg|
+          end
+          messages = filtered.map do |msg|
             role = (msg[:role] || msg['role']).to_s
             next msg unless role == 'tool'
 
@@ -1002,16 +1032,14 @@ module Legion
             content = msg[:content] || msg['content']
             next msg unless content.is_a?(String) && content.include?('<think')
 
-            cleaned = content.gsub(%r{<think(?:ing)?>.*?</think(?:ing)?>}m, '').strip
+            cleaned = content.gsub(THINKING_TAG_PATTERN, '').strip
             next msg if cleaned == content
 
             stripped_count += 1
             msg.merge(content: cleaned)
           end
 
-          if stripped_count.positive?
-            log.info "[llm][executor] action=strip_thinking_history request_id=#{@request.id} stripped=#{stripped_count}"
-          end
+          log.info "[llm][executor] action=strip_thinking_history request_id=#{@request.id} stripped=#{stripped_count}" if stripped_count.positive?
           result
         end
 
@@ -1496,7 +1524,9 @@ module Legion
 
             execute_step(step) { send(:"step_#{step}") }
           end
-          log.debug "[llm][executor] action=pre_provider_steps.complete executed=#{PRE_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}" if skipped.any?
+          if skipped.any?
+            log.debug "[llm][executor] action=pre_provider_steps.complete executed=#{PRE_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}" # rubocop:disable Layout/LineLength
+          end
           log.debug '[llm][executor] action=pre_provider_steps.complete' if skipped.empty?
         end
 
@@ -1516,7 +1546,7 @@ module Legion
               execute_step(step) { send(:"step_#{step}") }
             end
             if skipped.any?
-              log.debug "[llm][executor] action=post_provider_steps.complete executed=#{POST_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}"
+              log.debug "[llm][executor] action=post_provider_steps.complete executed=#{POST_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}" # rubocop:disable Layout/LineLength
             else
               log.debug '[llm][executor] action=post_provider_steps.complete'
             end
@@ -1914,7 +1944,7 @@ module Legion
             fallback_provider: fallback&.dig(:provider)
           )
           unless fallback
-            log.warn "[llm][fallback] action=no_fallback_available provider=#{@resolved_provider} model=#{@resolved_model} reason=#{reason} error=#{error.class.name}"
+            log.warn "[llm][fallback] action=no_fallback_available provider=#{@resolved_provider} model=#{@resolved_model} reason=#{reason} error=#{error.class.name}" # rubocop:disable Layout/LineLength
             raise error_class, "#{@resolved_provider}:#{@resolved_model} #{reason} — #{error.message}"
           end
 
@@ -1990,7 +2020,11 @@ module Legion
             offering_id:       @resolved_offering_id,
             offering_metadata: @resolved_offering_metadata,
             tier:              tier,
-            request_type:      @request.respond_to?(:request_type) ? @request.request_type : (@request.respond_to?(:metadata) && @request.metadata.is_a?(Hash) ? (@request.metadata[:task] || @request.metadata[:request_type] || 'chat') : 'chat'),
+            request_type:      if @request.respond_to?(:request_type)
+                                 @request.request_type
+                               else
+                                 (@request.respond_to?(:metadata) && @request.metadata.is_a?(Hash) ? (@request.metadata[:task] || @request.metadata[:request_type] || 'chat') : 'chat') # rubocop:disable Layout/LineLength
+                               end,
             input_tokens:      input_tokens,
             output_tokens:     output_tokens,
             latency_ms:        latency_ms,
@@ -2404,7 +2438,7 @@ module Legion
               call_counts[tool_name] += 1
               entry_key = call_counts[tool_name] > 1 ? "#{tool_name}:#{call_counts[tool_name]}" : tool_name
               index[entry_key] = {
-                tool_name: tool_name,
+                tool_name:   tool_name,
                 exchange_id: event[:exchange_id],
                 source:      data[:source],
                 status:      data[:status],

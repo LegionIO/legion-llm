@@ -151,13 +151,18 @@ module Legion
             }
           end
 
-          def format_model_object(id, created: nil, owned_by: 'legion')
-            {
+          def format_model_object(id, created: nil, owned_by: 'legion', limits: nil)
+            obj = {
               id:       id.to_s,
               object:   'model',
               created:  created || Time.now.to_i,
               owned_by: owned_by
             }
+            if limits.is_a?(Hash)
+              obj[:context_window] = limits[:context_window] if limits[:context_window]
+              obj[:max_output_tokens] = limits[:max_output_tokens] if limits[:max_output_tokens]
+            end
+            obj
           end
 
           def build_tool_calls(pipeline_response)

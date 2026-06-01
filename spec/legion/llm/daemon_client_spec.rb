@@ -278,6 +278,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       allow(response).to receive(:[]).and_return(nil)
 
       http = double('Net::HTTP')
+      allow(http).to receive(:use_ssl=)
       allow(http).to receive(:open_timeout=)
       allow(http).to receive(:read_timeout=)
       allow(http).to receive(:request).and_return(response)
@@ -542,6 +543,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     it 'uses DEFAULT_TIMEOUT when no timeout argument is given' do
       http = double('Net::HTTP')
+      allow(http).to receive(:use_ssl=)
       allow(http).to receive(:open_timeout=)
       allow(http).to receive(:request).and_return(double('Response', code: '200', body: '{}'))
       expect(http).to receive(:read_timeout=).with(described_class::DEFAULT_TIMEOUT)
@@ -552,6 +554,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     it 'uses a custom timeout when provided' do
       http = double('Net::HTTP')
+      allow(http).to receive(:use_ssl=)
       allow(http).to receive(:open_timeout=)
       allow(http).to receive(:request).and_return(double('Response', code: '200', body: '{}'))
       expect(http).to receive(:read_timeout=).with(120)
