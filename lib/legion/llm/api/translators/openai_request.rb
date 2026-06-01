@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'securerandom'
 require 'legion/logging/helper'
 
 module Legion
@@ -40,16 +41,16 @@ module Legion
 
             raw_messages.each do |msg|
               m = msg.respond_to?(:transform_keys) ? msg.transform_keys(&:to_sym) : msg
-              role = m[:role].to_s
+              role = (m[:role] || m['role']).to_sym
 
               case role
-              when 'system'
+              when :system
                 system_content = extract_content(m[:content])
-              when 'assistant'
+              when :assistant
                 entry = { role: role, content: extract_content(m[:content]) }
                 entry[:tool_calls] = normalize_assistant_tool_calls(m[:tool_calls]) if m[:tool_calls]
                 messages << entry
-              when 'tool'
+              when :tool
                 messages << { role: role, content: extract_content(m[:content]), tool_call_id: m[:tool_call_id] }.compact
               else
                 messages << { role: role, content: extract_content(m[:content]) }
@@ -69,7 +70,7 @@ module Legion
               next unless fn.is_a?(Hash)
 
               {
-                id:        tc[:id],
+                id:        tc[:id] || "call_#{fn[:name]}_#{SecureRandom.hex(8)}",
                 name:      fn[:name].to_s,
                 arguments: fn[:arguments].is_a?(String) ? Legion::JSON.parse(fn[:arguments]) : (fn[:arguments] || {})
               }
@@ -83,10 +84,19 @@ module Legion
             return content if content.is_a?(String)
             return content unless content.is_a?(Array)
 
-            content.filter_map do |block|
+            has_non_text = content.any? do |block|
               b = block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
-              b[:text] if b[:type].to_s == 'text'
-            end.join
+              b[:type].to_s != 'text'
+            end
+
+            if has_non_text
+              content.map { |block| block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block }
+            else
+              content.filter_map do |block|
+                b = block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
+                b[:text] if b[:type].to_s == 'text'
+              end.join
+            end
           end
 
           def normalize_tools(raw_tools)
@@ -94,7 +104,10 @@ module Legion
 
             raw_tools.filter_map do |tool|
               t = tool.respond_to?(:transform_keys) ? tool.transform_keys(&:to_sym) : tool
-              next unless t[:type].to_s == 'function'
+              unless t[:type].to_s == 'function'
+                log.debug("[llm][translator][openai_request] action=skip_unsupported_tool type=#{t[:type]}")
+                next
+              end
 
               fn = t[:function]
               fn = fn.transform_keys(&:to_sym) if fn.respond_to?(:transform_keys)

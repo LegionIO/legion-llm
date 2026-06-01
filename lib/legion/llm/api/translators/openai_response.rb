@@ -183,7 +183,9 @@ module Legion
           end
 
           def map_finish_reason(stop_reason)
-            FINISH_REASON_MAP.fetch(stop_reason.to_s, 'stop')
+            return 'stop' if stop_reason.nil? || stop_reason.to_s.empty?
+
+            FINISH_REASON_MAP.fetch(stop_reason.to_s, 'error')
           end
 
           def extract_token_count(tokens, key)
