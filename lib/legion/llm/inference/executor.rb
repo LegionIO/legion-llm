@@ -196,7 +196,9 @@ module Legion
           total_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - pipeline_start) * 1000).round
           @step_timing_hash[:total] = total_ms
           @timestamps[:step_timings] = @step_timing_hash
-          log.warn("[pipeline][timing] profile=#{@profile} total=#{total_ms}ms executed=#{executed} skipped=#{skipped} #{step_timings.join(' ')}")
+          log.warn("[pipeline][timing] request_id=#{@request.id} conversation_id=#{@request.conversation_id} " \
+                   "provider=#{@resolved_provider} model=#{@resolved_model} profile=#{@profile} " \
+                   "total=#{total_ms}ms executed=#{executed} skipped=#{skipped} #{step_timings.join(' ')}")
           annotate_top_level_span(steps_executed: executed, steps_skipped: skipped)
         end
 

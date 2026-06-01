@@ -26,8 +26,9 @@ module Legion
           def check(response, quality_threshold: DEFAULT_QUALITY_THRESHOLD, json_expected: false, quality_check: nil)
             failures = []
             content = response.content
+            has_tool_calls = response.respond_to?(:tool_calls) && response.tool_calls&.any?
 
-            failures << :empty_response if content.nil? || content.strip.empty?
+            failures << :empty_response if !has_tool_calls && (content.nil? || content.strip.empty?)
 
             unless failures.include?(:empty_response)
               if quality_setting(:too_short, false) && content.length < quality_threshold

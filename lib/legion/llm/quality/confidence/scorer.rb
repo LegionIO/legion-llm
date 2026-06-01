@@ -147,11 +147,12 @@ module Legion
               signals  = {}
               penalty  = 0.0
               content  = raw_response.respond_to?(:content) ? raw_response.content.to_s : ''
+              has_tool_calls = raw_response.respond_to?(:tool_calls) && raw_response.tool_calls&.any?
 
               # Use pre-computed QualityResult when available to avoid duplicate work.
               quality_result = options[:quality_result]
 
-              if content.to_s.strip.empty?
+              if content.to_s.strip.empty? && !has_tool_calls
                 signals[:empty] = true
                 penalty += HEURISTIC_WEIGHTS[:empty].abs
               else
