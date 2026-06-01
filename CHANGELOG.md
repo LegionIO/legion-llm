@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.11.1] - 2026-06-01
+
+### Fixed
+- **Embedding instance selection honored** — Discovery honors a configured `embedding.instance` pin over a higher-tier-ranked empty instance (and skips empty candidates whose resolved model is absent), and `Embeddings.generate`/`generate_batch` resolve that configured instance on the dispatch path instead of falling back to the provider default
+
 ## [0.11.0] - 2026-05-31
 
 ### Added
