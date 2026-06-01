@@ -68,24 +68,30 @@ module Legion
               bands = resolve_bands(options[:confidence_bands])
 
               if (caller_score = options[:confidence_score])
-                return Score.build(
+                result = Score.build(
                   score:   caller_score.to_f,
                   bands:   bands,
                   source:  :caller_provided,
                   signals: { caller_provided: caller_score.to_f }
                 )
+                log.debug "[llm][confidence] action=score source=caller_provided score=#{result.score} band=#{result.band}"
+                return result
               end
 
               if (lp = extract_logprobs(raw_response))
-                return Score.build(
+                result = Score.build(
                   score:   lp,
                   bands:   bands,
                   source:  :logprobs,
                   signals: { avg_logprob: lp }
                 )
+                log.debug "[llm][confidence] action=score source=logprobs score=#{result.score} band=#{result.band}"
+                return result
               end
 
-              heuristic_score(raw_response, bands: bands, options: options)
+              result = heuristic_score(raw_response, bands: bands, options: options)
+              log.debug "[llm][confidence] action=score source=heuristic score=#{result.score} band=#{result.band}"
+              result
             end
 
             private
@@ -120,7 +126,7 @@ module Legion
               # We clamp at -5 so very negative values still map to > 0.
               Math.exp([avg_lp, -5.0].max)
             rescue StandardError => e
-              handle_exception(e, level: :debug, operation: 'llm.confidence_scorer.extract_logprobs')
+              handle_exception(e, level: :warn, operation: 'llm.confidence_scorer.extract_logprobs')
               nil
             end
 
@@ -133,7 +139,7 @@ module Legion
               lp ||= raw_response.metadata&.dig(:logprobs) if klass.method_defined?(:metadata)
               lp
             rescue StandardError => e
-              handle_exception(e, level: :debug, operation: 'llm.confidence_scorer.probe_logprobs')
+              handle_exception(e, level: :warn, operation: 'llm.confidence_scorer.probe_logprobs')
               nil
             end
 
@@ -141,11 +147,12 @@ module Legion
               signals  = {}
               penalty  = 0.0
               content  = raw_response.respond_to?(:content) ? raw_response.content.to_s : ''
+              has_tool_calls = raw_response.respond_to?(:tool_calls) && raw_response.tool_calls&.any?
 
               # Use pre-computed QualityResult when available to avoid duplicate work.
               quality_result = options[:quality_result]
 
-              if content.strip.empty?
+              if content.to_s.strip.empty? && !has_tool_calls
                 signals[:empty] = true
                 penalty += HEURISTIC_WEIGHTS[:empty].abs
               else
@@ -159,11 +166,13 @@ module Legion
                   penalty += weight.abs
                 end
 
-                hedges = count_hedges(content)
-                if hedges.positive?
-                  hedge_penalty = [hedges * 0.05, 0.3].min
-                  signals[:hedging] = hedges
-                  penalty += hedge_penalty
+                if quality_setting(:hedging, false)
+                  hedges = count_hedges(content)
+                  if hedges.positive?
+                    hedge_penalty = [hedges * 0.05, 0.3].min
+                    signals[:hedging] = hedges
+                    penalty += hedge_penalty
+                  end
                 end
 
                 if options[:json_expected] && !failures.include?(:json_parse_failure)
@@ -177,16 +186,23 @@ module Legion
             end
 
             def detect_failures(content, options)
-              return [] if content.strip.empty?
+              return [] if content.to_s.strip.empty?
 
               failures = []
               threshold = options.fetch(:quality_threshold, Quality::Checker::DEFAULT_QUALITY_THRESHOLD)
-              failures << :too_short if content.length < threshold
-              failures << :truncated if truncated?(content)
-              failures << :refusal   if refusal?(content)
+              failures << :too_short if quality_setting(:too_short, false) && content.length < threshold
+              failures << :truncated if quality_setting(:truncated, false) && truncated?(content)
+              failures << :refusal if quality_setting(:refusal, false) && refusal?(content)
               failures << :repetition if repetitive?(content)
               failures << :json_parse_failure if options[:json_expected] && !valid_json?(content)
               failures
+            end
+
+            def quality_setting(key, default)
+              Legion::LLM::Settings.value(:quality, key)
+            rescue StandardError => e
+              log.debug "[llm][quality][confidence][scorer] action=quality_setting_fallback key=#{key} error=#{e.class} message=#{e.message}"
+              default
             end
 
             def truncated?(content)
@@ -219,7 +235,7 @@ module Legion
               Legion::JSON.parse(content, symbolize_names: false)
               true
             rescue Legion::JSON::ParseError => e
-              handle_exception(e, level: :debug, handled: true, operation: 'llm.confidence.valid_json')
+              handle_exception(e, level: :warn, handled: true, operation: 'llm.confidence.valid_json')
               false
             end
 

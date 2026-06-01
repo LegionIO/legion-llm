@@ -11,6 +11,7 @@ module Legion
         extend Legion::Logging::Helper
 
         def inject(system:, enrichments:)
+          enrichments = {} unless enrichments.is_a?(Hash)
           parts = []
 
           # Settings-driven baseline (universal foundation, overridable via config)

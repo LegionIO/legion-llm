@@ -24,7 +24,7 @@ module Legion
               BATCH_POOL_MUTEX.synchronize do
                 @batch_pool ||= begin
                   pool_size = Legion::LLM::Settings.value(:api, :batch_pool_size, default: 4)
-                  Concurrent::FixedThreadPool.new(pool_size, fallback_policy: :abort)
+                  Concurrent::FixedThreadPool.new(pool_size, fallback_policy: :caller_runs)
                 end
               end
             end
@@ -237,7 +237,8 @@ module Legion
 
               ::File.readlines(file_path).filter_map do |line|
                 Legion::JSON.load(line.strip)
-              rescue StandardError
+              rescue StandardError => e
+                log.debug "[llm][api][openai][batches] action=load_batch_line_fallback file=#{file_id} error=#{e.class} message=#{e.message}"
                 nil
               end
             end

@@ -22,6 +22,7 @@ module Legion
         def initialize(conversation_id:)
           @conversation_id = conversation_id
           @curated_messages = nil
+          @curation_mutex = Mutex.new
         end
 
         # Called async after each turn completes — zero latency impact.
@@ -29,8 +30,9 @@ module Legion
           return unless enabled?
 
           current_turn_count = Array(turn_messages).size + (assistant_response ? 1 : 0)
+          log.debug "[llm][curator] action=curate_turn conversation_id=#{@conversation_id} turn_messages=#{current_turn_count}"
 
-          Thread.new do
+          Inference::Executor::ASYNC_THREAD_POOL.post do
             all_messages = Inference::Conversation.messages(@conversation_id)
             older = if current_turn_count.positive? && all_messages.size > current_turn_count
                       all_messages[0...-current_turn_count]
@@ -42,7 +44,7 @@ module Legion
               curated = older.map { |msg| curate_message(msg, assistant_response) }
               store_curated(@conversation_id, curated)
             end
-            @curated_messages = nil
+            @curation_mutex.synchronize { @curated_messages = nil }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.context_curator.curate_turn')
           end
@@ -53,7 +55,9 @@ module Legion
         def curated_messages
           return nil unless enabled?
 
-          @curated_messages ||= load_curated(@conversation_id)
+          @curation_mutex.synchronize do
+            @curated_messages ||= load_curated(@conversation_id)
+          end
         end
 
         # Drops older conversation turns from the prompt window after archiving
@@ -77,8 +81,9 @@ module Legion
           archived = archive_conversation_history(dropped, conversation_id: conversation_id)
           return messages unless archived
 
-          log.info("[llm][context_curator] action=drop_and_archive conversation_id=#{conversation_id} " \
-                   "dropped=#{dropped.size} retained=#{retained.size} estimated_tokens=#{estimated}")
+          tokens_freed = estimated - Context::Compressor.estimate_tokens(retained)
+          log.warn("[llm][curator] action=drop_and_archive conversation_id=#{conversation_id} " \
+                   "messages_dropped=#{dropped.size} retained=#{retained.size} tokens_freed=#{tokens_freed}")
           retained
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.context_curator.drop_and_archive',
@@ -93,10 +98,8 @@ module Legion
           return msg if content.length <= max_chars
 
           summary = heuristic_tool_summary(content, tool_name_from(msg))
-          log.debug "[llm][curator] action=distill_tool_result conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} summary_chars=#{summary.length}\n  " \
-                    "BEFORE: #{content}\n  " \
-                    "AFTER:  #{summary}"
+          log.info "[llm][curator] action=distill_tool_result conversation_id=#{@conversation_id} " \
+                   "original_chars=#{content.length} summary_chars=#{summary.length}"
           msg.merge(content: summary, curated: true, original_content: content)
         end
 
@@ -110,10 +113,9 @@ module Legion
 
           return msg if stripped == content || stripped.empty?
 
-          log.debug "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} stripped_chars=#{stripped.length}\n  " \
-                    "BEFORE: #{content}\n  " \
-                    "AFTER:  #{stripped}"
+          chars_removed = content.length - stripped.length
+          log.info "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
+                   "chars_removed=#{chars_removed} original_chars=#{content.length} stripped_chars=#{stripped.length}"
           msg.merge(content: stripped, curated: true, original_content: content)
         end
 
@@ -122,6 +124,7 @@ module Legion
           return messages unless setting(:exchange_folding, true)
 
           result = []
+          folded_count = 0
           i = 0
           while i < messages.length
             window = messages[i, 4]
@@ -134,11 +137,16 @@ module Legion
                 original_content: window.map { |m| m[:content] }.join("\n")
               }
               result << note
+              folded_count += window.length
               i += window.length
             else
               result << messages[i]
               i += 1
             end
+          end
+          if folded_count.positive?
+            log.info "[llm][curator] action=fold_resolved_exchanges conversation_id=#{@conversation_id} " \
+                     "messages_folded=#{folded_count} result_size=#{result.size}"
           end
           result
         end
@@ -153,10 +161,17 @@ module Legion
             file_last_seen[path] = idx if path
           end
 
-          messages.each_with_index.reject do |msg, idx|
+          result = messages.each_with_index.reject do |msg, idx|
             path = extract_file_path(msg[:content].to_s)
             path && file_last_seen[path] != idx
           end.map(&:first)
+
+          evicted_count = messages.size - result.size
+          if evicted_count.positive?
+            log.info "[llm][curator] action=evict_superseded conversation_id=#{@conversation_id} " \
+                     "files_evicted=#{evicted_count} messages_before=#{messages.size} messages_after=#{result.size}"
+          end
+          result
         end
 
         # Heuristic: deduplicate near-identical messages using Jaccard similarity.
@@ -165,6 +180,10 @@ module Legion
 
           threshold ||= setting(:dedup_threshold, 0.85)
           result = Context::Compressor.deduplicate_messages(messages, threshold: threshold)
+          if result[:removed].positive?
+            log.info "[llm][curator] action=dedup_similar conversation_id=#{@conversation_id} " \
+                     "removed=#{result[:removed]} original_count=#{result[:original_count]}"
+          end
           result[:messages]
         end
 

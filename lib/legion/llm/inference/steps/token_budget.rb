@@ -12,7 +12,10 @@ module Legion
 
           def step_token_budget
             max_input = @request.extra&.dig(:max_input_tokens)
-            log_step_debug(:token_budget, :checking, max_input_tokens: max_input || 'none')
+            session_total = Legion::LLM::Metering::Tokens.total_tokens
+            session_limit = Legion::LLM::Metering::Tokens.summary[:session_max_tokens]
+            log_step_debug(:token_budget, :checking, max_input_tokens: max_input || 'none',
+                                                     session_total: session_total, session_limit: session_limit || 'none')
             check_input_cap(max_input) if max_input&.positive?
             check_session_budget
             log_step_debug(:token_budget, :passed, max_input_tokens: max_input || 'none')

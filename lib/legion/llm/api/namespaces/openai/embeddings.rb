@@ -43,6 +43,16 @@ module Legion
                 )
 
                 log.info("[llm][api][namespaces][openai][embeddings] action=complete model=#{model} dims=#{vector_array.size}")
+
+                Legion::LLM::Audit.emit_prompt(
+                  request_id:   SecureRandom.uuid,
+                  caller:       build_server_caller(source: 'openai_embeddings', path: request.path, env: env),
+                  routing:      { model: model, provider: 'embed' },
+                  tokens:       { input_tokens: (text.length / 4.0).ceil, output_tokens: 0 },
+                  request_type: 'embedding',
+                  timestamp:    Time.now
+                )
+
                 content_type :json
                 Legion::JSON.dump(response_body)
               rescue Legion::LLM::AuthError => e

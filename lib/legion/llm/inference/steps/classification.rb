@@ -177,6 +177,10 @@ module Legion
 
             return declared_level if current_idx >= threshold_idx
 
+            log.warn(
+              "[llm][steps][classification] action=level_upgraded request_id=#{@request&.id || 'none'} " \
+              "from=#{declared_level} to=restricted patterns=#{scan[:patterns].join(',')}"
+            )
             LEVELS[threshold_idx]
           end
 

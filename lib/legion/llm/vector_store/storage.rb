@@ -132,8 +132,8 @@ module Legion
 
         def safe_add_index(table, column, name:)
           db.add_index(table, column, name: name)
-        rescue StandardError
-          # Idempotent: table may already have this index
+        rescue StandardError => e
+          log.debug "[llm][vector_store][storage] action=safe_add_index_skipped table=#{table} index=#{name} error=#{e.class} message=#{e.message}"
         end
       end
     end

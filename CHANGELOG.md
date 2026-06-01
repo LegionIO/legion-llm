@@ -1,6 +1,53 @@
 # Legion LLM Changelog
 
-## [0.10.3] - 2026-05-31
+## [0.11.0] - 2026-05-31
+
+### Added
+- **Comprehensive diagnostic logging** — 28 files across executor, pipeline steps, tool loop, context, router, quality checker with structured `[llm][component] action=verb key=value` format at appropriate severity levels (debug/info/warn)
+- **Context window enforcement** — Pre-dispatch compaction triggers at 90% of model's context window, preserving recent turns and aggressively compacting older history
+- **Tool result trimming** — Oversized tool results from prior turns trimmed to 4000 chars before dispatch (current turn preserved in full)
+- **Thinking block stripping** — Historical `<think>` blocks removed from prior assistant turns before dispatch
+- **Empty response guard** — Streaming responses with no text and no tool calls emit `overloaded_error` instead of valid empty message, triggering client retry
+- **System prompt: no tool call limit** — Added instruction telling models there is no tool call limit per turn
+- **Conversation ID always generated** — API handler generates conv_id when client doesn't provide one; returned via `X-Legion-Conversation-Id` header
+- **Metering spool encryption** — Spool file encrypts via `Legion::Crypt` when `:compliance, :encrypt_spool` enabled
+- **Audit publisher improvements** — Preserves caller identity, includes agent_id/node_id, extracts provider metrics, hashes truncated conversations
+
+### Fixed
+- **Quality checker ignores tool-use responses** — No longer flags empty_response when model returns tool calls with no text content
+- **Confidence scoring skips tool-use** — Score=0.0 no longer reported for valid tool call responses
+- **Context overflow doesn't trip circuit breaker** — ContextLengthExceededError no longer reports `:error` signal to health tracker
+- **HealthTracker deadlock prevention** — `Mutex` replaced with `Monitor` (reentrant) to prevent deadlock when custom handlers call back into report/adjustment
+- **Thread pool fallback policy** — Chat/batch pools use `:caller_runs` instead of `:abort` (no silent request drops under load)
+- **Bare Thread.new eliminated** — All async work uses managed `ASYNC_THREAD_POOL` with `at_exit` shutdown hooks
+- **Conversation#replace preserves internal roles** — `__metadata__` and `__curated__` entries no longer wiped on replace
+- **EscalationChain method naming** — `padded_resolutions` renamed to `capped_resolutions` (it truncates, not pads)
+- **trigger_tool_limit default mismatch** — Fallback default fixed from 50 to 25 to match settings.rb
+- **Debate extract_question string keys** — `m[:role] == :user` changed to `.to_s == 'user'` for mixed-key messages
+- **EnrichmentInjector nil safety** — `enrichments` param defaults to `{}` when nil
+- **Stop reason preserved from provider** — `message_response` and `chunk_response` extract actual `finish_reason` from raw provider response instead of discarding
+- **OpenAI streaming usage stats** — Always included in final chunk (was gated behind `include_reasoning`)
+- **Metering identity** — Uses caller identity from request, not process publisher identity
+- **Metering request_type** — Derived from request metadata (image/audio/chat), not hardcoded 'chat'
+- **Metering actual cost** — Prefers provider-reported cost over local estimate
+- **Metering encryption** — `encrypt?` respects `:compliance, :encrypt_metering` setting
+- **Audit identity clobbering** — `attributed_event` uses `||=` to preserve caller identity
+- **Audit step order** — `post_response` (audit) now runs before `metering` (financial records need supporting evidence)
+- **Audit tool spooling** — Failed tool audit events spool to disk instead of silent drop
+- **Audit timeline** — Preserves RBAC, classification, billing, confidence decisions
+- **Budget cap** — Pre-flight check estimates output tokens (assumes output ≈ input) instead of `output_tokens: 0`
+- **Embeddings audit** — POST /v1/embeddings now emits audit event
+- **Native chat audit** — Async chat path emits `Audit.emit_prompt` after completion
+- **Knowledge capture embedding** — Truncates content to 2000 chars before embedding to prevent ContextLengthExceededError
+- **Dedup performance** — O(n²) → O(n×20) via sliding window comparison
+- **22 silent rescue swallows** — All `rescue StandardError` without variable capture now log at debug level
+
+### Changed
+- **max_tool_calls_per_turn: 50** — New setting (was dead `MAX_TOOL_LOOPS = 10` constant); deferred tool calls get error result telling model to retry
+- **max_tool_rounds** — Removed `MAX_NATIVE_TOOL_ROUNDS` constant; reads directly from settings
+- **Settings-driven limits** — Redundant fallback defaults removed from `llm_setting` call sites
+
+## [0.10.4] - 2026-05-31
 
 ### Fixed
 - **TRANSLATION-BUG-01**: Anthropic `tool_result` content blocks preserved as arrays — multimodal tool results (images) no longer flattened to string.
@@ -12,6 +59,17 @@
 - **TRANSLATION-BUG-10**: Stable `tool_call_id` generated when OpenAI client sends nil — multi-turn tool chains no longer break.
 - **TRANSLATION-BUG-11**: OpenAI translator uses symbol roles (`:user`, `:assistant`) matching Anthropic — executor symbol comparisons now work.
 - **TRANSLATION-BUG-12**: Unsupported OpenAI tool types (`code_interpreter`, `file_search`) logged at debug instead of silent drop.
+
+## [0.10.3] - 2026-05-31
+
+### Fixed
+- **DaemonClient HTTPS support** — `http_get` and `http_post` now set `http.use_ssl = true` when the daemon URL scheme is `https://`. Previously, all daemon communication was plain HTTP, silently failing for HTTPS URLs or sending credentials in cleartext.
+- **Context compression guard against preserve_recent: 0** — `auto_compact` now enforces a minimum `preserve_recent` of 1. A value of 0 would compact the entire conversation including the latest messages, producing empty context.
+- **Context curator thread safety** — `curate_turn` and `curated_messages` now synchronize on a per-instance `@curation_mutex`. Concurrent turns could race on `@curated_messages`, causing stale or nil curation state.
+- **Recursive compaction guard** — `maybe_compact_history` now uses `Thread.current[:legion_compacting]` to prevent infinite recursion when `Context::Compressor.auto_compact` triggers its own LLM summarization call, which would recursively trigger compaction again.
+- **Metering::Tokens unbounded memory growth** — `TokenTracker#record` now evicts oldest entries when the store exceeds `MAX_ENTRIES` (10,000). Long-running high-throughput processes would leak memory.
+- **Tool timeline index per-call resolution** — `build_tool_timeline_index` now tracks per-tool-name call counts and produces keys like `"read_file:2"` for repeated calls. `build_response_tool_calls` matches each tool call to its corresponding timeline entry, fixing wrong duration/status when the same tool is called multiple times in a round.
+- **Streaming escalation quality bypass documented** — Added explicit comment noting that streaming escalation attempts always pass quality check because in-flight stream quality-checking is not supported.
 
 ## [0.10.2] - 2026-05-30
 

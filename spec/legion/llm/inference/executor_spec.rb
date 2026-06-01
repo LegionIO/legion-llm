@@ -658,7 +658,7 @@ confidence: 0.9 }],
       expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
     end
 
-    it 'uses MAX_NATIVE_TOOL_ROUNDS as default when max_tool_rounds not in settings' do
+    it 'uses default max_tool_rounds (200) when not configured in settings' do
       Legion::Settings.set_prop(:llm, { routing: { escalation: { pipeline_enabled: false } } })
 
       register_native_chat { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }

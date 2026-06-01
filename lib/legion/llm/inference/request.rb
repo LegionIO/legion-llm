@@ -128,7 +128,8 @@ module Legion
           intent = Legion::LLM::Settings.config_value(routing, :default_intent, {})
           intent = intent.is_a?(Hash) ? normalize_hash(intent) : {}
           intent.merge(capability: :chat)
-        rescue StandardError
+        rescue StandardError => e
+          Legion::LLM.log.debug "[llm][inference][request] action=default_auto_routing_intent_fallback error=#{e.class} message=#{e.message}"
           { capability: :chat }
         end
 

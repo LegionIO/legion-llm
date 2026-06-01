@@ -46,7 +46,7 @@ module Legion
 
       def attributed_event(event)
         source = event.is_a?(Hash) ? event.dup : {}
-        source[:identity] = Legion::LLM::PublisherIdentity.current
+        source[:identity] ||= Legion::LLM::PublisherIdentity.current
         source[:caller] ||= Legion::LLM::PublisherIdentity.caller_hash
         source
       end
@@ -70,7 +70,8 @@ module Legion
           parsed = lines.filter_map do |line|
             next if line.strip.empty?
 
-            Legion::JSON.load(line)
+            decrypted = decrypt_spool_line(line)
+            Legion::JSON.load(decrypted)
           end
           File.write(path, '')
           parsed
@@ -175,12 +176,34 @@ module Legion
         SPOOL_MUTEX.synchronize do
           ensure_spool_dir
           enforce_max_events
-          line = Legion::JSON.dump(event)
+          json = Legion::JSON.dump(event)
+          line = if encrypt_spool?
+                   Legion::Crypt.encrypt(json)
+                 else
+                   json
+                 end
           File.open(spool_file_path, 'a') { |f| f.puts(line) }
         end
         log.debug("[llm][metering] spool_event written provider=#{event[:provider]} model=#{event[:model_id]}")
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.metering.spool_event')
+      end
+
+      def encrypt_spool?
+        defined?(Legion::Crypt) &&
+          Legion::Crypt.respond_to?(:encrypt) &&
+          Legion::LLM::Settings.value(:compliance, :encrypt_spool) == true
+      rescue StandardError
+        false
+      end
+
+      def decrypt_spool_line(line)
+        return line unless defined?(Legion::Crypt) && Legion::Crypt.respond_to?(:decrypt)
+        return line if line.start_with?('{')
+
+        Legion::Crypt.decrypt(line)
+      rescue StandardError
+        line
       end
 
       def read_spool

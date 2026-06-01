@@ -559,7 +559,7 @@ module Legion
         return unless Quality::ShadowEval.enabled? && Quality::ShadowEval.should_sample?
 
         log.debug "[llm][inference] shadow_evaluate primary_model=#{primary_model}"
-        Thread.new do
+        Inference::Executor::ASYNC_THREAD_POOL.post do
           Quality::ShadowEval.evaluate(
             primary_response: { content: response.respond_to?(:content) ? response.content : response.to_s,
                                 model: primary_model, usage: {} },

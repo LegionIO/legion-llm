@@ -64,7 +64,8 @@ module Legion
             return nil if scored.empty?
 
             selected = scored.min_by { |_model, cost| cost }&.first
-            log.debug("Arbitrage selected model=#{selected} capability=#{capability}")
+            log.warn "[llm][arbitrage] action=select model=#{selected} capability=#{capability} " \
+                     "reason=no_routing_rules_matched candidates=#{scored.size}"
             selected
           end
 

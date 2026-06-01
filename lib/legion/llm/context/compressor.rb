@@ -70,6 +70,8 @@ module Legion
           # @param messages [Array<Hash>] messages with :role and :content keys
           # @param threshold [Float] similarity threshold (0.0-1.0) above which messages are considered duplicates
           # @return [Hash] { messages: Array, removed: Integer, original_count: Integer }
+          DEDUP_WINDOW = 20
+
           def deduplicate_messages(messages, threshold: 0.85)
             return { messages: [], removed: 0, original_count: 0 } if messages.nil? || messages.empty?
 
@@ -80,7 +82,8 @@ module Legion
               content = msg[:content].to_s
               next kept.unshift(msg) if content.length < 20
 
-              duplicate = kept.any? do |existing|
+              window = kept.first(DEDUP_WINDOW)
+              duplicate = window.any? do |existing|
                 next false unless existing[:role] == msg[:role]
 
                 jaccard_similarity(content, existing[:content].to_s) >= threshold
@@ -93,15 +96,21 @@ module Legion
               end
             end
 
+            if removed.positive?
+              log.info("[llm][compressor] action=deduplicate_messages removed=#{removed} " \
+                       "original_count=#{messages.size} kept=#{kept.size}")
+            end
             { messages: kept, removed: removed, original_count: messages.size }
           end
 
           def auto_compact(messages, target_tokens:, preserve_recent: 10)
+            preserve_recent = 1 unless preserve_recent.to_i.positive?
             return messages if messages.size <= preserve_recent
 
             recent = messages.last(preserve_recent)
             older  = messages[0..-(preserve_recent + 1)]
 
+            tokens_before = estimate_tokens(messages)
             summarized = summarize_messages(older, max_tokens: target_tokens / 2)
 
             compaction_msg = {
@@ -119,7 +128,12 @@ module Legion
               content: summarized[:summary]
             }
 
-            [compaction_msg, summary_msg, *recent].flatten
+            result = [compaction_msg, summary_msg, *recent].flatten
+            tokens_after = estimate_tokens(result)
+            log.info("[llm][compressor] action=auto_compact messages_before=#{messages.size} " \
+                     "messages_after=#{result.size} tokens_before=#{tokens_before} " \
+                     "tokens_after=#{tokens_after} tokens_saved=#{tokens_before - tokens_after}")
+            result
           end
 
           def estimate_tokens(messages)

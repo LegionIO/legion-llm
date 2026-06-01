@@ -231,8 +231,7 @@ module Legion
               end
 
               def self.append_usage_stats(done_chunk, pipeline_response, include_reasoning)
-                return unless include_reasoning
-
+                _ = include_reasoning
                 tokens = pipeline_response.tokens || {}
                 oai = Legion::LLM::API::Translators::OpenAIResponse
                 input_count = oai.extract_token_count(tokens, :input).to_i

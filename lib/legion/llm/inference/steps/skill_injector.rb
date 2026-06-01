@@ -149,13 +149,15 @@ module Legion
           end
 
           def activate_skill(conv_id, skill_class)
+            skill_key = "#{skill_class.namespace}:#{skill_class.skill_name}"
             log_step_info(
               :skill_injector,
               :activate_skill,
-              skill: "#{skill_class.namespace}:#{skill_class.skill_name}"
+              skill: skill_key
             )
             result = skill_class.new.run(from_step: 0, context: build_skill_context(conv_id))
             @skill_executed = true
+            log_step_info(:skill_injector, :skill_executed, skill: skill_key, has_inject: !(result.inject.nil? || result.inject.empty?))
             inject_skill_result(result)
           end
 

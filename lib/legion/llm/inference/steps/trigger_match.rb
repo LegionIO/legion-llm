@@ -43,6 +43,10 @@ module Legion
             @triggered_tools = if matched.size <= limit
                                  matched.to_a
                                else
+                                 log.warn(
+                                   "[llm][steps][trigger_match] action=tools_capped request_id=#{@request.id} " \
+                                   "matched=#{matched.size} limit=#{limit} dropped=#{matched.size - limit}"
+                                 )
                                  rank_and_cap(matched, per_word, limit)
                                end
 
@@ -170,7 +174,7 @@ module Legion
           end
 
           def trigger_tool_limit
-            tool_trigger_setting(:tool_limit, 50)
+            tool_trigger_setting(:tool_limit, 25)
           end
 
           def tool_trigger_setting(key, default = nil)

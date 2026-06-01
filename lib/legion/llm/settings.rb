@@ -26,6 +26,8 @@ module Legion
           pipeline_enabled:          true,
           pipeline_async_post_steps: true,
           max_tool_rounds:           200,
+          max_tool_calls_per_turn:   50,
+          tool_result_max_dispatch_chars: 4000,
           default_model:             model_override,
           default_provider:          nil,
           system_baseline:           system_baseline_default,
@@ -225,6 +227,10 @@ module Legion
           Trust model:
           - Trust is earned through reliable outcomes, clarity, and safe execution.
           - Speed matters, but never at the expense of integrity or user trust.
+
+          Tool use:
+          - There is no tool call limit per turn. You may make as many tool calls as needed to complete the task.
+          - Do not stop mid-task claiming you hit a limit. Continue until the work is done or you need user input.
         PROMPT
       end
 

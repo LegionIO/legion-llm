@@ -23,7 +23,8 @@ module Legion
             def self.capable_provider_available?(capability)
               instances = begin
                 Legion::LLM::Call::Registry.all_instances
-              rescue StandardError
+              rescue StandardError => e
+                log.debug "[llm][api][openai][images] action=registry_fallback capability=#{capability} error=#{e.class} message=#{e.message}"
                 []
               end
               instances.any? do |entry|
@@ -76,7 +77,8 @@ module Legion
 
                 Legion::JSON.load(raw)
               end
-            rescue StandardError
+            rescue StandardError => e
+              log.debug "[llm][api][openai][images] action=parse_media_body_fallback error=#{e.class} message=#{e.message}"
               {}
             end
 

@@ -461,30 +461,29 @@ RSpec.describe Legion::LLM::Context::Curator do
   # --- async curation does not block caller ---
 
   describe '#curate_turn' do
-    it 'returns a Thread without blocking' do
+    it 'submits work to the async pool without blocking' do
       messages = [{ role: :user, content: 'hi' }]
-      result = curator.curate_turn(turn_messages: messages, assistant_response: 'hello')
-      expect(result).to be_a(Thread)
-      result.join(2) # wait for thread to finish
+      expect { curator.curate_turn(turn_messages: messages, assistant_response: 'hello') }.not_to raise_error
+      sleep 0.1
     end
 
     it 'never raises even if curation fails internally' do
       allow(curator).to receive(:store_curated).and_raise(StandardError, 'storage failure')
-      thread = curator.curate_turn(turn_messages:      [{ role: :user, content: 'test' }],
-                                   assistant_response: 'response')
-      expect { thread.join(2) }.not_to raise_error
+      expect {
+        curator.curate_turn(turn_messages: [{ role: :user, content: 'test' }], assistant_response: 'response')
+        sleep 0.1
+      }.not_to raise_error
     end
   end
 
   # --- curated cache invalidation ---
 
   describe 'cache invalidation after async curation' do
-    it 'clears @curated_messages after thread completes' do
+    it 'clears @curated_messages after async work completes' do
       curator.instance_variable_set(:@curated_messages, [{ role: :user, content: 'stale' }])
 
-      thread = curator.curate_turn(turn_messages:      [{ role: :user, content: 'msg' }],
-                                   assistant_response: 'resp')
-      thread.join(2)
+      curator.curate_turn(turn_messages: [{ role: :user, content: 'msg' }], assistant_response: 'resp')
+      sleep 0.2
 
       expect(curator.instance_variable_get(:@curated_messages)).to be_nil
     end

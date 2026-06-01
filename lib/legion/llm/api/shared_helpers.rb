@@ -213,7 +213,8 @@ module Legion
           return raw_args unless raw_args.is_a?(String)
 
           Legion::JSON.parse(raw_args, symbolize_names: true)
-        rescue StandardError
+        rescue StandardError => e
+          log.debug "[llm][api][shared_helpers] action=openai_tool_call_arguments_fallback error=#{e.class} message=#{e.message}"
           raw_args
         end
 

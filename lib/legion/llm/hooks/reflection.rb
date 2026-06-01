@@ -37,7 +37,7 @@ module Legion
         def extract_async(response, messages, model)
           return unless should_extract?(response)
 
-          Thread.new do
+          Inference::Executor::ASYNC_THREAD_POOL.post do
             extract(response, messages, model)
           rescue StandardError => e
             handle_exception(e, level: :debug, operation: 'llm.hooks.reflection.extract_async', model: model)

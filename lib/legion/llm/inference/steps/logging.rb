@@ -48,7 +48,8 @@ module Legion
             return unless object.respond_to?(method_name)
 
             object.public_send(method_name)
-          rescue StandardError
+          rescue StandardError => e
+            log.debug "[llm][inference][steps][logging] action=step_log_reader_fallback method=#{method_name} error=#{e.class} message=#{e.message}"
             nil
           end
 

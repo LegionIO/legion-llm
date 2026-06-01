@@ -88,6 +88,8 @@ module Legion
               log_step_debug(:rag_context, :no_context_added, strategy: strategy)
               return
             end
+            total_chars = entries.sum { |e| (e[:content] || e['content']).to_s.length }
+            log_step_info(:rag_context, :context_injected, strategy: strategy, entry_count: entries.size, total_chars: total_chars)
 
             scores = entries.filter_map { |e| e[:confidence] || e[:distance] }.map { |s| s.is_a?(Numeric) ? s.round(3) : s }
             log.debug(
@@ -117,18 +119,24 @@ module Legion
 
           def select_context_strategy(utilization:)
             explicit = @request.context_strategy
-            return explicit if explicit && explicit != :auto
+            if explicit && explicit != :auto
+              log_step_info(:rag_context, :strategy_explicit, strategy: explicit)
+              return explicit
+            end
 
             skip_threshold    = rag_setting(:utilization_skip_threshold, 0.9)
             compact_threshold = rag_setting(:utilization_compact_threshold, 0.7)
 
-            if utilization >= skip_threshold
-              :none
-            elsif utilization >= compact_threshold
-              :rag_compact
-            else
-              :rag
-            end
+            strategy = if utilization >= skip_threshold
+                         :none
+                       elsif utilization >= compact_threshold
+                         :rag_compact
+                       else
+                         :rag
+                       end
+            log_step_info(:rag_context, :strategy_selected, strategy: strategy, utilization: utilization.round(3),
+                                                            skip_threshold: skip_threshold, compact_threshold: compact_threshold)
+            strategy
           end
 
           def estimate_utilization

@@ -76,14 +76,20 @@ module Legion
               return
             end
 
-            log_step_debug(:debate, :start)
+            log_step_info(:debate, :start, message_count: @request.messages.size)
             debate_result = run_debate(@raw_response, @request)
             unless debate_result
               log_step_debug(:debate, :skipped, reason: :no_result)
               return
             end
 
+            original_chars = extract_content(@raw_response).length
             @raw_response = debate_result[:synthetic_response]
+            log.warn(
+              "[llm][steps][debate] action=response_replaced request_id=#{@request&.id || 'none'} " \
+              "original_chars=#{original_chars} synthetic_chars=#{debate_result[:synthetic_response].content.to_s.length} " \
+              "rounds=#{debate_result[:rounds]}"
+            )
             @enrichments['debate:result'] = {
               content:   "debate completed: #{debate_result[:rounds]} rounds, judge synthesis produced",
               data:      debate_result[:metadata],
@@ -137,7 +143,10 @@ module Legion
             models = select_debate_models(request)
             @warnings << models[:warning] if models[:warning]
             if models[:skip]
-              log_step_info(:debate, :skipped, reason: models[:skip])
+              log.warn(
+                "[llm][steps][debate] action=skipped_insufficient_models request_id=#{request&.id || 'none'} " \
+                "reason=#{models[:skip]} available_models=#{available_models.size}"
+              )
               return nil
             end
 
@@ -208,7 +217,7 @@ module Legion
           end
 
           def extract_question(request)
-            request.messages.select { |m| m[:role] == :user }
+            request.messages.select { |m| m[:role].to_s == 'user' }
                             .last&.dig(:content) || ''
           end
 

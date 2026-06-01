@@ -135,9 +135,9 @@ module Legion
 
           def replace(conversation_id, messages)
             ensure_conversation(conversation_id)
-            conversations[conversation_id][:messages] = messages.each_with_index.map do |msg, i|
-              msg.merge(seq: i + 1, created_at: msg[:created_at] || Time.now)
-            end
+            preserved = conversations[conversation_id][:messages].select { |m| internal_role?(m[:role]) }
+            combined = messages.map { |msg| msg.merge(created_at: msg[:created_at] || Time.now) } + preserved
+            conversations[conversation_id][:messages] = combined.each_with_index.map { |msg, i| msg.merge(seq: i + 1) }
             touch(conversation_id)
           end
 

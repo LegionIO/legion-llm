@@ -600,11 +600,21 @@ module Legion
             result:      response.content,
             model:       response.model_id,
             tool_calls:  response.respond_to?(:tool_calls) ? response.tool_calls : nil,
-            stop_reason: response.respond_to?(:tool_call?) && response.tool_call? ? :tool_use : nil,
+            stop_reason: extract_stop_reason_from_message(response),
             thinking:    thinking_hash(response),
             usage:       usage_hash(response),
             metadata:    response_metadata(response, offering_metadata: offering_metadata)
           }.compact
+        end
+
+        def extract_stop_reason_from_message(response)
+          return :tool_use if response.respond_to?(:tool_call?) && response.tool_call?
+
+          raw = response.respond_to?(:raw) ? response.raw : nil
+          return nil unless raw.is_a?(Hash)
+
+          reason = raw.dig('choices', 0, 'finish_reason') || raw['finish_reason'] || raw[:finish_reason]
+          reason&.to_sym
         end
 
         def build_stream_accumulator
@@ -650,11 +660,21 @@ module Legion
             result:      accumulator[:content],
             model:       accumulator[:model],
             tool_calls:  tool_calls.empty? ? nil : tool_calls,
-            stop_reason: tool_calls.empty? ? nil : :tool_use,
+            stop_reason: extract_stream_stop_reason(accumulator, tool_calls),
             thinking:    stream_thinking_hash(accumulator),
             usage:       accumulator[:usage],
             metadata:    response_metadata(accumulator[:raw], offering_metadata: offering_metadata)
           }.compact
+        end
+
+        def extract_stream_stop_reason(accumulator, tool_calls)
+          return :tool_use unless tool_calls.empty?
+
+          raw = accumulator[:raw]
+          return nil unless raw.is_a?(Hash)
+
+          reason = raw.dig('choices', 0, 'finish_reason') || raw['finish_reason'] || raw[:finish_reason]
+          reason&.to_sym
         end
 
         def image_response(response, model:, offering_metadata: nil)

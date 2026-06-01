@@ -82,11 +82,13 @@ module Legion
           resolution = best&.to_resolution
 
           if resolution
-            log.info("Routed to tier=#{resolution.tier} provider=#{resolution.provider} model=#{resolution.model} via rule='#{resolution.rule}'")
-          else
-            log.debug('Router: no rules matched, resolution is nil')
+            log.info "[llm][router] action=resolve.matched tier=#{resolution.tier} provider=#{resolution.provider} " \
+                     "model=#{resolution.model} rule=#{resolution.rule}"
           end
 
+          unless resolution
+            log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size}"
+          end
           resolution || arbitrage_fallback(intent)
         end
 
@@ -212,7 +214,7 @@ module Legion
           return nil unless provider
 
           tier = PROVIDER_TIER.fetch(provider, :cloud)
-          log.debug("Router: arbitrage fallback selected model=#{model} provider=#{provider} tier=#{tier}")
+          log.warn "[llm][router] action=arbitrage_fallback model=#{model} provider=#{provider} tier=#{tier}"
           Resolution.new(tier: tier, provider: provider, model: model, rule: 'arbitrage_fallback')
         end
 
@@ -238,7 +240,7 @@ module Legion
         end
 
         def select_candidates(rules, intent, exclude: {})
-          log.debug("Router: selecting candidates from #{rules.size} rules")
+          log.debug "[llm][router] action=select_candidates total_rules=#{rules.size}"
 
           # 1. Collect constraints from constraint rules that match the intent
           constraints = rules
@@ -277,7 +279,7 @@ module Legion
           # 6. Filter by tier availability
           final = not_denied.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
 
-          log.debug("Router: #{final.size} candidates after filtering (started with #{rules.size})")
+          log.debug "[llm][router] action=select_candidates.done candidates_remaining=#{final.size} started_with=#{rules.size}"
 
           final
         end
@@ -636,7 +638,8 @@ module Legion
         def registry_tier_for_default_provider(provider)
           instances = begin
             Call::Registry.all_instances
-          rescue StandardError
+          rescue StandardError => e
+            log.debug "[llm][router] action=registry_tier_fallback error=#{e.class} message=#{e.message}"
             []
           end
           entry = instances.find { |i| i[:provider] == provider }

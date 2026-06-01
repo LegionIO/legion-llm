@@ -70,7 +70,7 @@ module Legion
 
       def attributed_event(event)
         source = event.is_a?(Hash) ? event.dup : {}
-        source[:identity] = Legion::LLM::PublisherIdentity.current
+        source[:identity] ||= Legion::LLM::PublisherIdentity.current
         source[:caller] ||= Legion::LLM::PublisherIdentity.caller_hash
         source
       end
