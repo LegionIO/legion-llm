@@ -686,22 +686,45 @@ module Legion
       end
 
       def publish_escalation_event(history, final_outcome, caller: nil)
-        payload = {
-          outcome:   final_outcome,
-          attempts:  history.size,
-          history:   history,
-          caller:    caller || Legion::LLM::PublisherIdentity.caller_hash,
-          timestamp: Time.now.utc.iso8601
+        return if history.size <= 1
+
+        first_attempt = history.first
+        last_attempt = history.last
+
+        event = {
+          outcome:        final_outcome,
+          attempts:       history.size,
+          history:        history,
+          # Flat fields for consumer compatibility
+          from_provider:  first_attempt&.dig(:provider),
+          from_instance:  first_attempt&.dig(:instance),
+          from_model:     first_attempt&.dig(:model),
+          to_provider:    last_attempt&.dig(:provider),
+          to_instance:    last_attempt&.dig(:instance),
+          to_model:       last_attempt&.dig(:model),
+          reason:         ('provider_failover' if [:failure, 'failure', :error].include?(first_attempt&.dig(:outcome))),
+          error_category: extract_error_category_from_attempt(first_attempt),
+          attempt_no:     history.size,
+          latency_ms:     history.sum { |a| (a[:duration_ms] || 0).to_i },
+          caller:         caller || Legion::LLM::PublisherIdentity.caller_hash,
+          timestamp:      Time.now.utc.iso8601
         }
 
-        Legion::Events.emit('llm.escalation', **payload) if defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
+        Legion::Events.emit('llm.escalation', **event) if defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
 
         log.info "[llm][inference] escalation_event outcome=#{final_outcome} attempts=#{history.size}"
 
-        Transport::Messages::EscalationEvent.new(payload).publish if Legion::LLM::Settings.transport_connected?
+        Transport::Messages::EscalationEvent.new(event).publish if Legion::LLM::Settings.transport_connected?
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.publish_escalation_event', outcome: final_outcome)
         nil
+      end
+
+      def extract_error_category_from_attempt(attempt)
+        return nil unless attempt.is_a?(Hash)
+
+        failures = Array(attempt[:failures])
+        failures.first.is_a?(Hash) ? failures.first[:category].to_s : nil
       end
 
       def response_guards_enabled?
@@ -763,10 +786,38 @@ module Legion
 
         input  = response.respond_to?(:input_tokens)  ? response.input_tokens.to_i  : 0
         output = response.respond_to?(:output_tokens) ? response.output_tokens.to_i : 0
+        usage = response.respond_to?(:usage) ? response.usage : {}
+        usage_hash = usage.is_a?(Hash) ? usage : {}
+        thinking = (usage_hash[:thinking_tokens] || usage_hash[:thinking] || 0).to_i
+
+        finish = nil
+        if response.respond_to?(:stop_reason)
+          finish = response.stop_reason&.to_s
+        elsif response.respond_to?(:stop) && response.stop.is_a?(Hash)
+          finish = response.stop[:reason]&.to_s
+        end
+
+        meta = response.respond_to?(:meta) ? response.meta : {}
+        meta_hash = meta.is_a?(Hash) ? meta : {}
+        latency = (meta_hash[:latency_ms] || meta_hash.dig(:timing, :latency_ms) || 0).to_i
+        wall_clock = (meta_hash[:wall_clock_ms] || meta_hash.dig(:timing, :wall_clock_ms) || 0).to_i
+
         Legion::LLM::Metering.emit(
-          provider: provider, model_id: model, request_type: 'chat',
-          tier: 'direct', input_tokens: input, output_tokens: output, total_tokens: input + output,
-          caller: caller
+          provider:          provider,
+          model_id:          model,
+          request_type:      'chat',
+          tier:              'direct',
+          input_tokens:      input,
+          output_tokens:     output,
+          thinking_tokens:   thinking,
+          total_tokens:      input + output + thinking,
+          finish_reason:     finish,
+          provider_instance: response.respond_to?(:instance) ? response.instance : nil,
+          latency_ms:        latency,
+          wall_clock_ms:     wall_clock,
+          caller:            caller,
+          event_type:        'llm_completion',
+          status:            'success'
         )
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.non_pipeline_metering')

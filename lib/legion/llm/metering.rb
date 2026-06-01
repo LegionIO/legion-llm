@@ -111,13 +111,27 @@ module Legion
           )
 
           emit(
-            provider:      resolved_provider,
-            model_id:      resolved_model,
-            input_tokens:  usage[:input_tokens],
-            output_tokens: usage[:output_tokens],
-            caller:        caller,
-            event_type:    'llm_completion',
-            status:        response.is_a?(Hash) && response[:error] ? 'failure' : 'success'
+            provider:              resolved_provider,
+            model_id:              resolved_model,
+            request_type:          'chat',
+            tier:                  extract_tier(response),
+            input_tokens:          usage[:input_tokens],
+            output_tokens:         usage[:output_tokens],
+            thinking_tokens:       usage[:thinking_tokens] || 0,
+            total_tokens:          usage[:input_tokens] + usage[:output_tokens],
+            finish_reason:         extract_finish_reason(response),
+            error_category:        extract_error_category(response),
+            error_code:            extract_error_code(response),
+            error_message:         extract_error_message(response),
+            provider_instance:     extract_provider_instance(response),
+            dispatch_path:         extract_dispatch_path(response),
+            route_attempts:        extract_route_attempts(response),
+            provider_response_ref: response.respond_to?(:provider_response_id) ? response.provider_response_id : nil,
+            latency_ms:            extract_latency_ms(response),
+            wall_clock_ms:         extract_wall_clock_ms(response),
+            caller:                caller,
+            event_type:            'llm_completion',
+            status:                extract_status(response)
           )
           nil
         end
@@ -279,6 +293,74 @@ module Legion
         else
           super
         end
+      end
+
+      # --- Extractor helpers for after_chat hook ---
+
+      def extract_finish_reason(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:finish_reason] || response.dig(:stop, :reason) || response.dig(:choices, 0, :finish_reason)
+      end
+
+      def extract_tier(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:tier] || response.dig(:routing, :tier)
+      end
+
+      def extract_error_category(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:error_category] || response.dig(:error, :category)
+      end
+
+      def extract_error_code(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:error_code] || response.dig(:error, :code)
+      end
+
+      def extract_error_message(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:error_message] || response.dig(:error, :message)
+      end
+
+      def extract_provider_instance(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:provider_instance] || response.dig(:routing, :provider_instance) || response[:instance]
+      end
+
+      def extract_dispatch_path(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:dispatch_path] || response[:tier] || response.dig(:routing, :tier)
+      end
+
+      def extract_route_attempts(response)
+        return nil unless response.is_a?(Hash)
+
+        (response[:route_attempts] || 0).to_i
+      end
+
+      def extract_latency_ms(response)
+        return nil unless response.is_a?(Hash)
+
+        (response[:latency_ms] || response.dig(:timing, :latency_ms) || 0).to_i
+      end
+
+      def extract_wall_clock_ms(response)
+        return nil unless response.is_a?(Hash)
+
+        (response[:wall_clock_ms] || response.dig(:timing, :wall_clock_ms) || 0).to_i
+      end
+
+      def extract_status(response)
+        return 'success' unless response.is_a?(Hash)
+
+        response[:error] ? 'failure' : 'success'
       end
     end
   end
