@@ -24,6 +24,7 @@ module Legion
             return unavailable_result(model, provider) unless provider
 
             model ||= resolve_model
+            instance ||= resolve_instance
             text = coerce_text(text)
             text_length = text.length
             prepared_texts = prepare_embedding_texts(text, provider: provider, model: model, task: task)
@@ -73,6 +74,7 @@ module Legion
 
             provider ||= resolve_provider
             model ||= resolve_model
+            instance ||= resolve_instance
 
             log.info("[llm][embed] action=generate_batch provider=#{provider} instance=#{instance || 'default'} " \
                      "model=#{model} count=#{texts.size} task=#{task}")
@@ -128,6 +130,16 @@ module Legion
           def resolve_model
             LLM.embedding_model ||
               embedding_config_value(:default_model)
+          end
+
+          # Resolve the embedding instance the same way provider/model are resolved.
+          # Prefer the discovered/configured embedding instance (Discovery honors the
+          # configured embedding.instance pin), then the raw embedding.instance setting.
+          # Without this the dispatch passes instance=nil and falls back to the provider's
+          # default (e.g. an empty local Ollama) even when a managed instance is configured.
+          def resolve_instance
+            LLM.embedding_instance ||
+              embedding_config_value(:instance)
           end
 
           def embedding_config_value(key)
