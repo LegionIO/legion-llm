@@ -91,7 +91,7 @@ module Legion
                                                                               id: request_id, type: 'message', role: 'assistant',
                       content: [], model: model.to_s,
                       stop_reason: nil, stop_sequence: nil,
-                      usage: { input_tokens: 0, output_tokens: 0 }
+                      usage: { input_tokens: est_tokens, output_tokens: 0 }
                                                                             }
                                                                           })}\n\n"
 
