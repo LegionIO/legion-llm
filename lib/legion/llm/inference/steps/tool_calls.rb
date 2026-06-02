@@ -65,15 +65,17 @@ module Legion
                 lex_normalized = (source[:lex] || '').delete_prefix('lex-').tr('-', '_')
                 runner_key     = source[:type] == :extension ? "#{lex_normalized}_#{source[:runner]}" : nil
                 result_string  = result[:result].is_a?(String) ? result[:result] : Legion::JSON.dump(result[:result] || {})
-                @pending_tool_history << {
-                  tool_call_id:  tool_call_id,
-                  pending_index: @pending_tool_history.size,
-                  tool_name:     tool_name,
-                  args:          tc[:arguments] || tc['arguments'] || {},
-                  result:        result_string,
-                  error:         result[:status] == :error,
-                  runner_key:    runner_key
-                }
+                @pending_tool_history_mutex.synchronize do
+                  @pending_tool_history << {
+                    tool_call_id:  tool_call_id,
+                    pending_index: @pending_tool_history.size,
+                    tool_name:     tool_name,
+                    args:          tc[:arguments] || tc['arguments'] || {},
+                    result:        result_string,
+                    error:         result[:status] == :error,
+                    runner_key:    runner_key
+                  }
+                end
               end
 
               @timeline.record(

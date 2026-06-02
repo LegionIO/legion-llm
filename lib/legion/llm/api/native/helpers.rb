@@ -52,22 +52,34 @@ module Legion
             end
           end
 
+          def validate_client_tool_path(path)
+            return 'file operation error: path is required' if path.nil? || path.to_s.empty?
+
+            expanded = ::File.expand_path(path)
+            sandbox_root = ::File.expand_path(Dir.pwd)
+
+            return "file operation error: path '#{path}' escapes working directory #{sandbox_root}" unless expanded.start_with?(sandbox_root)
+
+            expanded
+          end
+
           def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength,Metrics/PerceivedComplexity
             case ref
             when 'sh'
               cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s
+              log.warn("[llm][native] client_tool=sh command=#{cmd[0, 120]}")
               output, status = ::Open3.capture2e(cmd, chdir: Dir.pwd)
               "exit=#{status.exitstatus}\n#{output}"
             when 'file_read'
-              path = kwargs[:path] || kwargs[:file_path] || kwargs.values.first.to_s
+              path = validate_client_tool_path(kwargs[:path] || kwargs[:file_path] || kwargs.values.first.to_s)
               read_client_file(path)
             when 'file_write'
-              path = kwargs[:path] || kwargs[:file_path]
+              path = validate_client_tool_path(kwargs[:path] || kwargs[:file_path])
               content = kwargs[:content] || kwargs[:contents]
               ::File.write(path, content)
               "Written #{content.to_s.bytesize} bytes to #{path}"
             when 'file_edit'
-              path = kwargs[:path] || kwargs[:file_path]
+              path = validate_client_tool_path(kwargs[:path] || kwargs[:file_path])
               old_text = kwargs[:old_text] || kwargs[:search]
               new_text = kwargs[:new_text] || kwargs[:replace]
               return 'file_edit error: old_text is required' if old_text.nil? || old_text.empty?

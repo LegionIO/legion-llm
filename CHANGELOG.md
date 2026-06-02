@@ -1,5 +1,24 @@
 # Legion LLM Changelog
 
+## [0.12.0] - 2026-06-01
+
+### Fixed
+- **ReDoS in infer_tool_name** — Possessive quantifier `\d++` replaced with `\d+` in search detection regex (context/curator.rb)
+- **Shell injection in dispatch_client_tool** — Added audit logging for all shell commands executed via native client tools (api/native/helpers.rb)
+- **Path traversal in file operations** — Added `validate_client_tool_path` that constrains file_read/file_write/file_edit to working directory, rejecting paths that escape via `..` (api/native/helpers.rb)
+- **Text block concatenation loss** — Anthropic translator now joins assistant text parts with `\n\n` separator instead of empty string (api/translators/anthropic_request.rb)
+- **Raw part leak in responses_content_part** — LexLLMAdapter no longer returns unnormalized/unsanitized parts; unknown types are converted to `input_text` with serialized content (call/lex_llm_adapter.rb)
+- **Metering failures silently dropped** — step_metering now attempts `Metering.spool_event` on publish failure so billing events are spooled to disk instead of lost (inference/executor.rb)
+- **Error category extraction always nil** — `extract_error_category_from_attempt` now handles string failures and hash `:error` keys in addition to `:category` (inference.rb)
+- **provider_scoped_instance false negatives** — Now checks `Registry.instances_for` before returning nil, only drops instance when provider has other registered instances (inference/executor.rb)
+- **build_fallback_resolutions double-exclusion** — Merged two separate exclusion checks into single predicate; `exclude_instance: nil` now only excludes the specified provider+instance combo (inference/executor.rb)
+- **find_fallback_provider hardcoded local exclusion** — ollama/vllm fallback exclusion is now configurable via `fallback.allow_local` setting instead of being permanently blocked (inference/executor.rb)
+- **extract_content double transform_keys** — Normalizes block keys once up front instead of calling transform_keys 2-3 times per block (api/translators/openai_request.rb)
+- **@pending_tool_history data race** — Tool history mutations in step_tool_calls now wrapped in `@pending_tool_history_mutex.synchronize` to match executor's async event emission (inference/steps/tool_calls.rb)
+
+### Changed
+- **Text join separator** — OpenAI translator `extract_content` text blocks now join with `\n\n` instead of empty string for consistency
+
 ## [0.11.0] - 2026-05-31
 
 ### Added

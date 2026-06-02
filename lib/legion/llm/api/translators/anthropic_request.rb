@@ -72,7 +72,7 @@ module Legion
               end
             end
 
-            msg = { role: :assistant, content: text_parts.join }
+            msg = { role: :assistant, content: text_parts.join("\n\n") }
             msg[:tool_calls] = tool_calls if tool_calls.any?
             [msg]
           end

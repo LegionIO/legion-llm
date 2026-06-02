@@ -410,7 +410,13 @@ module Legion
           provider_sym = provider.to_sym
           instance_sym = instance.to_sym
           return instance_sym if Call::Registry.registered?(provider_sym, instance: instance_sym)
-          return nil if Call::Registry.registered?(provider_sym)
+
+          if Call::Registry.registered?(provider_sym)
+            # Provider is registered but the specific instance is not.
+            # Only return nil if there's at least one instance registered for this provider.
+            instances = Call::Registry.instances_for(provider_sym)
+            return nil if instances.is_a?(Array) && instances.any?
+          end
 
           preserve_unknown ? instance_sym : nil
         rescue StandardError => e
@@ -834,8 +840,8 @@ module Legion
           primary_rank = primary_tier ? (tier_rank[primary_tier.to_sym] || 99) : 99
 
           candidates = Call::Registry.all_instances.filter_map do |entry|
-            next if entry[:provider] == exclude_provider&.to_sym && entry[:instance] == (exclude_instance&.to_sym || :default)
-            next if entry[:provider] == exclude_provider&.to_sym && exclude_instance.nil?
+            next if entry[:provider] == exclude_provider&.to_sym &&
+                    (exclude_instance.nil? || entry[:instance] == (exclude_instance&.to_sym || :default))
 
             model = Router.send(:registry_default_model, entry)
             next unless model
@@ -1976,7 +1982,7 @@ module Legion
             next unless config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled)
             next if exclude.include?(name) || exclude.include?(name.to_s)
             next if exclude.include?(normalized_name)
-            next if %i[ollama vllm].include?(normalized_name)
+            next if %i[ollama vllm].include?(normalized_name) && !fallback_local_providers?
 
             default_model = Legion::LLM::Settings.config_value(config, :default_model)
             next unless default_model
@@ -1984,6 +1990,12 @@ module Legion
             return { provider: normalized_name, model: default_model }
           end
           nil
+        end
+
+        def fallback_local_providers?
+          return @fallback_local_providers if defined?(@fallback_local_providers)
+
+          @fallback_local_providers = (llm_setting(:fallback, :allow_local, false) == true)
         end
 
         def step_response_normalization
@@ -2045,6 +2057,13 @@ module Legion
         rescue StandardError => e
           @warnings << "metering error: #{e.message}"
           handle_exception(e, level: :warn, operation: 'llm.pipeline.step_metering')
+
+          # Attempt to spool the event so billing isn't lost even if publish fails.
+          begin
+            Legion::LLM::Metering.spool_event(event) if event
+          rescue StandardError => spool_e
+            handle_exception(spool_e, level: :error, operation: 'llm.pipeline.step_metering.spool_fallback')
+          end
         end
 
         def estimate_cost(input_tokens, output_tokens)

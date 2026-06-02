@@ -724,7 +724,16 @@ module Legion
         return nil unless attempt.is_a?(Hash)
 
         failures = Array(attempt[:failures])
-        failures.first.is_a?(Hash) ? failures.first[:category].to_s : nil
+        return nil if failures.empty?
+
+        first = failures.first
+        if first.is_a?(Hash)
+          first[:category]&.to_s || first[:error]&.to_s
+        elsif first.is_a?(String)
+          first
+        else
+          first.to_s
+        end
       end
 
       def response_guards_enabled?

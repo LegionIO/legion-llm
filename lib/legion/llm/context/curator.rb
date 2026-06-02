@@ -545,7 +545,7 @@ module Legion
           first_line = content[0, 200]
           return :read_file   if first_line.match?(/\AFile:|\ARead:|\A#\s+\S+\.rb|\A\d+\t/)
           return :bash        if first_line.match?(/exit code|STDOUT|STDERR/i)
-          return :search      if first_line.include?(' match') && first_line.match?(/\d++ match/)
+          return :search      if first_line.include?(' match') && first_line.match?(/\d+ match/)
 
           nil
         end
