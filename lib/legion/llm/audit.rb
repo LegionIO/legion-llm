@@ -65,7 +65,7 @@ module Legion
       end
 
       def transport_connected?
-        Legion::LLM::Settings.transport_connected?
+        Legion::Settings.dig(:transport, :connected) == true
       end
 
       def attributed_event(event)
