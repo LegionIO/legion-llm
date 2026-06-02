@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.12.1] - 2026-06-02
+
+### Fixed
+- **Provider-scoped discovery refresh** — `Discovery.refresh_discovered_models!` now accepts an optional `provider:` keyword argument. When filtered, only refreshes that provider's models and merges with the existing cache instead of re-querying all providers (discovery.rb)
+
 ## [0.12.0] - 2026-06-01
 
 ### Fixed

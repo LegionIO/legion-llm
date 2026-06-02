@@ -118,37 +118,65 @@ module Legion
           entry&.dig(:size_bytes)
         end
 
-        def refresh_discovered_models!
-          log.debug '[llm][discovery] action=refresh_discovered_models'
+        def refresh_discovered_models!(provider: nil)
+          log.debug "[llm][discovery] action=refresh_discovered_models provider=#{provider || :all}"
           return unless defined?(Call::Registry)
 
-          models = Call::Registry.all_instances.flat_map do |entry|
-            adapter = entry[:adapter]
-            next [] unless adapter.respond_to?(:offerings)
-
-            begin
-              Array(adapter.offerings(live: true)).map do |offering|
-                data = normalize_offering(offering)
-                {
-                  model:           (data[:id] || data[:name] || data[:model]).to_s,
-                  provider:        entry[:provider],
-                  instance:        normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
-                  tier:            data[:tier] || entry.dig(:metadata, :tier),
-                  size_bytes:      data[:size_bytes] || data[:size],
-                  capabilities:    data[:capabilities] || [],
-                  context_length:  data[:context_length] || data[:max_model_len] || data.dig(:limits, :context_window),
-                  parameter_count: data[:parameter_count] || data.dig(:metadata, :parameter_count)
-                }
-              end
-            rescue StandardError => e
-              report_discovery_failure(entry, e)
-              []
-            end
+          if provider
+            refresh_provider_models(provider)
+          else
+            refresh_all_provider_models
           end
+        end
+
+        # Refresh models for a single provider, preserving other providers' cached models.
+        def refresh_provider_models(provider)
+          return unless defined?(Call::Registry)
+
+          fresh_models = Call::Registry.all_instances
+            .select { |e| (e[:provider] || '').to_sym == provider }
+            .flat_map { |entry| fetch_offering_models(entry) }
+
+          existing = @discovered_models_cache || []
+          other_models = existing.reject { |m| (m[:provider] || '').to_sym == provider }
+
+          @discovered_models_cache = other_models + fresh_models
+          @discovered_models_at = Time.now
+          log.debug "[llm][discovery] action=refresh_provider_models provider=#{provider} count=#{@discovered_models_cache.size}"
+        end
+
+        def refresh_all_provider_models
+          return unless defined?(Call::Registry)
+
+          models = Call::Registry.all_instances.flat_map { |entry| fetch_offering_models(entry) }
 
           @discovered_models_cache = models
           @discovered_models_at = Time.now
           log.debug "[llm][discovery] action=refresh_discovered_models count=#{models.size}"
+        end
+
+        def fetch_offering_models(entry)
+          adapter = entry[:adapter]
+          return [] unless adapter.respond_to?(:offerings)
+
+          begin
+            Array(adapter.offerings(live: true)).map do |offering|
+              data = normalize_offering(offering)
+              {
+                model:           (data[:id] || data[:name] || data[:model]).to_s,
+                provider:        entry[:provider],
+                instance:        normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
+                tier:            data[:tier] || entry.dig(:metadata, :tier),
+                size_bytes:      data[:size_bytes] || data[:size],
+                capabilities:    data[:capabilities] || [],
+                context_length:  data[:context_length] || data[:max_model_len] || data.dig(:limits, :context_window),
+                parameter_count: data[:parameter_count] || data.dig(:metadata, :parameter_count)
+              }
+            end
+          rescue StandardError => e
+            report_discovery_failure(entry, e)
+            []
+          end
         end
 
         def reset!
