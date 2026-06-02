@@ -19,6 +19,12 @@
 ### Changed
 - **Text join separator** — OpenAI translator `extract_content` text blocks now join with `\n\n` instead of empty string for consistency
 
+## [0.12.0] - 2026-06-01
+
+### Fixed
+- **ReDoS in strip_thinking regex** — `[^#\n][^\n]*` double-character-class pattern replaced with anchored, non-backtracking variant that only strips lines starting with `#+ Thinking` headings (context/curator.rb)
+- **Client passthrough tool events never emitted** — `client_passthrough_tool_loop_result` now emits both `emit_tool_call_event` and `emit_tool_result_event` for passthrough tools so they appear in `@pending_tool_history`, fire `@tool_event_handler` callbacks, and generate tool audit events (inference/steps/tool_calls.rb)
+
 ## [0.11.0] - 2026-05-31
 
 ### Added

@@ -109,7 +109,10 @@ module Legion
 
           content = msg[:content].to_s
           stripped = strip_thinking_tags(content)
-          stripped = stripped.gsub(/^#+\s*[Tt]hinking[^\n]*\n(?:[^#\n][^\n]*\n)*/m, '').strip
+          # Only strip lines that start with a heading containing "Thinking".
+          # Avoid catastrophic backtracking by anchoring to the start of line
+          # and using a non-greedy, bounded inner pattern.
+          stripped = stripped.gsub(/^#+\s*[Tt]hinking[^\n]*\n(?!#+\s*[Tt]hinking[^\n]*\n)[^\n]*(?:\n(?![#\n])[^\n]*)*\n?/m, '').strip
 
           return msg if stripped == content || stripped.empty?
 

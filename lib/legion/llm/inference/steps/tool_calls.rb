@@ -161,6 +161,23 @@ module Legion
 
           def client_passthrough_tool_loop_result(result, tool_calls, round)
             result[:tool_calls] = tool_calls
+            # Emit tool call/result events for client passthrough tools so they
+            # appear in the pending_tool_history and trigger @tool_event_handler callbacks.
+            tool_calls.each do |tool_call|
+              next unless client_passthrough_tool_call?(tool_call)
+
+              normalized = normalize_native_tool_call(tool_call)
+              emit_tool_call_event(normalized, round)
+              emit_tool_result_event(
+                ToolResultEvent.new(
+                  result:       "Passthrough to client: #{normalized[:name]}",
+                  tool_call_id: normalized[:id],
+                  tool_name:    normalized[:name],
+                  started_at:   Time.now,
+                  status:       :success
+                )
+              )
+            end
             log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=client_passthrough"
             result
           end
