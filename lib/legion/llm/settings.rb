@@ -31,6 +31,7 @@ module Legion
           max_tool_calls_per_turn:        50,
           tool_result_max_dispatch_chars: 4000,
           default_model:                  model_override,
+          default_temperature:            1.0,
           default_provider:               nil,
           system_baseline:                system_baseline_default,
           fleet:                          fleet_defaults,
@@ -57,7 +58,8 @@ module Legion
           api:                            api_defaults,
           compliance:                     compliance_defaults,
           skills:                         skills_defaults,
-          claude_cli:                     claude_cli_defaults
+          claude_cli:                     claude_cli_defaults,
+          fallback:                       fallback_defaults
         }
       end
 
@@ -543,6 +545,12 @@ module Legion
           auto_discover:     { claude: false, codex: false },
           enabled_skills:    [],
           disabled_skills:   []
+        }
+      end
+
+      def self.fallback_defaults
+        {
+          allow_local: true
         }
       end
 

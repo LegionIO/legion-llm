@@ -10,13 +10,6 @@ module Legion
 
         module_function
 
-        def llm_setting(key, default = nil)
-          Legion::LLM::Settings.value(key, default: default)
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.prompt.llm_setting', key: key)
-          default
-        end
-
         # Auto-routed: Router picks the best provider+model based on intent.
         # Primary entry point for most LLM calls.
         # When provider/model are passed explicitly, they take precedence over routing.
@@ -57,8 +50,8 @@ module Legion
             resolved_model = resolution&.model
           end
 
-          resolved_provider ||= llm_setting(:default_provider) unless auto_route
-          resolved_model ||= llm_setting(:default_model) unless auto_route
+          resolved_provider ||= Legion::Settings[:llm][:default_provider] unless auto_route
+          resolved_model ||= Legion::Settings[:llm][:default_model] unless auto_route
 
           request(message,
                   provider:         resolved_provider,

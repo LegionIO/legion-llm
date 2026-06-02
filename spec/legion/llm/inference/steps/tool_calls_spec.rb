@@ -20,12 +20,6 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolCalls do
         @discovered_tools = []
         @exchange_id = 'exch_001'
       end
-
-      def llm_setting(key, default = nil)
-        Legion::LLM::Settings.config_value(Legion::LLM::Settings.current_settings, key, default)
-      rescue StandardError
-        default
-      end
     end
   end
 

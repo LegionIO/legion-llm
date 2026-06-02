@@ -59,7 +59,11 @@ module Legion
 
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
-        THINKING_TAG_PATTERN = %r{<think(?:ing)?>((?:[^<]|<(?!/think(?:ing)?>))*?)</think(?:ing)?>}m
+        THINKING_TAG_PAIRS = [
+          ['<thinking>', '</thinking>'],
+          ['<think>',    '</think>'],
+          ['<thought>',  '</thought>']
+        ].freeze
 
         CONFIG_ERROR_PATTERNS = [
           /ValidationException/,
@@ -154,13 +158,6 @@ module Legion
           Thread.current[:legion_log_conv_id] = nil
           Thread.current[:legion_log_exchange_id] = nil
           Thread.current[:legion_log_chain_id] = nil
-        end
-
-        def llm_setting(key, default = nil)
-          Legion::LLM::Settings.config_value(Legion::LLM::Settings.current_settings, key, default)
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.pipeline.settings')
-          default
         end
 
         def normalize_offering_metadata(value)
@@ -303,12 +300,12 @@ module Legion
           # skip to prevent infinite loops when compressor calls back into chat_direct
           return history if Thread.current[:legion_compacting]
 
-          conv_settings = llm_setting(:conversation, {})
-          return history unless Legion::LLM::Settings.config_value(conv_settings, :auto_compact)
+          conv_settings = Legion::Settings[:llm][:conversation] || {}
+          return history unless conv_settings[:auto_compact]
 
-          threshold = Legion::LLM::Settings.config_value(conv_settings, :summarize_threshold, 50_000)
-          target_tokens = Legion::LLM::Settings.config_value(conv_settings, :target_tokens, 20_000)
-          preserve_recent = Legion::LLM::Settings.config_value(conv_settings, :preserve_recent, 10)
+          threshold = conv_settings[:summarize_threshold] || 50_000
+          target_tokens = conv_settings[:target_tokens] || 20_000
+          preserve_recent = conv_settings[:preserve_recent] || 10
 
           estimated = Context::Compressor.estimate_tokens(history)
           return history unless estimated >= threshold
@@ -376,9 +373,9 @@ module Legion
 
           @resolved_provider = state[:provider] ||
                                (state[:model] && Router.infer_provider_for_model(state[:model])) ||
-                               (llm_setting(:default_provider) unless auto_route)
+                               (Legion::Settings[:llm][:default_provider] unless auto_route)
           @resolved_instance = resolve_provider_instance(state[:instance], @resolved_provider)
-          @resolved_model = state[:model] || (llm_setting(:default_model) unless auto_route)
+          @resolved_model = state[:model] || (Legion::Settings[:llm][:default_model] unless auto_route)
           if auto_route && (@resolved_provider.nil? || @resolved_model.nil?)
             raise ProviderError, 'Auto routing could not resolve an available LLM provider/model'
           end
@@ -401,7 +398,7 @@ module Legion
         def resolve_provider_instance(requested_instance, provider)
           return provider_scoped_instance(requested_instance, provider, preserve_unknown: true) if requested_instance
 
-          provider_scoped_instance(llm_setting(:default_instance), provider, preserve_unknown: false)
+          provider_scoped_instance(Legion::Settings[:llm][:default_instance], provider, preserve_unknown: false)
         end
 
         def provider_scoped_instance(instance, provider, preserve_unknown:)
@@ -410,7 +407,13 @@ module Legion
           provider_sym = provider.to_sym
           instance_sym = instance.to_sym
           return instance_sym if Call::Registry.registered?(provider_sym, instance: instance_sym)
-          return nil if Call::Registry.registered?(provider_sym)
+
+          if Call::Registry.registered?(provider_sym)
+            # Provider is registered but the specific instance is not.
+            # Only return nil if there's at least one instance registered for this provider.
+            instances = Call::Registry.instances_for(provider_sym)
+            return nil if instances.is_a?(Array) && instances.any?
+          end
 
           preserve_unknown ? instance_sym : nil
         rescue StandardError => e
@@ -834,8 +837,8 @@ module Legion
           primary_rank = primary_tier ? (tier_rank[primary_tier.to_sym] || 99) : 99
 
           candidates = Call::Registry.all_instances.filter_map do |entry|
-            next if entry[:provider] == exclude_provider&.to_sym && entry[:instance] == (exclude_instance&.to_sym || :default)
-            next if entry[:provider] == exclude_provider&.to_sym && exclude_instance.nil?
+            next if entry[:provider] == exclude_provider&.to_sym &&
+                    (exclude_instance.nil? || entry[:instance] == (exclude_instance&.to_sym || :default))
 
             model = Router.send(:registry_default_model, entry)
             next unless model
@@ -907,27 +910,18 @@ module Legion
         end
 
         def pipeline_escalation_enabled?
-          routing = llm_setting(:routing)
-          return false unless routing.is_a?(Hash)
-
-          esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
-          Legion::LLM::Settings.config_value(esc, :enabled) == true && Legion::LLM::Settings.config_value(esc, :pipeline_enabled) == true
+          esc = Legion::Settings[:llm].dig(:routing, :escalation) || {}
+          esc[:enabled] == true && esc[:pipeline_enabled] == true
         end
 
         def pipeline_escalation_max_attempts
-          routing = llm_setting(:routing)
-          return 3 unless routing.is_a?(Hash)
-
-          esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
-          Legion::LLM::Settings.config_value(esc, :max_attempts, 3)
+          esc = Legion::Settings[:llm].dig(:routing, :escalation) || {}
+          esc[:max_attempts] || 3
         end
 
         def pipeline_escalation_quality_threshold
-          routing = llm_setting(:routing)
-          return 50 unless routing.is_a?(Hash)
-
-          esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
-          Legion::LLM::Settings.config_value(esc, :quality_threshold, 50)
+          esc = Legion::Settings[:llm].dig(:routing, :escalation) || {}
+          esc[:quality_threshold] || 50
         end
 
         def execute_provider_request
@@ -1030,9 +1024,9 @@ module Legion
             next msg unless (msg[:role] || msg['role']).to_s == 'assistant'
 
             content = msg[:content] || msg['content']
-            next msg unless content.is_a?(String) && content.include?('<think')
+            next msg unless content.is_a?(String)
 
-            cleaned = content.gsub(THINKING_TAG_PATTERN, '').strip
+            cleaned = strip_leading_thinking_block(content)
             next msg if cleaned == content
 
             stripped_count += 1
@@ -1043,8 +1037,19 @@ module Legion
           result
         end
 
+        def strip_leading_thinking_block(text)
+          result = text.lstrip
+          THINKING_TAG_PAIRS.each do |open_tag, close_tag|
+            next unless result.start_with?(open_tag)
+
+            close_idx = result.index(close_tag, open_tag.length)
+            return close_idx ? result[(close_idx + close_tag.length)..].lstrip : ''
+          end
+          text
+        end
+
         def trim_oversized_tool_results(messages)
-          max_chars = llm_setting(:tool_result_max_dispatch_chars, 4000).to_i
+          max_chars = Legion::Settings[:llm][:tool_result_max_dispatch_chars].to_i
           return messages unless max_chars.positive?
 
           preserve_after = last_user_message_index(messages)
@@ -1435,8 +1440,8 @@ module Legion
           return false unless defined?(Call::Dispatch)
           return false unless provider
 
-          layer_settings = llm_setting(:provider_layer, {})
-          mode = Legion::LLM::Settings.config_value(layer_settings, :mode, 'auto').to_s
+          layer_settings = Legion::Settings[:llm][:provider_layer] || {}
+          mode = (layer_settings[:mode] || 'auto').to_s
 
           %w[native auto].include?(mode)
         end
@@ -1586,7 +1591,7 @@ module Legion
         private :execute_post_provider_steps_mixed
 
         def async_post_enabled?
-          llm_setting(:pipeline_async_post_steps) == true
+          Legion::Settings[:llm][:pipeline_async_post_steps] == true
         end
 
         private :async_post_enabled?
@@ -1893,7 +1898,7 @@ module Legion
         def pipeline_spans_enabled?
           return false unless telemetry_enabled?
 
-          settings = llm_setting(:telemetry)
+          settings = Legion::Settings[:llm][:telemetry]
           return true unless settings.is_a?(Hash)
 
           Legion::LLM::Settings.config_value(settings, :pipeline_spans, true)
@@ -1970,20 +1975,23 @@ module Legion
         end
 
         def find_fallback_provider(exclude: [])
-          providers = llm_setting(:providers, {})
+          providers = Legion::Settings[:llm][:providers] || {}
           providers.each do |name, config|
             normalized_name = name.to_sym
-            next unless config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled)
-            next if exclude.include?(name) || exclude.include?(name.to_s)
-            next if exclude.include?(normalized_name)
-            next if %i[ollama vllm].include?(normalized_name)
+            next unless config.is_a?(Hash) && config[:enabled]
+            next if exclude.include?(name) || exclude.include?(name.to_s) || exclude.include?(normalized_name)
+            next if %i[ollama vllm].include?(normalized_name) && !fallback_local_providers?
+            next unless config[:default_model]
 
-            default_model = Legion::LLM::Settings.config_value(config, :default_model)
-            next unless default_model
-
-            return { provider: normalized_name, model: default_model }
+            return { provider: normalized_name, model: config[:default_model] }
           end
           nil
+        end
+
+        def fallback_local_providers?
+          return @fallback_local_providers if defined?(@fallback_local_providers)
+
+          @fallback_local_providers = Legion::Settings[:llm].dig(:fallback, :allow_local) != false
         end
 
         def step_response_normalization
@@ -2045,6 +2053,13 @@ module Legion
         rescue StandardError => e
           @warnings << "metering error: #{e.message}"
           handle_exception(e, level: :warn, operation: 'llm.pipeline.step_metering')
+
+          # Attempt to spool the event so billing isn't lost even if publish fails.
+          begin
+            Legion::LLM::Metering.spool_event(event) if event
+          rescue StandardError => spool_e
+            handle_exception(spool_e, level: :error, operation: 'llm.pipeline.step_metering.spool_fallback')
+          end
         end
 
         def estimate_cost(input_tokens, output_tokens)

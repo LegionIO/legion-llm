@@ -8,7 +8,7 @@ module Legion
 
         def execute_native_tool_loop
           messages = native_dispatch_messages.dup
-          max_rounds = llm_setting(:max_tool_rounds).to_i
+          max_rounds = Legion::Settings[:llm][:max_tool_rounds].to_i
           max_rounds = 200 unless max_rounds.positive?
           round = 0
           log.debug "[llm][executor] action=native_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
@@ -51,7 +51,7 @@ module Legion
 
         def execute_native_streaming_tool_loop(&block)
           messages = native_dispatch_messages.dup
-          max_rounds = llm_setting(:max_tool_rounds).to_i
+          max_rounds = Legion::Settings[:llm][:max_tool_rounds].to_i
           max_rounds = 200 unless max_rounds.positive?
           round = 0
           log.debug "[llm][executor] action=native_streaming_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
@@ -98,7 +98,7 @@ module Legion
         end
 
         def split_tool_calls_by_cap(tool_calls, round)
-          max_per_turn = llm_setting(:max_tool_calls_per_turn).to_i
+          max_per_turn = Legion::Settings[:llm][:max_tool_calls_per_turn].to_i
           return [tool_calls, []] unless max_per_turn.positive? && tool_calls.size > max_per_turn
 
           log.warn "[llm][native_tool_loop] action=cap_per_turn round=#{round} " \

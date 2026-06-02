@@ -165,27 +165,33 @@ RSpec.describe Legion::LLM::Context::Curator do
       end
     end
 
-    context 'message has an unclosed <think> tag (provider died mid-stream)' do
-      let(:content) { "Preamble.\n<think>Reasoning that never finished" }
+    context 'message has an unclosed <think> tag at start (provider died mid-stream)' do
+      let(:content) { '<think>Reasoning that never finished' }
       let(:msg) { { role: :assistant, content: content } }
 
-      it 'strips the unclosed tag and trailing content' do
+      it 'returns original when stripping would produce empty content' do
         result = curator.strip_thinking(msg)
-        expect(result[:content]).to include('Preamble.')
-        expect(result[:content]).not_to include('<think>')
-        expect(result[:curated]).to be true
+        expect(result).to eq(msg)
       end
     end
 
-    context 'message has an unclosed <thinking> tag' do
-      let(:content) { "Before.\n<thinking>Partial reasoning" }
+    context 'message has an unclosed <thinking> tag at start' do
+      let(:content) { '<thinking>Partial reasoning' }
       let(:msg) { { role: :assistant, content: content } }
 
-      it 'strips the unclosed tag and trailing content' do
+      it 'returns original when stripping would produce empty content' do
         result = curator.strip_thinking(msg)
-        expect(result[:content]).to include('Before.')
-        expect(result[:content]).not_to include('<thinking>')
-        expect(result[:curated]).to be true
+        expect(result).to eq(msg)
+      end
+    end
+
+    context 'message references thinking tags mid-content (not real thinking blocks)' do
+      let(:content) { 'Use `<think>` for reasoning. The model outputs `</think>` when done.' }
+      let(:msg) { { role: :assistant, content: content } }
+
+      it 'does not strip content between referenced tags' do
+        result = curator.strip_thinking(msg)
+        expect(result).to eq(msg)
       end
     end
   end

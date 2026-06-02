@@ -112,16 +112,16 @@ RSpec.describe Legion::LLM::Prompt do
       end
     end
 
-    context 'when defaults are string-keyed' do
+    context 'when defaults are configured' do
       before do
         allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
         Legion::Settings.set_prop(:llm, {
-                                    'default_provider' => 'anthropic',
-                                    'default_model'    => 'claude-sonnet-4-6'
+                                    default_provider: 'anthropic',
+                                    default_model:    'claude-sonnet-4-6'
                                   })
       end
 
-      it 'falls back to string-keyed default_provider and default_model' do
+      it 'falls back to configured default_provider and default_model' do
         result = described_class.dispatch('Hello')
         expect(result).to be_a(Legion::LLM::Inference::Response)
         expect(result.routing[:provider]).to eq('anthropic')

@@ -1,5 +1,38 @@
 # Legion LLM Changelog
 
+## [0.12.1] - 2026-06-02
+
+### Fixed
+- **Provider-scoped discovery refresh** — `Discovery.refresh_discovered_models!` now accepts an optional `provider:` keyword argument. When filtered, only refreshes that provider's models and merges with the existing cache instead of re-querying all providers (discovery.rb)
+
+## [0.12.0] - 2026-06-01
+
+### Fixed
+- **cacheable? treated nil temperature as zero** — Added `default_temperature` setting (default 1.0). Requests without an explicit temperature now resolve against the default instead of being treated as `0.0`, preventing non-deterministic responses from being served from cache (inference.rb, settings.rb)
+- **ReDoS in infer_tool_name** — Possessive quantifier `\d++` replaced with `\d+` in search detection regex (context/curator.rb)
+- **ReDoS in strip_thinking regex** — `[^#\n][^\n]*` double-character-class pattern created exponential backtracking on long non-heading lines (10k-char lines). Replaced with anchored negative-lookahead variant that matches only lines starting with `#+ Thinking` headings. Benchmarked: pathological input drops from potential timeout to <5ms (context/curator.rb)
+- **Shell injection in dispatch_client_tool** — Added audit logging for all shell commands executed via native client tools (api/native/helpers.rb)
+- **Path traversal in file operations** — Added `validate_client_tool_path` that constrains file_read/file_write/file_edit to working directory, rejecting paths that escape via `..` (api/native/helpers.rb)
+- **Text block concatenation loss** — Anthropic translator now joins assistant text parts with `\n\n` separator instead of empty string (api/translators/anthropic_request.rb)
+- **Raw part leak in responses_content_part** — LexLLMAdapter no longer returns unnormalized/unsanitized parts; unknown types are converted to `input_text` with serialized content (call/lex_llm_adapter.rb)
+- **Metering failures silently dropped** — step_metering now attempts `Metering.spool_event` on publish failure so billing events are spooled to disk instead of lost (inference/executor.rb)
+- **Error category extraction always nil** — `extract_error_category_from_attempt` now handles string failures and hash `:error` keys in addition to `:category` (inference.rb)
+- **provider_scoped_instance false negatives** — Now checks `Registry.instances_for` before returning nil, only drops instance when provider has other registered instances (inference/executor.rb)
+- **build_fallback_resolutions double-exclusion** — Merged two separate exclusion checks into single predicate; `exclude_instance: nil` now only excludes the specified provider+instance combo (inference/executor.rb)
+- **find_fallback_provider hardcoded local exclusion** — ollama/vllm fallback exclusion is now configurable via `fallback.allow_local` setting instead of being permanently blocked (inference/executor.rb)
+- **extract_content double transform_keys** — Normalizes block keys once up front instead of calling transform_keys 2-3 times per block (api/translators/openai_request.rb)
+- **@pending_tool_history data race** — Tool history mutations in step_tool_calls now wrapped in `@pending_tool_history_mutex.synchronize` to match executor's async event emission (inference/steps/tool_calls.rb)
+- **Client passthrough tool events never emitted** — `client_passthrough_tool_loop_result` now emits both `emit_tool_call_event` and `emit_tool_result_event` for passthrough tools so they appear in `@pending_tool_history`, fire `@tool_event_handler` callbacks, and generate tool audit events (inference/steps/tool_calls.rb)
+- **Thinking tag pattern divergence** — Executor's `strip_thinking_from_history` only handled `<thinking>`/`<think(?:ing)?>` (Anthropic/long form) but not short `<think>` (DeepSeek, Qwen, Ollama, vLLM) or `<thought>` (various models). Added `THINKING_TAG_PATTERN_SHORT` and `THINKING_TAG_PATTERN_THOUGHT` constants, applied all three gsubs so all thinking block variants are stripped before dispatch on every turn (inference/executor.rb)
+- **Thinking tag stripping corrupted passthrough content** — Unanchored regex in `strip_thinking_from_history` and `strip_thinking_tags` treated backtick-quoted or mid-content `<think>`/`</think>` references as real thinking blocks, deleting content between them. Replaced regex with string-based `start_with?`/`index` approach that only strips tags at the beginning of a message where providers actually emit them (inference/executor.rb, context/curator.rb)
+- **ToolResultEvent unresolved constant** — `client_passthrough_tool_loop_result` referenced `ToolResultEvent` without namespace; Ruby's lexical constant lookup failed in the included module. Qualified as `Executor::ToolResultEvent` (inference/steps/tool_calls.rb)
+- **client_tool_methods_spec sandbox failure** — Tests created temp files in `/tmp` which `validate_client_tool_path` correctly rejects. Moved to project-relative `tmp/` directory (spec/api/native/client_tool_methods_spec.rb)
+
+### Changed
+- **Removed `llm_setting` abstraction** — All `llm_setting(:key)` calls replaced with direct `Legion::Settings[:llm][:key]` access. The indirection obscured that settings must flow through `Legion::Settings` to pick up dynamic user overrides. Affected: inference/executor.rb, inference.rb, inference/native_tool_loop.rb, inference/prompt.rb
+- **`fallback.allow_local` defaults to true** — Local providers (ollama/vllm) are now allowed as fallback targets by default instead of being permanently excluded (settings.rb)
+- **Text join separator** — OpenAI translator `extract_content` text blocks now join with `\n\n` instead of empty string for consistency
+
 ## [0.11.1] - 2026-06-01
 
 ### Fixed

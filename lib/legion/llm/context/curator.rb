@@ -109,7 +109,10 @@ module Legion
 
           content = msg[:content].to_s
           stripped = strip_thinking_tags(content)
-          stripped = stripped.gsub(/^#+\s*[Tt]hinking[^\n]*\n(?:[^#\n][^\n]*\n)*/m, '').strip
+          # Only strip lines that start with a heading containing "Thinking".
+          # Avoid catastrophic backtracking by anchoring to the start of line
+          # and using a non-greedy, bounded inner pattern.
+          stripped = stripped.gsub(/^#+\s*[Tt]hinking[^\n]*\n(?!#+\s*[Tt]hinking[^\n]*\n)[^\n]*(?:\n(?![#\n])[^\n]*)*\n?/m, '').strip
 
           return msg if stripped == content || stripped.empty?
 
@@ -236,27 +239,20 @@ module Legion
         end
 
         def strip_thinking_tags(text)
-          result = text
-          THINKING_TAG_PAIRS.each do |open_tag, close_tag|
-            result = strip_tag_pair(result, open_tag, close_tag)
+          result = text.lstrip
+          loop do
+            stripped = false
+            THINKING_TAG_PAIRS.each do |open_tag, close_tag|
+              next unless result.start_with?(open_tag)
+
+              close_idx = result.index(close_tag, open_tag.length)
+              result = close_idx ? result[(close_idx + close_tag.length)..].lstrip : ''
+              stripped = true
+              break
+            end
+            break unless stripped
           end
           result
-        end
-
-        def strip_tag_pair(text, open_tag, close_tag)
-          out = +''
-          pos = 0
-          while pos < text.length
-            open_idx = text.index(open_tag, pos)
-            break unless open_idx
-
-            out << text[pos...open_idx]
-            close_idx = text.index(close_tag, open_idx + open_tag.length)
-            pos = close_idx ? close_idx + close_tag.length : text.length
-          end
-          out << text[pos..] if pos < text.length
-          # Strip any unclosed open tag left at the end (provider died mid-stream).
-          out.sub(/#{Regexp.escape(open_tag)}.*\z/m, '').strip
         end
 
         def curate_message(msg, assistant_response)
@@ -526,7 +522,7 @@ module Legion
             file_count = content.lines.count { |l| l.include?('/') }
             "Search returned #{line_count} matches across #{file_count} files"
           when /bash|run_command|execute/
-            exit_match = content.match(/exit(?:\s+code)?:?\s*(\d+)/i)
+            exit_match = content[0, 500].match(/exit(?: code)?:? *(\d+)/i)
             exit_code  = exit_match ? exit_match[1] : '0'
             last_lines = lines.last(3).map(&:chomp).join(' | ')
             "Command output (#{line_count} lines), exit #{exit_code}: #{last_lines[0, 200]}"
@@ -545,7 +541,7 @@ module Legion
           first_line = content[0, 200]
           return :read_file   if first_line.match?(/\AFile:|\ARead:|\A#\s+\S+\.rb|\A\d+\t/)
           return :bash        if first_line.match?(/exit code|STDOUT|STDERR/i)
-          return :search      if first_line.include?(' match') && first_line.match?(/\d++ match/)
+          return :search      if first_line.include?(' match') && first_line.match?(/\d+ match/)
 
           nil
         end

@@ -11,24 +11,24 @@ RSpec.describe Legion::LLM::API::Native::ClientToolMethods do
     end.new
   end
 
+  let(:tmp_dir) { File.join(Dir.pwd, 'tmp', 'test_client_tools') }
+
+  before { FileUtils.mkdir_p(tmp_dir) }
+  after { FileUtils.rm_rf(tmp_dir) }
+
   describe '#dispatch_client_tool' do
     it 'reads text files as UTF-8 content' do
-      Tempfile.create(['legion-text', '.txt']) do |file|
-        file.write('hello')
-        file.close
+      path = File.join(tmp_dir, 'text.txt')
+      File.write(path, 'hello')
 
-        expect(host.send(:dispatch_client_tool, 'file_read', path: file.path)).to eq('hello')
-      end
+      expect(host.send(:dispatch_client_tool, 'file_read', path: path)).to eq('hello')
     end
 
     it 'rejects non-PDF binary files' do
-      Tempfile.create(['legion-binary', '.bin']) do |file|
-        file.binmode
-        file.write("abc\x00def")
-        file.close
+      path = File.join(tmp_dir, 'binary.bin')
+      File.binwrite(path, "abc\x00def")
 
-        expect(host.send(:dispatch_client_tool, 'file_read', path: file.path)).to eq('Binary file detected, cannot read as text.')
-      end
+      expect(host.send(:dispatch_client_tool, 'file_read', path: path)).to eq('Binary file detected, cannot read as text.')
     end
 
     it 'extracts PDF text through pdf-reader' do
@@ -40,13 +40,10 @@ RSpec.describe Legion::LLM::API::Native::ClientToolMethods do
       stub_const('PDF', Module.new)
       stub_const('PDF::Reader', reader_class)
 
-      Tempfile.create(['legion-doc', '.pdf']) do |file|
-        file.binmode
-        file.write('%PDF-1.7')
-        file.close
+      path = File.join(tmp_dir, 'doc.pdf')
+      File.binwrite(path, '%PDF-1.7')
 
-        expect(host.send(:dispatch_client_tool, 'file_read', path: file.path)).to eq('extracted text')
-      end
+      expect(host.send(:dispatch_client_tool, 'file_read', path: path)).to eq('extracted text')
     end
   end
 end

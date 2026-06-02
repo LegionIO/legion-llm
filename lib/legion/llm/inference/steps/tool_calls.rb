@@ -65,15 +65,17 @@ module Legion
                 lex_normalized = (source[:lex] || '').delete_prefix('lex-').tr('-', '_')
                 runner_key     = source[:type] == :extension ? "#{lex_normalized}_#{source[:runner]}" : nil
                 result_string  = result[:result].is_a?(String) ? result[:result] : Legion::JSON.dump(result[:result] || {})
-                @pending_tool_history << {
-                  tool_call_id:  tool_call_id,
-                  pending_index: @pending_tool_history.size,
-                  tool_name:     tool_name,
-                  args:          tc[:arguments] || tc['arguments'] || {},
-                  result:        result_string,
-                  error:         result[:status] == :error,
-                  runner_key:    runner_key
-                }
+                @pending_tool_history_mutex.synchronize do
+                  @pending_tool_history << {
+                    tool_call_id:  tool_call_id,
+                    pending_index: @pending_tool_history.size,
+                    tool_name:     tool_name,
+                    args:          tc[:arguments] || tc['arguments'] || {},
+                    result:        result_string,
+                    error:         result[:status] == :error,
+                    runner_key:    runner_key
+                  }
+                end
               end
 
               @timeline.record(
@@ -159,6 +161,23 @@ module Legion
 
           def client_passthrough_tool_loop_result(result, tool_calls, round)
             result[:tool_calls] = tool_calls
+            # Emit tool call/result events for client passthrough tools so they
+            # appear in the pending_tool_history and trigger @tool_event_handler callbacks.
+            tool_calls.each do |tool_call|
+              next unless client_passthrough_tool_call?(tool_call)
+
+              normalized = normalize_native_tool_call(tool_call)
+              emit_tool_call_event(normalized, round)
+              emit_tool_result_event(
+                Executor::ToolResultEvent.new(
+                  result:       "Passthrough to client: #{normalized[:name]}",
+                  tool_call_id: normalized[:id],
+                  tool_name:    normalized[:name],
+                  started_at:   Time.now,
+                  status:       :success
+                )
+              )
+            end
             log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=client_passthrough"
             result
           end

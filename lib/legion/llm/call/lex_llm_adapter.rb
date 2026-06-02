@@ -221,13 +221,13 @@ module Legion
 
         def responses_content_part(part)
           return { type: 'input_text', text: part } if part.is_a?(String)
-          return part unless part.respond_to?(:transform_keys)
+          return nil unless part.respond_to?(:transform_keys)
 
           normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
           type = normalized[:type].to_s
           return { type: type, text: normalized[:text].to_s } if %w[input_text output_text text].include?(type)
 
-          part
+          { type: 'input_text', text: normalized.to_s }
         end
 
         def normalize_response_system(system)

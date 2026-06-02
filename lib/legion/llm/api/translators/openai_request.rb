@@ -84,19 +84,17 @@ module Legion
             return content if content.is_a?(String)
             return content unless content.is_a?(Array)
 
-            has_non_text = content.any? do |block|
-              b = block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
-              b[:type].to_s != 'text'
+            # Normalize keys once up front to avoid repeated transform_keys calls.
+            normalized = content.map do |block|
+              block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
             end
 
-            if has_non_text
-              content.map { |block| block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block }
-            else
-              content.filter_map do |block|
-                b = block.respond_to?(:transform_keys) ? block.transform_keys(&:to_sym) : block
-                b[:text] if b[:type].to_s == 'text'
-              end.join
-            end
+            has_non_text = normalized.any? { |b| b[:type].to_s != 'text' }
+            return normalized if has_non_text
+
+            normalized.filter_map do |b|
+              b[:text] if b[:type].to_s == 'text'
+            end.join("\n\n")
           end
 
           def normalize_tools(raw_tools)
