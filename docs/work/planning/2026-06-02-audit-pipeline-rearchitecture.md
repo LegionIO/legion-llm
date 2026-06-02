@@ -489,8 +489,202 @@ This data flows into `llm_route_attempts` rows written by the `response_writer`.
 | Winning attempt | ❌ | ❌ | ✅ |
 | Total wall clock | ❌ | ❌ | ✅ |
 
-## Open Questions
+## Streaming Response Semantics
 
-1. Should `llm_policy_evaluations` be populated in Phase 2 (part of this work) or deferred to Phase 4?
-2. Do we need a backfill job for the 57,779 existing `request_json = '{}'` rows, or accept that pre-fix data is lost?
-3. Should the `llm.metering` exchange be formally deprecated in this release or left as-is?
+For streaming requests (`call_stream`), `response.attempt` emits **once at stream completion** (when the provider sends the final usage/done event). This means:
+
+- `latency_ms` = time from dispatch to first token (captured separately as `time_to_first_token_ms`)
+- `wall_clock_ms` = time from dispatch to stream end (includes provider generation time)
+- `output_tokens` / `cost_usd` = final values from the provider's usage block (sent at stream end)
+- `response_content` = full accumulated content
+
+If the stream dies mid-way (provider error, connection drop, timeout):
+- `response.attempt` still emits with `status: 'error'`
+- `output_tokens` = partial count if the provider reported usage before dying, otherwise 0
+- `error_message` = the failure reason
+- `response_content` = whatever was accumulated before failure (may be partial)
+
+No separate `response.streaming.started` / `response.streaming.completed` events. One event per attempt, always at termination (success or failure). The `time_to_first_token_ms` field distinguishes "fast start, slow generation" from "slow provider."
+
+## Spool Overflow Policy
+
+When the spool reaches capacity (default: 50,000 events):
+
+1. **Alert at 80% capacity** — emit a `Legion::Events` warning: `llm.audit.spool_pressure` with current count
+2. **Alert at 95% capacity** — emit a critical alert: `llm.audit.spool_critical`
+3. **At 100% — reject new LLM requests** — return 503 to callers with message "Audit spool full — LLM requests blocked until transport reconnects"
+
+**Rationale:** For HIPAA/FedRAMP, silently dropping audit events is a finding. Silently dropping request data is also a finding. Blocking requests is an operational impact but NOT a compliance failure — it's a compensating control that preserves the invariant "every LLM call has an audit trail."
+
+The spool file path, max size, and overflow behavior are configurable:
+```ruby
+Legion::Settings[:llm][:audit][:spool] = {
+  max_events:          50_000,
+  warn_threshold:      0.8,
+  critical_threshold:  0.95,
+  overflow_policy:     :block_requests  # or :drop_oldest (non-compliant)
+}
+```
+
+## Consumer Error Handling (Ledger Runner DLQ)
+
+When `write_request_record` or `write_response_record` fails:
+
+1. **Transient DB errors** (connection timeout, pool exhausted): NACK with requeue. Bunny redelivers after channel recovery. Max 3 redeliveries (tracked via `x-delivery-count` header on quorum queues).
+2. **Persistent errors** (constraint violation, data format): NACK without requeue → message goes to **dead letter queue** (`llm.audit.request_writer.dlq` / `llm.audit.response_writer.dlq`).
+3. **DLQ monitoring**: A periodic actor (`DlqMonitor`) checks DLQ depth every 60s and emits `Legion::Events` alert if non-empty.
+4. **DLQ replay**: Manual replay via `legionio ledger replay-dlq <queue_name>` CLI command after the underlying issue is fixed.
+
+Queue declarations:
+```ruby
+queue_options: {
+  durable: true,
+  arguments: {
+    'x-queue-type': 'quorum',
+    'x-delivery-limit': 3,
+    'x-dead-letter-exchange': 'llm.audit.dlq',
+    'x-dead-letter-routing-key': 'dlq.request_writer'
+  }
+}
+```
+
+## Embedding Call Audit
+
+`embed()`, `embed_batch()`, and `embed_direct()` are LLM provider calls that consume tokens and may contain PHI (clinical search queries). They MUST be audited.
+
+**Event:** `response.attempt` with `operation: 'embed'` (same routing key, same consumer).
+
+Emitted from:
+- `Call::Embeddings.generate` — after provider returns
+- `Call::Embeddings.generate_batch` — one event per batch (not per text)
+
+**Fields specific to embedding:**
+- `operation: 'embed'`
+- `input_text_chars: 1507` (length of input, not the full text for privacy)
+- `input_chunks: 2` (how many chunks were embedded)
+- `dimensions: 1024` (output vector size)
+- No `response_content` (embeddings are vectors, not text)
+- `input_tokens` / `cost_usd` from provider response
+
+**No `request.opened` for embeddings** — they're always sub-operations of a larger request (RAG retrieval, knowledge ingestion). The parent request's `request.opened` already captures the intent. Embedding `response.attempt` events link via `parent_request_id` when available.
+
+## Dual-Emit Deduplication Strategy
+
+During Phase 2 (both old and new actors running):
+
+**Dedup key:** `(request_ref, attempt_no)` for responses, `(request_ref)` for requests.
+
+**Rules:**
+1. New `response_writer` uses `response_id` (a UUID generated at emit time) as the unique key for `llm_message_inference_responses`. Old metering actor uses `stable_uuid(request_ref)`. These are DIFFERENT UUIDs → no conflict, but creates duplicate rows.
+2. To prevent this: **old metering actor does NOT create response rows during Phase 2**. It only writes to `llm_message_inference_metrics` (its original purpose). This requires a one-line change in the metering runner: skip `find_or_create_request` and `find_or_create_response`, only call `find_or_create_metric` if a response row already exists.
+3. The old prompts actor continues to work for `msg_*` requests from older nodes. The new `request_writer` handles `request.opened` events. Both use `request_ref` as the conflict key — ON CONFLICT DO NOTHING (first writer wins).
+
+**Reconciliation query** (run periodically by `reconciliation` actor):
+```sql
+-- Find requests with metrics but no response (orphaned by old metering actor)
+SELECT m.id, m.message_inference_request_id
+FROM llm_message_inference_metrics m
+LEFT JOIN llm_message_inference_responses r ON r.id = m.message_inference_response_id
+WHERE r.id IS NULL AND m.inserted_at > NOW() - INTERVAL '1 day';
+```
+
+## Failed Attempt Metrics
+
+Every `response.attempt` gets a metric row, regardless of outcome:
+- **Success:** Full token counts and cost from provider
+- **Error with partial streaming:** Whatever tokens the provider reported before dying
+- **Connection refused / timeout before any data:** `input_tokens: 0, output_tokens: 0, cost_usd: 0.0`
+- **InvalidRoleError (fails before sending to provider):** `input_tokens: 0, output_tokens: 0, cost_usd: 0.0`
+
+The metric row is ALWAYS created (1:1 with response rows). Billing queries filter on `cost_usd > 0` for spend reports. The zero-cost rows are still valuable for failure rate analysis and provider health tracking.
+
+## Multi-Round Tool Loop Events
+
+Within a single request, the native tool loop dispatches to the provider N times. Each dispatch is a `response.attempt` with:
+
+- `attempt_type: 'tool_round'` (not 'escalation')
+- `tool_round: 1` (1-indexed within the tool loop)
+- `tool_calls: [{name, arguments, id}]` — tool calls the LLM made this round
+- `tool_results_pending: true` — indicates more rounds may follow
+- Same `request_id`, incrementing `attempt_no` globally
+
+The final round has `tool_results_pending: false` and `finish_reason: 'end_turn'`.
+
+This means a request with 3 tool rounds + 1 escalation retry = 4 response rows:
+- attempt_no=1, tool_round=1, attempt_type='tool_round', status='tool_use'
+- attempt_no=2, tool_round=2, attempt_type='tool_round', status='tool_use'
+- attempt_no=3, tool_round=3, attempt_type='tool_round', status='end_turn' (success)
+- OR: attempt_no=3, attempt_type='escalation' if the tool loop failed and escalated
+
+## Response Writer Transaction Strategy
+
+The 3-table write is split to prevent blast radius:
+
+```ruby
+def write_response_record(payload)
+  response = insert_response(payload)  # independent, must succeed
+  insert_metric(payload, response)     # independent, logs warning on failure
+  insert_route_attempt(payload, response)  # independent, logs warning on failure
+end
+```
+
+Each insert is its own savepoint. If `insert_route_attempt` fails (table doesn't exist on an older schema), the response and metric rows are preserved. Failures log at WARN level and do NOT nack the message.
+
+## Index Strategy
+
+Indexes required for the new query patterns:
+
+```sql
+-- Already exist (verify):
+CREATE INDEX IF NOT EXISTS idx_requests_request_ref ON llm_message_inference_requests(request_ref);
+CREATE INDEX IF NOT EXISTS idx_responses_request_id ON llm_message_inference_responses(message_inference_request_id);
+CREATE INDEX IF NOT EXISTS idx_metrics_response_id ON llm_message_inference_metrics(message_inference_response_id);
+
+-- New (add in migration):
+CREATE INDEX idx_responses_attempt_no ON llm_message_inference_responses(message_inference_request_id, attempt_no);
+CREATE INDEX idx_route_attempts_request_id ON llm_route_attempts(message_inference_request_id);
+CREATE INDEX idx_requests_conversation_inserted ON llm_message_inference_requests(conversation_id, inserted_at DESC);
+CREATE INDEX idx_responses_provider_inserted ON llm_message_inference_responses(provider, inserted_at DESC);
+```
+
+## Identity & Billing Field Clarification
+
+| Field | Meaning | Used for |
+|-------|---------|----------|
+| `caller` | The code path that initiated the request (extension name, API route, GAIA mode) | Debugging, attribution |
+| `identity` | The human or system principal whose spend this counts against | **Billing, cost center allocation** |
+| `caller.requested_by.identity` | Same as `identity` when available | Redundant, for backward compat |
+
+**Billing rule:** `identity.identity` drives cost center allocation. If a GAIA tick runs on behalf of user `kblanc13`, the identity is `kblanc13` even though the caller is `lex-agentic-language`.
+
+## Data Retention
+
+| Table | Retention | Purge policy |
+|-------|-----------|-------------|
+| `llm_message_inference_requests` | 90 days default, 30 days if contains_phi | `retention_purge` actor, configurable via `settings[:llm][:compliance][:retention]` |
+| `llm_message_inference_responses` | Same as parent request | Cascade delete from request |
+| `llm_message_inference_metrics` | 365 days (billing) | Separate purge, preserves aggregated rollups |
+| `llm_route_attempts` | Same as parent request | Cascade delete |
+| `llm_policy_evaluations` | 365 days | Independent purge |
+| `llm_security_events` | 7 years (compliance) | Never auto-purged, manual archival only |
+
+## Schema Migration Approach
+
+New fields from the event schema that don't have existing columns are stored in the existing `request_json` / `response_json` TEXT columns (JSON-encoded). The typed columns (`provider`, `model_key`, `tier`, `status`, etc.) continue to be populated directly.
+
+New columns added in this work:
+- `llm_message_inference_requests`: `client_ip` (varchar 45), `client_user_agent` (text)
+- `llm_message_inference_responses`: `attempt_no` (integer, default 1), `attempt_type` (varchar 32), `tool_round` (integer, null)
+- `llm_message_inference_metrics`: `time_to_first_token_ms` (integer, null)
+
+All other event fields (enrichments, timeline, tracing, etc.) go into `request_json` / `response_json` as before.
+
+## Backfill Decision
+
+The 57,779 existing `request_json = '{}'` rows **cannot be recovered** — the audit events are gone. Compensating control: add a `data_quality_flag` column (varchar 32) to `llm_message_inference_requests`. Backfill sets it to `'incomplete'` for all existing `{}` rows. New rows get `'complete'`. Compliance reports filter on `data_quality_flag = 'complete'` and document the gap with a formal exception noting the date range and root cause fix.
+
+## Resolved Design Decisions
+
+1. `llm_policy_evaluations` — populated in Phase 2 (part of this work). The data is already in `request.opened`.
+2. Backfill — formal exception with `data_quality_flag` column, not a backfill job.
+3. `llm.metering` exchange — formally deprecated in Phase 3. Left operational in Phase 2 for backward compat but metering actor stops creating request/response rows.
