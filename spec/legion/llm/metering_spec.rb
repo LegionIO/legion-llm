@@ -49,8 +49,8 @@ RSpec.describe Legion::LLM::Metering do
       expect(msg_instance).to have_received(:publish)
     end
 
-    it 'treats string-keyed transport settings as connected' do
-      Legion::Settings[:transport]['connected'] = true
+    it 'treats symbol-keyed transport settings as connected' do
+      Legion::Settings[:transport][:connected] = true
       msg_instance = instance_double(Legion::LLM::Metering::Event)
       allow(Legion::LLM::Metering::Event).to receive(:new).and_return(msg_instance)
       allow(msg_instance).to receive(:publish)

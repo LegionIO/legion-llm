@@ -138,7 +138,7 @@ module Legion
       end
 
       def transport_connected?
-        Legion::LLM::Settings.transport_connected?
+        Legion::Settings.dig(:transport, :connected) == true
       end
 
       def metering_event_class
@@ -206,7 +206,7 @@ module Legion
       def encrypt_spool?
         defined?(Legion::Crypt) &&
           Legion::Crypt.respond_to?(:encrypt) &&
-          Legion::LLM::Settings.value(:compliance, :encrypt_spool) == true
+          Legion::Settings.dig(:llm, :compliance, :encrypt_spool) == true
       rescue StandardError
         false
       end
@@ -265,7 +265,7 @@ module Legion
       end
 
       def spool_settings
-        settings = Legion::LLM::Settings.value(:metering, :spool, default: {})
+        settings = Legion::Settings.dig(:llm, :metering, :spool) || {}
         settings.is_a?(Hash) ? settings : {}
       end
 
