@@ -1287,6 +1287,57 @@ confidence: 0.9 }],
     end
   end
 
+  describe '#provider_supports_responses?' do
+    it 'returns false when no provider is resolved yet' do
+      executor = described_class.new(request)
+      expect(executor.provider_supports_responses?).to be false
+    end
+
+    it 'returns false when resolved provider is not registered in Registry' do
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :unknown_provider)
+      expect(executor.provider_supports_responses?).to be false
+    end
+
+    it 'returns false when registered adapter does not respond to supports?' do
+      adapter = Module.new
+      Legion::LLM::Call::Registry.register(:fake_no_supports, adapter)
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :fake_no_supports)
+      expect(executor.provider_supports_responses?).to be false
+    ensure
+      Legion::LLM::Call::Registry.deregister_provider(:fake_no_supports)
+    end
+
+    it 'returns false when adapter#supports?(:responses) is false' do
+      adapter = Module.new do
+        def self.supports?(cap)
+          cap.to_sym == :chat
+        end
+      end
+      Legion::LLM::Call::Registry.register(:fake_chat_only, adapter)
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :fake_chat_only)
+      expect(executor.provider_supports_responses?).to be false
+    ensure
+      Legion::LLM::Call::Registry.deregister_provider(:fake_chat_only)
+    end
+
+    it 'returns true when adapter#supports?(:responses) is true' do
+      adapter = Module.new do
+        def self.supports?(_cap)
+          true
+        end
+      end
+      Legion::LLM::Call::Registry.register(:fake_responses_native, adapter)
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :fake_responses_native)
+      expect(executor.provider_supports_responses?).to be true
+    ensure
+      Legion::LLM::Call::Registry.deregister_provider(:fake_responses_native)
+    end
+  end
+
   describe 'profile skip lists include new sticky steps' do
     %i[gaia system service quick_reply].each do |profile_name|
       %i[sticky_runners tool_history_inject sticky_persist].each do |step|

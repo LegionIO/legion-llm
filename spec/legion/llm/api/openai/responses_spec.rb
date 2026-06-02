@@ -32,6 +32,11 @@ RSpec.describe Legion::LLM::API::OpenAI::Responses do
       result = described_class.normalize_input_array(input)
       expect(result).to eq([])
     end
+
+    it 'maps developer role to system' do
+      result = described_class.normalize_input_array([{ role: 'developer', content: 'Be an expert.' }])
+      expect(result).to eq([{ role: 'system', content: 'Be an expert.' }])
+    end
   end
 
   describe '.build_tool_declarations' do

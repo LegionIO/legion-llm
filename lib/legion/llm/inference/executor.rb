@@ -146,6 +146,22 @@ module Legion
           clear_log_context
         end
 
+        # Returns true when the resolved provider's adapter natively supports the Responses API.
+        # Called by the API layer before choosing call_responses vs call_stream.
+        # Pre-provider steps must have already run (provider is resolved) for this to be accurate;
+        # returns false safely if resolution hasn't happened yet.
+        def provider_supports_responses?
+          provider = @resolved_provider
+          return false unless provider && use_native_dispatch?(provider)
+
+          ext = Call::Registry.for(provider, instance: @resolved_instance || :default)
+          ext.respond_to?(:supports?) ? ext.supports?(:responses) : false
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.executor.provider_supports_responses',
+                              provider: @resolved_provider)
+          false
+        end
+
         private
 
         def set_log_context

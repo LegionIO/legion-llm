@@ -53,6 +53,8 @@ RSpec.describe 'Codex CLI conformance', :integration do
           pipeline_response
         end
         allow(ex).to receive(:respond_to?).with(:call_responses).and_return(true)
+        allow(ex).to receive(:respond_to?).with(:provider_supports_responses?).and_return(true)
+        allow(ex).to receive(:provider_supports_responses?).and_return(true)
       end
     )
     Legion::Settings[:llm][:default_model] = 'legionio'

@@ -11,7 +11,10 @@ module Legion
         include Legion::Logging::Helper
 
         METADATA_KEYS = %i[tier capabilities enabled].freeze
-        RESPONSES_PROVIDER_FAMILIES = %i[openai vllm].freeze
+        # Only providers that natively expose /v1/responses (OpenAI API proper).
+        # All other providers (vLLM, Ollama, MLX, Anthropic, Bedrock, Gemini, Vertex, Azure Foundry)
+        # use /v1/chat/completions and must declare :responses in their instance capabilities explicitly.
+        RESPONSES_PROVIDER_FAMILIES = %i[openai].freeze
 
         def initialize(provider_name, provider_class, instance_config: {})
           @provider_name = provider_name.to_sym

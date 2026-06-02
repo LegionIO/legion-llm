@@ -36,6 +36,8 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
         double('Response', routing: { model: 'legionio' }, tokens: { input_tokens: 5, output_tokens: 10 },
                            message: { content: 'Hello' }, tools: [])
       )
+      # Default: provider does not natively support the Responses API (covers vllm, ollama, etc.)
+      allow(ex).to receive(:provider_supports_responses?).and_return(false)
     end
   end
 
@@ -54,48 +56,103 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
       expect(body[:error][:type]).to eq('invalid_request_error')
     end
 
-    it 'returns sync response object when stream is false' do
-      allow(executor_double).to receive(:call_responses).and_return(
-        double('Response',
-               routing: { model: 'legionio' },
-               tokens:  { input_tokens: 5, output_tokens: 10 },
-               message: { content: 'Hello!' },
-               tools:   [])
-      )
-      post '/v1/responses',
-           Legion::JSON.dump({ input: 'Hello', model: 'legionio', stream: false }),
-           'CONTENT_TYPE' => 'application/json'
-      expect(last_response.status).to eq(200)
-      body = Legion::JSON.load(last_response.body)
-      expect(body[:object]).to eq('response')
-      expect(body[:status]).to eq('completed')
-      expect(body[:output]).to be_an(Array)
+    context 'when provider does not natively support the Responses API (vllm, ollama, etc.)' do
+      it 'returns sync response object via call when stream is false' do
+        # executor.call is already stubbed in executor_double with message: { content: 'Hello' }
+        post '/v1/responses',
+             Legion::JSON.dump({ input: 'Hello', model: 'legionio', stream: false }),
+             'CONTENT_TYPE' => 'application/json'
+        expect(last_response.status).to eq(200)
+        body = Legion::JSON.load(last_response.body)
+        expect(body[:object]).to eq('response')
+        expect(body[:status]).to eq('completed')
+        expect(body[:output]).to be_an(Array)
+      end
+
+      it 'streams typed SSE events via call_stream when stream is true' do
+        pipeline_response = double('Response',
+                                   routing: { model: 'legionio' },
+                                   tokens:  { input_tokens: 5, output_tokens: 10 },
+                                   tools:   [])
+        allow(executor_double).to receive(:call_stream) do |&block|
+          block.call(double('Chunk', content: 'Hello '))
+          block.call(double('Chunk', content: 'world'))
+          pipeline_response
+        end
+        post '/v1/responses',
+             Legion::JSON.dump({ input: 'Hi', model: 'legionio', stream: true }),
+             'CONTENT_TYPE' => 'application/json'
+        expect(last_response.content_type).to include('text/event-stream')
+        expect(last_response.body).to include('event: response.created')
+        expect(last_response.body).to include('event: response.output_text.delta')
+        expect(last_response.body).to include('event: response.completed')
+        expect(last_response.body).not_to include('data: [DONE]')
+        expect(executor_double).not_to have_received(:call_responses)
+      end
     end
 
-    it 'streams typed SSE events when stream is true' do
-      pipeline_response = double('Response',
+    context 'when provider natively supports the Responses API (openai)' do
+      before do
+        allow(executor_double).to receive(:provider_supports_responses?).and_return(true)
+      end
+
+      it 'routes non-streaming through call_responses' do
+        native_response = double('Response',
                                  routing: { model: 'legionio' },
                                  tokens:  { input_tokens: 5, output_tokens: 10 },
+                                 message: { content: 'Hello native!' },
                                  tools:   [])
-      allow(executor_double).to receive(:call_stream) do |&block|
-        block.call(double('Chunk', content: 'Hello '))
-        block.call(double('Chunk', content: 'world'))
-        pipeline_response
+        allow(executor_double).to receive(:call_responses).and_return(native_response)
+        post '/v1/responses',
+             Legion::JSON.dump({ input: 'Hello', model: 'legionio', stream: false }),
+             'CONTENT_TYPE' => 'application/json'
+        expect(last_response.status).to eq(200)
+        expect(executor_double).to have_received(:call_responses).with(body: anything, stream: false)
       end
-      # Also stub call_responses for streaming path (call_executor prefers it when upstream_body present)
-      allow(executor_double).to receive(:call_responses) do |**, &block|
-        block.call(double('Chunk', content: 'Hello '))
-        block.call(double('Chunk', content: 'world'))
-        pipeline_response
+
+      it 'routes streaming through call_responses' do
+        pipeline_response = double('Response',
+                                   routing: { model: 'legionio' },
+                                   tokens:  { input_tokens: 5, output_tokens: 10 },
+                                   tools:   [])
+        allow(executor_double).to receive(:call_responses) do |**, &block|
+          block.call(double('Chunk', content: 'Hello '))
+          block.call(double('Chunk', content: 'world'))
+          pipeline_response
+        end
+        post '/v1/responses',
+             Legion::JSON.dump({ input: 'Hi', model: 'legionio', stream: true }),
+             'CONTENT_TYPE' => 'application/json'
+        expect(last_response.content_type).to include('text/event-stream')
+        expect(last_response.body).to include('event: response.output_text.delta')
+        expect(executor_double).not_to have_received(:call_stream)
       end
-      post '/v1/responses',
-           Legion::JSON.dump({ input: 'Hi', model: 'legionio', stream: true }),
-           'CONTENT_TYPE' => 'application/json'
-      expect(last_response.content_type).to include('text/event-stream')
-      expect(last_response.body).to include('event: response.created')
-      expect(last_response.body).to include('event: response.output_text.delta')
-      expect(last_response.body).to include('event: response.completed')
-      expect(last_response.body).not_to include('data: [DONE]')
+    end
+  end
+
+  describe '.normalize_input_array' do
+    subject { Legion::LLM::API::Namespaces::OpenAI::Responses }
+
+    it 'maps developer role to system' do
+      result = subject.normalize_input_array([{ role: 'developer', content: 'You are an expert.' }])
+      expect(result).to eq([{ role: 'system', content: 'You are an expert.' }])
+    end
+
+    it 'preserves standard roles unchanged' do
+      result = subject.normalize_input_array([
+                                               { role: 'user', content: 'hello' },
+                                               { role: 'assistant', content: 'hi' }
+                                             ])
+      expect(result.map { |m| m[:role] }).to eq(%w[user assistant])
+    end
+
+    it 'mixes developer and user roles correctly' do
+      result = subject.normalize_input_array([
+                                               { role: 'developer', content: 'Be concise.' },
+                                               { role: 'user', content: 'explain ruby' }
+                                             ])
+      expect(result.first[:role]).to eq('system')
+      expect(result.last[:role]).to eq('user')
     end
   end
 
@@ -140,13 +197,6 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
 
   describe 'POST /api/llm/inference/v1/responses (legacy alias)' do
     it 'returns a response via the legacy path (same as /v1/responses)' do
-      allow(executor_double).to receive(:call_responses).and_return(
-        double('Response',
-               routing: { model: 'legionio' },
-               tokens:  { input_tokens: 5, output_tokens: 10 },
-               message: { content: 'Hello via legacy path!' },
-               tools:   [])
-      )
       post '/api/llm/inference/v1/responses',
            Legion::JSON.dump({ input: 'Hello', model: 'legionio', stream: false }),
            'CONTENT_TYPE' => 'application/json'
