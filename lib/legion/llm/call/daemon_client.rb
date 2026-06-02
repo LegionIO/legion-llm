@@ -179,14 +179,9 @@ module Legion
         # ── private helpers ────────────────────────────────────────────────
 
         def fetch_daemon_url
-          settings = Legion::LLM::Settings.current_settings
-          return nil unless settings.is_a?(Hash)
-
-          daemon = Legion::LLM::Settings.config_value(settings, :daemon, {})
-          return nil unless daemon.is_a?(Hash)
-          return nil if Legion::LLM::Settings.config_value(daemon, :enabled) == false
-
-          Legion::LLM::Settings.config_value(daemon, :url)
+          daemon = Legion::Settings[:llm]&.[](:daemon) || {}
+          return nil if daemon[:enabled] == false
+          daemon[:url]
         rescue StandardError => e
           handle_exception(e, level: :warn)
           nil

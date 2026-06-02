@@ -26,7 +26,7 @@ RSpec.describe 'Legion::LLM::API::Auth' do
 
   context 'when auth is disabled' do
     before do
-      allow(Legion::LLM::Settings).to receive(:value).with(:api, :auth, :enabled).and_return(false)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :api, :auth, :enabled).and_return(nil)
     end
 
     it 'allows requests without any token' do
@@ -37,8 +37,8 @@ RSpec.describe 'Legion::LLM::API::Auth' do
 
   context 'when auth is enabled and token is valid' do
     before do
-      allow(Legion::LLM::Settings).to receive(:value).with(:api, :auth, :enabled).and_return(true)
-      allow(Legion::LLM::Settings).to receive(:value).with(:api, :auth, :api_keys, default: []).and_return(['valid-key'])
+      allow(Legion::Settings).to receive(:dig).with(:llm, :api, :auth, :enabled).and_return(true)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :api, :auth, :api_keys).and_return(['valid-key'])
     end
 
     it 'allows Bearer token requests' do
@@ -54,8 +54,8 @@ RSpec.describe 'Legion::LLM::API::Auth' do
 
   context 'when auth is enabled and token is invalid' do
     before do
-      allow(Legion::LLM::Settings).to receive(:value).with(:api, :auth, :enabled).and_return(true)
-      allow(Legion::LLM::Settings).to receive(:value).with(:api, :auth, :api_keys, default: []).and_return(['valid-key'])
+      allow(Legion::Settings).to receive(:dig).with(:llm, :api, :auth, :enabled).and_return(true)
+      allow(Legion::Settings).to receive(:dig).with(:llm, :api, :auth, :api_keys).and_return(['valid-key'])
     end
 
     it 'returns 401 for bad Bearer token' do

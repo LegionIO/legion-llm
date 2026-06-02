@@ -132,7 +132,7 @@ module Legion
           def discovery_settings
             return {} unless Legion.const_defined?('Settings', false)
 
-            Legion::LLM::Settings.value(:discovery, default: {})
+            Legion::Settings[:llm][:discovery] || {}
           rescue StandardError => e
             handle_exception(e, level: :debug)
             {}

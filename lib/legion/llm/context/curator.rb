@@ -227,14 +227,14 @@ module Legion
         end
 
         def curation_settings
-          Legion::LLM::Settings.value(:context_curation, default: {})
+          Legion::Settings[:llm][:context_curation] || {}
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.context_curator.curation_settings')
           {}
         end
 
         def setting(key, default)
-          val = Legion::LLM::Settings.config_value(curation_settings, key)
+          val = curation_settings[key]
           val.nil? ? default : val
         end
 
@@ -601,9 +601,9 @@ module Legion
           ext = Legion::Settings[:extensions]
           providers = (ext.is_a?(Hash) && ext[:llm].is_a?(Hash) ? ext[:llm] : {})
           %w[ollama vllm mlx].each do |provider|
-            config = Legion::LLM::Settings.config_value(providers, provider, {})
-            enabled = Legion::LLM::Settings.config_value(config, :enabled)
-            model = Legion::LLM::Settings.config_value(config, :default_model)
+            config = providers[provider.to_sym] || providers[provider] || {}
+            enabled = config[:enabled]
+            model = config[:default_model]
             return model if config.is_a?(Hash) && enabled && model
           end
           nil

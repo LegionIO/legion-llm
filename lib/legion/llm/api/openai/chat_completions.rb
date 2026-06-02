@@ -35,7 +35,7 @@ module Legion
 
               request_id = body[:request_id] || SecureRandom.uuid
               normalized = Legion::LLM::API::Translators::OpenAIRequest.normalize(body)
-              model = normalized[:model] || Legion::LLM::Settings.value(:default_model) || 'default'
+              model = normalized[:model] || Legion::Settings[:llm][:default_model] || 'default'
               streaming = normalized[:stream] == true
               include_reasoning = body[:include_reasoning] == true || body[:include_thinking] == true
 
