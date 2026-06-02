@@ -31,6 +31,7 @@ module Legion
           max_tool_calls_per_turn:        50,
           tool_result_max_dispatch_chars: 4000,
           default_model:                  model_override,
+          default_temperature:            1.0,
           default_provider:               nil,
           system_baseline:                system_baseline_default,
           fleet:                          fleet_defaults,

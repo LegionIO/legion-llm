@@ -761,7 +761,8 @@ module Legion
       end
 
       def cacheable?(cache_opt, temperature, message)
-        cache_opt != false && temperature.to_f.zero? && message && Cache.enabled?
+        effective_temp = temperature.nil? ? llm_setting(:default_temperature, 1.0) : temperature
+        cache_opt != false && effective_temp.to_f.zero? && message && Cache.enabled?
       end
 
       def build_cache_key(model, provider, message, temperature)

@@ -3,7 +3,9 @@
 ## [0.12.0] - 2026-06-01
 
 ### Fixed
+- **cacheable? treated nil temperature as zero** — Added `default_temperature` setting (default 1.0). Requests without an explicit temperature now resolve against the default instead of being treated as `0.0`, preventing non-deterministic responses from being served from cache (inference.rb, settings.rb)
 - **ReDoS in infer_tool_name** — Possessive quantifier `\d++` replaced with `\d+` in search detection regex (context/curator.rb)
+- **ReDoS in strip_thinking regex** — `[^#\n][^\n]*` double-character-class pattern created exponential backtracking on long non-heading lines (10k-char lines). Replaced with anchored negative-lookahead variant that matches only lines starting with `#+ Thinking` headings. Benchmarked: pathological input drops from potential timeout to <5ms (context/curator.rb)
 - **Shell injection in dispatch_client_tool** — Added audit logging for all shell commands executed via native client tools (api/native/helpers.rb)
 - **Path traversal in file operations** — Added `validate_client_tool_path` that constrains file_read/file_write/file_edit to working directory, rejecting paths that escape via `..` (api/native/helpers.rb)
 - **Text block concatenation loss** — Anthropic translator now joins assistant text parts with `\n\n` separator instead of empty string (api/translators/anthropic_request.rb)
@@ -15,15 +17,10 @@
 - **find_fallback_provider hardcoded local exclusion** — ollama/vllm fallback exclusion is now configurable via `fallback.allow_local` setting instead of being permanently blocked (inference/executor.rb)
 - **extract_content double transform_keys** — Normalizes block keys once up front instead of calling transform_keys 2-3 times per block (api/translators/openai_request.rb)
 - **@pending_tool_history data race** — Tool history mutations in step_tool_calls now wrapped in `@pending_tool_history_mutex.synchronize` to match executor's async event emission (inference/steps/tool_calls.rb)
+- **Client passthrough tool events never emitted** — `client_passthrough_tool_loop_result` now emits both `emit_tool_call_event` and `emit_tool_result_event` for passthrough tools so they appear in `@pending_tool_history`, fire `@tool_event_handler` callbacks, and generate tool audit events (inference/steps/tool_calls.rb)
 
 ### Changed
 - **Text join separator** — OpenAI translator `extract_content` text blocks now join with `\n\n` instead of empty string for consistency
-
-## [0.12.0] - 2026-06-01
-
-### Fixed
-- **ReDoS in strip_thinking regex** — `[^#\n][^\n]*` double-character-class pattern replaced with anchored, non-backtracking variant that only strips lines starting with `#+ Thinking` headings (context/curator.rb)
-- **Client passthrough tool events never emitted** — `client_passthrough_tool_loop_result` now emits both `emit_tool_call_event` and `emit_tool_result_event` for passthrough tools so they appear in `@pending_tool_history`, fire `@tool_event_handler` callbacks, and generate tool audit events (inference/steps/tool_calls.rb)
 
 ## [0.11.0] - 2026-05-31
 
