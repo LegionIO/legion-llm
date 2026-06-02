@@ -58,7 +58,8 @@ module Legion
           api:                            api_defaults,
           compliance:                     compliance_defaults,
           skills:                         skills_defaults,
-          claude_cli:                     claude_cli_defaults
+          claude_cli:                     claude_cli_defaults,
+          fallback:                       fallback_defaults
         }
       end
 
@@ -544,6 +545,12 @@ module Legion
           auto_discover:     { claude: false, codex: false },
           enabled_skills:    [],
           disabled_skills:   []
+        }
+      end
+
+      def self.fallback_defaults
+        {
+          allow_local: true
         }
       end
 

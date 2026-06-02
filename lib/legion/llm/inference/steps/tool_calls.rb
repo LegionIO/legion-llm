@@ -169,7 +169,7 @@ module Legion
               normalized = normalize_native_tool_call(tool_call)
               emit_tool_call_event(normalized, round)
               emit_tool_result_event(
-                ToolResultEvent.new(
+                Executor::ToolResultEvent.new(
                   result:       "Passthrough to client: #{normalized[:name]}",
                   tool_call_id: normalized[:id],
                   tool_name:    normalized[:name],

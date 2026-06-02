@@ -239,27 +239,20 @@ module Legion
         end
 
         def strip_thinking_tags(text)
-          result = text
-          THINKING_TAG_PAIRS.each do |open_tag, close_tag|
-            result = strip_tag_pair(result, open_tag, close_tag)
+          result = text.lstrip
+          loop do
+            stripped = false
+            THINKING_TAG_PAIRS.each do |open_tag, close_tag|
+              next unless result.start_with?(open_tag)
+
+              close_idx = result.index(close_tag, open_tag.length)
+              result = close_idx ? result[(close_idx + close_tag.length)..].lstrip : ''
+              stripped = true
+              break
+            end
+            break unless stripped
           end
           result
-        end
-
-        def strip_tag_pair(text, open_tag, close_tag)
-          out = +''
-          pos = 0
-          while pos < text.length
-            open_idx = text.index(open_tag, pos)
-            break unless open_idx
-
-            out << text[pos...open_idx]
-            close_idx = text.index(close_tag, open_idx + open_tag.length)
-            pos = close_idx ? close_idx + close_tag.length : text.length
-          end
-          out << text[pos..] if pos < text.length
-          # Strip any unclosed open tag left at the end (provider died mid-stream).
-          out.sub(/#{Regexp.escape(open_tag)}.*\z/m, '').strip
         end
 
         def curate_message(msg, assistant_response)

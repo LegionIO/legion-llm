@@ -26,17 +26,6 @@ module Legion
 
       module_function
 
-      def llm_setting(key, default = nil)
-        Legion::LLM::Settings.config_value(Legion::LLM::Settings.current_settings, key, default)
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'llm.inference.settings')
-        default
-      end
-
-      def settings_value(*keys, default: nil)
-        Legion::LLM::Settings.value(*keys, default: default)
-      end
-
       # Public inference entry points — these are the methods delegated from Legion::LLM
 
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
@@ -54,7 +43,7 @@ module Legion
 
         result = if defined?(Legion::Telemetry::OpenInference)
                    Legion::Telemetry::OpenInference.llm_span(
-                     model:    (model || llm_setting(:default_model)).to_s,
+                     model:    (model || Legion::Settings[:llm][:default_model]).to_s,
                      provider: provider&.to_s,
                      input:    message
                    ) do |_span|
@@ -178,7 +167,7 @@ module Legion
         log.debug("[llm][inference] chat_direct.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
-          ttl = settings_value(:prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
+          ttl = Legion::Settings.dig(:llm, :prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
           Cache.set(cache_key, result, ttl: ttl)
         end
 
@@ -377,7 +366,7 @@ module Legion
         end
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
-        resolved_model = model || llm_setting(:default_model)
+        resolved_model = model || Legion::Settings[:llm][:default_model]
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_before(messages: messages, model: resolved_model)
@@ -399,7 +388,7 @@ module Legion
       end
 
       def pipeline_enabled?
-        llm_setting(:pipeline_enabled) == true
+        Legion::Settings[:llm][:pipeline_enabled] == true
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.pipeline_enabled')
         false
@@ -440,7 +429,7 @@ module Legion
           &
         )
         return result if result.is_a?(Hash) && result[:deferred]
-        return normalize_ask_direct_hash(result, fallback_model: model || llm_setting(:default_model)) if result.is_a?(Hash)
+        return normalize_ask_direct_hash(result, fallback_model: model || Legion::Settings[:llm][:default_model]) if result.is_a?(Hash)
 
         response, resolved_model = resolve_ask_direct_response(result, message, model, &)
 
@@ -469,7 +458,7 @@ module Legion
         resolved_model = if result.respond_to?(:model_id) && result.model_id
                            result.model_id.to_s
                          else
-                           (requested_model || llm_setting(:default_model)).to_s
+                           (requested_model || Legion::Settings[:llm][:default_model]).to_s
                          end
         [result, resolved_model]
       end
@@ -504,10 +493,10 @@ module Legion
           assert_external_allowed! if external_tier?(tier.to_sym)
         end
 
-        model ||= llm_setting(:default_model)
+        model ||= Legion::Settings[:llm][:default_model]
         instance = resolution&.instance || kwargs[:instance] || kwargs[:instance_id] || kwargs[:provider_instance]
         provider ||= (model && Router.infer_provider_for_model(model)) ||
-                     llm_setting(:default_provider)
+                     Legion::Settings[:llm][:default_provider]
 
         opts = {}
         opts[:model] = model if model
@@ -737,7 +726,7 @@ module Legion
       end
 
       def response_guards_enabled?
-        settings_value(:response_guards, :enabled) == true
+        Legion::Settings.dig(:llm, :response_guards, :enabled) == true
       end
 
       def blocked_hook_response(blocked)
@@ -761,22 +750,22 @@ module Legion
       end
 
       def cacheable?(cache_opt, temperature, message)
-        effective_temp = temperature.nil? ? llm_setting(:default_temperature, 1.0) : temperature
+        effective_temp = temperature.nil? ? Legion::Settings[:llm][:default_temperature] : temperature
         cache_opt != false && effective_temp.to_f.zero? && message && Cache.enabled?
       end
 
       def build_cache_key(model, provider, message, temperature)
         messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         Cache.key(
-          model:       model || llm_setting(:default_model),
-          provider:    provider || llm_setting(:default_provider),
+          model:       model || Legion::Settings[:llm][:default_model],
+          provider:    provider || Legion::Settings[:llm][:default_provider],
           messages:    messages_arr,
           temperature: temperature
         )
       end
 
       def escalation_enabled?
-        routing = llm_setting(:routing)
+        routing = Legion::Settings[:llm][:routing]
         return false unless routing.is_a?(Hash)
 
         esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
@@ -784,7 +773,7 @@ module Legion
       end
 
       def escalation_quality_threshold
-        routing = llm_setting(:routing)
+        routing = Legion::Settings[:llm][:routing]
         return 50 unless routing.is_a?(Hash)
 
         esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
@@ -863,7 +852,7 @@ module Legion
         return external_tier?(tier.to_sym) if tier
         return false unless enterprise_privacy?
 
-        resolved = provider || llm_setting(:default_provider)
+        resolved = provider || Legion::Settings[:llm][:default_provider]
         external_providers = %i[anthropic bedrock openai gemini azure]
         external_providers.include?(resolved&.to_sym)
       end
