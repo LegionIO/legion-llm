@@ -159,7 +159,10 @@ module Legion
               owned_by: owned_by
             }
             if limits.is_a?(Hash)
-              obj[:context_window] = limits[:context_window] if limits[:context_window]
+              if limits[:context_window]
+                obj[:context_window] = limits[:context_window]
+                obj[:context_size] = limits[:context_window]
+              end
               obj[:max_output_tokens] = limits[:max_output_tokens] if limits[:max_output_tokens]
             end
             obj
