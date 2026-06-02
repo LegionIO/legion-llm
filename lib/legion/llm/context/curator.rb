@@ -522,7 +522,7 @@ module Legion
             file_count = content.lines.count { |l| l.include?('/') }
             "Search returned #{line_count} matches across #{file_count} files"
           when /bash|run_command|execute/
-            exit_match = content.match(/exit(?:\s+code)?:?\s*(\d+)/i)
+            exit_match = content[0, 500].match(/exit(?: code)?:? *(\d+)/i)
             exit_code  = exit_match ? exit_match[1] : '0'
             last_lines = lines.last(3).map(&:chomp).join(' | ')
             "Command output (#{line_count} lines), exit #{exit_code}: #{last_lines[0, 200]}"
