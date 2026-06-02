@@ -60,6 +60,7 @@ module Legion
         ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
 
         THINKING_TAG_PATTERN = %r{<think(?:ing)?>((?:[^<]|<(?!/think(?:ing)?>))*?)</think(?:ing)?>}m
+        THINKING_TAG_PATTERN_SHORT = %r{<think>(.*?)</think>}m
 
         CONFIG_ERROR_PATTERNS = [
           /ValidationException/,
@@ -1036,9 +1037,9 @@ module Legion
             next msg unless (msg[:role] || msg['role']).to_s == 'assistant'
 
             content = msg[:content] || msg['content']
-            next msg unless content.is_a?(String) && content.include?('<think')
+            next msg unless content.is_a?(String) && (content.include?('<think') || content.include?('<think>'))
 
-            cleaned = content.gsub(THINKING_TAG_PATTERN, '').strip
+            cleaned = content.gsub(THINKING_TAG_PATTERN, '').gsub(THINKING_TAG_PATTERN_SHORT, '').strip
             next msg if cleaned == content
 
             stripped_count += 1

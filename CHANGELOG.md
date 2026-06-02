@@ -18,6 +18,7 @@
 - **extract_content double transform_keys** — Normalizes block keys once up front instead of calling transform_keys 2-3 times per block (api/translators/openai_request.rb)
 - **@pending_tool_history data race** — Tool history mutations in step_tool_calls now wrapped in `@pending_tool_history_mutex.synchronize` to match executor's async event emission (inference/steps/tool_calls.rb)
 - **Client passthrough tool events never emitted** — `client_passthrough_tool_loop_result` now emits both `emit_tool_call_event` and `emit_tool_result_event` for passthrough tools so they appear in `@pending_tool_history`, fire `@tool_event_handler` callbacks, and generate tool audit events (inference/steps/tool_calls.rb)
+- **Thinking tag pattern divergence** — Executor's `strip_thinking_from_history` only handled `<thinking>`/`<think(?:ing)?>` (Anthropic/long form) but not the short `<think>` variant used by DeepSeek, Qwen, Ollama, and vLLM. Added `THINKING_TAG_PATTERN_SHORT` constant and applied both gsubs so short-form thinking blocks are stripped before dispatch on every turn (inference/executor.rb)
 
 ### Changed
 - **Text join separator** — OpenAI translator `extract_content` text blocks now join with `\n\n` instead of empty string for consistency
