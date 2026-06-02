@@ -683,8 +683,186 @@ All other event fields (enrichments, timeline, tracing, etc.) go into `request_j
 
 The 57,779 existing `request_json = '{}'` rows **cannot be recovered** — the audit events are gone. Compensating control: add a `data_quality_flag` column (varchar 32) to `llm_message_inference_requests`. Backfill sets it to `'incomplete'` for all existing `{}` rows. New rows get `'complete'`. Compliance reports filter on `data_quality_flag = 'complete'` and document the gap with a formal exception noting the date range and root cause fix.
 
+## Adversarial Review Round 2 — Resolutions
+
+### 🔴 #1: request.opened misses denied/blocked requests
+
+**Resolution: Two-event model for requests.**
+
+- `request.received` — fires at the TOP of `execute_steps`, before any pre-provider step. Contains: identity, raw messages, client_ip, user_agent, request_id, timestamp. Lightweight — just "someone asked us to do something."
+- `request.opened` — fires after pre-steps complete, before dispatch. Contains: full assembled payload with classification, tools, routing intent, escalation chain.
+
+If RBAC denies, classification blocks, or budget rejects — the `request.received` row exists with status `'denied'` or `'blocked'`. The `request.opened` event fires as a status update to that row (or never fires, and the row stays at `'received'`).
+
+The `request_writer` runner handles all three: `request.received` (INSERT), `request.opened` (UPDATE with full payload), `request.closed` (UPDATE with final status).
+
+Priority: `request.received` = 9 (highest — must always land), `request.opened` = 8, `request.closed` = 2.
+
+### 🔴 #2: after_chat metering hook bypasses executor
+
+**Resolution: Decommission the hook in Phase 1.**
+
+`Legion::LLM::Hooks::Metering.install` registers an `after_chat` hook that emits via the old metering path. In Phase 1, when v2 events are enabled:
+- The hook is NOT installed (guarded by `unless Legion::Settings.dig(:llm, :audit, :emit_v2)`)
+- The v2 emission points in the executor replace it entirely
+
+For non-pipeline paths (`chat_single_native`, `chat_direct`), the v2 `response.attempt` emission is added directly in those methods — they don't need the hook.
+
+### 🔴 #3: Response UUID collision on same-provider escalation
+
+**Resolution: v2 events use emit-time UUIDs, not deterministic hashes.**
+
+The old `stable_uuid("response:#{request_ref}:#{provider}")` dedup key is broken for escalation. The new `response_writer` uses `response_id` (a `SecureRandom.uuid` generated at emit time in the executor) as the primary key. Dedup is on `(request_ref, attempt_no)` compound unique index — not UUID.
+
+The old `find_or_create_response` with its deterministic UUID is only used by the legacy prompts actor (Phase 2 backward compat). It cannot collide with v2 rows because they use different UUID namespaces.
+
+### 🔴 #4: Metric UUID is 1:1 with request, not attempt
+
+**Resolution: Metric UUID includes response_id.**
+
+New dedup key: `"metric:#{response_id}"` — one metric per response row, guaranteed unique per attempt.
+
+The old path (`"metric:#{request_ref}"`) remains for legacy metering actor only. During Phase 2, if the old actor creates a metric and the new actor also creates one for the same request (different response_id), both coexist. The reconciliation actor merges them post-Phase 3.
+
+### 🔴 #5: Standalone embedding calls lack request context
+
+**Resolution: Standalone embeddings get their own `request.received` event.**
+
+When `Call::Embeddings.generate` is called OUTSIDE a pipeline request (no `@request` context):
+- Generate a synthetic `request_id` = `"embed_#{SecureRandom.hex(12)}"`
+- Emit `request.received` with `operation: 'embed'`, the caller identity (from thread-local or passed explicitly), and input metadata (text_chars, chunks)
+- Emit `response.attempt` with `operation: 'embed'` after provider returns
+
+When called INSIDE a pipeline (RAG step, etc.): link via `parent_request_id` to the enclosing request. No separate `request.received`.
+
+### 🔴 #6: Async step_post_response during Phase 2 dual-emit
+
+**Resolution: Phase 1 moves `post_response` out of ASYNC_SAFE_STEPS immediately.**
+
+This is the one-line fix from issue #146:
+```ruby
+ASYNC_SAFE_STEPS = %i[knowledge_capture response_return].freeze  # post_response REMOVED
+```
+
+This happens in Phase 1, BEFORE v2 events are added. It fixes the 93% → 100% success rate for `msg_*` requests immediately. The v2 events then replace `step_post_response` entirely in Phase 3.
+
+### 🟠 #7: request_json stores array vs object inconsistency
+
+**Accepted as-is.** The `request_json` column stores the messages array `[{...}]` for the new system. This is valid JSON. Downstream queries should use `request_json::jsonb` (cast to JSONB) and `jsonb_array_elements` for message-level queries. The column is a compliance artifact (verbatim what was processed), not a queryable document store. Adding a note to the schema docs.
+
+### 🟠 #8: deep_symbolize on payload
+
+**Accepted as-is.** `Legion::JSON.dump` handles symbol keys correctly (converts to strings in output). Time objects are serialized via `.iso8601` by `Legion::JSON`'s encoder. This is tested in existing specs and not a new risk.
+
+### 🟠 #9: No schema validation in request_writer
+
+**Resolution: Add event_type validation with unknown-type alerting.**
+
+```ruby
+def write_request_record(payload)
+  case payload[:event_type]
+  when 'request.received'  then insert_request(payload)
+  when 'request.opened'    then update_request_payload(payload)
+  when 'request.closed'    then update_request_status(payload)
+  else
+    log.error("[request_writer] unknown event_type=#{payload[:event_type]} request_id=#{payload[:request_id]}")
+    # NACK without requeue → DLQ for investigation
+  end
+end
+```
+
+Required field validation (request_id, event_type, timestamp) happens before the case statement. Missing required fields → DLQ.
+
+### 🟠 #10: Embed responses produce response_json = '{}'
+
+**Resolution: Embed responses don't write to response_json.**
+
+For `operation: 'embed'`, the `response_writer` skips `response_json` and `response_content_hash`. Instead it writes:
+- `status: 'success'` or `'error'`
+- `input_tokens` / `cost_usd` (in the linked metric row)
+- `provider`, `model_key`, `tier`
+- `latency_ms`, `wall_clock_ms`
+
+No response_json is expected or written. The column stays NULL (not `{}`). NULL means "not applicable for this operation type." `{}` means "should have data but doesn't."
+
+### 🟠 #11: @escalation_history never written to any table
+
+**Resolution: Escalation history is reconstructable from response.attempt rows.**
+
+Each `response.attempt` carries `escalation_context: { move: 'lateral', from_provider: '...', from_model: '...' }`. The full chain is recoverable by querying all response rows for a request_id ordered by attempt_no. No separate "escalation history" event needed — the data is there per-attempt.
+
+The `request.opened` event carries `escalation_chain: [...]` (the planned chain from the router). Comparing planned vs actual (from response rows) gives the full picture.
+
+### 🟠 #12: Spool overflow keeps newest — can orphan paired events
+
+**Resolution: Spool overflow blocks requests (never drops events).**
+
+Per the spool overflow policy defined above: at 100% capacity, new LLM requests are BLOCKED (503). Events are never dropped from the spool. The "keeps newest" trimming behavior in the old metering spool is NOT used by the new `EventSpool`. The new spool is append-only until flushed or until the overflow policy triggers.
+
+### 🟠 #13: Per-process spool on ephemeral storage
+
+**Resolution: Document as known limitation with mitigation.**
+
+For containerized deployments:
+- Spool path MUST be configured to a persistent volume (`/var/lib/legionio/spool/` mounted as PVC)
+- If ephemeral storage is used, the overflow policy `:block_requests` prevents data loss (requests fail rather than losing audit)
+- For ECS/EKS without PVC: use the `:block_requests` policy AND set spool max low (1000) so transport outages surface immediately as request failures rather than silently accumulating
+
+Added to deployment docs, not the architecture doc.
+
+### 🟡 #14-15: No per-round/per-attempt emission points in executor code
+
+**Acknowledged — this is implementation work, not a design gap.** The design doc specifies WHERE events emit. The implementation plan will detail the code changes needed in `native_tool_loop.rb` (inject after each `dispatch_provider_request`) and `executor.rb#attempt_escalation` (inject after `execute_provider_request` returns).
+
+### 🟡 #16: llm_messages table duplicates conversation state
+
+**Out of scope.** The `llm_messages` table is owned by the ledger for audit persistence. The in-memory `Conversation` store is for runtime context management. They serve different purposes (audit vs. runtime) and intentional divergence is acceptable.
+
+### 🟡 #17: current_turn_messages truncates system prompt
+
+**Resolution: System prompt is stored separately.**
+
+The `request.opened` event carries `system_prompt_hash` (from `response.attempt`) AND the full system prompt is available in `enrichments['gaia:system_prompt']` within the event payload. The `current_turn_messages` truncation is for the MESSAGES field only. The system prompt injected by `EnrichmentInjector` is captured in `request_json` at insert time (it's the first message in the array before truncation applies).
+
+Additionally: `audit_max_messages` defaults to 20 which covers the system prompt for most conversations. For long conversations, the hash provides tamper-evidence.
+
+### 🟡 #18: Metering.emit swallows exceptions without spooling
+
+**Resolution: Fix in Phase 1 — emit exceptions trigger spool.**
+
+```ruby
+def emit(event)
+  event = attributed_event(event)
+  event_class = metering_event_class if transport_connected?
+  if event_class
+    event_class.new(**event).publish
+    :published
+  else
+    spool_event(event)
+    :spooled
+  end
+rescue StandardError => e
+  spool_event(event)  # <-- spool on ANY failure, not just transport-down
+  handle_exception(e, level: :warn, operation: 'llm.audit.emit')
+  :spooled
+end
+```
+
+### 🟡 #19-20: Reconciliation ambiguous join + dual-emit enrichment skip
+
+**Resolution: These are Phase 2 transitional issues that self-resolve in Phase 3.** The reconciliation query is improved to match on `(conversation_id, request_ref, inserted_at within 5s)`. The enrichment skip during dual-emit is acceptable — v2 data wins in Phase 3 when old actors are removed.
+
+### 🟢 #21-23: Spool size mismatch, log.unknown, debug PHI logging
+
+- #21: New `EventSpool` uses 50K default. Old metering spool stays at 10K until decommissioned. No conflict — they're separate files.
+- #22: `log.unknown` removed (bug, not design).
+- #23: The debug logging (`log.error payload`) was temporary instrumentation added during this investigation session. It MUST be removed before any commit. Not part of the design.
+
 ## Resolved Design Decisions
 
 1. `llm_policy_evaluations` — populated in Phase 2 (part of this work). The data is already in `request.opened`.
 2. Backfill — formal exception with `data_quality_flag` column, not a backfill job.
 3. `llm.metering` exchange — formally deprecated in Phase 3. Left operational in Phase 2 for backward compat but metering actor stops creating request/response rows.
+4. Three-event model: `request.received` (at entry) → `request.opened` (after pre-steps) → `request.closed` (after all attempts).
+5. Async `post_response` fix (issue #146) ships in Phase 1 as an immediate fix, independent of v2 events.
+6. `after_chat` metering hook decommissioned in Phase 1 (guarded by feature flag).
