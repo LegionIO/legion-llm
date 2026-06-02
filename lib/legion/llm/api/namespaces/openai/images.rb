@@ -23,7 +23,8 @@ module Legion
             def self.capable_provider_available?(capability)
               instances = begin
                 Legion::LLM::Call::Registry.all_instances
-              rescue StandardError
+              rescue StandardError => e
+                log.debug "[llm][api][openai][images] action=registry_fallback capability=#{capability} error=#{e.class} message=#{e.message}"
                 []
               end
               instances.any? do |entry|
@@ -76,7 +77,8 @@ module Legion
 
                 Legion::JSON.load(raw)
               end
-            rescue StandardError
+            rescue StandardError => e
+              log.debug "[llm][api][openai][images] action=parse_media_body_fallback error=#{e.class} message=#{e.message}"
               {}
             end
 
@@ -116,7 +118,7 @@ module Legion
                      Legion::JSON.dump({ error: { message: 'prompt is required', type: 'invalid_request_error', code: nil } })
               end
 
-              model      = (body[:model] || body['model'] || Legion::LLM::Settings.value(:default_model) || 'dall-e-3').to_s
+              model      = (body[:model] || body['model'] || Legion::Settings[:llm][:default_model] || 'dall-e-3').to_s
               n          = [(body[:n] || body['n'] || 1).to_i, 1].max
               size       = (body[:size] || body['size'] || '1024x1024').to_s
               quality    = (body[:quality] || body['quality'] || 'standard').to_s

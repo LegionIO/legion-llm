@@ -15,11 +15,11 @@ module Legion
             def self.registered(app)
               log.debug('[llm][api][namespaces][openai][embeddings] registering routes')
 
-              app.post '/v1/embeddings' do
+              app.post '/v1/embeddings' do # rubocop:disable Metrics/BlockLength
                 require_llm!
                 body  = parse_request_body
                 input = body[:input]
-                model = body[:model] || Legion::LLM::Settings.value(:default_model)
+                model = body[:model] || Legion::Settings[:llm][:default_model]
 
                 if input.nil? || (input.respond_to?(:empty?) && input.empty?)
                   return openai_error('input is required', type: 'invalid_request_error',
@@ -43,6 +43,16 @@ module Legion
                 )
 
                 log.info("[llm][api][namespaces][openai][embeddings] action=complete model=#{model} dims=#{vector_array.size}")
+
+                Legion::LLM::Audit.emit_prompt(
+                  request_id:   SecureRandom.uuid,
+                  caller:       build_server_caller(source: 'openai_embeddings', path: request.path, env: env),
+                  routing:      { model: model, provider: 'embed' },
+                  tokens:       { input_tokens: (text.length / 4.0).ceil, output_tokens: 0 },
+                  request_type: 'embedding',
+                  timestamp:    Time.now
+                )
+
                 content_type :json
                 Legion::JSON.dump(response_body)
               rescue Legion::LLM::AuthError => e

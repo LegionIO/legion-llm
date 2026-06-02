@@ -9,8 +9,8 @@ RSpec.describe 'Legion::LLM::Settings api.use_namespaces toggle' do
       expect(defaults[:api][:use_namespaces]).to eq(true)
     end
 
-    it 'is accessible via Settings.value' do
-      result = Legion::LLM::Settings.value(:api, :use_namespaces)
+    it 'is accessible via Legion::Settings[:llm]' do
+      result = Legion::Settings[:llm][:api][:use_namespaces]
       expect(result).to eq(true)
     end
 
@@ -23,20 +23,18 @@ RSpec.describe 'Legion::LLM::Settings api.use_namespaces toggle' do
 
   describe 'settings toggle behavior' do
     after do
-      # Reset to registered defaults to prevent cross-test bleed
       Legion::LLM::Settings.register_defaults!
     end
 
-    it 'returns false when setting is absent from runtime hash' do
-      # Simulate settings hash without use_namespaces key
-      allow(Legion::Settings).to receive(:[]).with(:llm).and_return({ api: { auth: { enabled: false } } })
-      result = Legion::LLM::Settings.value(:api, :use_namespaces, default: false)
-      expect(result).to eq(false)
+    it 'returns nil when setting is absent from runtime hash' do
+      Legion::Settings[:llm][:api].delete(:use_namespaces)
+      result = Legion::Settings[:llm][:api][:use_namespaces]
+      expect(result).to be_nil
     end
 
     it 'returns true when explicitly set to true' do
-      allow(Legion::Settings).to receive(:[]).with(:llm).and_return({ api: { use_namespaces: true, auth: { enabled: false } } })
-      result = Legion::LLM::Settings.value(:api, :use_namespaces, default: false)
+      Legion::Settings[:llm][:api][:use_namespaces] = true
+      result = Legion::Settings[:llm][:api][:use_namespaces]
       expect(result).to eq(true)
     end
   end

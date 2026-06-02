@@ -201,7 +201,8 @@ module Legion
               def files_storage_path
                 configured = begin
                   Legion::Settings.dig(:llm, :files, :storage_path)
-                rescue StandardError
+                rescue StandardError => e
+                  log.debug "[llm][api][anthropic][files] action=files_storage_path_fallback error=#{e.class} message=#{e.message}"
                   nil
                 end
                 base = configured.to_s.empty? ? ::File.join(Dir.home, '.legionio', 'data', 'files') : configured

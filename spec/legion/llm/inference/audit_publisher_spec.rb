@@ -41,7 +41,7 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:request_id]).to eq('req_abc')
       expect(event[:conversation_id]).to eq('conv_xyz')
       expect(event[:caller]).to eq(response.caller)
-      expect(event[:identity]).to eq({ identity: 'matt@example.com', type: :human, credential: :system })
+      expect(event[:identity]).to eq({ requested_by: { identity: 'user:matt', type: :user, credential: :api } })
       expect(event[:tokens]).to be_a(Hash)
       expect(event[:routing]).to eq(response.routing)
       expect(event[:timestamp]).to be_a(Time)
@@ -167,7 +167,7 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       expect(event[:response_thinking]).to eq(thinking)
     end
 
-    it 'keeps extension caller context while using publisher identity for audit attribution' do
+    it 'keeps extension caller context and uses caller hash as identity' do
       response = Legion::LLM::Inference::Response.build(
         request_id: 'r', conversation_id: 'c',
         message: { role: :assistant, content: 'answer' },
@@ -178,27 +178,28 @@ RSpec.describe Legion::LLM::Inference::AuditPublisher do
       event = described_class.build_event(request: request, response: response)
 
       expect(event[:caller]).to eq(extension: 'lex-test')
-      expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
+      expect(event[:identity]).to eq(extension: 'lex-test')
     end
 
-    it 'does not let namespaced caller ids override publisher identity' do
+    it 'uses namespaced caller hash directly as identity' do
+      caller_hash = {
+        requested_by: {
+          id:         'system:system',
+          identity:   'system',
+          type:       'service',
+          credential: 'system'
+        }
+      }
       response = Legion::LLM::Inference::Response.build(
         request_id: 'r', conversation_id: 'c',
         message: { role: :assistant, content: 'answer' },
-        caller: {
-          requested_by: {
-            id:         'system:system',
-            identity:   'system',
-            type:       'service',
-            credential: 'system'
-          }
-        }
+        caller: caller_hash
       )
       request = Legion::LLM::Inference::Request.build(messages: [])
 
       event = described_class.build_event(request: request, response: response)
 
-      expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
+      expect(event[:identity]).to eq(caller_hash)
     end
 
     it 'does not let string caller identity override publisher identity' do

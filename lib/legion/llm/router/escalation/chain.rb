@@ -5,12 +5,15 @@ module Legion
     module Router
       class EscalationChain
         include Enumerable
+        include Legion::Logging::Helper
 
         attr_reader :max_attempts
 
         def initialize(resolutions:, max_attempts: 3)
           @resolutions = resolutions.dup.freeze
           @max_attempts = max_attempts
+          log.debug "[llm][escalation_chain] action=built size=#{@resolutions.size} max_attempts=#{@max_attempts} " \
+                    "providers=#{@resolutions.map { |r| "#{r.provider}:#{r.model}" }.join(', ')}"
         end
 
         def primary
@@ -20,7 +23,7 @@ module Legion
         def each(&)
           return enum_for(:each) unless block_given?
 
-          padded_resolutions.each(&)
+          capped_resolutions.each(&)
         end
 
         def size
@@ -37,7 +40,7 @@ module Legion
 
         private
 
-        def padded_resolutions
+        def capped_resolutions
           return [] if @resolutions.empty?
 
           @resolutions.first(@max_attempts)

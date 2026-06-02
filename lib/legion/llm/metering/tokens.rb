@@ -8,6 +8,7 @@ module Legion
         extend Legion::Logging::Helper
 
         MUTEX = Mutex.new
+        MAX_ENTRIES = 10_000
 
         class << self
           # Records token usage from a completed LLM call.
@@ -22,7 +23,14 @@ module Legion
               recorded_at:   Time.now
             }
 
-            MUTEX.synchronize { store << entry }
+            MUTEX.synchronize do
+              store << entry
+              # Evict oldest entries to prevent unbounded memory growth in long-running processes
+              if store.size > MAX_ENTRIES
+                evicted = store.shift(store.size - MAX_ENTRIES)
+                log.debug "[LLM::TokenTracker] evicted #{evicted.size} entries (max #{MAX_ENTRIES})"
+              end
+            end
             log.debug "[LLM::TokenTracker] recorded #{input_tokens}+#{output_tokens} tokens (total: #{total_tokens})"
             entry
           end
@@ -99,14 +107,14 @@ module Legion
           end
 
           def session_max_tokens
-            Legion::LLM::Settings.value(:budget, :session_max_tokens)
+            Legion::Settings.dig(:llm, :budget, :session_max_tokens)
           rescue StandardError => e
             handle_exception(e, level: :debug)
             nil
           end
 
           def session_warn_tokens
-            Legion::LLM::Settings.value(:budget, :session_warn_tokens)
+            Legion::Settings.dig(:llm, :budget, :session_warn_tokens)
           rescue StandardError => e
             handle_exception(e, level: :debug)
             nil

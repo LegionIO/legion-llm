@@ -72,7 +72,7 @@ module Legion
               end
             end
 
-            msg = { role: :assistant, content: text_parts.join }
+            msg = { role: :assistant, content: text_parts.join("\n\n") }
             msg[:tool_calls] = tool_calls if tool_calls.any?
             [msg]
           end
@@ -96,8 +96,11 @@ module Legion
                   text_parts = []
                 end
                 result_content = bs[:content]
-                result_content = extract_text_content(result_content) if result_content.is_a?(Array)
-                messages << { role: :tool, tool_call_id: bs[:tool_use_id], content: result_content.to_s }
+                messages << if result_content.is_a?(Array)
+                              { role: :tool, tool_call_id: bs[:tool_use_id], content: result_content }
+                            else
+                              { role: :tool, tool_call_id: bs[:tool_use_id], content: result_content.to_s }
+                            end
               else
                 text_parts << bs.to_s
               end
@@ -122,10 +125,18 @@ module Legion
             return nil if sys.nil?
             return sys if sys.is_a?(String)
 
-            # system can be a string or array of content blocks
             if sys.is_a?(Array)
-              text_blocks = sys.select { |b| (b[:type] || b['type']).to_s == 'text' }
-              text_blocks.map { |b| b[:text] || b['text'] }.join("\n\n")
+              has_cache_control = sys.any? { |b| b[:cache_control] || b['cache_control'] }
+              if has_cache_control
+                sys.filter_map do |b|
+                  next unless (b[:type] || b['type']).to_s == 'text'
+
+                  { text: b[:text] || b['text'], cache_control: b[:cache_control] || b['cache_control'] }.compact
+                end
+              else
+                text_blocks = sys.select { |b| (b[:type] || b['type']).to_s == 'text' }
+                text_blocks.map { |b| b[:text] || b['text'] }.join("\n\n")
+              end
             else
               sys.to_s
             end

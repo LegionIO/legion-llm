@@ -90,7 +90,7 @@ module Legion
         end
 
         def embedding_settings
-          Legion::LLM::Settings.value(:embedding, default: {})
+          Legion::Settings[:llm][:embedding]
         end
 
         def enabled_config?(config)

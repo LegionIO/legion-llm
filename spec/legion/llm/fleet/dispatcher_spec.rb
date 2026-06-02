@@ -2,6 +2,23 @@
 
 require 'spec_helper'
 
+unless defined?(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
+  module Legion
+    module Extensions
+      module Llm
+        module Transport
+          module Messages
+            class FleetRequest
+              def publish(**); end
+              def self.new(**); end
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
 RSpec.describe Legion::LLM::Fleet::Dispatcher do
   let(:future) { instance_double(Concurrent::Promises::ResolvableFuture) }
 
@@ -21,8 +38,8 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       expect(described_class.fleet_enabled?).to eq(false)
     end
 
-    it 'returns false when string-keyed fleet dispatch settings disable fleet' do
-      Legion::Settings[:llm]['fleet'] = { 'dispatch' => { 'enabled' => false } }
+    it 'returns false when fleet dispatch settings disable fleet' do
+      Legion::Settings[:llm][:fleet] = { dispatch: { enabled: false } }
       expect(described_class.fleet_enabled?).to eq(false)
     end
 
@@ -265,11 +282,11 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       expect(described_class.resolve_timeout(operation: :chat)).to eq(60)
     end
 
-    it 'reads per-type timeouts from string-keyed settings' do
-      Legion::Settings[:llm]['fleet'] = {
-        'dispatch' => {
-          'timeouts'        => { 'embed' => 12 },
-          'timeout_seconds' => 45
+    it 'reads per-type timeouts and default timeout from settings' do
+      Legion::Settings[:llm][:fleet] = {
+        dispatch: {
+          timeouts:        { embed: 12 },
+          timeout_seconds: 45
         }
       }
 
@@ -318,9 +335,9 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       expect(key).to eq('llm.fleet.offering.macbook-m4.qwen3-6-27b.inference')
     end
 
-    it 'reads routing style from string-keyed fleet dispatch settings' do
-      Legion::Settings[:llm]['fleet'] = {
-        'dispatch' => { 'routing_style' => 'legacy_provider_model' }
+    it 'reads routing style from fleet dispatch settings' do
+      Legion::Settings[:llm][:fleet] = {
+        dispatch: { routing_style: 'legacy_provider_model' }
       }
 
       key = described_class.build_routing_key(provider: 'ollama', operation: 'chat', model: 'qwen3.5:27b')

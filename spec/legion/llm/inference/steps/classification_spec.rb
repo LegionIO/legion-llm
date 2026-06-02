@@ -59,8 +59,8 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
         expect(step.enrichments['classification:scan'][:declared_level]).to eq(:internal)
       end
 
-      it 'uses string-keyed configured default level as baseline' do
-        Legion::Settings[:llm]['compliance'] = { 'default_level' => 'confidential' }
+      it 'uses configured default level as baseline from settings' do
+        Legion::Settings[:llm][:compliance] = { default_level: :confidential }
 
         step = build_step(classification: nil)
         step.step_classification
@@ -81,8 +81,8 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
         expect(step.enrichments).not_to have_key('classification:scan')
       end
 
-      it 'skips when string-keyed settings disable scanning' do
-        Legion::Settings[:llm]['compliance'] = { 'classification_scan' => false }
+      it 'skips when settings disable scanning' do
+        Legion::Settings[:llm][:compliance] = { classification_scan: false }
 
         step = build_step(classification: nil)
         step.step_classification
@@ -120,10 +120,10 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
         expect(step.enrichments['classification:scan'][:declared_level]).to eq(:internal)
       end
 
-      it 'reads string-keyed classification input' do
-        step = build_step(classification: { 'level' => 'internal' })
+      it 'reads classification input with symbol keys' do
+        step = build_step(classification: { level: :internal })
         step.step_classification
-        expect(step.enrichments['classification:scan'][:declared_level]).to eq('internal')
+        expect(step.enrichments['classification:scan'][:declared_level]).to eq(:internal)
       end
 
       it 'records timeline event' do
@@ -429,15 +429,15 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
         expect(step.request.messages.last[:content]).to be_nil
       end
 
-      it 'redacts string-keyed message content' do
+      it 'redacts message content with symbol keys' do
         step = build_step(
           classification: { level: :internal },
-          messages:       [{ 'role' => 'user', 'content' => 'my SSN is 123-45-6789' }]
+          messages:       [{ role: :user, content: 'my SSN is 123-45-6789' }]
         )
 
         step.step_classification
 
-        expect(step.request.messages.first['content']).to eq('my SSN is [REDACTED]')
+        expect(step.request.messages.first[:content]).to eq('my SSN is [REDACTED]')
       end
     end
 
@@ -513,16 +513,16 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
         end
       end
 
-      context 'when compliance settings and routing are string-keyed' do
+      context 'when compliance settings block cloud with explicit provider routing' do
         before do
-          Legion::Settings[:llm]['compliance'] = { 'phi_block_cloud' => true }
-          Legion::Settings[:llm]['default_provider'] = 'anthropic'
+          Legion::Settings[:llm][:compliance] = { phi_block_cloud: true }
+          Legion::Settings[:llm][:default_provider] = :anthropic
         end
 
-        it 'blocks restricted content routed to a string-keyed cloud provider' do
+        it 'blocks restricted content routed to a cloud provider' do
           request = Legion::LLM::Inference::Request.build(
-            messages: [{ 'role' => 'user', 'content' => 'patient medication list: lisinopril' }],
-            routing:  { 'provider' => 'anthropic', 'model' => nil }
+            messages: [{ role: :user, content: 'patient medication list: lisinopril' }],
+            routing:  { provider: :anthropic, model: nil }
           )
           step = klass.new(request)
 

@@ -124,12 +124,9 @@ module Legion
         end
 
         def self.default_auto_routing_intent
-          routing = Legion::LLM::Settings.value(:routing, default: {})
-          intent = Legion::LLM::Settings.config_value(routing, :default_intent, {})
+          intent = Legion::Settings[:llm][:routing][:default_intent]
           intent = intent.is_a?(Hash) ? normalize_hash(intent) : {}
           intent.merge(capability: :chat)
-        rescue StandardError
-          { capability: :chat }
         end
 
         def self.normalize_auto_routing(routing, extra)

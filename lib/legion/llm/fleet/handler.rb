@@ -232,10 +232,10 @@ module Legion
         end
 
         def responder_auth_required?
-          value = Legion::LLM::Settings.value(:fleet, :responder, :require_auth, default: nil)
+          value = Legion::Settings.dig(:llm, :fleet, :responder, :require_auth)
           return value != false unless value.nil?
 
-          Legion::LLM::Settings.value(:fleet, :auth, :require_signed_token, default: true) != false
+          Legion::Settings.dig(:llm, :fleet, :auth, :require_signed_token) != false
         end
 
         def protocol_version?(value)
@@ -244,11 +244,12 @@ module Legion
         end
 
         def reply_publish_options
+          responder = Legion::Settings[:llm][:fleet][:responder]
           {
-            mandatory:                  Legion::LLM::Settings.value(:fleet, :responder, :mandatory, default: false),
-            publisher_confirm:          Legion::LLM::Settings.value(:fleet, :responder, :publisher_confirm, default: false),
-            publish_confirm_timeout_ms: Legion::LLM::Settings.value(:fleet, :responder, :publish_confirm_timeout_ms, default: 500),
-            spool:                      Legion::LLM::Settings.value(:fleet, :responder, :spool, default: false),
+            mandatory:                  responder[:mandatory],
+            publisher_confirm:          responder[:publisher_confirm],
+            publish_confirm_timeout_ms: responder[:publish_confirm_timeout_ms] || 500,
+            spool:                      responder[:spool],
             return_result:              true
           }
         end

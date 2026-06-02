@@ -133,6 +133,8 @@ module Legion
           end
 
           def self.auto_routing_offering
+            ctx = Legion::Settings[:llm][:context_window] || 262_144
+            max_out = Legion::Settings[:llm][:max_output_tokens] || 16_384
             {
               id:                    AUTO_ROUTING_OFFERING_ID,
               offering_id:           AUTO_ROUTING_OFFERING_ID,
@@ -148,7 +150,7 @@ module Legion
               transport:             :internal,
               enabled:               true,
               capabilities:          AUTO_ROUTING_CAPABILITIES,
-              limits:                {},
+              limits:                { context_window: ctx, max_output_tokens: max_out },
               health:                { circuit_state: 'available' },
               metadata:              { auto_route: true, placeholder: true, display_name: AUTO_ROUTING_MODEL_DISPLAY },
               routing_metadata:      { strategy: 'auto' },

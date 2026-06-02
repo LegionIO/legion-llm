@@ -211,15 +211,15 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         expect(result[:source]).to eq(:role_mapping)
       end
 
-      it 'uses string-keyed tier_mappings from settings' do
-        Legion::Settings[:llm]['routing'] = {
-          'tier_mappings' => [
-            { 'pattern' => 'gpu:*', 'tier' => 'fleet', 'intent' => { 'cost' => 'minimize' } }
+      it 'uses tier_mappings from settings' do
+        Legion::Settings[:llm][:routing] = {
+          tier_mappings: [
+            { pattern: 'gpu:*', tier: 'fleet', intent: { cost: 'minimize' } }
           ]
         }
 
         result = assigner.assign(
-          caller:          { 'requested_by' => { 'identity' => 'gpu:worker:1' } },
+          caller:          { requested_by: { identity: 'gpu:worker:1' } },
           classification:  nil,
           priority:        :normal,
           gaia_hint:       nil,
@@ -228,7 +228,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         )
 
         expect(result[:tier]).to eq(:fleet)
-        expect(result[:intent]).to eq({ 'cost' => 'minimize' })
+        expect(result[:intent]).to eq({ cost: 'minimize' })
       end
     end
 

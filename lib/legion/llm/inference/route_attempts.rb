@@ -8,17 +8,15 @@ module Legion
         private
 
         def fleet_dispatch?
-          @resolved_tier == :fleet &&
-            Legion::LLM::Settings.value(:fleet, :dispatch, :enabled, default: true) != false
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.pipeline.fleet_dispatch_enabled')
-          false
+          @resolved_tier == :fleet && Legion::Settings[:llm][:fleet][:dispatch][:enabled] != false
         end
 
         def dispatch_provider_request(capability:, operation:, messages:, stream_block: nil)
           if fleet_dispatch?
+            log.debug "[llm][route_attempts] action=dispatch path=fleet provider=#{@resolved_provider} model=#{@resolved_model} operation=#{operation}"
             dispatch_fleet_request(operation: operation, messages: messages, stream_block: stream_block)
           else
+            log.debug "[llm][route_attempts] action=dispatch path=direct provider=#{@resolved_provider} model=#{@resolved_model} operation=#{operation}"
             dispatch_direct_request(capability: capability, operation: operation, messages: messages,
                                     stream_block: stream_block)
           end
@@ -93,6 +91,7 @@ module Legion
         def dispatch_fleet_request(operation:, messages:, stream_block: nil)
           idempotency_key = next_route_idempotency_key
           selected_lane = fleet_selected_lane(operation)
+          log.info "[llm][route_attempts] action=fleet_dispatch provider=#{@resolved_provider} model=#{@resolved_model} lane=#{selected_lane} operation=#{operation}" # rubocop:disable Layout/LineLength
           result = Fleet::Dispatcher.dispatch(
             operation:       operation,
             routing_key:     selected_lane,
@@ -101,6 +100,7 @@ module Legion
           )
           if result[:success] == false || result['success'] == false
             failure_reason = result[:error] || result['error'] || 'fleet_error'
+            log.warn "[llm][route_attempts] action=fleet_failed provider=#{@resolved_provider} model=#{@resolved_model} lane=#{selected_lane} reason=#{failure_reason}" # rubocop:disable Layout/LineLength
             record_route_attempt(
               dispatch_path:   :fleet,
               operation:       operation,

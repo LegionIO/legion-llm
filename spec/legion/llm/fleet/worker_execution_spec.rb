@@ -2,6 +2,20 @@
 
 require 'spec_helper'
 
+# Stub response classes for fleet dispatch tests (lex-llm Responses module not auto-loaded in legion-llm)
+unless defined?(Legion::Extensions::Llm::Responses::ChatResponse)
+  module Legion
+    module Extensions
+      module Llm
+        module Responses
+          ChatResponse = Struct.new(:content, :model, keyword_init: true)
+          EmbeddingResponse = Struct.new(:vectors, :model, keyword_init: true)
+        end
+      end
+    end
+  end
+end
+
 RSpec.describe Legion::LLM::Fleet::WorkerExecution do
   let(:envelope) do
     {
@@ -75,12 +89,15 @@ RSpec.describe Legion::LLM::Fleet::WorkerExecution do
     end.to raise_error(Legion::LLM::Fleet::WorkerExecution::PolicyError, /duplicate/)
   end
 
-  it 'fails closed when policy enforcement is required' do
+  it 'allows request with warning when policy enforcement is required but no engine is configured' do
     Legion::Settings[:llm][:fleet] = { responder: { require_auth: false, require_policy: true } }
+    allow(provider).to receive(:chat).and_return(
+      Legion::Extensions::Llm::Responses::ChatResponse.new(content: 'done', model: 'llama3.2')
+    )
 
-    expect do
-      described_class.call(envelope: envelope, provider: provider)
-    end.to raise_error(Legion::LLM::Fleet::WorkerExecution::PolicyError, /policy enforcement unavailable/)
+    result = described_class.call(envelope: envelope, provider: provider)
+
+    expect(result.content).to eq('done')
   end
 
   it 'does not burn token replay protection when provider dispatch fails before retry' do

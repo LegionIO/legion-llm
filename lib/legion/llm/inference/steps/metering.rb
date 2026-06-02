@@ -64,8 +64,13 @@ module Legion
             input    = opts.fetch(:input_tokens, 0)
             output   = opts.fetch(:output_tokens, 0)
             thinking = opts.fetch(:thinking_tokens, 0)
+            total    = input + output + thinking
+            log.debug(
+              "[llm][steps][metering] action=token_summary request_id=#{opts[:request_id]} " \
+              "input=#{input} output=#{output} thinking=#{thinking} total=#{total}"
+            )
             { input_tokens: input, output_tokens: output, thinking_tokens: thinking,
-              total_tokens: input + output + thinking }
+              total_tokens: total }
           end
 
           def timing_and_context(opts)

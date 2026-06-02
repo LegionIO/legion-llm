@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'digest'
 require 'legion/logging/helper'
 require_relative '../publisher_identity'
 module Legion
@@ -51,8 +52,13 @@ module Legion
             message_context:   build_message_context(request: request, response: response)
           }
           event[:message_id] = msg_id if msg_id
-          event[:task_id] = msg_task_id if msg_task_id
+          event[:task_id] = msg_task_id || (request.respond_to?(:task_id) ? request.task_id : nil)
           event[:message_conversation_id] = msg_conversation_id if msg_conversation_id
+          provider_metrics = extract_provider_metrics(provider_payload)
+          event[:provider_metrics] = provider_metrics if provider_metrics.any?
+          event[:agent_id] = request.agent_id if request.respond_to?(:agent_id) && request.agent_id
+          event[:node_id] = Legion::LLM.node_id if Legion::LLM.respond_to?(:node_id) && Legion::LLM.node_id
+          event.compact
           event
         end
 
@@ -65,8 +71,11 @@ module Legion
           nil
         end
 
-        def extract_identity(_caller)
-          Legion::LLM::PublisherIdentity.current
+        def extract_identity(caller_data)
+          return Legion::LLM::PublisherIdentity.current if caller_data.nil?
+          return Legion::LLM::PublisherIdentity.current unless caller_data.is_a?(Hash) && caller_data.any?
+
+          caller_data
         end
 
         def serialize_tokens(tokens)
@@ -98,7 +107,9 @@ module Legion
 
           timeline.select do |event|
             key = (event[:key] || event['key']).to_s
-            key.start_with?('provider:') || key.start_with?('escalation:') || key.start_with?('tool:execute:')
+            key.start_with?('provider:') || key.start_with?('escalation:') || key.start_with?('tool:execute:') ||
+              key.start_with?('rbac:') || key.start_with?('classification:') || key.start_with?('billing:') ||
+              key.start_with?('confidence:')
           end
         end
 
@@ -108,29 +119,44 @@ module Legion
           max = audit_max_messages
           return messages if messages.size <= max
 
-          messages.last(max)
+          truncated = messages.last(max)
+          full_hash = Digest::SHA256.hexdigest(messages.map { |m| (m[:content] || m['content']).to_s }.join)
+          truncated.unshift({ role: :system, content: "[audit: #{messages.size} messages, showing last #{max}, full_hash=#{full_hash}]" })
+          truncated
         end
 
         def audit_max_messages
-          max = Legion::LLM::Settings.value(:compliance, :audit_max_messages)
-          max = max.to_i if max.respond_to?(:to_i)
-          max.is_a?(Integer) && max.positive? ? max : 20
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.audit_publisher.audit_max_messages')
-          20
+          Legion::Settings[:llm][:compliance][:audit_max_messages]
         end
 
-        def build_message_context(response:, **)
-          {
+        def build_message_context(request:, response:)
+          ctx = {
             request_id:      response.request_id,
             conversation_id: response.conversation_id
-          }.compact
+          }
+
+          ctx[:message_id] = request.message_id if request.respond_to?(:message_id) && request.message_id
+          ctx[:message_seq] = request.message_seq if request.respond_to?(:message_seq) && request.message_seq
+          ctx[:parent_message_id] = request.parent_message_id if request.respond_to?(:parent_message_id) && request.parent_message_id
+
+          ctx.compact
         end
 
         def without_provider_payload(audit_data)
           return {} unless audit_data.is_a?(Hash)
 
           audit_data.reject { |key, _| key.to_s == 'provider_payload' }
+        end
+
+        def extract_provider_metrics(provider_payload)
+          return {} unless provider_payload.is_a?(Hash)
+
+          {
+            actual_cost_usd:      hash_value(provider_payload, :estimated_cost_usd) || hash_value(provider_payload, :cost_usd),
+            actual_input_tokens:  hash_value(provider_payload, :input_tokens),
+            actual_output_tokens: hash_value(provider_payload, :output_tokens),
+            model_version:        hash_value(provider_payload, :model_version) || hash_value(provider_payload, :model)
+          }.compact
         end
 
         def nested_value(hash, *keys)

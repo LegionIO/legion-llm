@@ -13,9 +13,9 @@ RSpec.describe Legion::LLM::API do
   describe '.registered' do
     context 'when use_namespaces is false (default)' do
       before do
-        allow(Legion::LLM::Settings).to receive(:value)
-          .with(:api, :use_namespaces, default: false)
-          .and_return(false)
+        allow(Legion::Settings).to receive(:dig)
+          .with(:llm, :api, :use_namespaces)
+          .and_return(nil)
       end
 
       it 'calls legacy flat registration chain' do
@@ -64,8 +64,8 @@ RSpec.describe Legion::LLM::API do
 
     context 'when use_namespaces is true' do
       before do
-        allow(Legion::LLM::Settings).to receive(:value)
-          .with(:api, :use_namespaces, default: false)
+        allow(Legion::Settings).to receive(:dig)
+          .with(:llm, :api, :use_namespaces)
           .and_return(true)
       end
 

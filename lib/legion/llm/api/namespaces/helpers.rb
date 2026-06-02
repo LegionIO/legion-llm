@@ -42,7 +42,8 @@ module Legion
 
           def data_subsystem_available?
             defined?(Legion::Data) && Legion::Data.respond_to?(:connected?) && Legion::Data.connected?
-          rescue StandardError
+          rescue StandardError => e
+            log.debug "[llm][api][namespaces][helpers] action=data_subsystem_check_fallback error=#{e.class} message=#{e.message}"
             false
           end
         end

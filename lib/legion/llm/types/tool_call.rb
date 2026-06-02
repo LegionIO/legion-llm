@@ -8,21 +8,25 @@ module Legion
       ToolCall = ::Data.define(
         :id, :exchange_id, :name, :arguments, :source,
         :status, :duration_ms, :result, :error,
-        :started_at, :finished_at
+        :started_at, :finished_at, :category,
+        :data_handling_classification, :policy_decision
       ) do
         def self.build(**kwargs)
           new(
-            id:          kwargs[:id] || "call_#{SecureRandom.hex(12)}",
-            exchange_id: kwargs[:exchange_id],
-            name:        kwargs[:name],
-            arguments:   kwargs[:arguments] || {},
-            source:      kwargs[:source],
-            status:      kwargs[:status],
-            duration_ms: kwargs[:duration_ms],
-            result:      kwargs[:result],
-            error:       kwargs[:error],
-            started_at:  kwargs[:started_at],
-            finished_at: kwargs[:finished_at]
+            id:                           kwargs[:id] || "call_#{SecureRandom.hex(12)}",
+            exchange_id:                  kwargs[:exchange_id],
+            name:                         kwargs[:name],
+            arguments:                    kwargs[:arguments] || {},
+            source:                       kwargs[:source],
+            status:                       kwargs[:status],
+            duration_ms:                  kwargs[:duration_ms],
+            result:                       kwargs[:result],
+            error:                        kwargs[:error],
+            started_at:                   kwargs[:started_at],
+            finished_at:                  kwargs[:finished_at],
+            category:                     kwargs[:category],
+            data_handling_classification: kwargs[:data_handling_classification],
+            policy_decision:              kwargs[:policy_decision]
           )
         end
 
@@ -41,17 +45,20 @@ module Legion
 
         def with_result(result:, status:, duration_ms: nil, finished_at: nil)
           ToolCall.new(
-            id:          id,
-            exchange_id: exchange_id,
-            name:        name,
-            arguments:   arguments,
-            source:      source,
-            status:      status,
-            duration_ms: duration_ms,
-            result:      result,
-            error:       status == :error ? result : error,
-            started_at:  started_at,
-            finished_at: finished_at || Time.now
+            id:                           id,
+            exchange_id:                  exchange_id,
+            name:                         name,
+            arguments:                    arguments,
+            source:                       source,
+            status:                       status,
+            duration_ms:                  duration_ms,
+            result:                       result,
+            error:                        status == :error ? result : error,
+            started_at:                   started_at,
+            finished_at:                  finished_at || Time.now,
+            category:                     category,
+            data_handling_classification: data_handling_classification,
+            policy_decision:              policy_decision
           )
         end
 
@@ -60,8 +67,19 @@ module Legion
         end
 
         def to_audit_hash
-          { id: id, name: name, arguments: arguments, status: status,
-            duration_ms: duration_ms, error: error, exchange_id: exchange_id }.compact
+          {
+            id:                           id,
+            name:                         name,
+            arguments:                    arguments,
+            status:                       status,
+            duration_ms:                  duration_ms,
+            error:                        error,
+            exchange_id:                  exchange_id,
+            source:                       source,
+            category:                     category,
+            data_handling_classification: data_handling_classification,
+            policy_decision:              policy_decision
+          }.compact
         end
       end
     end

@@ -21,181 +21,76 @@ module Legion
       def self.default
         model_override = ENV.fetch('ANTHROPIC_MODEL', nil)
         {
-          enabled:                   true,
-          connected:                 false,
-          pipeline_enabled:          true,
-          pipeline_async_post_steps: true,
-          max_tool_rounds:           200,
-          default_model:             model_override,
-          default_provider:          nil,
-          system_baseline:           system_baseline_default,
-          fleet:                     fleet_defaults,
-          routing:                   routing_defaults,
-          budget:                    budget_defaults,
-          confidence:                confidence_defaults,
-          discovery:                 discovery_defaults,
-          daemon:                    daemon_defaults,
-          prompt_caching:            prompt_caching_defaults,
-          arbitrage:                 arbitrage_defaults,
-          batch:                     batch_defaults,
-          scheduling:                scheduling_defaults,
-          rag:                       rag_defaults,
-          rag_guard:                 rag_guard_defaults,
-          gaia:                      gaia_defaults,
-          embedding:                 embedding_defaults,
-          conversation:              conversation_defaults,
-          telemetry:                 telemetry_defaults,
-          metering:                  metering_defaults,
-          context_curation:          context_curation_defaults,
-          debate:                    debate_defaults,
-          provider_layer:            provider_layer_defaults,
-          tool_trigger:              tool_trigger_defaults,
-          api:                       api_defaults,
-          compliance:                compliance_defaults,
-          skills:                    skills_defaults,
-          claude_cli:                claude_cli_defaults
+          enabled:                        true,
+          connected:                      false,
+          pipeline_enabled:               true,
+          pipeline_async_post_steps:      true,
+          context_window:                 262_144,
+          max_output_tokens:              16_384,
+          max_tool_rounds:                200,
+          max_tool_calls_per_turn:        50,
+          tool_result_max_dispatch_chars: 4000,
+          default_model:                  model_override,
+          default_temperature:            1.0,
+          default_provider:               nil,
+          system_baseline:                system_baseline_default,
+          fleet:                          fleet_defaults,
+          routing:                        routing_defaults,
+          budget:                         budget_defaults,
+          confidence:                     confidence_defaults,
+          discovery:                      discovery_defaults,
+          daemon:                         daemon_defaults,
+          prompt_caching:                 prompt_caching_defaults,
+          arbitrage:                      arbitrage_defaults,
+          batch:                          batch_defaults,
+          scheduling:                     scheduling_defaults,
+          rag:                            rag_defaults,
+          rag_guard:                      rag_guard_defaults,
+          gaia:                           gaia_defaults,
+          embedding:                      embedding_defaults,
+          conversation:                   conversation_defaults,
+          telemetry:                      telemetry_defaults,
+          metering:                       metering_defaults,
+          context_curation:               context_curation_defaults,
+          debate:                         debate_defaults,
+          provider_layer:                 provider_layer_defaults,
+          tool_trigger:                   tool_trigger_defaults,
+          api:                            api_defaults,
+          compliance:                     compliance_defaults,
+          skills:                         skills_defaults,
+          claude_cli:                     claude_cli_defaults,
+          fallback:                       fallback_defaults,
+          structured_output:              structured_output_defaults
         }
       end
 
-      def self.value(*keys, default: nil)
-        missing = Object.new
-        current = current_settings
-        keys.each_with_index do |key, index|
-          unless current.respond_to?(:key?)
-            warn_invalid_path(nil, keys, index, current)
-            return default
-          end
-
-          value = config_value(current, key, missing)
-          return default if value.equal?(missing)
-
-          current = value
-        end
-        current
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'llm.settings.value')
-        default
-      end
-
-      def self.config_value(config, key, default = nil)
-        return default unless config.respond_to?(:key?)
-
-        string_key = key.to_s
-        return config[string_key] if config.key?(string_key)
-
-        symbol_key = key.to_sym if key.respond_to?(:to_sym)
-        return config[symbol_key] if symbol_key && config.key?(symbol_key)
-
-        default
-      end
-
-      def self.namespace(namespace)
-        settings = Legion::Settings[namespace]
-        settings.is_a?(Hash) ? settings : {}
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.namespace', namespace: namespace)
-        {}
-      end
-
-      def self.global_value(namespace, *keys, default: nil)
-        if Legion::Settings.respond_to?(:dig) && keys.any?
-          direct = Legion::Settings.dig(namespace, *keys)
-          return direct unless direct.nil?
-        end
-
-        missing = Object.new
-        current = self.namespace(namespace)
-        keys.each_with_index do |key, index|
-          unless current.respond_to?(:key?)
-            warn_invalid_path(namespace, keys, index, current)
-            return default
-          end
-
-          value = config_value(current, key, missing)
-          return default if value.equal?(missing)
-
-          current = value
-        end
-        current
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.global_value', namespace: namespace, keys: keys)
-        default
-      end
-
-      def self.set_value(*keys, value:)
-        target = current_settings
-        return value unless target.is_a?(Hash)
-
-        assign_value(target, keys, value)
-        value
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.set_value', keys: keys)
-        value
-      end
-
-      def self.transport_connected?
-        return true if global_value(:transport, :connected) == true
-
-        transport = namespace(:transport)
-        config_value(transport, :connected) == true
-      end
-
-      def self.enterprise_privacy?
-        if Legion::Settings.respond_to?(:enterprise_privacy?)
-          Legion::Settings.enterprise_privacy?
-        else
-          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
-        end
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.enterprise_privacy')
-        ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
-      end
-
-      def self.current_settings
-        settings = Legion::Settings[:llm]
-        return settings if settings.is_a?(Hash)
-
-        {}
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'llm.settings.current_settings')
-        {}
-      end
-
       def self.register_defaults!
-        return unless Legion::Settings.respond_to?(:register_library)
-
         log.debug '[llm][settings] action=register_defaults'
         Legion::Settings.register_library(:llm, default)
       end
 
       def self.validate!(settings)
-        raise ArgumentError, 'llm.gateway has been removed; configure provider instances instead' if config_key?(settings, :gateway)
+        if settings.is_a?(Hash) && (settings.key?(:gateway) || settings.key?('gateway'))
+          raise ArgumentError,
+                'llm.gateway has been removed; configure provider instances instead'
+        end
 
-        routing = config_value(settings, :routing, {})
+        routing = settings.is_a?(Hash) ? (settings[:routing] || settings['routing'] || {}) : {}
         if routing.is_a?(Hash)
-          raise ArgumentError, 'routing.use_fleet has been removed; configure fleet.dispatch.enabled instead' if config_key?(routing, :use_fleet)
+          if routing.key?(:use_fleet) || routing.key?('use_fleet')
+            raise ArgumentError,
+                  'routing.use_fleet has been removed; configure fleet.dispatch.enabled instead'
+          end
 
-          openai_compat = config_value(config_value(routing, :tiers, {}), :openai_compat, {})
-          if openai_compat.is_a?(Hash) && config_key?(openai_compat, :gateways)
+          tiers = routing[:tiers] || routing['tiers'] || {}
+          openai_compat = tiers.is_a?(Hash) ? (tiers[:openai_compat] || tiers['openai_compat'] || {}) : {}
+          if openai_compat.is_a?(Hash) && (openai_compat.key?(:gateways) || openai_compat.key?('gateways'))
             raise ArgumentError, 'routing.tiers.openai_compat.gateways has been removed; configure lex-llm-openai provider instances instead'
           end
         end
 
         settings
       end
-
-      def self.assign_value(target, keys, value)
-        leaf = keys[0...-1].reduce(target) do |current, key|
-          existing = config_value(current, key)
-          unless existing.is_a?(Hash)
-            existing = {}
-            current[key] = existing
-          end
-          existing
-        end
-        leaf[keys.last] = value
-      end
-      private_class_method :assign_value
 
       def self.claude_cli_defaults
         {
@@ -225,6 +120,10 @@ module Legion
           Trust model:
           - Trust is earned through reliable outcomes, clarity, and safe execution.
           - Speed matters, but never at the expense of integrity or user trust.
+
+          Tool use:
+          - There is no tool call limit per turn. You may make as many tool calls as needed to complete the task.
+          - Do not stop mid-task claiming you hit a limit. Continue until the work is done or you need user input.
         PROMPT
       end
 
@@ -266,9 +165,10 @@ module Legion
 
       def self.discovery_defaults
         {
-          enabled:         true,
-          refresh_seconds: 60,
-          memory_floor_mb: 2048
+          enabled:                true,
+          refresh_seconds:        60,
+          memory_floor_mb:        2048,
+          memory_overhead_factor: 1.4
         }
       end
 
@@ -350,7 +250,8 @@ module Legion
         {
           session_max_tokens:  nil,
           session_warn_tokens: nil,
-          daily_max_tokens:    nil
+          daily_max_tokens:    nil,
+          session_usd:         0.0
         }
       end
 
@@ -400,7 +301,8 @@ module Legion
       def self.rag_guard_defaults
         {
           threshold:        0.7,
-          block_on_failure: true
+          block_on_failure: true,
+          evaluators:       %i[faithfulness rag_relevancy]
         }
       end
 
@@ -538,35 +440,34 @@ module Legion
         }
       end
 
+      def self.fallback_defaults
+        {
+          allow_local: true
+        }
+      end
+
+      def self.structured_output_defaults
+        {
+          retry_on_parse_failure: true,
+          max_retries:            2
+        }
+      end
+
       def self.compliance_defaults
         {
           classification_scan:   false,
           encrypt_audit:         false,
+          encrypt_metering:      false,
           phi_block_cloud:       false,
           cloud_providers:       %w[bedrock anthropic openai gemini azure],
           redact_pii:            false,
           redaction_placeholder: '[REDACTED]',
           strict_hipaa:          false,
           standalone_email_pii:  false,
-          default_level:         :public
+          default_level:         :public,
+          audit_max_messages:    20
         }
       end
-
-      # Provider defaults live in each lex-llm-* provider extension's
-      # `default_settings` and are accessed via Legion::Settings[:extensions][:llm].
-
-      def self.config_key?(config, key)
-        return false unless config.respond_to?(:key?)
-
-        config.key?(key) || config.key?(key.to_s)
-      end
-
-      def self.warn_invalid_path(namespace, keys, index, current)
-        traversed = keys.first(index + 1)
-        path = ([namespace].compact + traversed).join('.')
-        log.warn("[llm][settings] invalid_path path=#{path} current_class=#{current.class}")
-      end
-      private_class_method :config_key?, :warn_invalid_path
     end
   end
 end

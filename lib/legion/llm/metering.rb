@@ -46,7 +46,7 @@ module Legion
 
       def attributed_event(event)
         source = event.is_a?(Hash) ? event.dup : {}
-        source[:identity] = Legion::LLM::PublisherIdentity.current
+        source[:identity] ||= Legion::LLM::PublisherIdentity.current
         source[:caller] ||= Legion::LLM::PublisherIdentity.caller_hash
         source
       end
@@ -70,7 +70,8 @@ module Legion
           parsed = lines.filter_map do |line|
             next if line.strip.empty?
 
-            Legion::JSON.load(line)
+            decrypted = decrypt_spool_line(line)
+            Legion::JSON.load(decrypted)
           end
           File.write(path, '')
           parsed
@@ -110,20 +111,34 @@ module Legion
           )
 
           emit(
-            provider:      resolved_provider,
-            model_id:      resolved_model,
-            input_tokens:  usage[:input_tokens],
-            output_tokens: usage[:output_tokens],
-            caller:        caller,
-            event_type:    'llm_completion',
-            status:        response.is_a?(Hash) && response[:error] ? 'failure' : 'success'
+            provider:              resolved_provider,
+            model_id:              resolved_model,
+            request_type:          'chat',
+            tier:                  extract_tier(response),
+            input_tokens:          usage[:input_tokens],
+            output_tokens:         usage[:output_tokens],
+            thinking_tokens:       usage[:thinking_tokens] || 0,
+            total_tokens:          usage[:input_tokens] + usage[:output_tokens],
+            finish_reason:         extract_finish_reason(response),
+            error_category:        extract_error_category(response),
+            error_code:            extract_error_code(response),
+            error_message:         extract_error_message(response),
+            provider_instance:     extract_provider_instance(response),
+            dispatch_path:         extract_dispatch_path(response),
+            route_attempts:        extract_route_attempts(response),
+            provider_response_ref: response.respond_to?(:provider_response_id) ? response.provider_response_id : nil,
+            latency_ms:            extract_latency_ms(response),
+            wall_clock_ms:         extract_wall_clock_ms(response),
+            caller:                caller,
+            event_type:            'llm_completion',
+            status:                extract_status(response)
           )
           nil
         end
       end
 
       def transport_connected?
-        Legion::LLM::Settings.transport_connected?
+        Legion::Settings.dig(:transport, :connected) == true
       end
 
       def metering_event_class
@@ -175,12 +190,34 @@ module Legion
         SPOOL_MUTEX.synchronize do
           ensure_spool_dir
           enforce_max_events
-          line = Legion::JSON.dump(event)
+          json = Legion::JSON.dump(event)
+          line = if encrypt_spool?
+                   Legion::Crypt.encrypt(json)
+                 else
+                   json
+                 end
           File.open(spool_file_path, 'a') { |f| f.puts(line) }
         end
         log.debug("[llm][metering] spool_event written provider=#{event[:provider]} model=#{event[:model_id]}")
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.metering.spool_event')
+      end
+
+      def encrypt_spool?
+        defined?(Legion::Crypt) &&
+          Legion::Crypt.respond_to?(:encrypt) &&
+          Legion::Settings.dig(:llm, :compliance, :encrypt_spool) == true
+      rescue StandardError
+        false
+      end
+
+      def decrypt_spool_line(line)
+        return line unless defined?(Legion::Crypt) && Legion::Crypt.respond_to?(:decrypt)
+        return line if line.start_with?('{')
+
+        Legion::Crypt.decrypt(line)
+      rescue StandardError
+        line
       end
 
       def read_spool
@@ -228,7 +265,7 @@ module Legion
       end
 
       def spool_settings
-        settings = Legion::LLM::Settings.value(:metering, :spool, default: {})
+        settings = Legion::Settings.dig(:llm, :metering, :spool) || {}
         settings.is_a?(Hash) ? settings : {}
       end
 
@@ -256,6 +293,74 @@ module Legion
         else
           super
         end
+      end
+
+      # --- Extractor helpers for after_chat hook ---
+
+      def extract_finish_reason(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:finish_reason] || response.dig(:stop, :reason) || response.dig(:choices, 0, :finish_reason)
+      end
+
+      def extract_tier(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:tier] || response.dig(:routing, :tier)
+      end
+
+      def extract_error_category(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:error_category] || response.dig(:error, :category)
+      end
+
+      def extract_error_code(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:error_code] || response.dig(:error, :code)
+      end
+
+      def extract_error_message(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:error_message] || response.dig(:error, :message)
+      end
+
+      def extract_provider_instance(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:provider_instance] || response.dig(:routing, :provider_instance) || response[:instance]
+      end
+
+      def extract_dispatch_path(response)
+        return nil unless response.is_a?(Hash)
+
+        response[:dispatch_path] || response[:tier] || response.dig(:routing, :tier)
+      end
+
+      def extract_route_attempts(response)
+        return nil unless response.is_a?(Hash)
+
+        (response[:route_attempts] || 0).to_i
+      end
+
+      def extract_latency_ms(response)
+        return nil unless response.is_a?(Hash)
+
+        (response[:latency_ms] || response.dig(:timing, :latency_ms) || 0).to_i
+      end
+
+      def extract_wall_clock_ms(response)
+        return nil unless response.is_a?(Hash)
+
+        (response[:wall_clock_ms] || response.dig(:timing, :wall_clock_ms) || 0).to_i
+      end
+
+      def extract_status(response)
+        return 'success' unless response.is_a?(Hash)
+
+        response[:error] ? 'failure' : 'success'
       end
     end
   end

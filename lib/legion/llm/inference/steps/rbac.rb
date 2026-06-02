@@ -58,7 +58,7 @@ module Legion
           private
 
           def fail_open_permitted?
-            setting = Legion::LLM::Settings.global_value(:rbac, :fail_open)
+            setting = Legion::Settings.dig(:rbac, :fail_open)
             setting.nil? || setting
           end
 

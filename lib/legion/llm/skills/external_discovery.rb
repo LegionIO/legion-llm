@@ -40,14 +40,14 @@ module Legion
         end
 
         def claude_auto_discover?
-          Legion::LLM::Settings.value(:skills, :auto_discover, :claude, default: true) != false
+          Legion::Settings.dig(:llm, :skills, :auto_discover, :claude) != false
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.skills.external_discovery.claude_auto_discover')
           true
         end
 
         def codex_auto_discover?
-          Legion::LLM::Settings.value(:skills, :auto_discover, :codex, default: true) != false
+          Legion::Settings.dig(:llm, :skills, :auto_discover, :codex) != false
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.skills.external_discovery.codex_auto_discover')
           true

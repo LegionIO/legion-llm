@@ -67,14 +67,14 @@ module Legion
           private
 
           def rag_guard_settings
-            Legion::LLM::Settings.value(:rag_guard, default: {})
+            Legion::Settings[:llm][:rag_guard]
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_guard.settings')
             {}
           end
 
           def rag_guard_setting(key, default)
-            value = Legion::LLM::Settings.config_value(rag_guard_settings, key)
+            value = rag_guard_settings[key]
             value.nil? ? default : value
           end
 

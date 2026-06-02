@@ -136,7 +136,7 @@ RSpec.describe Legion::LLM::Fleet::TokenValidator do
           raise 'missing verification key' if verification_key.nil?
 
           self.last_verify_options = { issuer: issuer }.merge(opts)
-          raise 'unexpected issuer verification' if opts[:verify_issuer] != false
+          raise 'unexpected issuer verification' if opts[:verify_issuer] != true
 
           claims
         end
@@ -224,7 +224,7 @@ RSpec.describe Legion::LLM::Fleet::TokenValidator do
     expect(Legion::Crypt::JWT.last_verify_options).to include(
       issuer:        'custom-issuer',
       algorithm:     'HS512',
-      verify_issuer: false
+      verify_issuer: true
     )
   end
 end

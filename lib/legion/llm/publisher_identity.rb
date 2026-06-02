@@ -94,7 +94,8 @@ module Legion
         return nil unless process.respond_to?(method_name)
 
         process.public_send(method_name)
-      rescue StandardError
+      rescue StandardError => e
+        Legion::LLM.log.debug "[llm][publisher_identity] action=process_value_fallback method=#{method_name} error=#{e.class} message=#{e.message}"
         nil
       end
 

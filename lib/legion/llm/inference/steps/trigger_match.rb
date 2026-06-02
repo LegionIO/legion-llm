@@ -43,6 +43,10 @@ module Legion
             @triggered_tools = if matched.size <= limit
                                  matched.to_a
                                else
+                                 log.warn(
+                                   "[llm][steps][trigger_match] action=tools_capped request_id=#{@request.id} " \
+                                   "matched=#{matched.size} limit=#{limit} dropped=#{matched.size - limit}"
+                                 )
                                  rank_and_cap(matched, per_word, limit)
                                end
 
@@ -170,18 +174,15 @@ module Legion
           end
 
           def trigger_tool_limit
-            tool_trigger_setting(:tool_limit, 50)
+            tool_trigger_setting(:tool_limit, 25)
           end
 
           def tool_trigger_setting(key, default = nil)
-            Legion::LLM::Settings.config_value(settings_value(:tool_trigger, default: {}), key, default)
+            Legion::Settings.dig(:llm, :tool_trigger, key) || default
           end
 
           def settings_value(*keys, default: nil)
-            Legion::LLM::Settings.value(*keys, default: default)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.trigger_match.settings', keys: keys)
-            default
+            Legion::Settings.dig(:llm, *keys) || default
           end
 
           def log_trigger_match(action, **fields)

@@ -24,6 +24,7 @@ module Legion
             return unavailable_result(model, provider) unless provider
 
             model ||= resolve_model
+            instance ||= resolve_instance
             text = coerce_text(text)
             text_length = text.length
             prepared_texts = prepare_embedding_texts(text, provider: provider, model: model, task: task)
@@ -73,6 +74,7 @@ module Legion
 
             provider ||= resolve_provider
             model ||= resolve_model
+            instance ||= resolve_instance
 
             log.info("[llm][embed] action=generate_batch provider=#{provider} instance=#{instance || 'default'} " \
                      "model=#{model} count=#{texts.size} task=#{task}")
@@ -130,11 +132,21 @@ module Legion
               embedding_config_value(:default_model)
           end
 
-          def embedding_config_value(key)
-            v = Legion::LLM::Settings.value(:embedding, key)
-            return v unless v.nil?
+          # Resolve the embedding instance the same way provider/model are resolved.
+          # Prefer the discovered/configured embedding instance (Discovery honors the
+          # configured embedding.instance pin), then the raw embedding.instance setting.
+          # Without this the dispatch passes instance=nil and falls back to the provider's
+          # default (e.g. an empty local Ollama) even when a managed instance is configured.
+          def resolve_instance
+            LLM.embedding_instance ||
+              embedding_config_value(:instance)
+          end
 
-            plural = Legion::LLM::Settings.value(:embeddings, key)
+          def embedding_config_value(key)
+            embedding = Legion::Settings[:llm][:embedding]
+            return embedding[key] if embedding && (embedding.key?(key) || embedding.key?(key.to_s))
+
+            plural = Legion::Settings[:llm][:embeddings]&.[](key) || Legion::Settings[:llm][:embeddings]&.[](key.to_s)
             log.warn "[llm][embeddings] settings key \"embeddings.#{key}\" (plural) is deprecated — rename to \"embedding.#{key}\"" unless plural.nil?
             plural
           end
@@ -162,19 +174,19 @@ module Legion
           end
 
           def prefix_for(model, task)
-            registry = Legion::LLM::Settings.value(:embedding, :prefix_registry, default: PREFIX_REGISTRY)
-            model_prefixes = Legion::LLM::Settings.config_value(registry, model_base(model), {})
-            Legion::LLM::Settings.config_value(model_prefixes, task)
+            registry = Legion::Settings[:llm][:embedding][:prefix_registry] || PREFIX_REGISTRY
+            model_prefixes = registry[model_base(model)] || registry[model_base(model).to_s] || {}
+            model_prefixes[task] || model_prefixes[task.to_s]
           end
 
           def embedding_chunk_chars(provider:, model:, prefix:)
             return nil unless provider.to_s == 'ollama'
 
-            embedding = Legion::LLM::Settings.value(:embedding, default: {})
-            context_chars = Legion::LLM::Settings.config_value(embedding, :ollama_context_chars, {})
-            limit = Legion::LLM::Settings.config_value(context_chars, model.to_s) ||
-                    Legion::LLM::Settings.config_value(context_chars, model_base(model)) ||
-                    Legion::LLM::Settings.config_value(embedding, :ollama_default_context_chars)
+            embedding = Legion::Settings[:llm][:embedding] || {}
+            context_chars = embedding[:ollama_context_chars] || embedding['ollama_context_chars'] || {}
+            limit = context_chars[model.to_s] || context_chars[model] ||
+                    context_chars[model_base(model)] || context_chars[model_base(model).to_s] ||
+                    embedding[:ollama_default_context_chars] || embedding['ollama_default_context_chars']
             limit = limit.to_i
             return nil unless limit.positive?
 
@@ -268,13 +280,13 @@ module Legion
           end
 
           def enforce_dimension?
-            Legion::LLM::Settings.value(:embedding, :enforce_dimension) != false
+            Legion::Settings[:llm][:embedding][:enforce_dimension] != false
           end
 
           def enforce_dimensions(vector)
             return vector unless vector.is_a?(Array)
 
-            dim = Legion::LLM::Settings.value(:embedding, :dimension) || 1024
+            dim = Legion::Settings[:llm][:embedding][:dimension] || 1024
             return vector if vector.size == dim
             return vector.first(dim) if vector.size > dim
 

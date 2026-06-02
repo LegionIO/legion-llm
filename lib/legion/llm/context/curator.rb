@@ -22,6 +22,7 @@ module Legion
         def initialize(conversation_id:)
           @conversation_id = conversation_id
           @curated_messages = nil
+          @curation_mutex = Mutex.new
         end
 
         # Called async after each turn completes — zero latency impact.
@@ -29,8 +30,9 @@ module Legion
           return unless enabled?
 
           current_turn_count = Array(turn_messages).size + (assistant_response ? 1 : 0)
+          log.debug "[llm][curator] action=curate_turn conversation_id=#{@conversation_id} turn_messages=#{current_turn_count}"
 
-          Thread.new do
+          Inference::Executor::ASYNC_THREAD_POOL.post do
             all_messages = Inference::Conversation.messages(@conversation_id)
             older = if current_turn_count.positive? && all_messages.size > current_turn_count
                       all_messages[0...-current_turn_count]
@@ -42,7 +44,7 @@ module Legion
               curated = older.map { |msg| curate_message(msg, assistant_response) }
               store_curated(@conversation_id, curated)
             end
-            @curated_messages = nil
+            @curation_mutex.synchronize { @curated_messages = nil }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.context_curator.curate_turn')
           end
@@ -53,7 +55,9 @@ module Legion
         def curated_messages
           return nil unless enabled?
 
-          @curated_messages ||= load_curated(@conversation_id)
+          @curation_mutex.synchronize do
+            @curated_messages ||= load_curated(@conversation_id)
+          end
         end
 
         # Drops older conversation turns from the prompt window after archiving
@@ -77,8 +81,9 @@ module Legion
           archived = archive_conversation_history(dropped, conversation_id: conversation_id)
           return messages unless archived
 
-          log.info("[llm][context_curator] action=drop_and_archive conversation_id=#{conversation_id} " \
-                   "dropped=#{dropped.size} retained=#{retained.size} estimated_tokens=#{estimated}")
+          tokens_freed = estimated - Context::Compressor.estimate_tokens(retained)
+          log.warn("[llm][curator] action=drop_and_archive conversation_id=#{conversation_id} " \
+                   "messages_dropped=#{dropped.size} retained=#{retained.size} tokens_freed=#{tokens_freed}")
           retained
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.context_curator.drop_and_archive',
@@ -93,10 +98,8 @@ module Legion
           return msg if content.length <= max_chars
 
           summary = heuristic_tool_summary(content, tool_name_from(msg))
-          log.debug "[llm][curator] action=distill_tool_result conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} summary_chars=#{summary.length}\n  " \
-                    "BEFORE: #{content}\n  " \
-                    "AFTER:  #{summary}"
+          log.info "[llm][curator] action=distill_tool_result conversation_id=#{@conversation_id} " \
+                   "original_chars=#{content.length} summary_chars=#{summary.length}"
           msg.merge(content: summary, curated: true, original_content: content)
         end
 
@@ -106,14 +109,16 @@ module Legion
 
           content = msg[:content].to_s
           stripped = strip_thinking_tags(content)
-          stripped = stripped.gsub(/^#+\s*[Tt]hinking[^\n]*\n(?:[^#\n][^\n]*\n)*/m, '').strip
+          # Only strip lines that start with a heading containing "Thinking".
+          # Avoid catastrophic backtracking by anchoring to the start of line
+          # and using a non-greedy, bounded inner pattern.
+          stripped = stripped.gsub(/^#+\s*[Tt]hinking[^\n]*\n(?!#+\s*[Tt]hinking[^\n]*\n)[^\n]*(?:\n(?![#\n])[^\n]*)*\n?/m, '').strip
 
           return msg if stripped == content || stripped.empty?
 
-          log.debug "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
-                    "original_chars=#{content.length} stripped_chars=#{stripped.length}\n  " \
-                    "BEFORE: #{content}\n  " \
-                    "AFTER:  #{stripped}"
+          chars_removed = content.length - stripped.length
+          log.info "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
+                   "chars_removed=#{chars_removed} original_chars=#{content.length} stripped_chars=#{stripped.length}"
           msg.merge(content: stripped, curated: true, original_content: content)
         end
 
@@ -122,6 +127,7 @@ module Legion
           return messages unless setting(:exchange_folding, true)
 
           result = []
+          folded_count = 0
           i = 0
           while i < messages.length
             window = messages[i, 4]
@@ -134,11 +140,16 @@ module Legion
                 original_content: window.map { |m| m[:content] }.join("\n")
               }
               result << note
+              folded_count += window.length
               i += window.length
             else
               result << messages[i]
               i += 1
             end
+          end
+          if folded_count.positive?
+            log.info "[llm][curator] action=fold_resolved_exchanges conversation_id=#{@conversation_id} " \
+                     "messages_folded=#{folded_count} result_size=#{result.size}"
           end
           result
         end
@@ -153,10 +164,17 @@ module Legion
             file_last_seen[path] = idx if path
           end
 
-          messages.each_with_index.reject do |msg, idx|
+          result = messages.each_with_index.reject do |msg, idx|
             path = extract_file_path(msg[:content].to_s)
             path && file_last_seen[path] != idx
           end.map(&:first)
+
+          evicted_count = messages.size - result.size
+          if evicted_count.positive?
+            log.info "[llm][curator] action=evict_superseded conversation_id=#{@conversation_id} " \
+                     "files_evicted=#{evicted_count} messages_before=#{messages.size} messages_after=#{result.size}"
+          end
+          result
         end
 
         # Heuristic: deduplicate near-identical messages using Jaccard similarity.
@@ -165,6 +183,10 @@ module Legion
 
           threshold ||= setting(:dedup_threshold, 0.85)
           result = Context::Compressor.deduplicate_messages(messages, threshold: threshold)
+          if result[:removed].positive?
+            log.info "[llm][curator] action=dedup_similar conversation_id=#{@conversation_id} " \
+                     "removed=#{result[:removed]} original_count=#{result[:original_count]}"
+          end
           result[:messages]
         end
 
@@ -205,39 +227,32 @@ module Legion
         end
 
         def curation_settings
-          Legion::LLM::Settings.value(:context_curation, default: {})
+          Legion::Settings[:llm][:context_curation] || {}
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.context_curator.curation_settings')
           {}
         end
 
         def setting(key, default)
-          val = Legion::LLM::Settings.config_value(curation_settings, key)
+          val = curation_settings[key]
           val.nil? ? default : val
         end
 
         def strip_thinking_tags(text)
-          result = text
-          THINKING_TAG_PAIRS.each do |open_tag, close_tag|
-            result = strip_tag_pair(result, open_tag, close_tag)
+          result = text.lstrip
+          loop do
+            stripped = false
+            THINKING_TAG_PAIRS.each do |open_tag, close_tag|
+              next unless result.start_with?(open_tag)
+
+              close_idx = result.index(close_tag, open_tag.length)
+              result = close_idx ? result[(close_idx + close_tag.length)..].lstrip : ''
+              stripped = true
+              break
+            end
+            break unless stripped
           end
           result
-        end
-
-        def strip_tag_pair(text, open_tag, close_tag)
-          out = +''
-          pos = 0
-          while pos < text.length
-            open_idx = text.index(open_tag, pos)
-            break unless open_idx
-
-            out << text[pos...open_idx]
-            close_idx = text.index(close_tag, open_idx + open_tag.length)
-            pos = close_idx ? close_idx + close_tag.length : text.length
-          end
-          out << text[pos..] if pos < text.length
-          # Strip any unclosed open tag left at the end (provider died mid-stream).
-          out.sub(/#{Regexp.escape(open_tag)}.*\z/m, '').strip
         end
 
         def curate_message(msg, assistant_response)
@@ -507,7 +522,7 @@ module Legion
             file_count = content.lines.count { |l| l.include?('/') }
             "Search returned #{line_count} matches across #{file_count} files"
           when /bash|run_command|execute/
-            exit_match = content.match(/exit(?:\s+code)?:?\s*(\d+)/i)
+            exit_match = content[0, 500].match(/exit(?: code)?:? *(\d+)/i)
             exit_code  = exit_match ? exit_match[1] : '0'
             last_lines = lines.last(3).map(&:chomp).join(' | ')
             "Command output (#{line_count} lines), exit #{exit_code}: #{last_lines[0, 200]}"
@@ -526,7 +541,7 @@ module Legion
           first_line = content[0, 200]
           return :read_file   if first_line.match?(/\AFile:|\ARead:|\A#\s+\S+\.rb|\A\d+\t/)
           return :bash        if first_line.match?(/exit code|STDOUT|STDERR/i)
-          return :search      if first_line.include?(' match') && first_line.match?(/\d++ match/)
+          return :search      if first_line.include?(' match') && first_line.match?(/\d+ match/)
 
           nil
         end
@@ -586,9 +601,9 @@ module Legion
           ext = Legion::Settings[:extensions]
           providers = (ext.is_a?(Hash) && ext[:llm].is_a?(Hash) ? ext[:llm] : {})
           %w[ollama vllm mlx].each do |provider|
-            config = Legion::LLM::Settings.config_value(providers, provider, {})
-            enabled = Legion::LLM::Settings.config_value(config, :enabled)
-            model = Legion::LLM::Settings.config_value(config, :default_model)
+            config = providers[provider.to_sym] || providers[provider] || {}
+            enabled = config[:enabled]
+            model = config[:default_model]
             return model if config.is_a?(Hash) && enabled && model
           end
           nil

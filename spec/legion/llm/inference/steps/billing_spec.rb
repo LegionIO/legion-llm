@@ -103,7 +103,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Billing do
         expect(Legion::LLM::Metering::Pricing).to have_received(:estimate).with(
           model_id:      'qwen3.6-27b',
           input_tokens:  42,
-          output_tokens: 0
+          output_tokens: 42
         )
       end
     end

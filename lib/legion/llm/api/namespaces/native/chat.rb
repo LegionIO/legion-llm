@@ -16,7 +16,7 @@ module Legion
 
             ASYNC_POOL = Concurrent::FixedThreadPool.new(
               [4, (Concurrent.processor_count / 2)].max,
-              fallback_policy: :abort
+              fallback_policy: :caller_runs
             )
 
             # Ensure the thread pool is shut down cleanly when the process exits.
@@ -65,6 +65,14 @@ module Legion
                           tokens_in:  response.respond_to?(:input_tokens) ? response.input_tokens : nil,
                           tokens_out: response.respond_to?(:output_tokens) ? response.output_tokens : nil
                         }
+                      )
+                      Legion::LLM::Audit.emit_prompt(
+                        request_id: request_id,
+                        caller:     { requested_by: { identity: 'api:chat:async', type: :external } },
+                        routing:    { model: session.model.to_s, provider: provider },
+                        tokens:     { input_tokens:  response.respond_to?(:input_tokens) ? response.input_tokens : 0,
+                                      output_tokens: response.respond_to?(:output_tokens) ? response.output_tokens : 0 },
+                        timestamp:  Time.now
                       )
                       log.debug("[llm][api][namespaces][chat] action=async_complete request_id=#{request_id}")
                     rescue StandardError => e

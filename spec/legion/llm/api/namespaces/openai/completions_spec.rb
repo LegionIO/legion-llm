@@ -36,7 +36,7 @@ RSpec.describe 'Namespaces::OpenAI::Completions' do
     allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(
       double('Executor', call: pipeline_response)
     )
-    allow(Legion::LLM::Settings).to receive(:value).with(:default_model).and_return('legionio')
+    Legion::Settings[:llm][:default_model] = 'legionio'
   end
 
   describe 'POST /v1/completions' do

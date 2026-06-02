@@ -37,7 +37,7 @@ module Legion
 
           app.helpers do
             define_method(:auth_enabled?) do
-              Legion::LLM::Settings.value(:api, :auth, :enabled) == true
+              Legion::Settings.dig(:llm, :api, :auth, :enabled) == true
             end
 
             define_method(:extract_token) do |req|
@@ -56,7 +56,7 @@ module Legion
               return true unless auth_enabled?
               return false if token.nil? || token.empty?
 
-              keys = Legion::LLM::Settings.value(:api, :auth, :api_keys, default: [])
+              keys = Legion::Settings.dig(:llm, :api, :auth, :api_keys) || []
               keys.include?(token)
             end
           end

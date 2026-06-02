@@ -105,6 +105,7 @@ module Legion
         def http_get(path)
           uri     = URI.parse("#{daemon_url}#{path}")
           http    = Net::HTTP.new(uri.host, uri.port)
+          http.use_ssl = (uri.scheme == 'https')
           http.open_timeout = 2
           http.read_timeout = 2
           request = Net::HTTP::Get.new(uri.request_uri)
@@ -137,6 +138,7 @@ module Legion
         def http_post(path, body, timeout: DEFAULT_TIMEOUT)
           uri     = URI.parse("#{daemon_url}#{path}")
           http    = Net::HTTP.new(uri.host, uri.port)
+          http.use_ssl = (uri.scheme == 'https')
           http.open_timeout = 5
           http.read_timeout = timeout
           request = Net::HTTP::Post.new(uri.request_uri)
@@ -177,14 +179,10 @@ module Legion
         # ── private helpers ────────────────────────────────────────────────
 
         def fetch_daemon_url
-          settings = Legion::LLM::Settings.current_settings
-          return nil unless settings.is_a?(Hash)
+          daemon = Legion::Settings[:llm]&.[](:daemon) || {}
+          return nil if daemon[:enabled] == false
 
-          daemon = Legion::LLM::Settings.config_value(settings, :daemon, {})
-          return nil unless daemon.is_a?(Hash)
-          return nil if Legion::LLM::Settings.config_value(daemon, :enabled) == false
-
-          Legion::LLM::Settings.config_value(daemon, :url)
+          daemon[:url]
         rescue StandardError => e
           handle_exception(e, level: :warn)
           nil

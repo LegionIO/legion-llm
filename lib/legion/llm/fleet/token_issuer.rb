@@ -64,9 +64,7 @@ module Legion
         end
 
         def token_ttl_seconds
-          Integer(Legion::LLM::Settings.value(:fleet, :dispatch, :token_ttl_seconds, default: 180))
-        rescue ArgumentError, TypeError
-          180
+          Integer(Legion::Settings[:llm][:fleet][:dispatch][:token_ttl_seconds])
         end
 
         def issuer
@@ -82,9 +80,7 @@ module Legion
         end
 
         def auth_setting(key, default:)
-          Legion::LLM::Settings.value(:fleet, :auth, key, default: default)
-        rescue StandardError
-          default
+          Legion::Settings[:llm][:fleet][:auth][key] || default
         end
 
         def signing_key

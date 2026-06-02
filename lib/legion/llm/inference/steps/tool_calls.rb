@@ -11,8 +11,6 @@ module Legion
           include Legion::Logging::Helper
           include Steps::Logging
 
-          MAX_TOOL_LOOPS = 10
-
           # rubocop:disable Metrics/MethodLength, Metrics/BlockLength
           def step_tool_calls
             unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
@@ -67,15 +65,17 @@ module Legion
                 lex_normalized = (source[:lex] || '').delete_prefix('lex-').tr('-', '_')
                 runner_key     = source[:type] == :extension ? "#{lex_normalized}_#{source[:runner]}" : nil
                 result_string  = result[:result].is_a?(String) ? result[:result] : Legion::JSON.dump(result[:result] || {})
-                @pending_tool_history << {
-                  tool_call_id:  tool_call_id,
-                  pending_index: @pending_tool_history.size,
-                  tool_name:     tool_name,
-                  args:          tc[:arguments] || tc['arguments'] || {},
-                  result:        result_string,
-                  error:         result[:status] == :error,
-                  runner_key:    runner_key
-                }
+                @pending_tool_history_mutex.synchronize do
+                  @pending_tool_history << {
+                    tool_call_id:  tool_call_id,
+                    pending_index: @pending_tool_history.size,
+                    tool_name:     tool_name,
+                    args:          tc[:arguments] || tc['arguments'] || {},
+                    result:        result_string,
+                    error:         result[:status] == :error,
+                    runner_key:    runner_key
+                  }
+                end
               end
 
               @timeline.record(
@@ -120,20 +120,34 @@ module Legion
             native_source = @native_tool_source_map&.[](tool_key) || @native_tool_source_map&.[](tool_name)
             if native_source
               registry_tool = @injected_tool_map&.[](tool_key) || @injected_tool_map&.[](tool_name)
-              return native_source.merge(tool_class: registry_tool) if native_source[:type] == :registry && registry_tool
+              if native_source[:type] == :registry && registry_tool
+                log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=native_registry"
+                return native_source.merge(tool_class: registry_tool)
+              end
 
+              log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=native_map type=#{native_source[:type]}"
               return native_source
             end
 
             mcp_tool = @discovered_tools&.find { |t| t[:name].to_s == tool_key }
-            return mcp_tool[:source] if mcp_tool
+            if mcp_tool
+              log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=mcp server=#{mcp_tool[:source][:server]}"
+              return mcp_tool[:source]
+            end
 
             registry_tool = @injected_tool_map&.[](tool_key) || @injected_tool_map&.[](tool_name)
-            return { type: :registry, tool_class: registry_tool } if registry_tool
+            if registry_tool
+              log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=injected_registry"
+              return { type: :registry, tool_class: registry_tool }
+            end
 
             override = ToolDispatcher.check_override(tool_key)
-            return override if override
+            if override
+              log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=override type=#{override[:type]}"
+              return override
+            end
 
+            log.debug "[llm][tool_calls] action=source_resolved tool=#{tool_key} source=builtin"
             { type: :builtin }
           end
 
@@ -147,6 +161,23 @@ module Legion
 
           def client_passthrough_tool_loop_result(result, tool_calls, round)
             result[:tool_calls] = tool_calls
+            # Emit tool call/result events for client passthrough tools so they
+            # appear in the pending_tool_history and trigger @tool_event_handler callbacks.
+            tool_calls.each do |tool_call|
+              next unless client_passthrough_tool_call?(tool_call)
+
+              normalized = normalize_native_tool_call(tool_call)
+              emit_tool_call_event(normalized, round)
+              emit_tool_result_event(
+                Executor::ToolResultEvent.new(
+                  result:       "Passthrough to client: #{normalized[:name]}",
+                  tool_call_id: normalized[:id],
+                  tool_name:    normalized[:name],
+                  started_at:   Time.now,
+                  status:       :success
+                )
+              )
+            end
             log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=client_passthrough"
             result
           end
@@ -261,12 +292,20 @@ module Legion
           end
 
           def log_tool_call_result(tool_call_id, tool_name, result)
-            log.info(
-              "[llm][tools] result request_id=#{@request.id} " \
-              "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
-              "status=#{result[:status]} duration_ms=#{result[:duration_ms]} " \
-              "result_class=#{result[:result].class} result_chars=#{result_size(result[:result])}"
-            )
+            if result[:status] == :error
+              log.warn(
+                "[llm][tool_calls] action=tool_call_failed request_id=#{@request.id} " \
+                "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
+                "duration_ms=#{result[:duration_ms]} error=#{(result[:error] || result[:result]).to_s[0..200]}"
+              )
+            else
+              log.info(
+                "[llm][tools] result request_id=#{@request.id} " \
+                "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
+                "status=#{result[:status]} duration_ms=#{result[:duration_ms]} " \
+                "result_class=#{result[:result].class} result_chars=#{result_size(result[:result])}"
+              )
+            end
             log_step_debug(
               :tool_calls,
               :result,

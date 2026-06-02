@@ -165,27 +165,33 @@ RSpec.describe Legion::LLM::Context::Curator do
       end
     end
 
-    context 'message has an unclosed <think> tag (provider died mid-stream)' do
-      let(:content) { "Preamble.\n<think>Reasoning that never finished" }
+    context 'message has an unclosed <think> tag at start (provider died mid-stream)' do
+      let(:content) { '<think>Reasoning that never finished' }
       let(:msg) { { role: :assistant, content: content } }
 
-      it 'strips the unclosed tag and trailing content' do
+      it 'returns original when stripping would produce empty content' do
         result = curator.strip_thinking(msg)
-        expect(result[:content]).to include('Preamble.')
-        expect(result[:content]).not_to include('<think>')
-        expect(result[:curated]).to be true
+        expect(result).to eq(msg)
       end
     end
 
-    context 'message has an unclosed <thinking> tag' do
-      let(:content) { "Before.\n<thinking>Partial reasoning" }
+    context 'message has an unclosed <thinking> tag at start' do
+      let(:content) { '<thinking>Partial reasoning' }
       let(:msg) { { role: :assistant, content: content } }
 
-      it 'strips the unclosed tag and trailing content' do
+      it 'returns original when stripping would produce empty content' do
         result = curator.strip_thinking(msg)
-        expect(result[:content]).to include('Before.')
-        expect(result[:content]).not_to include('<thinking>')
-        expect(result[:curated]).to be true
+        expect(result).to eq(msg)
+      end
+    end
+
+    context 'message references thinking tags mid-content (not real thinking blocks)' do
+      let(:content) { 'Use `<think>` for reasoning. The model outputs `</think>` when done.' }
+      let(:msg) { { role: :assistant, content: content } }
+
+      it 'does not strip content between referenced tags' do
+        result = curator.strip_thinking(msg)
+        expect(result).to eq(msg)
       end
     end
   end
@@ -461,30 +467,29 @@ RSpec.describe Legion::LLM::Context::Curator do
   # --- async curation does not block caller ---
 
   describe '#curate_turn' do
-    it 'returns a Thread without blocking' do
+    it 'submits work to the async pool without blocking' do
       messages = [{ role: :user, content: 'hi' }]
-      result = curator.curate_turn(turn_messages: messages, assistant_response: 'hello')
-      expect(result).to be_a(Thread)
-      result.join(2) # wait for thread to finish
+      expect { curator.curate_turn(turn_messages: messages, assistant_response: 'hello') }.not_to raise_error
+      sleep 0.1
     end
 
     it 'never raises even if curation fails internally' do
       allow(curator).to receive(:store_curated).and_raise(StandardError, 'storage failure')
-      thread = curator.curate_turn(turn_messages:      [{ role: :user, content: 'test' }],
-                                   assistant_response: 'response')
-      expect { thread.join(2) }.not_to raise_error
+      expect do
+        curator.curate_turn(turn_messages: [{ role: :user, content: 'test' }], assistant_response: 'response')
+        sleep 0.1
+      end.not_to raise_error
     end
   end
 
   # --- curated cache invalidation ---
 
   describe 'cache invalidation after async curation' do
-    it 'clears @curated_messages after thread completes' do
+    it 'clears @curated_messages after async work completes' do
       curator.instance_variable_set(:@curated_messages, [{ role: :user, content: 'stale' }])
 
-      thread = curator.curate_turn(turn_messages:      [{ role: :user, content: 'msg' }],
-                                   assistant_response: 'resp')
-      thread.join(2)
+      curator.curate_turn(turn_messages: [{ role: :user, content: 'msg' }], assistant_response: 'resp')
+      sleep 0.2
 
       expect(curator.instance_variable_get(:@curated_messages)).to be_nil
     end

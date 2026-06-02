@@ -88,7 +88,7 @@ module Legion
         Hooks.install_defaults
         Tools::Interceptor.load_defaults
 
-        Legion::LLM::Skills.start if defined?(Legion::LLM::Skills) && Settings.value(:skills, :enabled) != false
+        Legion::LLM::Skills.start if defined?(Legion::LLM::Skills) && Legion::Settings[:llm][:skills][:enabled] != false
 
         LLM::Transport.load_all
         LLM::Fleet.load_transport
@@ -96,7 +96,7 @@ module Legion
         LLM::Metering.load_transport
 
         @started = true
-        Settings.set_value(:connected, value: true)
+        Legion::Settings[:llm][:connected] = true
         log.info '[llm] started'
         API.register_routes if defined?(API)
       rescue StandardError => e
@@ -106,7 +106,7 @@ module Legion
 
       def shutdown
         log.debug '[llm] shutdown.enter'
-        Settings.set_value(:connected, value: false)
+        Legion::Settings[:llm][:connected] = false
         @started = false
         Discovery.reset!
         Call::Registry.reset!
@@ -124,7 +124,7 @@ module Legion
       end
 
       def settings
-        Settings.current_settings
+        Legion::Settings[:llm]
       end
 
       def chat(...) = Inference.chat(...)
@@ -134,7 +134,7 @@ module Legion
       def embed(text, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.embedding_span(
-            model: (Settings.value(:default_model) || 'unknown').to_s
+            model: (Legion::Settings[:llm][:default_model] || 'unknown').to_s
           ) { |_span| Call::Embeddings.generate(text: text, **) }
         else
           Call::Embeddings.generate(text: text, **)
@@ -147,7 +147,7 @@ module Legion
       def structured(messages:, schema:, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.llm_span(
-            model: (Settings.value(:default_model) || 'unknown').to_s, input: messages.to_s
+            model: (Legion::Settings[:llm][:default_model] || 'unknown').to_s, input: messages.to_s
           ) { |_span| Call::StructuredOutput.generate(messages: messages, schema: schema, **) }
         else
           Call::StructuredOutput.generate(messages: messages, schema: schema, **)

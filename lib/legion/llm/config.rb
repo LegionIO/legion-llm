@@ -11,26 +11,26 @@ module Legion
 
       def set_defaults
         log.debug '[llm][config] set_defaults.enter'
-        default_model = Legion::LLM::Settings.value(:default_model)
-        default_provider = Legion::LLM::Settings.value(:default_provider)
+        default_model = Legion::Settings[:llm][:default_model]
+        default_provider = Legion::Settings[:llm][:default_provider]
 
         if default_model.nil? && default_provider.nil?
           log.debug '[llm][config] set_defaults auto_configure_defaults'
           auto_configure_defaults
         end
-        log.debug "[llm][config] set_defaults.exit default_model=#{Legion::LLM::Settings.value(:default_model)} default_provider=#{Legion::LLM::Settings.value(:default_provider)}"
+        log.debug "[llm][config] set_defaults.exit default_model=#{Legion::Settings[:llm][:default_model]} default_provider=#{Legion::Settings[:llm][:default_provider]}"
       end
 
       def auto_configure_defaults
         log.debug '[llm][config] auto_configure_defaults.enter'
         extension_providers.each do |provider, config|
-          next unless Legion::LLM::Settings.config_value(config, :enabled)
+          next unless config[:enabled] != false
 
-          model = Legion::LLM::Settings.config_value(config, :default_model)
+          model = config[:default_model]
           next unless model
 
-          Legion::LLM::Settings.set_value(:default_model, value: model)
-          Legion::LLM::Settings.set_value(:default_provider, value: provider)
+          Legion::Settings[:llm][:default_provider] = provider.to_sym
+          Legion::Settings[:llm][:default_model] = model
           log.info "[llm][config] auto-configured default model=#{model} provider=#{provider}"
           break
         end

@@ -43,7 +43,7 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
     allow(Legion::LLM).to receive(:started?).and_return(true)
     allow(Legion::LLM::Inference::Request).to receive(:build).and_return(double('Request'))
     allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(executor_double)
-    allow(Legion::LLM::Settings).to receive(:value).with(:default_model).and_return('legionio')
+    Legion::Settings[:llm][:default_model] = 'legionio'
   end
 
   describe 'POST /v1/responses' do

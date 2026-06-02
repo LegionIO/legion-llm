@@ -36,7 +36,7 @@ module Legion
 
                 messages = [{ role: 'system', content: body[:instructions].to_s }] + messages if body[:instructions]
 
-                model       = body[:model] || Legion::LLM::Settings.value(:default_model) || 'default'
+                model       = body[:model] || Legion::Settings[:llm][:default_model] || 'default'
                 streaming   = body[:stream] == true
                 tool_decls  = Responses.build_tool_declarations(body[:tools])
 

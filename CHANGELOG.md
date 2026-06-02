@@ -1,5 +1,125 @@
 # Legion LLM Changelog
 
+## [0.11.2] - 2026-06-02
+
+### Removed
+- **Legion::LLM::Settings abstraction layer** — Removed `value`, `config_value`, `global_value`, `set_value`, `transport_connected?`, `enterprise_privacy?`, `current_settings`, and `namespace` methods. All settings reads now go directly through `Legion::Settings[:llm]` or `Legion::Settings.dig(:llm, ...)`. The module retains only `default`, `register_defaults!`, `validate!`, and the `*_defaults` class methods.
+- **Passthrough wrapper methods** — Removed `routing_settings`, `discovery_settings`, `default_settings_model`, `default_settings_provider`, `llm_settings` and similar indirection methods from Router, Discovery, and Inference modules.
+- **String-key dual-lookup** — `config_value` previously tried both symbol and string keys on any hash. All settings are now symbol-keyed; string-key fallback is gone.
+- **Deprecated "embeddings" (plural) settings key** — Use `embedding` (singular) only.
+
+### Added
+- Default values for `compliance.encrypt_metering`, `compliance.audit_max_messages`, `budget.session_usd`, `rag_guard.evaluators`, `discovery.memory_overhead_factor`, and `structured_output` settings so all accessed keys have registered defaults.
+
+## [0.12.1] - 2026-06-02
+
+### Fixed
+- **Provider-scoped discovery refresh** — `Discovery.refresh_discovered_models!` now accepts an optional `provider:` keyword argument. When filtered, only refreshes that provider's models and merges with the existing cache instead of re-querying all providers (discovery.rb)
+
+## [0.12.0] - 2026-06-01
+
+### Fixed
+- **cacheable? treated nil temperature as zero** — Added `default_temperature` setting (default 1.0). Requests without an explicit temperature now resolve against the default instead of being treated as `0.0`, preventing non-deterministic responses from being served from cache (inference.rb, settings.rb)
+- **ReDoS in infer_tool_name** — Possessive quantifier `\d++` replaced with `\d+` in search detection regex (context/curator.rb)
+- **ReDoS in strip_thinking regex** — `[^#\n][^\n]*` double-character-class pattern created exponential backtracking on long non-heading lines (10k-char lines). Replaced with anchored negative-lookahead variant that matches only lines starting with `#+ Thinking` headings. Benchmarked: pathological input drops from potential timeout to <5ms (context/curator.rb)
+- **Shell injection in dispatch_client_tool** — Added audit logging for all shell commands executed via native client tools (api/native/helpers.rb)
+- **Path traversal in file operations** — Added `validate_client_tool_path` that constrains file_read/file_write/file_edit to working directory, rejecting paths that escape via `..` (api/native/helpers.rb)
+- **Text block concatenation loss** — Anthropic translator now joins assistant text parts with `\n\n` separator instead of empty string (api/translators/anthropic_request.rb)
+- **Raw part leak in responses_content_part** — LexLLMAdapter no longer returns unnormalized/unsanitized parts; unknown types are converted to `input_text` with serialized content (call/lex_llm_adapter.rb)
+- **Metering failures silently dropped** — step_metering now attempts `Metering.spool_event` on publish failure so billing events are spooled to disk instead of lost (inference/executor.rb)
+- **Error category extraction always nil** — `extract_error_category_from_attempt` now handles string failures and hash `:error` keys in addition to `:category` (inference.rb)
+- **provider_scoped_instance false negatives** — Now checks `Registry.instances_for` before returning nil, only drops instance when provider has other registered instances (inference/executor.rb)
+- **build_fallback_resolutions double-exclusion** — Merged two separate exclusion checks into single predicate; `exclude_instance: nil` now only excludes the specified provider+instance combo (inference/executor.rb)
+- **find_fallback_provider hardcoded local exclusion** — ollama/vllm fallback exclusion is now configurable via `fallback.allow_local` setting instead of being permanently blocked (inference/executor.rb)
+- **extract_content double transform_keys** — Normalizes block keys once up front instead of calling transform_keys 2-3 times per block (api/translators/openai_request.rb)
+- **@pending_tool_history data race** — Tool history mutations in step_tool_calls now wrapped in `@pending_tool_history_mutex.synchronize` to match executor's async event emission (inference/steps/tool_calls.rb)
+- **Client passthrough tool events never emitted** — `client_passthrough_tool_loop_result` now emits both `emit_tool_call_event` and `emit_tool_result_event` for passthrough tools so they appear in `@pending_tool_history`, fire `@tool_event_handler` callbacks, and generate tool audit events (inference/steps/tool_calls.rb)
+- **Thinking tag pattern divergence** — Executor's `strip_thinking_from_history` only handled `<thinking>`/`<think(?:ing)?>` (Anthropic/long form) but not short `<think>` (DeepSeek, Qwen, Ollama, vLLM) or `<thought>` (various models). Added `THINKING_TAG_PATTERN_SHORT` and `THINKING_TAG_PATTERN_THOUGHT` constants, applied all three gsubs so all thinking block variants are stripped before dispatch on every turn (inference/executor.rb)
+- **Thinking tag stripping corrupted passthrough content** — Unanchored regex in `strip_thinking_from_history` and `strip_thinking_tags` treated backtick-quoted or mid-content `<think>`/`</think>` references as real thinking blocks, deleting content between them. Replaced regex with string-based `start_with?`/`index` approach that only strips tags at the beginning of a message where providers actually emit them (inference/executor.rb, context/curator.rb)
+- **ToolResultEvent unresolved constant** — `client_passthrough_tool_loop_result` referenced `ToolResultEvent` without namespace; Ruby's lexical constant lookup failed in the included module. Qualified as `Executor::ToolResultEvent` (inference/steps/tool_calls.rb)
+- **client_tool_methods_spec sandbox failure** — Tests created temp files in `/tmp` which `validate_client_tool_path` correctly rejects. Moved to project-relative `tmp/` directory (spec/api/native/client_tool_methods_spec.rb)
+
+### Changed
+- **Removed `llm_setting` abstraction** — All `llm_setting(:key)` calls replaced with direct `Legion::Settings[:llm][:key]` access. The indirection obscured that settings must flow through `Legion::Settings` to pick up dynamic user overrides. Affected: inference/executor.rb, inference.rb, inference/native_tool_loop.rb, inference/prompt.rb
+- **`fallback.allow_local` defaults to true** — Local providers (ollama/vllm) are now allowed as fallback targets by default instead of being permanently excluded (settings.rb)
+- **Text join separator** — OpenAI translator `extract_content` text blocks now join with `\n\n` instead of empty string for consistency
+
+## [0.11.1] - 2026-06-01
+
+### Fixed
+- **Embedding instance selection honored** — Discovery honors a configured `embedding.instance` pin over a higher-tier-ranked empty instance (and skips empty candidates whose resolved model is absent), and `Embeddings.generate`/`generate_batch` resolve that configured instance on the dispatch path instead of falling back to the provider default
+
+## [0.11.0] - 2026-05-31
+
+### Added
+- **Comprehensive diagnostic logging** — 28 files across executor, pipeline steps, tool loop, context, router, quality checker with structured `[llm][component] action=verb key=value` format at appropriate severity levels (debug/info/warn)
+- **Context window enforcement** — Pre-dispatch compaction triggers at 90% of model's context window, preserving recent turns and aggressively compacting older history
+- **Tool result trimming** — Oversized tool results from prior turns trimmed to 4000 chars before dispatch (current turn preserved in full)
+- **Thinking block stripping** — Historical `<think>` blocks removed from prior assistant turns before dispatch
+- **Empty response guard** — Streaming responses with no text and no tool calls emit `overloaded_error` instead of valid empty message, triggering client retry
+- **System prompt: no tool call limit** — Added instruction telling models there is no tool call limit per turn
+- **Conversation ID always generated** — API handler generates conv_id when client doesn't provide one; returned via `X-Legion-Conversation-Id` header
+- **Metering spool encryption** — Spool file encrypts via `Legion::Crypt` when `:compliance, :encrypt_spool` enabled
+- **Audit publisher improvements** — Preserves caller identity, includes agent_id/node_id, extracts provider metrics, hashes truncated conversations
+
+### Fixed
+- **Quality checker ignores tool-use responses** — No longer flags empty_response when model returns tool calls with no text content
+- **Confidence scoring skips tool-use** — Score=0.0 no longer reported for valid tool call responses
+- **Context overflow doesn't trip circuit breaker** — ContextLengthExceededError no longer reports `:error` signal to health tracker
+- **HealthTracker deadlock prevention** — `Mutex` replaced with `Monitor` (reentrant) to prevent deadlock when custom handlers call back into report/adjustment
+- **Thread pool fallback policy** — Chat/batch pools use `:caller_runs` instead of `:abort` (no silent request drops under load)
+- **Bare Thread.new eliminated** — All async work uses managed `ASYNC_THREAD_POOL` with `at_exit` shutdown hooks
+- **Conversation#replace preserves internal roles** — `__metadata__` and `__curated__` entries no longer wiped on replace
+- **EscalationChain method naming** — `padded_resolutions` renamed to `capped_resolutions` (it truncates, not pads)
+- **trigger_tool_limit default mismatch** — Fallback default fixed from 50 to 25 to match settings.rb
+- **Debate extract_question string keys** — `m[:role] == :user` changed to `.to_s == 'user'` for mixed-key messages
+- **EnrichmentInjector nil safety** — `enrichments` param defaults to `{}` when nil
+- **Stop reason preserved from provider** — `message_response` and `chunk_response` extract actual `finish_reason` from raw provider response instead of discarding
+- **OpenAI streaming usage stats** — Always included in final chunk (was gated behind `include_reasoning`)
+- **Metering identity** — Uses caller identity from request, not process publisher identity
+- **Metering request_type** — Derived from request metadata (image/audio/chat), not hardcoded 'chat'
+- **Metering actual cost** — Prefers provider-reported cost over local estimate
+- **Metering encryption** — `encrypt?` respects `:compliance, :encrypt_metering` setting
+- **Audit identity clobbering** — `attributed_event` uses `||=` to preserve caller identity
+- **Audit step order** — `post_response` (audit) now runs before `metering` (financial records need supporting evidence)
+- **Audit tool spooling** — Failed tool audit events spool to disk instead of silent drop
+- **Audit timeline** — Preserves RBAC, classification, billing, confidence decisions
+- **Budget cap** — Pre-flight check estimates output tokens (assumes output ≈ input) instead of `output_tokens: 0`
+- **Embeddings audit** — POST /v1/embeddings now emits audit event
+- **Native chat audit** — Async chat path emits `Audit.emit_prompt` after completion
+- **Knowledge capture embedding** — Truncates content to 2000 chars before embedding to prevent ContextLengthExceededError
+- **Dedup performance** — O(n²) → O(n×20) via sliding window comparison
+- **22 silent rescue swallows** — All `rescue StandardError` without variable capture now log at debug level
+
+### Changed
+- **max_tool_calls_per_turn: 50** — New setting (was dead `MAX_TOOL_LOOPS = 10` constant); deferred tool calls get error result telling model to retry
+- **max_tool_rounds** — Removed `MAX_NATIVE_TOOL_ROUNDS` constant; reads directly from settings
+- **Settings-driven limits** — Redundant fallback defaults removed from `llm_setting` call sites
+
+## [0.10.4] - 2026-05-31
+
+### Fixed
+- **TRANSLATION-BUG-01**: Anthropic `tool_result` content blocks preserved as arrays — multimodal tool results (images) no longer flattened to string.
+- **TRANSLATION-BUG-03**: Anthropic `stop_reason` properly maps `content_filter`; distinguishes `stop` with/without `stop_sequence`.
+- **TRANSLATION-BUG-04**: OpenAI `map_finish_reason` returns `error` for unknown stop reasons instead of `stop` (errors no longer disguised as success).
+- **TRANSLATION-BUG-05**: OpenAI `extract_content` preserves `image_url` and non-text content parts — vision input no longer silently dropped.
+- **TRANSLATION-BUG-06**: Anthropic streaming `content_block_start` includes tool arguments in `input` field (was empty `{}`).
+- **TRANSLATION-BUG-09**: Anthropic system prompt `cache_control` metadata preserved when present — prompt caching no longer silently disabled.
+- **TRANSLATION-BUG-10**: Stable `tool_call_id` generated when OpenAI client sends nil — multi-turn tool chains no longer break.
+- **TRANSLATION-BUG-11**: OpenAI translator uses symbol roles (`:user`, `:assistant`) matching Anthropic — executor symbol comparisons now work.
+- **TRANSLATION-BUG-12**: Unsupported OpenAI tool types (`code_interpreter`, `file_search`) logged at debug instead of silent drop.
+
+## [0.10.3] - 2026-05-31
+
+### Fixed
+- **DaemonClient HTTPS support** — `http_get` and `http_post` now set `http.use_ssl = true` when the daemon URL scheme is `https://`. Previously, all daemon communication was plain HTTP, silently failing for HTTPS URLs or sending credentials in cleartext.
+- **Context compression guard against preserve_recent: 0** — `auto_compact` now enforces a minimum `preserve_recent` of 1. A value of 0 would compact the entire conversation including the latest messages, producing empty context.
+- **Context curator thread safety** — `curate_turn` and `curated_messages` now synchronize on a per-instance `@curation_mutex`. Concurrent turns could race on `@curated_messages`, causing stale or nil curation state.
+- **Recursive compaction guard** — `maybe_compact_history` now uses `Thread.current[:legion_compacting]` to prevent infinite recursion when `Context::Compressor.auto_compact` triggers its own LLM summarization call, which would recursively trigger compaction again.
+- **Metering::Tokens unbounded memory growth** — `TokenTracker#record` now evicts oldest entries when the store exceeds `MAX_ENTRIES` (10,000). Long-running high-throughput processes would leak memory.
+- **Tool timeline index per-call resolution** — `build_tool_timeline_index` now tracks per-tool-name call counts and produces keys like `"read_file:2"` for repeated calls. `build_response_tool_calls` matches each tool call to its corresponding timeline entry, fixing wrong duration/status when the same tool is called multiple times in a round.
+- **Streaming escalation quality bypass documented** — Added explicit comment noting that streaming escalation attempts always pass quality check because in-flight stream quality-checking is not supported.
+
 ## [0.10.2] - 2026-05-30
 
 ### Fixed

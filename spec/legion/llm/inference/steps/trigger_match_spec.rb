@@ -219,11 +219,11 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
       expect(step.send(:trigger_scan_depth)).to eq(5)
     end
 
-    it 'reads from string-keyed settings' do
+    it 'reads from settings via set_prop' do
       Legion::Settings.set_prop(:llm, {
-                                  'tool_trigger' => {
-                                    'scan_depth' => 3,
-                                    'tool_limit' => 8
+                                  tool_trigger: {
+                                    scan_depth: 3,
+                                    tool_limit: 8
                                   }
                                 })
       expect(step.send(:trigger_scan_depth)).to eq(3)
@@ -231,9 +231,9 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
   end
 
   describe '#trigger_tool_limit' do
-    it 'returns default 50 when settings missing' do
+    it 'returns default 25 when settings missing' do
       Legion::Settings[:llm][:tool_trigger] = {}
-      expect(step.send(:trigger_tool_limit)).to eq(50)
+      expect(step.send(:trigger_tool_limit)).to eq(25)
     end
 
     it 'reads from settings' do
@@ -241,11 +241,11 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
       expect(step.send(:trigger_tool_limit)).to eq(7)
     end
 
-    it 'reads from string-keyed settings' do
+    it 'reads from settings via set_prop' do
       Legion::Settings.set_prop(:llm, {
-                                  'tool_trigger' => {
-                                    'scan_depth' => 3,
-                                    'tool_limit' => 8
+                                  tool_trigger: {
+                                    scan_depth: 3,
+                                    tool_limit: 8
                                   }
                                 })
       expect(step.send(:trigger_tool_limit)).to eq(8)

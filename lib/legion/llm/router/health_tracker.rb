@@ -20,7 +20,7 @@ module Legion
           @latency_window = {}
           @handlers       = {}
           @denied_models  = {}
-          @mutex          = Mutex.new
+          @mutex          = Monitor.new
 
           register_default_handlers
         end
@@ -39,25 +39,23 @@ module Legion
           handler = @handlers[sym]
           return nil unless handler
 
+          log.debug "[llm][health_tracker] action=signal_received provider=#{provider} instance=#{instance || 'all'} signal=#{sym} value=#{value}"
+
           if instance
-            # Instance-specific tracking
             payload = build_payload(provider: provider, instance: instance,
                                     key: instance_key(provider, instance),
                                     offering_id: offering_id, signal: sym,
                                     value: value, metadata: metadata)
             @mutex.synchronize { handler.call(payload) }
           else
-            # Check if we have tracked instances for this provider; if so, broadcast
             instances = known_instances(provider)
             if instances.empty?
-              # No instances tracked — use provider-level key (backward compat)
               payload = build_payload(provider: provider, instance: nil,
                                       key: health_key(provider, offering_id),
                                       offering_id: offering_id, signal: sym,
                                       value: value, metadata: metadata)
               @mutex.synchronize { handler.call(payload) }
             else
-              # Broadcast to all known instances of this provider
               @mutex.synchronize do
                 instances.each do |inst_key|
                   payload = build_payload(provider: provider, instance: nil,
@@ -120,7 +118,7 @@ module Legion
             @denied_models[key] ||= {}
             @denied_models[key][model.to_s] = { reason: reason, at: Time.now }
           end
-          log.warn("Model denied provider=#{key} model=#{model} reason=#{reason}")
+          log.warn("[llm][health_tracker] action=model_denied provider=#{key} model=#{model} reason=#{reason}")
         end
 
         # Check if a model is denied for a provider+instance.
@@ -201,7 +199,6 @@ module Legion
           }
         end
 
-        # Returns the circuit state for a single key
         def circuit_state_for_key(key)
           circuit = @circuits[key]
           return :closed if circuit.nil?
@@ -209,7 +206,7 @@ module Legion
           if circuit[:state] == :open
             elapsed = Time.now - circuit[:opened_at]
             if elapsed >= @cooldown_seconds
-              log.warn("Circuit open->half_open for provider=#{key} (cooldown elapsed)")
+              log.info("[llm][health_tracker] action=circuit_state_change from=open to=half_open provider=#{key} cooldown_elapsed_s=#{elapsed.round}")
               return :half_open
             end
           end
@@ -236,13 +233,14 @@ module Legion
             if circuit_state_for_key(key) == :half_open
               circuit[:state]     = :open
               circuit[:opened_at] = Time.now
-              log.warn("Circuit half_open->open for provider=#{key} (error during probe)")
+              log.warn("[llm][health_tracker] action=circuit_state_change from=half_open to=open provider=#{key} reason=error_during_probe")
             else
               circuit[:failures] += 1.0
+              log.debug "[llm][health_tracker] action=error_recorded provider=#{key} failures=#{circuit[:failures]} threshold=#{@failure_threshold}"
               if circuit[:failures] >= @failure_threshold
                 circuit[:state]     = :open
                 circuit[:opened_at] = Time.now
-                log.warn("Circuit closed->open for provider=#{key} (failures=#{circuit[:failures]})")
+                log.warn("[llm][health_tracker] action=circuit_state_change from=closed to=open provider=#{key} failures=#{circuit[:failures]} threshold=#{@failure_threshold}") # rubocop:disable Layout/LineLength
               end
             end
           end
@@ -255,32 +253,19 @@ module Legion
             circuit[:failures]  = 0
             circuit[:state]     = :closed
             circuit[:opened_at] = nil
-            log.warn("Circuit #{prev_state}->closed for provider=#{key}") if prev_state != :closed
+            log.info("[llm][health_tracker] action=circuit_state_change from=#{prev_state} to=closed provider=#{key}") if prev_state != :closed
           end
 
           register_handler(:quality_failure) do |payload|
             key = payload[:provider]
-            ensure_circuit(key)
-            circuit = @circuits[key]
-
-            if circuit_state_for_key(key) == :half_open
-              circuit[:state]     = :open
-              circuit[:opened_at] = Time.now
-              log.warn("Circuit half_open->open for provider=#{key} (quality failure during probe)")
-            else
-              circuit[:failures] += 0.5
-              if circuit[:failures] >= @failure_threshold
-                circuit[:state]     = :open
-                circuit[:opened_at] = Time.now
-                log.warn("Circuit closed->open for provider=#{key} (quality failures=#{circuit[:failures]})")
-              end
-            end
+            log.debug "[llm][health_tracker] action=quality_failure_received provider=#{key}"
           end
 
           register_handler(:latency) do |payload|
             key = payload[:provider]
             @latency_window[key] ||= []
             @latency_window[key] << { value: payload[:value], at: payload[:at] }
+            log.debug "[llm][health_tracker] action=latency_recorded provider=#{key} value_ms=#{payload[:value]}"
           end
         end
 
@@ -313,7 +298,7 @@ module Legion
 
           multiplier = (avg / LATENCY_THRESHOLD_MS).floor
           penalty = [LATENCY_PENALTY_STEP * multiplier, OPEN_PENALTY].max
-          log.debug("Latency penalty applied to provider=#{key} avg_ms=#{avg.round} penalty=#{penalty}")
+          log.debug "[llm][health_tracker] action=latency_penalty_applied provider=#{key} avg_ms=#{avg.round} penalty=#{penalty}"
           penalty
         end
       end

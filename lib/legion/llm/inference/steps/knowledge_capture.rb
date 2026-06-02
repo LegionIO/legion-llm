@@ -16,14 +16,16 @@ module Legion
             request = @request
             enrichments = @enrichments
             local_enabled = local_capture_enabled?
-            log_step_debug(
+            content_chars = response&.message&.dig(:content).to_s.length
+            log_step_info(
               :knowledge_capture,
               :dispatch_async,
               local_enabled:       local_enabled,
-              writeback_available: defined?(Legion::Extensions::Apollo::Helpers::Writeback)
+              writeback_available: defined?(Legion::Extensions::Apollo::Helpers::Writeback),
+              response_chars:      content_chars
             )
 
-            Thread.new do
+            Executor::ASYNC_THREAD_POOL.post do
               if defined?(Legion::Extensions::Apollo::Helpers::Writeback)
                 log_step_debug(:knowledge_capture, :writeback_route)
                 Legion::Extensions::Apollo::Helpers::Writeback.evaluate_and_route(
@@ -48,6 +50,8 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture')
           end
 
+          EMBED_MAX_CHARS = 2000
+
           private
 
           def local_capture_enabled?
@@ -68,6 +72,8 @@ module Legion
               log_step_debug(:knowledge_capture, :local_ingest_skipped, reason: :empty_content)
               return
             end
+
+            content = content[0, EMBED_MAX_CHARS] if content.length > EMBED_MAX_CHARS
 
             model = response.routing[:model].to_s
             tags  = ['llm_response', model].reject(&:empty?)

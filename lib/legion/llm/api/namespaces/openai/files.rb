@@ -53,12 +53,14 @@ module Legion
                 file_id  = "file-#{SecureRandom.hex(16)}"
                 filename = begin
                   uploaded[:filename] || uploaded.original_filename
-                rescue StandardError
+                rescue StandardError => e
+                  log.debug "[llm][api][openai][files] action=filename_fallback error=#{e.class} message=#{e.message}"
                   'upload.bin'
                 end
                 data = begin
                   uploaded[:tempfile]&.read || uploaded.read
-                rescue StandardError
+                rescue StandardError => e
+                  log.debug "[llm][api][openai][files] action=file_read_fallback error=#{e.class} message=#{e.message}"
                   ''
                 end
 

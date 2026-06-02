@@ -23,7 +23,8 @@ module Legion
           @pending[correlation_id] = { future: future, expected: normalize_hash(expected || {}) }
           ensure_consumer
           future
-        rescue StandardError
+        rescue StandardError => e
+          log.debug "[llm][fleet][reply_dispatcher] action=register_cleanup correlation_id=#{correlation_id} error=#{e.class} message=#{e.message}"
           @pending.delete(correlation_id)
           raise
         end
@@ -184,11 +185,11 @@ module Legion
         end
 
         def reply_queue_prefix
-          Legion::LLM::Settings.value(:fleet, :dispatch, :reply_queue_prefix, default: 'llm.fleet.reply')
+          Legion::Settings[:llm][:fleet][:dispatch][:reply_queue_prefix]
         end
 
         def reply_queue_expires_ms
-          Legion::LLM::Settings.value(:fleet, :dispatch, :reply_queue_expires_ms, default: 60_000)
+          Legion::Settings[:llm][:fleet][:dispatch][:reply_queue_expires_ms]
         end
 
         def current_agent_queue_name

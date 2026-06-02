@@ -646,8 +646,8 @@ confidence: 0.9 }],
       expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
     end
 
-    it 'honors string-keyed max_tool_rounds settings' do
-      Legion::Settings.set_prop(:llm, { 'max_tool_rounds' => 2, 'routing' => { 'escalation' => { 'pipeline_enabled' => false } } })
+    it 'honors max_tool_rounds settings' do
+      Legion::Settings.set_prop(:llm, { max_tool_rounds: 2, routing: { escalation: { pipeline_enabled: false } } })
 
       register_native_chat do
         { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
@@ -658,7 +658,7 @@ confidence: 0.9 }],
       expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
     end
 
-    it 'uses MAX_NATIVE_TOOL_ROUNDS as default when max_tool_rounds not in settings' do
+    it 'uses default max_tool_rounds (200) when not configured in settings' do
       Legion::Settings.set_prop(:llm, { routing: { escalation: { pipeline_enabled: false } } })
 
       register_native_chat { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }
@@ -784,17 +784,17 @@ confidence: 0.9 }],
     end
   end
 
-  describe 'string-keyed routing settings' do
+  describe 'routing settings' do
     subject(:executor) { described_class.new(request) }
 
-    it 'honors string-keyed pipeline escalation settings' do
+    it 'honors pipeline escalation settings' do
       Legion::Settings.set_prop(:llm, {
-                                  'routing' => {
-                                    'escalation' => {
-                                      'enabled'           => true,
-                                      'pipeline_enabled'  => true,
-                                      'max_attempts'      => 7,
-                                      'quality_threshold' => 85
+                                  routing: {
+                                    escalation: {
+                                      enabled:           true,
+                                      pipeline_enabled:  true,
+                                      max_attempts:      7,
+                                      quality_threshold: 85
                                     }
                                   }
                                 })
@@ -804,10 +804,10 @@ confidence: 0.9 }],
       expect(executor.send(:pipeline_escalation_quality_threshold)).to eq(85)
     end
 
-    it 'honors string-keyed native provider layer settings' do
+    it 'honors native provider layer settings' do
       Legion::Settings.set_prop(:llm, {
-                                  'provider_layer' => {
-                                    'mode' => 'auto'
+                                  provider_layer: {
+                                    mode: 'auto'
                                   }
                                 })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
@@ -823,8 +823,8 @@ confidence: 0.9 }],
       )
       tool_executor = described_class.new(tool_request)
       Legion::Settings.set_prop(:llm, {
-                                  'provider_layer' => {
-                                    'mode' => 'native'
+                                  provider_layer: {
+                                    mode: 'native'
                                   }
                                 })
 
@@ -877,17 +877,31 @@ confidence: 0.9 }],
       expect(toolless_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end
 
-    it 'finds string-keyed fallback provider configs' do
+    it 'finds fallback provider configs' do
       Legion::Settings.set_prop(:llm, {
-                                  'providers' => {
-                                    'ollama'  => {
-                                      'enabled'       => true,
-                                      'default_model' => 'qwen3.6:27b'
+                                  providers: {
+                                    ollama:  {
+                                      enabled:       true,
+                                      default_model: 'qwen3.6:27b'
                                     },
-                                    'bedrock' => {
-                                      'enabled'       => true,
-                                      'default_model' => 'claude-sonnet-4-6'
+                                    bedrock: {
+                                      enabled:       true,
+                                      default_model: 'claude-sonnet-4-6'
                                     }
+                                  }
+                                })
+
+      expect(executor.send(:find_fallback_provider, exclude: [])).to eq(
+        { provider: :ollama, model: 'qwen3.6:27b' }
+      )
+    end
+
+    it 'skips local providers when allow_local is false' do
+      Legion::Settings.set_prop(:llm, {
+                                  fallback:  { allow_local: false },
+                                  providers: {
+                                    ollama:  { enabled: true, default_model: 'qwen3.6:27b' },
+                                    bedrock: { enabled: true, default_model: 'claude-sonnet-4-6' }
                                   }
                                 })
 

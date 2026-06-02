@@ -96,7 +96,7 @@ module Legion
               events << ['content_block_start', {
                 type:          'content_block_start',
                 index:         content_index,
-                content_block: { type: 'tool_use', id: tc[:id], name: tc[:name], input: {} }
+                content_block: { type: 'tool_use', id: tc[:id], name: tc[:name], input: tc[:arguments] || {} }
               }]
               events << ['content_block_delta', {
                 type:  'content_block_delta',
@@ -160,10 +160,12 @@ module Legion
             reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : stop.to_s
 
             case reason.to_s
-            when 'tool_use'   then 'tool_use'
-            when 'max_tokens' then 'max_tokens'
-            when 'stop'       then 'stop_sequence'
-            else                   'end_turn'
+            when 'tool_use'       then 'tool_use'
+            when 'max_tokens'     then 'max_tokens'
+            when 'content_filter' then 'content_filter'
+            when 'stop'
+              pipeline_response.respond_to?(:stop_sequence) && pipeline_response.stop_sequence ? 'stop_sequence' : 'end_turn'
+            else 'end_turn'
             end
           end
 

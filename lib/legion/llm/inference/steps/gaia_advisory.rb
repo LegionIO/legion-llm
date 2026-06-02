@@ -11,7 +11,7 @@ module Legion
           include Steps::Logging
 
           def step_gaia_advisory
-            if Legion::LLM::Settings.value(:gaia, :advisory_enabled, default: true) == false
+            if Legion::Settings[:llm][:gaia][:advisory_enabled] == false
               log_step_debug(:gaia_advisory, :skipped, reason: :disabled_by_settings)
               return
             end
@@ -45,6 +45,7 @@ module Legion
             }
 
             if advisory[:system_prompt]
+              log_step_info(:gaia_advisory, :system_prompt_injected, chars: advisory[:system_prompt].to_s.length)
               @enrichments['gaia:system_prompt'] = {
                 content:   advisory[:system_prompt],
                 timestamp: Time.now
@@ -52,6 +53,7 @@ module Legion
             end
 
             if advisory[:routing_hint]
+              log_step_info(:gaia_advisory, :routing_hint_injected, tier: advisory[:routing_hint][:recommended_tier] || 'none')
               @enrichments['gaia:routing_hint'] = {
                 data:      advisory[:routing_hint],
                 timestamp: Time.now

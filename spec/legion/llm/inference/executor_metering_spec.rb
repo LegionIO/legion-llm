@@ -87,7 +87,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
       expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
         expect(event[:cost_usd]).to eq(0.00042)
         expect(event[:caller]).to eq(caller)
-        expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
+        expect(event[:identity]).to eq(caller)
         expect(event[:conversation_id]).to eq('conv_123')
         expect(event[:correlation_id]).to eq('corr_123')
         expect(event[:wall_clock_ms]).to be >= 0
@@ -163,14 +163,14 @@ RSpec.describe Legion::LLM::Inference::Executor do
         }
       end
 
-      it 'keeps the caller context but publishes process identity for metering attribution' do
+      it 'keeps the caller context and uses caller hash as metering identity' do
         allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
 
         executor.send(:step_metering)
 
         expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
           expect(event[:caller]).to eq(caller)
-          expect(event[:identity]).to eq(identity: 'matt@example.com', type: :human, credential: :system)
+          expect(event[:identity]).to eq(caller)
         end
       end
     end
@@ -178,7 +178,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     context 'with a string caller' do
       let(:caller) { 'extension:lex-test' }
 
-      it 'keeps the caller string but publishes process identity for metering attribution' do
+      it 'keeps the caller string and falls back to process identity for metering attribution' do
         allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
 
         executor.send(:step_metering)

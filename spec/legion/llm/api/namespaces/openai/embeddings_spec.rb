@@ -24,7 +24,7 @@ RSpec.describe 'Namespaces::OpenAI::Embeddings' do
 
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
-    allow(Legion::LLM::Settings).to receive(:value).with(:default_model).and_return('legionio')
+    Legion::Settings[:llm][:default_model] = 'legionio'
     allow(Legion::LLM).to receive(:embed).and_return([0.1, 0.2, 0.3])
   end
 

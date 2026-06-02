@@ -21,13 +21,13 @@ module Legion
         end
 
         def inject_anthropic_cache_control!(opts, provider)
-          resolved_provider = (provider || Legion::LLM::Settings.value(:default_provider))&.to_sym
+          resolved_provider = (provider || Legion::Settings[:llm][:default_provider])&.to_sym
           return unless resolved_provider == :anthropic
 
-          caching_settings = Legion::LLM::Settings.value(:prompt_caching, default: {}) || {}
-          return unless Legion::LLM::Settings.config_value(caching_settings, :enabled, true) != false
+          caching_settings = Legion::Settings.dig(:llm, :prompt_caching) || {}
+          return unless caching_settings[:enabled] != false
 
-          min_tokens = Legion::LLM::Settings.config_value(caching_settings, :min_tokens) || 1024
+          min_tokens = caching_settings[:min_tokens] || 1024
           instructions = opts[:instructions]
           return unless instructions.is_a?(String) && instructions.length > min_tokens
 

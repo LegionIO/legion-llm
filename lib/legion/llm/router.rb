@@ -82,11 +82,11 @@ module Legion
           resolution = best&.to_resolution
 
           if resolution
-            log.info("Routed to tier=#{resolution.tier} provider=#{resolution.provider} model=#{resolution.model} via rule='#{resolution.rule}'")
-          else
-            log.debug('Router: no rules matched, resolution is nil')
+            log.info "[llm][router] action=resolve.matched tier=#{resolution.tier} provider=#{resolution.provider} " \
+                     "model=#{resolution.model} rule=#{resolution.rule}"
           end
 
+          log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size}" unless resolution
           resolution || arbitrage_fallback(intent)
         end
 
@@ -105,10 +105,7 @@ module Legion
         end
 
         def routing_enabled?
-          settings = routing_settings
-          return false if settings.nil? || settings.empty?
-
-          settings[:enabled] == true && auto_rules_populated?
+          Legion::Settings.dig(:llm, :routing, :enabled) == true && auto_rules_populated?
         end
 
         def auto_rules_populated?
@@ -129,9 +126,9 @@ module Legion
         end
 
         def tier_priority
-          configured = Legion::LLM::Settings.value(:tier_order, default: nil)
-          configured = routing_settings[:tier_order] if configured.nil? || Array(configured).empty?
-          configured = routing_settings[:tier_priority] if configured.nil? || Array(configured).empty?
+          configured = Legion::Settings[:llm][:tier_order]
+          configured = Legion::Settings[:llm][:routing][:tier_order] if configured.nil? || Array(configured).empty?
+          configured = Legion::Settings[:llm][:routing][:tier_priority] if configured.nil? || Array(configured).empty?
           normalized = Array(configured).filter_map { |tier| tier.to_sym if tier.respond_to?(:to_sym) }
           normalized = TIER_RANK.keys if normalized.empty?
           (normalized + TIER_RANK.keys).uniq
@@ -182,7 +179,7 @@ module Legion
                               else
                                 registry_entry&.[](:provider) ||
                                   (tier && default_provider_for_tier(tier)) ||
-                                  default_settings_provider&.to_sym ||
+                                  Legion::Settings[:llm][:default_provider]&.to_sym ||
                                   :anthropic
                               end
           resolved_model    = model || registry_default_model(registry_entry) || (tier && default_model_for_tier(tier))
@@ -212,12 +209,12 @@ module Legion
           return nil unless provider
 
           tier = PROVIDER_TIER.fetch(provider, :cloud)
-          log.debug("Router: arbitrage fallback selected model=#{model} provider=#{provider} tier=#{tier}")
+          log.warn "[llm][router] action=arbitrage_fallback model=#{model} provider=#{provider} tier=#{tier}"
           Resolution.new(tier: tier, provider: provider, model: model, rule: 'arbitrage_fallback')
         end
 
         def merge_defaults(intent)
-          defaults = (routing_settings[:default_intent] || {})
+          defaults = (Legion::Settings[:llm][:routing][:default_intent] || {})
                      .transform_keys(&:to_sym)
                      .transform_values { |v| v.respond_to?(:to_sym) ? v.to_sym : v }
 
@@ -229,7 +226,7 @@ module Legion
         end
 
         def load_rules
-          manual = (routing_settings[:rules] || []).map do |h|
+          manual = (Legion::Settings[:llm][:routing][:rules] || []).map do |h|
             h = h.transform_keys(&:to_sym)
             h[:priority] = (h[:priority] || 0) + 1000
             Rule.from_hash(h)
@@ -238,7 +235,7 @@ module Legion
         end
 
         def select_candidates(rules, intent, exclude: {})
-          log.debug("Router: selecting candidates from #{rules.size} rules")
+          log.debug "[llm][router] action=select_candidates total_rules=#{rules.size}"
 
           # 1. Collect constraints from constraint rules that match the intent
           constraints = rules
@@ -277,7 +274,7 @@ module Legion
           # 6. Filter by tier availability
           final = not_denied.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
 
-          log.debug("Router: #{final.size} candidates after filtering (started with #{rules.size})")
+          log.debug "[llm][router] action=select_candidates.done candidates_remaining=#{final.size} started_with=#{rules.size}"
 
           final
         end
@@ -346,7 +343,7 @@ module Legion
           available   = Discovery::System.available_memory_mb
           return false if model_bytes.nil? || available.nil?
 
-          floor = discovery_settings[:memory_floor_mb] || 2048
+          floor = Legion::Settings[:llm][:discovery][:memory_floor_mb]
           model_mb = model_bytes / 1024 / 1024
           model_mb > (available - floor)
         end
@@ -367,16 +364,7 @@ module Legion
         end
 
         def discovery_enabled?
-          ds = discovery_settings
-          Legion::LLM::Settings.config_value(ds, :enabled, true)
-        end
-
-        def discovery_settings
-          discovery = Legion::LLM::Settings.value(:discovery, default: {})
-          discovery.is_a?(Hash) ? discovery.transform_keys(&:to_sym) : {}
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.router.discovery_settings')
-          {}
+          Legion::Settings[:llm][:discovery][:enabled] != false
         end
 
         def excluded_by_denial?(rule)
@@ -404,7 +392,11 @@ module Legion
         end
 
         def privacy_mode?
-          Legion::LLM::Settings.enterprise_privacy?
+          if Legion::Settings.respond_to?(:enterprise_privacy?)
+            Legion::Settings.enterprise_privacy?
+          else
+            ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+          end
         end
 
         def external_tier?(tier)
@@ -439,19 +431,10 @@ module Legion
           (tier_priority.size - index) * 100
         end
 
-        def routing_settings
-          routing = Legion::LLM::Settings.value(:routing, default: {})
-          return {} unless routing.is_a?(Hash)
-
-          routing.transform_keys(&:to_sym)
-        end
-
         def build_health_tracker
-          settings = routing_settings
-          health   = Legion::LLM::Settings.config_value(settings, :health, {})
-          health   = health.transform_keys(&:to_sym) if health.is_a?(Hash)
-          cb       = Legion::LLM::Settings.config_value(health, :circuit_breaker, {})
-          cb       = cb.transform_keys(&:to_sym) if cb.is_a?(Hash)
+          routing = Legion::Settings[:llm][:routing] || {}
+          health = routing[:health] || {}
+          cb = health[:circuit_breaker] || {}
 
           HealthTracker.new(
             window_seconds:    health.fetch(:window_seconds, 300),
@@ -474,7 +457,7 @@ module Legion
           when :openai_compat
             :openai
           when :cloud
-            default = routing_settings[:default_provider]
+            default = Legion::Settings[:llm][:default_provider]
             default ? default.to_sym : :bedrock
           when :frontier
             :anthropic
@@ -504,10 +487,10 @@ module Legion
         end
 
         def chain_from_defaults(model, provider, max, allow_default_fallback: true)
-          if provider || model || (allow_default_fallback && (default_settings_provider || default_settings_model))
-            p = (provider || default_settings_provider)&.to_sym
+          if provider || model || (allow_default_fallback && (Legion::Settings[:llm][:default_provider] || Legion::Settings[:llm][:default_model]))
+            p = (provider || Legion::Settings[:llm][:default_provider])&.to_sym
             resolved_model = model || registry_default_model(registry_entry_for_provider(p)) ||
-                             default_settings_model || 'claude-sonnet-4-6'
+                             Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6'
             primary = Resolution.new(tier:     PROVIDER_TIER.fetch(p || :anthropic, :frontier),
                                      provider: p || :anthropic,
                                      model:    resolved_model)
@@ -519,10 +502,10 @@ module Legion
 
           resolutions = enabled_provider_chain
           if resolutions.empty? && allow_default_fallback
-            p = default_settings_provider&.to_sym || :anthropic
+            p = Legion::Settings[:llm][:default_provider]&.to_sym || :anthropic
             resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
-                                          model:    default_settings_model || 'claude-sonnet-4-6')]
+                                          model:    Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6')]
           end
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end
@@ -575,10 +558,10 @@ module Legion
           resolutions = resolutions.uniq { |r| [r.provider, r.model] }
           resolutions = enabled_provider_chain if resolutions.empty?
           if resolutions.empty? && allow_default_fallback
-            p = default_settings_provider&.to_sym || :anthropic
+            p = Legion::Settings[:llm][:default_provider]&.to_sym || :anthropic
             resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
-                                          model:    default_settings_model || 'claude-sonnet-4-6')]
+                                          model:    Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6')]
           end
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end
@@ -610,21 +593,14 @@ module Legion
         end
 
         def escalation_max_attempts
-          settings = routing_settings
-          esc = Legion::LLM::Settings.config_value(settings, :escalation, {})
-          esc = esc.transform_keys(&:to_sym) if esc.is_a?(Hash)
-          Legion::LLM::Settings.config_value(esc, :max_attempts, 3)
-        end
-
-        def default_settings_model
-          Legion::LLM::Settings.value(:default_model)
+          Legion::Settings.dig(:llm, :routing, :escalation, :max_attempts) || 3
         end
 
         def default_settings_model_for_tier(tier)
-          model = default_settings_model
+          model = Legion::Settings[:llm][:default_model]
           return nil if model.nil? || model.to_s.empty?
 
-          provider = default_settings_provider&.to_sym
+          provider = Legion::Settings[:llm][:default_provider]&.to_sym
           return nil unless provider
 
           provider_tier = registry_tier_for_default_provider(provider)
@@ -636,17 +612,14 @@ module Legion
         def registry_tier_for_default_provider(provider)
           instances = begin
             Call::Registry.all_instances
-          rescue StandardError
+          rescue StandardError => e
+            log.debug "[llm][router] action=registry_tier_fallback error=#{e.class} message=#{e.message}"
             []
           end
           entry = instances.find { |i| i[:provider] == provider }
           return registry_tier(provider, entry[:metadata]) if entry
 
           PROVIDER_TIER.fetch(provider, :cloud)
-        end
-
-        def default_settings_provider
-          Legion::LLM::Settings.value(:default_provider)
         end
 
         # Determine tier for a provider: prefer registry metadata, fall back to PROVIDER_TIER constant.

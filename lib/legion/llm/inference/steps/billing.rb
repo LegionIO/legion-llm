@@ -80,7 +80,7 @@ module Legion
           def estimate_request_cost
             model_id     = @request.routing[:model]
             input_tokens = Legion::LLM::Context::Compressor.estimate_tokens(@request.messages)
-            Legion::LLM::Metering::Pricing.estimate(model_id: model_id, input_tokens: input_tokens, output_tokens: 0)
+            Legion::LLM::Metering::Pricing.estimate(model_id: model_id, input_tokens: input_tokens, output_tokens: input_tokens)
           end
         end
       end

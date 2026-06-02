@@ -107,10 +107,10 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
         expect(step.debate_enabled?(base_request)).to be true
       end
 
-      it 'returns true when debate.enabled is string-keyed' do
+      it 'returns true when debate.enabled is set via set_prop' do
         Legion::Settings.set_prop(:llm, {
-                                    'debate' => {
-                                      'enabled' => true
+                                    debate: {
+                                      enabled: true
                                     }
                                   })
         step = host_class.new(base_request)
@@ -304,26 +304,26 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       expect(metadata[:judge_model]).to eq('anthropic:claude-sonnet-4-5')
     end
 
-    it 'uses string-keyed debate and provider settings' do
+    it 'uses debate and provider settings via set_prop' do
       Legion::Settings.set_prop(:llm, {
-                                  'default_provider' => 'anthropic',
-                                  'default_model'    => 'claude-sonnet-4-6',
-                                  'debate'           => {
-                                    'enabled'          => true,
-                                    'default_rounds'   => 1,
-                                    'max_rounds'       => 2,
-                                    'challenger_model' => 'openai:gpt-4o',
-                                    'judge_model'      => 'anthropic:claude-sonnet-4-5'
+                                  default_provider: :anthropic,
+                                  default_model:    'claude-sonnet-4-6',
+                                  debate:           {
+                                    enabled:          true,
+                                    default_rounds:   1,
+                                    max_rounds:       2,
+                                    challenger_model: 'openai:gpt-4o',
+                                    judge_model:      'anthropic:claude-sonnet-4-5'
                                   }
                                 })
       Legion::Settings[:extensions][:llm] = {
-        'anthropic' => {
-          'enabled'       => true,
-          'default_model' => 'claude-sonnet-4-6'
+        anthropic: {
+          enabled:       true,
+          default_model: 'claude-sonnet-4-6'
         },
-        'openai'    => {
-          'enabled'       => true,
-          'default_model' => 'gpt-4o'
+        openai:    {
+          enabled:       true,
+          default_model: 'gpt-4o'
         }
       }
 

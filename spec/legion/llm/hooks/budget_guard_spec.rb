@@ -108,8 +108,8 @@ RSpec.describe Legion::LLM::Hooks::BudgetGuard do
   end
 
   describe '.session_budget' do
-    it 'reads string-keyed budget settings' do
-      Legion::Settings.set_prop(:llm, { 'budget' => { 'session_usd' => '12.50' } })
+    it 'reads symbol-keyed budget settings' do
+      Legion::Settings.set_prop(:llm, { budget: { session_usd: '12.50' } })
       expect(described_class.session_budget).to eq(12.5)
     end
   end

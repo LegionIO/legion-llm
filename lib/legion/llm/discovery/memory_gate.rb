@@ -40,12 +40,12 @@ module Legion
           file_mb = file_mb.to_i / (1024 * 1024) if file_mb && file_mb > 1_000_000
           return 4096 unless file_mb&.positive?
 
-          overhead = Legion::LLM::Settings.value(:discovery, :memory_overhead_factor) || 1.4
+          overhead = Legion::Settings[:llm][:discovery][:memory_overhead_factor]
           (file_mb * overhead).ceil
         end
 
         def memory_floor_mb
-          Legion::LLM::Settings.value(:discovery, :memory_floor_mb) || 2048
+          Legion::Settings[:llm][:discovery][:memory_floor_mb]
         end
       end
     end

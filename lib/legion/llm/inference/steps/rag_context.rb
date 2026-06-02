@@ -50,14 +50,11 @@ module Legion
           end
 
           def rag_setting(key, default = nil)
-            Legion::LLM::Settings.config_value(rag_settings, key, default)
+            Legion::Settings.dig(:llm, :rag, key) || default
           end
 
           def settings_value(*keys, default: nil)
-            Legion::LLM::Settings.value(*keys, default: default)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.rag_context.settings', keys: keys)
-            default
+            Legion::Settings.dig(:llm, *keys) || default
           end
 
           def rag_enabled?
@@ -83,11 +80,13 @@ module Legion
           end
 
           def record_rag_enrichment(result, strategy)
-            entries = Legion::LLM::Settings.config_value(result, :entries, [])
-            unless result && Legion::LLM::Settings.config_value(result, :success) && entries.any?
+            entries = result[:entries] || []
+            unless result && result[:success] && entries.any?
               log_step_debug(:rag_context, :no_context_added, strategy: strategy)
               return
             end
+            total_chars = entries.sum { |e| (e[:content] || e['content']).to_s.length }
+            log_step_info(:rag_context, :context_injected, strategy: strategy, entry_count: entries.size, total_chars: total_chars)
 
             scores = entries.filter_map { |e| e[:confidence] || e[:distance] }.map { |s| s.is_a?(Numeric) ? s.round(3) : s }
             log.debug(
@@ -97,15 +96,15 @@ module Legion
             )
 
             @enrichments['rag:context_retrieval'] = {
-              content:   "#{Legion::LLM::Settings.config_value(result, :count)} entries retrieved via #{strategy}",
-              data:      { entries: entries, strategy: strategy, count: Legion::LLM::Settings.config_value(result, :count) },
+              content:   "#{result[:count]} entries retrieved via #{strategy}",
+              data:      { entries: entries, strategy: strategy, count: result[:count] },
               timestamp: Time.now
             }
             log_step_info(:rag_context, :context_added, strategy: strategy, entry_count: entries.size)
           end
 
           def record_rag_timeline(result, strategy, start_time)
-            count = Legion::LLM::Settings.config_value(result, :count, 0)
+            count = result[:count] || 0
             @timeline.record(
               category: :enrichment, key: 'rag:context_retrieval',
               direction: :inbound,
@@ -117,18 +116,24 @@ module Legion
 
           def select_context_strategy(utilization:)
             explicit = @request.context_strategy
-            return explicit if explicit && explicit != :auto
+            if explicit && explicit != :auto
+              log_step_info(:rag_context, :strategy_explicit, strategy: explicit)
+              return explicit
+            end
 
             skip_threshold    = rag_setting(:utilization_skip_threshold, 0.9)
             compact_threshold = rag_setting(:utilization_compact_threshold, 0.7)
 
-            if utilization >= skip_threshold
-              :none
-            elsif utilization >= compact_threshold
-              :rag_compact
-            else
-              :rag
-            end
+            strategy = if utilization >= skip_threshold
+                         :none
+                       elsif utilization >= compact_threshold
+                         :rag_compact
+                       else
+                         :rag
+                       end
+            log_step_info(:rag_context, :strategy_selected, strategy: strategy, utilization: utilization.round(3),
+                                                            skip_threshold: skip_threshold, compact_threshold: compact_threshold)
+            strategy
           end
 
           def estimate_utilization
@@ -255,7 +260,7 @@ module Legion
           def merge_apollo_results(*results)
             entries = results.flat_map { |result| apollo_result_entries(result) }
             {
-              success: entries.any? || results.any? { |result| Legion::LLM::Settings.config_value(result, :success) },
+              success: entries.any? || results.any? { |result| result[:success] },
               entries: entries,
               count:   entries.size
             }
@@ -265,7 +270,7 @@ module Legion
             return [] if result.nil?
 
             if result.respond_to?(:key?)
-              Array(Legion::LLM::Settings.config_value(result, :entries, []))
+              Array(result[:entries] || [])
             else
               Array(result)
             end
@@ -276,12 +281,12 @@ module Legion
           end
 
           def extract_query
-            @request.messages.select { |m| Legion::LLM::Settings.config_value(m, :role).to_s == 'user' }
+            @request.messages.select { |m| m[:role].to_s == 'user' }
                              .then { |messages| content_text(message_content(messages.last)) }
           end
 
           def message_content(message)
-            Legion::LLM::Settings.config_value(message, :content)
+            message[:content]
           end
 
           def content_text(content)

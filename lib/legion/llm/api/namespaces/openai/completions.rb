@@ -27,7 +27,7 @@ module Legion
                 end
 
                 request_id = SecureRandom.uuid
-                model      = body[:model] || Legion::LLM::Settings.value(:default_model) || 'default'
+                model      = body[:model] || Legion::Settings[:llm][:default_model] || 'default'
                 messages   = [{ role: 'user', content: prompt.to_s }]
 
                 log.info("[llm][api][namespaces][openai][completions] action=accepted request_id=#{request_id} model=#{model}")

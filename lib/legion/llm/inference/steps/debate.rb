@@ -76,14 +76,20 @@ module Legion
               return
             end
 
-            log_step_debug(:debate, :start)
+            log_step_info(:debate, :start, message_count: @request.messages.size)
             debate_result = run_debate(@raw_response, @request)
             unless debate_result
               log_step_debug(:debate, :skipped, reason: :no_result)
               return
             end
 
+            original_chars = extract_content(@raw_response).length
             @raw_response = debate_result[:synthetic_response]
+            log.warn(
+              "[llm][steps][debate] action=response_replaced request_id=#{@request&.id || 'none'} " \
+              "original_chars=#{original_chars} synthetic_chars=#{debate_result[:synthetic_response].content.to_s.length} " \
+              "rounds=#{debate_result[:rounds]}"
+            )
             @enrichments['debate:result'] = {
               content:   "debate completed: #{debate_result[:rounds]} rounds, judge synthesis produced",
               data:      debate_result[:metadata],
@@ -111,7 +117,7 @@ module Legion
           end
 
           def debate_enabled?(request)
-            explicit = Legion::LLM::Settings.config_value(request.extra, :debate)
+            explicit = request.extra[:debate] if request.extra.is_a?(Hash)
             return explicit unless explicit.nil?
 
             gaia_trigger = gaia_debate_trigger?(@enrichments)
@@ -123,10 +129,11 @@ module Legion
           def gaia_debate_trigger?(enrichments)
             return false unless debate_setting(:gaia_auto_trigger) == true
 
-            advisory = Legion::LLM::Settings.config_value(enrichments&.fetch('gaia:advisory', nil), :data)
+            gaia = enrichments&.fetch('gaia:advisory', nil)
+            advisory = gaia.is_a?(Hash) ? gaia[:data] : nil
             return false unless advisory.is_a?(Hash)
 
-            Legion::LLM::Settings.config_value(advisory, :high_stakes) == true || Legion::LLM::Settings.config_value(advisory, :debate_recommended) == true
+            advisory[:high_stakes] == true || advisory[:debate_recommended] == true
           end
 
           def run_debate(advocate_response, request)
@@ -137,7 +144,10 @@ module Legion
             models = select_debate_models(request)
             @warnings << models[:warning] if models[:warning]
             if models[:skip]
-              log_step_info(:debate, :skipped, reason: models[:skip])
+              log.warn(
+                "[llm][steps][debate] action=skipped_insufficient_models request_id=#{request&.id || 'none'} " \
+                "reason=#{models[:skip]} available_models=#{available_models.size}"
+              )
               return nil
             end
 
@@ -187,18 +197,15 @@ module Legion
           end
 
           def debate_setting(key, default = nil)
-            Legion::LLM::Settings.config_value(debate_settings, key, default)
+            Legion::Settings[:llm][:debate][key] || default
           end
 
           def settings_value(*keys, default: nil)
-            Legion::LLM::Settings.value(*keys, default: default)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.debate.settings', keys: keys)
-            default
+            Legion::Settings.dig(:llm, *keys) || default
           end
 
           def resolve_debate_rounds(request)
-            requested = Legion::LLM::Settings.config_value(request.extra, :debate_rounds)
+            requested = request.extra.is_a?(Hash) ? request.extra[:debate_rounds] : nil
             default   = debate_setting(:default_rounds, 1)
             max       = debate_setting(:max_rounds, 3)
 
@@ -208,7 +215,7 @@ module Legion
           end
 
           def extract_question(request)
-            request.messages.select { |m| m[:role] == :user }
+            request.messages.select { |m| m[:role].to_s == 'user' }
                             .last&.dig(:content) || ''
           end
 
@@ -227,8 +234,8 @@ module Legion
             explicit_challenger = debate_setting(:challenger_model)
             explicit_judge      = debate_setting(:judge_model)
 
-            request_model    = @resolved_model || Legion::LLM::Settings.config_value(request.routing, :model) || settings_value(:default_model)
-            request_provider = @resolved_provider || Legion::LLM::Settings.config_value(request.routing, :provider) || settings_value(:default_provider)
+            request_model    = @resolved_model || (request.routing.is_a?(Hash) ? request.routing[:model] : nil) || settings_value(:default_model)
+            request_provider = @resolved_provider || (request.routing.is_a?(Hash) ? request.routing[:provider] : nil) || settings_value(:default_provider)
 
             advocate_model = explicit_advocate || "#{request_provider}:#{request_model}"
 
@@ -268,9 +275,9 @@ module Legion
             providers = extension_providers
             models = []
             providers.each do |provider_name, config|
-              next unless config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled)
+              next unless config.is_a?(Hash) && config[:enabled]
 
-              default_model = Legion::LLM::Settings.config_value(config, :default_model)
+              default_model = config[:default_model]
               next unless default_model
 
               models << "#{provider_name}:#{default_model}"

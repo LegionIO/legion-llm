@@ -12,7 +12,9 @@ group :test do
   if Dir.exist?(lex_llm_path)
     gem 'lex-llm', path: lex_llm_path
   else
-    gem 'lex-llm'
+    # TEMP (revert to `gem 'lex-llm'` once 0.4.16 is published): track lex-llm PR #16, which
+    # adds the fleet TokenValidator verify_issuer + WorkerExecution policy-warn behavior these specs require.
+    gem 'lex-llm', git: 'https://github.com/LegionIO/lex-llm.git', branch: 'fix/audit-fleet-security'
   end
 
   %w[

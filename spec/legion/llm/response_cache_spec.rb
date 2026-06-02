@@ -4,26 +4,10 @@ require 'spec_helper'
 require 'fileutils'
 require 'tmpdir'
 
-# Stub Legion::Cache with an in-memory hash if not already loaded
-unless defined?(Legion::Cache)
+# Stub Legion::Cache with in-memory get/set/delete when no real cache driver is loaded.
+unless Legion::Cache.respond_to?(:get)
   module Legion
     module Cache
-      module Local
-        class << self
-          def connected?
-            false
-          end
-
-          def get(_key); end
-
-          def set(*)
-            true
-          end
-
-          def delete(_key, **); end
-        end
-      end
-
       class << self
         def reset!
           @store = {}
@@ -32,21 +16,19 @@ unless defined?(Legion::Cache)
         def get(key)
           entry = @store&.dig(key)
           return nil if entry.nil?
-
-          # Respect TTL
           return nil if entry[:expires_at] && ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) > entry[:expires_at]
 
           entry[:value]
         end
 
-        def set(key, value, ttl = 180)
+        def set(key, value, ttl: 180, **_opts)
           @store ||= {}
           expires_at = ttl.positive? ? ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) + ttl : nil
           @store[key] = { value: value, expires_at: expires_at }
           true
         end
 
-        def delete(key)
+        def delete(key, **_opts)
           @store&.delete(key)
         end
 
@@ -113,13 +95,13 @@ RSpec.describe Legion::LLM::Cache::Response do
       expect(described_class.response(request_id)).to eq('Hello world')
     end
 
-    it 'uses string-keyed response cache settings' do
+    it 'uses response cache settings via set_prop' do
       Legion::Settings.set_prop(:llm, {
-                                  'prompt_caching' => {
-                                    'response_cache' => {
-                                      'spool_dir'             => spool_dir,
-                                      'spool_threshold_bytes' => 1,
-                                      'ttl_seconds'           => 300
+                                  prompt_caching: {
+                                    response_cache: {
+                                      spool_dir:             spool_dir,
+                                      spool_threshold_bytes: 1,
+                                      ttl_seconds:           300
                                     }
                                   }
                                 })

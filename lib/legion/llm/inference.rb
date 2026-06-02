@@ -26,17 +26,6 @@ module Legion
 
       module_function
 
-      def llm_setting(key, default = nil)
-        Legion::LLM::Settings.config_value(Legion::LLM::Settings.current_settings, key, default)
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'llm.inference.settings')
-        default
-      end
-
-      def settings_value(*keys, default: nil)
-        Legion::LLM::Settings.value(*keys, default: default)
-      end
-
       # Public inference entry points — these are the methods delegated from Legion::LLM
 
       def chat(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
@@ -54,7 +43,7 @@ module Legion
 
         result = if defined?(Legion::Telemetry::OpenInference)
                    Legion::Telemetry::OpenInference.llm_span(
-                     model:    (model || llm_setting(:default_model)).to_s,
+                     model:    (model || Legion::Settings[:llm][:default_model]).to_s,
                      provider: provider&.to_s,
                      input:    message
                    ) do |_span|
@@ -178,7 +167,7 @@ module Legion
         log.debug("[llm][inference] chat_direct.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
-          ttl = settings_value(:prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
+          ttl = Legion::Settings.dig(:llm, :prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
           Cache.set(cache_key, result, ttl: ttl)
         end
 
@@ -377,7 +366,7 @@ module Legion
         end
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
-        resolved_model = model || llm_setting(:default_model)
+        resolved_model = model || Legion::Settings[:llm][:default_model]
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_before(messages: messages, model: resolved_model)
@@ -399,7 +388,7 @@ module Legion
       end
 
       def pipeline_enabled?
-        llm_setting(:pipeline_enabled) == true
+        Legion::Settings[:llm][:pipeline_enabled] == true
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.pipeline_enabled')
         false
@@ -440,7 +429,7 @@ module Legion
           &
         )
         return result if result.is_a?(Hash) && result[:deferred]
-        return normalize_ask_direct_hash(result, fallback_model: model || llm_setting(:default_model)) if result.is_a?(Hash)
+        return normalize_ask_direct_hash(result, fallback_model: model || Legion::Settings[:llm][:default_model]) if result.is_a?(Hash)
 
         response, resolved_model = resolve_ask_direct_response(result, message, model, &)
 
@@ -469,7 +458,7 @@ module Legion
         resolved_model = if result.respond_to?(:model_id) && result.model_id
                            result.model_id.to_s
                          else
-                           (requested_model || llm_setting(:default_model)).to_s
+                           (requested_model || Legion::Settings[:llm][:default_model]).to_s
                          end
         [result, resolved_model]
       end
@@ -504,10 +493,10 @@ module Legion
           assert_external_allowed! if external_tier?(tier.to_sym)
         end
 
-        model ||= llm_setting(:default_model)
+        model ||= Legion::Settings[:llm][:default_model]
         instance = resolution&.instance || kwargs[:instance] || kwargs[:instance_id] || kwargs[:provider_instance]
         provider ||= (model && Router.infer_provider_for_model(model)) ||
-                     llm_setting(:default_provider)
+                     Legion::Settings[:llm][:default_provider]
 
         opts = {}
         opts[:model] = model if model
@@ -559,7 +548,7 @@ module Legion
         return unless Quality::ShadowEval.enabled? && Quality::ShadowEval.should_sample?
 
         log.debug "[llm][inference] shadow_evaluate primary_model=#{primary_model}"
-        Thread.new do
+        Inference::Executor::ASYNC_THREAD_POOL.post do
           Quality::ShadowEval.evaluate(
             primary_response: { content: response.respond_to?(:content) ? response.content : response.to_s,
                                 model: primary_model, usage: {} },
@@ -686,26 +675,58 @@ module Legion
       end
 
       def publish_escalation_event(history, final_outcome, caller: nil)
-        payload = {
-          outcome:   final_outcome,
-          attempts:  history.size,
-          history:   history,
-          caller:    caller || Legion::LLM::PublisherIdentity.caller_hash,
-          timestamp: Time.now.utc.iso8601
+        return if history.size <= 1
+
+        first_attempt = history.first
+        last_attempt = history.last
+
+        event = {
+          outcome:        final_outcome,
+          attempts:       history.size,
+          history:        history,
+          # Flat fields for consumer compatibility
+          from_provider:  first_attempt&.dig(:provider),
+          from_instance:  first_attempt&.dig(:instance),
+          from_model:     first_attempt&.dig(:model),
+          to_provider:    last_attempt&.dig(:provider),
+          to_instance:    last_attempt&.dig(:instance),
+          to_model:       last_attempt&.dig(:model),
+          reason:         ('provider_failover' if [:failure, 'failure', :error].include?(first_attempt&.dig(:outcome))),
+          error_category: extract_error_category_from_attempt(first_attempt),
+          attempt_no:     history.size,
+          latency_ms:     history.sum { |a| (a[:duration_ms] || 0).to_i },
+          caller:         caller || Legion::LLM::PublisherIdentity.caller_hash,
+          timestamp:      Time.now.utc.iso8601
         }
 
-        Legion::Events.emit('llm.escalation', **payload) if defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
+        Legion::Events.emit('llm.escalation', **event) if defined?(Legion::Events) && Legion::Events.respond_to?(:emit)
 
         log.info "[llm][inference] escalation_event outcome=#{final_outcome} attempts=#{history.size}"
 
-        Transport::Messages::EscalationEvent.new(payload).publish if Legion::LLM::Settings.transport_connected?
+        Transport::Messages::EscalationEvent.new(event).publish if Legion::Settings.dig(:transport, :connected) == true
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.publish_escalation_event', outcome: final_outcome)
         nil
       end
 
+      def extract_error_category_from_attempt(attempt)
+        return nil unless attempt.is_a?(Hash)
+
+        failures = Array(attempt[:failures])
+        return nil if failures.empty?
+
+        first = failures.first
+        if first.is_a?(Hash)
+          first[:category]&.to_s || first[:error]&.to_s
+        elsif first.is_a?(String)
+          first
+        else
+          first.to_s
+        end
+      end
+
       def response_guards_enabled?
-        settings_value(:response_guards, :enabled) == true
+        Legion::Settings.dig(:llm, :response_guards, :enabled) == true
       end
 
       def blocked_hook_response(blocked)
@@ -729,33 +750,34 @@ module Legion
       end
 
       def cacheable?(cache_opt, temperature, message)
-        cache_opt != false && temperature.to_f.zero? && message && Cache.enabled?
+        effective_temp = temperature.nil? ? Legion::Settings[:llm][:default_temperature] : temperature
+        cache_opt != false && effective_temp.to_f.zero? && message && Cache.enabled?
       end
 
       def build_cache_key(model, provider, message, temperature)
         messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         Cache.key(
-          model:       model || llm_setting(:default_model),
-          provider:    provider || llm_setting(:default_provider),
+          model:       model || Legion::Settings[:llm][:default_model],
+          provider:    provider || Legion::Settings[:llm][:default_provider],
           messages:    messages_arr,
           temperature: temperature
         )
       end
 
       def escalation_enabled?
-        routing = llm_setting(:routing)
+        routing = Legion::Settings[:llm][:routing]
         return false unless routing.is_a?(Hash)
 
-        esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
-        Legion::LLM::Settings.config_value(esc, :enabled) == true
+        esc = routing.is_a?(Hash) ? (routing[:escalation] || {}) : {}
+        esc[:enabled] == true
       end
 
       def escalation_quality_threshold
-        routing = llm_setting(:routing)
+        routing = Legion::Settings[:llm][:routing]
         return 50 unless routing.is_a?(Hash)
 
-        esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
-        Legion::LLM::Settings.config_value(esc, :quality_threshold, 50)
+        esc = routing.is_a?(Hash) ? (routing[:escalation] || {}) : {}
+        esc[:quality_threshold] || 50
       end
 
       def emit_non_pipeline_metering(response, model:, provider:, caller: nil)
@@ -763,17 +785,49 @@ module Legion
 
         input  = response.respond_to?(:input_tokens)  ? response.input_tokens.to_i  : 0
         output = response.respond_to?(:output_tokens) ? response.output_tokens.to_i : 0
+        usage = response.respond_to?(:usage) ? response.usage : {}
+        usage_hash = usage.is_a?(Hash) ? usage : {}
+        thinking = (usage_hash[:thinking_tokens] || usage_hash[:thinking] || 0).to_i
+
+        finish = nil
+        if response.respond_to?(:stop_reason)
+          finish = response.stop_reason&.to_s
+        elsif response.respond_to?(:stop) && response.stop.is_a?(Hash)
+          finish = response.stop[:reason]&.to_s
+        end
+
+        meta = response.respond_to?(:meta) ? response.meta : {}
+        meta_hash = meta.is_a?(Hash) ? meta : {}
+        latency = (meta_hash[:latency_ms] || meta_hash.dig(:timing, :latency_ms) || 0).to_i
+        wall_clock = (meta_hash[:wall_clock_ms] || meta_hash.dig(:timing, :wall_clock_ms) || 0).to_i
+
         Legion::LLM::Metering.emit(
-          provider: provider, model_id: model, request_type: 'chat',
-          tier: 'direct', input_tokens: input, output_tokens: output, total_tokens: input + output,
-          caller: caller
+          provider:          provider,
+          model_id:          model,
+          request_type:      'chat',
+          tier:              'direct',
+          input_tokens:      input,
+          output_tokens:     output,
+          thinking_tokens:   thinking,
+          total_tokens:      input + output + thinking,
+          finish_reason:     finish,
+          provider_instance: response.respond_to?(:instance) ? response.instance : nil,
+          latency_ms:        latency,
+          wall_clock_ms:     wall_clock,
+          caller:            caller,
+          event_type:        'llm_completion',
+          status:            'success'
         )
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.non_pipeline_metering')
       end
 
       def enterprise_privacy?
-        Legion::LLM::Settings.enterprise_privacy?
+        if Legion::Settings.respond_to?(:enterprise_privacy?)
+          Legion::Settings.enterprise_privacy?
+        else
+          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+        end
       end
 
       def emit_privacy_blocked_audit
@@ -802,7 +856,7 @@ module Legion
         return external_tier?(tier.to_sym) if tier
         return false unless enterprise_privacy?
 
-        resolved = provider || llm_setting(:default_provider)
+        resolved = provider || Legion::Settings[:llm][:default_provider]
         external_providers = %i[anthropic bedrock openai gemini azure]
         external_providers.include?(resolved&.to_sym)
       end
