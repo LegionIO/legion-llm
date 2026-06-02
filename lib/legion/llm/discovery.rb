@@ -134,8 +134,8 @@ module Legion
           return unless defined?(Call::Registry)
 
           fresh_models = Call::Registry.all_instances
-            .select { |e| (e[:provider] || '').to_sym == provider }
-            .flat_map { |entry| fetch_offering_models(entry) }
+                                       .select { |e| (e[:provider] || '').to_sym == provider }
+                                       .flat_map { |entry| fetch_offering_models(entry) }
 
           existing = @discovered_models_cache || []
           other_models = existing.reject { |m| (m[:provider] || '').to_sym == provider }
