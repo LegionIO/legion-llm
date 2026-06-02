@@ -61,6 +61,7 @@ module Legion
 
         THINKING_TAG_PATTERN = %r{<think(?:ing)?>((?:[^<]|<(?!/think(?:ing)?>))*?)</think(?:ing)?>}m
         THINKING_TAG_PATTERN_SHORT = %r{<think>(.*?)</think>}m
+        THINKING_TAG_PATTERN_THOUGHT = %r{<thought>(.*?)</thought>}m
 
         CONFIG_ERROR_PATTERNS = [
           /ValidationException/,
@@ -1037,9 +1038,9 @@ module Legion
             next msg unless (msg[:role] || msg['role']).to_s == 'assistant'
 
             content = msg[:content] || msg['content']
-            next msg unless content.is_a?(String) && (content.include?('<think') || content.include?('<think>'))
+            next msg unless content.is_a?(String) && (content.include?('<think') || content.include?('<think>') || content.include?('<thought>'))
 
-            cleaned = content.gsub(THINKING_TAG_PATTERN, '').gsub(THINKING_TAG_PATTERN_SHORT, '').strip
+            cleaned = content.gsub(THINKING_TAG_PATTERN, '').gsub(THINKING_TAG_PATTERN_SHORT, '').gsub(THINKING_TAG_PATTERN_THOUGHT, '').strip
             next msg if cleaned == content
 
             stripped_count += 1
