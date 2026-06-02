@@ -866,3 +866,231 @@ end
 4. Three-event model: `request.received` (at entry) → `request.opened` (after pre-steps) → `request.closed` (after all attempts).
 5. Async `post_response` fix (issue #146) ships in Phase 1 as an immediate fix, independent of v2 events.
 6. `after_chat` metering hook decommissioned in Phase 1 (guarded by feature flag).
+
+## Adversarial Review Round 3 — Resolutions
+
+### 🔴 #1: Inference.call path bypasses executor — zero v2 events
+
+**Resolution: All paths MUST go through the executor.**
+
+The current `Inference.call` (inference.rb:370-393) dispatches directly without the executor pipeline. This is the legacy "quick" path that extensions and hooks use. In Phase 1:
+
+- `Inference.call` is deprecated. All callers are migrated to `Inference.chat` (which uses the executor).
+- For callers that need the lightweight path (no RAG, no tools, no classification), use `Inference::Profile::SYSTEM` which skips non-essential steps but STILL runs through the executor's emission points.
+- The executor profiles already support step skipping: `GAIA_SKIP`, `SYSTEM_SKIP`, `QUICK_REPLY_SKIP`. The emission steps (`request.received`, `response.attempt`, `request.closed`) are NEVER skipped — they're not in any skip list.
+
+For the transition period: `Inference.call` wraps the executor with `profile: :system` internally, so existing callers get v2 events without code changes:
+
+```ruby
+def call(messages:, model:, provider:, **)
+  Executor.new(Request.build(messages: messages, model: model, provider: provider, **), profile: :system).call
+end
+```
+
+### 🔴 #2: Two separate after_chat hooks
+
+**Resolution: Consolidate to ONE metering path, guarded by one flag.**
+
+`Hooks::Metering` (hooks/metering.rb) is dead code — it's never installed by `install_defaults`. It exists as an unused module. Phase 1 deletes the file entirely. Only `Legion::LLM::Metering.install_hook` (called from `Hooks.install_defaults`) is active, and it's guarded:
+
+```ruby
+def install_defaults
+  unless Legion::Settings.dig(:llm, :audit, :emit_v2)
+    Legion::LLM::Metering.install_hook
+  end
+  Hooks::BudgetGuard.install
+end
+```
+
+Verified: `grep -rn "Hooks::Metering.install"` across the entire monorepo shows zero callers outside the module definition itself.
+
+### 🔴 #3: flush_spool truncates before publish completes
+
+**Resolution: Atomic flush with published-offset tracking.**
+
+New flush mechanism:
+1. Read spool file line by line
+2. Publish each event to AMQP with publisher confirms enabled
+3. After EACH confirmed publish, write the line offset to a `.cursor` file (`events.jsonl.cursor`)
+4. After all lines are published and confirmed, truncate the spool file and reset cursor to 0
+5. On crash/restart: read cursor → skip already-published lines → resume from cursor position
+
+```ruby
+def flush_spool
+  cursor = read_cursor
+  lines = File.readlines(spool_path)
+  lines[cursor..].each_with_index do |line, i|
+    event = Legion::JSON.load(line)
+    publish_with_confirm(event)
+    write_cursor(cursor + i + 1)
+  end
+  truncate_spool
+  reset_cursor
+end
+```
+
+No event is lost on crash — the cursor file persists the last-published offset.
+
+### 🔴 #4: request.opened arriving before request.received
+
+**Resolution: All event handlers do INSERT-or-UPDATE (upsert), not conditional logic.**
+
+```ruby
+def write_request_record(payload)
+  case payload[:event_type]
+  when 'request.received'
+    upsert_request(payload, initial: true)
+  when 'request.opened'
+    upsert_request(payload, initial: false)
+  when 'request.closed'
+    upsert_request(payload, initial: false)
+  end
+end
+
+def upsert_request(payload, initial:)
+  db[:llm_message_inference_requests].insert_conflict(
+    target: :request_ref,
+    update: build_update_fields(payload, initial: initial)
+  ).insert(build_insert_fields(payload))
+end
+```
+
+If `request.opened` arrives first: INSERT succeeds (creates the row with full payload). When `request.received` arrives later: ON CONFLICT updates only NULL fields (doesn't overwrite existing data). The `initial: true` flag on `request.received` means it can set fields that later events won't overwrite (like `received_at` timestamp).
+
+If `request.received` arrives first: INSERT succeeds with raw messages. When `request.opened` arrives: ON CONFLICT updates `request_json` with the full injected payload, status from 'received' to 'dispatched'.
+
+Either order produces the same final state.
+
+### 🔴 #5: generate_batch — 50 embeddings, same request_id, same attempt_no
+
+**Resolution: generate_batch emits ONE request + ONE response for the batch, not per-item.**
+
+`generate_batch` is a single API call to the provider with multiple texts. The provider returns one response with one token count. It's one billing event:
+
+- `request_id` = `"embed_batch_#{SecureRandom.hex(12)}"` (one per batch call)
+- `response.attempt` = one event with `input_chunks: 50`, `input_tokens: <total>`, `cost_usd: <total>`
+- `attempt_no` = 1 (always — no escalation for embeddings)
+
+Per-item breakdown is metadata in the response event (`chunk_details: [{index: 0, tokens: 12}, ...]`) but NOT separate rows. One request, one response, one metric — for the batch.
+
+If `generate_batch` internally splits into multiple provider calls (chunking for context limits), each provider call IS a separate `response.attempt` with incrementing `attempt_no` (1, 2, 3...) under the same `request_id`. This matches the escalation model — multiple provider calls for one inbound request.
+
+### 🟠 #6: Partial failure in response_writer (response exists, metric doesn't)
+
+**Resolution: Accepted as eventually consistent. Reconciliation query added.**
+
+The response_writer acks after `insert_response` succeeds. If `insert_metric` fails, the response row exists without a metric. This is acceptable because:
+- The message is acked (response data is persisted — the critical compliance artifact)
+- A periodic reconciliation query finds orphaned responses and re-derives metrics from the response row's token fields
+
+```sql
+-- Reconciliation: find responses without metrics
+SELECT r.id, r.message_inference_request_id, r.provider, r.model_key
+FROM llm_message_inference_responses r
+LEFT JOIN llm_message_inference_metrics m ON m.message_inference_response_id = r.id
+WHERE m.id IS NULL AND r.inserted_at > NOW() - INTERVAL '1 day';
+```
+
+The `reconciliation` actor runs this hourly and creates missing metric rows.
+
+### 🟠 #7: Raw vs injected messages — where do they live?
+
+**Resolution: Two fields.**
+
+- `request_json` — what was DISPATCHED to the provider (injected messages, system prompt, full context). Set by `request.opened` event. This is the compliance artifact.
+- `caller_messages_json` — what the CALLER sent (raw, no injection). Set by `request.received` event. This is for debugging/UX.
+
+New column: `caller_messages_json TEXT NULL` added in migration. The `request_json` column continues to hold the dispatched payload (what the provider saw).
+
+### 🟠 #8: Hooks::Metering.install latent risk
+
+**Invalidated.** Verified via grep — `Hooks::Metering.install` is never called anywhere in the monorepo. The module exists but is dead code. Deleted in Phase 1 cleanup. No latent risk.
+
+### 🟠 #9: Inference.call runs hooks but no v2 events
+
+**Resolved by #1 above.** `Inference.call` wraps the executor with `:system` profile. All paths go through executor. No separate hook-only path exists after Phase 1.
+
+### 🟠 #10: request.opened before request.received — UPDATE on non-existent row
+
+**Resolved by #4 above.** All handlers use upsert. Order doesn't matter.
+
+### 🟡 #11: step_metering and v2 response.attempt — double metric during Phase 2
+
+**Resolution: step_metering is disabled when emit_v2 is true.**
+
+```ruby
+def step_metering
+  return if v2_audit_enabled?  # skip legacy metering when v2 is active
+  # ... existing metering logic
+end
+```
+
+The old metering actor only receives events from nodes running without emit_v2. New nodes emit response.attempt only. No double metrics.
+
+### 🟡 #12: Crash leaves request.closed unemitted
+
+**Resolution: Reconciliation actor detects orphaned requests.**
+
+A periodic check (every 5 minutes) finds requests in 'dispatched' status older than 5 minutes with no corresponding `request.closed`:
+
+```sql
+SELECT id, request_ref FROM llm_message_inference_requests
+WHERE status = 'dispatched' AND inserted_at < NOW() - INTERVAL '5 minutes'
+AND NOT EXISTS (
+  SELECT 1 FROM llm_message_inference_responses
+  WHERE message_inference_request_id = llm_message_inference_requests.id
+  AND inserted_at > llm_message_inference_requests.inserted_at + INTERVAL '5 minutes'
+);
+```
+
+These get status set to `'orphaned'` with a note. No fake `request.closed` — the absence IS the audit trail (process crashed).
+
+### 🟡 #13: First attempt has no from_provider in escalation_context
+
+**Accepted.** First attempt: `escalation_context: { move: 'primary' }` with no `from_provider`. Subsequent: `{ move: 'lateral', from_provider: '...' }`. This is schema-correct — `from_provider` is nullable/optional in the JSON. Queries use `escalation_context->>'move'` for counting, not `from_provider`.
+
+### 🟡 #14: attempt_no shared between tool rounds and escalation
+
+**Resolution: Separate counters.**
+
+- `attempt_no` — escalation attempts only (1, 2, 3 across providers)
+- `tool_round` — tool loop iterations within ONE attempt (1, 2, 3 within a single provider call)
+
+A request with 2 tool rounds then escalation:
+- attempt_no=1, tool_round=1, attempt_type='tool_round'
+- attempt_no=1, tool_round=2, attempt_type='tool_round'
+- attempt_no=1, tool_round=3, attempt_type='end_turn' (final round, success)
+
+If it escalated instead:
+- attempt_no=1, tool_round=1, attempt_type='tool_round' (provider A, tool call)
+- attempt_no=1, tool_round=2, attempt_type='error' (provider A failed)
+- attempt_no=2, tool_round=null, attempt_type='escalation' (provider B, fresh start)
+
+`total_attempts` in `request.closed` counts escalation attempts only. Tool rounds are sub-attempts within one escalation attempt.
+
+### 🟡 #15: OfficialRecordWriter.request_uuid vs v2 request_id
+
+**Resolution: v2 uses `request_id` directly as the `uuid` column value.** No `stable_uuid` derivation. The `request_ref` column holds the same value. The old actors use `stable_uuid(request_ref)` which produces a different UUID — but they write to different rows because the v2 actor's ON CONFLICT uses `request_ref`, not `uuid`. Both coexist.
+
+### 🟡 #16: response_writer polymorphic on operation
+
+**Resolution: `insert_response` dispatches on `operation`.**
+
+```ruby
+def insert_response(payload)
+  case payload[:operation]
+  when 'embed'
+    insert_embed_response(payload)
+  else
+    insert_chat_response(payload)
+  end
+end
+```
+
+`insert_embed_response` skips `response_content`, `finish_reason`, `tool_calls`. Sets `response_json = NULL`. Writes provider, model, tier, status, latency, error fields only.
+
+### 🟢 #17-19: data_quality_flag NULL gap, TTFB capture, prefetch delay
+
+- #17: Migration adds column with `default: 'legacy'` not NULL. All existing rows get 'legacy'. New rows get 'complete'. No NULL gap.
+- #18: Implementation detail — `@timestamps[:first_token]` captured in the streaming block callback. Already available by stream completion.
+- #19: Accepted. Eventual consistency window for status is documented. Not data-loss.
