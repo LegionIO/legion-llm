@@ -143,10 +143,10 @@ module Legion
           end
 
           def embedding_config_value(key)
-            v = Legion::LLM::Settings.value(:embedding, key)
-            return v unless v.nil?
+            embedding = Legion::Settings[:llm][:embedding]
+            return embedding[key] if embedding && (embedding.key?(key) || embedding.key?(key.to_s))
 
-            plural = Legion::LLM::Settings.value(:embeddings, key)
+            plural = Legion::Settings[:llm][:embeddings]&.[](key) || Legion::Settings[:llm][:embeddings]&.[](key.to_s)
             log.warn "[llm][embeddings] settings key \"embeddings.#{key}\" (plural) is deprecated — rename to \"embedding.#{key}\"" unless plural.nil?
             plural
           end
@@ -174,19 +174,19 @@ module Legion
           end
 
           def prefix_for(model, task)
-            registry = Legion::LLM::Settings.value(:embedding, :prefix_registry, default: PREFIX_REGISTRY)
-            model_prefixes = Legion::LLM::Settings.config_value(registry, model_base(model), {})
-            Legion::LLM::Settings.config_value(model_prefixes, task)
+            registry = Legion::Settings[:llm][:embedding][:prefix_registry] || PREFIX_REGISTRY
+            model_prefixes = registry[model_base(model)] || registry[model_base(model).to_s] || {}
+            model_prefixes[task] || model_prefixes[task.to_s]
           end
 
           def embedding_chunk_chars(provider:, model:, prefix:)
             return nil unless provider.to_s == 'ollama'
 
-            embedding = Legion::LLM::Settings.value(:embedding, default: {})
-            context_chars = Legion::LLM::Settings.config_value(embedding, :ollama_context_chars, {})
-            limit = Legion::LLM::Settings.config_value(context_chars, model.to_s) ||
-                    Legion::LLM::Settings.config_value(context_chars, model_base(model)) ||
-                    Legion::LLM::Settings.config_value(embedding, :ollama_default_context_chars)
+            embedding = Legion::Settings[:llm][:embedding] || {}
+            context_chars = embedding[:ollama_context_chars] || embedding['ollama_context_chars'] || {}
+            limit = context_chars[model.to_s] || context_chars[model] ||
+                    context_chars[model_base(model)] || context_chars[model_base(model).to_s] ||
+                    embedding[:ollama_default_context_chars] || embedding['ollama_default_context_chars']
             limit = limit.to_i
             return nil unless limit.positive?
 
@@ -280,13 +280,13 @@ module Legion
           end
 
           def enforce_dimension?
-            Legion::LLM::Settings.value(:embedding, :enforce_dimension) != false
+            Legion::Settings[:llm][:embedding][:enforce_dimension] != false
           end
 
           def enforce_dimensions(vector)
             return vector unless vector.is_a?(Array)
 
-            dim = Legion::LLM::Settings.value(:embedding, :dimension) || 1024
+            dim = Legion::Settings[:llm][:embedding][:dimension] || 1024
             return vector if vector.size == dim
             return vector.first(dim) if vector.size > dim
 
