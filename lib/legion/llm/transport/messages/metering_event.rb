@@ -13,9 +13,7 @@ module Legion
           def priority    = 0
 
           def encrypt?
-            Legion::LLM::Settings.value(:compliance, :encrypt_metering) == true
-          rescue StandardError
-            false
+            Legion::Settings[:llm][:compliance][:encrypt_metering] == true
           end
 
           def expiration = nil

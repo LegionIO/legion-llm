@@ -86,15 +86,15 @@ module Legion
           end
 
           def settings_pricing
-            pricing = Legion::LLM::Settings.value(:pricing, default: {})
+            pricing = Legion::Settings[:llm][:pricing] || {}
             return {} unless pricing.is_a?(Hash)
 
             pricing.transform_values do |entry|
               next entry unless entry.is_a?(Hash)
 
               {
-                input:  Legion::LLM::Settings.config_value(entry, :input),
-                output: Legion::LLM::Settings.config_value(entry, :output)
+                input:  entry[:input],
+                output: entry[:output]
               }
             end
           rescue StandardError => e

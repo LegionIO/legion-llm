@@ -39,11 +39,11 @@ module Legion
           end
 
           def settings_threshold
-            Legion::LLM::Settings.value(:rag_guard, :threshold, default: 0.7)
+            Legion::Settings[:llm][:rag_guard][:threshold]
           end
 
           def settings_evaluators
-            Legion::LLM::Settings.value(:rag_guard, :evaluators, default: %i[faithfulness rag_relevancy])
+            Legion::Settings[:llm][:rag_guard][:evaluators]
           end
 
           def run_evaluator(evaluator_name, response:, context:)

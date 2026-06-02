@@ -171,7 +171,7 @@ module Legion
         def registry_tool_limit
           return nil unless local_provider?
 
-          raw_limit = Legion::LLM::Settings.value(:tool_trigger, :local_tool_limit)
+          raw_limit = Legion::Settings.dig(:llm, :tool_trigger, :local_tool_limit)
           limit = raw_limit.to_i
           limit.positive? ? limit : nil
         end
@@ -1187,7 +1187,7 @@ module Legion
             return value if [true, false].include?(value)
           end
 
-          Legion::LLM::Settings.value(:tool_trigger, :client_tool_passthrough) == true
+          Legion::Settings.dig(:llm, :tool_trigger, :client_tool_passthrough) == true
         end
 
         def client_tool_passthrough_allowed?(definition)
@@ -1202,11 +1202,7 @@ module Legion
         end
 
         def client_tool_passthrough_list(key)
-          defaults = {
-            client_tool_passthrough_whitelist: Legion::LLM::Settings::CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT,
-            client_tool_passthrough_blacklist: Legion::LLM::Settings::CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT
-          }
-          Array(Legion::LLM::Settings.value(:tool_trigger, key, default: defaults.fetch(key))).flat_map do |entry|
+          Array(Legion::Settings.dig(:llm, :tool_trigger, key)).flat_map do |entry|
             client_tool_policy_variants(entry)
           end.uniq
         end
@@ -1898,10 +1894,7 @@ module Legion
         def pipeline_spans_enabled?
           return false unless telemetry_enabled?
 
-          settings = Legion::Settings[:llm][:telemetry]
-          return true unless settings.is_a?(Hash)
-
-          Legion::LLM::Settings.config_value(settings, :pipeline_spans, true)
+          Legion::Settings[:llm][:telemetry][:pipeline_spans] != false
         end
 
         def annotate_span(span, step_name)

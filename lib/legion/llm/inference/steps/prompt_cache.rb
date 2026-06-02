@@ -91,14 +91,13 @@ module Legion
           private
 
           def prompt_caching_settings
-            Legion::LLM::Settings.value(:prompt_caching, default: {})
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.prompt_cache.settings')
-            {}
+            Legion::Settings[:llm][:prompt_caching] || Legion::Settings[:llm]['prompt_caching'] || {}
           end
 
           def prompt_caching_value(key, default = nil)
-            Legion::LLM::Settings.config_value(prompt_caching_settings, key, default)
+            settings = prompt_caching_settings
+            val = settings.key?(key) ? settings[key] : settings[key.to_s]
+            val.nil? ? default : val
           end
 
           def caching_enabled?

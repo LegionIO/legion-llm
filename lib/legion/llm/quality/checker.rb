@@ -65,10 +65,8 @@ module Legion
           end
 
           def quality_setting(key, default)
-            settings = Legion::LLM::Settings.value(:quality, key)
-            settings.nil? ? default : settings
-          rescue StandardError
-            default
+            value = Legion::Settings.dig(:llm, :quality, key)
+            value.nil? ? default : value
           end
 
           private

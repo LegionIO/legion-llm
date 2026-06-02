@@ -181,6 +181,7 @@ module Legion
         def fetch_daemon_url
           daemon = Legion::Settings[:llm]&.[](:daemon) || {}
           return nil if daemon[:enabled] == false
+
           daemon[:url]
         rescue StandardError => e
           handle_exception(e, level: :warn)

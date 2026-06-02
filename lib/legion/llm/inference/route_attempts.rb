@@ -8,11 +8,7 @@ module Legion
         private
 
         def fleet_dispatch?
-          @resolved_tier == :fleet &&
-            Legion::LLM::Settings.value(:fleet, :dispatch, :enabled, default: true) != false
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.pipeline.fleet_dispatch_enabled')
-          false
+          @resolved_tier == :fleet && Legion::Settings[:llm][:fleet][:dispatch][:enabled] != false
         end
 
         def dispatch_provider_request(capability:, operation:, messages:, stream_block: nil)

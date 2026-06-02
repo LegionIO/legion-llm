@@ -89,7 +89,7 @@ module Legion
         end
 
         def check_settings_override(tool_name)
-          overrides = Legion::LLM::Settings.global_value(:mcp, :overrides)
+          overrides = Legion::Settings.dig(:mcp, :overrides)
           return nil unless overrides.is_a?(Hash)
 
           override = overrides[tool_name]

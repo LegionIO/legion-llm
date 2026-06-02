@@ -122,12 +122,9 @@ module Legion
         end
 
         def default_routing_style
-          Legion::LLM::Settings.value(:fleet, :dispatch, :routing_style) ||
-            Legion::LLM::Settings.value(:routing, :tiers, :fleet, :routing_style) ||
+          Legion::Settings.dig(:llm, :fleet, :dispatch, :routing_style) ||
+            Legion::Settings.dig(:llm, :routing, :tiers, :fleet, :routing_style) ||
             :shared_lane
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.fleet.dispatcher.default_routing_style')
-          :shared_lane
         end
 
         def context_window_from(options)
@@ -187,24 +184,20 @@ module Legion
         end
 
         def transport_ready?
-          Legion::LLM::Settings.transport_connected?
+          Legion::Settings.dig(:transport, :connected) == true
         end
 
         def fleet_enabled?
-          Legion::LLM::Settings.value(:fleet, :dispatch, :enabled, default: true) != false
+          Legion::Settings[:llm][:fleet][:dispatch][:enabled] != false
         end
 
         def resolve_timeout(operation: :default, request_type: nil, override: nil)
           return override if override
 
           op = (operation || request_type || :default).to_sym
-          timeouts = Legion::LLM::Settings.value(:fleet, :dispatch, :timeouts, default: {}) || {}
-          fetch_option(timeouts, op) ||
-            Legion::LLM::Settings.value(:fleet, :dispatch, :timeout_seconds, default: 30) ||
-            30
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.fleet.dispatcher.resolve_timeout')
-          30
+          dispatch = Legion::Settings.dig(:llm, :fleet, :dispatch) || {}
+          timeouts = dispatch[:timeouts] || {}
+          fetch_option(timeouts, op) || dispatch[:timeout_seconds] || 30
         end
 
         def next_request_id
@@ -229,11 +222,12 @@ module Legion
         end
 
         def request_publish_options
+          dispatch = Legion::Settings[:llm][:fleet][:dispatch]
           {
-            mandatory:                  Legion::LLM::Settings.value(:fleet, :dispatch, :mandatory, default: true),
-            publisher_confirm:          Legion::LLM::Settings.value(:fleet, :dispatch, :publisher_confirm, default: true),
-            publish_confirm_timeout_ms: Legion::LLM::Settings.value(:fleet, :dispatch, :publish_confirm_timeout_ms, default: 500),
-            spool:                      Legion::LLM::Settings.value(:fleet, :dispatch, :spool, default: false),
+            mandatory:                  dispatch[:mandatory],
+            publisher_confirm:          dispatch[:publisher_confirm],
+            publish_confirm_timeout_ms: dispatch[:publish_confirm_timeout_ms] || 500,
+            spool:                      dispatch[:spool],
             return_result:              true
           }
         end
@@ -288,10 +282,10 @@ module Legion
         end
 
         def dispatch_auth_required?
-          value = Legion::LLM::Settings.value(:fleet, :dispatch, :require_auth, default: nil)
+          value = Legion::Settings.dig(:llm, :fleet, :dispatch, :require_auth)
           return value != false unless value.nil?
 
-          Legion::LLM::Settings.value(:fleet, :auth, :require_signed_token, default: true) != false
+          Legion::Settings.dig(:llm, :fleet, :auth, :require_signed_token) != false
         end
 
         def default_caller

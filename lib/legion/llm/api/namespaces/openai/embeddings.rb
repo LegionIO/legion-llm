@@ -19,7 +19,7 @@ module Legion
                 require_llm!
                 body  = parse_request_body
                 input = body[:input]
-                model = body[:model] || Legion::LLM::Settings.value(:default_model)
+                model = body[:model] || Legion::Settings[:llm][:default_model]
 
                 if input.nil? || (input.respond_to?(:empty?) && input.empty?)
                   return openai_error('input is required', type: 'invalid_request_error',

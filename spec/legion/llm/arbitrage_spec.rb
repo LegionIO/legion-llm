@@ -54,10 +54,10 @@ RSpec.describe Legion::LLM::Router::Arbitrage do
       expect(described_class.cost_table['gpt-4o']).to eq({ input: 1.0, output: 5.0 })
     end
 
-    it 'reads string-keyed cost table overrides' do
+    it 'reads cost table overrides from settings' do
       Legion::Settings.set_prop(:llm, {
-                                  'arbitrage' => {
-                                    'cost_table' => { 'my-custom-model' => { 'input' => 1.0, 'output' => 2.0 } }
+                                  arbitrage: {
+                                    cost_table: { 'my-custom-model' => { input: 1.0, output: 2.0 } }
                                   }
                                 })
       expect(described_class.cost_table['my-custom-model']).to eq({ input: 1.0, output: 2.0 })

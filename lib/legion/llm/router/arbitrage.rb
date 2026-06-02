@@ -85,7 +85,7 @@ module Legion
           private
 
           def settings
-            arb = Legion::LLM::Settings.value(:arbitrage, default: {})
+            arb = Legion::Settings[:llm][:arbitrage]
             arb.is_a?(Hash) ? arb.transform_keys(&:to_sym) : {}
           rescue StandardError => e
             handle_exception(e, level: :warn)

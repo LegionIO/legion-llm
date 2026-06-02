@@ -184,10 +184,10 @@ RSpec.describe Legion::LLM::Quality::Confidence::Scorer do
         expect(result_custom.band).to eq(:very_high)
       end
 
-      it 'reads string-keyed band settings' do
+      it 'reads band settings' do
         Legion::Settings.set_prop(:llm, {
-                                    'confidence' => {
-                                      'bands' => { 'low' => 0.2, 'medium' => 0.4, 'high' => 0.6, 'very_high' => 0.8 }
+                                    confidence: {
+                                      bands: { low: 0.2, medium: 0.4, high: 0.6, very_high: 0.8 }
                                     }
                                   })
 

@@ -98,8 +98,8 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
       allow(Legion::JSON).to receive(:dump).and_return('{}')
       allow(Legion::JSON).to receive(:load).with('not json').and_raise(Legion::JSON::ParseError, 'unexpected token')
       allow(Legion::JSON).to receive(:load).with('{"name":"Bob"}').and_return({ name: 'Bob' })
-      allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :retry_on_parse_failure).and_return(true)
-      allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :max_retries).and_return(2)
+      Legion::Settings[:llm][:structured_output][:retry_on_parse_failure] = true
+      Legion::Settings[:llm][:structured_output][:max_retries] = 2
 
       result = described_class.generate(messages: messages, schema: schema, model: 'gpt-4o')
       expect(result[:valid]).to be true
@@ -147,8 +147,8 @@ RSpec.describe Legion::LLM::Call::StructuredOutput do
       allow(Legion::JSON).to receive(:dump).and_return('{}')
       allow(Legion::JSON).to receive(:load).with('not json').and_raise(Legion::JSON::ParseError, 'unexpected token')
       allow(Legion::JSON).to receive(:load).with('{"name":"Bob"}').and_return({ name: 'Bob' })
-      allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :retry_on_parse_failure).and_return(true)
-      allow(Legion::Settings).to receive(:dig).with(:llm, :structured_output, :max_retries).and_return(2)
+      Legion::Settings[:llm][:structured_output][:retry_on_parse_failure] = true
+      Legion::Settings[:llm][:structured_output][:max_retries] = 2
 
       result = described_class.generate(messages: messages, schema: schema, model: 'gpt-4o')
 

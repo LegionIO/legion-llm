@@ -91,7 +91,8 @@ module Legion
           private
 
           def shadow_setting(key, default = nil)
-            Legion::LLM::Settings.value(:shadow, key, default: default)
+            value = Legion::Settings.dig(:llm, :shadow, key)
+            value.nil? ? default : value
           end
 
           def record(comparison)

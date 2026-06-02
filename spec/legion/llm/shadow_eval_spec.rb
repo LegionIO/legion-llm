@@ -16,8 +16,8 @@ RSpec.describe Legion::LLM::Quality::ShadowEval do
       expect(described_class.enabled?).to be true
     end
 
-    it 'reads string-keyed settings' do
-      Legion::Settings.set_prop(:llm, { 'shadow' => { 'enabled' => true } })
+    it 'reads settings via set_prop' do
+      Legion::Settings.set_prop(:llm, { shadow: { enabled: true } })
       expect(described_class.enabled?).to be true
     end
   end

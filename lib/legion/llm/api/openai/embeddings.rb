@@ -26,7 +26,7 @@ module Legion
               body = parse_request_body
 
               input = body[:input] || body['input']
-              model = body[:model] || body['model'] || Legion::LLM::Settings.value(:default_model)
+              model = body[:model] || body['model'] || Legion::Settings[:llm][:default_model]
 
               if input.nil? || (input.respond_to?(:empty?) && input.empty?)
                 halt 400, { 'Content-Type' => 'application/json' },

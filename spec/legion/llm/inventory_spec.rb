@@ -213,15 +213,15 @@ RSpec.describe Legion::LLM::Inventory do
     expect(offerings.map { |offering| offering[:model] }).to include('qwen3.6-27b')
   end
 
-  it 'reads top-level string-keyed provider and embedding settings' do
+  it 'reads provider and embedding settings with symbol keys' do
     Legion::Settings[:extensions][:llm] = {
-      'bedrock-json' => {
-        'enabled'       => true,
-        'default_model' => 'claude-sonnet-4-6'
+      'bedrock-json': {
+        enabled:       true,
+        default_model: 'claude-sonnet-4-6'
       }
     }
-    Legion::Settings[:llm]['embedding'] = {
-      'provider_models' => { 'bedrock-json' => 'amazon.titan-embed-text-v2:0' }
+    Legion::Settings[:llm][:embedding] = {
+      provider_models: { 'bedrock-json' => 'amazon.titan-embed-text-v2:0' }
     }
 
     offerings = described_class.offerings(provider: 'bedrock-json')

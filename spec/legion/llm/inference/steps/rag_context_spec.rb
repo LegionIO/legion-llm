@@ -84,11 +84,11 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       expect(step.send(:select_context_strategy, utilization: 0.65)).to eq(:none)
     end
 
-    it 'uses string-keyed threshold settings' do
+    it 'uses threshold settings via set_prop' do
       Legion::Settings.set_prop(:llm, {
-                                  'rag' => {
-                                    'utilization_compact_threshold' => 0.4,
-                                    'utilization_skip_threshold'    => 0.8
+                                  rag: {
+                                    utilization_compact_threshold: 0.4,
+                                    utilization_skip_threshold:    0.8
                                   }
                                 })
 
@@ -135,11 +135,11 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       expect(step.send(:trivial_query?, 'hello')).to be false
     end
 
-    it 'uses string-keyed trivial pattern settings' do
+    it 'uses trivial pattern settings via set_prop' do
       Legion::Settings.set_prop(:llm, {
-                                  'rag' => {
-                                    'trivial_patterns'  => %w[foo bar],
-                                    'trivial_max_chars' => 10
+                                  rag: {
+                                    trivial_patterns:  %w[foo bar],
+                                    trivial_max_chars: 10
                                   }
                                 })
 

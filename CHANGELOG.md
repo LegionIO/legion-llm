@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.11.2] - 2026-06-02
+
+### Removed
+- **Legion::LLM::Settings abstraction layer** — Removed `value`, `config_value`, `global_value`, `set_value`, `transport_connected?`, `enterprise_privacy?`, `current_settings`, and `namespace` methods. All settings reads now go directly through `Legion::Settings[:llm]` or `Legion::Settings.dig(:llm, ...)`. The module retains only `default`, `register_defaults!`, `validate!`, and the `*_defaults` class methods.
+- **Passthrough wrapper methods** — Removed `routing_settings`, `discovery_settings`, `default_settings_model`, `default_settings_provider`, `llm_settings` and similar indirection methods from Router, Discovery, and Inference modules.
+- **String-key dual-lookup** — `config_value` previously tried both symbol and string keys on any hash. All settings are now symbol-keyed; string-key fallback is gone.
+- **Deprecated "embeddings" (plural) settings key** — Use `embedding` (singular) only.
+
+### Added
+- Default values for `compliance.encrypt_metering`, `compliance.audit_max_messages`, `budget.session_usd`, `rag_guard.evaluators`, `discovery.memory_overhead_factor`, and `structured_output` settings so all accessed keys have registered defaults.
+
 ## [0.12.1] - 2026-06-02
 
 ### Fixed

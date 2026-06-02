@@ -190,7 +190,7 @@ module Legion
             missing = Object.new
             expected.all? do |k, v|
               actual.is_a?(Hash) &&
-                (actual_value = Legion::LLM::Settings.config_value(actual, k, missing)) != missing &&
+                (actual_value = actual[k.to_sym] || actual[k.to_s] || missing) != missing &&
                 deep_subset_match?(actual_value, v)
             end
           end
@@ -226,10 +226,7 @@ module Legion
           end
 
           def settings_value(*keys, default: nil)
-            Legion::LLM::Settings.value(*keys, default: default)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.skill_injector.settings', keys: keys)
-            default
+            Legion::Settings.dig(:llm, *keys) || default
           end
         end
       end

@@ -118,13 +118,8 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
       expect(first_chat_rule[:then][:tier]).to eq(:direct)
     end
 
-    it 'warns when configured tier priority cannot be read' do
-      error = StandardError.new('settings unavailable')
-      allow(Legion::LLM::Settings).to receive(:value).and_raise(error)
-      expect(described_class).to receive(:handle_exception).with(
-        error,
-        hash_including(level: :warn, handled: true, operation: 'rule_generator.tier_priority')
-      ).at_least(:once).and_call_original
+    it 'falls back to DEFAULT_TIER_PRIORITY when settings raise' do
+      Legion::Settings[:llm][:routing] = nil
 
       rules = described_class.generate(discovered)
 

@@ -54,11 +54,8 @@ module Legion
         end
 
         def resolve_baseline
-          value = Legion::LLM::Settings.value(:system_baseline)
+          value = Legion::Settings[:llm][:system_baseline]
           value.is_a?(String) && !value.strip.empty? ? value : nil
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.pipeline.enrichment_injector.resolve_baseline')
-          nil
         end
 
         def format_history_message(message)

@@ -184,9 +184,9 @@ module Legion
         end
 
         def tier_priority
-          configured = Legion::LLM::Settings.value(:tier_order, default: nil)
-          configured = Legion::LLM::Settings.value(:routing, :tier_order, default: nil) if blank_array?(configured)
-          configured = Legion::LLM::Settings.value(:routing, :tier_priority, default: DEFAULT_TIER_PRIORITY) if blank_array?(configured)
+          configured = Legion::Settings[:llm][:tier_order]
+          configured = Legion::Settings[:llm][:routing][:tier_order] if blank_array?(configured)
+          configured = Legion::Settings[:llm][:routing][:tier_priority] if blank_array?(configured)
           normalized = Array(configured).filter_map do |tier|
             tier.to_sym if tier.respond_to?(:to_sym)
           end

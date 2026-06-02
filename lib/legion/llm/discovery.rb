@@ -243,10 +243,7 @@ module Legion
         end
 
         def discovery_refresh_seconds
-          Legion::LLM::Settings.config_value(
-            Legion::LLM::Settings.config_value(llm_settings, :discovery, {}),
-            :refresh_seconds, 60
-          )
+          Legion::Settings[:llm][:discovery][:refresh_seconds]
         end
 
         # Match model names allowing prefix matching for tagged variants (e.g. "llama3" matches "llama3:8b")
@@ -308,8 +305,8 @@ module Legion
         # serves its resolved model. Returns { provider:, instance:, model: } or nil.
         def select_pinned_embedding_instance(embedding_instances)
           settings = embedding_settings
-          pinned_instance = Legion::LLM::Settings.config_value(settings, :instance)
-          pinned_provider = Legion::LLM::Settings.config_value(settings, :provider)
+          pinned_instance = settings[:instance]
+          pinned_provider = settings[:provider]
           return nil if pinned_instance.nil? && pinned_provider.nil?
 
           candidate = embedding_instances.find do |i|
@@ -359,7 +356,7 @@ module Legion
         # default_model, then the first embedding-capable discovered model on that instance.
         def resolve_embedding_model_for(candidate)
           candidate.dig(:metadata, :default_model) ||
-            Legion::LLM::Settings.config_value(embedding_settings, :default_model) ||
+            embedding_settings[:default_model] ||
             first_embedding_model_for(candidate[:provider], candidate[:instance])
         end
 
@@ -392,15 +389,15 @@ module Legion
         end
 
         def find_embedding_provider(embedding_settings)
-          fallback = Legion::LLM::Settings.config_value(embedding_settings, :provider_fallback, %w[ollama bedrock openai])
-          provider_models = Legion::LLM::Settings.config_value(embedding_settings, :provider_models, {})
-          ollama_preferred = Legion::LLM::Settings.config_value(embedding_settings, :ollama_preferred,
-                                                                %w[mxbai-embed-large bge-large snowflake-arctic-embed])
+          fallback = embedding_settings[:provider_fallback] || %w[ollama bedrock openai]
+          provider_models = embedding_settings[:provider_models] || {}
+          ollama_preferred = embedding_settings[:ollama_preferred] ||
+                             %w[mxbai-embed-large bge-large snowflake-arctic-embed]
 
           log.debug "[llm][discovery] find_embedding_provider fallback=#{fallback}"
           fallback.each do |provider_name|
             provider = provider_name.to_sym
-            model = Legion::LLM::Settings.config_value(provider_models, provider_name)
+            model = provider_models[provider_name.to_sym] || provider_models[provider_name]
             available = probe_embedding_provider(provider, ollama_preferred)
             log.debug "[llm][discovery] find_embedding_provider provider=#{provider} available=#{available.inspect}"
             next unless available
@@ -448,8 +445,9 @@ module Legion
 
         def detect_cloud_embedding(provider)
           log.debug "[llm][discovery] detect_cloud_embedding provider=#{provider}"
-          provider_config = Legion::LLM::Settings.config_value(providers_settings, provider)
-          return nil unless provider_config.is_a?(Hash) && Legion::LLM::Settings.config_value(provider_config, :enabled)
+          ps = providers_settings
+          provider_config = ps[provider.to_sym] || ps[provider.to_s]
+          return nil unless provider_config.is_a?(Hash) && provider_config[:enabled] != false
           return nil unless provider_supports_embeddings?(provider)
 
           true
@@ -459,10 +457,10 @@ module Legion
         end
 
         def build_embedding_fallback_chain(embedding_settings)
-          fallback = Legion::LLM::Settings.config_value(embedding_settings, :provider_fallback, %w[ollama bedrock openai])
-          provider_models = Legion::LLM::Settings.config_value(embedding_settings, :provider_models, {})
-          ollama_preferred = Legion::LLM::Settings.config_value(embedding_settings, :ollama_preferred,
-                                                                %w[mxbai-embed-large bge-large snowflake-arctic-embed])
+          fallback = embedding_settings[:provider_fallback] || %w[ollama bedrock openai]
+          provider_models = embedding_settings[:provider_models] || {}
+          ollama_preferred = embedding_settings[:ollama_preferred] ||
+                             %w[mxbai-embed-large bge-large snowflake-arctic-embed]
 
           log.debug "[llm][discovery] build_embedding_fallback_chain fallback=#{fallback}"
           fallback.filter_map do |provider_name|
@@ -473,7 +471,7 @@ module Legion
             available = probe_embedding_provider(provider, ollama_preferred)
             next unless available
 
-            model = available.is_a?(String) ? available : Legion::LLM::Settings.config_value(provider_models, provider_name)&.to_s
+            model = available.is_a?(String) ? available : (provider_models[provider_name.to_sym] || provider_models[provider_name])&.to_s
             log.debug "[llm][discovery] fallback chain entry provider=#{provider} model=#{model}"
             { provider: provider, model: model }
           end
@@ -495,22 +493,13 @@ module Legion
         end
 
         def provider_enabled?(provider)
-          config = Legion::LLM::Settings.config_value(providers_settings, provider)
-          config.is_a?(Hash) && Legion::LLM::Settings.config_value(config, :enabled) != false
+          ps = providers_settings
+          config = ps[provider.to_sym] || ps[provider.to_s]
+          config.is_a?(Hash) && config[:enabled] != false
         end
 
         def embedding_settings
-          settings = llm_settings
-          result = Legion::LLM::Settings.config_value(settings, :embedding)
-          return result if result.is_a?(Hash) && !result.empty?
-
-          plural = Legion::LLM::Settings.config_value(settings, :embeddings)
-          if plural.is_a?(Hash) && !plural.empty?
-            log.warn '[llm][discovery] settings key "embeddings" (plural) is deprecated — rename to "embedding" (singular)'
-            return plural
-          end
-
-          result || {}
+          Legion::Settings[:llm][:embedding]
         end
 
         def providers_settings
@@ -523,15 +512,8 @@ module Legion
           {}
         end
 
-        def llm_settings
-          Legion::LLM::Settings.current_settings
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.discovery.settings')
-          {}
-        end
-
         def discovery_enabled?
-          Legion::LLM::Settings.config_value(Legion::LLM::Settings.config_value(llm_settings, :discovery, {}), :enabled) != false
+          Legion::Settings[:llm][:discovery][:enabled] != false
         end
       end
     end

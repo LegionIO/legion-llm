@@ -209,9 +209,7 @@ module Legion
           end
 
           def summarize_model
-            return unless defined?(Legion::LLM::Settings)
-
-            Legion::LLM::Settings.value(:compressor, :model)
+            Legion::Settings.dig(:llm, :compressor, :model)
           end
 
           def jaccard_similarity(text_a, text_b)

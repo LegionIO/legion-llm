@@ -55,7 +55,7 @@ RSpec.describe 'Codex CLI conformance', :integration do
         allow(ex).to receive(:respond_to?).with(:call_responses).and_return(true)
       end
     )
-    allow(Legion::LLM::Settings).to receive(:value).with(:default_model).and_return('legionio')
+    Legion::Settings[:llm][:default_model] = 'legionio'
   end
 
   it 'Step 1: GET /v1/models returns legionio in the model list' do

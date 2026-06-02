@@ -118,7 +118,7 @@ module Legion
                      Legion::JSON.dump({ error: { message: 'prompt is required', type: 'invalid_request_error', code: nil } })
               end
 
-              model      = (body[:model] || body['model'] || Legion::LLM::Settings.value(:default_model) || 'dall-e-3').to_s
+              model      = (body[:model] || body['model'] || Legion::Settings[:llm][:default_model] || 'dall-e-3').to_s
               n          = [(body[:n] || body['n'] || 1).to_i, 1].max
               size       = (body[:size] || body['size'] || '1024x1024').to_s
               quality    = (body[:quality] || body['quality'] || 'standard').to_s

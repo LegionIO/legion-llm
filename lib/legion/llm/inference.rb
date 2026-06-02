@@ -703,7 +703,7 @@ module Legion
 
         log.info "[llm][inference] escalation_event outcome=#{final_outcome} attempts=#{history.size}"
 
-        Transport::Messages::EscalationEvent.new(event).publish if Legion::LLM::Settings.transport_connected?
+        Transport::Messages::EscalationEvent.new(event).publish if Legion::Settings.dig(:transport, :connected) == true
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.publish_escalation_event', outcome: final_outcome)
         nil
@@ -768,16 +768,16 @@ module Legion
         routing = Legion::Settings[:llm][:routing]
         return false unless routing.is_a?(Hash)
 
-        esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
-        Legion::LLM::Settings.config_value(esc, :enabled) == true
+        esc = routing.is_a?(Hash) ? (routing[:escalation] || {}) : {}
+        esc[:enabled] == true
       end
 
       def escalation_quality_threshold
         routing = Legion::Settings[:llm][:routing]
         return 50 unless routing.is_a?(Hash)
 
-        esc = Legion::LLM::Settings.config_value(routing, :escalation, {})
-        Legion::LLM::Settings.config_value(esc, :quality_threshold, 50)
+        esc = routing.is_a?(Hash) ? (routing[:escalation] || {}) : {}
+        esc[:quality_threshold] || 50
       end
 
       def emit_non_pipeline_metering(response, model:, provider:, caller: nil)
@@ -823,7 +823,11 @@ module Legion
       end
 
       def enterprise_privacy?
-        Legion::LLM::Settings.enterprise_privacy?
+        if Legion::Settings.respond_to?(:enterprise_privacy?)
+          Legion::Settings.enterprise_privacy?
+        else
+          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+        end
       end
 
       def emit_privacy_blocked_audit

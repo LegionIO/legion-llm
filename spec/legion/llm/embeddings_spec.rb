@@ -233,28 +233,6 @@ RSpec.describe '.detect_embedding_capability' do
     end
   end
 
-  context 'when embedding settings use deprecated plural "embeddings" key (#124)' do
-    before do
-      Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
-      Legion::Settings[:llm].delete(:embedding)
-      Legion::Settings[:llm][:embeddings] = {
-        provider_fallback: %w[ollama],
-        ollama_preferred:  %w[nomic-embed-text]
-      }
-      allow(Legion::LLM::Discovery).to receive(:model_available?)
-        .and_return(false)
-      allow(Legion::LLM::Discovery).to receive(:model_available?)
-        .with('nomic-embed-text', provider: :ollama).and_return(true)
-    end
-
-    it 'reads embedding settings from plural key with deprecation warning' do
-      expect(Legion::LLM::Discovery.log).to receive(:warn).with(/deprecated/).at_least(:once)
-      Legion::LLM::Discovery.detect_embedding_capability
-      expect(Legion::LLM.can_embed?).to be true
-      expect(Legion::LLM.embedding_model).to eq('nomic-embed-text')
-    end
-  end
-
   context 'when embedding discovery settings were loaded from JSON string keys' do
     before do
       Legion::Settings[:extensions][:llm] = {

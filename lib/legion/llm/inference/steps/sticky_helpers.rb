@@ -36,14 +36,13 @@ module Legion
           end
 
           def sticky_setting(key, default = nil)
-            Legion::LLM::Settings.config_value(settings_value(:tool_sticky, default: {}), key, default)
+            value = Legion::Settings.dig(:llm, :tool_sticky, key)
+            value.nil? ? default : value
           end
 
           def settings_value(*keys, default: nil)
-            Legion::LLM::Settings.value(*keys, default: default)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.steps.sticky.settings', keys: keys)
-            default
+            value = Legion::Settings.dig(:llm, *keys)
+            value.nil? ? default : value
           end
         end
       end

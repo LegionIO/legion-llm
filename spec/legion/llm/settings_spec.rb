@@ -24,24 +24,21 @@ RSpec.describe Legion::LLM::Settings do
     end
   end
 
-  describe '.value' do
-    it 'warns when a configured path traverses a scalar value' do
-      Legion::Settings[:llm][:routing] = 'invalid'
-
-      expect(described_class.log).to receive(:warn).with(/invalid_path.*routing.enabled/)
-
-      expect(described_class.value(:routing, :enabled, default: false)).to be false
+  describe '.register_defaults!' do
+    it 'registers defaults into Legion::Settings[:llm]' do
+      described_class.register_defaults!
+      expect(Legion::Settings[:llm][:enabled]).to eq(true)
+      expect(Legion::Settings[:llm][:routing][:enabled]).to eq(true)
     end
   end
 
-  describe '.global_value' do
-    it 'warns when a global path traverses a scalar value' do
-      Legion::Settings.merge_settings('mcp', { overrides: 'invalid' })
-      allow(Legion::Settings).to receive(:dig).and_return(nil)
+  describe '.validate!' do
+    it 'raises on removed gateway key' do
+      expect { described_class.validate!(gateway: {}) }.to raise_error(ArgumentError, /gateway/)
+    end
 
-      expect(described_class.log).to receive(:warn).with(/invalid_path.*mcp.overrides.tool/)
-
-      expect(described_class.global_value(:mcp, :overrides, :tool, default: nil)).to be_nil
+    it 'raises on removed routing.use_fleet key' do
+      expect { described_class.validate!(routing: { use_fleet: true }) }.to raise_error(ArgumentError, /use_fleet/)
     end
   end
 end

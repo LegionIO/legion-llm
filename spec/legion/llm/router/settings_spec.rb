@@ -5,8 +5,6 @@ require 'spec_helper'
 RSpec.describe Legion::LLM::Settings do
   subject(:defaults) { described_class.default }
 
-  # ─── 1. Default settings include :routing key ─────────────────────────────────
-
   describe '.default' do
     it 'includes a :routing key' do
       expect(defaults).to have_key(:routing)
@@ -32,42 +30,15 @@ RSpec.describe Legion::LLM::Settings do
     end
   end
 
-  describe '.value' do
+  describe 'Legion::Settings[:llm] access' do
     it 'reads nested symbol-keyed settings' do
       Legion::Settings[:llm][:routing] = { fleet: { timeout_seconds: 45 } }
-      expect(described_class.value(:routing, :fleet, :timeout_seconds)).to eq(45)
+      expect(Legion::Settings[:llm][:routing][:fleet][:timeout_seconds]).to eq(45)
     end
 
-    it 'reads nested string-keyed settings' do
-      Legion::Settings.set_prop(:llm, { 'routing' => { 'fleet' => { 'timeout_seconds' => 60 } } })
-      expect(described_class.value(:routing, :fleet, :timeout_seconds)).to eq(60)
-    end
-
-    it 'reads the canonical Legion::Settings llm store directly' do
-      Legion::Settings.set_prop(:llm, { prompt_caching: { response_cache: { spool_dir: '/tmp/legion-file-override' } } })
-      allow(Legion::LLM).to receive(:settings).and_return({})
-
-      expect(described_class.value(:prompt_caching, :response_cache, :spool_dir)).to eq('/tmp/legion-file-override')
-    end
-
-    it 'preserves JSON-loaded settings overrides' do
-      Legion::Settings.set_prop(:llm, Legion::JSON.load(<<~JSON))
-        {
-          "prompt_caching": {
-            "response_cache": {
-              "spool_dir": "/tmp/legion-json-override",
-              "enabled": false
-            }
-          }
-        }
-      JSON
-
-      expect(described_class.value(:prompt_caching, :response_cache, :spool_dir)).to eq('/tmp/legion-json-override')
-      expect(described_class.value(:prompt_caching, :response_cache, :enabled, default: true)).to be false
-    end
-
-    it 'returns the default when a path is missing' do
-      expect(described_class.value(:missing, :path, default: 'fallback')).to eq('fallback')
+    it 'writes to the canonical LLM settings store' do
+      Legion::Settings[:llm][:connected] = true
+      expect(Legion::Settings[:llm][:connected]).to be true
     end
   end
 
@@ -81,40 +52,12 @@ RSpec.describe Legion::LLM::Settings do
     end
   end
 
-  describe '.global_value' do
-    it 'reads non-LLM settings with string and symbol keys' do
-      Legion::Settings.set_prop(:transport, { 'connected' => true })
-
-      expect(described_class.global_value(:transport, :connected)).to be true
-    end
-  end
-
-  describe '.set_value' do
-    it 'writes through the canonical LLM settings store' do
-      described_class.set_value(:connected, value: true)
-
-      expect(Legion::Settings[:llm][:connected]).to be true
-    end
-  end
-
-  describe '.transport_connected?' do
-    it 'uses the shared settings helper path' do
-      Legion::Settings.set_prop(:transport, { connected: true })
-
-      expect(described_class.transport_connected?).to be true
-    end
-  end
-
-  # ─── 2. Routing defaults to disabled ─────────────────────────────────────────
-
   describe '.routing_defaults' do
     subject(:routing) { described_class.routing_defaults }
 
     it 'defaults routing to enabled' do
       expect(routing[:enabled]).to be true
     end
-
-    # ─── 3. Includes default_intent with privacy/capability/cost ──────────────
 
     describe 'default_intent' do
       subject(:intent) { described_class.routing_defaults[:default_intent] }
@@ -138,8 +81,6 @@ RSpec.describe Legion::LLM::Settings do
         expect(intent[:cost]).to eq('normal')
       end
     end
-
-    # ─── 4. Includes tier definitions (local, fleet, openai_compat, cloud, frontier) ───
 
     describe 'tiers' do
       subject(:tiers) { described_class.routing_defaults[:tiers] }
@@ -182,14 +123,10 @@ RSpec.describe Legion::LLM::Settings do
       end
     end
 
-    # ─── 4b. tier_priority order ─────────────────────────────────────────────
-
     it 'defines tier_priority in correct order' do
       routing = described_class.routing_defaults
       expect(routing[:tier_priority]).to eq(%w[local direct fleet openai_compat cloud frontier])
     end
-
-    # ─── 5. Includes health config with circuit_breaker sub-hash ──────────────
 
     describe 'health' do
       subject(:health) { described_class.routing_defaults[:health] }
@@ -226,8 +163,6 @@ RSpec.describe Legion::LLM::Settings do
       end
     end
 
-    # ─── 6. Includes empty rules array ────────────────────────────────────────
-
     describe 'rules' do
       it 'includes a :rules key' do
         expect(described_class.routing_defaults).to have_key(:rules)
@@ -248,8 +183,6 @@ RSpec.describe Legion::LLM::Settings do
       expect(routing[:escalation][:quality_threshold]).to eq(0)
     end
   end
-
-  # ─── Integration: routing key wired into default ──────────────────────────────
 
   describe 'routing key in default hash' do
     it 'routing key in default equals routing_defaults' do

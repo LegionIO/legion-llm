@@ -106,7 +106,7 @@ module Legion
             end
 
             def settings_bands
-              conf = Legion::LLM::Settings.value(:confidence, :bands)
+              conf = Legion::Settings[:llm][:confidence][:bands]
               return DEFAULT_BANDS unless conf.is_a?(Hash)
 
               DEFAULT_BANDS.merge(conf.transform_keys(&:to_sym))
@@ -199,10 +199,8 @@ module Legion
             end
 
             def quality_setting(key, default)
-              Legion::LLM::Settings.value(:quality, key)
-            rescue StandardError => e
-              log.debug "[llm][quality][confidence][scorer] action=quality_setting_fallback key=#{key} error=#{e.class} message=#{e.message}"
-              default
+              value = Legion::Settings.dig(:llm, :quality, key)
+              value.nil? ? default : value
             end
 
             def truncated?(content)
