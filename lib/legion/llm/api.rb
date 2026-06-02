@@ -29,7 +29,7 @@ module Legion
       extend Legion::Logging::Helper
 
       def self.registered(app)
-        if Legion::LLM::Settings.value(:api, :use_namespaces, default: false)
+        if Legion::Settings.dig(:llm, :api, :use_namespaces) == true
           log.debug('[llm][api] routing=namespaces registering via Namespaces::Registration')
           Namespaces::Registration.registered(app)
         else
