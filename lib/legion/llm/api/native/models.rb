@@ -13,6 +13,7 @@ module Legion
           AUTO_ROUTING_MODEL_DISPLAY = 'LegionIO'
           AUTO_ROUTING_OFFERING_ID = 'legionio:auto:inference:legionio'
           AUTO_ROUTING_CAPABILITIES = %w[auto_routing chat completion json_schema tools].freeze
+          AUTO_ROUTING_MODEL_ALIASES = %w[auto].freeze
 
           def self.registered(app)
             log.debug('[llm][api][models] registering model inventory routes')
@@ -108,9 +109,10 @@ module Legion
               enabled:        offerings.any? { |offering| offering[:enabled] != false }
             }
             if auto_routing_model?(model)
-              summary[:display_name] = AUTO_ROUTING_MODEL_DISPLAY
+              first_display = offerings.filter_map { |o| o[:display_name] }.first
+              summary[:display_name] = first_display || AUTO_ROUTING_MODEL_DISPLAY
               summary[:auto_route] = true
-              summary[:default] = true
+              summary[:default] = model.to_s == AUTO_ROUTING_MODEL_ID
             end
             summary
           end
@@ -129,7 +131,18 @@ module Legion
             return offerings unless auto_routing_offering_matches?(filters)
             return offerings if offerings.any? { |offering| auto_routing_model?(offering[:model]) }
 
-            [auto_routing_offering, *offerings]
+            [auto_routing_offering, auto_routing_alias_offering, *offerings]
+          end
+
+          def self.auto_routing_alias_offering
+            base = auto_routing_offering
+            base.merge(
+              id:                    'legionio:auto:inference:auto',
+              offering_id:           'legionio:auto:inference:auto',
+              model:                 'auto',
+              display_name:          'LegionIO (auto)',
+              canonical_model_alias: 'auto'
+            )
           end
 
           def self.auto_routing_offering
@@ -182,7 +195,8 @@ module Legion
           end
 
           def self.auto_routing_model?(model)
-            model.to_s.strip.downcase == AUTO_ROUTING_MODEL_ID
+            m = model.to_s.strip.downcase
+            m == AUTO_ROUTING_MODEL_ID || AUTO_ROUTING_MODEL_ALIASES.include?(m)
           end
         end
       end

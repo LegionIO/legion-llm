@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.12.2] - 2026-06-02
+
+### Fixed
+- **Codex CLI `/v1/responses` routing through non-native providers** — `RESPONSES_PROVIDER_FAMILIES` now contains only `:openai` (api.openai.com). All other providers (vLLM, Ollama, MLX, Bedrock, Gemini, Azure, etc.) use `/v1/chat/completions` and must explicitly declare `:responses` in their instance capabilities to opt in. Previously `:vllm` was included, causing `BadRequestError: Invalid request` when Codex routed through a vLLM-backed proxy (call/lex_llm_adapter.rb)
+- **`developer` role crash on Responses API input** — The OpenAI Responses API sends `developer` as a higher-trust system role. Both Responses API handlers now map `developer` → `system` before building the message array, preventing `InvalidRoleError` from `lex-llm::Message::ROLES` validation (api/namespaces/openai/responses.rb, api/openai/responses.rb)
+- **Non-streaming Responses API path always used `call_responses`** — Sync path now calls `call_executor_sync` which routes through `call` for non-native providers and `call_responses` only when `provider_supports_responses?` returns true (api/namespaces/openai/responses.rb)
+
+### Added
+- **`Executor#provider_supports_responses?`** — Public method that checks whether the resolved provider's adapter natively supports the Responses API. Used by the API layer to gate `call_responses` vs `call_stream`/`call` dispatch. Returns false safely when provider resolution hasn't run yet (inference/executor.rb)
+- **`Responses.call_executor_sync`** — New method for non-streaming dispatch: routes through `call_responses` when native, otherwise `call` (api/namespaces/openai/responses.rb)
+- **`Responses.native_responses_supported?`** — Predicate shared by streaming and sync dispatch paths (api/namespaces/openai/responses.rb)
+
 ## [0.11.2] - 2026-06-02
 
 ### Removed

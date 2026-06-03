@@ -17,8 +17,8 @@ module Legion
       PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
                         gemini: :cloud, azure: :cloud, ollama: :local, vllm: :fleet }.freeze
       PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
-      TIER_EXTERNAL = Set[:cloud, :frontier, :openai_compat].freeze
-      TIER_RANK = { local: 0, direct: 1, fleet: 2, openai_compat: 3, cloud: 4, frontier: 5 }.freeze
+      TIER_EXTERNAL = Set[:cloud, :frontier].freeze
+      TIER_RANK = { local: 0, direct: 1, fleet: 2, cloud: 3, frontier: 4 }.freeze
       CAPABILITY_ALIASES = {
         function_calling: :tools,
         functions:        :tools,
@@ -142,12 +142,11 @@ module Legion
         end
 
         # Check whether a tier can be used right now.
-        # :local          — always available
-        # :direct         — always available (remote self-hosted instances)
-        # :fleet          — available when Legion::Transport is loaded
-        # :openai_compat  — available when OpenAI-compatible provider instances are registered
-        # :cloud          — available unless privacy mode
-        # :frontier       — available unless privacy mode
+        # :local    — always available
+        # :direct   — always available (remote self-hosted instances)
+        # :fleet    — available when Legion::Transport is loaded
+        # :cloud    — available unless privacy mode
+        # :frontier — available unless privacy mode
         def tier_available?(tier)
           sym = tier.to_sym
           if external_tier?(sym) && privacy_mode?
@@ -157,11 +156,6 @@ module Legion
           if sym == :fleet
             available = Legion.const_defined?('Transport', false)
             log.debug "[llm][router] action=tier_available tier=fleet available=#{available}"
-            return available
-          end
-          if sym == :openai_compat
-            available = openai_compat_available?
-            log.debug "[llm][router] action=tier_available tier=openai_compat available=#{available}"
             return available
           end
 
@@ -403,10 +397,6 @@ module Legion
           TIER_EXTERNAL.include?(tier)
         end
 
-        def openai_compat_available?
-          !registry_entry_for_tier(:openai_compat).nil?
-        end
-
         def pick_best(candidates)
           return nil if candidates.empty?
 
@@ -454,8 +444,6 @@ module Legion
           case sym
           when :local, :direct, :fleet
             :ollama
-          when :openai_compat
-            :openai
           when :cloud
             default = Legion::Settings[:llm][:default_provider]
             default ? default.to_sym : :bedrock
@@ -477,8 +465,6 @@ module Legion
           case sym
           when :local, :direct, :fleet
             default_settings_model_for_tier(sym) || 'llama3'
-          when :openai_compat
-            'gpt-4o'
           when :cloud
             default_settings_model_for_tier(sym) || 'us.anthropic.claude-sonnet-4-6'
           when :frontier

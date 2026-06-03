@@ -128,17 +128,6 @@ RSpec.describe Legion::LLM::Router::Resolution do
     end
   end
 
-  describe '#openai_compat?' do
-    it 'returns true for openai_compat tier' do
-      r = described_class.new(tier: :openai_compat, provider: :custom_gateway, model: 'gpt-4o')
-      expect(r.openai_compat?).to be true
-    end
-
-    it 'returns false for non-openai_compat tier' do
-      expect(resolution.openai_compat?).to be false
-    end
-  end
-
   describe '#external?' do
     it 'returns true for cloud tier' do
       r = described_class.new(tier: :cloud, provider: :bedrock, model: 'claude-sonnet-4-6')
@@ -150,8 +139,8 @@ RSpec.describe Legion::LLM::Router::Resolution do
       expect(r.external?).to be true
     end
 
-    it 'returns true for openai_compat tier' do
-      r = described_class.new(tier: :openai_compat, provider: :custom_gateway, model: 'gpt-4o')
+    it 'returns true for an unknown/custom tier' do
+      r = described_class.new(tier: :custom, provider: :custom_gateway, model: 'gpt-4o')
       expect(r.external?).to be true
     end
 

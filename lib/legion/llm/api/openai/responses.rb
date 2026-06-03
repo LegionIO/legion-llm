@@ -130,6 +130,8 @@ module Legion
                 role = item[:role]&.to_s
                 next unless role
 
+                role = 'system' if role == 'developer'
+
                 content = item[:content]
                 content = content.to_s if content && !content.is_a?(Array)
                 messages << { role: role, content: content }.compact

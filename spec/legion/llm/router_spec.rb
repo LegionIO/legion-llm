@@ -512,8 +512,8 @@ RSpec.describe Legion::LLM::Router do
       expect(described_class.send(:external_tier?, :frontier)).to be true
     end
 
-    it 'returns true for :openai_compat' do
-      expect(described_class.send(:external_tier?, :openai_compat)).to be true
+    it 'returns false for :local' do
+      expect(described_class.send(:external_tier?, :local)).to be false
     end
   end
 
@@ -523,7 +523,7 @@ RSpec.describe Legion::LLM::Router do
     it 'is a frozen Set of external tiers' do
       expect(described_class::TIER_EXTERNAL).to be_a(Set)
       expect(described_class::TIER_EXTERNAL).to be_frozen
-      expect(described_class::TIER_EXTERNAL).to eq(Set[:cloud, :frontier, :openai_compat])
+      expect(described_class::TIER_EXTERNAL).to eq(Set[:cloud, :frontier])
     end
   end
 end

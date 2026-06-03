@@ -17,7 +17,7 @@ module Legion
       @discovered_models_cache = nil
       @discovered_models_at = nil
 
-      EMBEDDING_TIER_ORDER = %w[local direct fleet openai_compat cloud frontier].freeze
+      EMBEDDING_TIER_ORDER = %w[local direct fleet cloud frontier].freeze
 
       class << self
         attr_reader :embedding_provider, :embedding_model, :embedding_instance, :embedding_fallback_chain

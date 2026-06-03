@@ -146,6 +146,22 @@ module Legion
           clear_log_context
         end
 
+        # Returns true when the resolved provider's adapter natively supports the Responses API.
+        # Called by the API layer before choosing call_responses vs call_stream.
+        # Pre-provider steps must have already run (provider is resolved) for this to be accurate;
+        # returns false safely if resolution hasn't happened yet.
+        def provider_supports_responses?
+          provider = @resolved_provider
+          return false unless provider && use_native_dispatch?(provider)
+
+          ext = Call::Registry.for(provider, instance: @resolved_instance || :default)
+          ext.respond_to?(:supports?) ? ext.supports?(:responses) : false
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.executor.provider_supports_responses',
+                              provider: @resolved_provider)
+          false
+        end
+
         private
 
         def set_log_context
@@ -368,7 +384,7 @@ module Legion
         def step_routing
           log.debug "[llm][executor] action=step_routing.enter requested_provider=#{@request.routing[:provider]} requested_model=#{@request.routing[:model]}"
           @timestamps[:routing_start] = Time.now
-          state = resolve_routing_state(apply_proactive_tier_assignment(routing_request_state))
+          state = resolve_routing_state(apply_proactive_tier_assignment(resolve_model_to_local_provider(routing_request_state)))
           auto_route = state[:auto_route] == true
 
           @resolved_provider = state[:provider] ||
@@ -534,6 +550,43 @@ module Legion
             state[:tier_explicit] = true
             state[:intent] = @proactive_tier_assignment[:intent]
           end
+          state
+        end
+
+        # If the caller named a model but gave no explicit provider/tier/instance,
+        # search discovered providers for that model with a healthy circuit.
+        # On a hit: pin provider + instance so normal routing runs against the local copy.
+        # On a miss: clear the model name and set auto_route so the pipeline picks the best
+        # available provider rather than blindly forwarding a frontier model name.
+        def resolve_model_to_local_provider(state)
+          return state if state[:provider_explicit] || state[:tier_explicit] || state[:instance_explicit]
+          return state if state[:provider] || state[:tier] || state[:instance]
+          return state unless state[:model] && defined?(Discovery) && defined?(Router)
+
+          model = state[:model].to_s
+          all_discovered = Array(Discovery.cached_discovered_models)
+          return state if all_discovered.empty?
+
+          candidates = all_discovered.select do |m|
+            dn = m[:model].to_s
+            dn == model || dn.start_with?("#{model}:")
+          end
+          return state if candidates.empty?
+
+          healthy = candidates.find do |m|
+            Router.health_tracker.circuit_state(m[:provider], instance: m[:instance]) != :open
+          end
+
+          if healthy
+            log.info "[llm][executor] action=model_discovery_pin model=#{model} provider=#{healthy[:provider]} instance=#{healthy[:instance]}"
+            state[:provider] = healthy[:provider]
+            state[:instance] = healthy[:instance]
+          else
+            log.info "[llm][executor] action=model_discovery_miss model=#{model} falling_back=auto_route"
+            state[:model] = nil
+            state[:auto_route] = true
+          end
+
           state
         end
 

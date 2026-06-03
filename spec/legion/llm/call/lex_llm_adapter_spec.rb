@@ -240,6 +240,33 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     end.to raise_error(Legion::LLM::ProviderError, /Responses API dispatch is not supported/)
   end
 
+  describe '#supports?' do
+    it 'returns false for :responses on a provider not in the family list and no explicit capability' do
+      non_responses = described_class.new(:vllm, provider_class)
+      expect(non_responses.supports?(:responses)).to be false
+    end
+
+    it 'returns false for :responses on an arbitrary provider name not in the family list' do
+      non_responses = described_class.new(:ollama, provider_class)
+      expect(non_responses.supports?(:responses)).to be false
+    end
+
+    it 'returns true for :responses on the openai provider family' do
+      openai_adapter = described_class.new(:openai, provider_class)
+      expect(openai_adapter.supports?(:responses)).to be true
+    end
+
+    it 'returns true for :responses when instance_config explicitly declares it' do
+      explicit = described_class.new(:vllm, provider_class, instance_config: { capabilities: [:responses] })
+      expect(explicit.supports?(:responses)).to be true
+    end
+
+    it 'returns true for non-responses capabilities on any provider' do
+      expect(described_class.new(:vllm, provider_class).supports?(:chat)).to be true
+      expect(described_class.new(:ollama, provider_class).supports?(:embed)).to be true
+    end
+  end
+
   it 'streams upstream Responses API deltas and captures completed usage' do
     connection = Class.new do
       attr_reader :payload

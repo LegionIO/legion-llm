@@ -63,7 +63,7 @@ module Legion
                     out << "event: error\ndata: #{Legion::JSON.dump({ type: 'server_error', message: e.message })}\n\n"
                   end
                 else
-                  pipeline_response = executor.call_responses(body: body, stream: false)
+                  pipeline_response = Responses.call_executor_sync(executor, upstream_body: body)
                   response_body     = Responses.format_response(pipeline_response, request_id: request_id, model: model)
                   log.info("[llm][api][namespaces][openai][responses] action=complete request_id=#{request_id}")
                   content_type :json
@@ -164,6 +164,10 @@ module Legion
                   flush_pending_tool_calls(messages, pending_tool_calls)
                   role = item[:role]&.to_s
                   next unless role
+
+                  # OpenAI Responses API uses "developer" as a higher-trust system role.
+                  # All downstream providers only understand the standard four roles.
+                  role = 'system' if role == 'developer'
 
                   content = item[:content]
                   content = content.to_s if content && !content.is_a?(Array)
@@ -295,11 +299,26 @@ module Legion
             end
 
             def self.call_executor(executor, upstream_body: nil, &)
-              if upstream_body && executor.respond_to?(:call_responses)
+              if native_responses_supported?(executor, upstream_body)
                 executor.call_responses(body: upstream_body, stream: true, &)
               else
                 executor.call_stream(&)
               end
+            end
+
+            def self.call_executor_sync(executor, upstream_body: nil)
+              if native_responses_supported?(executor, upstream_body)
+                executor.call_responses(body: upstream_body, stream: false)
+              else
+                executor.call
+              end
+            end
+
+            def self.native_responses_supported?(executor, upstream_body)
+              upstream_body &&
+                executor.respond_to?(:call_responses) &&
+                executor.respond_to?(:provider_supports_responses?) &&
+                executor.provider_supports_responses?
             end
 
             def self.build_output_tool_calls(pipeline_response)

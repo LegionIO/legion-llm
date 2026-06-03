@@ -864,7 +864,7 @@ module Legion
       alias effective_tier_is_cloud? effective_tier_is_external?
 
       def external_tier?(tier)
-        %i[cloud frontier openai_compat].include?(tier)
+        %i[cloud frontier].include?(tier)
       end
     end
   end

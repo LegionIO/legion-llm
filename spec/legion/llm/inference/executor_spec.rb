@@ -1287,6 +1287,141 @@ confidence: 0.9 }],
     end
   end
 
+  describe '#provider_supports_responses?' do
+    it 'returns false when no provider is resolved yet' do
+      executor = described_class.new(request)
+      expect(executor.provider_supports_responses?).to be false
+    end
+
+    it 'returns false when resolved provider is not registered in Registry' do
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :unknown_provider)
+      expect(executor.provider_supports_responses?).to be false
+    end
+
+    it 'returns false when registered adapter does not respond to supports?' do
+      adapter = Module.new
+      Legion::LLM::Call::Registry.register(:fake_no_supports, adapter)
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :fake_no_supports)
+      expect(executor.provider_supports_responses?).to be false
+    ensure
+      Legion::LLM::Call::Registry.deregister_provider(:fake_no_supports)
+    end
+
+    it 'returns false when adapter#supports?(:responses) is false' do
+      adapter = Module.new do
+        def self.supports?(cap)
+          cap.to_sym == :chat
+        end
+      end
+      Legion::LLM::Call::Registry.register(:fake_chat_only, adapter)
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :fake_chat_only)
+      expect(executor.provider_supports_responses?).to be false
+    ensure
+      Legion::LLM::Call::Registry.deregister_provider(:fake_chat_only)
+    end
+
+    it 'returns true when adapter#supports?(:responses) is true' do
+      adapter = Module.new do
+        def self.supports?(_cap)
+          true
+        end
+      end
+      Legion::LLM::Call::Registry.register(:fake_responses_native, adapter)
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :fake_responses_native)
+      expect(executor.provider_supports_responses?).to be true
+    ensure
+      Legion::LLM::Call::Registry.deregister_provider(:fake_responses_native)
+    end
+  end
+
+  describe '#resolve_model_to_local_provider' do
+    let(:healthy_entry) do
+      { model: 'gpt-5.4-mini', provider: :ollama, instance: :default, tier: 'local' }
+    end
+
+    it 'returns state unchanged when provider is already explicit' do
+      executor = described_class.new(request)
+      state = { model: 'gpt-5.4-mini', provider: :openai, provider_explicit: true,
+                tier_explicit: false, instance_explicit: false, instance: nil, tier: nil }
+      result = executor.send(:resolve_model_to_local_provider, state)
+      expect(result[:provider]).to eq(:openai)
+      expect(result[:auto_route]).to be_nil
+    end
+
+    it 'returns state unchanged when no model is set' do
+      executor = described_class.new(request)
+      state = { model: nil, provider: nil, tier: nil, instance: nil,
+                provider_explicit: false, tier_explicit: false, instance_explicit: false }
+      result = executor.send(:resolve_model_to_local_provider, state)
+      expect(result[:auto_route]).to be_nil
+    end
+
+    it 'pins provider and instance when a healthy discovered match exists' do
+      executor = described_class.new(request)
+      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
+                provider_explicit: false, tier_explicit: false, instance_explicit: false }
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([healthy_entry])
+      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
+      result = executor.send(:resolve_model_to_local_provider, state)
+      expect(result[:provider]).to eq(:ollama)
+      expect(result[:instance]).to eq(:default)
+      expect(result[:model]).to eq('gpt-5.4-mini')
+      expect(result[:auto_route]).to be_nil
+    end
+
+    it 'skips open-circuit candidates and falls through to auto_route when all are open' do
+      executor = described_class.new(request)
+      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
+                provider_explicit: false, tier_explicit: false, instance_explicit: false }
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([healthy_entry])
+      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:open)
+      result = executor.send(:resolve_model_to_local_provider, state)
+      expect(result[:auto_route]).to be true
+      expect(result[:model]).to be_nil
+    end
+
+    it 'returns state unchanged when discovery cache is empty (discovery not yet run)' do
+      executor = described_class.new(request)
+      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
+                provider_explicit: false, tier_explicit: false, instance_explicit: false }
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
+      result = executor.send(:resolve_model_to_local_provider, state)
+      expect(result[:auto_route]).to be_nil
+      expect(result[:model]).to eq('gpt-5.4-mini')
+    end
+
+    it 'falls back to auto_route when model is not present among discovered models' do
+      executor = described_class.new(request)
+      other_model = { model: 'llama3:8b', provider: :ollama, instance: :default, tier: 'local' }
+      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
+                provider_explicit: false, tier_explicit: false, instance_explicit: false }
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([other_model])
+      result = executor.send(:resolve_model_to_local_provider, state)
+      expect(result[:auto_route]).to be_nil
+      expect(result[:model]).to eq('gpt-5.4-mini')
+    end
+
+    it 'prefers the first healthy candidate when multiple instances carry the same model' do
+      executor = described_class.new(request)
+      entries = [
+        { model: 'gpt-5.4-mini', provider: :vllm, instance: :h200, tier: 'fleet' },
+        { model: 'gpt-5.4-mini', provider: :ollama, instance: :default, tier: 'local' }
+      ]
+      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
+                provider_explicit: false, tier_explicit: false, instance_explicit: false }
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(entries)
+      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:vllm, instance: :h200).and_return(:closed)
+      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
+      result = executor.send(:resolve_model_to_local_provider, state)
+      expect(result[:provider]).to eq(:vllm)
+      expect(result[:instance]).to eq(:h200)
+    end
+  end
+
   describe 'profile skip lists include new sticky steps' do
     %i[gaia system service quick_reply].each do |profile_name|
       %i[sticky_runners tool_history_inject sticky_persist].each do |step|

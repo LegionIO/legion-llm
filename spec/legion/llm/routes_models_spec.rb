@@ -33,17 +33,22 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
     end
 
-    it 'surfaces the LegionIO auto-routing placeholder model' do
+    it 'surfaces the LegionIO auto-routing placeholder model and auto alias' do
       response = get_json('/api/llm/models')
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
-      expect(body[:data][:models].first).to include(id: 'legionio', display_name: 'LegionIO')
       expect(body[:data][:models]).to include(
         hash_including(id: 'legionio', display_name: 'LegionIO', auto_route: true, default: true)
       )
+      expect(body[:data][:models]).to include(
+        hash_including(id: 'auto', display_name: 'LegionIO (auto)', auto_route: true)
+      )
       expect(body[:data][:offerings]).to include(
         hash_including(model: 'legionio', provider_family: 'legionio', tier: 'auto', transport: 'internal')
+      )
+      expect(body[:data][:offerings]).to include(
+        hash_including(model: 'auto', provider_family: 'legionio', tier: 'auto', transport: 'internal')
       )
     end
 

@@ -279,6 +279,7 @@ RSpec.describe 'Codex CLI conformance', type: :conformance do
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
       allow(fake_executor).to receive(:call_responses).and_return(fake_pipeline_response)
+      allow(fake_executor).to receive(:provider_supports_responses?).and_return(true)
 
       post '/v1/responses',
            Legion::JSON.dump(sync_request),
