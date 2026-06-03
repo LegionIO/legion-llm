@@ -76,12 +76,9 @@ module Legion
         end
 
         routing = settings.is_a?(Hash) ? (settings[:routing] || settings['routing'] || {}) : {}
-        if routing.is_a?(Hash)
-          if routing.key?(:use_fleet) || routing.key?('use_fleet')
-            raise ArgumentError,
-                  'routing.use_fleet has been removed; configure fleet.dispatch.enabled instead'
-          end
-
+        if routing.is_a?(Hash) && (routing.key?(:use_fleet) || routing.key?('use_fleet'))
+          raise ArgumentError,
+                'routing.use_fleet has been removed; configure fleet.dispatch.enabled instead'
         end
 
         settings
@@ -213,15 +210,15 @@ module Legion
           tier_priority:  %w[local direct fleet cloud frontier],
           default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
           tiers:          {
-            local:         { provider: 'ollama' },
-            fleet:         {
+            local:    { provider: 'ollama' },
+            fleet:    {
               queue:           'llm.fleet',
               routing_style:   :shared_lane,
               timeout_seconds: 30,
               timeouts:        { embed: 10, chat: 30, generate: 30, default: 30 }
             },
-            cloud:         { providers: %w[bedrock azure gemini] },
-            frontier:      { providers: %w[anthropic openai] }
+            cloud:    { providers: %w[bedrock azure gemini] },
+            frontier: { providers: %w[anthropic openai] }
           },
           health:         {
             window_seconds:               300,
