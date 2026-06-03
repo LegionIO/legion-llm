@@ -790,7 +790,7 @@ module Legion
                                     handled:   true)
           false
         rescue StandardError => e
-          tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+          skip_all_provider_model_instances!(resolution, tried)
           record_escalation_failure(e, resolution, start_time,
                                     outcome:   :error,
                                     operation: 'llm.pipeline.escalation_attempt')
@@ -931,6 +931,20 @@ module Legion
             next if tried.any? { |t| t[:provider] == r.provider && t[:instance] == r.instance && t[:model] == r.model }
 
             log.debug "[llm][escalation] action=skip_same_tier provider=#{r.provider} model=#{r.model} tier=#{r.tier} reason=context_overflow"
+            tried << { provider: r.provider, instance: r.instance, model: r.model }
+          end
+        end
+
+        def skip_all_provider_model_instances!(failed_resolution, tried)
+          chain = @escalation_chain
+          return unless chain.respond_to?(:each)
+
+          chain.each do |r|
+            next if r.provider != failed_resolution.provider || r.model != failed_resolution.model
+            next if tried.any? { |t| t[:provider] == r.provider && t[:instance] == r.instance && t[:model] == r.model }
+
+            log.warn "[llm][escalation] action=skip_provider_model provider=#{r.provider} model=#{r.model} " \
+                     "instance=#{r.instance} reason=provider_error"
             tried << { provider: r.provider, instance: r.instance, model: r.model }
           end
         end
