@@ -82,11 +82,6 @@ module Legion
                   'routing.use_fleet has been removed; configure fleet.dispatch.enabled instead'
           end
 
-          tiers = routing[:tiers] || routing['tiers'] || {}
-          openai_compat = tiers.is_a?(Hash) ? (tiers[:openai_compat] || tiers['openai_compat'] || {}) : {}
-          if openai_compat.is_a?(Hash) && (openai_compat.key?(:gateways) || openai_compat.key?('gateways'))
-            raise ArgumentError, 'routing.tiers.openai_compat.gateways has been removed; configure lex-llm-openai provider instances instead'
-          end
         end
 
         settings
@@ -215,7 +210,7 @@ module Legion
       def self.routing_defaults
         {
           enabled:        true,
-          tier_priority:  %w[local direct fleet openai_compat cloud frontier],
+          tier_priority:  %w[local direct fleet cloud frontier],
           default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
           tiers:          {
             local:         { provider: 'ollama' },
@@ -225,7 +220,6 @@ module Legion
               timeout_seconds: 30,
               timeouts:        { embed: 10, chat: 30, generate: 30, default: 30 }
             },
-            openai_compat: {},
             cloud:         { providers: %w[bedrock azure gemini] },
             frontier:      { providers: %w[anthropic openai] }
           },

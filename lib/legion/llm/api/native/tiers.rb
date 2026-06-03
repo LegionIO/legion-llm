@@ -165,7 +165,7 @@ module Legion
             routing_config = Legion::Settings[:llm][:routing] || {}
             top_level = Legion::Settings[:llm][:tier_order] || nil
             Array(top_level || routing_config[:tier_order] || routing_config[:tier_priority] ||
-                  %w[local direct fleet openai_compat cloud frontier])
+                  %w[local direct fleet cloud frontier])
           end
 
           def self.privacy_mode?

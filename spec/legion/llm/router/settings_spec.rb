@@ -101,14 +101,6 @@ RSpec.describe Legion::LLM::Settings do
         expect(tiers[:fleet][:timeout_seconds]).to eq(30)
       end
 
-      it 'includes openai_compat tier config' do
-        expect(tiers).to have_key(:openai_compat)
-      end
-
-      it 'openai_compat tier does not configure gateway lists' do
-        expect(tiers.dig(:openai_compat, :gateways)).to be_nil
-      end
-
       it 'cloud tier includes managed providers only' do
         expect(tiers).to have_key(:cloud)
         expect(tiers[:cloud][:providers]).to eq(%w[bedrock azure gemini])
@@ -125,7 +117,7 @@ RSpec.describe Legion::LLM::Settings do
 
     it 'defines tier_priority in correct order' do
       routing = described_class.routing_defaults
-      expect(routing[:tier_priority]).to eq(%w[local direct fleet openai_compat cloud frontier])
+      expect(routing[:tier_priority]).to eq(%w[local direct fleet cloud frontier])
     end
 
     describe 'health' do

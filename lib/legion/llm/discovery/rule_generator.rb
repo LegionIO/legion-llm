@@ -26,7 +26,7 @@ module Legion
           anthropic: :frontier
         }.freeze
 
-        DEFAULT_TIER_PRIORITY = %i[local direct fleet openai_compat cloud frontier].freeze
+        DEFAULT_TIER_PRIORITY = %i[local direct fleet cloud frontier].freeze
         CAPABILITY_ALIASES = {
           function_calling: :tools,
           functions:        :tools,

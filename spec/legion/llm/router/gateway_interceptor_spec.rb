@@ -20,11 +20,7 @@ RSpec.describe 'OpenAI-compatible provider-instance routing' do
     )
   end
 
-  it 'makes openai_compat available from a lex-llm-openai provider instance' do
-    expect(Legion::LLM::Router.tier_available?(:openai_compat)).to be true
-  end
-
-  it 'resolves openai_compat to the registered OpenAI-compatible provider instance' do
+  it 'resolves a provider registered with openai_compat tier metadata' do
     result = Legion::LLM::Router.resolve(tier: :openai_compat)
 
     expect(result.provider).to eq(:openai)

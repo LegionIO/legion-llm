@@ -40,10 +40,6 @@ module Legion
           @tier == :frontier
         end
 
-        def openai_compat?
-          @tier == :openai_compat
-        end
-
         def external?
           !%i[local direct fleet].include?(@tier)
         end
