@@ -139,8 +139,8 @@ RSpec.describe Legion::LLM::Router::Resolution do
       expect(r.external?).to be true
     end
 
-    it 'returns true for openai_compat tier' do
-      r = described_class.new(tier: :openai_compat, provider: :custom_gateway, model: 'gpt-4o')
+    it 'returns true for an unknown/custom tier' do
+      r = described_class.new(tier: :custom, provider: :custom_gateway, model: 'gpt-4o')
       expect(r.external?).to be true
     end
 
