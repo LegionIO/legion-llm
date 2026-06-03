@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.12.3] - 2026-06-02
+
+### Fixed
+- **Escalation retries all instances of a broken provider** — When a `StandardError` fires during an escalation attempt (e.g. a code bug in the provider adapter), the loop previously retried every other registered instance of the same `provider+model` combination before giving up. New `skip_all_provider_model_instances!` marks all chain entries with the same `provider+model` as tried on the first `StandardError`, so escalation immediately advances to a different provider. Transient error paths (rate limit, auth, context overflow) are unaffected (inference/executor.rb)
+
 ## [0.12.2] - 2026-06-02
 
 ### Fixed
