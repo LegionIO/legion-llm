@@ -852,6 +852,19 @@ module Legion
             duration_ms: duration_ms
           )
           report_escalation_quality_failure(resolution, result) unless result.passed
+          emit_escalation_attempt_metering(
+            provider:    resolution.provider,
+            model:       resolution.model,
+            duration_ms: duration_ms,
+            attempt:     @escalation_history.size
+          )
+          emit_escalation_attempt_audit(
+            provider:    resolution.provider,
+            model:       resolution.model,
+            outcome:     outcome,
+            duration_ms: duration_ms,
+            attempt:     @escalation_history.size
+          )
           result.passed
         ensure
           @current_escalation_context = nil
@@ -892,6 +905,20 @@ module Legion
             category: :provider, key: 'escalation:attempt', direction: :internal,
             detail: "attempt #{@escalation_history.size}: #{resolution.provider}:#{resolution.model} => #{outcome}",
             from: 'pipeline', to: "provider:#{resolution.provider}"
+          )
+          emit_escalation_attempt_metering(
+            provider:    resolution.provider,
+            model:       resolution.model,
+            duration_ms: duration_ms,
+            attempt:     @escalation_history.size
+          )
+          emit_escalation_attempt_audit(
+            provider:    resolution.provider,
+            model:       resolution.model,
+            outcome:     outcome,
+            duration_ms: duration_ms,
+            error:       err,
+            attempt:     @escalation_history.size
           )
         end
 
@@ -1673,10 +1700,86 @@ module Legion
             error:           { class: error.class.name, message: error.message },
             tracing:         @tracing,
             timestamp:       Time.now,
-            request_type:    'chat'
+            request_type:    'chat',
+            messages:        @request.messages
           )
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_error_audit')
+        end
+
+        def emit_escalation_attempt_audit(provider:, model:, outcome:, duration_ms:, error: nil, attempt: 1)
+          routing = { provider: provider, model: model }
+          routing[:offering_id] = @resolved_offering_id if @resolved_offering_id
+          routing[:offering_metadata] = @resolved_offering_metadata if @resolved_offering_metadata&.any?
+
+          tokens = {}
+          if @extracted_tokens
+            input_tokens  = @extracted_tokens.respond_to?(:input_tokens)  ? @extracted_tokens.input_tokens.to_i  : 0
+            output_tokens = @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens.to_i : 0
+            thinking      = @extracted_tokens.respond_to?(:thinking_tokens) ? @extracted_tokens.thinking_tokens.to_i : 0
+            tokens = { input_tokens: input_tokens, output_tokens: output_tokens, thinking_tokens: thinking }.compact
+          end
+
+          content = extract_response_content
+          thinking_response = extract_thinking
+
+          Legion::LLM::Audit.emit_prompt(
+            request_id:            @request.id,
+            conversation_id:       @request.conversation_id,
+            caller:                @request.caller,
+            routing:               routing,
+            tokens:                tokens,
+            status:                outcome == :success ? 'success' : 'error',
+            provider_response_ref: "#{@request.id}:attempt:#{attempt}",
+            latency_ms:            duration_ms,
+            response_content:      content,
+            response_thinking:     thinking_response,
+            error:                 error ? { class: error.class.name, message: error.message } : nil,
+            tracing:               @tracing,
+            timestamp:             Time.now,
+            request_type:          'chat',
+            messages:              @request.messages
+          )
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_escalation_attempt_audit')
+        end
+
+        def emit_escalation_attempt_metering(provider:, model:, duration_ms:, attempt: 1)
+          @extracted_tokens ||= extract_tokens
+          input_tokens  = @extracted_tokens.respond_to?(:input_tokens)  ? @extracted_tokens.input_tokens.to_i  : 0
+          output_tokens = @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens.to_i : 0
+          cost_usd = estimate_cost(input_tokens, output_tokens)
+
+          event = Steps::Metering.build_event(
+            provider:          provider,
+            model_id:          model,
+            offering_id:       @resolved_offering_id,
+            offering_metadata: @resolved_offering_metadata,
+            tier:              @resolved_tier,
+            request_type:      if @request.respond_to?(:request_type)
+                                 @request.request_type
+                               else
+                                 'chat'
+                               end,
+            input_tokens:      input_tokens,
+            output_tokens:     output_tokens,
+            latency_ms:        duration_ms,
+            wall_clock_ms:     0,
+            cost_usd:          cost_usd,
+            request_id:        @request.id,
+            conversation_id:   @request.conversation_id,
+            correlation_id:    @tracing&.dig(:correlation_id),
+            caller:            @request.caller,
+            identity:          metering_identity,
+            billing:           @request.billing,
+            routing_reason:    "escalation_attempt:#{attempt}",
+            messages:          @request.messages,
+            response_content:  extract_response_content,
+            response_thinking: extract_thinking
+          )
+          Steps::Metering.publish_or_spool(event)
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_escalation_attempt_metering')
         end
 
         def config_error?(err)

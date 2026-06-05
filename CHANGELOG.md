@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.12.9] - 2026-06-05
+
+### Fixed
+- **Escalation attempts now individually recorded** — Every escalation attempt emits its own metering and audit events so each provider attempt gets a separate `inference_response` row and `metric` row. Per-attempt events include messages, response content, thinking, tokens, and cost. `emit_error_audit` now includes request messages so the ledger captures `request_json` even on total escalation exhaustion (issue #147) (lib/legion/llm/inference/executor.rb)
+
 ## [0.12.8] - 2026-06-05
 
 ### Fixed
