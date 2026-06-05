@@ -3,6 +3,8 @@
 ## [0.12.5] - 2026-06-04
 
 ### Fixed
+- **dispatch_extension fails when source uses :extension key** — `dispatch_extension` only checked `source[:lex]`, but `check_registry_override` and other callers sometimes set `:extension` instead. Now falls back to `source[:extension]` when `:lex` is absent (tools/dispatcher.rb)
+- **dispatch_client attempted server-side execution of client tools** — Client tools (Bash, Read, etc.) now always return `:passthrough` status instead of attempting server-side execution via `ClientToolMethods`. LegionIO should never execute client tools; that's the client's responsibility (tools/dispatcher.rb)
 - **OpenAI Responses API ignores explicit provider routing** — Both namespace (`api/namespaces/openai/responses.rb`) and legacy (`api/openai/responses.rb`) handlers only passed `{ model: model }` in the routing hash, dropping `HTTP_X_LEGION_PROVIDER`, `HTTP_X_LEGION_TIER`, and `HTTP_X_LEGION_INSTANCE` headers. Now extracts these headers and body fields, builds a proper routing hash with provider/instance/model, and passes tier via `Request.extra[:tier]` to match the Anthropic Messages handler behavior.
 - **Anthropic Messages API drops thinking config** — Both namespace (`api/namespaces/anthropic/messages.rb`) and legacy (`api/anthropic/messages.rb`) handlers never forwarded `body[:thinking]` to `Request.build`. Now passes through unchanged so all providers (Anthropic, Bedrock, etc.) receive the original thinking config. Anthropic provider now handles both `:budget_tokens` and `:budget` keys for compatibility.
 

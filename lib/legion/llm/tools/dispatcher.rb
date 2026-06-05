@@ -114,8 +114,9 @@ module Legion
         end
 
         def dispatch_extension(tool_call, source)
-          log.debug "[llm][tools] action=dispatch_extension tool=#{tool_call[:name]} lex=#{source[:lex]} runner=#{source[:runner]}"
-          segments = (source[:lex] || '').delete_prefix('lex-').split('-')
+          lex = source[:lex] || source[:extension]
+          log.debug "[llm][tools] action=dispatch_extension tool=#{tool_call[:name]} lex=#{lex} runner=#{source[:runner]}"
+          segments = (lex || '').delete_prefix('lex-').split('-')
           runner_path = (%w[Legion Extensions] + segments.map(&:capitalize) + ['Runners', source[:runner]]).join('::')
 
           runner = Kernel.const_get(runner_path)
@@ -136,13 +137,7 @@ module Legion
         end
 
         def dispatch_client(tool_call, source)
-          return { status: :error, result: "Tool #{tool_call[:name]} is not executable server-side." } unless source[:executable]
-
-          require 'legion/llm/api/native/helpers'
-
-          helper = Object.new.extend(Legion::LLM::API::Native::ClientToolMethods)
-          result = helper.send(:dispatch_client_tool, tool_call[:name].to_s, **symbolize_keys(tool_call[:arguments] || {}))
-          { status: :success, result: result }
+          { status: :passthrough, result: nil, client_tool: true, tool_name: tool_call[:name], source: source }
         end
 
         def dispatch_special(tool_call)
