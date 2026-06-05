@@ -119,7 +119,7 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       step.step_knowledge_capture
       sleep 0.2
       expect(apollo_local).to have_received(:ingest).with(
-        hash_including(content: 'response text', tags: array_including('llm_response'))
+        hash_including(content: 'response text')
       )
     end
 

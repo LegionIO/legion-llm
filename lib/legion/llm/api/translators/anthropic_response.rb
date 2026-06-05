@@ -265,10 +265,10 @@ module Legion
             false
           end
 
-          private_class_method :extract_content, :format_usage, :text_looks_like_tool_json?
+          private_class_method :extract_content, :format_usage
 
           class << self
-            public :extract_tool_calls, :format_stop_reason, :token_count, :thinking_payload, :thinking_content_block
+            public :extract_tool_calls, :format_stop_reason, :token_count, :thinking_payload, :thinking_content_block, :text_looks_like_tool_json?
           end
         end
       end

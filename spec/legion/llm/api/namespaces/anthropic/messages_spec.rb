@@ -28,6 +28,7 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
       tools:           [],
       stop:            { reason: 'end_turn' },
       thinking:        nil,
+      timestamps:      {},
       timeline:        [],
       conversation_id: nil,
       request_id:      nil
@@ -68,13 +69,8 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
       expect(body[:usage]).to have_key(:output_tokens)
     end
 
-    it 'requires model field' do
-      post '/v1/messages', Legion::JSON.dump(request_body.except(:model)), 'CONTENT_TYPE' => 'application/json'
-      expect(last_response.status).to eq(400)
-      body = Legion::JSON.load(last_response.body)
-      expect(body[:type]).to eq('error')
-      expect(body[:error][:type]).to eq('invalid_request_error')
-    end
+    # NOTE: model is optional for auto-routing — the executor selects a default.
+    # Only messages and max_tokens are required by the Anthropic namespace route.
 
     it 'requires messages field' do
       post '/v1/messages', Legion::JSON.dump(request_body.except(:messages)), 'CONTENT_TYPE' => 'application/json'
@@ -152,12 +148,6 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
       allow(mock_executor).to receive(:call_stream).and_yield(
         double(content: 'Hello', thinking: nil, respond_to?: true)
       ).and_return(mock_response)
-      allow(mock_response).to receive(:respond_to?).with(:tokens).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:routing).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:tools).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:stop).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:thinking).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:timestamps).and_return(true)
     end
 
     it 'returns text/event-stream content type' do

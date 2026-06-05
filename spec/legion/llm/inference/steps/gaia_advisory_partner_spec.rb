@@ -35,6 +35,10 @@ RSpec.describe Legion::LLM::Inference::Steps::GaiaAdvisory do
   end
 
   describe 'partner context enrichment in #step_gaia_advisory' do
+    before do
+      Legion::Settings[:llm][:gaia][:advisory_enabled] = true
+    end
+
     context 'when caller is a known partner' do
       before do
         stub_gaia(advisory: { valence: [0.8] })

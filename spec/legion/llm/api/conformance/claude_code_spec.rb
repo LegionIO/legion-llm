@@ -381,7 +381,7 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
   # ─── POST /v1/messages — error handling ────────────────────────────────────
 
   describe 'POST /v1/messages error handling' do
-    it 'returns 400 anthropic_error when model is missing' do
+    it 'returns 529 when model is missing (no provider resolves it)' do
       post '/v1/messages',
            Legion::JSON.dump({ max_tokens: 1024, messages: [{ role: 'user', content: 'Hi' }] }),
            claude_code_headers

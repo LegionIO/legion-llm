@@ -26,6 +26,10 @@ RSpec.describe Legion::LLM::Inference::Steps::GaiaAdvisory do
   end
 
   describe '#step_gaia_advisory' do
+    before do
+      Legion::Settings[:llm][:gaia][:advisory_enabled] = true
+    end
+
     it 'skips when GAIA advisory is disabled by settings' do
       Legion::Settings[:llm][:gaia][:advisory_enabled] = false
       gaia_mod = Module.new

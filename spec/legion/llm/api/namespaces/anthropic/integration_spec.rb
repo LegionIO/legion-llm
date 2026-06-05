@@ -26,10 +26,10 @@ capabilities: %w[chat tools], limits: {}, enabled: true }
   it 'responds to POST /v1/messages' do
     mock_executor = instance_double(Legion::LLM::Inference::Executor)
     mock_response = instance_double(Legion::LLM::Inference::Response,
-                                    message: { content: 'hi' }, routing: { model: 'legionio' },
-                                    tokens: { input: 5, output: 2 }, tools: nil, stop: { reason: 'end_turn' },
-                                    thinking: nil)
-    allow(mock_response).to receive(:respond_to?).and_return(true)
+                                    message:         { content: 'hi' }, routing: { model: 'legionio' },
+                                    tokens:          { input: 5, output: 2 }, tools: [], stop: { reason: 'end_turn' },
+                                    thinking:        nil, timestamps: {}, timeline: [],
+                                    conversation_id: nil, request_id: nil)
     allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
     allow(mock_executor).to receive(:call).and_return(mock_response)
 

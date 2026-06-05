@@ -29,8 +29,8 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
   end
 
   describe '.fleet_enabled?' do
-    it 'returns true by default' do
-      expect(described_class.fleet_enabled?).to eq(true)
+    it 'returns false by default' do
+      expect(described_class.fleet_enabled?).to eq(false)
     end
 
     it 'returns false when fleet dispatch is disabled' do
@@ -44,6 +44,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
     end
 
     it 'ignores the removed routing.use_fleet setting' do
+      Legion::Settings[:llm][:fleet] = { dispatch: { enabled: true } }
       Legion::Settings[:llm][:routing] = { use_fleet: false }
       expect(described_class.fleet_enabled?).to eq(true)
     end

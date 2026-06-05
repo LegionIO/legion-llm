@@ -30,16 +30,19 @@ RSpec.describe 'Claude Code Drop-in Conformance' do
   describe 'POST /v1/messages (what Claude Code sends)' do
     let(:mock_response) do
       instance_double(Legion::LLM::Inference::Response,
-                      message:  { content: 'I can help with that.' },
-                      routing:  { model: 'legionio', provider: :anthropic },
-                      tokens:   { input: 15, output: 6 },
-                      tools:    nil,
-                      stop:     { reason: 'end_turn' },
-                      thinking: nil)
+                      message:         { content: 'I can help with that.' },
+                      routing:         { model: 'legionio', provider: :anthropic },
+                      tokens:          { input: 15, output: 6 },
+                      tools:           [],
+                      stop:            { reason: 'end_turn' },
+                      thinking:        nil,
+                      timestamps:      {},
+                      timeline:        [],
+                      conversation_id: nil,
+                      request_id:      nil)
     end
 
     before do
-      allow(mock_response).to receive(:respond_to?).and_return(true)
       mock_executor = instance_double(Legion::LLM::Inference::Executor)
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
       allow(mock_executor).to receive(:call).and_return(mock_response)
@@ -113,12 +116,16 @@ input_schema: { type: 'object', properties: { file_path: { type: 'string' } }, r
     before do
       mock_executor = instance_double(Legion::LLM::Inference::Executor)
       mock_response = instance_double(Legion::LLM::Inference::Response,
-                                      message: { content: 'Done.' },
-                                      routing: { model: 'legionio' },
-                                      tokens:  { input: 10, output: 4 },
-                                      tools:   nil,
-                                      stop:    { reason: 'end_turn' })
-      allow(mock_response).to receive(:respond_to?).and_return(true)
+                                      message:         { content: 'Done.' },
+                                      routing:         { model: 'legionio' },
+                                      tokens:          { input: 10, output: 4 },
+                                      tools:           [],
+                                      stop:            { reason: 'end_turn' },
+                                      thinking:        nil,
+                                      timestamps:      {},
+                                      timeline:        [],
+                                      conversation_id: nil,
+                                      request_id:      nil)
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
       allow(mock_executor).to receive(:call_stream).and_yield(
         double(content: 'Done.', thinking: nil, respond_to?: true)
