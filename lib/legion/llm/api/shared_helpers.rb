@@ -506,11 +506,37 @@ module Legion
           normalized_caller = caller_context.respond_to?(:transform_keys) ? caller_context.transform_keys(&:to_sym) : {}
           safe_caller_fields = normalized_caller.slice(:context, :session_id, :trace_id)
 
-          {
-            source:       source,
-            path:         path,
-            requested_by: identity_caller_hash(env).fetch(:requested_by)
-          }.merge(safe_caller_fields)
+          caller_hash = {
+            source:                source,
+            path:                  path,
+            requested_by:          identity_caller_hash(env).fetch(:requested_by),
+            runtime_caller_class:  detect_caller_class(env),
+            runtime_caller_client: detect_caller_client(env)
+          }
+
+          # Carry parent request reference for ledger enrichment (avoids DB queries at emit time)
+          if (turn_metadata = env['HTTP_X_CODEX_TURN_METADATA'])
+            begin
+              parsed = Legion::JSON.load(turn_metadata)
+              caller_hash[:parent_request_ref] = parsed['turn_id'] if parsed['turn_id']
+              caller_hash[:codex_turn_metadata] = parsed
+            rescue StandardError
+              # Ignore malformed metadata
+            end
+          end
+
+          caller_hash.merge(safe_caller_fields)
+        end
+
+        def detect_caller_class(env)
+          return 'codex' if env['HTTP_X_CODEX_TURN_METADATA'] || env['HTTP_X_CODEX_WINDOW_ID']
+          return 'claude-code' if env['HTTP_X_CLAUDE_CODE_SESSION_ID']
+
+          nil
+        end
+
+        def detect_caller_client(env)
+          env['HTTP_USER_AGENT'] || env['HTTP_X_REQUEST_ID']
         end
 
         def detect_modality(messages)

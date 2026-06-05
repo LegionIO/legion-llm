@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.12.12] - 2026-06-05
+
+### Added
+- **Caller class and client detection** — `build_server_caller` now emits `runtime_caller_class` (codex, claude-code), `runtime_caller_client` (user-agent), `parent_request_ref` (Codex turn_id for ledger correlation), and `codex_turn_metadata` (parsed X_CODEX_TURN_METADATA JSON) in the caller hash so the ledger can populate caller identity, client attribution, and turn-level request correlation without DB queries at emit time (api/shared_helpers.rb)
+
 ## [0.12.11] - 2026-06-05
 
 ### Fixed
