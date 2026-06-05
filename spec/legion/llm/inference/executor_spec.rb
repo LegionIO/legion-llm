@@ -462,7 +462,8 @@ confidence: 0.9 }],
         id:              'req-route-fleet',
         conversation_id: 'conv-route-fleet',
         messages:        [{ role: :user, content: 'hello' }],
-        routing:         { provider: :vllm, model: 'qwen3.6-27b' }
+        routing:         { provider: :vllm, model: 'qwen3.6-27b' },
+        extra:           { tier: :fleet }
       )
     end
 
@@ -487,7 +488,6 @@ confidence: 0.9 }],
 
     it 'records fleet timeouts with the selected lane and idempotency key' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
-      Legion::LLM::Call::Registry.register(:vllm, Module.new)
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
         success:        false,
         error:          'fleet_timeout',
@@ -541,6 +541,7 @@ confidence: 0.9 }],
         messages:        [{ role: :user, content: 'lookup teams chat' }],
         system:          'Use available tools.',
         routing:         { provider: :vllm, model: 'qwen3.6-27b' },
+        extra:           { tier: :fleet },
         metadata:        { client_tool_passthrough: true },
         tools:           [
           {
