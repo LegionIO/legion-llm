@@ -568,12 +568,23 @@ module Legion
 
             message_hash = normalize_hash(message)
             message_class.new(
-              role:         message_hash[:role] || :user,
+              role:         normalize_role(message_hash[:role] || :user),
               content:      normalize_message_content(message_hash[:content]),
               tool_calls:   normalize_message_tool_calls(message_hash[:tool_calls]),
               tool_call_id: message_hash[:tool_call_id]
             )
           end
+        end
+
+        def normalize_role(role)
+          normalized = role.to_sym
+          return normalized unless %i[developer critic discriminator].include?(normalized)
+
+          # Only providers that understand these roles need them preserved.
+          # OpenAI is the only provider that supports :developer/:critic/:discriminator natively.
+          return normalized if @provider_name == :openai
+
+          :system
         end
 
         def consolidate_system_messages(raw_messages)

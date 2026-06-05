@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.12.10] - 2026-06-05
+
+### Fixed
+- **OpenAI role normalization** — `:developer`, `:critic`, `:discriminator` roles now map to `:system` for non-OpenAI providers (Anthropic, vLLM, Ollama, Bedrock) so they don't raise `InvalidRoleError`. OpenAI messages preserve the original role because OpenAI natively supports all four. `normalize_role` runs at the adapter boundary per-provider (issue #147) (lib/legion/llm/call/lex_llm_adapter.rb)
+
 ## [0.12.9] - 2026-06-05
 
 ### Fixed
