@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.12.11] - 2026-06-05
+
+### Fixed
+- **Client request ID and conversation threading** — `/v1/messages` and `/v1/responses` now read `X-Client-Request-Id` from HTTP headers as the request ID instead of always generating new ones. `conversation_id` now uses `Thread-Id` (Codex) or `X-Claude-Code-Session-Id` (Claude Code) so the ledger groups messages from the same client session into one conversation row instead of random UUIDs (api/namespaces/anthropic/messages.rb, api/namespaces/openai/responses.rb)
+
 ## [0.12.10] - 2026-06-05
 
 ### Fixed

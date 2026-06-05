@@ -22,7 +22,7 @@ module Legion
                 request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
                 body = parse_request_body
 
-                request_id = "resp_#{SecureRandom.hex(16)}"
+                request_id = env['HTTP_X_CLIENT_REQUEST_ID'] || "resp_#{SecureRandom.hex(16)}"
 
                 input = body[:input]
                 messages = case input
@@ -53,15 +53,16 @@ module Legion
                 log.info("[llm][api][namespaces][openai][responses] action=accepted request_id=#{request_id} model=#{model} stream=#{streaming}")
 
                 inference_request = Legion::LLM::Inference::Request.build(
-                  id:       request_id,
-                  messages: messages,
-                  routing:  routing,
-                  tools:    tool_decls,
-                  caller:   build_server_caller(source: 'openai_responses', path: request.path, env: env),
-                  stream:   streaming,
-                  thinking: thinking,
-                  cache:    { strategy: :default, cacheable: true },
-                  extra:    extra.empty? ? {} : extra
+                  id:              request_id,
+                  messages:        messages,
+                  routing:         routing,
+                  tools:           tool_decls,
+                  caller:          build_server_caller(source: 'openai_responses', path: request.path, env: env),
+                  conversation_id: env['HTTP_X_LEGION_CONVERSATION_ID'] || env['HTTP_THREAD_ID'],
+                  stream:          streaming,
+                  thinking:        thinking,
+                  cache:           { strategy: :default, cacheable: true },
+                  extra:           extra.empty? ? {} : extra
                 )
                 executor = Legion::LLM::Inference::Executor.new(inference_request)
 

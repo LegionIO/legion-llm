@@ -25,7 +25,7 @@ module Legion
 
               validate_anthropic_required!(body)
 
-              request_id = "msg_#{SecureRandom.hex(12)}"
+              request_id = env['HTTP_X_CLIENT_REQUEST_ID'] || "msg_#{SecureRandom.hex(12)}"
               normalized = Legion::LLM::API::Translators::AnthropicRequest.normalize(body)
               streaming = normalized[:stream] == true
 
@@ -35,7 +35,7 @@ module Legion
               tool_defs = build_tool_definitions(normalized[:tools] || [], executable: false)
               modality = detect_modality(normalized[:messages])
 
-              conv_id = env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id] || "conv_#{SecureRandom.hex(8)}"
+              conv_id = env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id] || env['HTTP_THREAD_ID'] || env['HTTP_X_CLAUDE_CODE_SESSION_ID'] || "conv_#{SecureRandom.hex(8)}"
               ext_provider = env['HTTP_X_LEGION_PROVIDER'] || body[:provider]
               ext_tier = env['HTTP_X_LEGION_TIER'] || body[:tier]
               ext_instance = env['HTTP_X_LEGION_INSTANCE'] || body[:instance]
