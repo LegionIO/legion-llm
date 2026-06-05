@@ -2227,7 +2227,10 @@ module Legion
             billing:           @request.billing,
             agent_id:          agent[:id],
             task_id:           agent[:task_id],
-            routing_reason:    @audit.dig(:'routing:provider_selection', :data, :reason)
+            routing_reason:    @audit.dig(:'routing:provider_selection', :data, :reason),
+            messages:          @request.messages,
+            response_content:  extract_response_content,
+            response_thinking: extract_thinking
           )
           Steps::Metering.publish_or_spool(event)
           flush_deferred_tool_audits
@@ -2545,6 +2548,19 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.build_response_tokens')
           @extracted_tokens
+        end
+
+        def extract_response_content
+          return nil unless @raw_response
+
+          if @raw_response.respond_to?(:content)
+            @raw_response.content
+          elsif @raw_response.is_a?(Hash) && @raw_response[:content]
+            @raw_response[:content]
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.extract_response_content')
+          nil
         end
 
         def extract_thinking

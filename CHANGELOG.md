@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.12.7] - 2026-06-05
+
+### Fixed
+- **Metering events now include request messages and response content** — Fixes 86% empty `request_json` rows in `llm_message_inference_requests` by including `messages`, `response_content`, and `response_thinking` in the metering event payload so the ledger captures complete data on the first synchronous write (issue #146) (inference/steps/metering.rb, inference/executor.rb)
+
 ## [0.12.6] - 2026-06-05
 
 ### Added

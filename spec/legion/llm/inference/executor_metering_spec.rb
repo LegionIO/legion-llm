@@ -110,7 +110,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'does not emit a zero-dollar cost estimate when provider usage is missing for a known model' do
-      logger = instance_double('Logger', debug: nil, warn: nil)
+      logger = instance_double('Logger', debug: nil, warn: nil, info: nil)
       raw = double('raw_response',
                    content:       'hello',
                    input_tokens:  nil,
@@ -193,6 +193,68 @@ RSpec.describe Legion::LLM::Inference::Executor do
     it 'tolerates a nil raw_response without raising' do
       executor.instance_variable_set(:@raw_response, nil)
       expect { executor.send(:step_metering) }.not_to raise_error
+    end
+
+    it 'includes messages from the request in the metering event' do
+      allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+      executor.send(:step_metering)
+
+      expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+        expect(event[:messages]).to eq([{ role: :user, content: 'hello' }])
+      end
+    end
+
+    it 'includes response_content from the raw response' do
+      allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+      executor.send(:step_metering)
+
+      expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+        expect(event[:response_content]).to eq('hello')
+      end
+    end
+
+    context 'with thinking in the raw response' do
+      before do
+        raw = double('raw_response',
+                     content:       'the answer',
+                     input_tokens:  50,
+                     output_tokens: 20,
+                     thinking:      'reasoning steps')
+        executor.instance_variable_set(:@raw_response, raw)
+      end
+
+      it 'includes response_thinking in the metering event' do
+        allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+        executor.send(:step_metering)
+
+        expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+          expect(event[:response_thinking]).to be_a(Hash)
+          expect(event[:response_thinking][:content]).to eq('reasoning steps')
+        end
+      end
+    end
+
+    context 'without thinking in the raw response' do
+      before do
+        raw = double('raw_response',
+                     content:       'the answer',
+                     input_tokens:  50,
+                     output_tokens: 20)
+        executor.instance_variable_set(:@raw_response, raw)
+      end
+
+      it 'omits response_thinking from the metering event' do
+        allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+        executor.send(:step_metering)
+
+        expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+          expect(event).not_to have_key(:response_thinking)
+        end
+      end
     end
   end
 end
