@@ -19,7 +19,18 @@ module Legion
             result = Call::NativeResponseAdapter.coerce_result(result)
             tool_calls = normalize_native_tool_calls(result[:tool_calls])
             if tool_calls.empty?
+              # Provider may have emitted tool arguments as plain text JSON
+              # (common with vLLM/qwen when a tool choice is forced).
+              # Try to synthesize a structured tool call from the text.
+              tool_calls = maybe_synthesize_tool_call_from_content(result, round)
+              if tool_calls.any?
+                result[:tool_calls] = tool_calls
+                result[:stop_reason] = :tool_use
+              end
+            end
+            if tool_calls.empty?
               log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=no_tool_calls"
+              @last_tool_loop_messages = messages
               return result
             end
             if tool_calls.any? { |tool_call| client_passthrough_tool_call?(tool_call) }
@@ -67,7 +78,18 @@ module Legion
             result = Call::NativeResponseAdapter.coerce_result(result)
             tool_calls = normalize_native_tool_calls(result[:tool_calls])
             if tool_calls.empty?
+              # Provider may have emitted tool arguments as plain text JSON
+              # (common with vLLM/qwen when a tool choice is forced).
+              # Try to synthesize a structured tool call from the text.
+              tool_calls = maybe_synthesize_tool_call_from_content(result, round)
+              if tool_calls.any?
+                result[:tool_calls] = tool_calls
+                result[:stop_reason] = :tool_use
+              end
+            end
+            if tool_calls.empty?
               log.debug "[llm][executor] action=native_streaming_tool_loop.complete rounds=#{round} reason=no_tool_calls"
+              @last_tool_loop_messages = messages
               return result
             end
             if tool_calls.any? { |tool_call| client_passthrough_tool_call?(tool_call) }
@@ -200,6 +222,47 @@ module Legion
 
             part[:text] || part['text']
           end.join(' ')
+        end
+
+        # When a tool choice is forced and the provider outputs the arguments as
+        # plain text JSON (e.g. vLLM/qwen), synthesize a structured tool call
+        # from the content so downstream translators emit the correct
+        # client-native shape (tool_use / function_call etc).
+        def maybe_synthesize_tool_call_from_content(result, round)
+          tool_prefs = native_tool_prefs
+          return [] unless tool_prefs
+
+          forced_name = tool_prefs[:choice]
+          return [] unless forced_name && native_dispatch_tools.key?(forced_name)
+
+          raw = result[:result] || result[:content] || result['result'] || result['content']
+          text = raw.is_a?(String) ? raw.to_s.strip : ''
+          return [] if text.empty? || !text.start_with?('{"')
+
+          parsed = nil
+          begin
+            parsed = Legion::JSON.parse(text, symbolize_names: false)
+          rescue Legion::JSON::ParseError, StandardError => e
+            log.warn "[llm][native_tool_loop] action=synthesize_tool_call failed parse round=#{round} error=#{e.message}"
+            return []
+          end
+          return [] unless parsed.is_a?(Hash) && !parsed.empty?
+
+          synthesized = [{
+            id:        "call_#{SecureRandom.hex(10)}",
+            name:      forced_name.to_s,
+            arguments: parsed
+          }]
+
+          log.info "[llm][native_tool_loop] action=synthesized_tool_call round=#{round} " \
+                   "tool=#{forced_name} arg_keys=#{parsed.keys.join(',')}"
+
+          # Strip the JSON blob from the text content so it isn't also emitted
+          # as a plain text delta by the API translator.
+          result[:result] = ''
+          result[:content] = ''
+
+          synthesized
         end
 
         def normalize_native_tool_calls(tool_calls)

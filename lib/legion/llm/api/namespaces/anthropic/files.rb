@@ -167,7 +167,6 @@ module Legion
               anthropic_error('api_error', e.message, status_code: 500)
             end
 
-            # rubocop:disable Metrics/BlockLength
             helpers do
               # ── Filename / MIME extraction ──────────────────────────────────
 
@@ -285,8 +284,6 @@ module Legion
                 sorted_list
               end
             end
-            # rubocop:enable Metrics/BlockLength
-
             # Thread-safe metadata store, re-initialized cleanly on each Sinatra::Extension register.
             def self.metadata_store
               @metadata_store ||= Concurrent::Map.new

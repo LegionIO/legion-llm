@@ -25,7 +25,7 @@ module Legion
         class << self
           def check(response, quality_threshold: DEFAULT_QUALITY_THRESHOLD, json_expected: false, quality_check: nil)
             failures = []
-            content = response.content
+            content = effective_content(response)
             has_tool_calls = response.respond_to?(:tool_calls) && response.tool_calls&.any?
 
             failures << :empty_response if !has_tool_calls && (content.nil? || content.strip.empty?)
@@ -35,7 +35,7 @@ module Legion
                 failures << :too_short
                 log.debug "[llm][quality] check=too_short result=fail content_length=#{content.length} threshold=#{quality_threshold}"
               end
-              if repetitive?(content)
+              if quality_setting(:repetition, false) && repetitive?(content)
                 failures << :repetition
                 log.debug "[llm][quality] check=repetition result=fail content_length=#{content.length}"
               end
@@ -62,6 +62,34 @@ module Legion
               log.warn "[llm][quality] action=check result=failed failures=#{failures.join(',')}"
             end
             result
+          end
+
+          def effective_content(response)
+            content = response.respond_to?(:content) ? response.content.to_s : ''
+            return content unless content.to_s.strip.empty?
+
+            thinking = response.respond_to?(:thinking) ? response.thinking : nil
+            return content unless thinking
+
+            "#{content}#{extract_thinking_content(thinking)}"
+          rescue StandardError
+            content
+          end
+
+          def extract_thinking_content(thinking)
+            extracted = if thinking.is_a?(Hash)
+                          normalized = thinking.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+                          normalized[:content] || normalized[:text]
+                        elsif thinking.respond_to?(:content)
+                          thinking.content
+                        elsif thinking.respond_to?(:text)
+                          thinking.text
+                        else
+                          thinking
+                        end
+            extracted.to_s.strip
+          rescue StandardError
+            ''
           end
 
           def quality_setting(key, default)

@@ -22,7 +22,7 @@ module Legion
       end
     end
 
-    def self.const_missing(name) # rubocop:disable Metrics/MethodLength
+    def self.const_missing(name)
       case name
       when :Pipeline
         CompatWarning.warn_once('Legion::LLM::Pipeline', 'Legion::LLM::Inference')

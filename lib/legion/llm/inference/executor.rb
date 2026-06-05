@@ -148,17 +148,29 @@ module Legion
 
         # Returns true when the resolved provider's adapter natively supports the Responses API.
         # Called by the API layer before choosing call_responses vs call_stream.
-        # Pre-provider steps must have already run (provider is resolved) for this to be accurate;
-        # returns false safely if resolution hasn't happened yet.
+        # Checks the resolved provider first; if not yet resolved, falls back to the
+        # requested provider from routing state so the decision can be made before
+        # pre-provider steps run.
         def provider_supports_responses?
           provider = @resolved_provider
+          instance = @resolved_instance
+
+          # If provider hasn't been resolved yet, use the routing hint from the request.
+          # Only check resolved state if the provider is already resolved; otherwise fall back to routing.
+          unless provider && instance && Call::Registry.registered?(provider, instance: instance)
+            provider = @request.routing&.dig(:provider)
+            instance = @request.routing&.dig(:instance)
+          end
+
           return false unless provider && use_native_dispatch?(provider)
 
-          ext = Call::Registry.for(provider, instance: @resolved_instance || :default)
+          # When instance is nil, Registry.for returns the first available adapter.
+          # When instance is specified, it looks up that specific instance.
+          ext = Call::Registry.for(provider, instance: instance)
           ext.respond_to?(:supports?) ? ext.supports?(:responses) : false
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.executor.provider_supports_responses',
-                              provider: @resolved_provider)
+                              provider: provider)
           false
         end
 
@@ -392,9 +404,7 @@ module Legion
                                (Legion::Settings[:llm][:default_provider] unless auto_route)
           @resolved_instance = resolve_provider_instance(state[:instance], @resolved_provider)
           @resolved_model = state[:model] || (Legion::Settings[:llm][:default_model] unless auto_route)
-          if auto_route && (@resolved_provider.nil? || @resolved_model.nil?)
-            raise ProviderError, 'Auto routing could not resolve an available LLM provider/model'
-          end
+          raise ProviderError, 'Auto routing could not resolve an available LLM provider/model' if auto_route && (@resolved_provider.nil? || @resolved_model.nil?)
 
           @resolved_tier = state[:tier]&.to_sym || inferred_provider_tier(@resolved_provider)
           @resolved_offering_id = state[:offering_id]
@@ -574,7 +584,14 @@ module Legion
           return state if candidates.empty?
 
           healthy = candidates.find do |m|
-            Router.health_tracker.circuit_state(m[:provider], instance: m[:instance]) != :open
+            provider = m[:provider]
+            instance = m[:instance]
+            # Must be both locally registered and circuit-closed.
+            # A discovered model on a remote-only provider (e.g. Anthropic on a
+            # vLLM-only node) should not pin — fall through to auto_route.
+            next false unless Call::Registry.registered?(provider, instance: instance)
+
+            Router.health_tracker.circuit_state(provider, instance: instance) != :open
           end
 
           if healthy
@@ -699,7 +716,7 @@ module Legion
                               provider: @resolved_provider, model: @resolved_model)
             emit_error_audit(e, status: 'rate_limited')
             raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
-          rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
+          rescue Faraday::ConnectionFailed, Faraday::TimeoutError, Faraday::SSLError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_down',
                               provider: @resolved_provider, model: @resolved_model)
             emit_error_audit(e, status: 'provider_down')
@@ -738,13 +755,7 @@ module Legion
         end
 
         def run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier, stream_block: nil)
-          move_type = if tried.empty?
-                        :primary
-                      elsif resolution.tier == primary_tier
-                        :lateral
-                      else
-                        :escalation
-                      end
+          move_type = escalation_move_type(resolution, tried, primary_tier)
           prev_provider = @resolved_provider
           prev_tier = @resolved_tier
           log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} " \
@@ -790,11 +801,24 @@ module Legion
                                     handled:   true)
           false
         rescue StandardError => e
+          if client_stream_error?(e)
+            log.warn "[llm][escalation] action=client_stream_error error=#{e.class}: #{e.message} " \
+                     "provider=#{resolution.provider} model=#{resolution.model}"
+            raise
+          end
+
           skip_all_provider_model_instances!(resolution, tried)
           record_escalation_failure(e, resolution, start_time,
                                     outcome:   :error,
                                     operation: 'llm.pipeline.escalation_attempt')
           false
+        end
+
+        def escalation_move_type(resolution, tried, primary_tier)
+          return :primary if tried.empty?
+          return :lateral if resolution.tier == primary_tier
+
+          :escalation
         end
 
         def attempt_escalation(resolution, threshold, quality_check, start_time, stream_block: nil)
@@ -815,7 +839,7 @@ module Legion
           end
           duration_ms = ((Time.now - start_time) * 1000).round
           outcome = result.passed ? :success : :quality_failure
-          log.debug "[llm][escalation] action=attempt_result provider=#{resolution.provider} model=#{resolution.model} outcome=#{outcome} duration_ms=#{duration_ms}" # rubocop:disable Layout/LineLength
+          log.debug "[llm][escalation] action=attempt_result provider=#{resolution.provider} model=#{resolution.model} outcome=#{outcome} duration_ms=#{duration_ms}"
           @timeline.record(
             category: :provider, key: 'escalation:attempt', direction: :internal,
             detail: "attempt #{@escalation_history.size + 1}: #{resolution.provider}:#{resolution.model} => #{outcome}",
@@ -1000,9 +1024,7 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
-          unless fleet_dispatch? || use_native_dispatch?(@resolved_provider)
-            raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}"
-          end
+          raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless fleet_dispatch? || use_native_dispatch?(@resolved_provider)
 
           execute_provider_request_native
 
@@ -1014,6 +1036,7 @@ module Legion
           result = execute_native_tool_loop
           merge_response_offering_metadata(result[:metadata])
           @raw_response = Call::NativeResponseAdapter.new(result)
+          @tool_loop_messages = @last_tool_loop_messages if @last_tool_loop_messages
         end
 
         def native_dispatch_messages
@@ -1219,6 +1242,19 @@ module Legion
           @native_dispatch_tools ||= native_tool_definitions.to_h { |tool| [tool.name.to_sym, tool.to_h] }
         end
 
+        # Returns true when ALL requested tools are client-side passthrough tools
+        # (none resolved to registry/extension tool classes). Used by the native
+        # tool loop to decide whether to force an explicit tool choice.
+        def client_tools_only?
+          request_tools = Array(@request.tools)
+          return false if request_tools.empty?
+
+          request_tools.none? do |tool|
+            source = request_tool_source(tool)
+            source[:type].to_sym != :client || source[:executable] == true
+          end
+        end
+
         def native_tool_definitions
           @native_tool_definitions ||= begin
             definitions = []
@@ -1233,18 +1269,8 @@ module Legion
 
         def registry_tool_injection_requested?
           return false if @request.respond_to?(:suppress_tools) && @request.suppress_tools
-          return false if client_tools_only?
 
           true
-        end
-
-        def client_tools_only?
-          return false unless client_tool_passthrough_enabled?
-
-          Array(@request.tools).any? do |tool|
-            source = tool.respond_to?(:source) ? tool.source : {}
-            source.is_a?(Hash) && source[:type] == :client
-          end
         end
 
         def client_tool_passthrough_enabled?
@@ -1307,11 +1333,12 @@ module Legion
         end
 
         def add_native_tool_definition(definitions, tool)
+          source = request_tool_source(tool)
           definition = case tool
                        when Types::ToolDefinition
-                         tool
+                         source == tool.source ? tool : tool.with(source: source)
                        when Hash
-                         Types::ToolDefinition.from_hash(tool, source: tool[:source] || tool['source'] || { type: :client, executable: false })
+                         Types::ToolDefinition.from_hash(tool, source: source)
                        else
                          Types::ToolDefinition.from_tool_class(tool)
                        end
@@ -1342,6 +1369,89 @@ module Legion
           handle_exception(e, level: :warn, operation: 'llm.pipeline.native_tool_definition')
         end
 
+        def request_tool_source(tool)
+          explicit_source = if tool.respond_to?(:source)
+                              tool.source
+                            elsif tool.respond_to?(:[])
+                              tool[:source] || tool['source']
+                            end
+
+          source = explicit_source.is_a?(Hash) ? explicit_source : {}
+          source_type = source[:type] || source['type']
+
+          client_like_source = source.empty? ||
+                               (source_type.respond_to?(:to_sym) && source_type.to_sym == :client)
+
+          # Allow client-shaped declarations to be reclassified to LegionIO sources
+          # when they match tools registered on this node.
+          if client_like_source
+            resolved_source = resolve_registry_tool_source(tool)
+            return resolved_source if resolved_source
+          end
+
+          source.empty? ? { type: :client, executable: false } : source
+        end
+
+        def resolve_registry_tool_source(tool)
+          tool_name = request_tool_names(tool).find { |name| !name.to_s.empty? }
+          return nil unless tool_name
+          return nil unless Legion::Settings::Extensions.respond_to?(:find_tool)
+
+          entry = request_tool_names(tool).filter_map do |candidate|
+            Legion::Settings::Extensions.find_tool(candidate)
+          end.first
+          return nil unless entry.is_a?(Hash)
+
+          tool_class = entry[:tool_class] || entry['tool_class']
+          extension = entry[:extension] || entry['extension']
+          runner = entry[:runner] || entry['runner']
+          function = entry[:function] || entry['function']
+
+          if tool_class
+            return {
+              type:       :registry,
+              tool_class: tool_class,
+              extension:  extension,
+              runner:     runner,
+              function:   function
+            }.compact
+          end
+
+          return nil unless extension.to_s.length.positive? && runner.to_s.length.positive? && function.to_s.length.positive?
+
+          {
+            type:     :extension,
+            lex:      extension,
+            runner:   runner,
+            function: function
+          }
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'llm.pipeline.native_tool_source.resolve', tool_name: tool_name)
+          nil
+        end
+
+        def request_tool_names(tool)
+          explicit_source = if tool.respond_to?(:source)
+                              tool.source
+                            elsif tool.respond_to?(:[])
+                              tool[:source] || tool['source']
+                            end
+          source = explicit_source.is_a?(Hash) ? explicit_source : {}
+          raw_name = source[:raw_name] || source['raw_name']
+          declared_name = if tool.respond_to?(:name)
+                            tool.name
+                          elsif tool.respond_to?(:[])
+                            tool[:name] || tool['name']
+                          end
+
+          [raw_name, declared_name].compact.flat_map do |name|
+            raw = name.to_s
+            sanitized = Types::ToolDefinition.sanitize_tool_name(raw)
+            dotted_legion = sanitized.sub(/\Alegion_/, 'legion.')
+            [raw, sanitized, dotted_legion]
+          end.uniq
+        end
+
         def add_registry_tool_definitions(definitions)
           return unless registry_tool_sources_available?
 
@@ -1369,9 +1479,7 @@ module Legion
           source = definition.respond_to?(:source) ? definition.source : {}
           source_type = nil
           source_type = source[:type] || source['type'] if source.is_a?(Hash)
-          if source_type.respond_to?(:to_sym) && source_type.to_sym == :special
-            variants += Tools::Special.aliases_for(definition.name).flat_map { |name| client_tool_policy_variants(name) }
-          end
+          variants += Tools::Special.aliases_for(definition.name).flat_map { |name| client_tool_policy_variants(name) } if source_type.respond_to?(:to_sym) && source_type.to_sym == :special
           variants.uniq
         end
 
@@ -1581,6 +1689,20 @@ module Legion
             err.class.name.to_s.include?('ContextLength')
         end
 
+        # Detect client-side stream errors (disconnects, broken pipes, socket timeouts)
+        # that originate from writing back to the HTTP client, not from the provider itself.
+        def client_stream_error?(err)
+          name = err.class.name.to_s
+          msg  = err.message.to_s
+          name.include?('Puma::ConnectionError') ||
+            name.include?('Errno::EPIPE') ||
+            (name.include?('IOError') && msg.include?('closed')) ||
+            (name.include?('IOError') && msg.include?('already closed')) ||
+            name.include?('EOFError') ||
+            name.include?('Errno::ECONNRESET') ||
+            name.include?('Errno::ECONNABORTED')
+        end
+
         def execute_pre_provider_steps
           log.debug "[llm][executor] action=pre_provider_steps.enter step_count=#{PRE_PROVIDER_STEPS.size} profile=#{@profile}"
           skipped = []
@@ -1593,7 +1715,7 @@ module Legion
             execute_step(step) { send(:"step_#{step}") }
           end
           if skipped.any?
-            log.debug "[llm][executor] action=pre_provider_steps.complete executed=#{PRE_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}" # rubocop:disable Layout/LineLength
+            log.debug "[llm][executor] action=pre_provider_steps.complete executed=#{PRE_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}"
           end
           log.debug '[llm][executor] action=pre_provider_steps.complete' if skipped.empty?
         end
@@ -1614,7 +1736,7 @@ module Legion
               execute_step(step) { send(:"step_#{step}") }
             end
             if skipped.any?
-              log.debug "[llm][executor] action=post_provider_steps.complete executed=#{POST_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}" # rubocop:disable Layout/LineLength
+              log.debug "[llm][executor] action=post_provider_steps.complete executed=#{POST_PROVIDER_STEPS.size - skipped.size} skipped=#{skipped.size} skipped_steps=#{skipped.join(',')}"
             else
               log.debug '[llm][executor] action=post_provider_steps.complete'
             end
@@ -1695,7 +1817,7 @@ module Legion
                               provider: @resolved_provider, model: @resolved_model)
             emit_error_audit(e, status: 'rate_limited')
             raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
-          rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
+          rescue Faraday::ConnectionFailed, Faraday::TimeoutError, Faraday::SSLError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_down',
                               provider: @resolved_provider, model: @resolved_model)
             emit_error_audit(e, status: 'provider_down')
@@ -1712,9 +1834,7 @@ module Legion
             from: 'pipeline', to: "provider:#{@resolved_provider}"
           )
 
-          unless fleet_dispatch? || use_native_dispatch?(@resolved_provider)
-            raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}"
-          end
+          raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless fleet_dispatch? || use_native_dispatch?(@resolved_provider)
 
           execute_provider_request_stream_native(&)
 
@@ -2009,7 +2129,7 @@ module Legion
             fallback_provider: fallback&.dig(:provider)
           )
           unless fallback
-            log.warn "[llm][fallback] action=no_fallback_available provider=#{@resolved_provider} model=#{@resolved_model} reason=#{reason} error=#{error.class.name}" # rubocop:disable Layout/LineLength
+            log.warn "[llm][fallback] action=no_fallback_available provider=#{@resolved_provider} model=#{@resolved_model} reason=#{reason} error=#{error.class.name}"
             raise error_class, "#{@resolved_provider}:#{@resolved_model} #{reason} — #{error.message}"
           end
 
@@ -2091,7 +2211,7 @@ module Legion
             request_type:      if @request.respond_to?(:request_type)
                                  @request.request_type
                                else
-                                 (@request.respond_to?(:metadata) && @request.metadata.is_a?(Hash) ? (@request.metadata[:task] || @request.metadata[:request_type] || 'chat') : 'chat') # rubocop:disable Layout/LineLength
+                                 (@request.respond_to?(:metadata) && @request.metadata.is_a?(Hash) ? (@request.metadata[:task] || @request.metadata[:request_type] || 'chat') : 'chat')
                                end,
             input_tokens:      input_tokens,
             output_tokens:     output_tokens,
@@ -2183,20 +2303,42 @@ module Legion
           log.debug("[pipeline][context_store] action=store conversation_id=#{conv_id} message_count=#{@request.messages.size}")
 
           @request.messages.each do |msg|
+            next unless msg.is_a?(Hash)
+
             typed_msg = Types::Message.build(
-              role:            msg[:role]&.to_sym || :user,
-              content:         msg[:content],
+              role:            msg[:role]&.to_sym || msg['role']&.to_sym || :user,
+              content:         msg[:content] || msg['content'],
+              task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil,
               conversation_id: conv_id,
-              task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil
+              tool_calls:      msg[:tool_calls] || msg['tool_calls'],
+              tool_call_id:    msg[:tool_call_id] || msg['tool_call_id'],
+              name:            msg[:name] || msg['name']
             )
-            Conversation.append(conv_id,
-                                role:    typed_msg.role,
-                                content: typed_msg.content)
+
+            attrs = {
+              role:            typed_msg.role,
+              content:         typed_msg.content,
+              conversation_id: conv_id,
+              task_id:         typed_msg.task_id
+            }
+
+            attrs[:tool_calls]   = typed_msg.tool_calls   if typed_msg.tool_calls
+            attrs[:tool_call_id] = typed_msg.tool_call_id if typed_msg.tool_call_id
+            attrs[:name]         = typed_msg.name if typed_msg.name
+
+            Conversation.append(conv_id, **attrs)
           end
+
+          # Persist intermediate tool-use messages from the native tool loop
+          persist_tool_loop_messages(conv_id) if @tool_loop_messages
 
           assistant_response = nil
           if @raw_response.respond_to?(:content) && @raw_response.content
             tokens = @extracted_tokens || extract_tokens
+
+            # Capture tool_calls from the tool loop's final assistant message
+            final_tool_calls = tool_loop_final_tool_calls
+
             typed_assistant = Types::Message.build(
               role:            :assistant,
               content:         @raw_response.content,
@@ -2207,13 +2349,17 @@ module Legion
               conversation_id: conv_id,
               task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil
             )
-            Conversation.append(conv_id,
-                                role:          typed_assistant.role,
-                                content:       typed_assistant.content,
-                                provider:      typed_assistant.provider,
-                                model:         typed_assistant.model,
-                                input_tokens:  typed_assistant.input_tokens,
-                                output_tokens: typed_assistant.output_tokens)
+            conv_attrs = {
+              role:          typed_assistant.role,
+              content:       typed_assistant.content,
+              provider:      typed_assistant.provider,
+              model:         typed_assistant.model,
+              input_tokens:  typed_assistant.input_tokens,
+              output_tokens: typed_assistant.output_tokens
+            }
+            conv_attrs[:tool_calls] = final_tool_calls if final_tool_calls && !final_tool_calls.empty?
+
+            Conversation.append(conv_id, **conv_attrs)
             assistant_response = @raw_response.content
           end
 
@@ -2224,6 +2370,43 @@ module Legion
             direction: :internal, detail: "stored to #{conv_id}",
             from: 'pipeline', to: 'conversation_store'
           )
+        end
+
+        # Persist the intermediate assistant/tool messages generated during the native tool loop.
+        # The loop appends: { role: :assistant, tool_calls: [...] } then { role: :tool, tool_call_id: ..., content: ... }
+        # Skip the first N messages (original inputs) and the last message (final assistant — stored by @raw_response).
+        def persist_tool_loop_messages(conv_id)
+          skip_count = @request.messages.size
+          intermediate = @tool_loop_messages[skip_count...-1]
+          return unless intermediate && !intermediate.empty?
+
+          task_id = @request.respond_to?(:task_id) ? @request.task_id : nil
+          intermediate.each do |msg|
+            role    = msg[:role]&.to_sym || :assistant
+            content = msg[:content]
+
+            attrs = { role: role, content: content, conversation_id: conv_id, task_id: task_id }
+            attrs[:tool_calls]   = msg[:tool_calls]   if msg[:tool_calls]
+            attrs[:tool_call_id] = msg[:tool_call_id] if msg[:tool_call_id]
+            attrs[:name]         = msg[:name]         if msg[:name]
+
+            Conversation.append(conv_id, **attrs)
+          end
+          log.debug("[pipeline][context_store] action=store_tool_loop_messages conversation_id=#{conv_id} stored=#{intermediate.size}")
+        end
+
+        # Extract tool_calls from the tool loop's final assistant message (the last entry).
+        def tool_loop_final_tool_calls
+          return nil if @tool_loop_messages.nil? || @tool_loop_messages.empty?
+
+          last = @tool_loop_messages.last
+          return nil unless last.is_a?(Hash) && last[:role].to_s == 'assistant'
+
+          tool_calls = last[:tool_calls]
+          return nil unless tool_calls && !tool_calls.empty?
+
+          # Convert to plain hashes for storage
+          tool_calls.map { |tc| tc.is_a?(Hash) ? tc : tc.to_h }
         end
 
         def trigger_async_curation(conv_id, turn_messages, assistant_response)
@@ -2322,9 +2505,7 @@ module Legion
           routing[:escalation_chain] = @escalation_history if @escalation_history.any?
           routing[:route_attempts] = @route_attempts.dup if @route_attempts.any?
 
-          if @timestamps[:provider_start] && @timestamps[:provider_end]
-            routing[:latency_ms] = ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).round
-          end
+          routing[:latency_ms] = ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).round if @timestamps[:provider_start] && @timestamps[:provider_end]
 
           routing
         end
@@ -2346,6 +2527,11 @@ module Legion
             total:              input + output
           }
 
+          # Preserve output token breakdown (e.g. reasoning_tokens from Responses API)
+          if tokens.respond_to?(:output_tokens_details) && tokens.output_tokens_details.is_a?(Hash) && !tokens.output_tokens_details.empty?
+            result[:output_tokens_details] = tokens.output_tokens_details
+          end
+
           context_window = @resolved_offering_metadata&.dig(:limits, :context_window) ||
                            @resolved_offering_metadata&.dig(:context_window)
           if context_window&.to_i&.positive?
@@ -2363,11 +2549,15 @@ module Legion
         def extract_thinking
           return nil unless @raw_response
 
+          raw_thinking = @raw_response.respond_to?(:thinking) ? @raw_response.thinking : nil
+          log.info "[llm][executor] extract_thinking raw_thinking_present=#{!raw_thinking.nil?} class=#{raw_thinking.class} len=#{raw_thinking.to_s.length}"
+
           thinking = if @raw_response.respond_to?(:thinking) && @raw_response.thinking
                        @raw_response.thinking
                      elsif @raw_response.respond_to?(:metadata) && @raw_response.metadata.is_a?(Hash)
                        @raw_response.metadata[:thinking] || @raw_response.metadata['thinking']
                      end
+          log.info "[llm][executor] extract_thinking thinking_present=#{!thinking.nil?} class=#{thinking.class}"
           return nil unless thinking
 
           payload = normalize_thinking_payload(thinking)

@@ -22,8 +22,8 @@ module Legion
             log.debug('[llm][api][openai][responses] routes registered')
           end
 
-          def self.build_handler # rubocop:disable Metrics/MethodLength
-            proc do # rubocop:disable Metrics/BlockLength
+          def self.build_handler
+            proc do
               require_llm!
               body = parse_request_body
               request_id = "resp_#{SecureRandom.hex(16)}"
@@ -47,6 +47,14 @@ module Legion
 
               tool_declarations = Responses.build_tool_declarations(body[:tools])
 
+              ext_provider = env['HTTP_X_LEGION_PROVIDER'] || body[:provider]
+              ext_tier     = env['HTTP_X_LEGION_TIER']     || body[:tier]
+              ext_instance = env['HTTP_X_LEGION_INSTANCE'] || body[:instance]
+
+              routing = { provider: ext_provider, instance: ext_instance, model: model }.compact
+              extra   = {}
+              extra[:tier] = ext_tier.to_sym if ext_tier
+
               log.info(
                 "[llm][api][openai][responses] action=accepted request_id=#{request_id} " \
                 "model=#{model} stream=#{streaming} tools=#{tool_declarations.size}"
@@ -60,11 +68,12 @@ module Legion
               inference_request = Legion::LLM::Inference::Request.build(
                 id:       request_id,
                 messages: messages,
-                routing:  { model: model },
+                routing:  routing,
                 tools:    tool_declarations,
                 caller:   effective_caller,
                 stream:   streaming,
-                cache:    { strategy: :default, cacheable: true }
+                cache:    { strategy: :default, cacheable: true },
+                extra:    extra.empty? ? {} : extra
               )
 
               executor = Legion::LLM::Inference::Executor.new(inference_request)
@@ -206,7 +215,7 @@ module Legion
             }
           end
 
-          def self.stream_response(out, executor, request_id:, model:, upstream_body: nil) # rubocop:disable Metrics/MethodLength
+          def self.stream_response(out, executor, request_id:, model:, upstream_body: nil)
             created_at = Time.now.to_i
             seq = 0
             in_progress_response = { id: request_id, object: 'response', created_at: created_at,

@@ -22,8 +22,8 @@ module Legion
             log.debug('[llm][api][openai][chat_completions] routes registered')
           end
 
-          def self.build_handler # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
-            proc do # rubocop:disable Metrics/BlockLength
+          def self.build_handler # rubocop:disable Metrics/AbcSize
+            proc do
               require_llm!
               body = parse_request_body
 
@@ -72,7 +72,10 @@ module Legion
                         'Connection'        => 'keep-alive',
                         'X-Accel-Buffering' => 'no'
 
-                stream do |out| # rubocop:disable Metrics/BlockLength
+                stream do |out|
+                  full_text = +''
+                  text_delta_lines = [] # buffer until we know if tool calls exist
+
                   pipeline_response = executor.call_stream do |chunk|
                     Legion::LLM::API::OpenAI::ChatCompletions.emit_reasoning_delta(
                       out, chunk, model, request_id, include_reasoning
@@ -80,15 +83,27 @@ module Legion
                     text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
                     next if text.empty?
 
+                    full_text << text
                     chunk_obj = Legion::LLM::API::Translators::OpenAIResponse.format_stream_chunk(
                       text, model: model, request_id: request_id
                     )
-                    out << "data: #{Legion::JSON.dump(chunk_obj)}\n\n"
+                    text_delta_lines << "data: #{Legion::JSON.dump(chunk_obj)}\n\n"
                   end
+
+                  # If tool calls are present and the text is just JSON arguments
+                  # (e.g. vLLM/qwen with a forced tool choice), suppress the
+                  # in-stream text deltas so the client only sees structured
+                  # tool_calls — not raw JSON text deltas.
+                  tool_calls = Legion::LLM::API::Translators::OpenAIResponse.build_tool_calls(pipeline_response)
+                  if tool_calls.any? &&
+                     Legion::LLM::API::Translators::AnthropicResponse.text_looks_like_tool_json?(full_text)
+                    text_delta_lines.clear
+                  end
+
+                  text_delta_lines.each { |line| out << line }
 
                   routing = pipeline_response.routing || {}
                   final_model = (routing[:model] || routing['model'] || model).to_s
-                  tool_calls = Legion::LLM::API::Translators::OpenAIResponse.build_tool_calls(pipeline_response)
                   tool_calls.each_with_index do |tool_call, index|
                     tc_chunk = Legion::LLM::API::Translators::OpenAIResponse.format_stream_tool_call_chunk(
                       tool_call, model: final_model, request_id: request_id, index: index

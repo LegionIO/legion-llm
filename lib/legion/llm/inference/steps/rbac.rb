@@ -23,8 +23,8 @@ module Legion
                 raise Legion::LLM::PipelineError.new(msg, step: :rbac)
               end
 
-              log.warn('[llm][rbac] RBAC unavailable, permitting request (fail_open enabled) ' \
-                       "request_id=#{@request.id}")
+              log.debug('[llm][rbac] RBAC unavailable, permitting request (fail_open enabled) ' \
+                        "request_id=#{@request.id}")
               @warnings << 'RBAC unavailable, permitting request (fail_open enabled)'
               record_rbac_audit(:success, 'permitted (rbac unavailable, fail_open enabled)', start_time)
               record_rbac_timeline('permitted (rbac unavailable, fail_open enabled)')

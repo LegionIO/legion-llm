@@ -11,7 +11,6 @@ module Legion
           include Legion::Logging::Helper
           include Steps::Logging
 
-          # rubocop:disable Metrics/MethodLength, Metrics/BlockLength
           def step_tool_calls
             unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
               log_step_debug(:tool_calls, :skipped, reason: :no_tool_calls)
@@ -62,7 +61,7 @@ module Legion
               )
 
               if @pending_tool_history
-                lex_normalized = (source[:lex] || '').delete_prefix('lex-').tr('-', '_')
+                lex_normalized = (source[:lex] || source[:extension] || '').delete_prefix('lex-').tr('-', '_')
                 runner_key     = source[:type] == :extension ? "#{lex_normalized}_#{source[:runner]}" : nil
                 result_string  = result[:result].is_a?(String) ? result[:result] : Legion::JSON.dump(result[:result] || {})
                 @pending_tool_history_mutex.synchronize do
@@ -110,7 +109,6 @@ module Legion
             @warnings << "Tool call handling error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.tool_calls')
           end
-          # rubocop:enable Metrics/MethodLength, Metrics/BlockLength
 
           private
 
@@ -152,7 +150,7 @@ module Legion
           end
 
           def client_passthrough_source?(source)
-            source[:type] == :client && source[:executable] != true
+            source[:type] == :client
           end
 
           def client_passthrough_tool_call?(tool_call)
@@ -269,7 +267,7 @@ module Legion
             when :mcp
               "mcp:#{source[:server]}"
             when :extension
-              [source[:lex], source[:runner], source[:function]].compact.join(':')
+              [source[:lex] || source[:extension], source[:runner], source[:function]].compact.join(':')
             else
               source[:type].to_s
             end

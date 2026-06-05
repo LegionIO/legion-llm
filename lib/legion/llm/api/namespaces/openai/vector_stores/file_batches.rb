@@ -21,7 +21,6 @@ module Legion
               SYNC_BATCH_LIMIT = 20
 
               # POST /v1/vector_stores/:vector_store_id/file_batches — create batch
-              # rubocop:disable Metrics/BlockLength
               post '/file_batches' do
                 require_llm!
                 require_data!
@@ -81,8 +80,6 @@ module Legion
                 handle_exception(e, level: :error, operation: 'llm.api.vector_stores.batches.create')
                 openai_error(e.message, type: 'server_error', code: 'internal_error', status_code: 500)
               end
-              # rubocop:enable Metrics/BlockLength
-
               # GET /v1/vector_stores/:vector_store_id/file_batches/:batch_id — retrieve status
               get '/file_batches/:batch_id' do
                 require_llm!

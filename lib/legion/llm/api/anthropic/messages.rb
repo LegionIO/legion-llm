@@ -13,10 +13,10 @@ module Legion
         module Messages
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          def self.registered(app) # rubocop:disable Metrics/AbcSize
             log.debug('[llm][api][anthropic][messages] registering POST /v1/messages')
 
-            app.post '/v1/messages' do # rubocop:disable Metrics/BlockLength
+            app.post '/v1/messages' do
               require_llm!
 
               body = parse_request_body
@@ -40,6 +40,7 @@ module Legion
                 tools:    build_tool_classes(normalized[:tools] || []),
                 caller:   build_server_caller(source: 'anthropic_compat', path: request.path, env: env),
                 stream:   streaming,
+                thinking: body[:thinking],
                 cache:    { strategy: :default, cacheable: true }
               )
 
@@ -54,6 +55,7 @@ module Legion
 
                 stream do |out|
                   full_text = +''
+                  text_delta_lines = [] # buffer in-stream deltas until we know if tool calls exist
 
                   pipeline_response = executor.call_stream do |chunk|
                     text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
@@ -61,7 +63,7 @@ module Legion
 
                     full_text << text
                     delta_event = Legion::LLM::API::Translators::AnthropicResponse.format_chunk(text)
-                    out << "event: content_block_delta\ndata: #{Legion::JSON.dump(delta_event)}\n\n"
+                    text_delta_lines << "event: content_block_delta\ndata: #{Legion::JSON.dump(delta_event)}\n\n"
                   end
 
                   events = Legion::LLM::API::Translators::AnthropicResponse.streaming_events(
@@ -70,6 +72,16 @@ module Legion
                     request_id: request_id,
                     full_text:  full_text
                   )
+
+                  # If tool calls are present and the text is just JSON arguments,
+                  # suppress the in-stream text deltas so the client only sees
+                  # tool_use content blocks — not text deltas of raw JSON.
+                  if Legion::LLM::API::Translators::AnthropicResponse.text_looks_like_tool_json?(full_text)
+                    pipeline_tools = pipeline_response.respond_to?(:tools) ? Array(pipeline_response.tools) : []
+                    text_delta_lines.clear if pipeline_tools.any?
+                  end
+
+                  text_delta_lines.each { |line| out << line }
 
                   events.each do |event_name, payload|
                     next if event_name == 'content_block_delta'

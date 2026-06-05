@@ -132,7 +132,7 @@ module Legion
 
         # --- Private helpers ---
 
-        def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:, # rubocop:disable Metrics/ParameterLists, Metrics/MethodLength
+        def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:, # rubocop:disable Metrics/ParameterLists
                                    escalate:, max_escalations:, thinking:, temperature:,
                                    max_tokens:, tracing:, agent:, caller:, cache:,
                                    quality_check:, **rest)

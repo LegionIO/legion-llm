@@ -25,10 +25,10 @@ module Legion
           connected:                      false,
           pipeline_enabled:               true,
           pipeline_async_post_steps:      true,
-          context_window:                 262_144,
+          context_window:                 250_000,
           max_output_tokens:              16_384,
           max_tool_rounds:                200,
-          max_tool_calls_per_turn:        50,
+          max_tool_calls_per_turn:        100,
           tool_result_max_dispatch_chars: 4000,
           default_model:                  model_override,
           default_temperature:            1.0,
@@ -47,6 +47,7 @@ module Legion
           rag:                            rag_defaults,
           rag_guard:                      rag_guard_defaults,
           gaia:                           gaia_defaults,
+          knowledge_capture:              knowledge_capture_defaults,
           embedding:                      embedding_defaults,
           conversation:                   conversation_defaults,
           telemetry:                      telemetry_defaults,
@@ -167,7 +168,7 @@ module Legion
       def self.fleet_defaults
         {
           dispatch:  {
-            enabled:                true,
+            enabled:                false,
             exchange:               'llm.fleet',
             routing_style:          :shared_lane,
             mandatory:              true,
@@ -190,7 +191,7 @@ module Legion
             max_clock_skew_seconds: 30
           },
           responder: {
-            enabled:                    true,
+            enabled:                    false,
             require_auth:               nil,
             require_policy:             false,
             require_idempotency:        true,
@@ -227,7 +228,7 @@ module Legion
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },
           escalation:     {
-            enabled:           true,
+            enabled:           false,
             pipeline_enabled:  true,
             max_attempts:      3,
             quality_threshold: 0
@@ -248,7 +249,7 @@ module Legion
 
       def self.arbitrage_defaults
         {
-          enabled:            true,
+          enabled:            false,
           prefer_cheapest:    true,
           quality_floor:      0.7,
           cost_table_refresh: 86_400,
@@ -276,7 +277,7 @@ module Legion
 
       def self.rag_defaults
         {
-          enabled:                       true,
+          enabled:                       false,
           full_limit:                    5,
           compact_limit:                 3,
           min_confidence:                0.92,
@@ -292,14 +293,22 @@ module Legion
       def self.rag_guard_defaults
         {
           threshold:        0.7,
-          block_on_failure: true,
+          block_on_failure: false,
           evaluators:       %i[faithfulness rag_relevancy]
         }
       end
 
       def self.gaia_defaults
         {
-          advisory_enabled: true
+          advisory_enabled: false
+        }
+      end
+
+      def self.knowledge_capture_defaults
+        {
+          enabled:              false,
+          writeback_enabled:    false,
+          local_ingest_enabled: false
         }
       end
 
@@ -387,7 +396,7 @@ module Legion
         {
           scan_depth:                        10,
           tool_limit:                        25,
-          local_tool_limit:                  100,
+          local_tool_limit:                  50,
           client_tool_passthrough:           true,
           client_tool_passthrough_whitelist: CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT.dup,
           client_tool_passthrough_blacklist: CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT.dup
@@ -464,3 +473,9 @@ module Legion
 end
 
 Legion::LLM::Settings.register_defaults!
+
+begin
+  Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default) if Legion.const_defined?('Settings', false)
+rescue StandardError => e
+  Legion::LLM::Settings.handle_exception(e, level: :fatal, operation: :merge_settings)
+end

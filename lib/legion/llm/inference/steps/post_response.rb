@@ -49,15 +49,22 @@ module Legion
             cache_read  = @raw_response.respond_to?(:cache_read_tokens) ? @raw_response.cache_read_tokens.to_i : 0
             cache_write = @raw_response.respond_to?(:cache_write_tokens) ? @raw_response.cache_write_tokens.to_i : 0
 
+            details = if @raw_response.respond_to?(:output_tokens_details) && @raw_response.output_tokens_details.is_a?(Hash)
+                        @raw_response.output_tokens_details
+                      else
+                        {}
+                      end
+
             log_step_debug(:post_response, :tokens_extracted, input: input, output: output,
                                                               cache_read: cache_read, cache_write: cache_write)
             log_zero_token_usage(input, output)
 
             Usage.new(
-              input_tokens:       input,
-              output_tokens:      output,
-              cache_read_tokens:  cache_read,
-              cache_write_tokens: cache_write
+              input_tokens:          input,
+              output_tokens:         output,
+              cache_read_tokens:     cache_read,
+              cache_write_tokens:    cache_write,
+              output_tokens_details: details
             )
           end
 

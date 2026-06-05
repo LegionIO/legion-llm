@@ -21,7 +21,7 @@ module Legion
                 log.debug('[llm][api][namespaces][openai][parts] registering routes')
 
                 # POST /v1/uploads/:id/parts
-                app.post '/v1/uploads/:id/parts' do # rubocop:disable Metrics/BlockLength
+                app.post '/v1/uploads/:id/parts' do
                   require_llm!
                   upload_id = params[:id]
                   entry     = Uploads::UPLOAD_MUTEX.synchronize { Uploads::UPLOAD_STORE[upload_id] }

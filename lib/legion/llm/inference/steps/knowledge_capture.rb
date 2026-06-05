@@ -12,21 +12,33 @@ module Legion
           include Steps::Logging
 
           def step_knowledge_capture
+            unless knowledge_capture_enabled?
+              log_step_debug(:knowledge_capture, :skipped, reason: :disabled)
+              return
+            end
+
             response = current_response
             request = @request
             enrichments = @enrichments
+            writeback_enabled = knowledge_capture_writeback_enabled?
             local_enabled = local_capture_enabled?
+            unless writeback_enabled || local_enabled
+              log_step_debug(:knowledge_capture, :skipped, reason: :no_targets)
+              return
+            end
+
             content_chars = response&.message&.dig(:content).to_s.length
             log_step_info(
               :knowledge_capture,
               :dispatch_async,
+              writeback_enabled:   writeback_enabled,
               local_enabled:       local_enabled,
               writeback_available: defined?(Legion::Extensions::Apollo::Helpers::Writeback),
               response_chars:      content_chars
             )
 
             Executor::ASYNC_THREAD_POOL.post do
-              if defined?(Legion::Extensions::Apollo::Helpers::Writeback)
+              if writeback_enabled && defined?(Legion::Extensions::Apollo::Helpers::Writeback)
                 log_step_debug(:knowledge_capture, :writeback_route)
                 Legion::Extensions::Apollo::Helpers::Writeback.evaluate_and_route(
                   request:     request,
@@ -54,7 +66,34 @@ module Legion
 
           private
 
+          def knowledge_capture_enabled?
+            knowledge_capture_setting(:enabled, true) == true
+          end
+
+          def knowledge_capture_writeback_enabled?
+            knowledge_capture_setting(:writeback_enabled, true) == true
+          end
+
+          def knowledge_capture_local_ingest_enabled?
+            knowledge_capture_setting(:local_ingest_enabled, true) == true
+          end
+
+          def knowledge_capture_setting(key, default)
+            settings = Legion::Settings.dig(:llm, :knowledge_capture) || {}
+            return default unless settings.is_a?(Hash)
+
+            return settings[key] if settings.key?(key)
+
+            string_key = key.to_s
+            settings.key?(string_key) ? settings[string_key] : default
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture.settings')
+            default
+          end
+
           def local_capture_enabled?
+            return false unless knowledge_capture_local_ingest_enabled?
+
             defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture.local_capture_enabled')

@@ -17,7 +17,7 @@ module Legion
             access_token private_key secret_key auth_token credential
           ].freeze
 
-          def step_sticky_persist # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+          def step_sticky_persist # rubocop:disable Metrics/AbcSize
             return unless sticky_persist_ready?
 
             conv_id        = @request.conversation_id

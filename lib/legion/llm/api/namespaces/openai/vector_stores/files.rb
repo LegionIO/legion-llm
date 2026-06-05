@@ -19,7 +19,6 @@ module Legion
               extend Legion::Logging::Helper
 
               # POST /v1/vector_stores/:vector_store_id/files — attach file + embed
-              # rubocop:disable Metrics/BlockLength
               post '/files' do
                 require_llm!
                 require_data!
@@ -79,8 +78,6 @@ module Legion
                 handle_exception(e, level: :error, operation: 'llm.api.vector_stores.files.attach')
                 openai_error(e.message, type: 'server_error', code: 'internal_error', status_code: 500)
               end
-              # rubocop:enable Metrics/BlockLength
-
               # GET /v1/vector_stores/:vector_store_id/files — list attached files
               get '/files' do
                 require_llm!

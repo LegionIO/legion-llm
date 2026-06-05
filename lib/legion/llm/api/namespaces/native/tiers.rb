@@ -37,7 +37,7 @@ module Legion
               end
             end
 
-            def self.registered(ns_context) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+            def self.registered(ns_context) # rubocop:disable Metrics/AbcSize
               log.debug('[llm][api][namespaces][tiers] registering routes')
 
               ns_context.get '' do

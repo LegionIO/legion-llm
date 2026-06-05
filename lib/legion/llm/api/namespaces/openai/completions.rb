@@ -12,12 +12,12 @@ module Legion
           module Completions
             extend Legion::Logging::Helper
 
-            def self.registered(app) # rubocop:disable Metrics/MethodLength
+            def self.registered(app)
               log.debug('[llm][api][namespaces][openai][completions] registering routes')
 
-              # rubocop:disable Metrics/BlockLength
               app.post '/v1/completions' do
                 require_llm!
+                request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
                 body   = parse_request_body
                 prompt = body[:prompt]
 
@@ -51,7 +51,15 @@ module Legion
                 input_tokens  = Completions.extract_token(tokens, :input_tokens)
                 output_tokens = Completions.extract_token(tokens, :output_tokens)
 
-                log.info("[llm][api][namespaces][openai][completions] action=complete request_id=#{request_id} model=#{resolved_model}")
+                log_api_completion_summary(
+                  namespace:         'namespaces][openai][completions',
+                  request_id:        request_id,
+                  pipeline_response: pipeline_response,
+                  stream:            false,
+                  started_at:        request_started_at,
+                  tool_calls:        [],
+                  stop_reason:       'stop'
+                )
                 content_type :json
                 status 200
                 Legion::JSON.dump({
@@ -79,8 +87,6 @@ module Legion
                 handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.completions')
                 openai_error(e.message, type: 'server_error', status_code: 500)
               end
-              # rubocop:enable Metrics/BlockLength
-
               log.debug('[llm][api][namespaces][openai][completions] routes registered')
             rescue StandardError => e
               handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.completions.register')

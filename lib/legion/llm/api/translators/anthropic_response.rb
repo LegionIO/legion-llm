@@ -72,26 +72,32 @@ module Legion
               }
             }]
 
-            events << ['content_block_start', {
-              type:          'content_block_start',
-              index:         content_index,
-              content_block: { type: 'text', text: '' }
-            }]
-
             events << ['ping', { type: 'ping' }]
 
-            unless full_text.empty?
+            # Emit text block only when there's real text content.
+            # When tool calls are present and the text is just JSON arguments
+            # (common with vLLM/qwen forced tool choices), skip the text block
+            # so the Anthropic-format SSE emits only tool_use blocks with
+            # stop_reason=tool_use.
+            text_is_tool_arguments = tool_calls.any? && text_looks_like_tool_json?(full_text)
+            unless full_text.empty? || text_is_tool_arguments
+              events << ['content_block_start', {
+                type:          'content_block_start',
+                index:         content_index,
+                content_block: { type: 'text', text: '' }
+              }]
+
               events << ['content_block_delta', {
                 type:  'content_block_delta',
                 index: content_index,
                 delta: { type: 'text_delta', text: full_text }
               }]
+
+              events << ['content_block_stop', { type: 'content_block_stop', index: content_index }]
+              content_index += 1
             end
 
-            events << ['content_block_stop', { type: 'content_block_stop', index: content_index }]
-
-            content_index += 1
-
+            # Emit tool_use blocks (index may have been bumped above)
             tool_calls.each do |tc|
               events << ['content_block_start', {
                 type:          'content_block_start',
@@ -123,8 +129,12 @@ module Legion
             tool_calls = extract_tool_calls(pipeline_response)
             blocks = []
 
+            thinking_block = thinking_content_block(pipeline_response)
+            blocks << thinking_block if thinking_block
+
             text = msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg.to_s
-            blocks << { type: 'text', text: text.to_s } unless text.to_s.empty? && !tool_calls.empty?
+            text_content = text.to_s
+            blocks << { type: 'text', text: text_content } unless text_content.empty? && !tool_calls.empty?
 
             tool_calls.each do |tc|
               blocks << {
@@ -136,6 +146,61 @@ module Legion
             end
 
             blocks.empty? ? [{ type: 'text', text: '' }] : blocks
+          end
+
+          def self.thinking_content_block(pipeline_response)
+            thinking = thinking_payload(pipeline_response)
+            return nil unless thinking
+
+            if thinking[:redacted] || thinking[:type].to_s == 'redacted_thinking'
+              data = thinking[:data] || thinking[:signature]
+              return nil if data.to_s.empty?
+
+              return { type: 'redacted_thinking', data: data.to_s }
+            end
+
+            block = { type: 'thinking', thinking: thinking[:content].to_s }
+            block[:signature] = thinking[:signature].to_s unless thinking[:signature].to_s.empty?
+            block
+          end
+
+          def self.thinking_payload(pipeline_response)
+            return nil unless pipeline_response.respond_to?(:thinking)
+
+            thinking_data = begin
+              pipeline_response.thinking
+            rescue Exception # rubocop:disable Style/RescueException
+              nil
+            end
+            normalize_thinking_payload(thinking_data)
+          end
+
+          def self.normalize_thinking_payload(value)
+            return nil unless value
+
+            if value.is_a?(Hash)
+              normalized = value.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+              content = normalized[:content] || normalized[:text] || normalized[:thinking]
+              signature = normalized[:signature]
+              data = normalized[:data]
+              redacted = normalized[:redacted] || normalized[:type].to_s == 'redacted_thinking'
+              type = normalized[:type]
+            else
+              content = value.respond_to?(:content) ? value.content : nil
+              content = value.text if content.nil? && value.respond_to?(:text)
+              content = value unless value.respond_to?(:content) || value.respond_to?(:text)
+              signature = value.respond_to?(:signature) ? value.signature : nil
+              data = value.respond_to?(:data) ? value.data : nil
+              redacted = false
+              type = nil
+            end
+
+            content = content.to_s unless content.nil?
+            signature = signature.to_s unless signature.nil?
+            data = data.to_s unless data.nil?
+            return nil if content.to_s.empty? && signature.to_s.empty? && data.to_s.empty?
+
+            { content: content, signature: signature, data: data, redacted: redacted, type: type }.compact
           end
 
           def self.extract_tool_calls(pipeline_response)
@@ -186,10 +251,24 @@ module Legion
             0
           end
 
-          private_class_method :extract_content, :format_usage
+          # Heuristic: does the full_text look like a bare JSON object that is
+          # tool-call arguments (e.g. {"file_path": "...", "limit": 300})?
+          # Used to avoid emitting such text as a text_delta when it should be
+          # a tool_use block.
+          def self.text_looks_like_tool_json?(text)
+            stripped = text.to_s.strip
+            return false unless stripped.start_with?('{"') && stripped.end_with?('}')
+
+            parsed = Legion::JSON.parse(stripped, symbolize_names: false)
+            parsed.is_a?(Hash) && parsed.keys.any?
+          rescue Legion::JSON::ParseError, StandardError
+            false
+          end
+
+          private_class_method :extract_content, :format_usage, :text_looks_like_tool_json?
 
           class << self
-            public :extract_tool_calls, :format_stop_reason, :token_count
+            public :extract_tool_calls, :format_stop_reason, :token_count, :thinking_payload, :thinking_content_block
           end
         end
       end

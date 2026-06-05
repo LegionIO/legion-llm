@@ -30,11 +30,12 @@ RSpec.describe 'Claude Code Drop-in Conformance' do
   describe 'POST /v1/messages (what Claude Code sends)' do
     let(:mock_response) do
       instance_double(Legion::LLM::Inference::Response,
-                      message: { content: 'I can help with that.' },
-                      routing: { model: 'legionio', provider: :anthropic },
-                      tokens:  { input: 15, output: 6 },
-                      tools:   nil,
-                      stop:    { reason: 'end_turn' })
+                      message:  { content: 'I can help with that.' },
+                      routing:  { model: 'legionio', provider: :anthropic },
+                      tokens:   { input: 15, output: 6 },
+                      tools:    nil,
+                      stop:     { reason: 'end_turn' },
+                      thinking: nil)
     end
 
     before do
@@ -120,7 +121,7 @@ input_schema: { type: 'object', properties: { file_path: { type: 'string' } }, r
       allow(mock_response).to receive(:respond_to?).and_return(true)
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
       allow(mock_executor).to receive(:call_stream).and_yield(
-        double(content: 'Done.', respond_to?: true)
+        double(content: 'Done.', thinking: nil, respond_to?: true)
       ).and_return(mock_response)
     end
 

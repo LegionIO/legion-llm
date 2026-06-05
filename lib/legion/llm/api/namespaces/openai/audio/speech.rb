@@ -73,7 +73,6 @@ module Legion
                 VALID_FORMATS.include?(returned_fmt) ? returned_fmt : requested_format
               end
 
-              # rubocop:disable Metrics/BlockLength
               post '/speech' do
                 require_llm!
 
@@ -200,7 +199,6 @@ module Legion
                 halt 500, { 'Content-Type' => 'application/json' },
                      Legion::JSON.dump({ error: { message: e.message, type: 'server_error', code: nil } })
               end
-              # rubocop:enable Metrics/BlockLength
             end
           end
         end

@@ -136,6 +136,163 @@ RSpec.describe Legion::LLM::Inference::Executor do
         expect(executor.send(:native_tool_definitions).map(&:name)).to include('client_shell')
       end
 
+      it 'still injects registry tools when client and server tools are mixed' do
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
+          end
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == false ? tools : []
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+
+        client_tool = Legion::LLM::Types::ToolDefinition.build(
+          name:        'client_shell',
+          description: 'Client shell',
+          source:      { type: :client, executable: false }
+        )
+        server_tool = Legion::LLM::Types::ToolDefinition.build(
+          name:        'registry_style_tool',
+          description: 'Server style tool',
+          source:      { type: :extension, extension: 'sample_extension', runner: 'tools' }
+        )
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'mixed tools' }],
+          tools:    [client_tool, server_tool],
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+        )
+
+        executor = described_class.new(request)
+
+        names = executor.send(:native_tool_definitions).map(&:name)
+        expect(names).to include('client_shell', 'registry_style_tool', 'registry_tool')
+      end
+
+      it 'resolves registry-backed tool definitions even when source says non-executable client' do
+        resolved_tool_class = Class.new do
+          def self.call(*); end
+        end
+
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) { [] }
+          define_singleton_method(:filter_tools) { [] }
+          define_singleton_method(:find_tool) do |name|
+            return nil unless name.to_s == 'registry_lookup'
+
+            {
+              name:         'registry_lookup',
+              description:  'Registry lookup',
+              input_schema: {},
+              tool_class:   resolved_tool_class
+            }
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'lookup from registry' }],
+          tools:    [{ name: 'registry_lookup', description: 'Registry lookup', parameters: {}, source: { type: :client, executable: false } }],
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+        )
+
+        executor = described_class.new(request)
+        definitions = executor.send(:native_tool_definitions)
+        lookup = definitions.find { |definition| definition.name == 'registry_lookup' }
+
+        expect(lookup.source[:type]).to eq(:registry)
+        expect(lookup.source[:tool_class]).to eq(resolved_tool_class)
+        expect(executor.send(:client_tools_only?)).to be(false)
+      end
+
+      it 'resolves sanitized LegionIO client-shaped tools back to dotted registry tools' do
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) { [] }
+          define_singleton_method(:filter_tools) { [] }
+          define_singleton_method(:find_tool) do |name|
+            return nil unless name.to_s == 'legion.microsoft_teams_create_chain'
+
+            {
+              name:         'legion.microsoft_teams_create_chain',
+              description:  'Create a Teams chain',
+              input_schema: {},
+              extension:    'lex-microsoft_teams',
+              runner:       'chains',
+              function:     'create_chain'
+            }
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'create a chain' }],
+          tools:    [{
+            name:        'legion_microsoft_teams_create_chain',
+            description: 'Create a Teams chain',
+            parameters:  {},
+            source:      { type: :client, executable: false, raw_name: 'legion.microsoft_teams_create_chain' }
+          }],
+          routing:  { provider: :vllm, model: 'qwen3.6-27b' },
+          metadata: { client_tool_passthrough: true }
+        )
+
+        executor = described_class.new(request)
+        definitions = executor.send(:native_tool_definitions)
+        tool = definitions.find { |definition| definition.name == 'legion_microsoft_teams_create_chain' }
+
+        expect(tool.source).to include(type: :extension, lex: 'lex-microsoft_teams', runner: 'chains', function: 'create_chain')
+        expect(executor.send(:client_tools_only?)).to be(false)
+      end
+
+      it 'keeps explicit all-client tool requests as passthrough-only' do
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) { [] }
+          define_singleton_method(:filter_tools) { [] }
+          define_singleton_method(:find_tool) { |_name| nil }
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'no registry tool' }],
+          tools:    [{ name: 'local_client_only', description: 'Client tool', parameters: {}, source: { type: :client, executable: false } }],
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+          metadata: { client_tool_passthrough: true }
+        )
+
+        executor = described_class.new(request)
+        expect(executor.send(:client_tools_only?)).to be(true)
+      end
+
+      it 'does not inject registry tools for all-client tool calls when passthrough is enabled' do
+        extensions_mod = Module.new do
+          define_singleton_method(:tools) do
+            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
+          end
+          define_singleton_method(:filter_tools) do |**criteria|
+            criteria[:deferred] == false ? tools : []
+          end
+        end
+        stub_const('Legion::Settings::Extensions', extensions_mod)
+
+        client_tool = Legion::LLM::Types::ToolDefinition.build(
+          name:        'client_shell',
+          description: 'Client shell',
+          source:      { type: :client, executable: false }
+        )
+        request = Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'client-only tools' }],
+          tools:    [client_tool],
+          routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
+          metadata: { client_tool_passthrough: true }
+        )
+
+        executor = described_class.new(request)
+        names = executor.send(:native_tool_definitions).map(&:name)
+
+        expect(names).to include('client_shell')
+        expect(names).not_to include('registry_tool')
+      end
+
       it 'filters explicitly enabled passthrough client tools with the default blacklist' do
         tools = ['sudo', 'git', 'ls', 'grep', 'legion', 'legionio', 'legionio do', 'legionio/legion',
                  'legionio_do', 'computer_use_session', 'plugin__aithena__recall',

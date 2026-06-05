@@ -34,6 +34,11 @@ module Legion
 
             finish_reason = tool_calls.empty? ? map_finish_reason(stop_reason) : 'tool_calls'
 
+            # When tool calls are present and content is just JSON arguments
+            # (e.g. vLLM/qwen forced tool choice), clear the content field
+            # so the client sees only structured tool_calls.
+            content = nil if tool_calls.any? && content_looks_like_tool_json?(content)
+
             message_body = { role: 'assistant', content: content }
             message_body[:tool_calls] = tool_calls unless tool_calls.empty?
 
@@ -42,9 +47,11 @@ module Legion
             if include_reasoning && pipeline_response.respond_to?(:thinking) && pipeline_response.thinking
               thinking_data = pipeline_response.thinking
               reasoning_text = if thinking_data.is_a?(Hash)
-                                 thinking_data[:content] || thinking_data['content']
+                                 thinking_data[:content] || thinking_data['content'] || thinking_data[:text] || thinking_data['text']
                                elsif thinking_data.respond_to?(:content)
                                  thinking_data.content
+                               elsif thinking_data.respond_to?(:text)
+                                 thinking_data.text
                                else
                                  thinking_data.to_s
                                end
@@ -214,6 +221,18 @@ module Legion
             return token_count.to_i if token_count
 
             input_text.to_s.split.size
+          end
+
+          # Heuristic: does the content look like a bare JSON object that is
+          # tool-call arguments (e.g. {"file_path": "...", "limit": 300})?
+          def content_looks_like_tool_json?(content)
+            stripped = content.to_s.strip
+            return false unless stripped.start_with?('{"') && stripped.end_with?('}')
+
+            parsed = Legion::JSON.parse(stripped, symbolize_names: false)
+            parsed.is_a?(Hash) && parsed.keys.any?
+          rescue Legion::JSON::ParseError, StandardError
+            false
           end
         end
       end

@@ -16,12 +16,12 @@ module Legion
             module Completions
               extend Legion::Logging::Helper
 
-              def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+              def self.registered(app) # rubocop:disable Metrics/AbcSize
                 log.debug('[llm][api][namespaces][openai][chat] registering routes')
 
-                # rubocop:disable Metrics/BlockLength
                 app.post '/v1/chat/completions' do
                   require_llm!
+                  request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
                   body = parse_request_body
 
                   unless body[:messages].is_a?(Array) && !body[:messages].empty?
@@ -33,7 +33,7 @@ module Legion
                   normalized = Legion::LLM::API::Translators::OpenAIRequest.normalize(body)
                   model      = normalized[:model] || Legion::Settings[:llm][:default_model] || 'default'
                   streaming  = normalized[:stream] == true
-                  include_reasoning = body[:include_reasoning] == true || body[:include_thinking] == true
+                  include_reasoning = body[:include_reasoning] != false && body[:include_thinking] != false
                   tool_decls = Completions.build_tool_declarations(normalized[:tools])
 
                   ext = Completions.extract_extended_fields(body, env)
@@ -92,9 +92,15 @@ module Legion
                       Completions.append_usage_stats(done_chunk, pipeline_response, include_reasoning)
                       out << "data: #{Legion::JSON.dump(done_chunk)}\n\n"
                       out << "data: [DONE]\n\n"
-                      log.info('[llm][api][namespaces][openai][chat] action=stream_complete ' \
-                               "request_id=#{request_id} model=#{final_model} " \
-                               "tool_calls=#{tool_calls.size} finish_reason=#{tool_calls.empty? ? 'stop' : 'tool_calls'}")
+                      log_api_completion_summary(
+                        namespace:         'namespaces][openai][chat',
+                        request_id:        request_id,
+                        pipeline_response: pipeline_response,
+                        stream:            true,
+                        started_at:        request_started_at,
+                        tool_calls:        tool_calls,
+                        stop_reason:       tool_calls.empty? ? 'stop' : 'tool_calls'
+                      )
                     rescue StandardError => e
                       handle_exception(e, level: :error, handled: false,
                                        operation: 'llm.api.namespaces.openai.chat.stream', request_id: request_id)
@@ -107,8 +113,15 @@ module Legion
                       pipeline_response, model: model, request_id: request_id,
                       include_reasoning: include_reasoning
                     )
-                    log.info("[llm][api][namespaces][openai][chat] action=complete request_id=#{request_id} " \
-                             "model=#{response_body[:model]}")
+                    log_api_completion_summary(
+                      namespace:         'namespaces][openai][chat',
+                      request_id:        request_id,
+                      pipeline_response: pipeline_response,
+                      stream:            false,
+                      started_at:        request_started_at,
+                      tool_calls:        response_body.dig(:choices, 0, :message, :tool_calls),
+                      stop_reason:       response_body.dig(:choices, 0, :finish_reason)
+                    )
                     content_type :json
                     status 200
                     Legion::JSON.dump(response_body)
@@ -126,8 +139,6 @@ module Legion
                   handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.chat')
                   openai_error(e.message, type: 'server_error', status_code: 500)
                 end
-                # rubocop:enable Metrics/BlockLength
-
                 app.get '/v1/chat/completions' do
                   content_type :json
                   Legion::JSON.dump({ object: 'list', data: [], has_more: false })

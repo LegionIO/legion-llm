@@ -28,11 +28,11 @@ module Legion
               ::File.join(::Dir.home, '.legionio', 'data', 'files')
             end
 
-            def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+            def self.registered(app) # rubocop:disable Metrics/AbcSize
               log.debug('[llm][api][namespaces][openai][files] registering routes')
 
               # POST /v1/files  (multipart/form-data)
-              app.post '/v1/files' do # rubocop:disable Metrics/BlockLength
+              app.post '/v1/files' do
                 require_llm!
 
                 uploaded = params[:file]

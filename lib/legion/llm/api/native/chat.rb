@@ -16,10 +16,10 @@ module Legion
             fallback_policy: :caller_runs
           )
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          def self.registered(app) # rubocop:disable Metrics/AbcSize
             log.debug('[llm][api][chat] registering POST /api/llm/chat')
 
-            app.post '/api/llm/chat' do # rubocop:disable Metrics/BlockLength
+            app.post '/api/llm/chat' do
               log.debug("[llm][api][chat] action=received params=#{params.keys}")
               require_llm!
 

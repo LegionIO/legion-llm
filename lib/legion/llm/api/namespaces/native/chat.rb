@@ -26,12 +26,13 @@ module Legion
               ASYNC_POOL.wait_for_termination(5)
             end
 
-            def self.registered(ns_context) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+            def self.registered(ns_context) # rubocop:disable Metrics/AbcSize
               log.debug('[llm][api][namespaces][chat] registering routes')
 
-              ns_context.post '' do # rubocop:disable Metrics/BlockLength
+              ns_context.post '' do
                 log.debug("[llm][api][namespaces][chat] action=received params=#{params.keys}")
                 require_llm!
+                request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
 
                 body = parse_request_body
                 validate_required!(body, :message)
@@ -101,7 +102,15 @@ module Legion
                     routing         = result.routing || {}
                     resolved_model  = routing[:model] || routing['model']
                     tokens          = result.tokens || {}
-                    log.info("[llm][api][namespaces][chat] action=completed request_id=#{request_id} model=#{resolved_model}")
+                    log_api_completion_summary(
+                      namespace:         'namespaces][chat',
+                      request_id:        request_id,
+                      pipeline_response: result,
+                      stream:            false,
+                      started_at:        request_started_at,
+                      tool_calls:        extract_tool_calls(result),
+                      stop_reason:       api_stop_reason(result)
+                    )
                     json_response(
                       {
                         response: content,

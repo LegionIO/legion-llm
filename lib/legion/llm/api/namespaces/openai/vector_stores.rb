@@ -103,7 +103,6 @@ module Legion
 
             # POST /v1/vector_stores/:id/search — semantic search over stored chunks
             # MUST be defined BEFORE post '/:id' so Sinatra matches the more specific /search path first
-            # rubocop:disable Metrics/BlockLength
             post '/:id/search' do
               require_llm!
               require_data!
@@ -174,8 +173,6 @@ module Legion
               handle_exception(e, level: :error, operation: 'llm.api.vector_stores.search')
               openai_error(e.message, type: 'server_error', code: 'internal_error', status_code: 500)
             end
-            # rubocop:enable Metrics/BlockLength
-
             # POST /v1/vector_stores/:id — update a store (name, metadata)
             # Defined AFTER post '/:id/search' so Sinatra selects the search route first
             post '/:id' do

@@ -14,7 +14,7 @@ module Legion
             module Items
               extend Legion::Logging::Helper
 
-              def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+              def self.registered(app) # rubocop:disable Metrics/AbcSize
                 log.debug('[llm][api][namespaces][openai][items] registering routes')
 
                 # POST /v1/conversations/:id/items
@@ -166,7 +166,7 @@ module Legion
               end
 
               def self.serialize_item(msg, conv_id)
-                {
+                base = {
                   id:         msg[:id],
                   object:     'conversation.item',
                   conv_id:    conv_id,
@@ -174,6 +174,55 @@ module Legion
                   content:    msg[:content],
                   created_at: msg[:created_at]&.to_i
                 }
+
+                # Tool result messages: role :tool → type "tool_result" with tool_use_id
+                return serialize_tool_result(msg, base) if msg[:role].to_s == 'tool'
+
+                # Assistant messages with tool_calls → structured content_blocks
+                return serialize_assistant_with_tools(msg, base) if msg[:tool_calls]
+
+                # Everything else: plain message item (backward-compatible)
+                base.merge(type: 'message')
+              end
+
+              def self.serialize_tool_result(msg, base)
+                # Convert { role: :tool, content: ..., tool_call_id: ..., name: ... }
+                # → { type: "tool_result", tool_use_id: ..., content: [{ type: "text", text: ... }] }
+                content = serialize_to_content_blocks(msg[:content])
+
+                base.merge(
+                  type:        'tool_result',
+                  tool_use_id: msg[:tool_call_id],
+                  name:        msg[:name],
+                  content:     content
+                )
+              end
+
+              def self.serialize_assistant_with_tools(msg, base)
+                # Convert { role: :assistant, content: ..., tool_calls: [...] }
+                # → { type: "message", content: [{ type: "text", ... }, { type: "tool_use", ... }] }
+                blocks = []
+                blocks << { type: 'text', text: msg[:content].to_s } unless msg[:content].to_s.empty?
+
+                msg[:tool_calls].each do |tc|
+                  blocks << {
+                    type:  'tool_use',
+                    id:    tc[:id] || tc['id'],
+                    name:  tc[:name] || tc['name'],
+                    input: tc[:arguments] || tc['arguments'] || {}
+                  }
+                end
+
+                base.merge(
+                  type:    'message',
+                  content: blocks
+                )
+              end
+
+              def self.serialize_to_content_blocks(content)
+                return [{ type: 'text', text: content }] if content.is_a?(String)
+
+                content.is_a?(Array) ? content.map { |block| serialize_to_content_blocks(block) }.flatten : [{ type: 'text', text: content.to_s }]
               end
             end
           end

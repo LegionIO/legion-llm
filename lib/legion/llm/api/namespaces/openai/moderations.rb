@@ -35,7 +35,6 @@ module Legion
             def self.registered(app)
               log.debug('[llm][api][namespaces][openai][moderations] registering routes')
 
-              # rubocop:disable Metrics/BlockLength
               app.post '/v1/moderations' do
                 require_llm!
 
@@ -99,8 +98,6 @@ module Legion
                 handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.moderations')
                 openai_error(e.message, type: 'server_error', status_code: 500)
               end
-              # rubocop:enable Metrics/BlockLength
-
               log.debug('[llm][api][namespaces][openai][moderations] routes registered')
             rescue StandardError => e
               handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.moderations.register')

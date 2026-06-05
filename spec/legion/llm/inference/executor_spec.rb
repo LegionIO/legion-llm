@@ -98,6 +98,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
         allow(gaia_mod).to receive(:started?).and_return(true)
         stub_const('Legion::Gaia', gaia_mod)
 
+        Legion::Settings[:llm][:gaia][:advisory_enabled] = true
+
         executor = described_class.new(request)
         allow(executor).to receive(:step_provider_call).and_return(
           { role: :assistant, content: 'test' }
@@ -131,7 +133,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
         rag_request = Legion::LLM::Inference::Request.build(
           messages:         [{ role: :user, content: 'what is pgvector?' }],
           system:           'You are helpful.',
-          context_strategy: :rag
+          context_strategy: :rag,
+          routing:          { provider: :anthropic, model: 'claude-opus-4-6' }
         )
 
         apollo_runner = double('Knowledge')
@@ -484,6 +487,7 @@ confidence: 0.9 }],
 
     it 'records fleet timeouts with the selected lane and idempotency key' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      Legion::LLM::Call::Registry.register(:vllm, Module.new)
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
         success:        false,
         error:          'fleet_timeout',
@@ -1366,6 +1370,7 @@ confidence: 0.9 }],
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
       allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([healthy_entry])
       allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:provider]).to eq(:ollama)
       expect(result[:instance]).to eq(:default)
@@ -1416,9 +1421,23 @@ confidence: 0.9 }],
       allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(entries)
       allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:vllm, instance: :h200).and_return(:closed)
       allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:provider]).to eq(:vllm)
       expect(result[:instance]).to eq(:h200)
+    end
+
+    it 'falls to auto_route when discovered model provider is not locally registered' do
+      executor = described_class.new(request)
+      remote_entry = { model: 'claude-haiku-4-5-20251001', provider: :anthropic, instance: :default, tier: 'frontier' }
+      state = { model: 'claude-haiku-4-5-20251001', provider: nil, tier: nil, instance: nil,
+                provider_explicit: false, tier_explicit: false, instance_explicit: false }
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([remote_entry])
+      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).and_return(:closed)
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(false)
+      result = executor.send(:resolve_model_to_local_provider, state)
+      expect(result[:auto_route]).to be true
+      expect(result[:model]).to be_nil
     end
   end
 
