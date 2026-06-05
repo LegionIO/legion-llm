@@ -1269,6 +1269,7 @@ module Legion
 
         def registry_tool_injection_requested?
           return false if @request.respond_to?(:suppress_tools) && @request.suppress_tools
+          return false if client_tools_only? && client_tool_passthrough_enabled?
 
           true
         end
