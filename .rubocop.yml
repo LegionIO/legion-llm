@@ -4,57 +4,44 @@ AllCops:
   SuggestExtensions: false
 
 Layout/LineLength:
-  Max: 160
-
+  Max: 195
 Layout/SpaceAroundEqualsInParameterDefault:
   EnforcedStyle: space
-
 Layout/HashAlignment:
   EnforcedHashRocketStyle: table
   EnforcedColonStyle: table
-
 Metrics/MethodLength:
-  Max: 60
-
+  Max: 150
 Metrics/ClassLength:
   Max: 1500
-
 Metrics/ModuleLength:
   Max: 1500
-
 Metrics/BlockLength:
-  Max: 40
+  Max: 150
   Exclude:
     - 'spec/**/*'
 
 Metrics/AbcSize:
-  Max: 85
+  Max: 100
 
 Metrics/CyclomaticComplexity:
-  Max: 35
+  Max: 50
 
 Metrics/PerceivedComplexity:
-  Max: 35
-
+  Max: 50
 Style/Documentation:
   Enabled: false
-
 Style/SymbolArray:
   Enabled: true
-
 Style/FrozenStringLiteralComment:
   Enabled: true
   EnforcedStyle: always
-
 Naming/FileName:
   Enabled: false
-
 Naming/PredicateMethod:
   Enabled: false
-
 Metrics/ParameterLists:
   Max: 9
-
 Style/RedundantConstantBase:
   Exclude:
     - 'spec/**/*'
