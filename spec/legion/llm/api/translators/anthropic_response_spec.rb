@@ -23,9 +23,9 @@ RSpec.describe Legion::LLM::API::Translators::AnthropicResponse do
     formatted = described_class.format(response, model: 'fallback-model', request_id: 'msg_test')
 
     expect(formatted[:content]).to eq([
-      { type: 'thinking', thinking: 'internal reasoning' },
-      { type: 'text', text: 'visible text' }
-    ])
+                                        { type: 'thinking', thinking: 'internal reasoning' },
+                                        { type: 'text', text: 'visible text' }
+                                      ])
   end
 
   it 'does not expose provider thinking in complete streaming events' do

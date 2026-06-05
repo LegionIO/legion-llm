@@ -22,12 +22,15 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
   let(:mock_response) do
     instance_double(
       Legion::LLM::Inference::Response,
-      message:  { content: 'Hello! How can I help you?' },
-      routing:  { model: 'claude-sonnet-4-6', provider: :anthropic },
-      tokens:   { input: 10, output: 8 },
-      tools:    nil,
-      stop:     { reason: 'end_turn' },
-      thinking: nil
+      message:         { content: 'Hello! How can I help you?' },
+      routing:         { model: 'claude-sonnet-4-6', provider: :anthropic },
+      tokens:          { input: 10, output: 8 },
+      tools:           [],
+      stop:            { reason: 'end_turn' },
+      thinking:        nil,
+      timeline:        [],
+      conversation_id: nil,
+      request_id:      nil
     )
   end
 
@@ -49,12 +52,6 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
       mock_executor = instance_double(Legion::LLM::Inference::Executor)
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
       allow(mock_executor).to receive(:call).and_return(mock_response)
-      allow(mock_response).to receive(:respond_to?).with(:tokens).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:routing).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:tools).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:stop).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:thinking).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:timestamps).and_return(true)
     end
 
     it 'returns Anthropic message format' do

@@ -54,6 +54,9 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       before do
         stub_const('Legion::Extensions::Apollo::Helpers::Writeback', Module.new)
         allow(Legion::Extensions::Apollo::Helpers::Writeback).to receive(:evaluate_and_route)
+        Legion::Settings[:llm][:knowledge_capture][:enabled] = true
+        Legion::Settings[:llm][:knowledge_capture][:writeback_enabled] = true
+        Legion::Settings[:llm][:knowledge_capture][:local_ingest_enabled] = false
       end
 
       it 'dispatches evaluate_and_route async' do
@@ -107,8 +110,11 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       stub_const('Legion::Apollo::Local', apollo_local)
       allow(apollo_local).to receive(:ingest).and_call_original
 
+      Legion::Settings[:llm][:knowledge_capture][:enabled] = true
+      Legion::Settings[:llm][:knowledge_capture][:local_ingest_enabled] = true
+
       step = klass.new(local_request)
-      step.raw_response = double(content: 'response text', input_tokens: 10, output_tokens: 20)
+      step.raw_response = double(message: { content: 'response text' }, routing: { model: 'test-model' })
 
       step.step_knowledge_capture
       sleep 0.2
@@ -124,8 +130,11 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       end
       stub_const('Legion::Apollo::Local', apollo_local)
 
+      Legion::Settings[:llm][:knowledge_capture][:enabled] = true
+      Legion::Settings[:llm][:knowledge_capture][:local_ingest_enabled] = true
+
       step = klass.new(local_request)
-      step.raw_response = double(content: 'answer', input_tokens: 5, output_tokens: 10)
+      step.raw_response = double(message: { content: 'answer' }, routing: { model: 'test-model' })
       step.step_knowledge_capture
       expect(step.warnings.none? { |w| w.include?('local_knowledge') }).to be true
     end
@@ -137,8 +146,11 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       end
       stub_const('Legion::Apollo::Local', apollo_local)
 
+      Legion::Settings[:llm][:knowledge_capture][:enabled] = true
+      Legion::Settings[:llm][:knowledge_capture][:local_ingest_enabled] = true
+
       step = klass.new(local_request)
-      step.raw_response = double(content: 'answer', input_tokens: 5, output_tokens: 10)
+      step.raw_response = double(message: { content: 'answer' }, routing: { model: 'test-model' })
       expect { step.step_knowledge_capture }.not_to raise_error
     end
   end
