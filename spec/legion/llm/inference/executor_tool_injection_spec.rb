@@ -268,9 +268,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
           define_singleton_method(:tools) do
             [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
           end
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == false ? tools : []
-          end
+          define_singleton_method(:filter_tools) { |**| [] }
+          define_singleton_method(:find_tool) { |**_| nil }
         end
         stub_const('Legion::Settings::Extensions', extensions_mod)
 

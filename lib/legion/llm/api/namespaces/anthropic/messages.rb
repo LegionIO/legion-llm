@@ -23,37 +23,6 @@ module Legion
               request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
               body = parse_request_body
 
-              # pp body.keys
-              body.each do |key, value|
-                if value.is_a?(String)
-                  log.unknown "#{key}: #{value.class} #{value}"
-                elsif value.is_a?(Array) && value.length > 10
-                  log.unknown "#{key}: #{value.class} #{value.length}"
-                  log.unknown "#{key}: #{value.class} last 2 #{value.last(2)}"
-                elsif value.is_a?(Hash) && value.length > 10
-                  log.unknown "#{key}: #{value.class} #{value.length}... keys: #{value.keys}"
-                # rubocop:disable Lint/DuplicateBranch
-                elsif value.is_a?(Hash) || value.is_a?(Array) || value.is_a?(Integer) || value.is_a?(Float) || value.is_a?(TrueClass) || value.is_a?(FalseClass)
-                  log.unknown "#{key}: #{value.class} #{value}"
-                else
-                  log.unknown "#{key}: #{value.class}"
-                  # rubocop:enable Lint/DuplicateBranch
-                end
-              end
-              # log.unknown "model: #{body[:model]}"
-              #
-              # log.unknown "messages: #{body[:messages].class}.class #{body[:messages]&.length}"
-              # log.unknown "system: #{body[:system].class}.class #{body[:system]&.length}"
-              # log.unknown "tools: #{body[:tools]}.class}.class #{body[:tools]&.length}"
-              # log.unknown "metadata: #{body[:metadata].class}.class #{body[:metadata]&.length}"
-              # log.unknown "max_tokens: #{body[:max_tokens].class}.class #{body[:max_tokens]}"
-              # log.unknown "thinking: #{body[:thinking].class}.class #{body[:thinking]}"
-              # log.unknown "context_management: #{body[:context_management].class}.class #{body[:context_management]}"
-              # log.unknown "stream: #{body[:stream].class}.class #{body[:stream]}"
-
-              # [:model, :messages, :system, :tools, :metadata, :max_tokens, :thinking, :context_management, :stream]
-              # "claude-haiku-4-5-20251001"
-
               validate_anthropic_required!(body)
 
               request_id = "msg_#{SecureRandom.hex(12)}"

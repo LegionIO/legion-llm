@@ -103,9 +103,6 @@ module Legion
           def settings_extensions
             return unless defined?(Legion::Settings::Extensions)
 
-            Legion::Settings::Extensions.tools.each do |tool|
-              puts "#{tool[:name]} => extension: #{tool[:extension]}, runner: #{tool[:runner]}, function: #{tool[:function]}, description: #{tool[:description]}, deferred: #{tool[:deferred]}"
-            end
             Legion::Settings::Extensions
           end
 

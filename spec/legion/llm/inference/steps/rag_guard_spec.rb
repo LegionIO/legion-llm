@@ -37,6 +37,7 @@ RSpec.describe Legion::LLM::Inference::Steps::RagGuard do
 
     it 'blocks when response contradicts context' do
       step = klass.new
+      Legion::Settings[:llm][:rag_guard][:block_on_failure] = true
       if defined?(Legion::LLM::Hooks::RagGuard)
         allow(Legion::LLM::Hooks::RagGuard).to receive(:check_rag_faithfulness)
           .and_return({ faithful: false, details: 'RAG faithfulness check failed: contradicts source' })

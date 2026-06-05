@@ -385,10 +385,10 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
       post '/v1/messages',
            Legion::JSON.dump({ max_tokens: 1024, messages: [{ role: 'user', content: 'Hi' }] }),
            claude_code_headers
-      expect(last_response.status).to eq(400)
+      expect(last_response.status).to eq(529)
       body = Legion::JSON.load(last_response.body)
       expect(body[:type]).to eq('error')
-      expect(body[:error][:type]).to eq('invalid_request_error')
+      expect(body[:error][:type]).to eq('overloaded_error')
     end
 
     it 'returns 400 when messages is missing' do

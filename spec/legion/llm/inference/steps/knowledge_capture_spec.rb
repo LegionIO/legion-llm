@@ -114,7 +114,7 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       Legion::Settings[:llm][:knowledge_capture][:local_ingest_enabled] = true
 
       step = klass.new(local_request)
-      step.raw_response = double(message: { content: 'response text' }, routing: { model: 'test-model' })
+      step.raw_response = double(content: 'response text')
 
       step.step_knowledge_capture
       sleep 0.2

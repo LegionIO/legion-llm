@@ -14,33 +14,13 @@ module Legion
           module Responses
             extend Legion::Logging::Helper
 
-            def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+            def self.registered(app) # rubocop:disable Metrics/AbcSize
               log.debug('[llm][api][namespaces][openai][responses] registering routes')
 
               app.post '/v1/responses' do
                 require_llm!
                 request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
                 body = parse_request_body
-                pp env
-
-                body.each do |key, value|
-                  if value.is_a?(String)
-                    log.unknown "#{key}: #{value.class} #{value}"
-                  elsif value.is_a?(Array) && value.length > 10
-                    log.unknown "#{key}: #{value.class} #{value.length}"
-                    log.unknown "#{key}: #{value.class} last 2 #{value.last(2)}"
-                  elsif value.is_a?(Hash) && value.length > 10
-                    log.unknown "#{key}: #{value.class} #{value.length}... keys: #{value.keys}"
-                  # rubocop:disable Lint/DuplicateBranch
-                  elsif value.is_a?(Hash) || value.is_a?(Array) ||
-                        value.is_a?(Integer) || value.is_a?(Float) ||
-                        value.is_a?(TrueClass) || value.is_a?(FalseClass)
-                    log.unknown "#{key}: #{value.class} #{value}"
-                  else
-                    log.unknown "#{key}: #{value.class}"
-                    # rubocop:enable Lint/DuplicateBranch
-                  end
-                end
 
                 request_id = "resp_#{SecureRandom.hex(16)}"
 
