@@ -488,6 +488,7 @@ confidence: 0.9 }],
 
     it 'records fleet timeouts with the selected lane and idempotency key' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
         success:        false,
         error:          'fleet_timeout',
@@ -512,6 +513,7 @@ confidence: 0.9 }],
 
     it 'records fleet errors separately from publish and timeout failures' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
         success:        false,
         error:          'fleet_worker_error',
@@ -530,6 +532,7 @@ confidence: 0.9 }],
 
     it 'passes native dispatch options as top-level fleet request params' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
       captured_request = nil
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch) do |request:, **|
         captured_request = request
