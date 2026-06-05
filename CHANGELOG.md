@@ -1,5 +1,18 @@
 # Legion LLM Changelog
 
+## [0.12.5] - 2026-06-04
+
+### Fixed
+- **OpenAI Responses API ignores explicit provider routing** — Both namespace (`api/namespaces/openai/responses.rb`) and legacy (`api/openai/responses.rb`) handlers only passed `{ model: model }` in the routing hash, dropping `HTTP_X_LEGION_PROVIDER`, `HTTP_X_LEGION_TIER`, and `HTTP_X_LEGION_INSTANCE` headers. Now extracts these headers and body fields, builds a proper routing hash with provider/instance/model, and passes tier via `Request.extra[:tier]` to match the Anthropic Messages handler behavior.
+- **Anthropic Messages API drops thinking config** — Both namespace (`api/namespaces/anthropic/messages.rb`) and legacy (`api/anthropic/messages.rb`) handlers never forwarded `body[:thinking]` to `Request.build`. Now passes through unchanged so all providers (Anthropic, Bedrock, etc.) receive the original thinking config. Anthropic provider now handles both `:budget_tokens` and `:budget` keys for compatibility.
+
+## [0.12.4] - 2026-06-04
+
+### Fixed
+- **Forced tool choice arguments emitted as text instead of structured tool_use** — When a tool choice is forced (e.g. vLLM/qwen with explicit tool name in user text), the provider may output tool arguments as plain text JSON (`{"file_path": "..."}`) in `delta['content']` instead of structured `delta['tool_calls']`. Added `maybe_synthesize_tool_call_from_content` to both `execute_native_tool_loop` and `execute_native_streaming_tool_loop`: when tool calls are empty but content is valid JSON and a tool choice is forced, parse the text and create a proper tool call. Also added `text_looks_like_tool_json?` guard to Anthropic and OpenAI response translators to skip emitting JSON blobs as text deltas. Client sees native tool_use/function_call blocks instead of raw JSON text (inference/native_tool_loop.rb, api/translators/anthropic_response.rb, api/translators/openai_response.rb, api/anthropic/messages.rb, api/openai/chat_completions.rb)
+- **Model discovery pins to unregistered remote providers** — `resolve_model_to_local_provider` found a model in the discovery cache and pinned it to a provider that isn't registered locally (e.g. `claude-haiku-4-5-20251001` → Anthropic on a vLLM-only node). Added `Call::Registry.registered?(provider, instance: instance)` check to the healthy candidate filter so unregistered providers are skipped and the request falls through to `auto_route` (inference/executor.rb)
+- **`client_tools_only?` method missing** — Restored `client_tools_only?` in executor to guard explicit tool choice forcing for client passthrough requests (inference/executor.rb, inference/native_tool_loop.rb)
+
 ## [0.12.3] - 2026-06-02
 
 ### Fixed
