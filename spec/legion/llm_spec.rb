@@ -57,6 +57,12 @@ RSpec.describe Legion::LLM do
       expect(Legion::LLM.embedding_model).to be_nil
     end
 
+    it 'gracefully shuts down the async thread pool on shutdown' do
+      described_class.start
+      described_class.shutdown
+      expect(Legion::LLM::Inference::Executor::ASYNC_THREAD_POOL.shutdown?).to be true
+    end
+
     it 'registers routes with Legion::API when available on start' do
       fake_api = Module.new do
         def self.register_library_routes(name, mod); end

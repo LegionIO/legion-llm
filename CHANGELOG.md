@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.12.8] - 2026-06-05
+
+### Fixed
+- **Async thread pool graceful shutdown** — `Legion::LLM.shutdown` now calls `shutdown` + `wait_for_termination(5)` on the executor's `ASYNC_THREAD_POOL` so background curation, reflection, and knowledge capture threads drain cleanly instead of being killed mid-operation (issue #143) (lib/legion/llm.rb)
+
 ## [0.12.7] - 2026-06-05
 
 ### Fixed

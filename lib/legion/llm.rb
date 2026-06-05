@@ -116,6 +116,11 @@ module Legion
         @embedding_model = nil
         @embedding_instance = nil
         @embedding_fallback_chain = nil
+        # Gracefully shut down the async thread pool (curation, reflection, knowledge capture)
+        if (pool = Inference::Executor::ASYNC_THREAD_POOL).running?
+          pool.shutdown
+          pool.wait_for_termination(5)
+        end
         log.info '[llm] shut down'
       end
 
