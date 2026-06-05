@@ -577,6 +577,7 @@ confidence: 0.9 }],
 
       Legion::Settings[:llm][:routing][:escalation][:enabled] = true
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = true
+      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
       allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
       allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
@@ -1340,6 +1341,7 @@ confidence: 0.9 }],
       Legion::LLM::Call::Registry.register(:fake_responses_native, adapter)
       executor = described_class.new(request)
       executor.instance_variable_set(:@resolved_provider, :fake_responses_native)
+      executor.instance_variable_set(:@resolved_instance, :default)
       expect(executor.provider_supports_responses?).to be true
     ensure
       Legion::LLM::Call::Registry.deregister_provider(:fake_responses_native)

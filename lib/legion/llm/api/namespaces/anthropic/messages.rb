@@ -132,7 +132,7 @@ module Legion
 
                     out << data
                     true
-                  rescue IOError, Errno::EPIPE, Puma::ConnectionError => e
+                  rescue IOError, Errno::EPIPE => e
                     stream_closed = true
                     log.warn "[llm][api][anthropic] action=client_stream_error request_id=#{request_id} error=#{e.class}: #{e.message}"
                     raise
@@ -378,7 +378,7 @@ module Legion
                     tool_calls:        tool_calls,
                     stop_reason:       stop_reason
                   )
-                rescue Puma::ConnectionError, IOError, Errno::EPIPE
+                rescue IOError, Errno::EPIPE, *(defined?(Puma) ? [Puma::ConnectionError] : [])
                   # Client disconnected — exit cleanly without blowing up Puma
                 rescue StandardError => e
                   handle_exception(e, level: :error, handled: false, operation: 'llm.ns.anthropic.messages.stream', request_id: request_id)
