@@ -507,11 +507,9 @@ module Legion
           safe_caller_fields = normalized_caller.slice(:context, :session_id, :trace_id)
 
           caller_hash = {
-            source:                source,
-            path:                  path,
-            requested_by:          identity_caller_hash(env).fetch(:requested_by),
-            runtime_caller_class:  detect_caller_class(env),
-            runtime_caller_client: detect_caller_client(env)
+            source:       source,
+            path:         path,
+            requested_by: identity_caller_hash(env).fetch(:requested_by)
           }
 
           # Carry parent request reference for ledger enrichment (avoids DB queries at emit time)
@@ -526,13 +524,6 @@ module Legion
           end
 
           caller_hash.merge(safe_caller_fields)
-        end
-
-        def detect_caller_class(env)
-          return 'codex' if env['HTTP_X_CODEX_TURN_METADATA'] || env['HTTP_X_CODEX_WINDOW_ID']
-          return 'claude-code' if env['HTTP_X_CLAUDE_CODE_SESSION_ID']
-
-          nil
         end
 
         def detect_caller_client(env)

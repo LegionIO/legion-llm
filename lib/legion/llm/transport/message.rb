@@ -46,7 +46,7 @@ module Legion
         end
 
         def encode_message
-          payload = message
+          payload = inject_runtime_caller_info(message)
           payload = Legion::JSON.dump(payload) unless payload.is_a?(String)
 
           if encrypt? && defined?(Legion::Crypt) && Legion::Crypt.respond_to?(:encrypt)
@@ -59,6 +59,48 @@ module Legion
 
           @options[:content_encoding] = 'identity'
           payload
+        end
+
+        def inject_runtime_caller_info(payload)
+          return payload unless payload.is_a?(Hash)
+
+          caller_info = payload[:caller]
+          return payload unless caller_info.is_a?(Hash)
+
+          caller_info = caller_info.transform_keys(&:to_sym)
+
+          # Don't override if already present
+          return payload.merge(caller: caller_info) if caller_info[:class] || caller_info[:caller_class] ||
+                                                       caller_info[:source_class] || payload[:runtime_caller_class]
+
+          # Walk the call stack to find the class that initiated this publish
+          runtime_caller_class = resolve_caller_class
+          caller_info[:class] = runtime_caller_class if runtime_caller_class
+
+          payload.merge(caller: caller_info)
+        end
+
+        def resolve_caller_class
+          caller_locations(1, 50).each do |loc|
+            path = loc.path.to_s
+            next unless path.include?('legion')
+            next unless path.include?('/api/') || path.include?('inference/executor')
+
+            # Extract everything after /lib/legion/ — the path segments become the class name:
+            # legion/llm/api/namespaces/anthropic/messages.rb -> Legion::Llm::Api::Namespaces::Anthropic::Messages
+            # legion/gaia/foo/bar.rb -> Legion::Gaia::Foo::Bar
+            relative = path.split('/lib/legion/')[1] || next
+            parts = relative.gsub('.rb', '').split('/')
+            next unless parts&.any?
+
+            class_name = parts.flat_map { |p| p.split('_') }.collect(&:capitalize).join('::')
+
+            return "Legion::#{class_name}"
+          end
+          nil
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'transport.message.resolve_caller_class')
+          nil
         end
 
         def content_encoding

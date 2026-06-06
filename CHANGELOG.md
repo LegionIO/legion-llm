@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.12.13] - 2026-06-05
+
+### Added
+- **Runtime caller class detection via caller_locations** — `Transport::Message#encode_message` now walks the call stack to find the class/module that initiated an AMQP publish and injects `runtime_caller_class` into the caller hash. Works for any caller (Legion::LLM::API::Namespaces::Anthropic::Messages, Legion::Gaia::*, etc.) — the class name is derived from the file path so it always matches the actual calling module (lib/legion/llm/transport/message.rb)
+
 ## [0.12.12] - 2026-06-05
 
 ### Added
