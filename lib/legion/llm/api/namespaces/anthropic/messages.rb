@@ -200,7 +200,7 @@ module Legion
                   translator = Legion::LLM::API::Translators::AnthropicResponse
                   tool_calls = translator.extract_tool_calls(pipeline_response)
                   tokens = pipeline_response.respond_to?(:tokens) ? pipeline_response.tokens : nil
-                  stop_reason = tool_calls.any? ? 'tool_use' : translator.format_stop_reason(pipeline_response)
+                  stop_reason = translator.format_stop_reason(pipeline_response)
                   final_thinking = translator.thinking_payload(pipeline_response)
                   full_thinking_signature ||= final_thinking[:signature] if final_thinking && final_thinking[:signature]
                   content_index = next_block_index
@@ -298,14 +298,16 @@ module Legion
                   end
 
                   tool_calls.each do |tc|
+                    is_server_tool = tc[:legionio] == true
+
                     emit_event.call('content_block_start', {
                                       type:          'content_block_start',
                                       index:         content_index,
                                       content_block: {
-                                        type:  'tool_use',
-                                        id:    tc[:id] || "toolu_#{SecureRandom.hex(12)}",
+                                        type:  is_server_tool ? 'server_tool_use' : 'tool_use',
+                                        id:    tc[:id] || (is_server_tool ? "srvtoolu_#{SecureRandom.hex(12)}" : "toolu_#{SecureRandom.hex(12)}"),
                                         name:  tc[:name],
-                                        input: {}
+                                        input: tc[:arguments] || {}
                                       }
                                     })
                     break if stream_closed
@@ -324,6 +326,32 @@ module Legion
                     break if stream_closed
 
                     content_index += 1
+
+                    # Emit server_tool_result for LegionIO tools
+                    if is_server_tool
+                      result = tc[:result]
+                      if result
+                        result_str = result.is_a?(String) ? result : (Legion::JSON.dump(result) rescue result.to_s)
+                        emit_event.call('content_block_start', {
+                                          type:          'content_block_start',
+                                          index:         content_index,
+                                          content_block: { type: 'server_tool_result', id: tc[:id], content: [] }
+                                        })
+                        break if stream_closed
+
+                        emit_event.call('content_block_delta', {
+                                          type:  'content_block_delta',
+                                          index: content_index,
+                                          delta: { type: 'content_block_delta', content: [{ type: 'text', text: result_str }] }
+                                        })
+                        break if stream_closed
+
+                        emit_event.call('content_block_stop', { type: 'content_block_stop', index: content_index })
+                        break if stream_closed
+
+                        content_index += 1
+                      end
+                    end
                   end
                   next if stream_closed
 

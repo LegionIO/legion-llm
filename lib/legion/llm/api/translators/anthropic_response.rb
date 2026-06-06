@@ -97,20 +97,54 @@ module Legion
               content_index += 1
             end
 
-            # Emit tool_use blocks (index may have been bumped above)
+            # Emit tool_use/server_tool_use blocks (index may have been bumped above)
             tool_calls.each do |tc|
-              events << ['content_block_start', {
-                type:          'content_block_start',
-                index:         content_index,
-                content_block: { type: 'tool_use', id: tc[:id], name: tc[:name], input: tc[:arguments] || {} }
-              }]
-              events << ['content_block_delta', {
-                type:  'content_block_delta',
-                index: content_index,
-                delta: { type: 'input_json_delta', partial_json: Legion::JSON.dump(tc[:arguments] || {}) }
-              }]
-              events << ['content_block_stop', { type: 'content_block_stop', index: content_index }]
-              content_index += 1
+              if tc[:legionio] == true
+                # Server tool: emit call + result together
+                events << ['content_block_start', {
+                  type:          'content_block_start',
+                  index:         content_index,
+                  content_block: { type: 'server_tool_use', id: tc[:id], name: tc[:name], input: tc[:arguments] || {} }
+                }]
+                events << ['content_block_delta', {
+                  type:  'content_block_delta',
+                  index: content_index,
+                  delta: { type: 'input_json_delta', partial_json: Legion::JSON.dump(tc[:arguments] || {}) }
+                }]
+                events << ['content_block_stop', { type: 'content_block_stop', index: content_index }]
+                content_index += 1
+
+                # Emit result
+                result = tc[:result]
+                if result
+                  result_str = result.is_a?(String) ? result : (Legion::JSON.dump(result) rescue result.to_s)
+                  events << ['content_block_start', {
+                    type:          'content_block_start',
+                    index:         content_index,
+                    content_block: { type: 'server_tool_result', id: tc[:id], content: [] }
+                  }]
+                  events << ['content_block_delta', {
+                    type:  'content_block_delta',
+                    index: content_index,
+                    delta: { type: 'content_block_delta', content: [{ type: 'text', text: result_str }] }
+                  }]
+                  events << ['content_block_stop', { type: 'content_block_stop', index: content_index }]
+                  content_index += 1
+                end
+              else
+                events << ['content_block_start', {
+                  type:          'content_block_start',
+                  index:         content_index,
+                  content_block: { type: 'tool_use', id: tc[:id], name: tc[:name], input: tc[:arguments] || {} }
+                }]
+                events << ['content_block_delta', {
+                  type:  'content_block_delta',
+                  index: content_index,
+                  delta: { type: 'input_json_delta', partial_json: Legion::JSON.dump(tc[:arguments] || {}) }
+                }]
+                events << ['content_block_stop', { type: 'content_block_stop', index: content_index }]
+                content_index += 1
+              end
             end
 
             stop_reason = format_stop_reason(pipeline_response)
@@ -137,12 +171,31 @@ module Legion
             blocks << { type: 'text', text: text_content } unless text_content.empty? && !tool_calls.empty?
 
             tool_calls.each do |tc|
-              blocks << {
-                type:  'tool_use',
-                id:    tc[:id],
-                name:  tc[:name],
-                input: tc[:arguments] || {}
-              }
+              if tc[:legionio] == true
+                # Server tool: emit call + result together
+                blocks << {
+                  type:  'server_tool_use',
+                  id:    tc[:id],
+                  name:  tc[:name],
+                  input: tc[:arguments] || {}
+                }
+                result = tc[:result]
+                if result
+                  result_str = result.is_a?(String) ? result : (Legion::JSON.dump(result) rescue result.to_s)
+                  blocks << {
+                    type:       'server_tool_result',
+                    id:         tc[:id],
+                    content:    [{ type: 'text', text: result_str }]
+                  }
+                end
+              else
+                blocks << {
+                  type:  'tool_use',
+                  id:    tc[:id],
+                  name:  tc[:name],
+                  input: tc[:arguments] || {}
+                }
+              end
             end
 
             blocks.empty? ? [{ type: 'text', text: '' }] : blocks
@@ -207,16 +260,30 @@ module Legion
             return [] unless pipeline_response.respond_to?(:tools)
 
             Array(pipeline_response.tools).map do |tc|
+              source = tc.respond_to?(:source) ? tc.source : (tc[:source] || tc['source'] || {})
+              is_legionio = legionio_tool_source?(source)
+
               {
-                id:        tc.respond_to?(:id)        ? tc.id        : (tc[:id] || tc['id'] || "toolu_#{SecureRandom.hex(10)}"),
+                id:        tc.respond_to?(:id)        ? tc.id        : (tc[:id] || tc['id'] || (is_legionio ? "srvtoolu_#{SecureRandom.hex(10)}" : "toolu_#{SecureRandom.hex(10)}")),
                 name:      tc.respond_to?(:name)      ? tc.name      : (tc[:name] || tc['name'] || ''),
-                arguments: tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
+                arguments: tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {}),
+                result:    tc.respond_to?(:result)    ? tc.result    : (tc[:result] || tc['result']),
+                source:    source,
+                legionio:  is_legionio
               }
             end
           end
 
+          def self.legionio_tool_source?(source)
+            return false unless source.is_a?(Hash)
+
+            type = source[:type] || source['type']
+            %i[special registry extension].include?(type&.to_sym)
+          end
+
           def self.format_stop_reason(pipeline_response)
             tool_calls = extract_tool_calls(pipeline_response)
+            return 'pause_turn' if tool_calls.any? { |tc| tc[:legionio] == true }
             return 'tool_use' if tool_calls.any?
 
             return 'end_turn' unless pipeline_response.respond_to?(:stop)
@@ -265,7 +332,7 @@ module Legion
             false
           end
 
-          private_class_method :extract_content, :format_usage
+          private_class_method :extract_content, :format_usage, :text_looks_like_tool_json?, :legionio_tool_source?
 
           class << self
             public :extract_tool_calls, :format_stop_reason, :token_count, :thinking_payload, :thinking_content_block, :text_looks_like_tool_json?

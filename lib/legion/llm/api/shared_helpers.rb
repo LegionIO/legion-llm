@@ -509,7 +509,8 @@ module Legion
           caller_hash = {
             source:       source,
             path:         path,
-            requested_by: identity_caller_hash(env).fetch(:requested_by)
+            requested_by: identity_caller_hash(env).fetch(:requested_by),
+            client:       caller_client_string(env)
           }
 
           # Carry parent request reference for ledger enrichment (avoids DB queries at emit time)

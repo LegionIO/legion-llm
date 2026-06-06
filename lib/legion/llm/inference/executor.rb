@@ -2745,12 +2745,26 @@ module Legion
           reason = if @raw_response.respond_to?(:stop_reason)
                      @raw_response.stop_reason&.to_sym
                    elsif @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
-                     :tool_use
+                     stop_reason_for_tool_calls(response_tool_calls)
                    end
           { reason: reason || :end_turn }
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.pipeline.extract_stop_reason')
           { reason: :end_turn }
+        end
+
+        def stop_reason_for_tool_calls(tool_calls)
+          return nil if tool_calls.empty?
+
+          tool_calls.each do |tc|
+            source = tc.source
+            next unless source.is_a?(Hash)
+
+            type = source[:type] || source['type']
+            return :pause_turn if %i[special registry extension].include?(type&.to_sym)
+          end
+
+          :tool_use
         end
 
         def estimate_response_cost
