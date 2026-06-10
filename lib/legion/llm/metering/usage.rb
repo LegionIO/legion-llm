@@ -9,20 +9,23 @@ module Legion
     # cache_read_tokens  - Integer tokens served from prompt cache (e.g. Anthropic cache_read)
     # cache_write_tokens - Integer tokens written to prompt cache
     # total_tokens       - Integer total; auto-calculated as input + output when not provided
+    # output_tokens_details - Optional breakdown (e.g. { reasoning_tokens: 48 }) from Responses API
     Usage = ::Data.define(
       :input_tokens,
       :output_tokens,
       :cache_read_tokens,
       :cache_write_tokens,
-      :total_tokens
+      :total_tokens,
+      :output_tokens_details
     ) do
-      def initialize(input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: nil)
+      def initialize(input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: nil, output_tokens_details: {})
         super(
           input_tokens:,
           output_tokens:,
           cache_read_tokens:,
           cache_write_tokens:,
-          total_tokens:       total_tokens || (input_tokens + output_tokens)
+          total_tokens:          total_tokens || (input_tokens + output_tokens),
+          output_tokens_details: output_tokens_details
         )
       end
     end

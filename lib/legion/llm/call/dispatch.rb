@@ -10,9 +10,11 @@ module Legion
       # Wraps a native dispatch result hash so Pipeline::Executor and
       # ConversationStore can consume a stable provider response object.
       class NativeResponseAdapter
+        extend Legion::Logging::Helper
+
         attr_reader :content, :model, :input_tokens, :output_tokens,
                     :cache_read_tokens, :cache_write_tokens, :usage, :metadata,
-                    :tool_calls, :stop_reason, :thinking
+                    :tool_calls, :stop_reason, :thinking, :output_tokens_details
 
         HASH_KEY_MAP = {
           result: :content, content: :content,
@@ -30,15 +32,16 @@ module Legion
             metadata: result_hash[:metadata] || {},
             thinking: result_hash[:thinking]
           )
-          @content             = extracted[:result].to_s
-          @model               = result_hash[:model]
-          @metadata            = extracted[:metadata] || {}
-          @tool_calls          = self.class.coerce_tool_calls(result_hash[:tool_calls])
-          @stop_reason         = result_hash[:stop_reason]
-          @thinking            = extracted[:thinking]
-          usage                = self.class.coerce_usage(result_hash[:usage])
-          @usage               = usage
-          @input_tokens        = usage.input_tokens
+          @content                 = extracted[:result].to_s
+          @model                   = result_hash[:model]
+          @metadata                = extracted[:metadata] || {}
+          @tool_calls              = self.class.coerce_tool_calls(result_hash[:tool_calls])
+          @stop_reason             = result_hash[:stop_reason]
+          @thinking                = extracted[:thinking]
+          @output_tokens_details   = self.class.extract_output_token_details(result_hash[:usage]) || {}
+          usage                    = self.class.coerce_usage(result_hash[:usage])
+          @usage                   = usage
+          @input_tokens            = usage.input_tokens
           @output_tokens       = usage.output_tokens
           @cache_read_tokens   = usage.cache_read_tokens
           @cache_write_tokens  = usage.cache_write_tokens
@@ -78,6 +81,7 @@ module Legion
         def self.extract_result(result, metadata: {}, thinking: nil)
           extractor = defined?(::Legion::Extensions::Llm::Responses::ThinkingExtractor) &&
                       ::Legion::Extensions::Llm::Responses::ThinkingExtractor
+          log.info "[llm][dispatch] extract_result thinking_param=#{thinking ? 'present' : 'nil'}"
           return { result: result, metadata: metadata || {}, thinking: normalize_thinking_payload(thinking) } unless extractor
 
           extraction = extractor.extract(result, metadata: metadata || {})
@@ -95,11 +99,14 @@ module Legion
           return raw_usage if raw_usage.is_a?(Usage)
           return Usage.new unless raw_usage.is_a?(Hash)
 
+          details = raw_usage[:output_tokens_details] || raw_usage['output_tokens_details'] || {}
+
           Usage.new(
-            input_tokens:       (raw_usage[:input_tokens] || raw_usage['input_tokens']).to_i,
-            output_tokens:      (raw_usage[:output_tokens] || raw_usage['output_tokens']).to_i,
-            cache_read_tokens:  (raw_usage[:cache_read_tokens] || raw_usage['cache_read_tokens']).to_i,
-            cache_write_tokens: (raw_usage[:cache_write_tokens] || raw_usage['cache_write_tokens']).to_i
+            input_tokens:          (raw_usage[:input_tokens] || raw_usage['input_tokens']).to_i,
+            output_tokens:         (raw_usage[:output_tokens] || raw_usage['output_tokens']).to_i,
+            cache_read_tokens:     (raw_usage[:cache_read_tokens] || raw_usage['cache_read_tokens']).to_i,
+            cache_write_tokens:    (raw_usage[:cache_write_tokens] || raw_usage['cache_write_tokens']).to_i,
+            output_tokens_details: details
           )
         end
 
@@ -114,6 +121,16 @@ module Legion
 
         def self.single_tool_call_hash?(hash)
           hash.key?(:name) || hash.key?('name') || hash.key?(:function) || hash.key?('function')
+        end
+
+        def self.extract_output_token_details(raw_usage)
+          return nil unless raw_usage
+
+          if raw_usage.respond_to?(:output_tokens_details) && raw_usage.output_tokens_details.is_a?(Hash)
+            raw_usage.output_tokens_details
+          elsif raw_usage.is_a?(Hash)
+            raw_usage[:output_tokens_details] || raw_usage['output_tokens_details']
+          end
         end
 
         def self.coerce_single_tool_call(entry)
@@ -190,9 +207,7 @@ module Legion
           raise Legion::LLM::ProviderError, "unsupported capability: #{capability}" unless method_name
 
           ext = fetch_extension!(provider, instance: instance)
-          if ext.respond_to?(:supports?) && !ext.supports?(cap_sym)
-            raise Legion::LLM::ProviderError, "unsupported capability #{capability} for provider #{provider}"
-          end
+          raise Legion::LLM::ProviderError, "unsupported capability #{capability} for provider #{provider}" if ext.respond_to?(:supports?) && !ext.supports?(cap_sym)
 
           log.info("[llm][dispatch] capability=#{cap_sym} provider=#{provider} " \
                    "instance=#{instance || 'default'} model=#{model}")
@@ -285,11 +300,13 @@ module Legion
           usage = if raw_usage.is_a?(Usage)
                     raw_usage
                   elsif raw_usage.is_a?(Hash)
+                    details = raw_usage[:output_tokens_details] || raw_usage['output_tokens_details'] || {}
                     Usage.new(
-                      input_tokens:       raw_usage[:input_tokens].to_i,
-                      output_tokens:      raw_usage[:output_tokens].to_i,
-                      cache_read_tokens:  raw_usage[:cache_read_tokens].to_i,
-                      cache_write_tokens: raw_usage[:cache_write_tokens].to_i
+                      input_tokens:          raw_usage[:input_tokens].to_i,
+                      output_tokens:         raw_usage[:output_tokens].to_i,
+                      cache_read_tokens:     raw_usage[:cache_read_tokens].to_i,
+                      cache_write_tokens:    raw_usage[:cache_write_tokens].to_i,
+                      output_tokens_details: details
                     )
                   else
                     Usage.new

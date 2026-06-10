@@ -11,7 +11,6 @@ module Legion
           include Legion::Logging::Helper
           include Steps::Logging
 
-          # rubocop:disable Metrics/MethodLength, Metrics/BlockLength
           def step_tool_calls
             unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
               log_step_debug(:tool_calls, :skipped, reason: :no_tool_calls)
@@ -62,7 +61,7 @@ module Legion
               )
 
               if @pending_tool_history
-                lex_normalized = (source[:lex] || '').delete_prefix('lex-').tr('-', '_')
+                lex_normalized = (source[:lex] || source[:extension] || '').delete_prefix('lex-').tr('-', '_')
                 runner_key     = source[:type] == :extension ? "#{lex_normalized}_#{source[:runner]}" : nil
                 result_string  = result[:result].is_a?(String) ? result[:result] : Legion::JSON.dump(result[:result] || {})
                 @pending_tool_history_mutex.synchronize do
@@ -110,7 +109,6 @@ module Legion
             @warnings << "Tool call handling error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.tool_calls')
           end
-          # rubocop:enable Metrics/MethodLength, Metrics/BlockLength
 
           private
 
@@ -152,7 +150,7 @@ module Legion
           end
 
           def client_passthrough_source?(source)
-            source[:type] == :client && source[:executable] != true
+            source[:type] == :client
           end
 
           def client_passthrough_tool_call?(tool_call)
@@ -160,9 +158,33 @@ module Legion
           end
 
           def client_passthrough_tool_loop_result(result, tool_calls, round)
-            result[:tool_calls] = tool_calls
-            # Emit tool call/result events for client passthrough tools so they
-            # appear in the pending_tool_history and trigger @tool_event_handler callbacks.
+            # DO NOT overwrite result[:tool_calls] with just client tools.
+            # The provider response already contains ALL tool calls (LegionIO + client).
+            # The translator needs to see both:
+            #   - LegionIO tools with results → server_tool_use + server_tool_result
+            #   - Client tools without results → tool_use (passthrough)
+
+            # Populate :result on LegionIO tool calls from @pending_tool_history.
+            # These tools already executed server-side, but the result hash
+            # doesn't have the results yet. Without this, format_stop_reason
+            # sees LegionIO tools with nil results → returns 'pause_turn' →
+            # causes Claude Code to auto-send a follow-up → duplicate responses.
+            all_tc = Array(result[:tool_calls])
+            all_tc.each do |tc|
+              next if client_passthrough_tool_call?(tc)
+
+              tc_id = tc[:id] || tc['id']
+              tc_name = tc[:name] || tc['name']
+              entry = @pending_tool_history&.find { |e| e[:tool_call_id] == tc_id || e[:tool_name] == tc_name }
+              next unless entry && entry[:result]
+
+              tc[:result] = entry[:result]
+              tc['result'] = entry[:result]
+              log.debug("[llm][tool_loop] action=populate_legionio_result tool=#{tc_name} " \
+                        "tc_id=#{tc_id} result_length=#{entry[:result].to_s.length}")
+            end
+
+            # Only emit events for client passthrough tools here.
             tool_calls.each do |tool_call|
               next unless client_passthrough_tool_call?(tool_call)
 
@@ -269,7 +291,7 @@ module Legion
             when :mcp
               "mcp:#{source[:server]}"
             when :extension
-              [source[:lex], source[:runner], source[:function]].compact.join(':')
+              [source[:lex] || source[:extension], source[:runner], source[:function]].compact.join(':')
             else
               source[:type].to_s
             end

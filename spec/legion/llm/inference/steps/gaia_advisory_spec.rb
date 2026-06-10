@@ -26,6 +26,10 @@ RSpec.describe Legion::LLM::Inference::Steps::GaiaAdvisory do
   end
 
   describe '#step_gaia_advisory' do
+    before do
+      Legion::Settings[:llm][:gaia][:advisory_enabled] = true
+    end
+
     it 'skips when GAIA advisory is disabled by settings' do
       Legion::Settings[:llm][:gaia][:advisory_enabled] = false
       gaia_mod = Module.new
@@ -101,7 +105,10 @@ RSpec.describe Legion::LLM::Inference::Steps::GaiaAdvisory do
       mod
     end
 
-    before { stub_const('Legion::Gaia', gaia_mod) }
+    before do
+      stub_const('Legion::Gaia', gaia_mod)
+      Legion::Settings[:llm][:gaia][:advisory_enabled] = true
+    end
 
     context 'when calibration weights exist in Apollo Local' do
       before do
@@ -164,6 +171,7 @@ RSpec.describe Legion::LLM::Inference::Steps::GaiaAdvisory do
     end
 
     before do
+      Legion::Settings[:llm][:gaia][:advisory_enabled] = true
       stub_const('Legion::Gaia', gaia_mod)
       stub_const('Legion::Gaia::BondRegistry', double('BondRegistry', partner?: true))
       apollo_local = double('Apollo::Local', started?: true)

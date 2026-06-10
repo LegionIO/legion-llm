@@ -18,7 +18,7 @@ module Legion
             UPLOAD_MUTEX = Mutex.new
             UPLOAD_TTL   = 3600 # 1 hour
 
-            def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+            def self.registered(app) # rubocop:disable Metrics/AbcSize
               log.debug('[llm][api][namespaces][openai][uploads] registering routes')
 
               # POST /v1/uploads
@@ -78,7 +78,7 @@ module Legion
               end
 
               # POST /v1/uploads/:id/complete
-              app.post '/v1/uploads/:id/complete' do # rubocop:disable Metrics/BlockLength
+              app.post '/v1/uploads/:id/complete' do
                 require_llm!
                 upload_id = params[:id]
                 body      = parse_request_body

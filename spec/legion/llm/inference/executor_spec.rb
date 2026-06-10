@@ -98,6 +98,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
         allow(gaia_mod).to receive(:started?).and_return(true)
         stub_const('Legion::Gaia', gaia_mod)
 
+        Legion::Settings[:llm][:gaia][:advisory_enabled] = true
+
         executor = described_class.new(request)
         allow(executor).to receive(:step_provider_call).and_return(
           { role: :assistant, content: 'test' }
@@ -131,7 +133,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
         rag_request = Legion::LLM::Inference::Request.build(
           messages:         [{ role: :user, content: 'what is pgvector?' }],
           system:           'You are helpful.',
-          context_strategy: :rag
+          context_strategy: :rag,
+          routing:          { provider: :anthropic, model: 'claude-opus-4-6' }
         )
 
         apollo_runner = double('Knowledge')
@@ -459,7 +462,8 @@ confidence: 0.9 }],
         id:              'req-route-fleet',
         conversation_id: 'conv-route-fleet',
         messages:        [{ role: :user, content: 'hello' }],
-        routing:         { provider: :vllm, model: 'qwen3.6-27b' }
+        routing:         { provider: :vllm, model: 'qwen3.6-27b' },
+        extra:           { tier: :fleet }
       )
     end
 
@@ -484,6 +488,7 @@ confidence: 0.9 }],
 
     it 'records fleet timeouts with the selected lane and idempotency key' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
         success:        false,
         error:          'fleet_timeout',
@@ -508,6 +513,7 @@ confidence: 0.9 }],
 
     it 'records fleet errors separately from publish and timeout failures' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
         success:        false,
         error:          'fleet_worker_error',
@@ -526,6 +532,7 @@ confidence: 0.9 }],
 
     it 'passes native dispatch options as top-level fleet request params' do
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
       captured_request = nil
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch) do |request:, **|
         captured_request = request
@@ -537,6 +544,7 @@ confidence: 0.9 }],
         messages:        [{ role: :user, content: 'lookup teams chat' }],
         system:          'Use available tools.',
         routing:         { provider: :vllm, model: 'qwen3.6-27b' },
+        extra:           { tier: :fleet },
         metadata:        { client_tool_passthrough: true },
         tools:           [
           {
@@ -569,6 +577,7 @@ confidence: 0.9 }],
 
       Legion::Settings[:llm][:routing][:escalation][:enabled] = true
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = true
+      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
       allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
       allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
@@ -637,25 +646,31 @@ confidence: 0.9 }],
       Legion::Settings[:llm][:routing][:escalation][:enabled] = false
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
 
+      call_count = 0
       register_native_chat do
-        { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
+        call_count += 1
+        # Vary arguments each round to avoid repeat detection
+        { content: '', tool_calls: [{ id: "tc_#{call_count}", name: 'lookup', arguments: { round: call_count } }], usage: {} }
       end
       executor = described_class.new(tool_request)
       allow(executor).to receive(:step_response_normalization)
 
-      expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
+      expect { executor.call }.to raise_error(Legion::LLM::PipelineError, /tool loop exceeded 2 rounds/)
     end
 
     it 'honors max_tool_rounds settings' do
       Legion::Settings.set_prop(:llm, { max_tool_rounds: 2, routing: { escalation: { pipeline_enabled: false } } })
 
+      call_count = 0
       register_native_chat do
-        { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
+        call_count += 1
+        # Vary arguments each round to avoid repeat detection
+        { content: '', tool_calls: [{ id: "tc_#{call_count}", name: 'lookup', arguments: { round: call_count } }], usage: {} }
       end
       executor = described_class.new(tool_request)
       allow(executor).to receive(:step_response_normalization)
 
-      expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
+      expect { executor.call }.to raise_error(Legion::LLM::PipelineError, /tool loop exceeded 2 rounds/)
     end
 
     it 'uses default max_tool_rounds (200) when not configured in settings' do
@@ -754,7 +769,7 @@ confidence: 0.9 }],
       expect(response.tools.first.arguments).to eq(command: 'status')
     end
 
-    it 'skips explicit tool choice for client passthrough requests' do
+    it 'matches explicit tool choice even when client tools are present' do
       client_tool = Legion::LLM::Types::ToolDefinition.build(
         name:        'git',
         description: 'Git client tool',
@@ -769,7 +784,8 @@ confidence: 0.9 }],
       executor = described_class.new(path_request)
       executor.instance_variable_set(:@resolved_provider, :vllm)
 
-      expect(executor.send(:native_tool_prefs)).to include(choice: :auto)
+      # Explicit tool choice is matched regardless of client tools presence
+      expect(executor.send(:native_tool_prefs)).to include(choice: 'git')
     end
 
     it 'still chooses the Ruby tool when Ruby is explicitly requested' do
@@ -1332,6 +1348,7 @@ confidence: 0.9 }],
       Legion::LLM::Call::Registry.register(:fake_responses_native, adapter)
       executor = described_class.new(request)
       executor.instance_variable_set(:@resolved_provider, :fake_responses_native)
+      executor.instance_variable_set(:@resolved_instance, :default)
       expect(executor.provider_supports_responses?).to be true
     ensure
       Legion::LLM::Call::Registry.deregister_provider(:fake_responses_native)
@@ -1366,6 +1383,7 @@ confidence: 0.9 }],
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
       allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([healthy_entry])
       allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:provider]).to eq(:ollama)
       expect(result[:instance]).to eq(:default)
@@ -1416,9 +1434,23 @@ confidence: 0.9 }],
       allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(entries)
       allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:vllm, instance: :h200).and_return(:closed)
       allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:provider]).to eq(:vllm)
       expect(result[:instance]).to eq(:h200)
+    end
+
+    it 'falls to auto_route when discovered model provider is not locally registered' do
+      executor = described_class.new(request)
+      remote_entry = { model: 'claude-haiku-4-5-20251001', provider: :anthropic, instance: :default, tier: 'frontier' }
+      state = { model: 'claude-haiku-4-5-20251001', provider: nil, tier: nil, instance: nil,
+                provider_explicit: false, tier_explicit: false, instance_explicit: false }
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([remote_entry])
+      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).and_return(:closed)
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(false)
+      result = executor.send(:resolve_model_to_local_provider, state)
+      expect(result[:auto_route]).to be true
+      expect(result[:model]).to be_nil
     end
   end
 

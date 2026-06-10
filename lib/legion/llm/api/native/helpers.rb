@@ -63,7 +63,7 @@ module Legion
             expanded
           end
 
-          def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength,Metrics/PerceivedComplexity
+          def dispatch_client_tool(ref, **kwargs) # rubocop:disable Metrics/AbcSize
             case ref
             when 'sh'
               cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s

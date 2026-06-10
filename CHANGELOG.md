@@ -1,5 +1,146 @@
 # Legion LLM Changelog
 
+## [0.12.14] - 2026-06-10
+
+### Added
+- **Hint-based router scoring** — `tier`, `provider`, and `model` are now preference hints that bias rule scoring (+50 per matching hint) instead of hard overrides that bypass rule evaluation. This allows the router to apply policy (cost, privacy, health) and fall back to a better local match when the hinted provider is unavailable (router.rb)
+- **Context window filtering in router** — `estimated_tokens` is now computed from request messages + conversation history and passed to the router. Rules whose model's `context_length` cannot fit the estimated token count (at 90% threshold) are excluded from candidate selection (router.rb, executor.rb)
+- **Model-provider mismatch detection** — When an explicitly specified provider differs from the model's natural provider (e.g. "claude-sonnet-4-6" routed to vllm), the model is swapped to the provider's default to prevent dispatch failures. Auto-resolved providers (from tier/defaults) trust the caller's model choice (router.rb, executor.rb)
+- **Provider registry validation in explicit resolution** — Unregistered providers are cleared before tier-based fallback instead of committing to a dead-end resolution (router.rb)
+- **Repeat tool call detection in native tool loop** — The tool loop now tracks `(name, args_hash)` pairs and returns early with client passthrough results when repeated calls are detected, preventing infinite loops from stuck tool cycles (native_tool_loop.rb)
+- **Preserve recent turns in context curator** — `preserve_recent_turns` setting (default: 2) prevents tool result distillation from the most recent N turns so the model retains full context of recent work (context/curator.rb)
+- **Large JSON result summarization** — `summarize_result` now extracts top-level JSON keys from large results (>2000 chars) without full parsing, avoiding ParseError noise from truncated JSON (steps/tool_history.rb)
+
+### Changed
+- **Default settings adjustments** — `tool_result_max_dispatch_chars`: 4000→10000, `default_temperature`: 1.0→0.9, `context_curation.tool_result_max_chars`: 2000→10000, `thinking_eviction`: true→false, `exchange_folding`: true→false, `target_context_tokens`: 40000→60000, `conversation.summarize_threshold`: 50000→90000, `conversation.target_tokens`: 20000→60000, `structured_output.retry_on_parse_failure`: true→false (settings.rb)
+- **Router no longer short-circuits on tier/provider** — Tier and provider hints flow through rule matching with scoring bonuses instead of bypassing rules entirely. Fallback chain: rule match → explicit resolution → arbitrage (router.rb)
+- **Always inject LegionIO tools** — Removed `client_tools_only?` optimization; LegionIO tools (special + extension) are always injected regardless of client passthrough settings. Client passthrough is handled by the tool loop which executes LegionIO tools server-side (executor.rb)
+- **Server-side LegionIO tool execution in tool loop** — Tool calls are partitioned into server (LegionIO) and client (passthrough). Server tools execute in-place; client tools are returned without results. LegionIO tool results are populated from `@pending_tool_history` so translators see completed results and avoid `pause_turn` stop reasons (native_tool_loop.rb, steps/tool_calls.rb)
+- **Stop reason logic for completed LegionIO tools** — LegionIO tools with results no longer trigger `:pause_turn`; only tools without results (pending execution) pause the turn (steps/tool_calls.rb)
+
+### Fixed
+- **merge_defaults crash on nil intent** — Added safe navigation (`&.`) for `transform_keys`/`transform_values` on nil intent in `merge_defaults` (router.rb)
+- **structured_output retry_enabled? nil dereference** — Changed `[]` chain to `.dig()` so the setting check survives when the structured_output subtree is absent (call/structured_output.rb)
+- **Spec helper provider registration isolation** — Standard providers (anthropic, test, bedrock, openai, ollama, vllm, azure_foundry, gemini, xai) are now re-registered in `before(:each)` after `Registry.reset!` so router resolution works in every test (spec_helper.rb)
+
+## [0.12.13] - 2026-06-05
+
+### Added
+- **Runtime caller class detection via caller_locations** — `Transport::Message#encode_message` now walks the call stack to find the class/module that initiated an AMQP publish and injects `runtime_caller_class` into the caller hash. Works for any caller (Legion::LLM::API::Namespaces::Anthropic::Messages, Legion::Gaia::*, etc.) — the class name is derived from the file path so it always matches the actual calling module (lib/legion/llm/transport/message.rb)
+
+## [0.12.12] - 2026-06-05
+
+### Added
+- **Caller class and client detection** — `build_server_caller` now emits `runtime_caller_class` (codex, claude-code), `runtime_caller_client` (user-agent), `parent_request_ref` (Codex turn_id for ledger correlation), and `codex_turn_metadata` (parsed X_CODEX_TURN_METADATA JSON) in the caller hash so the ledger can populate caller identity, client attribution, and turn-level request correlation without DB queries at emit time (api/shared_helpers.rb)
+
+## [0.12.11] - 2026-06-05
+
+### Fixed
+- **Client request ID and conversation threading** — `/v1/messages` and `/v1/responses` now read `X-Client-Request-Id` from HTTP headers as the request ID instead of always generating new ones. `conversation_id` now uses `Thread-Id` (Codex) or `X-Claude-Code-Session-Id` (Claude Code) so the ledger groups messages from the same client session into one conversation row instead of random UUIDs (api/namespaces/anthropic/messages.rb, api/namespaces/openai/responses.rb)
+
+## [0.12.10] - 2026-06-05
+
+### Fixed
+- **OpenAI role normalization** — `:developer`, `:critic`, `:discriminator` roles now map to `:system` for non-OpenAI providers (Anthropic, vLLM, Ollama, Bedrock) so they don't raise `InvalidRoleError`. OpenAI messages preserve the original role because OpenAI natively supports all four. `normalize_role` runs at the adapter boundary per-provider (issue #147) (lib/legion/llm/call/lex_llm_adapter.rb)
+
+## [0.12.9] - 2026-06-05
+
+### Fixed
+- **Escalation attempts now individually recorded** — Every escalation attempt emits its own metering and audit events so each provider attempt gets a separate `inference_response` row and `metric` row. Per-attempt events include messages, response content, thinking, tokens, and cost. `emit_error_audit` now includes request messages so the ledger captures `request_json` even on total escalation exhaustion (issue #147) (lib/legion/llm/inference/executor.rb)
+
+## [0.12.8] - 2026-06-05
+
+### Fixed
+- **Async thread pool graceful shutdown** — `Legion::LLM.shutdown` now calls `shutdown` + `wait_for_termination(5)` on the executor's `ASYNC_THREAD_POOL` so background curation, reflection, and knowledge capture threads drain cleanly instead of being killed mid-operation (issue #143) (lib/legion/llm.rb)
+
+## [0.12.7] - 2026-06-05
+
+### Fixed
+- **Metering events now include request messages and response content** — Fixes 86% empty `request_json` rows in `llm_message_inference_requests` by including `messages`, `response_content`, and `response_thinking` in the metering event payload so the ledger captures complete data on the first synchronous write (issue #146) (inference/steps/metering.rb, inference/executor.rb)
+
+## [0.12.6] - 2026-06-05
+
+### Added
+- **Full thinking/reasoning support end-to-end** — Thinking blocks now flow through the entire pipeline: provider adapter accumulates thinking deltas and completed thinking, LexLLMAdapter extracts reasoning from Responses API output items, Anthropic translator emits thinking_content_block and redacted_thinking blocks, and the Response struct carries `thinking` through to all API formats. Anthropic streaming now emits `thinking_delta` and `signature_delta` events with proper content_block_start/stop lifecycle (api/namespaces/anthropic/messages.rb, api/translators/anthropic_response.rb, call/lex_llm_adapter.rb, inference/executor.rb)
+- **Responses API thinking + tool calls** — LexLLMAdapter now accumulates thinking (`response.reasoning_text.delta`, `response.reasoning_summary_text.delta`) and tool calls (`response.function_call_arguments.delta`) during Responses API streaming. Hash (non-streaming) responses also extract thinking from reasoning output items and top-level `reasoning.text`. `responses_usage` captures `output_tokens_details.reasoning_tokens` (call/lex_llm_adapter.rb)
+- **OpenAI Responses API namespace overhaul** — Rebuilt `/v1/responses` handler with full reasoning, tool call, thinking config, and provider routing support. Extracts `provider`/`tier`/`instance` from headers and body, builds proper routing hash, forwards `thinking` config to Request.build, and emits thinking blocks in streaming responses. Non-streaming path now returns thinking in the response payload (api/namespaces/openai/responses.rb, api/openai/responses.rb)
+- **Shared API completion summary logging** — New `log_api_completion_summary` helper in `api/shared_helpers.rb` emits structured completion logs across all API handlers (Anthropic, OpenAI chat, OpenAI Responses, native chat, native inference) with provider, model, tier, tokens (input/output/cache/thinking), latency, tool calls, and stop_reason. Replaces ad-hoc logging in each handler (api/shared_helpers.rb, api/namespaces/anthropic/messages.rb, api/namespaces/openai/responses.rb, api/namespaces/native/chat.rb, api/namespaces/native/inference.rb, api/native/chat.rb)
+- **`output_tokens_details` token breakdown** — `Usage` struct now carries `output_tokens_details` (reasoning_tokens). `NativeResponseAdapter` extracts it from provider usage hashes, and `extract_tokens` preserves it in the response tokens hash so downstream metering and API responses can report reasoning token counts (metering/usage.rb, call/dispatch.rb, inference/executor.rb)
+- **Tool loop message persistence** — Intermediate assistant/tool messages generated during the native tool loop are now persisted to the conversation store. `persist_tool_loop_messages` stores the intermediate exchanges (tool_use + tool_result pairs) between the original inputs and the final assistant response. `tool_loop_final_tool_calls` extracts tool_calls from the loop's final message for the assistant response record (inference/executor.rb)
+- **Client stream error detection** — New `client_stream_error?` predicate detects client-side disconnects (Puma::ConnectionError, EPIPE, closed IOError, ECONNRESET, ECONNABORTED) so escalation avoids retrying when the HTTP client has already disconnected (inference/executor.rb)
+- **Tool source resolution from registry** — Client-shaped tool declarations are now reclassified as registry/extension tools when a matching entry exists in `Legion::Settings::Extensions.find_tool`. `request_tool_source` and `resolve_registry_tool_source` look up tools by name (including `raw_name` from sanitized LegionIO dot-notation like `legion.microsoft_teams_create_chain`) and reclassify the source to `:registry` or `:extension` type with proper tool_class, runner, and function metadata. `client_tools_only?` was rewritten to only return true when ALL tools are truly client-side (none resolved to registry) (inference/executor.rb)
+
+### Changed
+- **Anthropic Messages API model no longer required** — `validate_anthropic_required!` no longer rejects requests without an explicit `model` field; the executor will auto-select a default. This matches the behavior expected by Claude Code and other clients that rely on server-side model resolution (api/namespaces/anthropic/messages.rb)
+- **Settings defaults** — `gaia.advisory_enabled` defaults to `false`, `fleet.enabled` to `false`, `routing.escalation.enabled` to `false`, `routing.arbitrage.enabled` to `false`, `rag.enabled` to `false`, `knowledge_capture.enabled` to `false`. Context window reduced to `128000`, local tool limit reduced to `50` (settings.rb)
+- **Empty response detection accounts for thinking** — Anthropic streaming no longer emits an overloaded_error when the provider returns thinking-only content (internal reasoning with no client-visible text). The error check now requires both `tool_calls.empty? && full_text.empty? && full_thinking.empty?` (api/namespaces/anthropic/messages.rb)
+- **Streaming stream error resilience** — Anthropic and OpenAI Responses streaming handlers now track `stream_closed` state and handle EPIPE/Puma::ConnectionError gracefully, exiting the stream loop without blowing up Puma (api/namespaces/anthropic/messages.rb, api/namespaces/openai/responses.rb)
+- **`provider_supports_responses?` fallback** — When the provider is not yet resolved, falls back to the request's routing hint so the decision can be made before pre-provider steps run (inference/executor.rb)
+- **Rubocop directive cleanup** — Removed unnecessary `Metrics/BlockLength` and `Metrics/MethodLength` disable comments throughout API files that no longer trigger violations (api/namespaces/*/). Line-length directives removed where guard-clause style fixes the violation (inference/executor.rb)
+
+### Fixed
+- **`Faraday::SSLError` not caught as provider_down** — SSL/TLS errors (certificate failures, handshake errors) were not handled in the provider_down rescue chain. Now `Faraday::SSLError` is caught alongside `ConnectionFailed` and `TimeoutError` in both `execute_provider_request_native` and `execute_provider_request_stream_native`, with audit status `provider_down` (inference/executor.rb)
+- **`client_tools_only?` returned wrong result** — The original implementation checked if any tool had `type: :client`, which returned true for mixed client+registry tool sets. Rewritten to check that ALL tools are client-side passthrough (none resolved to registry/extension tool classes). This fixes registry tool injection being suppressed when client and server tools are mixed (inference/executor.rb)
+- **Model resolution pins to unregistered remote providers** — `resolve_model_to_local_provider` now requires `Call::Registry.registered?(provider, instance: instance)` to pass before selecting a discovered model as healthy. Prevents pinning to providers like Anthropic when they only exist in the discovery cache (e.g. on a vLLM-only node) (inference/executor.rb)
+- **Quality checker thinking handling** — `Quality::Checker` now properly handles responses where content is nil but thinking is present, avoiding false quality failures (quality/checker.rb)
+- **RBAC step log level** — Downgraded RBAC step log from info to debug to reduce noise in production logs (inference/steps/rbac.rb)
+- **Compatibility alias** — `NativeResponseAdapter` alias now points to the correct nested class under `Call::Dispatch` (compat.rb)
+- **Knowledge capture step** — Handles nil thinking gracefully and respects the disabled default setting (inference/steps/knowledge_capture.rb)
+- **Post response step** — Properly passes thinking through post-response processing (inference/steps/post_response.rb)
+- **Trigger match step** — Now checks `ThinkingExtractor` availability before attempting extraction (inference/steps/trigger_match.rb)
+- **Sticky persist step** — Fixed tool call extraction for responses with thinking (inference/steps/sticky_persist.rb)
+- **Health tracker** — Removed unnecessary `Lint/DuplicateBranch` rubocop directive (router/health_tracker.rb)
+- **Route attempts** — Fixed `route_attempts` tracking for SSLError failures (inference/route_attempts.rb)
+
+## [0.12.6] - 2026-06-05
+
+### Added
+- **Full thinking/reasoning support end-to-end** — Thinking blocks now flow through the entire pipeline: provider adapters accumulate thinking deltas and completed thinking, LexLLMAdapter extracts reasoning from Responses API output items, Anthropic translator emits thinking_content_block and redacted_thinking blocks, and the Response struct carries `thinking` through to all API formats. Anthropic streaming now emits `thinking_delta` and `signature_delta` events with proper content_block_start/stop lifecycle (api/namespaces/anthropic/messages.rb, api/translators/anthropic_response.rb, call/lex_llm_adapter.rb, inference/executor.rb)
+- **Responses API thinking + tool calls in streaming** — LexLLMAdapter now accumulates thinking (`response.reasoning_text.delta`, `response.reasoning_summary_text.delta`) and tool calls (`response.function_call_arguments.delta`) during Responses API streaming. Hash (non-streaming) responses also extract thinking from reasoning output items and top-level `reasoning.text`. `responses_usage` captures `output_tokens_details.reasoning_tokens` (call/lex_llm_adapter.rb)
+- **OpenAI Responses API namespace overhaul** — Rebuilt `/v1/responses` handler with full reasoning, tool call, thinking config, and provider routing support. Extracts `provider`/`tier`/`instance` from headers and body, builds proper routing hash, forwards `thinking` config to Request.build, and emits thinking blocks in streaming responses. Non-streaming path now returns thinking in the response payload (api/namespaces/openai/responses.rb, api/openai/responses.rb)
+- **Shared API completion summary logging** — New `log_api_completion_summary` helper in `api/shared_helpers.rb` emits structured completion logs across all API handlers (Anthropic, OpenAI chat, OpenAI Responses, native chat, native inference) with provider, model, tier, tokens (input/output/cache/thinking), latency, tool calls, and stop_reason. Replaces ad-hoc logging in each handler (api/shared_helpers.rb, api/namespaces/anthropic/messages.rb, api/namespaces/openai/responses.rb, api/namespaces/native/chat.rb, api/namespaces/native/inference.rb, api/native/chat.rb)
+- **`output_tokens_details` token breakdown** — `Usage` struct now carries `output_tokens_details` (reasoning_tokens). `NativeResponseAdapter` extracts it from provider usage hashes, and `extract_tokens` preserves it in the response tokens hash so downstream metering and API responses can report reasoning token counts (metering/usage.rb, call/dispatch.rb, inference/executor.rb)
+- **Tool loop message persistence** — Intermediate assistant/tool messages generated during the native tool loop are now persisted to the conversation store. `persist_tool_loop_messages` stores the intermediate exchanges (tool_use + tool_result pairs) between the original inputs and the final assistant response. `tool_loop_final_tool_calls` extracts tool_calls from the loop's final message for the assistant response record (inference/executor.rb)
+- **Client stream error detection** — New `client_stream_error?` predicate detects client-side disconnects (Puma::ConnectionError, EPIPE, closed IOError, ECONNRESET, ECONNABORTED) so escalation avoids retrying when the HTTP client has already disconnected (inference/executor.rb)
+- **Tool source resolution from registry** — Client-shaped tool declarations are now reclassified as registry/extension tools when a matching entry exists in `Legion::Settings::Extensions.find_tool`. `request_tool_source` and `resolve_registry_tool_source` look up tools by name (including `raw_name` from sanitized LegionIO dot-notation like `legion.microsoft_teams_create_chain`) and reclassify the source to `:registry` or `:extension` type with proper tool_class, runner, and function metadata. `client_tools_only?` was rewritten to only return true when ALL tools are truly client-side (none resolved to registry) (inference/executor.rb)
+
+### Changed
+- **Anthropic Messages API model no longer required** — `validate_anthropic_required!` no longer rejects requests without an explicit `model` field; the executor will auto-select a default. This matches the behavior expected by Claude Code and other clients that rely on server-side model resolution (api/namespaces/anthropic/messages.rb)
+- **Settings defaults** — `gaia.advisory_enabled` defaults to `false`, `fleet.enabled` to `false`, `routing.escalation.enabled` to `false`, `routing.arbitrage.enabled` to `false`, `rag.enabled` to `false`, `knowledge_capture.enabled` to `false`. Context window reduced to `128000`, local tool limit reduced to `50` (settings.rb)
+- **Empty response detection accounts for thinking** — Anthropic streaming no longer emits an overloaded_error when the provider returns thinking-only content (internal reasoning with no client-visible text). The error check now requires `tool_calls.empty? && full_text.empty? && full_thinking.empty?` (api/namespaces/anthropic/messages.rb)
+- **Streaming stream error resilience** — Anthropic and OpenAI Responses streaming handlers now track `stream_closed` state and handle EPIPE/Puma::ConnectionError gracefully, exiting the stream loop without blowing up Puma (api/namespaces/anthropic/messages.rb, api/namespaces/openai/responses.rb)
+- **`provider_supports_responses?` fallback** — When the provider is not yet resolved, falls back to the request's routing hint so the decision can be made before pre-provider steps run (inference/executor.rb)
+- **Rubocop directive cleanup** — Removed unnecessary `Metrics/BlockLength` and `Metrics/MethodLength` disable comments throughout API files that no longer trigger violations (api/namespaces/*/). Line-length directives removed where guard-clause style fixes the violation (inference/executor.rb)
+
+### Fixed
+- **`Faraday::SSLError` not caught as provider_down** — SSL/TLS errors (certificate failures, handshake errors) were not handled in the provider_down rescue chain. Now `Faraday::SSLError` is caught alongside `ConnectionFailed` and `TimeoutError` in both `execute_provider_request_native` and `execute_provider_request_stream_native`, with audit status `provider_down` (inference/executor.rb)
+- **`client_tools_only?` returned wrong result** — The original implementation checked if any tool had `type: :client`, which returned true for mixed client+registry tool sets. Rewritten to check that ALL tools are client-side passthrough (none resolved to registry/extension tool classes). This fixes registry tool injection being suppressed when client and server tools are mixed (inference/executor.rb)
+- **Model resolution pins to unregistered remote providers** — `resolve_model_to_local_provider` now requires `Call::Registry.registered?(provider, instance: instance)` to pass before selecting a discovered model as healthy. Prevents pinning to providers like Anthropic when they only exist in the discovery cache (e.g. on a vLLM-only node) (inference/executor.rb)
+- **Quality checker thinking handling** — `Quality::Checker` now properly handles responses where content is nil but thinking is present, avoiding false quality failures (quality/checker.rb)
+- **RBAC step log level** — Downgraded RBAC step log from info to debug to reduce noise in production logs (inference/steps/rbac.rb)
+- **Compatibility alias** — `NativeResponseAdapter` alias now points to the correct nested class under `Call::Dispatch` (compat.rb)
+- **Knowledge capture step** — Handles nil thinking gracefully and respects the disabled default setting (inference/steps/knowledge_capture.rb)
+- **Post response step** — Properly passes thinking through post-response processing (inference/steps/post_response.rb)
+- **Trigger match step** — Now checks `ThinkingExtractor` availability before attempting extraction (inference/steps/trigger_match.rb)
+- **Sticky persist step** — Fixed tool call extraction for responses with thinking (inference/steps/sticky_persist.rb)
+- **Route attempts** — Fixed `route_attempts` tracking for SSLError failures (inference/route_attempts.rb)
+- **Health tracker** — Removed unnecessary `Lint/DuplicateBranch` rubocop directive (router/health_tracker.rb)
+
+## [0.12.5] - 2026-06-04
+
+### Fixed
+- **dispatch_extension fails when source uses :extension key** — `dispatch_extension` only checked `source[:lex]`, but `check_registry_override` and other callers sometimes set `:extension` instead. Now falls back to `source[:extension]` when `:lex` is absent (tools/dispatcher.rb)
+- **dispatch_client attempted server-side execution of client tools** — Client tools (Bash, Read, etc.) now always return `:passthrough` status instead of attempting server-side execution via `ClientToolMethods`. LegionIO should never execute client tools; that's the client's responsibility (tools/dispatcher.rb)
+- **OpenAI Responses API ignores explicit provider routing** — Both namespace (`api/namespaces/openai/responses.rb`) and legacy (`api/openai/responses.rb`) handlers only passed `{ model: model }` in the routing hash, dropping `HTTP_X_LEGION_PROVIDER`, `HTTP_X_LEGION_TIER`, and `HTTP_X_LEGION_INSTANCE` headers. Now extracts these headers and body fields, builds a proper routing hash with provider/instance/model, and passes tier via `Request.extra[:tier]` to match the Anthropic Messages handler behavior.
+- **Anthropic Messages API drops thinking config** — Both namespace (`api/namespaces/anthropic/messages.rb`) and legacy (`api/anthropic/messages.rb`) handlers never forwarded `body[:thinking]` to `Request.build`. Now passes through unchanged so all providers (Anthropic, Bedrock, etc.) receive the original thinking config. Anthropic provider now handles both `:budget_tokens` and `:budget` keys for compatibility.
+
+## [0.12.4] - 2026-06-04
+
+### Fixed
+- **Forced tool choice arguments emitted as text instead of structured tool_use** — When a tool choice is forced (e.g. vLLM/qwen with explicit tool name in user text), the provider may output tool arguments as plain text JSON (`{"file_path": "..."}`) in `delta['content']` instead of structured `delta['tool_calls']`. Added `maybe_synthesize_tool_call_from_content` to both `execute_native_tool_loop` and `execute_native_streaming_tool_loop`: when tool calls are empty but content is valid JSON and a tool choice is forced, parse the text and create a proper tool call. Also added `text_looks_like_tool_json?` guard to Anthropic and OpenAI response translators to skip emitting JSON blobs as text deltas. Client sees native tool_use/function_call blocks instead of raw JSON text (inference/native_tool_loop.rb, api/translators/anthropic_response.rb, api/translators/openai_response.rb, api/anthropic/messages.rb, api/openai/chat_completions.rb)
+- **Model discovery pins to unregistered remote providers** — `resolve_model_to_local_provider` found a model in the discovery cache and pinned it to a provider that isn't registered locally (e.g. `claude-haiku-4-5-20251001` → Anthropic on a vLLM-only node). Added `Call::Registry.registered?(provider, instance: instance)` check to the healthy candidate filter so unregistered providers are skipped and the request falls through to `auto_route` (inference/executor.rb)
+- **`client_tools_only?` method missing** — Restored `client_tools_only?` in executor to guard explicit tool choice forcing for client passthrough requests (inference/executor.rb, inference/native_tool_loop.rb)
+
 ## [0.12.3] - 2026-06-02
 
 ### Fixed

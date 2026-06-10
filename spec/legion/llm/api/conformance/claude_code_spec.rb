@@ -240,7 +240,9 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
       instance_double(Legion::LLM::Types::ToolCall,
                       id:        'toolu_test_123',
                       name:      'get_weather',
-                      arguments: { city: 'Boston' })
+                      arguments: { city: 'Boston' },
+                      source:    { type: :client },
+                      result:    nil)
     end
     let(:fake_pipeline_response) do
       instance_double(
@@ -381,14 +383,14 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
   # ─── POST /v1/messages — error handling ────────────────────────────────────
 
   describe 'POST /v1/messages error handling' do
-    it 'returns 400 anthropic_error when model is missing' do
+    it 'returns 529 when model is missing (no provider resolves it)' do
       post '/v1/messages',
            Legion::JSON.dump({ max_tokens: 1024, messages: [{ role: 'user', content: 'Hi' }] }),
            claude_code_headers
-      expect(last_response.status).to eq(400)
+      expect(last_response.status).to eq(529)
       body = Legion::JSON.load(last_response.body)
       expect(body[:type]).to eq('error')
-      expect(body[:error][:type]).to eq('invalid_request_error')
+      expect(body[:error][:type]).to eq('overloaded_error')
     end
 
     it 'returns 400 when messages is missing' do

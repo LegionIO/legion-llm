@@ -553,16 +553,16 @@ RSpec.describe Legion::LLM::Context::Curator do
       expect(Legion::Settings.dig(:llm, :context_curation, :llm_assisted)).to be false
     end
 
-    it 'tool_result_max_chars defaults to 2000' do
-      expect(Legion::Settings.dig(:llm, :context_curation, :tool_result_max_chars)).to eq(2000)
+    it 'tool_result_max_chars defaults to 10000' do
+      expect(Legion::Settings.dig(:llm, :context_curation, :tool_result_max_chars)).to eq(10_000)
     end
 
-    it 'thinking_eviction defaults to true' do
-      expect(Legion::Settings.dig(:llm, :context_curation, :thinking_eviction)).to be true
+    it 'thinking_eviction defaults to false' do
+      expect(Legion::Settings.dig(:llm, :context_curation, :thinking_eviction)).to be false
     end
 
-    it 'exchange_folding defaults to true' do
-      expect(Legion::Settings.dig(:llm, :context_curation, :exchange_folding)).to be true
+    it 'exchange_folding defaults to false' do
+      expect(Legion::Settings.dig(:llm, :context_curation, :exchange_folding)).to be false
     end
 
     it 'superseded_eviction defaults to true' do
@@ -577,8 +577,8 @@ RSpec.describe Legion::LLM::Context::Curator do
       expect(Legion::Settings.dig(:llm, :context_curation, :dedup_threshold)).to eq(0.85)
     end
 
-    it 'target_context_tokens defaults to 40000' do
-      expect(Legion::Settings.dig(:llm, :context_curation, :target_context_tokens)).to eq(40_000)
+    it 'target_context_tokens defaults to 60000' do
+      expect(Legion::Settings.dig(:llm, :context_curation, :target_context_tokens)).to eq(60_000)
     end
   end
 end

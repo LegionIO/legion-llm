@@ -39,6 +39,11 @@ RSpec.describe 'vLLM provider integration' do
     end
 
     it 'returns :ollama when vllm is not registered' do
+      # Reset registry and register only non-vllm providers to simulate vllm absence
+      Legion::LLM::Call::Registry.reset!
+      %i[anthropic ollama bedrock openai].each do |p|
+        Legion::LLM::Call::Registry.register(p, Module.new)
+      end
       result = Legion::LLM::Router.send(:default_provider_for_tier, :fleet)
       expect(result).to eq(:ollama)
     end

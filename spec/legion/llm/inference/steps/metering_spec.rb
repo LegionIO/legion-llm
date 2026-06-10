@@ -25,6 +25,30 @@ RSpec.describe Legion::LLM::Inference::Steps::Metering do
       expect(event[:thinking_tokens]).to eq(0)
       expect(event[:total_tokens]).to eq(0)
     end
+
+    it 'includes messages when provided' do
+      messages = [{ role: :user, content: 'hello' }]
+      event = described_class.build_event(model_id: 'test', messages: messages)
+      expect(event[:messages]).to eq(messages)
+    end
+
+    it 'includes response_content when provided' do
+      event = described_class.build_event(model_id: 'test', response_content: 'the answer')
+      expect(event[:response_content]).to eq('the answer')
+    end
+
+    it 'includes response_thinking when provided' do
+      thinking = { content: 'reasoning here', enabled: true }
+      event = described_class.build_event(model_id: 'test', response_thinking: thinking)
+      expect(event[:response_thinking]).to eq(thinking)
+    end
+
+    it 'omits content fields when nil' do
+      event = described_class.build_event(model_id: 'test')
+      expect(event).not_to have_key(:messages)
+      expect(event).not_to have_key(:response_content)
+      expect(event).not_to have_key(:response_thinking)
+    end
   end
 
   describe '.publish_or_spool' do

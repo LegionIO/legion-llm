@@ -66,6 +66,7 @@ module Legion
             return false if query.nil? || query.empty?
 
             auto_strategy = @request.context_strategy.nil? || @request.context_strategy == :auto
+            log.unknown auto_strategy
             return true unless auto_strategy
 
             !trivial_query?(query)
@@ -87,6 +88,7 @@ module Legion
             end
             total_chars = entries.sum { |e| (e[:content] || e['content']).to_s.length }
             log_step_info(:rag_context, :context_injected, strategy: strategy, entry_count: entries.size, total_chars: total_chars)
+            log.unknown entries
 
             scores = entries.filter_map { |e| e[:confidence] || e[:distance] }.map { |s| s.is_a?(Numeric) ? s.round(3) : s }
             log.debug(

@@ -29,11 +29,11 @@ module Legion
               end
             end
 
-            def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+            def self.registered(app) # rubocop:disable Metrics/AbcSize
               log.debug('[llm][api][namespaces][openai][batches] registering routes')
 
               # POST /v1/batches
-              app.post '/v1/batches' do # rubocop:disable Metrics/BlockLength
+              app.post '/v1/batches' do
                 require_llm!
                 body = parse_request_body
                 validate_required!(body, :input_file_id, :endpoint)

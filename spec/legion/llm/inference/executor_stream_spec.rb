@@ -3,6 +3,10 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
+  before do
+    Legion::Settings[:llm][:routing][:escalation][:enabled] = false
+  end
+
   let(:request) do
     Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
@@ -52,6 +56,8 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
 
     timeline_keys = response.timeline.map { |e| e[:key] }
     expect(timeline_keys).to include('tracing:init')
+  ensure
+    Legion::LLM::Call::Registry.deregister_provider(:anthropic)
   end
 
   it 'applies enriched system instructions before streaming the provider call' do

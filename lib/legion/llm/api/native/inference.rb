@@ -133,7 +133,6 @@ module Legion
                         'Connection'        => 'keep-alive',
                         'X-Accel-Buffering' => 'no'
 
-                # rubocop:disable Metrics/BlockLength
                 stream do |out|
                   full_text = +''
 
@@ -229,7 +228,6 @@ module Legion
                   handle_exception(e, level: :error, handled: false, operation: 'llm.api.inference.stream', request_id: request_id)
                   emit_sse_event(out, 'error', { code: 'stream_error', message: e.message })
                 end
-                # rubocop:enable Metrics/BlockLength
               else
                 exec_t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
                 pipeline_response = executor.call

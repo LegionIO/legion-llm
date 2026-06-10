@@ -34,11 +34,28 @@ module Legion
 
           Inference::Executor::ASYNC_THREAD_POOL.post do
             all_messages = Inference::Conversation.messages(@conversation_id)
-            older = if current_turn_count.positive? && all_messages.size > current_turn_count
-                      all_messages[0...-current_turn_count]
-                    else
-                      []
-                    end
+
+            # Determine where the current turn starts in the full message list.
+            current_turn_start = if current_turn_count.positive? && all_messages.size > current_turn_count
+                                   all_messages.size - current_turn_count
+                                 else
+                                   0
+                                 end
+
+            # Respect preserve_recent_turns: don't distill tool results from the
+            # last N turns so the model retains full context of recent work.
+            # The current turn is always excluded (it's the most recent). We need
+            # to additionally preserve (preserve_recent_turns - 1) prior turns.
+            preserve_turns = setting(:preserve_recent_turns, 2).to_i
+            preserve_turns = 1 unless preserve_turns.positive?
+            preserve_prior = [preserve_turns - 1, 0].max
+
+            # Find the split point among messages before the current turn.
+            # Messages from split_idx onward are preserved (no distillation).
+            pre_current = all_messages[0...current_turn_start]
+            split_idx = find_preserve_split(pre_current, preserve_prior)
+
+            older = all_messages[0...split_idx]
 
             if older.any?
               curated = older.map { |msg| curate_message(msg, assistant_response) }

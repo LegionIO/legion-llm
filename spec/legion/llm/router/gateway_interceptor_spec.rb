@@ -11,8 +11,10 @@ require 'spec_helper'
 RSpec.describe 'Custom OpenAI-compatible provider routing' do
   before do
     Legion::LLM::Router.reset!
+    Legion::LLM::Call::Registry.reset!
     allow(Legion::LLM::Router).to receive(:privacy_mode?).and_return(false)
 
+    # Register only the custom proxy provider (no competing cloud providers)
     Legion::LLM::Call::Registry.register(
       :openai,
       Module.new,

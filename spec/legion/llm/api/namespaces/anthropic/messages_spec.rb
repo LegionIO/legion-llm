@@ -22,11 +22,16 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
   let(:mock_response) do
     instance_double(
       Legion::LLM::Inference::Response,
-      message: { content: 'Hello! How can I help you?' },
-      routing: { model: 'claude-sonnet-4-6', provider: :anthropic },
-      tokens:  { input: 10, output: 8 },
-      tools:   nil,
-      stop:    { reason: 'end_turn' }
+      message:         { content: 'Hello! How can I help you?' },
+      routing:         { model: 'claude-sonnet-4-6', provider: :anthropic },
+      tokens:          { input: 10, output: 8 },
+      tools:           [],
+      stop:            { reason: 'end_turn' },
+      thinking:        nil,
+      timestamps:      {},
+      timeline:        [],
+      conversation_id: nil,
+      request_id:      nil
     )
   end
 
@@ -48,10 +53,6 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
       mock_executor = instance_double(Legion::LLM::Inference::Executor)
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
       allow(mock_executor).to receive(:call).and_return(mock_response)
-      allow(mock_response).to receive(:respond_to?).with(:tokens).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:routing).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:tools).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:stop).and_return(true)
     end
 
     it 'returns Anthropic message format' do
@@ -68,13 +69,8 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
       expect(body[:usage]).to have_key(:output_tokens)
     end
 
-    it 'requires model field' do
-      post '/v1/messages', Legion::JSON.dump(request_body.except(:model)), 'CONTENT_TYPE' => 'application/json'
-      expect(last_response.status).to eq(400)
-      body = Legion::JSON.load(last_response.body)
-      expect(body[:type]).to eq('error')
-      expect(body[:error][:type]).to eq('invalid_request_error')
-    end
+    # NOTE: model is optional for auto-routing — the executor selects a default.
+    # Only messages and max_tokens are required by the Anthropic namespace route.
 
     it 'requires messages field' do
       post '/v1/messages', Legion::JSON.dump(request_body.except(:messages)), 'CONTENT_TYPE' => 'application/json'
@@ -136,6 +132,8 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
   end
 
   describe 'POST /v1/messages (streaming)' do
+    let(:mock_executor) { instance_double(Legion::LLM::Inference::Executor) }
+
     let(:request_body) do
       {
         model:      'claude-sonnet-4-6',
@@ -146,15 +144,10 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
     end
 
     before do
-      mock_executor = instance_double(Legion::LLM::Inference::Executor)
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
       allow(mock_executor).to receive(:call_stream).and_yield(
-        double(content: 'Hello', respond_to?: true)
+        double(content: 'Hello', thinking: nil, respond_to?: true)
       ).and_return(mock_response)
-      allow(mock_response).to receive(:respond_to?).with(:tokens).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:routing).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:tools).and_return(true)
-      allow(mock_response).to receive(:respond_to?).with(:stop).and_return(true)
     end
 
     it 'returns text/event-stream content type' do
@@ -197,6 +190,21 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
            'HTTP_ACCEPT'  => 'text/event-stream'
       expect(last_response.body).to include('event: content_block_delta')
       expect(last_response.body).to include('text_delta')
+    end
+
+    it 'keeps thinking-only chunks internal without treating them as empty responses' do
+      allow(mock_executor).to receive(:call_stream).and_yield(
+        double(content: nil, thinking: 'internal reasoning', respond_to?: true)
+      ).and_return(mock_response)
+
+      post '/v1/messages', Legion::JSON.dump(request_body),
+           'CONTENT_TYPE' => 'application/json',
+           'HTTP_ACCEPT'  => 'text/event-stream'
+
+      expect(last_response.body).to include('event: message_stop')
+      expect(last_response.body).not_to include('"type":"thinking"')
+      expect(last_response.body).not_to include('thinking_delta')
+      expect(last_response.body).not_to include('Model returned empty response')
     end
 
     it 'emits ping event' do

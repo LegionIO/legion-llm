@@ -72,7 +72,6 @@ module Legion
                 "WEBVTT\n\n00:00:00.000 --> 00:00:30.000\n#{text}\n\n"
               end
 
-              # rubocop:disable Metrics/BlockLength
               post '/transcriptions' do
                 require_llm!
 
@@ -201,7 +200,6 @@ module Legion
                 halt 500, { 'Content-Type' => 'application/json' },
                      Legion::JSON.dump({ error: { message: e.message, type: 'server_error', code: nil } })
               end
-              # rubocop:enable Metrics/BlockLength
             end
           end
         end

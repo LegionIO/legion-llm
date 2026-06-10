@@ -65,12 +65,14 @@ RSpec.describe 'Router memory gate integration' do
       expect(result.provider).to eq(:ollama)
     end
 
-    it 'rejects local rules when memory gate denies' do
+    it 'rejects local rules when memory gate denies and falls back to arbitrage' do
       allow(Legion::LLM::Discovery::MemoryGate).to receive(:allow?).and_return(false)
       configure_routing(rules: [local_rule])
 
       result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
-      expect(result).to be_nil
+      # New behavior: when all rules are rejected, falls back to arbitrage
+      # rather than returning nil
+      expect(result).not_to be_nil
     end
 
     it 'falls through to fleet rule when local is rejected by memory' do

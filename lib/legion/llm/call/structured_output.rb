@@ -130,7 +130,7 @@ module Legion
           end
 
           def retry_enabled?
-            Legion::Settings[:llm][:structured_output][:retry_on_parse_failure] != false
+            Legion::Settings.dig(:llm, :structured_output, :retry_on_parse_failure) != false
           end
 
           def max_retries

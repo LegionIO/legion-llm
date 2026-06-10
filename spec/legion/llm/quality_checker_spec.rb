@@ -8,6 +8,14 @@ RSpec.describe Legion::LLM::Quality::Checker do
   let(:empty_response) { double('Response', content: '', role: :assistant) }
   let(:nil_response) { double('Response', content: nil, role: :assistant) }
   let(:short_response) { double('Response', content: 'ok', role: :assistant) }
+  let(:thinking_only_response) do
+    double(
+      'Response',
+      content:  '',
+      thinking: { content: 'internal reasoning' },
+      role:     :assistant
+    )
+  end
 
   let(:repetitive_response) do
     repeated = 'ABCDEFGHIJKLMNOPQRST' * 10
@@ -39,6 +47,14 @@ RSpec.describe Legion::LLM::Quality::Checker do
       end
     end
 
+    context 'with thinking-only content' do
+      it 'does not fail empty_response when thinking is present' do
+        result = described_class.check(thinking_only_response)
+        expect(result.passed).to be true
+        expect(result.failures).not_to include(:empty_response)
+      end
+    end
+
     context 'with short content' do
       it 'fails with :too_short when below threshold' do
         result = described_class.check(short_response, quality_threshold: 10)
@@ -53,7 +69,16 @@ RSpec.describe Legion::LLM::Quality::Checker do
     end
 
     context 'with repetitive content' do
-      it 'fails with :repetition' do
+      it 'passes by default' do
+        result = described_class.check(repetitive_response)
+        expect(result.passed).to be true
+        expect(result.failures).not_to include(:repetition)
+      end
+
+      it 'fails with :repetition when enabled' do
+        Legion::Settings[:llm][:quality] ||= {}
+        Legion::Settings[:llm][:quality][:repetition] = true
+
         result = described_class.check(repetitive_response)
         expect(result.passed).to be false
         expect(result.failures).to include(:repetition)

@@ -261,9 +261,7 @@ module Legion
       end
 
       def inference_response_details(result, requested_model:, requested_provider:)
-        if result.is_a?(Legion::LLM::Inference::Response)
-          return pipeline_response_details(result, requested_model: requested_model, requested_provider: requested_provider)
-        end
+        return pipeline_response_details(result, requested_model: requested_model, requested_provider: requested_provider) if result.is_a?(Legion::LLM::Inference::Response)
         return hash_response_details(result, requested_model: requested_model, requested_provider: requested_provider) if result.is_a?(Hash)
 
         object_response_details(result, requested_model: requested_model, requested_provider: requested_provider)

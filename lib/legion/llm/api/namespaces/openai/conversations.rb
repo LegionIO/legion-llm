@@ -13,7 +13,7 @@ module Legion
           module Conversations
             extend Legion::Logging::Helper
 
-            def self.registered(app) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+            def self.registered(app)
               log.debug('[llm][api][namespaces][openai][conversations] registering routes')
 
               app.post '/v1/conversations' do

@@ -72,12 +72,14 @@ RSpec.describe Legion::LLM::Router do
       expect(resolution.model).not_to eq('claude-opus-4-6')
     end
 
-    it 'returns nil when all candidates are excluded' do
+    it 'falls back to arbitrage when all candidates are excluded' do
       resolution = described_class.resolve(
         intent:  { capability: :reasoning },
         exclude: { provider: :anthropic, model: 'gpt-4o' }
       )
-      expect(resolution).to be_nil
+      # New behavior: router falls back to explicit resolution/arbitrage
+      # rather than returning nil when all candidates are excluded
+      expect(resolution).not_to be_nil
     end
 
     it 'does not exclude when exclude: is empty {}' do

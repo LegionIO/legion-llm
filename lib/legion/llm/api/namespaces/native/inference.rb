@@ -19,6 +19,7 @@ module Legion
 
               ns_context.post '' do # rubocop:disable Metrics/BlockLength
                 require_llm!
+                request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
                 body = parse_request_body
                 validate_required!(body, :messages)
 
@@ -55,7 +56,7 @@ module Legion
                 last_user = messages.select { |m| (m[:role] || m['role']).to_s == 'user' }.last
                 prompt    = (last_user || {})[:content] || (last_user || {})['content'] || ''
 
-                route_t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+                route_t0 = request_started_at
 
                 if defined?(Legion::Gaia) && Legion::Gaia.respond_to?(:started?) && Legion::Gaia.started? && prompt.to_s.length.positive?
                   begin
@@ -119,7 +120,7 @@ module Legion
                           'Connection'        => 'keep-alive',
                           'X-Accel-Buffering' => 'no'
 
-                  stream do |out| # rubocop:disable Metrics/BlockLength
+                  stream do |out|
                     full_text = +''
 
                     executor.tool_event_handler = lambda { |event|
@@ -185,11 +186,14 @@ module Legion
                     }.compact
                     done_payload[:thinking] = pipeline_response.thinking if include_thinking && pipeline_response.thinking
                     emit_sse_event(out, 'done', done_payload)
-
-                    log.info(
-                      "[llm][api][namespaces][inference] action=completed request_id=#{request_id} " \
-                      "model=#{routing[:model] || 'unknown'} stream=true " \
-                      "input_tokens=#{token_value(tokens, :input) || 0} output_tokens=#{token_value(tokens, :output) || 0}"
+                    log_api_completion_summary(
+                      namespace:         'namespaces][inference',
+                      request_id:        request_id,
+                      pipeline_response: pipeline_response,
+                      stream:            true,
+                      started_at:        route_t0,
+                      tool_calls:        tool_calls,
+                      stop_reason:       stop_reason
                     )
                   rescue StandardError => e
                     handle_exception(e, level: :error, handled: false, operation: 'llm.api.inference.stream', request_id: request_id)
@@ -208,11 +212,14 @@ module Legion
                   tool_calls  = Legion::LLM::API::Translators::OpenAIResponse.build_tool_calls(pipeline_response)
                   stop_reason = pipeline_response.stop&.dig(:reason)&.to_s
 
-                  log.info(
-                    "[llm][api][namespaces][inference] action=completed request_id=#{request_id} " \
-                    "model=#{routing[:model] || routing['model'] || 'unknown'} " \
-                    "input_tokens=#{token_value(tokens, :input) || 0} output_tokens=#{token_value(tokens, :output) || 0} " \
-                    "tool_calls=#{tool_calls.size} stop_reason=#{stop_reason || 'unknown'} stream=false"
+                  log_api_completion_summary(
+                    namespace:         'namespaces][inference',
+                    request_id:        request_id,
+                    pipeline_response: pipeline_response,
+                    stream:            false,
+                    started_at:        route_t0,
+                    tool_calls:        tool_calls,
+                    stop_reason:       stop_reason
                   )
 
                   payload = {

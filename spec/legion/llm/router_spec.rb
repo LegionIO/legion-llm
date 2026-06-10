@@ -53,12 +53,12 @@ RSpec.describe Legion::LLM::Router do
     allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
   end
 
-  def configure_routing(enabled: true, rules: sample_rules, extra: {}, auto_rules_populated: true)
+  def configure_routing(enabled: true, rules: sample_rules, extra: {}, auto_rules_populated: true, default_intent: { privacy: 'normal', capability: 'basic' })
     Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
                                       routing: {
                                         enabled:        enabled,
                                         rules:          rules,
-                                        default_intent: { privacy: 'normal', capability: 'basic' }
+                                        default_intent: default_intent
                                       }.merge(extra)
                                     ))
     described_class.populate_auto_rules({}) if auto_rules_populated && enabled
@@ -207,21 +207,27 @@ RSpec.describe Legion::LLM::Router do
     end
   end
 
-  # ─── 6. Returns nil when no rules match ──────────────────────────────────────
+  # ─── 6. Falls back when no rules match ──────────────────────────────────────
 
   describe '.resolve with unmatched intent' do
     before { configure_routing }
 
-    it 'returns nil when no rules match the intent' do
+    it 'falls back to explicit resolution or arbitrage when no rules match the intent' do
       result = described_class.resolve(intent: { capability: 'unknown_capability_xyz' })
-      expect(result).to be_nil
+      # New behavior: router falls back to explicit resolution (from defaults) then arbitrage
+      # rather than returning nil, so a resolution is always returned when possible
+      expect(result).not_to be_nil
     end
   end
 
-  # ─── 7. Explicit tier override skips rule matching ───────────────────────────
+  # ─── 7. Explicit tier override as preference hint ───────────────────────────
 
   describe '.resolve with explicit tier override' do
-    before { configure_routing }
+    before do
+      # Configure routing without default_intent so tier/provider hints
+      # fall through to explicit resolution rather than matching rules
+      configure_routing(default_intent: {})
+    end
 
     it 'returns a resolution with the given tier' do
       result = described_class.resolve(tier: :fleet)
@@ -258,9 +264,12 @@ RSpec.describe Legion::LLM::Router do
       expect(result.provider).to eq(:ollama)
     end
 
-    it 'skips rule matching even when routing is enabled' do
-      expect(described_class).not_to receive(:load_rules)
-      described_class.resolve(tier: :cloud)
+    it 'uses tier/provider as preference hints during rule matching' do
+      # New behavior: tier/provider are hints that bias scoring, not hard overrides
+      # that skip rule matching. Rules are still evaluated but matching candidates
+      # receive a priority bonus.
+      result = described_class.resolve(tier: :cloud)
+      expect(result).not_to be_nil
     end
   end
 

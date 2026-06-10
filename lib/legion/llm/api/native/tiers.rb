@@ -9,7 +9,7 @@ module Legion
         module Tiers
           extend Legion::Logging::Helper
 
-          def self.registered(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          def self.registered(app) # rubocop:disable Metrics/AbcSize
             log.debug('[llm][api][tiers] registering tier routes')
 
             app.get '/api/llm/tiers' do

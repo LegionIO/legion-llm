@@ -279,11 +279,13 @@ module Legion
 
         def build_responses_stream_accumulator
           {
-            content:   +'',
-            model:     nil,
-            usage:     {},
-            completed: nil,
-            raw:       nil
+            content:    +'',
+            thinking:   +'',
+            model:      nil,
+            usage:      {},
+            completed:  nil,
+            raw:        nil,
+            tool_calls: {}
           }
         end
 
@@ -311,11 +313,33 @@ module Legion
           case parsed['type']
           when 'response.output_text.delta'
             accumulate_responses_text_delta(parsed, accumulator, block)
+          when 'response.reasoning_summary_text.delta', 'response.reasoning_text.delta'
+            accumulate_responses_thinking_delta(parsed, accumulator, block)
+          when 'response.function_call_arguments.delta'
+            call_id = parsed['item_id'].to_s
+            delta = parsed['delta'].to_s
+            return if delta.empty?
+
+            accumulator[:tool_calls][call_id] ||= +''
+            accumulator[:tool_calls][call_id] << delta
+
+            block&.call(
+              lex_llm_namespace::Chunk.new(
+                role:       :assistant,
+                content:    '',
+                tool_calls: { call_id.to_sym => lex_llm_namespace::ToolCall.new(id: call_id, name: '', arguments: delta) },
+                model_id:   parsed['model'],
+                raw:        parsed,
+                tokens:     nil
+              )
+            )
           when 'response.completed'
             response = parsed['response'] || {}
             accumulator[:completed] = response
             accumulator[:model] = response['model'] if response['model']
             accumulator[:usage] = responses_usage(response['usage'])
+            completed_thinking = extract_responses_thinking(response)
+            accumulator[:thinking] << completed_thinking if accumulator[:thinking].empty? && !completed_thinking.empty?
           end
         end
 
@@ -335,26 +359,86 @@ module Legion
           )
         end
 
+        def accumulate_responses_thinking_delta(parsed, accumulator, block)
+          delta = parsed['delta'].to_s
+          return if delta.empty?
+
+          accumulator[:thinking] << delta
+          block&.call(
+            lex_llm_namespace::Chunk.new(
+              role:     :assistant,
+              content:  '',
+              thinking: { content: delta, enabled: true },
+              model_id: parsed['model'],
+              raw:      parsed,
+              tokens:   nil
+            )
+          )
+        end
+
+        def accumulate_responses_tool_call_delta(parsed, accumulator, block)
+          call_id = parsed['item_id']
+          delta = parsed['delta'].to_s
+          return if delta.empty?
+
+          accumulator[:tool_calls][call_id] ||= { id: call_id, name: '', arguments: '' }
+          accumulator[:tool_calls][call_id][:arguments] << delta
+
+          block&.call(
+            lex_llm_namespace::Chunk.new(
+              role:       :assistant,
+              content:    '',
+              tool_calls: { call_id.to_sym => lex_llm_namespace::ToolCall.new(id: call_id, name: '', arguments: delta) },
+              model_id:   parsed['model'],
+              raw:        parsed,
+              tokens:     nil
+            )
+          )
+        end
+
         def responses_stream_response(accumulator, response_body, offering_metadata: nil)
           completed = accumulator[:completed] || {}
           content = accumulator[:content]
           content = extract_responses_text(completed) if content.empty?
+          thinking = accumulator[:thinking]
+          thinking = extract_responses_thinking(completed) if thinking.empty?
+          tool_calls = accumulator[:tool_calls]
+
+          # Convert streaming accumulator (id => args) to standard format, or extract from completed
+          if tool_calls && !tool_calls.empty?
+            # Prefer completed response data if available (has names)
+            completed_tool_calls = extract_responses_tool_calls(completed)
+            tool_calls = if completed_tool_calls && !completed_tool_calls.empty?
+                           completed_tool_calls
+                         else
+                           # Fall back to streaming accumulator
+                           tool_calls.map do |id, args|
+                             { id: id, name: '', arguments: args.is_a?(String) ? args : args.to_s }
+                           end
+                         end
+          else
+            tool_calls = extract_responses_tool_calls(completed)
+          end
 
           {
-            result:   content,
-            model:    accumulator[:model] || completed['model'],
-            usage:    accumulator[:usage],
-            metadata: response_metadata(completed.empty? ? response_body : completed, offering_metadata: offering_metadata)
+            result:     content,
+            model:      accumulator[:model] || completed['model'],
+            usage:      accumulator[:usage],
+            thinking:   thinking.empty? ? nil : { content: thinking, enabled: true },
+            tool_calls: tool_calls.empty? ? nil : tool_calls,
+            metadata:   response_metadata(completed.empty? ? response_body : completed, offering_metadata: offering_metadata)
           }.compact
         end
 
         def responses_hash_response(body, offering_metadata: nil)
           normalized = normalize_string_hash(body)
           {
-            result:   extract_responses_text(normalized),
-            model:    normalized['model'],
-            usage:    responses_usage(normalized['usage']),
-            metadata: response_metadata(normalized, offering_metadata: offering_metadata)
+            result:     extract_responses_text(normalized),
+            model:      normalized['model'],
+            usage:      responses_usage(normalized['usage']),
+            thinking:   response_thinking_hash(normalized),
+            tool_calls: extract_responses_tool_calls(normalized),
+            metadata:   response_metadata(normalized, offering_metadata: offering_metadata)
           }.compact
         end
 
@@ -386,16 +470,76 @@ module Legion
           end.join
         end
 
+        def extract_responses_tool_calls(body)
+          Array(body['output']).filter_map do |item|
+            next unless item['type'].to_s == 'function_call'
+
+            {
+              id:        item['call_id'] || item['id'],
+              name:      item['name'].to_s,
+              arguments: item['arguments'].is_a?(String) ? item['arguments'] : Legion::JSON.dump(item['arguments'] || {})
+            }
+          end
+        end
+
+        def response_thinking_hash(body)
+          thinking = extract_responses_thinking(body)
+          return nil if thinking.empty?
+
+          { content: thinking, enabled: true }
+        end
+
+        def extract_responses_thinking(body)
+          # First check output array for reasoning items
+          output_text = Array(body['output']).flat_map do |item|
+            next [] unless item['type'].to_s == 'reasoning'
+
+            reasoning_text_parts(item)
+          end.join
+
+          return output_text unless output_text.empty?
+
+          # Verbose responses include top-level reasoning.text
+          reasoning_obj = body['reasoning']
+          if reasoning_obj.is_a?(Hash)
+            direct = reasoning_obj['text'] || reasoning_obj['reasoning_text']
+            return direct.to_s if direct && !direct.to_s.empty?
+          end
+
+          ''
+        end
+
+        def reasoning_text_parts(item)
+          direct = item['text'] || item['content']
+          return [direct.to_s] if direct && !direct.is_a?(Array)
+
+          Array(item['summary']).filter_map { |part| reasoning_part_text(part) } +
+            Array(item['content']).filter_map { |part| reasoning_part_text(part) }
+        end
+
+        def reasoning_part_text(part)
+          return part.to_s if part.is_a?(String)
+          return nil unless part.is_a?(Hash)
+
+          part['text'] || part['content'] || part['summary_text']
+        end
+
         def responses_usage(usage)
           usage = normalize_string_hash(usage)
           input = usage['input_tokens'] || usage['prompt_tokens']
           output = usage['output_tokens'] || usage['completion_tokens']
-          {
+          details = {
+            reasoning_tokens: usage.dig('output_tokens_details', 'reasoning_tokens').to_i
+          }.compact
+
+          result = {
             input_tokens:       input.to_i,
             output_tokens:      output.to_i,
             cache_read_tokens:  usage.dig('input_tokens_details', 'cached_tokens').to_i,
             cache_write_tokens: usage.dig('input_tokens_details', 'cache_creation_tokens').to_i
           }
+          result[:output_tokens_details] = details unless details.empty?
+          result
         end
 
         def model_info(model, offering_metadata: nil)
@@ -424,12 +568,23 @@ module Legion
 
             message_hash = normalize_hash(message)
             message_class.new(
-              role:         message_hash[:role] || :user,
+              role:         normalize_role(message_hash[:role] || :user),
               content:      normalize_message_content(message_hash[:content]),
               tool_calls:   normalize_message_tool_calls(message_hash[:tool_calls]),
               tool_call_id: message_hash[:tool_call_id]
             )
           end
+        end
+
+        def normalize_role(role)
+          normalized = role.to_sym
+          return normalized unless %i[developer critic discriminator].include?(normalized)
+
+          # Only providers that understand these roles need them preserved.
+          # OpenAI is the only provider that supports :developer/:critic/:discriminator natively.
+          return normalized if @provider_name == :openai
+
+          :system
         end
 
         def consolidate_system_messages(raw_messages)
@@ -599,12 +754,14 @@ module Legion
         end
 
         def message_response(response, offering_metadata: nil)
+          thinking_val = thinking_hash(response)
+          log.info "[llm][adapter] message_response thinking=#{thinking_val ? 'present' : 'nil'}"
           {
             result:      response.content,
             model:       response.model_id,
             tool_calls:  response.respond_to?(:tool_calls) ? response.tool_calls : nil,
             stop_reason: extract_stop_reason_from_message(response),
-            thinking:    thinking_hash(response),
+            thinking:    thinking_val,
             usage:       usage_hash(response),
             metadata:    response_metadata(response, offering_metadata: offering_metadata)
           }.compact

@@ -17,7 +17,7 @@ module Legion
               "conversation_id=#{opts[:conversation_id] || 'none'} provider=#{opts[:provider]} " \
               "instance=#{opts[:provider_instance] || 'default'} model=#{opts[:model_id]}"
             )
-            identity_fields(opts).merge(token_fields(opts)).merge(timing_and_context(opts))
+            identity_fields(opts).merge(token_fields(opts)).merge(timing_and_context(opts)).merge(content_fields(opts))
           end
 
           def publish_or_spool(event)
@@ -81,6 +81,14 @@ module Legion
               routing_reason:    opts[:routing_reason],
               offering_metadata: opts[:offering_metadata],
               recorded_at:       Time.now.utc.iso8601
+            }.compact
+          end
+
+          def content_fields(opts)
+            {
+              messages:          opts[:messages],
+              response_content:  opts[:response_content],
+              response_thinking: opts[:response_thinking]
             }.compact
           end
 

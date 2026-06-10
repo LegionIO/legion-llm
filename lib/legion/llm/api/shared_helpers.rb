@@ -162,6 +162,119 @@ module Legion
           metrics.empty? ? nil : metrics
         end
 
+        def log_api_completion_summary(namespace:, request_id:, pipeline_response:, stream:, started_at:, tool_calls: nil, stop_reason: nil)
+          routing = pipeline_response.respond_to?(:routing) ? pipeline_response.routing || {} : {}
+          tokens = pipeline_response.respond_to?(:tokens) ? pipeline_response.tokens : nil
+          input_tokens = api_token_value(tokens, :input, :input_tokens)
+          output_tokens = api_token_value(tokens, :output, :output_tokens)
+          cache_read_tokens = api_token_value(tokens, :cache_read, :cache_read_tokens)
+          cache_write_tokens = api_token_value(tokens, :cache_write, :cache_write_tokens)
+          thinking_tokens = api_thinking_tokens(pipeline_response, tokens)
+          total_tokens = api_token_value(tokens, :total, :total_tokens)
+          total_tokens ||= [input_tokens, output_tokens, thinking_tokens].compact.sum
+
+          resolved_tool_calls = tool_calls || extract_tool_calls(pipeline_response)
+          resolved_stop_reason = stop_reason || api_stop_reason(pipeline_response) || 'unknown'
+          duration_ms = api_duration_ms(started_at)
+          provider_latency_ms = api_provider_latency_ms(pipeline_response, routing)
+          conversation_id = pipeline_response.respond_to?(:conversation_id) ? pipeline_response.conversation_id : nil
+
+          parts = {
+            request_id:          request_id || 'unknown',
+            conversation_id:     conversation_id || 'none',
+            provider:            api_hash_value(routing, :provider) || 'unknown',
+            instance:            api_hash_value(routing, :instance) || 'unknown',
+            model:               api_hash_value(routing, :model) || 'unknown',
+            tier:                api_hash_value(routing, :tier) || 'unknown',
+            stream:              stream,
+            duration_ms:         duration_ms,
+            provider_latency_ms: provider_latency_ms || 0,
+            input_tokens:        input_tokens || 0,
+            output_tokens:       output_tokens || 0,
+            total_tokens:        total_tokens || 0,
+            cache_read_tokens:   cache_read_tokens || 0,
+            cache_write_tokens:  cache_write_tokens || 0,
+            thinking_tokens:     thinking_tokens || 0,
+            tool_calls:          Array(resolved_tool_calls).size,
+            tool_executions:     api_tool_execution_count(pipeline_response),
+            stop_reason:         resolved_stop_reason
+          }
+
+          log.info("[llm][api][#{namespace}] action=completed " \
+                   "#{parts.map { |key, value| "#{key}=#{value}" }.join(' ')}")
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true,
+                          operation: "llm.api.#{namespace}.completion_summary",
+                          request_id: request_id)
+        end
+
+        def api_duration_ms(started_at)
+          return 0 unless started_at
+
+          ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - started_at) * 1000).round
+        end
+
+        def api_provider_latency_ms(pipeline_response, routing)
+          latency = api_hash_value(routing, :latency_ms)
+          return latency if latency
+
+          timestamps = pipeline_response.respond_to?(:timestamps) ? pipeline_response.timestamps || {} : {}
+          provider_start = api_hash_value(timestamps, :provider_start)
+          provider_end = api_hash_value(timestamps, :provider_end)
+          return nil unless provider_start && provider_end
+
+          ((provider_end - provider_start) * 1000).round
+        rescue StandardError
+          nil
+        end
+
+        def api_hash_value(hash, key)
+          return nil unless hash.respond_to?(:[])
+
+          hash[key] || hash[key.to_s]
+        end
+
+        def api_token_value(tokens, *keys)
+          return nil if tokens.nil?
+
+          keys.each do |key|
+            value = if tokens.is_a?(Hash)
+                      tokens[key] || tokens[key.to_s]
+                    elsif tokens.respond_to?(key)
+                      tokens.public_send(key)
+                    end
+            return value.to_i unless value.nil?
+          end
+
+          nil
+        end
+
+        def api_thinking_tokens(pipeline_response, tokens)
+          token_value = api_token_value(tokens, :thinking, :thinking_tokens, :reasoning, :reasoning_tokens)
+          return token_value unless token_value.nil?
+
+          thinking = pipeline_response.respond_to?(:thinking) ? pipeline_response.thinking : nil
+          return nil if thinking.nil?
+          return api_hash_value(thinking, :tokens).to_i if thinking.is_a?(Hash) && api_hash_value(thinking, :tokens)
+          return thinking.tokens.to_i if thinking.respond_to?(:tokens)
+
+          nil
+        end
+
+        def api_tool_execution_count(pipeline_response)
+          Array(pipeline_response.respond_to?(:timeline) ? pipeline_response.timeline : []).count do |event|
+            key = event.is_a?(Hash) ? event[:key] || event['key'] : nil
+            key.to_s.start_with?('tool:execute:')
+          end
+        end
+
+        def api_stop_reason(pipeline_response)
+          stop = pipeline_response.respond_to?(:stop) ? pipeline_response.stop : nil
+          return nil unless stop.respond_to?(:[])
+
+          stop[:reason] || stop['reason']
+        end
+
         # ---------------------------------------------------------------------------
         # Tool helpers
         # ---------------------------------------------------------------------------
@@ -177,7 +290,7 @@ module Legion
               name:        s[:name].to_s,
               description: (s[:description] || '').to_s,
               parameters:  s[:parameters] || s[:input_schema] || {},
-              source:      { type: :client, executable: executable }
+              source:      { type: :client, executable: executable, raw_name: s[:name].to_s }
             )
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: "llm.api.build_tool.#{s[:name]}")
@@ -393,11 +506,35 @@ module Legion
           normalized_caller = caller_context.respond_to?(:transform_keys) ? caller_context.transform_keys(&:to_sym) : {}
           safe_caller_fields = normalized_caller.slice(:context, :session_id, :trace_id)
 
-          {
+          caller_hash = {
             source:       source,
             path:         path,
-            requested_by: identity_caller_hash(env).fetch(:requested_by)
-          }.merge(safe_caller_fields)
+            requested_by: identity_caller_hash(env).fetch(:requested_by),
+            client:       caller_client_string(env)
+          }
+
+          # Carry parent request reference for ledger enrichment (avoids DB queries at emit time)
+          if (turn_metadata = env['HTTP_X_CODEX_TURN_METADATA'])
+            begin
+              parsed = Legion::JSON.load(turn_metadata)
+              caller_hash[:parent_request_ref] = parsed['turn_id'] if parsed['turn_id']
+              caller_hash[:codex_turn_metadata] = parsed
+            rescue StandardError
+              # Ignore malformed metadata
+            end
+          end
+
+          caller_hash.merge(safe_caller_fields)
+        end
+
+        def detect_caller_client(env)
+          env['HTTP_USER_AGENT'] || env['HTTP_X_REQUEST_ID']
+        end
+
+        def caller_client_string(env)
+          user_agent = env['HTTP_USER_AGENT'] || 'unknown'
+          remote_addr = env['REMOTE_ADDR'] || env['HTTP_X_FORWARDED_FOR'] || 'unknown'
+          "#{user_agent} (#{remote_addr})"
         end
 
         def detect_modality(messages)
