@@ -26,7 +26,7 @@ module Legion
               ASYNC_POOL.wait_for_termination(5)
             end
 
-            def self.registered(ns_context) # rubocop:disable Metrics/AbcSize
+            def self.registered(ns_context)
               log.debug('[llm][api][namespaces][chat] registering routes')
 
               ns_context.post '' do
