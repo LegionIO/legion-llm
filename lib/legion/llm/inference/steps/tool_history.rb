@@ -125,8 +125,6 @@ module Legion
                 keys << buffer unless buffer.empty?
                 buffer = +''
                 break if keys.size >= 3 # Only need first 3 keys
-              elsif in_key
-                buffer << ch
               else
                 buffer << ch
               end

@@ -98,7 +98,7 @@ module Legion
           resolution || arbitrage_fallback(intent)
         end
 
-        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, max_escalations: nil,
+        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil,
                           exclude: {}, allow_default_fallback: true, estimated_tokens: nil, **_opts)
           log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations} estimated_tokens=#{estimated_tokens}"
           max = max_escalations || escalation_max_attempts
@@ -549,6 +549,7 @@ module Legion
           end
         end
 
+        # rubocop:disable Lint/UnusedMethodArgument
         def chain_from_defaults(model, provider, max, hints: {}, allow_default_fallback: true)
           if provider || model || (allow_default_fallback && (Legion::Settings[:llm][:default_provider] || Legion::Settings[:llm][:default_model]))
             p = (provider || Legion::Settings[:llm][:default_provider])&.to_sym
@@ -585,6 +586,7 @@ module Legion
           end
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end
+        # rubocop:enable Lint/UnusedMethodArgument
 
         def enabled_provider_chain
           instances = begin
