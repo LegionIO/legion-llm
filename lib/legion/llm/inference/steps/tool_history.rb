@@ -59,14 +59,20 @@ module Legion
           def summarize_result(result_str, error)
             return "error: #{result_str.to_s[0, 100]}" if error
 
+            str = result_str.to_s
+            # If result is JSON but too long/truncated, avoid trying to parse incomplete JSON.
+            # Large tool results (e.g. legion_list_special_tools) can be 2KB+ and get
+            # truncated, causing parse errors that add noise to the logs.
+            if str.length > 2000 && str.start_with?('{')
+              # Return a summary for large JSON results without parsing
+              keys = extract_json_top_keys(str)
+              return keys.empty? ? "large JSON result (#{str.length} chars)" : "JSON with keys: #{keys.join(', ')}"
+            end
+
             begin
-              parsed = Legion::JSON.load(result_str.to_s)
-            rescue Legion::JSON::ParseError => e
-              handle_exception(e, level: :warn, handled: true,
-                                  operation: 'llm.pipeline.steps.tool_history.summarize_result',
-                                  result_class: result_str.class.name,
-                                  result_bytes: result_str.to_s.bytesize)
-              return result_str.to_s[0, 200]
+              parsed = Legion::JSON.load(str)
+            rescue StandardError
+              return str[0, 200]
             end
 
             if parsed.is_a?(Array)
@@ -79,11 +85,60 @@ module Legion
               elsif parsed[:result].is_a?(Hash) && parsed[:result][:number]
                 "##{parsed[:result][:number]} at #{parsed[:result][:html_url]}"
               else
-                result_str.to_s[0, 200]
+                str[0, 200]
               end
             else
-              result_str.to_s[0, 200]
+              str[0, 200]
             end
+          end
+
+          def extract_json_top_keys(str)
+            return [] unless str.start_with?('{')
+
+            keys = []
+            in_key = false
+            buffer = +''
+            brace_depth = 0
+            bracket_depth = 0
+            in_string = false
+            escaped = false
+            char_limit = [str.length, 500].min # Only scan first 500 chars
+
+            (0...char_limit).each do |i|
+              ch = str[i]
+              if escaped
+                escaped = false
+                next
+              end
+              if ch == '\\' && in_string
+                escaped = true
+                buffer << ch
+                next
+              end
+              in_string = !in_string if ch == '"' && !escaped
+              next unless in_string
+
+              if brace_depth == 1 && buffer.empty? && ch != '"'
+                in_key = true
+              elsif in_key && ch == '"'
+                in_key = false
+                keys << buffer unless buffer.empty?
+                buffer = +''
+                break if keys.size >= 3 # Only need first 3 keys
+              elsif in_key
+                buffer << ch
+              else
+                buffer << ch
+              end
+              next if in_string
+
+              brace_depth += 1 if ch == '{'
+              brace_depth -= 1 if ch == '}'
+              bracket_depth += 1 if ch == '['
+              bracket_depth -= 1 if ch == ']'
+            end
+
+            keys
           end
         end
       end

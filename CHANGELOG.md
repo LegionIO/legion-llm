@@ -1,5 +1,28 @@
 # Legion LLM Changelog
 
+## [0.12.14] - 2026-06-10
+
+### Added
+- **Hint-based router scoring** — `tier`, `provider`, and `model` are now preference hints that bias rule scoring (+50 per matching hint) instead of hard overrides that bypass rule evaluation. This allows the router to apply policy (cost, privacy, health) and fall back to a better local match when the hinted provider is unavailable (router.rb)
+- **Context window filtering in router** — `estimated_tokens` is now computed from request messages + conversation history and passed to the router. Rules whose model's `context_length` cannot fit the estimated token count (at 90% threshold) are excluded from candidate selection (router.rb, executor.rb)
+- **Model-provider mismatch detection** — When an explicitly specified provider differs from the model's natural provider (e.g. "claude-sonnet-4-6" routed to vllm), the model is swapped to the provider's default to prevent dispatch failures. Auto-resolved providers (from tier/defaults) trust the caller's model choice (router.rb, executor.rb)
+- **Provider registry validation in explicit resolution** — Unregistered providers are cleared before tier-based fallback instead of committing to a dead-end resolution (router.rb)
+- **Repeat tool call detection in native tool loop** — The tool loop now tracks `(name, args_hash)` pairs and returns early with client passthrough results when repeated calls are detected, preventing infinite loops from stuck tool cycles (native_tool_loop.rb)
+- **Preserve recent turns in context curator** — `preserve_recent_turns` setting (default: 2) prevents tool result distillation from the most recent N turns so the model retains full context of recent work (context/curator.rb)
+- **Large JSON result summarization** — `summarize_result` now extracts top-level JSON keys from large results (>2000 chars) without full parsing, avoiding ParseError noise from truncated JSON (steps/tool_history.rb)
+
+### Changed
+- **Default settings adjustments** — `tool_result_max_dispatch_chars`: 4000→10000, `default_temperature`: 1.0→0.9, `context_curation.tool_result_max_chars`: 2000→10000, `thinking_eviction`: true→false, `exchange_folding`: true→false, `target_context_tokens`: 40000→60000, `conversation.summarize_threshold`: 50000→90000, `conversation.target_tokens`: 20000→60000, `structured_output.retry_on_parse_failure`: true→false (settings.rb)
+- **Router no longer short-circuits on tier/provider** — Tier and provider hints flow through rule matching with scoring bonuses instead of bypassing rules entirely. Fallback chain: rule match → explicit resolution → arbitrage (router.rb)
+- **Always inject LegionIO tools** — Removed `client_tools_only?` optimization; LegionIO tools (special + extension) are always injected regardless of client passthrough settings. Client passthrough is handled by the tool loop which executes LegionIO tools server-side (executor.rb)
+- **Server-side LegionIO tool execution in tool loop** — Tool calls are partitioned into server (LegionIO) and client (passthrough). Server tools execute in-place; client tools are returned without results. LegionIO tool results are populated from `@pending_tool_history` so translators see completed results and avoid `pause_turn` stop reasons (native_tool_loop.rb, steps/tool_calls.rb)
+- **Stop reason logic for completed LegionIO tools** — LegionIO tools with results no longer trigger `:pause_turn`; only tools without results (pending execution) pause the turn (steps/tool_calls.rb)
+
+### Fixed
+- **merge_defaults crash on nil intent** — Added safe navigation (`&.`) for `transform_keys`/`transform_values` on nil intent in `merge_defaults` (router.rb)
+- **structured_output retry_enabled? nil dereference** — Changed `[]` chain to `.dig()` so the setting check survives when the structured_output subtree is absent (call/structured_output.rb)
+- **Spec helper provider registration isolation** — Standard providers (anthropic, test, bedrock, openai, ollama, vllm, azure_foundry, gemini, xai) are now re-registered in `before(:each)` after `Registry.reset!` so router resolution works in every test (spec_helper.rb)
+
 ## [0.12.13] - 2026-06-05
 
 ### Added

@@ -240,7 +240,9 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
       instance_double(Legion::LLM::Types::ToolCall,
                       id:        'toolu_test_123',
                       name:      'get_weather',
-                      arguments: { city: 'Boston' })
+                      arguments: { city: 'Boston' },
+                      source:    { type: :client },
+                      result:    nil)
     end
     let(:fake_pipeline_response) do
       instance_double(

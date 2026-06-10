@@ -531,6 +531,12 @@ module Legion
           env['HTTP_USER_AGENT'] || env['HTTP_X_REQUEST_ID']
         end
 
+        def caller_client_string(env)
+          user_agent = env['HTTP_USER_AGENT'] || 'unknown'
+          remote_addr = env['REMOTE_ADDR'] || env['HTTP_X_FORWARDED_FOR'] || 'unknown'
+          "#{user_agent} (#{remote_addr})"
+        end
+
         def detect_modality(messages)
           return nil unless messages.is_a?(Array)
 

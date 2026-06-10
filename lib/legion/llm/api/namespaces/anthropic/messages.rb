@@ -328,30 +328,38 @@ module Legion
                     content_index += 1
 
                     # Emit server_tool_result for LegionIO tools
-                    if is_server_tool
-                      result = tc[:result]
-                      if result
-                        result_str = result.is_a?(String) ? result : (Legion::JSON.dump(result) rescue result.to_s)
-                        emit_event.call('content_block_start', {
-                                          type:          'content_block_start',
-                                          index:         content_index,
-                                          content_block: { type: 'server_tool_result', id: tc[:id], content: [] }
-                                        })
-                        break if stream_closed
+                    next unless is_server_tool
 
-                        emit_event.call('content_block_delta', {
-                                          type:  'content_block_delta',
-                                          index: content_index,
-                                          delta: { type: 'content_block_delta', content: [{ type: 'text', text: result_str }] }
-                                        })
-                        break if stream_closed
+                    result = tc[:result]
+                    next unless result
 
-                        emit_event.call('content_block_stop', { type: 'content_block_stop', index: content_index })
-                        break if stream_closed
+                    result_str = if result.is_a?(String)
+                                   result
+                                 else
+                                   begin
+                                     Legion::JSON.dump(result)
+                                   rescue StandardError
+                                     result.to_s
+                                   end
+                                 end
+                    emit_event.call('content_block_start', {
+                                      type:          'content_block_start',
+                                      index:         content_index,
+                                      content_block: { type: 'server_tool_result', id: tc[:id], content: [] }
+                                    })
+                    break if stream_closed
 
-                        content_index += 1
-                      end
-                    end
+                    emit_event.call('content_block_delta', {
+                                      type:  'content_block_delta',
+                                      index: content_index,
+                                      delta: { type: 'content_block_delta', content: [{ type: 'text', text: result_str }] }
+                                    })
+                    break if stream_closed
+
+                    emit_event.call('content_block_stop', { type: 'content_block_stop', index: content_index })
+                    break if stream_closed
+
+                    content_index += 1
                   end
                   next if stream_closed
 

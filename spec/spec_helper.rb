@@ -45,7 +45,7 @@ def stub_native_provider(content: 'test response', input_tokens: 10, output_toke
   end
   allow(Legion::LLM::Call::Dispatch).to receive(:call).and_call_original
   if defined?(Legion::LLM::Call::Registry)
-    %i[anthropic test bedrock openai ollama].each do |provider|
+    %i[anthropic test bedrock openai ollama vllm].each do |provider|
       Legion::LLM::Call::Registry.register(provider, Module.new do
         define_singleton_method(:chat) { |**| result }
         define_singleton_method(:stream) do |**, &block|
@@ -69,6 +69,13 @@ RSpec.configure do |config|
       defined?(Legion::Transport::Settings)
     Legion::Settings[:logging][:level] = :fatal
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
+    # Re-register standard providers after reset so router resolution works
+    if defined?(Legion::LLM::Call::Registry)
+      %i[anthropic test bedrock openai ollama vllm azure_foundry gemini xai].each do |provider|
+        Legion::LLM::Call::Registry.register(provider, Module.new) unless
+          Legion::LLM::Call::Registry.registered?(provider)
+      end
+    end
     # Seed the extensions[:llm] path so specs can write provider configs there
     Legion::Settings[:extensions][:llm] ||= {}
     # Keep the full suite deterministic even when local/provider gems are present

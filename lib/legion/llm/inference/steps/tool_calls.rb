@@ -158,9 +158,33 @@ module Legion
           end
 
           def client_passthrough_tool_loop_result(result, tool_calls, round)
-            result[:tool_calls] = tool_calls
-            # Emit tool call/result events for client passthrough tools so they
-            # appear in the pending_tool_history and trigger @tool_event_handler callbacks.
+            # DO NOT overwrite result[:tool_calls] with just client tools.
+            # The provider response already contains ALL tool calls (LegionIO + client).
+            # The translator needs to see both:
+            #   - LegionIO tools with results → server_tool_use + server_tool_result
+            #   - Client tools without results → tool_use (passthrough)
+
+            # Populate :result on LegionIO tool calls from @pending_tool_history.
+            # These tools already executed server-side, but the result hash
+            # doesn't have the results yet. Without this, format_stop_reason
+            # sees LegionIO tools with nil results → returns 'pause_turn' →
+            # causes Claude Code to auto-send a follow-up → duplicate responses.
+            all_tc = Array(result[:tool_calls])
+            all_tc.each do |tc|
+              next if client_passthrough_tool_call?(tc)
+
+              tc_id = tc[:id] || tc['id']
+              tc_name = tc[:name] || tc['name']
+              entry = @pending_tool_history&.find { |e| e[:tool_call_id] == tc_id || e[:tool_name] == tc_name }
+              next unless entry && entry[:result]
+
+              tc[:result] = entry[:result]
+              tc['result'] = entry[:result]
+              log.debug("[llm][tool_loop] action=populate_legionio_result tool=#{tc_name} " \
+                        "tc_id=#{tc_id} result_length=#{entry[:result].to_s.length}")
+            end
+
+            # Only emit events for client passthrough tools here.
             tool_calls.each do |tool_call|
               next unless client_passthrough_tool_call?(tool_call)
 

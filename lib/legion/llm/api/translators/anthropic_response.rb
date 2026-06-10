@@ -117,7 +117,15 @@ module Legion
                 # Emit result
                 result = tc[:result]
                 if result
-                  result_str = result.is_a?(String) ? result : (Legion::JSON.dump(result) rescue result.to_s)
+                  result_str = if result.is_a?(String)
+                                 result
+                               else
+                                 begin
+                                   Legion::JSON.dump(result)
+                                 rescue StandardError
+                                   result.to_s
+                                 end
+                               end
                   events << ['content_block_start', {
                     type:          'content_block_start',
                     index:         content_index,
@@ -181,11 +189,19 @@ module Legion
                 }
                 result = tc[:result]
                 if result
-                  result_str = result.is_a?(String) ? result : (Legion::JSON.dump(result) rescue result.to_s)
+                  result_str = if result.is_a?(String)
+                                 result
+                               else
+                                 begin
+                                   Legion::JSON.dump(result)
+                                 rescue StandardError
+                                   result.to_s
+                                 end
+                               end
                   blocks << {
-                    type:       'server_tool_result',
-                    id:         tc[:id],
-                    content:    [{ type: 'text', text: result_str }]
+                    type:    'server_tool_result',
+                    id:      tc[:id],
+                    content: [{ type: 'text', text: result_str }]
                   }
                 end
               else
@@ -264,7 +280,11 @@ module Legion
               is_legionio = legionio_tool_source?(source)
 
               {
-                id:        tc.respond_to?(:id)        ? tc.id        : (tc[:id] || tc['id'] || (is_legionio ? "srvtoolu_#{SecureRandom.hex(10)}" : "toolu_#{SecureRandom.hex(10)}")),
+                id:        if tc.respond_to?(:id)
+                             tc.id
+                           else
+                             tc[:id] || tc['id'] || (is_legionio ? "srvtoolu_#{SecureRandom.hex(10)}" : "toolu_#{SecureRandom.hex(10)}")
+                           end,
                 name:      tc.respond_to?(:name)      ? tc.name      : (tc[:name] || tc['name'] || ''),
                 arguments: tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {}),
                 result:    tc.respond_to?(:result)    ? tc.result    : (tc[:result] || tc['result']),
@@ -283,8 +303,17 @@ module Legion
 
           def self.format_stop_reason(pipeline_response)
             tool_calls = extract_tool_calls(pipeline_response)
-            return 'pause_turn' if tool_calls.any? { |tc| tc[:legionio] == true }
-            return 'tool_use' if tool_calls.any?
+
+            # Only return 'pause_turn' for LegionIO tools that are still pending
+            # (i.e., executed server-side but result not yet available).
+            # If all LegionIO tools have results, the tool loop completed and
+            # the turn should end normally.
+            pending_legionio = tool_calls.select { |tc| tc[:legionio] == true && tc[:result].nil? }
+            return 'pause_turn' if pending_legionio.any?
+
+            # Client-side (passthrough) tool_use blocks without results mean
+            # the client needs to execute them.
+            return 'tool_use' if tool_calls.any? { |tc| tc[:legionio] != true && tc[:result].nil? }
 
             return 'end_turn' unless pipeline_response.respond_to?(:stop)
 

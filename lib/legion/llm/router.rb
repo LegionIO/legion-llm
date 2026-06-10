@@ -64,21 +64,24 @@ module Legion
 
         # Resolve an LLM routing intent to a tier/provider/model decision.
         #
+        # Model, provider, and tier are treated as preference hints — they bias scoring
+        # toward matching candidates but do not bypass rule evaluation. This allows the
+        # router to apply policy (cost, privacy, health) and fall back to a better local
+        # match when the hinted provider is unavailable.
+        #
         # @param intent   [Hash, nil] routing intent (capability, privacy, etc.)
-        # @param tier     [Symbol, nil] explicit tier override — skips rule matching
-        # @param model    [String, nil] explicit model override
-        # @param provider [Symbol, nil] explicit provider override
+        # @param tier     [Symbol, nil] tier preference hint
+        # @param model    [String, nil] model preference hint
+        # @param provider [Symbol, nil] provider preference hint
+        # @param estimated_tokens [Integer, nil] estimated total token count for context window filtering
         # @return [Resolution, nil]
-        def resolve(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, exclude: {})
-          log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider} instance=#{instance}"
-          return explicit_resolution(tier, provider, model, instance) if tier || provider || instance
-
-          return nil unless routing_enabled? && intent
+        def resolve(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, exclude: {}, estimated_tokens: nil, **_opts)
+          log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider} instance=#{instance} estimated_tokens=#{estimated_tokens}"
 
           merged = merge_defaults(intent)
           rules = load_rules
-          candidates = select_candidates(rules, merged, exclude: exclude)
-          best = pick_best(candidates)
+          candidates = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
+          best = pick_best(candidates, hints: { tier: tier, provider: provider, model: model })
           resolution = best&.to_resolution
 
           if resolution
@@ -86,18 +89,27 @@ module Legion
                      "model=#{resolution.model} rule=#{resolution.rule}"
           end
 
-          log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size}" unless resolution
+          # If no rules matched, fall back to explicit resolution from hints, then arbitrage.
+          unless resolution
+            log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size}"
+            resolution = explicit_resolution(tier, provider, model, instance)
+          end
+
           resolution || arbitrage_fallback(intent)
         end
 
         def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, max_escalations: nil,
-                          exclude: {}, allow_default_fallback: true)
-          log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations}"
+                          exclude: {}, allow_default_fallback: true, estimated_tokens: nil, **_opts)
+          log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations} estimated_tokens=#{estimated_tokens}"
           max = max_escalations || escalation_max_attempts
-          return EscalationChain.new(resolutions: [explicit_resolution(tier, provider, model, instance)], max_attempts: max) if tier || provider || instance
-          return chain_from_defaults(model, provider, max, allow_default_fallback: allow_default_fallback) unless routing_enabled? && intent
 
-          chain_from_intent(intent, max, exclude: exclude, allow_default_fallback: allow_default_fallback)
+          if routing_enabled? && intent
+            chain_from_intent(intent, max, hints: { tier: tier, provider: provider, model: model },
+                              exclude: exclude, allow_default_fallback: allow_default_fallback,
+                              estimated_tokens: estimated_tokens)
+          else
+            chain_from_defaults(model, provider, max, hints: { tier: tier }, allow_default_fallback: allow_default_fallback)
+          end
         end
 
         def health_tracker
@@ -163,6 +175,16 @@ module Legion
         end
 
         def explicit_resolution(tier, provider, model, instance = nil)
+          # Track whether the caller explicitly specified a provider (before validation may clear it)
+          provider_explicit = !provider.nil?
+
+          # Validate provider hint against registry — if the hinted provider isn't registered,
+          # fall through to tier-based or default resolution rather than committing to a dead end.
+          if provider && !Call::Registry.registered?(provider.to_sym)
+            log.debug "[llm][router] action=explicit_resolution.provider_not_registered provider=#{provider} falling_back"
+            provider = nil
+          end
+
           registry_entry = if provider
                              registry_entry_for_provider(provider.to_sym, instance: instance&.to_sym)
                            elsif tier
@@ -176,6 +198,20 @@ module Legion
                                   Legion::Settings[:llm][:default_provider]&.to_sym ||
                                   :anthropic
                               end
+
+          # If the resolved provider differs from the model's natural provider, swap to the
+          # provider's default model — sending "claude-sonnet-4-6" to vllm would fail.
+          # Only swap when the provider was explicitly specified AND we can positively identify
+          # the model's natural provider. If the provider was auto-resolved from tier/defaults,
+          # trust the caller's model choice. Unknown model patterns (nil) are allowed through
+          # since they may be custom/registry models.
+          model_natural_provider = model && infer_provider_for_model(model)
+          if provider_explicit && model && resolved_provider && model_natural_provider && model_natural_provider != resolved_provider
+            log.debug "[llm][router] action=explicit_resolution.model_provider_mismatch model=#{model} " \
+                      "natural_provider=#{model_natural_provider} resolved_provider=#{resolved_provider}"
+            model = nil
+          end
+
           resolved_model    = model || registry_default_model(registry_entry) || (tier && default_model_for_tier(tier))
           resolved_instance = registry_entry&.[](:instance) || instance
           resolved_tier     = tier || PROVIDER_TIER.fetch(resolved_provider, :frontier)
@@ -212,9 +248,8 @@ module Legion
                      .transform_keys(&:to_sym)
                      .transform_values { |v| v.respond_to?(:to_sym) ? v.to_sym : v }
 
-          normalized_intent = intent
-                              .transform_keys(&:to_sym)
-                              .transform_values { |v| v.respond_to?(:to_sym) ? v.to_sym : v }
+          normalized_intent = intent&.transform_keys(&:to_sym)
+                                    &.transform_values { |v| v.respond_to?(:to_sym) ? v.to_sym : v } || {}
 
           defaults.merge(normalized_intent)
         end
@@ -228,8 +263,8 @@ module Legion
           (manual + (@auto_rules || [])).sort_by { |r| -r.priority }
         end
 
-        def select_candidates(rules, intent, exclude: {})
-          log.debug "[llm][router] action=select_candidates total_rules=#{rules.size}"
+        def select_candidates(rules, intent, exclude: {}, estimated_tokens: nil, **_opts)
+          log.debug "[llm][router] action=select_candidates total_rules=#{rules.size} estimated_tokens=#{estimated_tokens}"
 
           # 1. Collect constraints from constraint rules that match the intent
           constraints = rules
@@ -254,12 +289,19 @@ module Legion
           # 5.55 Reject local-tier rules where model exceeds available memory
           memory_checked = discovered.reject { |r| excluded_by_memory?(r) }
 
+          # 5.56 Reject rules whose context window can't fit the estimated token count
+          context_fitted = if estimated_tokens&.positive?
+                             memory_checked.reject { |r| excluded_by_context_window?(r, estimated_tokens) }
+                           else
+                             memory_checked
+                           end
+
           # 5.6 Reject rules matching caller-provided exclude list
           normalized_exclude = exclude.is_a?(Hash) ? exclude : {}
           not_excluded = if normalized_exclude.empty?
-                           memory_checked
+                           context_fitted
                          else
-                           memory_checked.reject { |r| excluded_by_caller?(r, normalized_exclude) }
+                           context_fitted.reject { |r| excluded_by_caller?(r, normalized_exclude) }
                          end
 
           # 5.7 Reject rules for models denied by health tracker
@@ -271,6 +313,21 @@ module Legion
           log.debug "[llm][router] action=select_candidates.done candidates_remaining=#{final.size} started_with=#{rules.size}"
 
           final
+        end
+
+        # Reject rules whose model's context_length is too small for the estimated token count.
+        # Uses a 90% threshold to leave room for output tokens, matching the executor's compaction threshold.
+        def excluded_by_context_window?(rule, estimated_tokens)
+          context_length = rule.target[:context_length] || rule.target['context_length']
+          return false unless context_length&.to_i&.positive?
+
+          threshold = (context_length.to_i * 0.90).to_i
+          if estimated_tokens > threshold
+            log.debug "[llm][router] action=excluded_by_context_window model=#{rule.target[:model]} " \
+                      "context_length=#{context_length} estimated_tokens=#{estimated_tokens} threshold=#{threshold}"
+            return true
+          end
+          false
         end
 
         def satisfies_required_capabilities?(rule, intent)
@@ -397,18 +454,38 @@ module Legion
           TIER_EXTERNAL.include?(tier)
         end
 
-        def pick_best(candidates)
+        def pick_best(candidates, hints: {})
           return nil if candidates.empty?
 
-          candidates.max_by { |r| effective_priority(r) }
+          candidates.max_by { |r| effective_priority(r, hints: hints) }
         end
 
-        def effective_priority(rule)
+        def effective_priority(rule, hints: {})
           provider = (rule.target[:provider] || rule.target['provider'])&.to_sym
           offering_id = rule.target[:offering_id] || rule.target['offering_id']
           cost_bonus = (1.0 - rule.cost_multiplier) * 10
           tier_bonus = tier_priority_bonus(rule)
-          rule.priority + health_tracker.adjustment(provider, offering_id: offering_id) + cost_bonus + tier_bonus
+          hint_bonus = hint_matching_bonus(rule, hints)
+          rule.priority + health_tracker.adjustment(provider, offering_id: offering_id) + cost_bonus + tier_bonus + hint_bonus
+        end
+
+        # Score bonus when a rule's target matches caller-provided hints.
+        # Each matching hint adds +50 to the priority, so a rule matching all three
+        # hints gets +150. This makes hints strong preferences without overriding
+        # rule priority, health, or cost considerations.
+        def hint_matching_bonus(rule, hints)
+          return 0 if hints.nil? || hints.empty?
+
+          target = rule.target
+          target_provider = (target[:provider] || target['provider'])&.to_sym
+          target_tier     = (target[:tier]     || target['tier'])&.to_sym
+          target_model    = target[:model] || target['model']
+
+          bonus = 0
+          bonus += 50 if hints[:provider] && target_provider == hints[:provider].to_sym
+          bonus += 50 if hints[:tier]     && target_tier     == hints[:tier].to_sym
+          bonus += 50 if hints[:model]    && target_model && target_model == hints[:model].to_s
+          bonus
         end
 
         def tier_priority_bonus(rule)
@@ -472,11 +549,24 @@ module Legion
           end
         end
 
-        def chain_from_defaults(model, provider, max, allow_default_fallback: true)
+        def chain_from_defaults(model, provider, max, hints: {}, allow_default_fallback: true)
           if provider || model || (allow_default_fallback && (Legion::Settings[:llm][:default_provider] || Legion::Settings[:llm][:default_model]))
             p = (provider || Legion::Settings[:llm][:default_provider])&.to_sym
-            resolved_model = model || registry_default_model(registry_entry_for_provider(p)) ||
-                             Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6'
+
+            # If the resolved provider differs from the model's natural provider, swap to the
+            # provider's default model — sending "claude-sonnet-4-6" to vllm would fail.
+            resolved_model = model
+            if resolved_model
+              model_natural = infer_provider_for_model(resolved_model)
+              if model_natural && p && model_natural != p
+                log.debug "[llm][router] action=chain_from_defaults.model_provider_mismatch model=#{resolved_model} " \
+                          "natural_provider=#{model_natural} resolved_provider=#{p} swapping"
+                resolved_model = nil
+              end
+            end
+            resolved_model ||= registry_default_model(registry_entry_for_provider(p)) ||
+                               Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6'
+
             primary = Resolution.new(tier:     PROVIDER_TIER.fetch(p || :anthropic, :frontier),
                                      provider: p || :anthropic,
                                      model:    resolved_model)
@@ -534,11 +624,11 @@ module Legion
           end
         end
 
-        def chain_from_intent(intent, max, exclude: {}, allow_default_fallback: true)
+        def chain_from_intent(intent, max, hints: {}, exclude: {}, allow_default_fallback: true, **_opts)
           merged     = intent ? merge_defaults(intent) : {}
           rules      = load_rules
           candidates = select_candidates(rules, merged, exclude: exclude)
-          sorted     = candidates.sort_by { |r| -effective_priority(r) }
+          sorted     = candidates.sort_by { |r| -effective_priority(r, hints: hints) }
           resolutions = sorted.map(&:to_resolution)
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
           resolutions = resolutions.uniq { |r| [r.provider, r.model] }

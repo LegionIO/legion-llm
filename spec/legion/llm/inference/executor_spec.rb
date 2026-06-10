@@ -646,25 +646,31 @@ confidence: 0.9 }],
       Legion::Settings[:llm][:routing][:escalation][:enabled] = false
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
 
+      call_count = 0
       register_native_chat do
-        { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
+        call_count += 1
+        # Vary arguments each round to avoid repeat detection
+        { content: '', tool_calls: [{ id: "tc_#{call_count}", name: 'lookup', arguments: { round: call_count } }], usage: {} }
       end
       executor = described_class.new(tool_request)
       allow(executor).to receive(:step_response_normalization)
 
-      expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
+      expect { executor.call }.to raise_error(Legion::LLM::PipelineError, /tool loop exceeded 2 rounds/)
     end
 
     it 'honors max_tool_rounds settings' do
       Legion::Settings.set_prop(:llm, { max_tool_rounds: 2, routing: { escalation: { pipeline_enabled: false } } })
 
+      call_count = 0
       register_native_chat do
-        { content: '', tool_calls: [{ id: 'tc_1', name: 'lookup', arguments: {} }], usage: {} }
+        call_count += 1
+        # Vary arguments each round to avoid repeat detection
+        { content: '', tool_calls: [{ id: "tc_#{call_count}", name: 'lookup', arguments: { round: call_count } }], usage: {} }
       end
       executor = described_class.new(tool_request)
       allow(executor).to receive(:step_response_normalization)
 
-      expect { executor.call }.to raise_error(Legion::LLM::InferenceError, /tool loop exceeded 2 rounds/)
+      expect { executor.call }.to raise_error(Legion::LLM::PipelineError, /tool loop exceeded 2 rounds/)
     end
 
     it 'uses default max_tool_rounds (200) when not configured in settings' do
@@ -763,7 +769,7 @@ confidence: 0.9 }],
       expect(response.tools.first.arguments).to eq(command: 'status')
     end
 
-    it 'skips explicit tool choice for client passthrough requests' do
+    it 'matches explicit tool choice even when client tools are present' do
       client_tool = Legion::LLM::Types::ToolDefinition.build(
         name:        'git',
         description: 'Git client tool',
@@ -778,7 +784,8 @@ confidence: 0.9 }],
       executor = described_class.new(path_request)
       executor.instance_variable_set(:@resolved_provider, :vllm)
 
-      expect(executor.send(:native_tool_prefs)).to include(choice: :auto)
+      # Explicit tool choice is matched regardless of client tools presence
+      expect(executor.send(:native_tool_prefs)).to include(choice: 'git')
     end
 
     it 'still chooses the Ruby tool when Ruby is explicitly requested' do

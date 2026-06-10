@@ -71,14 +71,15 @@ module Legion
                   headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive', 'X-Accel-Buffering' => 'no'
                   stream do |out|
                     pipeline_response = Responses.stream_response(out, executor, request_id: request_id, model: model, upstream_body: body)
+                    tool_calls = Responses.build_output_tool_calls(pipeline_response)
                     log_api_completion_summary(
                       namespace:         'namespaces][openai][responses',
                       request_id:        request_id,
                       pipeline_response: pipeline_response,
                       stream:            true,
                       started_at:        request_started_at,
-                      tool_calls:        Responses.build_output_tool_calls(pipeline_response),
-                      stop_reason:       'completed'
+                      tool_calls:        tool_calls,
+                      stop_reason:       tool_calls.any? ? 'requires_action' : 'completed'
                     )
                   rescue StandardError => e
                     handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.responses.stream', request_id: request_id)
@@ -87,13 +88,14 @@ module Legion
                 else
                   pipeline_response = Responses.call_executor_sync(executor, upstream_body: body)
                   response_body     = Responses.format_response(pipeline_response, request_id: request_id, model: model)
+                  tool_calls = Responses.build_output_tool_calls(pipeline_response)
                   log_api_completion_summary(
                     namespace:         'namespaces][openai][responses',
                     request_id:        request_id,
                     pipeline_response: pipeline_response,
                     stream:            false,
                     started_at:        request_started_at,
-                    tool_calls:        Responses.build_output_tool_calls(pipeline_response),
+                    tool_calls:        tool_calls,
                     stop_reason:       response_body[:status]
                   )
                   content_type :json
@@ -284,8 +286,22 @@ module Legion
                 status:  'completed'
               }]
 
-              { id: request_id, object: 'response', created_at: Time.now.to_i,
-                model: resolved_model, output: output, usage: build_usage(tokens), status: 'completed' }
+              # Per OpenAI Responses API spec: when tool calls are present, the response
+              # must signal that client-side execution is required. Using 'completed' tells
+              # the client the turn is done and it should not execute the tool calls.
+              status = tool_calls.any? ? 'in_progress' : 'completed'
+
+              result = { id: request_id, object: 'response', created_at: Time.now.to_i,
+                model: resolved_model, output: output, usage: build_usage(tokens), status: status }
+
+              if tool_calls.any?
+                result[:action_required] = {
+                  type:           'function_calls',
+                  function_calls: tool_calls
+                }
+              end
+
+              result
             end
 
             # rubocop:disable Metrics/AbcSize
@@ -327,9 +343,12 @@ module Legion
                   emit_reasoning_delta(out, request_id, output_items, thinking, sequence: -> { seq += 1 })
                 end
 
-                # Handle tool call deltas from streaming responses
+                # Handle tool call deltas from streaming responses.
+                # These emit SSE events in real-time so the client sees tool calls
+                # as they arrive. At the end, build_output_tool_calls provides the
+                # final consolidated list (which filters out server-executed tools).
                 if chunk.respond_to?(:tool_calls) && chunk.tool_calls && !chunk.tool_calls.empty?
-                  close_reasoning_item(out, output_items, sequence: -> { seq += 1 })
+                  close_thinking_item(out, output_items, sequence: -> { seq += 1 })
                   chunk.tool_calls.each do |tc_id, tc|
                     tc_id_str = tc_id.to_s
                     tc_name = tc.respond_to?(:name) ? tc.name.to_s : ''
@@ -342,7 +361,7 @@ module Legion
                                  { type: 'response.output_item.added', sequence_number: seq += 1,
                                    output_index: idx, item: { id: tc_id_str, type: 'function_call', name: tc_name,
                                      call_id: tc_id_str, arguments: '', status: 'in_progress' } })
-                      pending_tool_calls[tc_id_str] = { name: tc_name, arguments: +'', output_index: idx }
+                      pending_tool_calls[tc_id_str] = { id: tc_id_str, name: tc_name, arguments: +'', output_index: idx }
                       output_items << { id: tc_id_str, type: 'function_call', name: tc_name,
                                         call_id: tc_id_str, arguments: pending_tool_calls[tc_id_str][:arguments], status: 'in_progress' }
                     end
@@ -358,7 +377,7 @@ module Legion
                 text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
                 next if text.empty?
 
-                close_reasoning_item(out, output_items, sequence: -> { seq += 1 })
+                close_thinking_item(out, output_items, sequence: -> { seq += 1 })
                 open_message.call
                 full_text << text
                 out << sse('response.output_text.delta', { type: 'response.output_text.delta', sequence_number: seq += 1,
@@ -369,7 +388,6 @@ module Legion
               tokens         = pipeline_response.tokens  || {}
               resolved_model = (routing[:model] || routing['model'] || model).to_s
               usage          = build_usage(tokens)
-              function_calls = build_output_tool_calls(pipeline_response)
 
               if full_reasoning.empty?
                 final_reasoning = extract_thinking_text(pipeline_response.respond_to?(:thinking) ? pipeline_response.thinking : nil)
@@ -378,7 +396,7 @@ module Legion
                   emit_reasoning_delta(out, request_id, output_items, final_reasoning, sequence: -> { seq += 1 })
                 end
               end
-              close_reasoning_item(out, output_items, sequence: -> { seq += 1 })
+              close_thinking_item(out, output_items, sequence: -> { seq += 1 })
 
               open_message.call
               out << sse('response.output_text.done',   { type: 'response.output_text.done',   sequence_number: seq += 1,
@@ -393,26 +411,36 @@ module Legion
                                                         output_index: msg_index, item: completed_item })
               output_items[msg_index] = completed_item
 
-              function_calls.each_with_index do |fc, _idx|
-                oi = output_items.length
-                out << sse('response.output_item.added',
-                           { type: 'response.output_item.added', sequence_number: seq += 1, output_index: oi,
-            item: fc.merge(status: 'in_progress', arguments: '') })
-                out << sse('response.function_call_arguments.delta',
-                           { type: 'response.function_call_arguments.delta', sequence_number: seq += 1, output_index: oi, item_id: fc[:id],
-            delta: fc[:arguments] })
+              # Complete any pending streaming tool calls with their final arguments.
+              pending_tool_calls.each_value do |pending|
                 out << sse('response.function_call_arguments.done',
-                           { type: 'response.function_call_arguments.done',  sequence_number: seq += 1, output_index: oi, item_id: fc[:id],
-            arguments: fc[:arguments] })
+                           { type: 'response.function_call_arguments.done', sequence_number: seq += 1,
+                             output_index: pending[:output_index], item_id: pending[:id],
+                             arguments: pending[:arguments] })
                 out << sse('response.output_item.done',
-                           { type: 'response.output_item.done',              sequence_number: seq += 1, output_index: oi, item: fc })
-                output_items << fc
+                           { type: 'response.output_item.done', sequence_number: seq += 1,
+                             output_index: pending[:output_index],
+                             item: { id: pending[:id], type: 'function_call', name: pending[:name],
+                                     call_id: pending[:id], arguments: pending[:arguments], status: 'completed' } })
               end
 
-              out << sse('response.completed', { type: 'response.completed', sequence_number: seq + 1,
-                                                 response: { id: request_id, object: 'response', created_at: created_at,
-                                                             status: 'completed', model: resolved_model,
-                                                             output: output_items, usage: usage } })
+              # Determine final status based on whether there are function calls
+              # that require client-side execution. Per OpenAI Responses API spec,
+              # the final event must be response.done (not response.completed) when
+              # function calls need client execution.
+              has_tool_calls = pending_tool_calls.any?
+              out << if has_tool_calls
+                       sse('response.done', { type: 'response.done', sequence_number: seq + 1,
+                         response: { id: request_id, object: 'response', created_at: created_at,
+                           status: 'requires_action', model: resolved_model,
+                           output: output_items, usage: usage,
+                           action_required: { type: 'function_calls', function_calls: output_items.select { |i| i[:type] == 'function_call' } } } })
+                     else
+                       sse('response.completed', { type: 'response.completed', sequence_number: seq + 1,
+                         response: { id: request_id, object: 'response', created_at: created_at,
+                           status: 'completed', model: resolved_model,
+                           output: output_items, usage: usage } })
+                     end
               pipeline_response
             end
             # rubocop:enable Metrics/AbcSize
@@ -461,15 +489,13 @@ module Legion
               log.info "[llm][responses] build_output_reasoning extracted_text_length=#{text.length}"
               return [] if text.empty?
 
-              # OpenAI Responses API format: type: "message", phase: "reasoning"
+              # OpenAI Responses API format: type: "thinking" with thinking text field
               [
                 {
-                  type:    'message',
-                  id:      "msg_#{SecureRandom.hex(12)}",
-                  role:    'assistant',
-                  phase:   'reasoning',
-                  status:  'completed',
-                  content: [{ type: 'output_text', text: text }]
+                  type:     'thinking',
+                  id:       "thnk_#{SecureRandom.hex(12)}",
+                  thinking: text,
+                  status:   'completed'
                 }
               ]
             end
@@ -477,53 +503,53 @@ module Legion
             def self.emit_reasoning_delta(out, _request_id, output_items, text, sequence:)
               return if text.empty?
 
-              state = current_reasoning_state(output_items)
+              state = current_thinking_state(output_items)
               unless state
                 state = {
-                  type:    'reasoning',
-                  id:      "rs_#{SecureRandom.hex(12)}",
-                  summary: [{ type: 'summary_text', text: +'' }],
-                  status:  'in_progress'
+                  type:     'thinking',
+                  id:       "thnk_#{SecureRandom.hex(12)}",
+                  thinking: +'',
+                  status:   'in_progress'
                 }
                 output_items << state
                 output_index = output_items.length - 1
                 out << sse('response.output_item.added',
                            { type: 'response.output_item.added', sequence_number: sequence.call,
                              output_index: output_index, item: state })
-                out << sse('response.reasoning_summary_part.added',
-                           { type: 'response.reasoning_summary_part.added', sequence_number: sequence.call,
-                             output_index: output_index, item_id: state[:id], summary_index: 0,
-                             part: { type: 'summary_text', text: '' } })
+                out << sse('response.thinking_part.added',
+                           { type: 'response.thinking_part.added', sequence_number: sequence.call,
+                             output_index: output_index, item_id: state[:id],
+                             part: { type: 'thinking', thinking: '' } })
               end
 
               output_index = output_items.index(state)
-              state[:summary][0][:text] << text
-              out << sse('response.reasoning_summary_text.delta',
-                         { type: 'response.reasoning_summary_text.delta', sequence_number: sequence.call,
-                           output_index: output_index, item_id: state[:id], summary_index: 0, delta: text })
+              state[:thinking] << text
+              out << sse('response.thinking.delta',
+                         { type: 'response.thinking.delta', sequence_number: sequence.call,
+                           output_index: output_index, item_id: state[:id], delta: text })
             end
 
-            def self.close_reasoning_item(out, output_items, sequence:)
-              state = current_reasoning_state(output_items)
+            def self.close_thinking_item(out, output_items, sequence:)
+              state = current_thinking_state(output_items)
               return unless state && state[:status] == 'in_progress'
 
               output_index = output_items.index(state)
               state[:status] = 'completed'
-              text = state.dig(:summary, 0, :text).to_s
-              out << sse('response.reasoning_summary_text.done',
-                         { type: 'response.reasoning_summary_text.done', sequence_number: sequence.call,
-                           output_index: output_index, item_id: state[:id], summary_index: 0, text: text })
-              out << sse('response.reasoning_summary_part.done',
-                         { type: 'response.reasoning_summary_part.done', sequence_number: sequence.call,
-                           output_index: output_index, item_id: state[:id], summary_index: 0,
-                           part: { type: 'summary_text', text: text } })
+              text = state[:thinking].to_s
+              out << sse('response.thinking.done',
+                         { type: 'response.thinking.done', sequence_number: sequence.call,
+                           output_index: output_index, item_id: state[:id], text: text })
+              out << sse('response.thinking_part.done',
+                         { type: 'response.thinking_part.done', sequence_number: sequence.call,
+                           output_index: output_index, item_id: state[:id],
+                           part: { type: 'thinking', thinking: text } })
               out << sse('response.output_item.done',
                          { type: 'response.output_item.done', sequence_number: sequence.call,
                            output_index: output_index, item: state })
             end
 
-            def self.current_reasoning_state(output_items)
-              output_items.find { |item| item[:type] == 'reasoning' && item[:status] == 'in_progress' }
+            def self.current_thinking_state(output_items)
+              output_items.find { |item| item[:type] == 'thinking' && item[:status] == 'in_progress' }
             end
 
             def self.extract_thinking_text(value)

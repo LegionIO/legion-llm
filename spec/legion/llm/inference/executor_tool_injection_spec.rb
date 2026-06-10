@@ -202,7 +202,6 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
         expect(lookup.source[:type]).to eq(:registry)
         expect(lookup.source[:tool_class]).to eq(resolved_tool_class)
-        expect(executor.send(:client_tools_only?)).to be(false)
       end
 
       it 'resolves sanitized LegionIO client-shaped tools back to dotted registry tools' do
@@ -241,10 +240,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         tool = definitions.find { |definition| definition.name == 'legion_microsoft_teams_create_chain' }
 
         expect(tool.source).to include(type: :extension, lex: 'lex-microsoft_teams', runner: 'chains', function: 'create_chain')
-        expect(executor.send(:client_tools_only?)).to be(false)
       end
 
-      it 'keeps explicit all-client tool requests as passthrough-only' do
+      it 'treats all-client tool requests as client passthrough but still injects pinned special tools' do
         extensions_mod = Module.new do
           define_singleton_method(:tools) { [] }
           define_singleton_method(:filter_tools) { [] }
@@ -260,10 +258,16 @@ RSpec.describe Legion::LLM::Inference::Executor do
         )
 
         executor = described_class.new(request)
-        expect(executor.send(:client_tools_only?)).to be(true)
+        definitions = executor.send(:native_tool_definitions)
+        names = definitions.map(&:name)
+
+        # Client tool is present
+        expect(names).to include('local_client_only')
+        # Pinned special tools are always injected alongside
+        expect(names).to include('legion_list_special_tools')
       end
 
-      it 'does not inject registry tools for all-client tool calls when passthrough is enabled' do
+      it 'injects registry tools alongside client tools regardless of passthrough mode' do
         extensions_mod = Module.new do
           define_singleton_method(:tools) do
             [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
@@ -288,8 +292,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         executor = described_class.new(request)
         names = executor.send(:native_tool_definitions).map(&:name)
 
+        # Both client tools and pinned special tools are present
         expect(names).to include('client_shell')
-        expect(names).not_to include('registry_tool')
+        expect(names).to include('legion_list_special_tools')
       end
 
       it 'filters explicitly enabled passthrough client tools with the default blacklist' do

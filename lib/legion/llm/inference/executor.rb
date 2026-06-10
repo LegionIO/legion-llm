@@ -399,11 +399,25 @@ module Legion
           state = resolve_routing_state(apply_proactive_tier_assignment(resolve_model_to_local_provider(routing_request_state)))
           auto_route = state[:auto_route] == true
 
+          inferred = state[:model] && Router.infer_provider_for_model(state[:model])
+          inferred = nil unless state[:provider] || (inferred && Call::Registry.registered?(inferred))
           @resolved_provider = state[:provider] ||
-                               (state[:model] && Router.infer_provider_for_model(state[:model])) ||
+                               inferred ||
                                (Legion::Settings[:llm][:default_provider] unless auto_route)
           @resolved_instance = resolve_provider_instance(state[:instance], @resolved_provider)
-          @resolved_model = state[:model] || (Legion::Settings[:llm][:default_model] unless auto_route)
+
+          # If the resolved provider differs from the model's natural provider, swap to the
+          # provider's default model — sending "claude-sonnet-4-6" to vllm would fail.
+          resolved_model = state[:model]
+          if resolved_model && @resolved_provider
+            model_natural = Router.infer_provider_for_model(resolved_model)
+            if model_natural && model_natural != @resolved_provider
+              log.debug "[llm][executor] action=model_provider_mismatch model=#{resolved_model} " \
+                        "natural_provider=#{model_natural} resolved_provider=#{@resolved_provider} swapping"
+              resolved_model = nil
+            end
+          end
+          @resolved_model = resolved_model || (Legion::Settings[:llm][:default_model] unless auto_route)
           raise ProviderError, 'Auto routing could not resolve an available LLM provider/model' if auto_route && (@resolved_provider.nil? || @resolved_model.nil?)
 
           @resolved_tier = state[:tier]&.to_sym || inferred_provider_tier(@resolved_provider)
@@ -465,8 +479,20 @@ module Legion
             auto_route:        @request.extra[:auto_route],
             provider_explicit: routing_field_explicit?(routing_explicit, :provider, @request.routing[:provider]),
             instance_explicit: routing_field_explicit?(routing_explicit, :instance, instance),
-            tier_explicit:     routing_field_explicit?(routing_explicit, :tier, tier)
+            tier_explicit:     routing_field_explicit?(routing_explicit, :tier, tier),
+            estimated_tokens:  estimate_request_tokens
           }
+        end
+
+        def estimate_request_tokens
+          # Estimate total tokens from current request messages + conversation history.
+          # This is used by the router to exclude models whose context window can't fit.
+          all_messages = []
+          all_messages.concat(@enrichments['context:conversation_history'] || [])
+          all_messages.concat(@request.messages || [])
+          return 0 if all_messages.empty?
+
+          estimate_message_tokens(all_messages)
         end
 
         def routing_intent_present?(intent)
@@ -630,12 +656,14 @@ module Legion
               provider:               state[:provider],
               instance:               state[:instance],
               max_escalations:        pipeline_escalation_max_attempts,
-              allow_default_fallback: state[:auto_route] != true
+              allow_default_fallback: state[:auto_route] != true,
+              estimated_tokens:       state[:estimated_tokens]
             )
             @escalation_chain.primary
           else
             Router.resolve(intent: state[:intent], tier: state[:tier], model: state[:model],
-                           provider: state[:provider], instance: state[:instance])
+                           provider: state[:provider], instance: state[:instance],
+                           estimated_tokens: state[:estimated_tokens])
           end
         end
 
@@ -1269,19 +1297,6 @@ module Legion
           @native_dispatch_tools ||= native_tool_definitions.to_h { |tool| [tool.name.to_sym, tool.to_h] }
         end
 
-        # Returns true when ALL requested tools are client-side passthrough tools
-        # (none resolved to registry/extension tool classes). Used by the native
-        # tool loop to decide whether to force an explicit tool choice.
-        def client_tools_only?
-          request_tools = Array(@request.tools)
-          return false if request_tools.empty?
-
-          request_tools.none? do |tool|
-            source = request_tool_source(tool)
-            source[:type].to_sym != :client || source[:executable] == true
-          end
-        end
-
         def native_tool_definitions
           @native_tool_definitions ||= begin
             definitions = []
@@ -1296,8 +1311,10 @@ module Legion
 
         def registry_tool_injection_requested?
           return false if @request.respond_to?(:suppress_tools) && @request.suppress_tools
-          return false if client_tools_only? && client_tool_passthrough_enabled?
 
+          # Always inject LegionIO tools (special + extension). Client passthrough
+          # is handled by the tool loop, which executes LegionIO tools server-side
+          # and returns only client tools to the client.
           true
         end
 
@@ -2761,9 +2778,17 @@ module Legion
             next unless source.is_a?(Hash)
 
             type = source[:type] || source['type']
-            return :pause_turn if %i[special registry extension].include?(type&.to_sym)
+            next unless %i[special registry extension].include?(type&.to_sym)
+
+            # LegionIO tool: only return :pause_turn if it hasn't been executed yet.
+            # If the tool already has a result, the server-side tool loop completed
+            # and we should fall through to :end_turn.
+            tc_result = tc.respond_to?(:result) ? tc.result : (tc[:result] || tc['result'])
+            return :pause_turn if tc_result.nil?
           end
 
+          # All LegionIO tools have results (already executed), or only
+          # client-side tools remain — treat as normal tool_use for the client.
           :tool_use
         end
 

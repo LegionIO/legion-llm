@@ -29,9 +29,9 @@ module Legion
           max_output_tokens:              16_384,
           max_tool_rounds:                200,
           max_tool_calls_per_turn:        100,
-          tool_result_max_dispatch_chars: 4000,
+          tool_result_max_dispatch_chars: 10_000,
           default_model:                  model_override,
-          default_temperature:            1.0,
+          default_temperature:            0.9,
           default_provider:               nil,
           system_baseline:                system_baseline_default,
           fleet:                          fleet_defaults,
@@ -361,13 +361,13 @@ module Legion
           mode:                    'heuristic',
           llm_assisted:            false,
           llm_model:               nil,
-          tool_result_max_chars:   2000,
-          thinking_eviction:       true,
-          exchange_folding:        true,
+          tool_result_max_chars:   10_000,
+          thinking_eviction:       false,
+          exchange_folding:        false,
           superseded_eviction:     true,
           dedup_enabled:           true,
           dedup_threshold:         0.85,
-          target_context_tokens:   40_000,
+          target_context_tokens:   60_000,
           archive_dropped_turns:   true,
           archive_preserve_recent: 10
         }
@@ -375,8 +375,8 @@ module Legion
 
       def self.conversation_defaults
         {
-          summarize_threshold: 50_000,
-          target_tokens:       20_000,
+          summarize_threshold: 90_000,
+          target_tokens:       60_000,
           preserve_recent:     10,
           auto_compact:        true
         }
@@ -448,7 +448,7 @@ module Legion
 
       def self.structured_output_defaults
         {
-          retry_on_parse_failure: true,
+          retry_on_parse_failure: false,
           max_retries:            2
         }
       end
