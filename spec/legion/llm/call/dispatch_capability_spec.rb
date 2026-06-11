@@ -41,7 +41,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         model: 'llama3', messages: [{ role: 'user', content: 'hi' }]
       )
       expect(result[:result]).to eq('chat response')
-      expect(result[:usage]).to be_a(Legion::LLM::Usage)
+      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
       expect(result[:usage].input_tokens).to eq(10)
     end
 
@@ -50,7 +50,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         provider: :ollama, capability: :embed, instance: :local,
         model: 'nomic-embed', text: 'hello world'
       )
-      expect(result[:usage]).to be_a(Legion::LLM::Usage)
+      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
       expect(result[:usage].input_tokens).to eq(3)
     end
 

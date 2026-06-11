@@ -146,7 +146,13 @@ module Legion
             def heuristic_score(raw_response, bands:, options:)
               signals  = {}
               penalty  = 0.0
-              content  = raw_response.respond_to?(:content) ? raw_response.content.to_s : ''
+              content  = if raw_response.respond_to?(:text)
+                           raw_response.text.to_s
+                         elsif raw_response.respond_to?(:content)
+                           raw_response.content.to_s
+                         else
+                           ''
+                         end
               has_tool_calls = raw_response.respond_to?(:tool_calls) && raw_response.tool_calls&.any?
 
               # Use pre-computed QualityResult when available to avoid duplicate work.

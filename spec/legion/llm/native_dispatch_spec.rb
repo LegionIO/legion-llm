@@ -56,7 +56,7 @@ RSpec.describe Legion::LLM::Call::Dispatch do
           model:    'claude-sonnet-4-6',
           messages: [{ role: 'user', content: 'hi' }]
         )
-        expect(result[:usage]).to be_a(Legion::LLM::Usage)
+        expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
         expect(result[:usage].input_tokens).to eq(10)
         expect(result[:usage].output_tokens).to eq(5)
       end
@@ -116,7 +116,7 @@ RSpec.describe Legion::LLM::Call::Dispatch do
 
     it 'returns normalized hash' do
       result = described_class.dispatch_embed(provider: :bedrock, model: 'titan', text: 'hello')
-      expect(result[:usage]).to be_a(Legion::LLM::Usage)
+      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
       expect(result[:usage].input_tokens).to eq(3)
     end
 
@@ -157,7 +157,7 @@ RSpec.describe Legion::LLM::Call::Dispatch do
         messages: []
       )
       expect(result[:result]).to eq(42)
-      expect(result[:usage]).to be_a(Legion::LLM::Usage)
+      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
     end
 
     it 'raises ProviderError when not registered' do
@@ -189,7 +189,7 @@ RSpec.describe Legion::LLM::Call::Dispatch do
       end)
       result = described_class.dispatch_chat(provider: :openai, model: nil, messages: [])
       expect(result[:result]).to eq('plain string')
-      expect(result[:usage]).to be_a(Legion::LLM::Usage)
+      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
     end
 
     it 'passes through a Usage struct when already wrapped' do
@@ -223,57 +223,41 @@ RSpec.describe Legion::LLM::Call::Dispatch do
   end
 end
 
-RSpec.describe Legion::LLM::Call::NativeResponseAdapter do
-  let(:usage_hash) { { input_tokens: 20, output_tokens: 10, cache_read_tokens: 5, cache_write_tokens: 2 } }
-  let(:result_hash) { { result: 'some content', usage: Legion::LLM::Usage.new(**usage_hash) } }
+# P4a: NativeResponseAdapter was deleted; Dispatch now returns Canonical::Response.
+# These specs verify the canonical adapter provides backward-compatible hash-key access.
+RSpec.describe Legion::LLM::Call::Dispatch, '.normalize_response (canonical)' do
+  let(:canonical) { Legion::Extensions::Llm::Canonical }
 
-  subject(:adapter) { described_class.new(result_hash) }
-
-  it 'exposes #content' do
-    expect(adapter.content).to eq('some content')
+  # Test the hash-key adapter on Canonical::Response
+  it 'allows [:text] access on Canonical::Response' do
+    response = canonical::Response.new(
+      text: 'hello', thinking: nil, tool_calls: [],
+      usage: canonical::Usage.new(input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}),
+      stop_reason: :end_turn, model: 'test', routing: {}, metadata: {}
+    )
+    expect(response[:text]).to eq('hello')
+    expect(response[:content]).to eq('hello')   # backward-compatible alias
+    expect(response[:result]).to eq('hello')    # backward-compatible alias
   end
 
-  it 'exposes #input_tokens' do
-    expect(adapter.input_tokens).to eq(20)
+  it 'allows hash-key access on Canonical::ToolCall' do
+    tc = canonical::ToolCall.new(
+      id: 'tc1', exchange_id: nil, name: 'write_file', arguments: { path: '/tmp/x' },
+      source: { type: :registry }, status: :success, duration_ms: 50, result: 'ok',
+      error: nil, started_at: nil, finished_at: nil, category: nil,
+      data_handling_classification: nil, policy_decision: nil
+    )
+    expect(tc[:id]).to eq('tc1')
+    expect(tc[:name]).to eq('write_file')
+    expect(tc[:arguments]).to eq({ path: '/tmp/x' })
   end
 
-  it 'exposes #output_tokens' do
-    expect(adapter.output_tokens).to eq(10)
-  end
-
-  it 'exposes #cache_read_tokens' do
-    expect(adapter.cache_read_tokens).to eq(5)
-  end
-
-  it 'exposes #cache_write_tokens' do
-    expect(adapter.cache_write_tokens).to eq(2)
-  end
-
-  it 'exposes #usage as a Usage struct' do
-    expect(adapter.usage).to be_a(Legion::LLM::Usage)
-  end
-
-  it 'converts nil result to empty string' do
-    adapter = described_class.new({ result: nil, usage: Legion::LLM::Usage.new })
-    expect(adapter.content).to eq('')
-  end
-
-  it 'uses zero values when usage is nil' do
-    adapter = described_class.new({ result: 'hi', usage: nil })
-    expect(adapter.input_tokens).to eq(0)
-    expect(adapter.output_tokens).to eq(0)
-  end
-
-  it 'exposes response metadata' do
-    adapter = described_class.new({ result: 'hi', usage: nil, metadata: { offering: { offering_id: 'x' } } })
-    expect(adapter.metadata).to eq(offering: { offering_id: 'x' })
-  end
-
-  it 'exposes provider thinking separately from content' do
-    adapter = described_class.new({ result: 'answer', usage: nil, thinking: { content: 'internal', enabled: true } })
-
-    expect(adapter.content).to eq('answer')
-    expect(adapter.thinking).to eq(content: 'internal', enabled: true)
-    expect(adapter[:thinking]).to eq(content: 'internal', enabled: true)
+  it 'allows dig on Canonical::Response' do
+    response = canonical::Response.new(
+      text: 'hello', thinking: nil, tool_calls: [],
+      usage: canonical::Usage.new(input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}),
+      stop_reason: :end_turn, model: 'test', routing: {}, metadata: { deep: { nested: 'value' } }
+    )
+    expect(response[:metadata][:deep][:nested]).to eq('value')
   end
 end

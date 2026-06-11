@@ -1093,8 +1093,8 @@ module Legion
 
         def execute_provider_request_native
           result = execute_native_tool_loop
-          merge_response_offering_metadata(result[:metadata])
-          @raw_response = Call::NativeResponseAdapter.new(result)
+          merge_response_offering_metadata(result.metadata) if result.respond_to?(:metadata)
+          @raw_response = result
           @tool_loop_messages = @last_tool_loop_messages if @last_tool_loop_messages
         end
 
@@ -1587,7 +1587,8 @@ module Legion
         end
 
         def native_assistant_tool_message(result, tool_calls)
-          { role: :assistant, content: result[:result].to_s, tool_calls: tool_calls }
+          content = result.respond_to?(:text) ? result.text : result[:result]
+          { role: :assistant, content: content.to_s, tool_calls: tool_calls }
         end
 
         def native_tool_result_message(tool_call, dispatch_result)
@@ -1969,8 +1970,8 @@ module Legion
 
         def execute_provider_request_stream_native(&)
           result = execute_native_streaming_tool_loop(&)
-          merge_response_offering_metadata(result[:metadata])
-          @raw_response = Call::NativeResponseAdapter.new(result)
+          merge_response_offering_metadata(result.metadata) if result.respond_to?(:metadata)
+          @raw_response = result
         end
 
         def execute_provider_request_responses(body:, stream:, &block)
@@ -1990,8 +1991,8 @@ module Legion
             stream:       stream,
             stream_block: block
           )
-          merge_response_offering_metadata(result[:metadata])
-          @raw_response = Call::NativeResponseAdapter.new(result)
+          merge_response_offering_metadata(result.metadata) if result.respond_to?(:metadata)
+          @raw_response = result
 
           @timestamps[:provider_end] = Time.now
           record_provider_response
@@ -2461,7 +2462,8 @@ module Legion
           persist_tool_loop_messages(conv_id) if @tool_loop_messages
 
           assistant_response = nil
-          if @raw_response.respond_to?(:content) && @raw_response.content
+          response_text = canonical_response_text(@raw_response)
+          if response_text && !response_text.empty?
             tokens = @extracted_tokens || extract_tokens
 
             # Capture tool_calls from the tool loop's final assistant message
@@ -2469,7 +2471,7 @@ module Legion
 
             typed_assistant = Types::Message.build(
               role:            :assistant,
-              content:         @raw_response.content,
+              content:         response_text,
               provider:        @resolved_provider,
               model:           @resolved_model,
               input_tokens:    tokens.respond_to?(:input_tokens) ? tokens.input_tokens : nil,
@@ -2488,7 +2490,7 @@ module Legion
             conv_attrs[:tool_calls] = final_tool_calls if final_tool_calls && !final_tool_calls.empty?
 
             Conversation.append(conv_id, **conv_attrs)
-            assistant_response = @raw_response.content
+            assistant_response = response_text
           end
 
           trigger_async_curation(conv_id, @request.messages, assistant_response)
@@ -2551,13 +2553,7 @@ module Legion
         def build_response
           @extracted_tokens ||= extract_tokens
 
-          content = if @raw_response.respond_to?(:content)
-                      @raw_response.content
-                    elsif @raw_response.is_a?(Hash) && @raw_response[:content]
-                      @raw_response[:content]
-                    else
-                      @raw_response.to_s
-                    end
+          content = canonical_response_text(@raw_response) || @raw_response.to_s
 
           msg = Types::Message.build(
             role:            :assistant,
@@ -2677,7 +2673,9 @@ module Legion
         def extract_response_content
           return nil unless @raw_response
 
-          if @raw_response.respond_to?(:content)
+          if @raw_response.respond_to?(:text)
+            @raw_response.text
+          elsif @raw_response.respond_to?(:content)
             @raw_response.content
           elsif @raw_response.is_a?(Hash) && @raw_response[:content]
             @raw_response[:content]
@@ -2709,6 +2707,14 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.extract_thinking')
           nil
+        end
+
+        # Extract text content from a canonical response or hash-shaped legacy result.
+        def canonical_response_text(response)
+          return response.text if response.respond_to?(:text) && !response.respond_to?(:[])
+
+          response.respond_to?(:content) ? response.content :
+            (response.respond_to?(:[]) ? response[:content] || response[:result] || response[:text] : nil)
         end
 
         def normalize_thinking_payload(thinking)

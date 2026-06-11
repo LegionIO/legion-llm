@@ -23,17 +23,13 @@ module Legion
           loop do
             @native_tool_loop_round = round
             result = dispatch_provider_request(capability: :chat, operation: :chat, messages: messages)
-            result = Call::NativeResponseAdapter.coerce_result(result)
-            tool_calls = normalize_native_tool_calls(result[:tool_calls])
+            tool_calls = extract_tool_calls(result)
             if tool_calls.empty?
               # Provider may have emitted tool arguments as plain text JSON
               # (common with vLLM/qwen when a tool choice is forced).
               # Try to synthesize a structured tool call from the text.
               tool_calls = maybe_synthesize_tool_call_from_content(result, round)
-              if tool_calls.any?
-                result[:tool_calls] = tool_calls
-                result[:stop_reason] = :tool_use
-              end
+              result = apply_synthesized_tool_calls(result, tool_calls) if tool_calls.any?
             end
             if tool_calls.empty?
               log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=no_tool_calls"
@@ -136,14 +132,10 @@ module Legion
               messages:     messages,
               stream_block: block
             )
-            result = Call::NativeResponseAdapter.coerce_result(result)
-            tool_calls = normalize_native_tool_calls(result[:tool_calls])
+            tool_calls = extract_tool_calls(result)
             if tool_calls.empty?
               tool_calls = maybe_synthesize_tool_call_from_content(result, round)
-              if tool_calls.any?
-                result[:tool_calls] = tool_calls
-                result[:stop_reason] = :tool_use
-              end
+              result = apply_synthesized_tool_calls(result, tool_calls) if tool_calls.any?
             end
             if tool_calls.empty?
               log.debug "[llm][executor] action=native_streaming_tool_loop.complete rounds=#{round} reason=no_tool_calls"
@@ -319,6 +311,9 @@ module Legion
         # plain text JSON (e.g. vLLM/qwen), synthesize a structured tool call
         # from the content so downstream translators emit the correct
         # client-native shape (tool_use / function_call etc).
+        #
+        # Returns an array of synthesized tool call hashes. Does NOT mutate the
+        # result — the caller rebuilds the canonical response if synthesis occurs.
         def maybe_synthesize_tool_call_from_content(result, round)
           tool_prefs = native_tool_prefs
           return [] unless tool_prefs
@@ -326,8 +321,7 @@ module Legion
           forced_name = tool_prefs[:choice]
           return [] unless forced_name && native_dispatch_tools.key?(forced_name)
 
-          raw = result[:result] || result[:content] || result['result'] || result['content']
-          text = raw.is_a?(String) ? raw.to_s.strip : ''
+          text = result_text_for_synthesis(result)
           return [] if text.empty? || !text.start_with?('{"')
 
           parsed = nil
@@ -348,12 +342,25 @@ module Legion
           log.info "[llm][native_tool_loop] action=synthesized_tool_call round=#{round} " \
                    "tool=#{forced_name} arg_keys=#{parsed.keys.join(',')}"
 
-          # Strip the JSON blob from the text content so it isn't also emitted
-          # as a plain text delta by the API translator.
-          result[:result] = ''
-          result[:content] = ''
-
           synthesized
+        end
+
+        # Extract text from canonical or hash-shaped result for tool-call synthesis.
+        def result_text_for_synthesis(result)
+          result.respond_to?(:text) ? result.text.to_s.strip :
+            (result[:result] || result[:content] || result['result'] || result['content'] || '').to_s.strip
+        end
+
+        # Apply synthesized tool calls to a canonical response (using .with for immutability)
+        # or mutate a hash in place. Returns the updated response.
+        def apply_synthesized_tool_calls(result, tool_calls)
+          return result.merge(tool_calls: tool_calls, stop_reason: :tool_use) unless result.respond_to?(:with)
+
+          result.with(
+            text:       '',
+            tool_calls: tool_calls,
+            stop_reason: :tool_use
+          )
         end
 
         # Detect tool calls that have already been executed in a previous round
@@ -375,6 +382,14 @@ module Legion
           "name=#{name}:args_hash=#{::Digest::MD5.hexdigest(arg_value)}"
         rescue StandardError
           "name=#{name}:args_hash=default"
+        end
+
+        # Extract tool call array from canonical response or hash-shaped result.
+        def extract_tool_calls(result)
+          return result.tool_calls if result.respond_to?(:tool_calls) && result.respond_to?(:text)
+
+          # Fallback for hash-shaped results
+          (result[:tool_calls] || result['tool_calls'] || []).to_a
         end
 
         def normalize_native_tool_calls(tool_calls)

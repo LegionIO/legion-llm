@@ -590,9 +590,8 @@ module Legion
                    Call::Dispatch.call(provider: provider, instance: instance, capability: :chat, model: model,
                                        messages: messages, **)
                  end
-        response = Call::NativeResponseAdapter.new(result)
-        emit_non_pipeline_metering(response, model: model, provider: provider, caller: caller)
-        response
+        emit_non_pipeline_metering(result, model: model, provider: provider, caller: caller)
+        result
       end
 
       def native_provider_error(operation)
