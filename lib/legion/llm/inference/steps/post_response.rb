@@ -38,19 +38,25 @@ module Legion
           private
 
           def extract_tokens
-            unless @raw_response.respond_to?(:input_tokens)
+            usage_source = if @raw_response.respond_to?(:usage) && @raw_response.usage.respond_to?(:input_tokens)
+                             @raw_response.usage
+                           elsif @raw_response.respond_to?(:input_tokens)
+                             @raw_response
+                           end
+
+            unless usage_source
               log_step_debug(:post_response, :token_extraction_skipped, reason: :no_token_accessors)
               return {}
             end
 
-            input  = @raw_response.input_tokens.to_i
-            output = @raw_response.output_tokens.to_i
+            input  = usage_source.input_tokens.to_i
+            output = usage_source.output_tokens.to_i
 
-            cache_read  = @raw_response.respond_to?(:cache_read_tokens) ? @raw_response.cache_read_tokens.to_i : 0
-            cache_write = @raw_response.respond_to?(:cache_write_tokens) ? @raw_response.cache_write_tokens.to_i : 0
+            cache_read  = usage_source.respond_to?(:cache_read_tokens) ? usage_source.cache_read_tokens.to_i : 0
+            cache_write = usage_source.respond_to?(:cache_write_tokens) ? usage_source.cache_write_tokens.to_i : 0
 
-            details = if @raw_response.respond_to?(:output_tokens_details) && @raw_response.output_tokens_details.is_a?(Hash)
-                        @raw_response.output_tokens_details
+            details = if usage_source.respond_to?(:output_tokens_details) && usage_source.output_tokens_details.is_a?(Hash)
+                        usage_source.output_tokens_details
                       else
                         {}
                       end

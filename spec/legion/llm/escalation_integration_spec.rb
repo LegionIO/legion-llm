@@ -37,7 +37,7 @@ RSpec.describe 'Legion::LLM.chat escalation' do
     it 'dispatches once through the native provider' do
       expect(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: good_content))
       result = Legion::LLM.chat(escalate: false, message: 'test')
-      expect(result.content).to eq(good_content)
+      expect(result.text).to eq(good_content)
     end
   end
 
@@ -52,7 +52,7 @@ RSpec.describe 'Legion::LLM.chat escalation' do
       end
 
       response = Legion::LLM.chat(escalate: true, message: 'test')
-      expect(response.content).to eq(good_content)
+      expect(response.text).to eq(good_content)
     end
   end
 
@@ -69,7 +69,7 @@ RSpec.describe 'Legion::LLM.chat escalation' do
       end
 
       response = Legion::LLM.chat(escalate: true, message: 'test')
-      expect(response.content).to eq(good_content)
+      expect(response.text).to eq(good_content)
     end
   end
 
@@ -97,9 +97,9 @@ RSpec.describe 'Legion::LLM.chat escalation' do
         end
       end
 
-      custom = ->(r) { r.content.include?('SELECT') }
+      custom = ->(r) { r.text.include?('SELECT') }
       response = Legion::LLM.chat(escalate: true, message: 'test', quality_check: custom)
-      expect(response.content).to include('SELECT')
+      expect(response.text).to include('SELECT')
     end
   end
 
@@ -111,7 +111,7 @@ RSpec.describe 'Legion::LLM.chat escalation' do
     it 'defaults escalate to false and returns a native response' do
       expect(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: good_content))
       result = Legion::LLM.chat(message: 'test')
-      expect(result.content).to eq(good_content)
+      expect(result.text).to eq(good_content)
     end
   end
 end

@@ -347,8 +347,11 @@ module Legion
 
         # Extract text from canonical or hash-shaped result for tool-call synthesis.
         def result_text_for_synthesis(result)
-          result.respond_to?(:text) ? result.text.to_s.strip :
+          if result.respond_to?(:text)
+            result.text.to_s.strip
+          else
             (result[:result] || result[:content] || result['result'] || result['content'] || '').to_s.strip
+          end
         end
 
         # Apply synthesized tool calls to a canonical response (using .with for immutability)
@@ -357,8 +360,8 @@ module Legion
           return result.merge(tool_calls: tool_calls, stop_reason: :tool_use) unless result.respond_to?(:with)
 
           result.with(
-            text:       '',
-            tool_calls: tool_calls,
+            text:        '',
+            tool_calls:  tool_calls,
             stop_reason: :tool_use
           )
         end

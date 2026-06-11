@@ -34,7 +34,7 @@ module Legion
         CompatWarning.warn_once('Legion::LLM::NativeDispatch', 'Legion::LLM::Call::Dispatch')
         Call::Dispatch
       when :NativeResponseAdapter
-        raise NameError, "Legion::LLM::NativeResponseAdapter removed in v0.12.x — use Canonical::Response from lex-llm"
+        raise NameError, 'Legion::LLM::NativeResponseAdapter removed in v0.12.x — use Canonical::Response from lex-llm'
       when :ProviderRegistry
         CompatWarning.warn_once('Legion::LLM::ProviderRegistry', 'Legion::LLM::Call::Registry')
         Call::Registry

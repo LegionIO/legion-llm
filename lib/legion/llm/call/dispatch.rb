@@ -11,68 +11,82 @@ module Legion
       # Canonical module convenience aliases (lex-llm 0.5.0+).
       Canonical = Legion::Extensions::Llm::Canonical
 
-      # Compatibility adapters for legacy callers that use hash-style access
-      # on canonical types (Naming after P4a spec: absorbed from NativeResponseAdapter).
-      # These provide `[]` / `dig` so existing code like tc[:name] still works
-      # on Canonical::Response and Canonical::ToolCall without wholesale rewrites.
+      # DEPRECATED(P6): Hash-key compatibility adapters for Canonical types.
+      # These exist ONLY to avoid wholesale rewrites in the P4a batch. They are
+      # deleted in Phase 6 — do NOT build new code against hash-key access on
+      # Canonical::Response, Canonical::ToolCall, or Canonical::Usage.
+      # Each access logs a deprecation breadcrumb so P6 can find survivors.
       module CanonicalResponseCompat
         KEY_MAP = { content: :text, result: :text, text: :text }.freeze
 
         def [](key)
+          Legion::Logging.log.debug do
+            "[llm][DEPRECATED(P6)] canonical_hash_access key=#{key} caller=#{caller_locations(1, 1)&.first}"
+          end
           sym = key.to_sym
           sym = KEY_MAP[sym] || sym
           public_send(sym) if respond_to?(sym)
         end
 
-        def has_key?(key)
+        def has_key?(key) # rubocop:disable Naming/PredicatePrefix -- Hash API compat requires this name
+          Legion::Logging.log.debug do
+            "[llm][DEPRECATED(P6)] canonical_has_key? key=#{key} caller=#{caller_locations(1, 1)&.first}"
+          end
           sym = key.respond_to?(:to_sym) ? key.to_sym : key.to_s.to_sym
           sym = KEY_MAP[sym] || sym
           respond_to?(sym)
         end
 
         def dig(key, *rest)
+          Legion::Logging.log.debug do
+            "[llm][DEPRECATED(P6)] canonical_dig key=#{key} caller=#{caller_locations(1, 1)&.first}"
+          end
           val = self[key]
           return val if rest.empty?
-          return nil unless val&.respond_to?(:dig)
+          return nil unless val.respond_to?(:dig)
 
           val.dig(*rest)
         end
       end
 
+      # DEPRECATED(P6): Hash-key compatibility adapter for Canonical::ToolCall.
+      # Deleted in Phase 6.
       module CanonicalToolCallCompat
         def [](key)
+          Legion::Logging.log.debug do
+            "[llm][DEPRECATED(P6)] tool_call_hash_access key=#{key} caller=#{caller_locations(1, 1)&.first}"
+          end
           sym = key.to_sym
           public_send(sym) if respond_to?(sym)
         end
       end
 
-      # Monkey-patch canonical types for Hash-like access (P4a: keeps existing
-      # hash-key patterns working during migration).
+      # DEPRECATED(P6): Monkey-patch canonical types for Hash-like access.
+      # These adapters exist ONLY to avoid wholesale rewrites in the P4a batch.
+      # They are deleted in Phase 6 — do not build new code against hash-key access.
       if defined?(Canonical::Response)
         Canonical::Response.include(CanonicalResponseCompat)
-          module_eval do
-            def [](key)
-              sym = key.respond_to?(:to_sym) ? key.to_sym : key.to_s.to_sym
-              # Map legacy result/content key to text, but fall back to metadata
-              # when the original non-string result was stored (e.g., images)
-              if sym == :result || sym == :content
-                return self[:text] unless self[:text].empty?
+        Canonical::Response.class_eval do
+          def [](key)
+            Legion::Logging.log.debug do
+              "[llm][DEPRECATED(P6)] response_hash_access key=#{key} caller=#{caller_locations(1, 1)&.first}"
+            end
+            sym = key.respond_to?(:to_sym) ? key.to_sym : key.to_s.to_sym
+            if %i[result content].include?(sym)
+              txt = text
+              return txt unless txt.to_s.empty?
 
-                metadata[:raw_result] if respond_to?(:metadata) && metadata[:raw_result]
-              elsif sym == :text
-                text
-              else
-                super
-              end
+              metadata[:raw_result] if respond_to?(:metadata) && metadata.is_a?(Hash) && metadata[:raw_result]
+            elsif sym == :text
+              text
+            else
+              super
             end
           end
+        end
       end
-      if defined?(Canonical::ToolCall)
-        Canonical::ToolCall.include(CanonicalToolCallCompat)
-      end
-      if defined?(Canonical::Usage)
-        Canonical::Usage.include(CanonicalResponseCompat)
-      end
+      Canonical::ToolCall.include(CanonicalToolCallCompat) if defined?(Canonical::ToolCall)
+      Canonical::Usage.include(CanonicalResponseCompat) if defined?(Canonical::Usage)
 
       module Dispatch
         extend self
@@ -195,19 +209,19 @@ module Legion
           # Non-hash objects (object with .content) or plain values → hash first
           raw = coerce_to_hash(raw) unless raw.is_a?(Hash)
 
-        text      = extract_response_text(raw)
+          text = extract_response_text(raw)
           raw_usage = raw[:usage] || {}
 
           # Preserve non-string payload (e.g., image URLs, embedding vectors as metadata)
           # so the compat adapter can return [:result] / [:content] for non-chat results.
-          metadata  = raw[:metadata] || raw[:offering_metadata] || {}
+          metadata = raw[:metadata] || raw[:offering_metadata] || {}
           raw_result = [raw[:result], raw[:content], raw[:response]].find { |v| !v.nil? && !v.is_a?(String) }
           metadata[:raw_result] = raw_result if raw_result
 
           usage = coerce_usage(raw_usage)
 
           log.debug("[llm][native] normalized_response usage_class=#{usage.class}")
-          thinking  = extract_thinking_payload(text, raw, metadata)
+          text, thinking = extract_thinking_payload(text, raw, metadata)
 
           tool_calls = to_canonical_tool_calls(
             raw[:tool_calls] || raw['tool_calls'] || raw[:tools] || raw['tools'] || text
@@ -232,13 +246,14 @@ module Legion
         def extract_response_text(raw)
           text_val = [raw[:result], raw[:content], raw[:response]].find { |v| !v.nil? && v.is_a?(String) }
           return text_val || '' if text_val
+
           # Non-string payload (images, embeddings) — preserve in metadata
           raw[:raw_payload] = [raw[:result], raw[:content], raw[:response]].find { |v| !v.nil? }
           ''
         end
 
         # Coerce a non-hash raw response (object with reader methods or a plain value) to a hash.
-        def coerce_to_hash(raw) # rubocop:disable Metrics/AbcSize
+        def coerce_to_hash(raw)
           {
             result:      raw.respond_to?(:content) ? raw.content : raw,
             usage:       {
@@ -258,14 +273,22 @@ module Legion
         def coerce_usage(raw_usage)
           return raw_usage if defined?(Canonical::Usage) && raw_usage.is_a?(Canonical::Usage)
 
-          hash = raw_usage.is_a?(Hash) ? raw_usage : {}
+          hash = if raw_usage.is_a?(Hash)
+                   raw_usage
+                 elsif raw_usage.respond_to?(:input_tokens)
+                   { input_tokens: raw_usage.input_tokens, output_tokens: raw_usage.respond_to?(:output_tokens) ? raw_usage.output_tokens : 0,
+                     cache_read_tokens: raw_usage.respond_to?(:cache_read_tokens) ? raw_usage.cache_read_tokens : 0,
+                     cache_write_tokens: raw_usage.respond_to?(:cache_write_tokens) ? raw_usage.cache_write_tokens : 0 }
+                 else
+                   {}
+                 end
           Canonical::Usage.new(
-            input_tokens:      (hash[:input_tokens] || hash['input_tokens'] || 0).to_i,
-            output_tokens:     (hash[:output_tokens] || hash['output_tokens'] || 0).to_i,
-            cache_read_tokens: (hash[:cache_read_tokens] || hash['cache_read_tokens'] || 0).to_i,
+            input_tokens:       (hash[:input_tokens] || hash['input_tokens'] || 0).to_i,
+            output_tokens:      (hash[:output_tokens] || hash['output_tokens'] || 0).to_i,
+            cache_read_tokens:  (hash[:cache_read_tokens] || hash['cache_read_tokens'] || 0).to_i,
             cache_write_tokens: (hash[:cache_write_tokens] || hash['cache_write_tokens'] || 0).to_i,
-            thinking_tokens:   (hash[:thinking_tokens] || hash['thinking_tokens'] || 0).to_i,
-            units:             raw_units(hash[:units] || hash['units'])
+            thinking_tokens:    (hash[:thinking_tokens] || hash['thinking_tokens'] || 0).to_i,
+            units:              raw_units(hash[:units] || hash['units'])
           )
         end
 
@@ -274,9 +297,11 @@ module Legion
         end
 
         # Normalize thinking payload to Canonical::Thinking | nil.
+        # Returns [cleaned_text, Canonical::Thinking | nil].
         def extract_thinking_payload(text, raw, metadata)
           content_out = nil
           sig_out     = nil
+          cleaned_text = text
           thinking_param = raw[:thinking] || raw['thinking']
 
           thinker = defined?(::Legion::Extensions::Llm::Responses::ThinkingExtractor) &&
@@ -284,12 +309,11 @@ module Legion
 
           if thinker
             extraction = thinker.extract(text.to_s, metadata: metadata || {})
+            cleaned_text = extraction.content || ''
             content_out = extraction.thinking || ''
             sig_out     = extraction.signature
             explicit_thinking = normalize_thinking_value(thinking_param)
-            merged = if explicit_thinking && !explicit_thinking[:content].to_s.empty? && content_out.to_s.empty?
-                       explicit_thinking
-                     elsif explicit_thinking && content_out.to_s.empty?
+            merged = if explicit_thinking && content_out.to_s.empty?
                        explicit_thinking
                      else
                        {
@@ -300,10 +324,10 @@ module Legion
             thinking_param = merged
           else
             thinking_param = normalize_thinking_value(thinking_param) ||
-                  normalize_thinking_value(metadata[:thinking] || metadata['thinking'])
+                             normalize_thinking_value(metadata[:thinking] || metadata['thinking'])
           end
 
-          build_canonical_thinking(thinking_param)
+          [cleaned_text, build_canonical_thinking(thinking_param)]
         end
 
         # Normalize a raw thinking value to { content: String, signature: String? } | nil.
@@ -329,18 +353,18 @@ module Legion
         end
 
         # Build a Canonical::Thinking or nil.
-        def build_canonical_thinking(h)
-          return nil if h.nil? || h.to_s.empty?
+        def build_canonical_thinking(payload)
+          return nil if payload.nil? || payload.to_s.empty?
 
-          content   = h[:content] || h['content'] || ''
-          signature = h[:signature] || h['signature']
+          content   = payload[:content] || payload['content'] || ''
+          signature = payload[:signature] || payload['signature']
           return nil if content.to_s.empty? && signature.to_s.empty?
 
-          Canonical::Thinking.new(content: content.to_s, signature: signature && signature.to_s)
+          Canonical::Thinking.new(content: content.to_s, signature: signature&.to_s)
         end
 
         # Convert raw tool_calls to Array<Canonical::ToolCall>.
-        def to_canonical_tool_calls(value) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+        def to_canonical_tool_calls(value)
           raw_calls = inner_tool_calls(value)
           raw_calls.filter_map { |entry| to_single_canonical_tool_call(entry) }.compact
         end
@@ -353,9 +377,11 @@ module Legion
           when Hash
             return [value] if tool_call_hash?(value)
             return value.values if value.values
+
             []
           else
             return [] unless value.respond_to?(:values)
+
             value.values
           end
         end
@@ -371,29 +397,30 @@ module Legion
                          }
                        elsif entry.is_a?(Hash)
                          symbolized = entry.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
-                         func       = symbolized[:function].is_a?(Hash) ?
-                                      symbolized[:function].transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k } : {}
+                         func       = if symbolized[:function].is_a?(Hash)
+                                        symbolized[:function].transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
+                                      else
+                                        {}
+                                      end
                          name       = symbolized[:name] || func[:name]
                          args_raw   = symbolized[:arguments] || symbolized[:input] || func[:arguments] || {}
                          return nil if name.to_s.empty?
 
                          {
-                           id:          symbolized[:id],
-                           name:        name.to_s,
-                           arguments:   parse_arguments(args_raw),
-                           source:      symbolized[:source],
-                           status:      symbolized[:status],
-                           result:      symbolized[:result],
-                           duration_ms: symbolized[:duration_ms],
-                           error:       symbolized[:error],
-                           started_at:  symbolized[:started_at],
-                           finished_at: symbolized[:finished_at],
-                           category:    symbolized[:category],
+                           id:                           symbolized[:id],
+                           name:                         name.to_s,
+                           arguments:                    parse_arguments(args_raw),
+                           source:                       symbolized[:source],
+                           status:                       symbolized[:status],
+                           result:                       symbolized[:result],
+                           duration_ms:                  symbolized[:duration_ms],
+                           error:                        symbolized[:error],
+                           started_at:                   symbolized[:started_at],
+                           finished_at:                  symbolized[:finished_at],
+                           category:                     symbolized[:category],
                            data_handling_classification: symbolized[:data_handling_classification],
-                           policy_decision: symbolized[:policy_decision]
+                           policy_decision:              symbolized[:policy_decision]
                          }
-                       else
-                         nil
                        end
           return nil unless normalized && normalized[:name] && !normalized[:name].to_s.empty?
 
@@ -402,20 +429,20 @@ module Legion
           normalized[:arguments] = parse_arguments(normalized[:arguments]) unless args_already_parsed
 
           Canonical::ToolCall.new(
-            id:          normalized[:id] || "tc_#{SecureRandom.hex(8)}",
-            exchange_id: normalized[:exchange_id],
-            name:        normalized[:name].to_s,
-            arguments:   normalized[:arguments] || {},
-            source:      normalized[:source] || { type: :client },
-            status:      normalized[:status],
-            duration_ms: normalized[:duration_ms],
-            result:      normalized[:result],
-            error:       normalized[:error],
-            started_at:  normalized[:started_at],
-            finished_at: normalized[:finished_at],
-            category:    normalized[:category],
+            id:                           normalized[:id] || "tc_#{SecureRandom.hex(8)}",
+            exchange_id:                  normalized[:exchange_id],
+            name:                         normalized[:name].to_s,
+            arguments:                    normalized[:arguments] || {},
+            source:                       normalized[:source] || { type: :client },
+            status:                       normalized[:status],
+            duration_ms:                  normalized[:duration_ms],
+            result:                       normalized[:result],
+            error:                        normalized[:error],
+            started_at:                   normalized[:started_at],
+            finished_at:                  normalized[:finished_at],
+            category:                     normalized[:category],
             data_handling_classification: normalized[:data_handling_classification],
-            policy_decision: normalized[:policy_decision]
+            policy_decision:              normalized[:policy_decision]
           )
         end
 
@@ -427,7 +454,6 @@ module Legion
           sym = reason.respond_to?(:to_sym) ? reason.to_sym : reason.to_s.to_sym
           Canonical::STOP_REASONS.include?(sym) ? sym : :end_turn
         end
-
 
         def parse_arguments(arguments)
           return arguments unless arguments.is_a?(String)

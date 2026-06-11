@@ -721,6 +721,7 @@ module Legion
 
       def attach_escalation_history(response, history, resolution, chain)
         return unless response.respond_to?(:extend)
+        return if response.frozen?
 
         response.extend(EscalationHistory)
         history.each { |h| response.record_escalation_attempt(**h) }

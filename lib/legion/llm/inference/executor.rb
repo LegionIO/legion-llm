@@ -2713,8 +2713,11 @@ module Legion
         def canonical_response_text(response)
           return response.text if response.respond_to?(:text) && !response.respond_to?(:[])
 
-          response.respond_to?(:content) ? response.content :
+          if response.respond_to?(:content)
+            response.content
+          else
             (response.respond_to?(:[]) ? response[:content] || response[:result] || response[:text] : nil)
+          end
         end
 
         def normalize_thinking_payload(thinking)
@@ -2722,11 +2725,14 @@ module Legion
             normalized = thinking.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
             content = normalized[:content] || normalized[:text]
             signature = normalized[:signature]
+          elsif thinking.respond_to?(:content) && thinking.respond_to?(:signature)
+            content = thinking.content
+            signature = thinking.signature
           elsif thinking.respond_to?(:text)
             content = thinking.text
             signature = thinking.respond_to?(:signature) ? thinking.signature : nil
           else
-            content = thinking
+            content = thinking.is_a?(String) ? thinking : nil
             signature = nil
           end
           content = content.to_s.strip unless content.nil?
