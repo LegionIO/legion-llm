@@ -141,11 +141,11 @@ module Legion
         end
 
         private_class_method def self.default_ttl
-          Legion::Settings[:llm][:prompt_caching][:response_cache][:ttl_seconds] || 300
+          Legion::Settings[:llm][:prompt_caching][:response_cache][:ttl_seconds]
         end
 
         private_class_method def self.spool_threshold
-          Legion::Settings[:llm][:prompt_caching][:response_cache][:spool_threshold_bytes] || (8 * 1024 * 1024)
+          Legion::Settings[:llm][:prompt_caching][:response_cache][:spool_threshold_bytes]
         end
 
         private_class_method def self.spool_dir

@@ -146,8 +146,8 @@ module Legion
           end
 
           def self.auto_routing_offering
-            ctx = Legion::Settings[:llm][:context_window] || 262_144
-            max_out = Legion::Settings[:llm][:max_output_tokens] || 16_384
+            ctx = Legion::Settings[:llm][:context_window]
+            max_out = Legion::Settings[:llm][:max_output_tokens]
             {
               id:                    AUTO_ROUTING_OFFERING_ID,
               offering_id:           AUTO_ROUTING_OFFERING_ID,

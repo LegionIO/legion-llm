@@ -122,9 +122,7 @@ module Legion
         end
 
         def default_routing_style
-          Legion::Settings.dig(:llm, :fleet, :dispatch, :routing_style) ||
-            Legion::Settings.dig(:llm, :routing, :tiers, :fleet, :routing_style) ||
-            :shared_lane
+          Legion::Settings.dig(:llm, :fleet, :dispatch, :routing_style) || :shared_lane
         end
 
         def context_window_from(options)

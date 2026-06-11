@@ -332,12 +332,12 @@ module Legion
           # skip to prevent infinite loops when compressor calls back into chat_direct
           return history if Thread.current[:legion_compacting]
 
-          conv_settings = Legion::Settings[:llm][:conversation] || {}
+          conv_settings = Legion::Settings[:llm][:conversation]
           return history unless conv_settings[:auto_compact]
 
-          threshold = conv_settings[:summarize_threshold] || 50_000
-          target_tokens = conv_settings[:target_tokens] || 20_000
-          preserve_recent = conv_settings[:preserve_recent] || 10
+          threshold = conv_settings[:summarize_threshold]
+          target_tokens = conv_settings[:target_tokens]
+          preserve_recent = conv_settings[:preserve_recent]
 
           estimated = Context::Compressor.estimate_tokens(history)
           return history unless estimated >= threshold
@@ -1623,7 +1623,7 @@ module Legion
           return false unless defined?(Call::Dispatch)
           return false unless provider
 
-          layer_settings = Legion::Settings[:llm][:provider_layer] || {}
+          layer_settings = Legion::Settings.dig(:llm, :provider_layer) || {}
           mode = (layer_settings[:mode] || 'auto').to_s
 
           %w[native auto].include?(mode)
@@ -2243,7 +2243,7 @@ module Legion
         end
 
         def find_fallback_provider(exclude: [])
-          providers = Legion::Settings[:llm][:providers] || {}
+          providers = Legion::Settings[:llm][:providers]
           providers.each do |name, config|
             normalized_name = name.to_sym
             next unless config.is_a?(Hash) && config[:enabled]

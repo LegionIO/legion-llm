@@ -265,7 +265,7 @@ module Legion
       end
 
       def spool_settings
-        settings = Legion::Settings.dig(:llm, :metering, :spool) || {}
+        settings = Legion::Settings[:llm][:metering][:spool]
         settings.is_a?(Hash) ? settings : {}
       end
 

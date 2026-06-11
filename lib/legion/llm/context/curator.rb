@@ -244,7 +244,7 @@ module Legion
         end
 
         def curation_settings
-          Legion::Settings[:llm][:context_curation] || {}
+          Legion::Settings[:llm][:context_curation]
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'llm.context_curator.curation_settings')
           {}

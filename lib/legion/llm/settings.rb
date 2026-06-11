@@ -33,6 +33,8 @@ module Legion
           default_model:                  model_override,
           default_temperature:            0.9,
           default_provider:               nil,
+          providers:                      {},
+          tier_order:                     nil,
           system_baseline:                system_baseline_default,
           fleet:                          fleet_defaults,
           routing:                        routing_defaults,
@@ -51,6 +53,7 @@ module Legion
           embedding:                      embedding_defaults,
           conversation:                   conversation_defaults,
           telemetry:                      telemetry_defaults,
+          pricing:                        {},
           metering:                       metering_defaults,
           context_curation:               context_curation_defaults,
           debate:                         debate_defaults,
@@ -418,8 +421,9 @@ module Legion
 
       def self.api_defaults
         {
-          use_namespaces: true,
-          auth:           {
+          use_namespaces:  true,
+          batch_pool_size: 4,
+          auth:            {
             enabled:      false,
             api_keys:     [],
             pass_through: false

@@ -184,7 +184,7 @@ module Legion
         )
 
         if cache_key && result.is_a?(Hash)
-          ttl = Legion::Settings.dig(:llm, :prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
+          ttl = Legion::Settings[:llm][:prompt_caching][:response_cache][:ttl_seconds]
           Cache.set(cache_key, result, ttl: ttl)
         end
 
@@ -235,7 +235,7 @@ module Legion
         log.debug("[llm][inference] chat_direct_raw.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
-          ttl = Legion::Settings.dig(:llm, :prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
+          ttl = Legion::Settings[:llm][:prompt_caching][:response_cache][:ttl_seconds]
           Cache.set(cache_key, result, ttl: ttl)
         end
 

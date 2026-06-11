@@ -134,7 +134,7 @@ module Legion
           end
 
           def max_retries
-            Legion::Settings[:llm][:structured_output][:max_retries] || 2
+            Legion::Settings[:llm][:structured_output][:max_retries]
           end
         end
       end

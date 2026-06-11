@@ -69,7 +69,7 @@ module Legion
       end
 
       private_class_method def self.llm_settings
-        Legion::Settings[:llm] || {}
+        Legion::Settings[:llm]
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.cache.settings')
         {}

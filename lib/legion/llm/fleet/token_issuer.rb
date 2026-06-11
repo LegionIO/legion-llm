@@ -80,7 +80,8 @@ module Legion
         end
 
         def auth_setting(key, default:)
-          Legion::Settings[:llm][:fleet][:auth][key] || default
+          val = Legion::Settings[:llm][:fleet][:auth][key]
+          val.nil? ? default : val
         end
 
         def signing_key

@@ -291,7 +291,7 @@ module Legion
         end
 
         def merge_defaults(intent)
-          defaults = (Legion::Settings[:llm][:routing][:default_intent] || {})
+          defaults = (Legion::Settings.dig(:llm, :routing, :default_intent) || {})
                      .transform_keys(&:to_sym)
                      .transform_values { |v| v.respond_to?(:to_sym) ? v.to_sym : v }
 
@@ -302,7 +302,7 @@ module Legion
         end
 
         def load_rules
-          manual = (Legion::Settings[:llm][:routing][:rules] || []).map do |h|
+          manual = (Legion::Settings.dig(:llm, :routing, :rules) || []).map do |h|
             h = h.transform_keys(&:to_sym)
             h[:priority] = (h[:priority] || 0) + 1000
             Rule.from_hash(h)
@@ -546,8 +546,7 @@ module Legion
         end
 
         def build_health_tracker
-          routing = Legion::Settings[:llm][:routing] || {}
-          health = routing[:health] || {}
+          health = Legion::Settings.dig(:llm, :routing, :health) || {}
           cb = health[:circuit_breaker] || {}
 
           HealthTracker.new(

@@ -174,7 +174,7 @@ module Legion
           end
 
           def prefix_for(model, task)
-            registry = Legion::Settings[:llm][:embedding][:prefix_registry] || PREFIX_REGISTRY
+            registry = Legion::Settings[:llm][:embedding][:prefix_registry]
             model_prefixes = registry[model_base(model)] || registry[model_base(model).to_s] || {}
             model_prefixes[task] || model_prefixes[task.to_s]
           end
@@ -182,7 +182,7 @@ module Legion
           def embedding_chunk_chars(provider:, model:, prefix:)
             return nil unless provider.to_s == 'ollama'
 
-            embedding = Legion::Settings[:llm][:embedding] || {}
+            embedding = Legion::Settings[:llm][:embedding]
             context_chars = embedding[:ollama_context_chars] || embedding['ollama_context_chars'] || {}
             limit = context_chars[model.to_s] || context_chars[model] ||
                     context_chars[model_base(model)] || context_chars[model_base(model).to_s] ||
@@ -286,7 +286,7 @@ module Legion
           def enforce_dimensions(vector)
             return vector unless vector.is_a?(Array)
 
-            dim = Legion::Settings[:llm][:embedding][:dimension] || 1024
+            dim = Legion::Settings[:llm][:embedding][:dimension]
             return vector if vector.size == dim
             return vector.first(dim) if vector.size > dim
 

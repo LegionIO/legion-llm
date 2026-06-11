@@ -45,7 +45,7 @@ module Legion
         def next_off_peak(time = Time.now.utc)
           now = time.is_a?(Time) ? time : Time.now.utc
           peak_end = peak_range.last
-          max_defer = Legion::Settings.dig(:llm, :scheduling, :max_defer_hours) || 8
+          max_defer = Legion::Settings[:llm][:scheduling][:max_defer_hours]
 
           next_time = if peak_hours?(now)
                         # During peak — next off-peak is at peak_end + 1
@@ -70,7 +70,7 @@ module Legion
             peak_range:      peak_range.to_s,
             next_off_peak:   peak_hours? ? next_off_peak.iso8601 : 'now',
             defer_intents:   defer_intents,
-            max_defer_hours: Legion::Settings.dig(:llm, :scheduling, :max_defer_hours) || 8
+            max_defer_hours: Legion::Settings[:llm][:scheduling][:max_defer_hours]
           }
         end
 
