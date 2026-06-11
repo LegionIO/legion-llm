@@ -81,6 +81,7 @@ RSpec.configure do |config|
     # Keep the full suite deterministic even when local/provider gems are present
     # and services like Ollama are running on the developer machine.
     Legion::Settings[:llm][:provider_layer][:mode] = 'auto'
+    Legion::Settings[:llm][:pipeline_async_post_steps] = false
     # Disable system_baseline by default so existing pipeline mocks are unaffected.
     # Specs that test baseline behavior set it explicitly.
     Legion::Settings[:llm][:system_baseline] = nil

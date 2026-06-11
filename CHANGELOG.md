@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.12.15] - 2026-06-10
+
+### Fixed
+- **Async post-step race condition in test suite** — Disabled `pipeline_async_post_steps` in spec_helper's global `before(:each)` to prevent `ASYNC_THREAD_POOL` from racing with `Settings.reset!` between examples, which caused 4 intermittent `NoMethodError: undefined method '[]' for nil` failures in executor_stream_spec and pre_rollout_integration_spec (spec_helper.rb)
+- **knowledge_capture_spec missing build_response** — Added minimal `build_response` to the test harness klass so `current_response` (from PostResponse) can construct a Response object instead of silently failing, which caused the ingest assertion to never fire (steps/knowledge_capture_spec.rb)
+- **executor_async_spec stale stub target** — Fixed string-keyed async test that stubbed `Legion::LLM.settings` (unused by production code) instead of setting `Legion::Settings[:llm][:pipeline_async_post_steps]` directly (executor_async_spec.rb)
+
 ## [0.12.14] - 2026-06-10
 
 ### Added

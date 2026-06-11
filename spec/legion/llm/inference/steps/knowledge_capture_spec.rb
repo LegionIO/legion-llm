@@ -20,6 +20,27 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
         @resolved_provider = :test
         @resolved_model    = 'test-model'
       end
+
+      private
+
+      def build_response
+        content = @raw_response.respond_to?(:content) ? @raw_response.content : nil
+        Legion::LLM::Inference::Response.build(
+          request_id:      @request.id,
+          conversation_id: @request.conversation_id || 'conv_test',
+          message:         { role: :assistant, content: content },
+          routing:         { provider: @resolved_provider, model: @resolved_model },
+          tokens:          @extracted_tokens || {},
+          stop:            { reason: :end_turn },
+          stream:          false,
+          timestamps:      { received: Time.now },
+          enrichments:     @enrichments,
+          audit:           {},
+          timeline:        @timeline.events,
+          tracing:         {},
+          caller:          @request.caller
+        )
+      end
     end
   end
 

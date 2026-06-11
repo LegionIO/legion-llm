@@ -24,6 +24,26 @@ RSpec.describe Legion::LLM::Inference::Steps::PostResponse do
         @exchange_id       = 'exch_001'
         @raw_response      = nil
       end
+
+      private
+
+      def build_response
+        Legion::LLM::Inference::Response.build(
+          request_id:      @request.id,
+          conversation_id: @request.conversation_id || 'conv_test',
+          message:         { role: :assistant, content: 'ok' },
+          routing:         { provider: @resolved_provider, model: @resolved_model },
+          tokens:          { input_tokens: 0, output_tokens: 0, total: 0 },
+          stop:            { reason: :end_turn },
+          stream:          false,
+          timestamps:      @timestamps,
+          enrichments:     @enrichments,
+          audit:           @audit,
+          timeline:        @timeline.events,
+          tracing:         @tracing,
+          caller:          @request.caller
+        )
+      end
     end
   end
 

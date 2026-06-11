@@ -68,47 +68,13 @@ module Legion
             )
           end
 
+          # Audit the SAME rich envelope the pipeline returns (routing with
+          # instance/tier/route_attempts/escalation_chain/latency, stop reason,
+          # thinking, cache, cost). The previous local rebuild dropped all of
+          # those fields, which is why the ledger showed them as null at scale.
           def current_response
             @extracted_tokens ||= extract_tokens
-
-            content = if @raw_response.respond_to?(:content)
-                        @raw_response.content
-                      elsif @raw_response.is_a?(Hash) && @raw_response[:content]
-                        @raw_response[:content]
-                      else
-                        @raw_response.to_s
-                      end
-
-            msg = Types::Message.build(
-              role:            :assistant,
-              content:         content,
-              provider:        @resolved_provider,
-              model:           @resolved_model,
-              input_tokens:    @extracted_tokens.respond_to?(:input_tokens) ? @extracted_tokens.input_tokens : nil,
-              output_tokens:   @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : nil,
-              conversation_id: @request.conversation_id
-            )
-
-            Response.build(
-              request_id:      @request.id,
-              conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
-              message:         msg.to_h,
-              routing:         { provider: @resolved_provider, model: @resolved_model },
-              tokens:          @extracted_tokens,
-              tools:           current_response_tool_calls,
-              enrichments:     @enrichments,
-              audit:           @audit,
-              timeline:        @timeline.events,
-              tracing:         @tracing,
-              caller:          @request.caller,
-              classification:  @request.classification
-            )
-          end
-
-          def current_response_tool_calls
-            return response_tool_calls if respond_to?(:response_tool_calls, true)
-
-            []
+            build_response
           end
 
           def log_zero_token_usage(input, output)

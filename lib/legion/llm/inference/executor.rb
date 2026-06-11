@@ -1781,7 +1781,7 @@ module Legion
             input_tokens:      input_tokens,
             output_tokens:     output_tokens,
             latency_ms:        duration_ms,
-            wall_clock_ms:     0,
+            wall_clock_ms:     duration_ms,
             cost_usd:          cost_usd,
             request_id:        @request.id,
             conversation_id:   @request.conversation_id,
