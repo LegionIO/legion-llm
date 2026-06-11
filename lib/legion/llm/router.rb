@@ -226,6 +226,53 @@ module Legion
           )
         end
 
+        def build_escalation_chain(provider:, model:, tier:, instance: nil, max_attempts: nil)
+          primary = explicit_resolution(tier, provider, model, instance)
+          fallbacks = build_fallback_resolutions(
+            exclude_provider: provider,
+            exclude_instance: instance,
+            primary_tier:     tier
+          )
+          resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
+          max = max_attempts || escalation_max_attempts
+          EscalationChain.new(resolutions: resolutions, max_attempts: max)
+        end
+
+        def build_fallback_resolutions(exclude_provider: nil, exclude_instance: nil, primary_tier: nil)
+          ranks = tier_rank
+          primary_rank = primary_tier ? (ranks[primary_tier.to_sym] || 99) : 99
+
+          candidates = Call::Registry.all_instances.filter_map do |entry|
+            next if entry[:provider] == exclude_provider&.to_sym &&
+                    (exclude_instance.nil? || entry[:instance] == (exclude_instance&.to_sym || :default))
+
+            model = registry_default_model(entry)
+            next unless model
+
+            entry_tier = PROVIDER_TIER.fetch(entry[:provider], :frontier)
+            Resolution.new(
+              tier:     entry_tier,
+              provider: entry[:provider],
+              instance: entry[:instance] == :default ? nil : entry[:instance],
+              model:    model,
+              rule:     'escalation_fallback'
+            )
+          end
+
+          candidates.sort_by do |r|
+            r_rank = ranks[r.tier] || 99
+            rank_diff = r_rank - primary_rank
+            bucket = if rank_diff.zero?
+                       0
+                     elsif rank_diff.positive?
+                       1
+                     else
+                       2
+                     end
+            [bucket, r_rank]
+          end
+        end
+
         private
 
         def arbitrage_fallback(intent)

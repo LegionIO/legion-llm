@@ -955,54 +955,16 @@ module Legion
         end
 
         def build_default_escalation_chain
-          primary = Router.explicit_resolution(@resolved_tier, @resolved_provider, @resolved_model, @resolved_instance)
-          fallbacks = build_fallback_resolutions(
-            exclude_provider: @resolved_provider,
-            exclude_instance: @resolved_instance,
-            primary_tier:     @resolved_tier
+          chain = Router.build_escalation_chain(
+            provider:     @resolved_provider,
+            model:        @resolved_model,
+            tier:         @resolved_tier,
+            instance:     @resolved_instance,
+            max_attempts: pipeline_escalation_max_attempts
           )
-          resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
-          chain = Router::EscalationChain.new(resolutions: resolutions, max_attempts: pipeline_escalation_max_attempts)
           log.debug "[llm][escalation] action=chain_built size=#{chain.size} max_attempts=#{chain.max_attempts} " \
-                    "primary=#{primary&.provider}:#{primary&.model} fallbacks=#{fallbacks.size}"
+                    "primary=#{@resolved_provider}:#{@resolved_model} fallbacks=#{chain.size - 1}"
           chain
-        end
-
-        def build_fallback_resolutions(exclude_provider: nil, exclude_instance: nil, primary_tier: nil)
-          tier_rank = Router.tier_rank
-          primary_rank = primary_tier ? (tier_rank[primary_tier.to_sym] || 99) : 99
-
-          candidates = Call::Registry.all_instances.filter_map do |entry|
-            next if entry[:provider] == exclude_provider&.to_sym &&
-                    (exclude_instance.nil? || entry[:instance] == (exclude_instance&.to_sym || :default))
-
-            model = Router.send(:registry_default_model, entry)
-            next unless model
-
-            tier = Router::PROVIDER_TIER.fetch(entry[:provider], :frontier)
-            Router::Resolution.new(
-              tier:     tier,
-              provider: entry[:provider],
-              instance: entry[:instance] == :default ? nil : entry[:instance],
-              model:    model,
-              rule:     'escalation_fallback'
-            )
-          end
-
-          # Lateral alternatives (same tier) come first; escalations (higher tier) follow;
-          # lower-ranked tiers are appended last.
-          candidates.sort_by do |r|
-            r_rank = tier_rank[r.tier] || 99
-            rank_diff = r_rank - primary_rank
-            bucket = if rank_diff.zero?
-                       0
-                     elsif rank_diff.positive?
-                       1
-                     else
-                       2
-                     end
-            [bucket, r_rank]
-          end
         end
 
         def skip_same_tier!(failed_resolution, tried)
