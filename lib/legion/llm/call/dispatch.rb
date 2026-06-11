@@ -125,6 +125,12 @@ module Legion
 
           raw = ext.public_send(method_name, model: model, **, &)
           normalize_response(raw)
+        rescue Legion::LLM::LLMError
+          raise
+        rescue StandardError => e
+          raise unless defined?(Legion::Extensions::Llm)
+
+          map_lex_llm_error(e, provider: provider, model: model)
         end
 
         # --- Deprecated per-type dispatch methods ---
@@ -386,6 +392,10 @@ module Legion
           end
         end
 
+        def tool_call_hash?(hash)
+          hash.key?(:name) || hash.key?('name') || hash.key?(:function) || hash.key?('function')
+        end
+
         # Convert a single raw tool call entry to Canonical::ToolCall.
         def to_single_canonical_tool_call(entry)
           # Canonical::ToolCall has many required fields; normalize them with defaults.
@@ -464,6 +474,24 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.dispatch.parse_arguments')
           {}
+        end
+
+        def map_lex_llm_error(error, provider:, model:)
+          case error
+          when Legion::Extensions::Llm::ContextLengthExceededError
+            raise Legion::LLM::ContextOverflow, "#{provider}:#{model} — #{error.message}"
+          when Legion::Extensions::Llm::UnauthorizedError, Legion::Extensions::Llm::ForbiddenError
+            raise Legion::LLM::AuthError, "#{provider}:#{model} — #{error.message}"
+          when Legion::Extensions::Llm::RateLimitError
+            raise Legion::LLM::RateLimitError, "#{provider}:#{model} — #{error.message}"
+          when Legion::Extensions::Llm::ServerError, Legion::Extensions::Llm::ServiceUnavailableError,
+               Legion::Extensions::Llm::OverloadedError
+            raise Legion::LLM::ProviderDown, "#{provider}:#{model} — #{error.message}"
+          when Legion::Extensions::Llm::BadRequestError, Legion::Extensions::Llm::Error
+            raise Legion::LLM::ProviderError, "#{provider}:#{model} — #{error.message}"
+          else
+            raise
+          end
         end
       end
     end
