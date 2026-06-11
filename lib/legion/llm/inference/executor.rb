@@ -142,6 +142,12 @@ module Legion
         def call_responses(body:, stream: false, &)
           set_log_context
           log.debug "[llm][executor] action=call_responses request_id=#{@request.id} profile=#{@profile} stream=#{stream}"
+
+          unless provider_supports_responses?
+            log.debug "[llm][executor] action=call_responses_fallback reason=provider_unsupported request_id=#{@request.id}"
+            return stream ? call_stream(&) : call
+          end
+
           execute_pre_provider_steps
           execute_provider_request_responses(body: body, stream: stream, &)
           execute_post_provider_steps
@@ -151,16 +157,12 @@ module Legion
         end
 
         # Returns true when the resolved provider's adapter natively supports the Responses API.
-        # Called by the API layer before choosing call_responses vs call_stream.
-        # Checks the resolved provider first; if not yet resolved, falls back to the
-        # requested provider from routing state so the decision can be made before
-        # pre-provider steps run.
+        # Internal decision — the API layer should call call_responses directly and let the
+        # executor handle fallback.
         def provider_supports_responses?
           provider = @resolved_provider
           instance = @resolved_instance
 
-          # If provider hasn't been resolved yet, use the routing hint from the request.
-          # Only check resolved state if the provider is already resolved; otherwise fall back to routing.
           unless provider && instance && Call::Registry.registered?(provider, instance: instance)
             provider = @request.routing&.dig(:provider)
             instance = @request.routing&.dig(:instance)
@@ -168,8 +170,6 @@ module Legion
 
           return false unless provider && use_native_dispatch?(provider)
 
-          # When instance is nil, Registry.for returns the first available adapter.
-          # When instance is specified, it looks up that specific instance.
           ext = Call::Registry.for(provider, instance: instance)
           ext.respond_to?(:supports?) ? ext.supports?(:responses) : false
         rescue StandardError => e

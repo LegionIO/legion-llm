@@ -446,7 +446,7 @@ module Legion
             # rubocop:enable Metrics/AbcSize
 
             def self.call_executor(executor, upstream_body: nil, &)
-              if executor.respond_to?(:call_responses) && executor.respond_to?(:provider_supports_responses?) && executor.provider_supports_responses?
+              if executor.respond_to?(:call_responses)
                 executor.call_responses(body: upstream_body, stream: true, &)
               else
                 executor.call_stream(&)
@@ -454,7 +454,7 @@ module Legion
             end
 
             def self.call_executor_sync(executor, upstream_body: nil)
-              if executor.respond_to?(:call_responses) && executor.respond_to?(:provider_supports_responses?) && executor.provider_supports_responses?
+              if executor.respond_to?(:call_responses)
                 executor.call_responses(body: upstream_body, stream: false)
               else
                 executor.call
@@ -462,9 +462,7 @@ module Legion
             end
 
             def self.native_responses_supported?(executor, _upstream_body)
-              executor.respond_to?(:call_responses) &&
-                executor.respond_to?(:provider_supports_responses?) &&
-                executor.provider_supports_responses?
+              executor.respond_to?(:call_responses)
             end
 
             def self.build_output_tool_calls(pipeline_response)

@@ -69,12 +69,12 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
         expect(body[:output]).to be_an(Array)
       end
 
-      it 'streams typed SSE events via call_stream when stream is true' do
+      it 'streams typed SSE events via call_responses fallback when stream is true' do
         pipeline_response = double('Response',
                                    routing: { model: 'legionio' },
                                    tokens:  { input_tokens: 5, output_tokens: 10 },
                                    tools:   [])
-        allow(executor_double).to receive(:call_stream) do |&block|
+        allow(executor_double).to receive(:call_responses) do |body:, stream:, &block| # rubocop:disable Lint/UnusedBlockArgument
           block.call(double('Chunk', content: 'Hello '))
           block.call(double('Chunk', content: 'world'))
           pipeline_response
@@ -87,7 +87,7 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
         expect(last_response.body).to include('event: response.output_text.delta')
         expect(last_response.body).to include('event: response.completed')
         expect(last_response.body).not_to include('data: [DONE]')
-        expect(executor_double).not_to have_received(:call_responses)
+        expect(executor_double).to have_received(:call_responses)
       end
     end
 
