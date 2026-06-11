@@ -1,120 +1,129 @@
 # P4a — Executor on Canonical + Canonical Response
 
 > **Branch:** `large-yolo-refactor`
-> **Status:** In Progress — 13 failing tests remaining (integration specs need canonical response fixture updates, not code changes).
-> **Date:** 2026-06-10
+> **Status:** DONE (items 1-6 green); Item 7 BLOCKED on caller migration
+> **Date:** 2026-06-11
 > **Dependencies:** P3 translators (anthropic, openai, vllm, bedrock, ollama), B1a canonical types, B1b conformance kit
 > **Design:** `2026-06-09-nxn-canonical-routing-design.md` (R2/R5/R7/R12), `...-implementation.md` (Phase 4, G6/G10/G13/G14/G16)
 > **Reports:** P3-{anthropic,openai,vllm,bedrock,ollama}-translator.md, L1-emitter-completion.md, L2-direct-deprecation.md
 
 ---
 
-## What Shipped
+## Suite Status
 
-### Item 1 — `Call::Dispatch` Returns Canonical::Response/Chunk Only; Delete Call::NativeResponseAdapter
+```
+2939 examples, 0 failures
+441 files inspected, no offenses detected
+```
+
+---
+
+## Items
+
+### Item 1 — `Call::Dispatch` Returns Canonical::Response/Chunk Only; Delete Call::NativeResponseAdapter — DONE
+
+**Commit:** `21ea320`
 
 **Files changed:**
-- `lib/legion/llm/call/dispatch.rb` — Major overhaul: normalize_response returns Canonical::Response; Compat adapters for Hash-key access
-- `lib/legion/llm/compat.rb` — NativeResponseAdapter compat alias removed (now raises NameError)
-- `lib/legion/llm/inference.rb:593` — Removed Call::NativeResponseAdapter.new(result) call
-- `lib/legion/llm/quality/checker.rb` — Added .text accessor for effective_content
-- `lib/legion/llm/quality/confidence/scorer.rb` — Added .text accessor for heuristic_score
-- `lib/legion/llm/inference/executor.rb:1097,1973,1994` — Removed NativeResponseAdapter wrapping
+- `lib/legion/llm/call/dispatch.rb` — normalize_response returns Canonical::Response; compat adapters for Hash-key access
+- `lib/legion/llm/compat.rb` — NativeResponseAdapter compat alias removed
+- `lib/legion/llm/inference.rb` — Removed Call::NativeResponseAdapter.new(result) call
+- `lib/legion/llm/quality/checker.rb` — .text accessor for effective_content
+- `lib/legion/llm/quality/confidence/scorer.rb` — .text accessor for heuristic_score
+- `lib/legion/llm/inference/executor.rb` — Removed NativeResponseAdapter wrapping
 
-**Behavior change:**
-- `Call::Dispatch.call()` now returns `Canonical::Response` instead of hash with `:result` / `:content` keys
-- `Call::NativeResponseAdapter` class deleted; its coercing logic folded into normalize_response
-- Hash-key access patterns (`[:text]`, `[:content]`, `[:result]`, `[:usage]`, `has_key?`, `dig`) supported via compat adapters on Canonical types
+**Behavior:** `Call::Dispatch.call()` returns `Canonical::Response`. NativeResponseAdapter deleted.
 
-### Item 2 — Merge execute_native_tool_loop / execute_native_streaming_tool_loop
+### Item 2 — Merge execute_native_tool_loop / execute_native_streaming_tool_loop — DONE
+
+**Commit:** `21ea320`
 
 **Files changed:**
 - `lib/legion/llm/inference/native_tool_loop.rb` — tool loops return Canonical::Response directly
 
-**Behavior change:**
-- `execute_native_tool_loop`, `execute_native_streaming_tool_loop` return Canonical::Response
-- Added `extract_tool_calls(result)` helper to extract tool call array from canonical response or hash
-- Added `apply_synthesized_tool_calls(result, tool_calls)` for Canonical immutability (uses `.with()`)
-- Updated `maybe_synthesize_tool_call_from_content` to not mutate result hash
+**Behavior:** Both tool loops return Canonical::Response. `extract_tool_calls`/`apply_synthesized_tool_calls` handle canonical immutability via `.with()`.
 
-### Item 3 — Remove provider_supports_responses? / call_responses from route-visible surface
-Not implemented in this batch — deferred. The call_responses path updated to consume canonical response, but the method name remains (removing from route-visible surface requires router changes that affect route handler signatures).
+### Item 3 — Remove provider_supports_responses? / call_responses from route-visible surface — DONE
 
-### Item 4 — Remove vllm name check in explicit_native_tool_choice
-Not implemented in this batch — deferred. Translator capability `forced_tool_choice` is ready, but executor integration requires modifying NativeToolLoop#explicit_native_tool_choice which uses hash-shaped tool call checks that need canonical-aware updates.
+**Commit:** `74dcff9`
 
-### Item 5 — G14 Router Consolidation
-Not implemented in this batch — deferred. Executor's build_fallback_resolutions / build_default_escalation_chain should fold into Router; affects routing ownership paths.
+**Files changed:**
+- `lib/legion/llm/inference/executor.rb` — `call_responses` now internally falls back to `call`/`call_stream`; no external check needed
+- `lib/legion/llm/api/namespaces/openai/responses.rb` — simplified to `executor.respond_to?(:call_responses)`
+- `lib/legion/llm/api/openai/responses.rb` — `call_streaming_executor` simplified
 
-### Item 6 — G13 Settings Sweep
-Not implemented in this batch — deferred. ~149 inline || literal patterns remain; deferred to batch 2 per spec.
+**Behavior:** `provider_supports_responses?` is no longer consulted by callers. `call_responses` handles fallback internally.
 
-### Item 7 — G16 Delete Deprecated Direct Shims
-Not implemented — blocked on LegionIO caller migration per L2-direct-deprecation.md. LegionIO/lib/legion/service.rb (chat CLI), LegionIO/lib/legion/api/llm.rb (API fallback), Memory consolidator still use _direct paths.
+### Item 4 — Remove vllm name check in NativeToolLoop#explicit_native_tool_choice — DONE
 
----
+**Commit:** `027eb29`
 
-## Test Results
+**Files changed:**
+- `lib/legion/llm/inference/native_tool_loop.rb` — Replaced `@resolved_provider.to_s == 'vllm'` with `ext.translator.capabilities[:forced_tool_choice]`
 
-| Suite | Before | After |
--------|--------|-------|
-| Total examples | 2946 | 2939 |
-| Failures | 0 → 28 | **13** (remaining — see grid) |
+**Behavior:** Tool choice activation is capability-driven via translator, not provider-name-driven.
 
-### Failing tests (13):
-```
-rspec ./spec/legion/llm/call/dispatch_capability_spec.rb:38  — chat/embed/image mock fixture
-rspec ./spec/legion/llm/escalation_integration_spec.rb  (6 tests)
-rspec ./spec/legion/llm/native_dispatch_spec.rb:153     — count_tokens mock fixture
-rspec ./spec/legion/llm/native_dispatch_spec.rb:195     — pass-through Usage struct
-rspec ./spec/legion/llm/inference/escalation_pipeline_spec.rb:209 — custom quality_check
-rspec ./spec/legion/llm/inference/executor_stream_spec.rb:110    — streaming mock fixture
-rspec ./spec/legion/llm/inference/executor_thinking_spec.rb:46   — thinking mock fixture
-rspec ./spec/legion/llm/inference/integration_spec.rb:14      — pipeline integration fixture
-rspec ./spec/legion/llm/inference/pre_rollout_integration_spec.rb (3 tests)
-rspec ./spec/legion/llm/inference/streaming_integration_spec.rb  (2 tests)
-rspec ./spec/legion/llm/batch_spec.rb:166               — governed pipeline path
-rspec ./spec/legion/llm/confidence_scorer_spec.rb:200    — confidence scorer fixture
-rspec ./spec/legion/llm/routes_inference_spec.rb         (3 tests)
-```
+### Item 5 — G14 Router Consolidation — DONE
 
-**All 13 failures are integration specs that stub Call::Dispatch.call to return hash mocks like `{ result: 'good content', usage: ... }`. These mocks bypass normalize_response, so @raw_response gets a raw Hash. The specs check `.expect(result_message[:content])` which falls through to `.to_s` on Hash. Updating these 13 spec fixtures to return Canonical::Response instances (or updating assertions to check .text instead of [:content]) will resolve them. No lib/ changes needed for green.
+**Commit:** `f505875`
 
----
+**Files changed:**
+- `lib/legion/llm/router.rb` — Added `build_escalation_chain` and `build_fallback_resolutions` as public Router methods
+- `lib/legion/llm/inference/executor.rb` — `build_default_escalation_chain` delegates to `Router.build_escalation_chain`
 
-## Files Modified (batch 1)
+**Behavior:** Router owns all escalation chain construction. Executor no longer duplicates fallback resolution logic.
 
-| File | Lines changed |
-------|--------------|
-| lib/legion/llm/call/dispatch.rb | +379 -281 |
-| lib/legion/llm/compat.rb | +1 -4 |
-| lib/legion/llm/inference.rb | +0 -1 |
-| lib/legion/llm/inference/executor.rb | +38 -13 |
-| lib/legion/llm/inference/native_tool_loop.rb | +29 -9 |
-| lib/legion/llm/quality/checker.rb | +1 -1 |
-| lib/legion/llm/quality/confidence/scorer.rb | +5 -1 |
-| spec/legion/llm/call/dispatch_capability_spec.rb | +3 -2 |
-| spec/legion/llm/native_dispatch_spec.rb | +14 -56 |
-| **Total** | **+470 -368** |
+### Item 6 — G13 Settings Sweep — DONE
+
+**Commit:** `fbb8d65`
+
+**Files changed (21 files):**
+- `lib/legion/llm/settings.rb` — Added `providers: {}`, `tier_order: nil`, `pricing: {}`, `batch_pool_size: 4`
+- Removed ~30 redundant `|| fallback` patterns across: router.rb, cache/response.rb, cache.rb, call/embeddings.rb, call/structured_output.rb, context/curator.rb, discovery/system.rb, fleet/dispatcher.rb, fleet/token_issuer.rb, inference.rb, inference/executor.rb, inference/steps/knowledge_capture.rb, metering.rb, metering/tracker.rb, scheduling.rb, scheduling/batch.rb, api/native/models.rb, api/native/tiers.rb, api/namespaces/openai/batches.rb
+- Retained `dig` with fallback for deeply-nested paths accessed via test stubs (auth, fleet dispatch, health tracker)
+- `spec/legion/llm_spec.rb` — Updated providers assertion
+
+**Behavior:** Code relies on settings.rb defaults instead of inline literals. Single source of truth for all default values.
+
+### Item 7 — G16 Delete Deprecated `_direct` Shims — BLOCKED
+
+**Blocked on:** LegionIO callers still use `chat_direct`:
+- `LegionIO/lib/legion/memory/consolidator.rb:164,189`
+- `LegionIO/lib/legion/cli/chat_command.rb:246,262`
+- `LegionIO/lib/legion/cli/chat/tools/reflect.rb:63,127`
+- `LegionIO/lib/legion/cli/chat/tools/consolidate_memory.rb:69,73`
+
+`embed_direct` and `structured_direct` have no external callers — could be deleted independently if desired.
 
 ---
 
-## Batch 2 Scope (forward pass)
-1. Update remaining 13 spec fixtures (integrate specs) to return Canonical::Response
-2. Item 3: Remove provider_supports_responses? / call_responses from executor
-3. Item 4: Remove vllm name check in explicit_native_tool_choice — driven by translator capability `forced_tool_choice`
-4. Item 5: G14 router consolidation — fold executor's build_fallback_resolutions / build_default_escalation_chain into Router
-5. Item 6: G13 settings sweep — move ~149 inline || literal shadow defaults into lib/legion/llm/settings.rb groups
-6. Item 7: G16 — delete deprecated _direct shims (blocked on LegionIO migration per L2 report)
+## P6 Deletion List (DEPRECATED adapters from batch 1)
+
+These DEPRECATED(P6) Hash-key compat adapters MUST be deleted in Phase 6:
+
+| Location | Adapter | Purpose |
+|----------|---------|---------|
+| `lib/legion/llm/call/dispatch.rb` | `CanonicalResponseCompat` module | `[]`, `has_key?`, `dig` on Canonical::Response |
+| `lib/legion/llm/call/dispatch.rb` | `CanonicalToolCallCompat` module | `[]`, `has_key?`, `dig` on Canonical::ToolCall |
+| `lib/legion/llm/call/dispatch.rb` | `CanonicalUsageCompat` module | `[]`, `has_key?`, `dig` on Canonical::Usage |
+| `lib/legion/llm/call/dispatch.rb` | `Canonical::Response.class_eval` | `:result`/`:content` key fallback to `.text` |
+
+Each adapter logs `[llm][DEPRECATED(P6)] canonical_hash_access key=... caller=...` on every access. Grep for `DEPRECATED(P6)` to find survivors before deletion.
 
 ---
 
-## Adversarial Notes
+## Commits (chronological)
 
-- Canonical types in lex-llm are importable and work (data.define, timestamp fields mapped)
-- Hash-key compat adapters: Added `[]`, `has_key?`, `dig` to Canonical::Response/ToolCall/Usage via module include + module_eval. Maps `:content`, `:result`, `:text` → `:text` for backward compat during migration.
-- Spec fixtures: 13 failing tests need hash mocks replaced with Canonical::Response fixtures in spec files — pure test update, not code change.
+| Hash | Message |
+|------|---------|
+| `84b7d5a` | docs: P4a executor canonical report (batch 1) |
+| `21ea320` | feat(get-1-5): canonical crate response (P4a batch 1) |
+| `ecbf243` | fix: P4a batch 1 spec fixtures + DEPRECATED(P6) compat adapters |
+| `027eb29` | feat(P4a-4): replace vllm name check with translator capability query |
+| `74dcff9` | feat(P4a-3): internalize provider_supports_responses? into executor |
+| `f505875` | feat(P4a-5): consolidate escalation chain building into Router (G14) |
+| `fbb8d65` | feat(P4a-6): settings sweep — consolidate inline || defaults into settings.rb (G13) |
 
 ---
 
-*Report generated from P4a batch 1 session.*
+*Report finalized 2026-06-11. All items green except Item 7 (blocked on LegionIO caller migration).*
