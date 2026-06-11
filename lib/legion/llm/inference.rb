@@ -125,9 +125,77 @@ module Legion
       end
 
       def chat_direct(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
-                      max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
+                      max_escalations: nil, quality_check: nil, message: nil, **, &)
+        Legion::LLM::Deprecation.warn_once(:chat_direct, replacement: 'Legion::LLM.chat')
+
+        if Thread.current[:legion_llm_in_pipeline] || !pipeline_enabled? || !message
+          return chat_direct_raw(model: model, provider: provider, intent: intent, tier: tier,
+                                 escalate: escalate, max_escalations: max_escalations,
+                                 quality_check: quality_check, message: message, **, &)
+        end
+
+        chat_direct_governed(model: model, provider: provider, intent: intent, tier: tier,
+                             escalate: escalate, max_escalations: max_escalations,
+                             quality_check: quality_check, message: message, **, &)
+      end
+
+      def chat_direct_governed(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
+                               max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
         log.debug(
-          "[llm][inference] chat_direct.enter model=#{model} provider=#{provider} intent=#{intent} " \
+          "[llm][inference] chat_direct_governed.enter model=#{model} provider=#{provider} " \
+          "intent=#{intent} tier=#{tier} message_present=#{!message.nil?}"
+        )
+
+        assert_external_allowed! if effective_tier_is_external?(tier, provider)
+
+        caller_hash = kwargs.delete(:caller) || { requested_by: { type: :system, identity: 'legion:internal:chat_direct' } }
+        cache_opt = kwargs.delete(:cache) { true }
+        temperature = kwargs.delete(:temperature)
+        kwargs.delete(:urgency)
+
+        cache_key = build_cache_key(model, provider, message, temperature) if cacheable?(cache_opt, temperature, message)
+        if cache_key
+          cached = Cache.get(cache_key)
+          if cached
+            log.debug '[llm][inference] chat_direct_governed cache=hit'
+            cached_response = cached.dup
+            cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
+            return cached_response
+          end
+        end
+
+        resolved_provider = provider || Legion::Settings[:llm][:default_provider]
+        resolved_model = model || Legion::Settings[:llm][:default_model]
+
+        unless resolved_provider || resolved_model || (intent && Router.routing_enabled?)
+          log.debug '[llm][inference] chat_direct_governed.fallback_to_raw — no provider/model resolvable'
+          return chat_direct_raw(model: model, provider: provider, intent: intent, tier: tier,
+                                 escalate: escalate, max_escalations: max_escalations,
+                                 quality_check: quality_check, message: message,
+                                 caller: caller_hash, cache: cache_opt, temperature: temperature, **kwargs)
+        end
+
+        result = Prompt.dispatch(
+          message,
+          intent: intent, tier: tier, provider: provider, model: model,
+          escalate: escalate, max_escalations: max_escalations,
+          quality_check: quality_check, caller: caller_hash,
+          temperature: temperature, **kwargs.except(:messages)
+        )
+
+        if cache_key && result.is_a?(Hash)
+          ttl = Legion::Settings.dig(:llm, :prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
+          Cache.set(cache_key, result, ttl: ttl)
+        end
+
+        log.debug("[llm][inference] chat_direct_governed.exit result_class=#{result.class}")
+        result
+      end
+
+      def chat_direct_raw(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
+                          max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
+        log.debug(
+          "[llm][inference] chat_direct_raw.enter model=#{model} provider=#{provider} intent=#{intent} " \
           "tier=#{tier} escalate=#{escalate} message_present=#{!message.nil?} kwargs=#{kwargs.keys.sort}"
         )
         cache_opt = kwargs.delete(:cache) { true }
@@ -139,7 +207,7 @@ module Legion
         if cache_key
           cached = Cache.get(cache_key)
           if cached
-            log.debug '[llm][inference] chat_direct cache=hit'
+            log.debug '[llm][inference] chat_direct_raw cache=hit'
             cached_response = cached.dup
             cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
             return cached_response
@@ -151,7 +219,7 @@ module Legion
         return deferred if deferred
 
         log.debug(
-          "[llm][inference] chat_direct.dispatch model=#{model} provider=#{provider} " \
+          "[llm][inference] chat_direct_raw.dispatch model=#{model} provider=#{provider} " \
           "escalate=#{escalate} message_present=#{!message.nil?}"
         )
         result = if escalate && message
@@ -164,7 +232,7 @@ module Legion
                    chat_single(model: model, provider: provider, intent: intent, tier: tier,
                                temperature: temperature, message: message, **kwargs, &)
                  end
-        log.debug("[llm][inference] chat_direct.exit result_class=#{result.class} result_nil=#{result.nil?}")
+        log.debug("[llm][inference] chat_direct_raw.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
           ttl = Legion::Settings.dig(:llm, :prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
@@ -371,9 +439,9 @@ module Legion
           return blocked[:response] || blocked_hook_response(blocked) if blocked
         end
 
-        result = chat_direct(model: model, provider: provider, intent: intent, tier: tier,
-                             escalate: escalate, max_escalations: max_escalations,
-                             quality_check: quality_check, message: message, **kwargs)
+        result = chat_direct_raw(model: model, provider: provider, intent: intent, tier: tier,
+                                 escalate: escalate, max_escalations: max_escalations,
+                                 quality_check: quality_check, message: message, **kwargs)
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_after(response: result, messages: messages, model: resolved_model)
@@ -418,7 +486,7 @@ module Legion
 
       def ask_direct(message:, model: nil, provider: nil, intent: nil, tier: nil, &)
         assert_external_allowed! if effective_tier_is_external?(tier, provider)
-        result = chat_direct(
+        result = chat_direct_raw(
           model:    model,
           provider: provider,
           intent:   intent,

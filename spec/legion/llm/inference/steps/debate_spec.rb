@@ -50,7 +50,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
     double('RawResponse', content: 'Microservices should be designed around business capabilities.')
   end
 
-  let(:chat_direct_result) do
+  let(:chat_result) do
     { content: 'A debate role response.' }
   end
 
@@ -70,7 +70,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       openai:    { enabled: true, default_model: 'gpt-4o' },
       gemini:    { enabled: false, default_model: 'gemini-2.0-flash' }
     }
-    allow(Legion::LLM).to receive(:chat_direct).and_return(chat_direct_result)
+    allow(Legion::LLM).to receive(:chat).and_return(chat_result)
   end
 
   describe '#debate_enabled?' do
@@ -162,10 +162,10 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
 
   describe '#step_debate' do
     context 'when debate is disabled' do
-      it 'is a no-op and does not call chat_direct' do
+      it 'is a no-op and does not call chat' do
         step = host_class.new(base_request, raw_response)
         step.step_debate
-        expect(Legion::LLM).not_to have_received(:chat_direct)
+        expect(Legion::LLM).not_to have_received(:chat)
         expect(step.raw_response).to eq(raw_response)
         expect(step.enrichments).not_to have_key('debate:result')
       end
@@ -195,11 +195,11 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
         expect(keys).to include('debate:completed')
       end
 
-      it 'calls chat_direct for challenger, rebuttal, and judge roles (3 calls for 1 round)' do
+      it 'calls chat for challenger, rebuttal, and judge roles (3 calls for 1 round)' do
         step = host_class.new(debate_request, raw_response)
         step.step_debate
         # 1 round: challenger + rebuttal + judge = 3 calls
-        expect(Legion::LLM).to have_received(:chat_direct).exactly(3).times
+        expect(Legion::LLM).to have_received(:chat).exactly(3).times
       end
     end
 
@@ -217,13 +217,13 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       it 'skips debate entirely' do
         step = host_class.new(debate_request, nil)
         step.step_debate
-        expect(Legion::LLM).not_to have_received(:chat_direct)
+        expect(Legion::LLM).not_to have_received(:chat)
       end
     end
 
     context 'when a debate role call fails' do
       it 'does not raise and still produces a response (role error is captured in content)' do
-        allow(Legion::LLM).to receive(:chat_direct).and_raise(StandardError, 'network error')
+        allow(Legion::LLM).to receive(:chat).and_raise(StandardError, 'network error')
         step = host_class.new(debate_request, raw_response)
         expect { step.step_debate }.not_to raise_error
         # Role errors are absorbed into placeholder content; debate still completes
@@ -257,7 +257,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       step.step_debate
       expect(step.enrichments['debate:result'][:data][:rounds]).to eq(2)
       # 2 rounds: (challenger + rebuttal) * 2 + judge = 5 calls
-      expect(Legion::LLM).to have_received(:chat_direct).exactly(5).times
+      expect(Legion::LLM).to have_received(:chat).exactly(5).times
     end
 
     it 'caps rounds at max_rounds setting' do
@@ -344,13 +344,13 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       step.step_debate
       expect(step.warnings).to include(match(/fewer than 2 distinct models available/))
       expect(step.enrichments).not_to have_key('debate:result')
-      expect(Legion::LLM).not_to have_received(:chat_direct)
+      expect(Legion::LLM).not_to have_received(:chat)
     end
   end
 
   describe 'judge synthesis replaces response' do
     it 'sets raw_response.content to the judge output' do
-      allow(Legion::LLM).to receive(:chat_direct).and_return({ content: 'judge final answer' })
+      allow(Legion::LLM).to receive(:chat).and_return({ content: 'judge final answer' })
       step = host_class.new(debate_request, raw_response)
       step.step_debate
       expect(step.raw_response.content).to eq('judge final answer')
@@ -365,7 +365,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
     end
 
     it 'separates judge evaluation metadata from the final answer when sections are present' do
-      allow(Legion::LLM).to receive(:chat_direct).and_return(
+      allow(Legion::LLM).to receive(:chat).and_return(
         { content: 'role response' },
         { content: 'role response' },
         { content: "Evaluation: challenger was stronger because it found risk.\nFinal answer: ship the safer option." }
@@ -403,7 +403,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       step.enrichments['gaia:advisory'] = { data: { high_stakes: true } }
       step.step_debate
       expect(step.enrichments).not_to have_key('debate:result')
-      expect(Legion::LLM).not_to have_received(:chat_direct)
+      expect(Legion::LLM).not_to have_received(:chat)
     end
   end
 
@@ -428,7 +428,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
     end
   end
 
-  describe 'chat_direct calls use correct provider/model split' do
+  describe 'chat calls use correct provider/model split' do
     it 'parses provider:model format when calling roles' do
       Legion::Settings[:llm][:debate][:challenger_model] = 'openai:gpt-4o'
       Legion::Settings[:llm][:debate][:judge_model]      = 'anthropic:claude-sonnet-4-5'
@@ -436,10 +436,10 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       step = host_class.new(debate_request, raw_response)
       step.step_debate
 
-      expect(Legion::LLM).to have_received(:chat_direct).with(
+      expect(Legion::LLM).to have_received(:chat).with(
         hash_including(model: 'gpt-4o', provider: :openai)
       ).at_least(:once)
-      expect(Legion::LLM).to have_received(:chat_direct).with(
+      expect(Legion::LLM).to have_received(:chat).with(
         hash_including(model: 'claude-sonnet-4-5', provider: :anthropic)
       ).at_least(:once)
     end

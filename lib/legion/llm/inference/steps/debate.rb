@@ -220,7 +220,10 @@ module Legion
           end
 
           def extract_content(response)
-            if response.respond_to?(:content)
+            if response.is_a?(Legion::LLM::Inference::Response)
+              msg = response.message
+              msg.is_a?(Hash) ? (msg[:content] || msg['content']).to_s : msg.to_s
+            elsif response.respond_to?(:content)
               response.content.to_s
             elsif response.is_a?(Hash)
               (response[:content] || response['content']).to_s
@@ -305,11 +308,15 @@ module Legion
             provider = parts.size == 2 ? parts[0].to_sym : nil
             mdl      = parts.size == 2 ? parts[1] : parts[0]
 
-            opts = { message: prompt, model: mdl }
+            opts = {
+              message: prompt,
+              model:   mdl,
+              caller:  { requested_by: { type: :system, identity: 'legion:internal:debate' } }
+            }
             opts[:provider] = provider if provider
             log_step_debug(:debate, :role_call, provider: provider || 'default', model: mdl, prompt_chars: prompt.length)
 
-            response = Legion::LLM.chat_direct(**opts)
+            response = Legion::LLM.chat(**opts)
             log_step_debug(:debate, :role_response, provider: provider || 'default', model: mdl)
             extract_content(response)
           rescue StandardError => e

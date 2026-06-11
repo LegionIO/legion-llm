@@ -6,6 +6,7 @@ Object.const_set(:Legion, Module.new) unless Object.const_defined?(:Legion, fals
 Legion.const_set(:LLM, Module.new) unless Legion.const_defined?(:LLM, false)
 
 require_relative 'llm/version'
+require_relative 'llm/deprecation'
 require_relative 'llm/errors'
 require_relative 'llm/settings'
 require_relative 'llm/caller_identity'
@@ -146,7 +147,13 @@ module Legion
         end
       end
 
-      def embed_direct(text, **) = Call::Embeddings.generate(text: text, **)
+      def embed_direct(text, **)
+        Deprecation.warn_once(:embed_direct, replacement: 'Legion::LLM.embed')
+        result = Call::Embeddings.generate(text: text, **)
+        emit_embed_metering(result)
+        result
+      end
+
       def embed_batch(texts, **) = Call::Embeddings.generate_batch(texts: texts, **)
 
       def structured(messages:, schema:, **)
@@ -159,7 +166,12 @@ module Legion
         end
       end
 
-      def structured_direct(messages:, schema:, **) = Call::StructuredOutput.generate(messages: messages, schema: schema, **)
+      def structured_direct(messages:, schema:, **)
+        Deprecation.warn_once(:structured_direct, replacement: 'Legion::LLM.structured')
+        result = Call::StructuredOutput.generate(messages: messages, schema: schema, **)
+        emit_structured_metering(result)
+        result
+      end
 
       # These methods check Discovery first, then fall back to instance ivars set directly on LLM
       # (ivar fallback preserves backwards compat for specs that do Legion::LLM.instance_variable_set)
@@ -184,6 +196,46 @@ module Legion
       end
 
       def agent(agent_class, **) = agent_class.new(**)
+
+      private
+
+      def emit_embed_metering(result)
+        return unless result.is_a?(Hash) && !result[:error]
+
+        Metering.emit(
+          provider:      result[:provider],
+          model_id:      result[:model],
+          request_type:  'embedding',
+          tier:          'direct',
+          input_tokens:  result[:tokens].to_i,
+          output_tokens: 0,
+          total_tokens:  result[:tokens].to_i,
+          event_type:    'llm_embedding',
+          status:        'success',
+          caller:        { requested_by: { type: :system, identity: 'legion:internal:embed_direct' } }
+        )
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.embed_direct.metering')
+      end
+
+      def emit_structured_metering(result)
+        return unless result.is_a?(Hash)
+
+        Metering.emit(
+          provider:      result[:provider],
+          model_id:      result[:model],
+          request_type:  'structured_output',
+          tier:          'direct',
+          input_tokens:  0,
+          output_tokens: 0,
+          total_tokens:  0,
+          event_type:    'llm_structured',
+          status:        result[:valid] ? 'success' : 'error',
+          caller:        { requested_by: { type: :system, identity: 'legion:internal:structured_direct' } }
+        )
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'llm.structured_direct.metering')
+      end
     end
   end
 end

@@ -106,7 +106,7 @@ RSpec.describe 'Legion::LLM.ask' do
     end
 
     it 'does not call chat_direct' do
-      expect(Legion::LLM).not_to receive(:chat_direct)
+      expect(Legion::LLM::Inference).not_to receive(:chat_direct_raw)
       Legion::LLM.ask(message: 'hello')
     end
   end
@@ -236,11 +236,11 @@ RSpec.describe 'Legion::LLM.ask' do
     before do
       allow(Legion::LLM::DaemonClient).to receive(:available?).and_return(true)
       allow(Legion::LLM::DaemonClient).to receive(:chat).and_return({ status: :unavailable })
-      allow(Legion::LLM::Inference).to receive(:chat_direct).and_return(session)
+      allow(Legion::LLM::Inference).to receive(:chat_direct_raw).and_return(session)
     end
 
     it 'falls through and calls chat_direct' do
-      expect(Legion::LLM::Inference).to receive(:chat_direct)
+      expect(Legion::LLM::Inference).to receive(:chat_direct_raw)
       Legion::LLM.ask(message: 'hello')
     end
 
@@ -260,7 +260,7 @@ RSpec.describe 'Legion::LLM.ask' do
     before do
       allow(Legion::LLM::DaemonClient).to receive(:available?).and_return(true)
       allow(Legion::LLM::DaemonClient).to receive(:chat).and_return({ status: :error, code: 500 })
-      allow(Legion::LLM::Inference).to receive(:chat_direct).and_return(session)
+      allow(Legion::LLM::Inference).to receive(:chat_direct_raw).and_return(session)
     end
 
     it 'returns a done hash with direct response' do
@@ -277,12 +277,12 @@ RSpec.describe 'Legion::LLM.ask' do
 
     before do
       allow(Legion::LLM::DaemonClient).to receive(:available?).and_return(false)
-      allow(Legion::LLM::Inference).to receive(:chat_direct).and_return(session)
+      allow(Legion::LLM::Inference).to receive(:chat_direct_raw).and_return(session)
     end
 
     it 'skips daemon and calls chat_direct directly' do
       expect(Legion::LLM::DaemonClient).not_to receive(:chat)
-      expect(Legion::LLM::Inference).to receive(:chat_direct)
+      expect(Legion::LLM::Inference).to receive(:chat_direct_raw)
       Legion::LLM.ask(message: 'hello')
     end
 
@@ -300,7 +300,7 @@ RSpec.describe 'Legion::LLM.ask' do
 
     before do
       allow(Legion::LLM::DaemonClient).to receive(:available?).and_return(false)
-      allow(Legion::LLM::Inference).to receive(:chat_direct).and_return(session)
+      allow(Legion::LLM::Inference).to receive(:chat_direct_raw).and_return(session)
     end
 
     it 'returns { status: :done, response:, meta: }' do
@@ -344,22 +344,22 @@ RSpec.describe 'Legion::LLM.ask' do
     end
 
     it 'forwards model to chat_direct' do
-      expect(Legion::LLM::Inference).to receive(:chat_direct).with(hash_including(model: 'gpt-4o')).and_return(session)
+      expect(Legion::LLM::Inference).to receive(:chat_direct_raw).with(hash_including(model: 'gpt-4o')).and_return(session)
       Legion::LLM.ask(message: 'hello', model: 'gpt-4o')
     end
 
     it 'forwards provider to chat_direct' do
-      expect(Legion::LLM::Inference).to receive(:chat_direct).with(hash_including(provider: :openai)).and_return(session)
+      expect(Legion::LLM::Inference).to receive(:chat_direct_raw).with(hash_including(provider: :openai)).and_return(session)
       Legion::LLM.ask(message: 'hello', provider: :openai)
     end
 
     it 'forwards tier to chat_direct' do
-      expect(Legion::LLM::Inference).to receive(:chat_direct).with(hash_including(tier: :cloud)).and_return(session)
+      expect(Legion::LLM::Inference).to receive(:chat_direct_raw).with(hash_including(tier: :cloud)).and_return(session)
       Legion::LLM.ask(message: 'hello', tier: :cloud)
     end
 
     it 'forwards intent to chat_direct' do
-      expect(Legion::LLM::Inference).to receive(:chat_direct).with(hash_including(intent: { privacy: :strict })).and_return(session)
+      expect(Legion::LLM::Inference).to receive(:chat_direct_raw).with(hash_including(intent: { privacy: :strict })).and_return(session)
       Legion::LLM.ask(message: 'hello', intent: { privacy: :strict })
     end
   end
@@ -372,7 +372,7 @@ RSpec.describe 'Legion::LLM.ask' do
 
     before do
       allow(Legion::LLM::DaemonClient).to receive(:available?).and_return(false)
-      allow(Legion::LLM::Inference).to receive(:chat_direct).and_return(session)
+      allow(Legion::LLM::Inference).to receive(:chat_direct_raw).and_return(session)
     end
 
     it 'passes block to session.ask when a block is given' do

@@ -1,5 +1,18 @@
 # Legion LLM Changelog
 
+## [0.12.16] - 2026-06-11
+
+### Deprecated
+- **`chat_direct`, `embed_direct`, `structured_direct` are deprecated shims** — These methods previously bypassed the Inference pipeline (no metering/audit). They are now rerouted through the governed pipeline using a `:system` caller profile that skips governance steps but preserves metering and audit emission. Use `Legion::LLM.chat`, `Legion::LLM.embed`, and `Legion::LLM.structured` instead. The deprecated names will be removed in the next major version. (lib/legion/llm/inference.rb, lib/legion/llm.rb, lib/legion/llm/deprecation.rb)
+
+### Changed
+- **scheduling/batch.rb uses governed pipeline** — `Batch.submit_single` now calls `Legion::LLM.chat` with a `:system` caller identity instead of `chat_direct`, ensuring batched requests are metered (lib/legion/llm/scheduling/batch.rb)
+- **inference/steps/debate.rb uses governed pipeline** — Debate role calls now use `Legion::LLM.chat` with a `:system` caller identity instead of `chat_direct`, ensuring debate invocations are metered (lib/legion/llm/inference/steps/debate.rb)
+
+### Added
+- **Deprecation helper** — `Legion::LLM::Deprecation.warn_once` emits a single `log.warn` per process per method name, thread-safe via Mutex (lib/legion/llm/deprecation.rb)
+- **Recursion guard in Executor** — `Thread.current[:legion_llm_in_pipeline]` prevents infinite loops when pipeline steps internally call `chat_direct` (lib/legion/llm/inference/executor.rb)
+
 ## [0.12.15] - 2026-06-10
 
 ### Fixed

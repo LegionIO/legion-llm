@@ -115,10 +115,12 @@ module Legion
 
         def call
           set_log_context
+          Thread.current[:legion_llm_in_pipeline] = true
           log.debug "[llm][executor] action=call request_id=#{@request.id} profile=#{@profile}"
           execute_steps
           build_response
         ensure
+          Thread.current[:legion_llm_in_pipeline] = nil
           clear_log_context
         end
 
@@ -126,12 +128,14 @@ module Legion
           return call unless block
 
           set_log_context
+          Thread.current[:legion_llm_in_pipeline] = true
           log.debug "[llm][executor] action=call_stream request_id=#{@request.id} profile=#{@profile}"
           execute_pre_provider_steps
           step_provider_call_stream(&block)
           execute_post_provider_steps
           build_response
         ensure
+          Thread.current[:legion_llm_in_pipeline] = nil
           clear_log_context
         end
 

@@ -142,12 +142,12 @@ module Legion
                      else
                        msgs.to_s
                      end
-            response = Legion::LLM.chat_direct(
+            response = Legion::LLM.chat(
               **entry[:opts],
               provider: provider,
               model:    model,
               message:  prompt,
-              urgency:  :immediate
+              caller:   { requested_by: { type: :system, identity: 'legion:internal:scheduling:batch' } }
             )
 
             {
