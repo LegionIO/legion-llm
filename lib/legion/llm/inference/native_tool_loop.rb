@@ -262,7 +262,9 @@ module Legion
         end
 
         def explicit_native_tool_choice
-          return unless @resolved_provider.to_s == 'vllm'
+          ext = Call::Registry.for(@resolved_provider, instance: @resolved_instance)
+          return unless ext.respond_to?(:translator) && ext.translator.respond_to?(:capabilities) &&
+                        ext.translator.capabilities[:forced_tool_choice]
 
           text = latest_user_text.to_s.downcase
           return if text.empty? || text.length > 500

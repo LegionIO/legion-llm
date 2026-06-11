@@ -770,6 +770,13 @@ confidence: 0.9 }],
     end
 
     it 'matches explicit tool choice even when client tools are present' do
+      translator = Struct.new(:capabilities).new({ forced_tool_choice: true })
+      vllm_ext = Module.new do
+        define_singleton_method(:translator) { translator }
+        define_singleton_method(:chat) { |**| { content: 'ok', usage: {} } }
+      end
+      Legion::LLM::Call::Registry.register(:vllm, vllm_ext)
+
       client_tool = Legion::LLM::Types::ToolDefinition.build(
         name:        'git',
         description: 'Git client tool',
@@ -784,11 +791,17 @@ confidence: 0.9 }],
       executor = described_class.new(path_request)
       executor.instance_variable_set(:@resolved_provider, :vllm)
 
-      # Explicit tool choice is matched regardless of client tools presence
       expect(executor.send(:native_tool_prefs)).to include(choice: 'git')
     end
 
     it 'still chooses the Ruby tool when Ruby is explicitly requested' do
+      translator = Struct.new(:capabilities).new({ forced_tool_choice: true })
+      vllm_ext = Module.new do
+        define_singleton_method(:translator) { translator }
+        define_singleton_method(:chat) { |**| { content: 'ok', usage: {} } }
+      end
+      Legion::LLM::Call::Registry.register(:vllm, vllm_ext)
+
       ruby_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'run ruby -v' }],
         routing:  { provider: :vllm, model: 'qwen3.6-27b' }
