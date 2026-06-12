@@ -11,6 +11,36 @@ RSpec.describe Legion::LLM::Types::ToolDefinition do
       expect(td.parameters).to eq({ type: 'object' })
       expect(td.source).to eq({ type: :builtin })
     end
+
+    it 'normalizes parameters at construction — injects type when missing' do
+      td = described_class.build(name: 'multi_agent_v1',
+                                 parameters: { properties: { task: { type: 'string' } } })
+      expect(td.parameters[:type]).to eq('object')
+      expect(td.parameters[:properties]).to eq(task: { type: 'string' })
+    end
+
+    it 'normalizes nil parameters to empty object schema' do
+      td = described_class.build(name: 'bare_tool')
+      expect(td.parameters).to eq(type: 'object', properties: {})
+    end
+
+    it 'wraps a bare property map under type:object/properties' do
+      td = described_class.build(name: 'location_tool',
+                                 parameters: { location: { type: 'string' } })
+      expect(td.parameters).to eq(type: 'object', properties: { location: { type: 'string' } })
+    end
+
+    it 'passes explicit-type schemas through unchanged' do
+      schema = { type: 'object', properties: { a: { type: 'string' } } }
+      td = described_class.build(name: 'typed', parameters: schema)
+      expect(td.parameters).to eq(schema)
+    end
+
+    it 'leaves composite schemas without forcing type' do
+      schema = { oneOf: [{ type: 'string' }, { type: 'integer' }] }
+      td = described_class.build(name: 'composite', parameters: schema)
+      expect(td.parameters).to eq(schema)
+    end
   end
 
   describe '.from_registry_entry' do
