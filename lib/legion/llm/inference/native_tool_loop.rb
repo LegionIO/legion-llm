@@ -415,12 +415,17 @@ module Legion
         # surfaces the response as plain text.
         def synthesize_qwen_single_tag_tool_call(text, round)
           stripped = text.strip
-          single_tag_re = %r{\A<([A-Za-z_][A-Za-z0-9_]*)>(.*)</\1>\z}m
+          # Tag-name body matches a tool name; trailing punctuation
+          # ([:.,!?]*) is tolerated — qwen has emitted both
+          # `<bash>...</bash>` and `<bash:>...</bash:>` variants in live
+          # runs (codex/vllm tool_call multi-turn captures, 2026-06-12).
+          # The closing punctuation must match the opening.
+          single_tag_re = %r{\A<([A-Za-z_][A-Za-z0-9_]*)([[:punct:]]*)>(.*)</\1\2>\z}m
           match = stripped.match(single_tag_re)
           return [] unless match
 
           name = match[1].to_s
-          inner = match[2].to_s
+          inner = match[3].to_s
           tool_def = lookup_native_tool_definition(name)
           return [] if tool_def.nil?
 

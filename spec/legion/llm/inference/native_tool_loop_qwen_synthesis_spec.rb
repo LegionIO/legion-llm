@@ -89,6 +89,20 @@ RSpec.describe 'NativeToolLoop qwen markup tool synthesis' do
       expect(synthesized.first[:arguments]).to eq('command' => 'ls -la')
       expect(synthesized.first[:id]).to start_with('call_')
     end
+
+    # Captured 2026-06-12 from
+    # legionio-e2e/results/codex/vllm_multi_turn_tool_round_trip_responses_api_*_response.json
+    # qwen sometimes appends a colon to the tag name. Tag still maps to a
+    # known tool; the inner text is still the single-arg value.
+    it 'synthesizes from the <bash:>ls -la</bash:> trailing-punct variant' do
+      result = canonical_response_with('<bash:>ls -la</bash:>')
+
+      synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
+
+      expect(synthesized.size).to eq(1)
+      expect(synthesized.first[:name]).to eq('bash')
+      expect(synthesized.first[:arguments]).to eq('command' => 'ls -la')
+    end
   end
 
   describe 'unrecoverable runs (captured live)' do
