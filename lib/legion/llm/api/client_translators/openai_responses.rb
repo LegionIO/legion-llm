@@ -222,14 +222,14 @@ module Legion
                   id:        "fc_#{SecureRandom.hex(12)}",
                   call_id:   tc.respond_to?(:id) ? tc.id : nil,
                   name:      tc.respond_to?(:name) ? tc.name.to_s : '',
-                  arguments: serialize_args(args),
+                  arguments: args_as_json_string(args),
                   status:    'completed'
                 }
               }
             else
               { type:         'response.function_call_arguments.delta',
                 output_index: output_index,
-                delta:        serialize_args(args) }
+                delta:        args_as_json_string(args) }
             end
           end
 
@@ -740,7 +740,7 @@ module Legion
               next if server_tool_resolved?(tc)
 
               { type: 'function_call', id: "fc_#{SecureRandom.hex(12)}", call_id: tc_id,
-                name: name.to_s, arguments: args.is_a?(String) ? args : Legion::JSON.dump(args), status: 'completed' }
+                name: name.to_s, arguments: args_as_json_string(args), status: 'completed' }
             end
           end
 
@@ -769,7 +769,7 @@ module Legion
                   id:        "fc_#{SecureRandom.hex(12)}",
                   call_id:   tc_id,
                   name:      name.to_s,
-                  arguments: args.is_a?(String) ? args : Legion::JSON.dump(args),
+                  arguments: args_as_json_string(args),
                   status:    'completed'
                 },
                 {

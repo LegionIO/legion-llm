@@ -38,12 +38,51 @@ module Legion
             value.to_s
           end
 
-          def serialize_args(args)
-            return args.to_s if args.is_a?(String)
+          # Tool-call argument coercion is FORMAT-SPECIFIC. The two client
+          # surfaces have incompatible wire requirements:
+          #
+          #   - Anthropic /v1/messages tool_use.input  MUST be an Object/Hash.
+          #     (`{"type":"tool_use","input":{"command":"ls"}}` — never a string.)
+          #   - OpenAI   function_call.arguments       MUST be a JSON String.
+          #     (`{"name":"bash","arguments":"{\"command\":\"ls\"}"}` — never an object.)
+          #
+          # A single uniform helper ("everything is a string") was the bug
+          # behind the claude/vllm multi-turn regression where `tool_use.input`
+          # surfaced as a JSON string (or worse — a coerced numeric like
+          # `1.01` from a degraded model output). Use the explicit per-format
+          # helper at the call site; never rebalance by pushing one format's
+          # shape onto the other.
+
+          # Coerce raw tool arguments into the OpenAI wire shape: a JSON
+          # string. Non-string inputs are JSON-dumped; nil becomes "{}";
+          # malformed values are stringified as a last resort so the wire
+          # never carries a Ruby object.
+          def args_as_json_string(args)
+            return args if args.is_a?(String)
 
             Legion::JSON.dump(args || {})
           rescue StandardError
             args.to_s
+          end
+
+          # Coerce raw tool arguments into the Anthropic wire shape: a Hash.
+          # Strings are parsed as JSON when possible; non-Hash literals
+          # (numbers, arrays from degraded model output) collapse to `{}`
+          # rather than violating the contract.
+          def args_as_object(args)
+            return args if args.is_a?(Hash)
+            return {} if args.nil?
+
+            if args.is_a?(String)
+              return {} if args.empty?
+
+              parsed = Legion::JSON.load(args)
+              return parsed if parsed.is_a?(Hash)
+            end
+
+            {}
+          rescue StandardError
+            {}
           end
         end
       end

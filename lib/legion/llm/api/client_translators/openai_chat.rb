@@ -200,7 +200,7 @@ module Legion
                                  type:     'function',
                                  function: {
                                    name:      tc.respond_to?(:name) ? tc.name.to_s : '',
-                                   arguments: args.is_a?(String) ? args : Legion::JSON.dump(args)
+                                   arguments: args_as_json_string(args)
                                  }
                                }]
                              })
@@ -533,7 +533,7 @@ module Legion
                 index:    idx,
                 function: {
                   name:      name.to_s,
-                  arguments: args.is_a?(String) ? args : Legion::JSON.dump(args)
+                  arguments: args_as_json_string(args)
                 }
               }
             end

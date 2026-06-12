@@ -35,6 +35,7 @@ module FakeProvider
     stream_thinking
     stream_tool
     server_tool_legion
+    tool_degraded_args
     error
   ].freeze
 
@@ -199,6 +200,7 @@ module FakeProvider
       when :tool_parallel_same_name then tool_parallel_response(model)
       when :multi_turn_continuation then multi_turn_response(model, messages)
       when :server_tool_legion      then server_tool_legion_response(model)
+      when :tool_degraded_args      then tool_degraded_args_response(model)
       else                               text_response(model)
       end
     end
@@ -257,6 +259,22 @@ module FakeProvider
         stop_reason: :tool_use,
         model:       model.to_s,
         metadata:    { fake: true, scenario: :tool_single }
+      )
+    end
+
+    # Degraded-args scenario: a non-Hash arguments value (e.g. a numeric or a
+    # raw string) — the shape live qwen3.6-27b emits when its tool-use markup
+    # falls back to plain content. Anthropic tool_use.input MUST still be an
+    # object; OpenAI function_call.arguments MUST still be a JSON string. The
+    # matrix oracle (P6F2) asserts both.
+    def tool_degraded_args_response(model)
+      Canonical::Response.build(
+        text:        '',
+        tool_calls:  [tool_call(name: 'bash', args: 1.01, id: 'call_fake_degraded')],
+        usage:       usage(input: 5, output: 4),
+        stop_reason: :tool_use,
+        model:       model.to_s,
+        metadata:    { fake: true, scenario: :tool_degraded_args }
       )
     end
 

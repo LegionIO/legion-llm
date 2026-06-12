@@ -368,14 +368,18 @@ module Legion
                   type:  'server_tool_use',
                   id:    tc.respond_to?(:id) ? tc.id : nil,
                   name:  tc.respond_to?(:name) ? tc.name.to_s : '',
-                  input: args
+                  input: args_as_object(args)
                 }
               }
             else
               {
                 type:  'content_block_delta',
                 index: block_index,
-                delta: { type: 'input_json_delta', partial_json: serialize_args(args) }
+                # Anthropic streaming partial_json is a String fragment that
+                # accumulates into a JSON object — wire-spec is string here,
+                # the assembled object is what input becomes when the block
+                # closes. args_as_json_string is the right helper.
+                delta: { type: 'input_json_delta', partial_json: args_as_json_string(args) }
               }
             end
           end
@@ -642,8 +646,13 @@ module Legion
             blocks << { type: 'text', text: text_content } unless text_content.empty? && !tool_calls.empty?
 
             tool_calls.each do |tc|
+              # Anthropic wire: tool_use.input MUST be an object. A degraded
+              # provider output (raw numeric, unparsed JSON string) coerces to
+              # `{}` rather than violating the contract. The matrix harness
+              # asserts this typing per format (P6F2).
+              input = args_as_object(tc[:arguments])
               if tc[:server_tool]
-                blocks << { type: 'server_tool_use', id: tc[:id], name: tc[:name], input: tc[:arguments] || {} }
+                blocks << { type: 'server_tool_use', id: tc[:id], name: tc[:name], input: input }
                 if tc[:result]
                   blocks << {
                     type:    'server_tool_result',
@@ -652,7 +661,7 @@ module Legion
                   }
                 end
               else
-                blocks << { type: 'tool_use', id: tc[:id], name: tc[:name], input: tc[:arguments] || {} }
+                blocks << { type: 'tool_use', id: tc[:id], name: tc[:name], input: input }
               end
             end
 

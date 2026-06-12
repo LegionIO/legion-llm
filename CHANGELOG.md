@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.12.18] - 2026-06-12
+
+### Fixed
+- **Anthropic `tool_use.input` regression — must be Object, not JSON string** — The P6 SharedExtractors dedup folded `serialize_args` into a single uniform helper that always returned a JSON string. The two client wire formats are incompatible: Anthropic `/v1/messages` REQUIRES `tool_use.input` (and `server_tool_use.input`) to be an Object; OpenAI `/v1/responses` and `/v1/chat/completions` REQUIRE `function_call.arguments` to be a JSON String. Replaced the uniform helper with two explicit per-format helpers — `args_as_object` (Anthropic) and `args_as_json_string` (OpenAI). Both helpers also defensively coerce degraded provider output (e.g. `1.01` numeric or unparsed JSON string from a qwen3.6-27b run that fell back to plain content) to the format-correct shape — `{}` for Anthropic, `"{}"` for OpenAI — rather than letting an off-spec value reach the wire. Live evidence: `legionio-e2e/results/claude/vllm_multi_turn_*` showed `"input": 1.01` against an Anthropic spec demanding an Object. Sibling check: G24 `server_tool_use.input` (Anthropic) and server `function_call.arguments` (Responses + chat completions) all use the per-format helper. (lib/legion/llm/api/client_translators/{shared_extractors,anthropic_messages,openai_chat,openai_responses}.rb)
+
+### Added
+- **Matrix harness oracle: `tool_args_typing_matrix_spec.rb`** — Asserts `tool_use.input is Hash` for Anthropic and `function_call.arguments is String` for OpenAI Responses + chat completions, on three input shapes (normal Hash args, degraded numeric, G24 server-tool block). Verified to fail with the exact regression signature ("got Float: 1.01") when the per-format coercion is reverted. Closes the assertion gap that let 3056 specs pass while the regression shipped to live e2e. (spec/legion/llm/api/matrix/tool_args_typing_matrix_spec.rb, spec/support/fake_provider.rb new `:tool_degraded_args` scenario)
+
 ## [0.12.17] - 2026-06-12
 
 ### Deprecated
