@@ -437,8 +437,23 @@ module Legion
             enabled:      false,
             api_keys:     [],
             pass_through: false
-          }
+          },
+          # G21 — X-Legion-Format and X-Legion-Debug surface. Default ON for
+          # lite/dev because the envelope leaks routing/escalation internals;
+          # production deployments must explicitly opt in.
+          debug_formats:   debug_formats_defaults
         }
+      end
+
+      def self.debug_formats_defaults
+        { enabled: debug_formats_default_enabled }
+      end
+
+      def self.debug_formats_default_enabled
+        return true if defined?(Legion::Mode) && Legion::Mode.respond_to?(:lite?) && Legion::Mode.lite?
+
+        env = (ENV.fetch('LEGION_ENV', nil) || ENV.fetch('RACK_ENV', nil)).to_s.downcase
+        %w[development dev test].include?(env)
       end
 
       def self.streaming_defaults

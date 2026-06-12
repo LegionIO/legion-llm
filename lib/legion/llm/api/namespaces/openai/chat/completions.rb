@@ -4,6 +4,7 @@ require 'legion/logging/helper'
 require 'legion/llm/api/namespaces/helpers'
 require 'legion/llm/api/client_translators/openai_chat'
 require 'legion/llm/api/stream_assembler'
+require 'legion/llm/api/debug_formats'
 
 module Legion
   module LLM
@@ -53,14 +54,23 @@ module Legion
 
                   executor = Legion::LLM::Inference::Executor.new(inference_request)
 
+                  canonical_format = Legion::LLM::API::DebugFormats.canonical_format?(env)
+                  echo_request = Legion::LLM::API::DebugFormats.echo_request?(env)
+
                   if streaming
                     content_type 'text/event-stream'
                     headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive', 'X-Accel-Buffering' => 'no'
                     stream do |out|
-                      emitter = translator.events_emitter(
-                        out, request_id: request_id, model: model,
-                             include_reasoning: include_reasoning
-                      )
+                      emitter = if canonical_format
+                                  Legion::LLM::API::DebugFormats.canonical_event_emitter(out)
+                                else
+                                  translator.events_emitter(
+                                    out, request_id: request_id, model: model,
+                                         include_reasoning: include_reasoning
+                                  )
+                                end
+                      Legion::LLM::API::DebugFormats.emit_echo_request_sse(out, canonical_request) if echo_request
+
                       assembler = Legion::LLM::API::StreamAssembler.new(
                         emitter:    emitter,
                         request_id: request_id,
@@ -87,9 +97,6 @@ module Legion
                     end
                   else
                     pipeline_response = executor.call
-                    response_body = translator.format_response(
-                      pipeline_response, model: model, request_id: request_id, include_reasoning: include_reasoning
-                    )
                     log_api_completion_summary(
                       namespace:         'namespaces][openai][chat',
                       request_id:        request_id,
@@ -97,9 +104,23 @@ module Legion
                       stream:            false,
                       started_at:        request_started_at
                     )
-                    content_type :json
-                    status 200
-                    Legion::JSON.dump(response_body)
+
+                    if canonical_format
+                      status_code, response_headers, body_string = Legion::LLM::API::DebugFormats.render_canonical_response(
+                        pipeline_response, canonical_request: canonical_request, env: env
+                      )
+                      status status_code
+                      response_headers.each { |k, v| headers k => v }
+                      body_string
+                    else
+                      response_body = translator.format_response(
+                        pipeline_response, model: model, request_id: request_id, include_reasoning: include_reasoning
+                      )
+                      response_body = Legion::LLM::API::DebugFormats.attach_echo_request(response_body, canonical_request) if echo_request
+                      content_type :json
+                      status 200
+                      Legion::JSON.dump(response_body)
+                    end
                   end
                 rescue Legion::LLM::AuthError => e
                   handle_exception(e, level: :error, handled: true, operation: 'llm.api.namespaces.openai.chat.auth')

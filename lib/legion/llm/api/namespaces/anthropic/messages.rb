@@ -6,6 +6,7 @@ require 'sinatra/namespace'
 require 'legion/logging/helper'
 require 'legion/llm/api/client_translators/anthropic_messages'
 require 'legion/llm/api/stream_assembler'
+require 'legion/llm/api/debug_formats'
 
 module Legion
   module LLM
@@ -42,13 +43,22 @@ module Legion
               executor = Legion::LLM::Inference::Executor.new(inference_request)
               conv_id = inference_request.conversation_id
 
+              canonical_format = Legion::LLM::API::DebugFormats.canonical_format?(env)
+              echo_request = Legion::LLM::API::DebugFormats.echo_request?(env)
+
               if streaming
                 content_type 'text/event-stream'
                 headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive',
                         'X-Accel-Buffering' => 'no', 'X-Legion-Conversation-Id' => conv_id
 
                 stream do |out|
-                  emitter = translator.events_emitter(out, request_id: request_id, model: model, conv_id: conv_id)
+                  emitter = if canonical_format
+                              Legion::LLM::API::DebugFormats.canonical_event_emitter(out)
+                            else
+                              translator.events_emitter(out, request_id: request_id, model: model, conv_id: conv_id)
+                            end
+                  Legion::LLM::API::DebugFormats.emit_echo_request_sse(out, canonical_request) if echo_request
+
                   assembler = Legion::LLM::API::StreamAssembler.new(
                     emitter:      emitter,
                     request_id:   request_id,
@@ -76,7 +86,6 @@ module Legion
                 end
               else
                 pipeline_response = executor.call
-                formatted = translator.format_response(pipeline_response, model: model, request_id: request_id)
                 log_api_completion_summary(
                   namespace:         'anthropic',
                   request_id:        request_id,
@@ -85,10 +94,23 @@ module Legion
                   started_at:        request_started_at
                 )
 
-                headers 'X-Legion-Conversation-Id' => conv_id
-                content_type :json
-                status 200
-                Legion::JSON.dump(formatted)
+                if canonical_format
+                  status_code, response_headers, body_string = Legion::LLM::API::DebugFormats.render_canonical_response(
+                    pipeline_response, canonical_request: canonical_request, env: env
+                  )
+                  status status_code
+                  response_headers.each { |k, v| headers k => v }
+                  headers 'X-Legion-Conversation-Id' => conv_id
+                  body_string
+                else
+                  formatted = translator.format_response(pipeline_response, model: model, request_id: request_id)
+                  formatted = Legion::LLM::API::DebugFormats.attach_echo_request(formatted, canonical_request) if echo_request
+
+                  headers 'X-Legion-Conversation-Id' => conv_id
+                  content_type :json
+                  status 200
+                  Legion::JSON.dump(formatted)
+                end
               end
             rescue Legion::LLM::AuthError => e
               handle_exception(e, level: :error, handled: true, operation: 'llm.ns.anthropic.messages.auth')

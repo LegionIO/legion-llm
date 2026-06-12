@@ -122,8 +122,7 @@ module Legion
             Events.new(out: out, request_id: request_id, model: model.to_s, conv_id: conv_id)
           end
 
-          # Format a single Canonical::Chunk to a /v1/responses SSE event hash —
-          # used by the X-Legion-Format: canonical debug surface (G21).
+          # Format a single Canonical::Chunk to a /v1/responses SSE event hash.
           def format_chunk(canonical_chunk)
             return nil if canonical_chunk.nil?
 
