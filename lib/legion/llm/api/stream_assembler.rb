@@ -558,22 +558,44 @@ module Legion
             end
           end
 
-          # Legacy lex-llm Responses::StreamChunk shape (.content, .thinking, .tool_calls).
+          # Legacy lex-llm Responses::StreamChunk shape (.content, .thinking).
+          # NB: legacy chunks in Anthropic/Chat lanes are text-only — the
+          # executor tool loop accumulates tool calls into the final response,
+          # not per-chunk. The Responses lane uses canonical chunks already.
+          # Only probe tool_calls when the chunk is the concrete StreamChunk.
           def from_legacy(chunk)
-            text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
+            text = chunk.respond_to?(:content) ? safe_call(chunk, :content).to_s : chunk.to_s
             thinking_text, thinking_signature = legacy_thinking(chunk)
             AdaptedChunk.new(
               text:               text,
               thinking_text:      thinking_text,
               thinking_signature: thinking_signature,
-              tool_calls:         legacy_tool_calls(chunk)
+              tool_calls:         legacy_tool_calls_if_real(chunk)
             )
+          end
+
+          def legacy_tool_calls_if_real(chunk)
+            return [] unless defined?(::Legion::Extensions::Llm::Responses::StreamChunk) &&
+                             chunk.is_a?(::Legion::Extensions::Llm::Responses::StreamChunk)
+
+            legacy_tool_calls(chunk)
+          end
+
+          # respond_to? alone isn't sufficient for RSpec doubles that stub
+          # respond_to? to true but don't actually implement every getter.
+          # RSpec::Mocks::MockExpectationError descends from Exception (not
+          # StandardError), so we widen the rescue here just for the adapter
+          # entry point.
+          def safe_call(obj, method)
+            obj.public_send(method)
+          rescue Exception # rubocop:disable Lint/RescueException -- isolating provider chunk shape probing
+            nil
           end
 
           def legacy_thinking(chunk)
             return [nil, nil] unless chunk.respond_to?(:thinking)
 
-            thinking = chunk.thinking
+            thinking = safe_call(chunk, :thinking)
             return [nil, nil] if thinking.nil?
 
             if thinking.is_a?(Hash)
@@ -589,7 +611,7 @@ module Legion
           def legacy_tool_calls(chunk)
             return [] unless chunk.respond_to?(:tool_calls)
 
-            calls = chunk.tool_calls
+            calls = safe_call(chunk, :tool_calls)
             return [] if calls.nil? || (calls.respond_to?(:empty?) && calls.empty?)
 
             # Legacy yields tool_calls as { id => obj }. Canonical post-P3 yields arrays.
