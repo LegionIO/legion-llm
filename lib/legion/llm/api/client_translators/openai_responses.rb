@@ -487,6 +487,13 @@ module Legion
             messages
           end
 
+          # Emit FLAT tool_call hashes ({id, name, arguments}) — Canonical::Message.from_hash
+          # forwards each tool_call hash to ToolCall.from_hash, which expects
+          # name and arguments at the top level. The OpenAI nested
+          # {type: 'function', function: {name, arguments}} envelope produces
+          # ToolCall(name: nil) — provider translators then drop the call,
+          # leaving an orphan tool_result that Bedrock rejects with
+          # "unexpected tool_use_id in tool_result".
           def flush_pending_tool_calls(messages, pending)
             return if pending.empty?
 
@@ -494,10 +501,20 @@ module Legion
               role:       'assistant',
               content:    '',
               tool_calls: pending.map do |tc|
-                { id: tc[:id], type: 'function', function: { name: tc[:name], arguments: tc[:arguments] } }
+                args = tc[:arguments]
+                args = safe_parse_json(args) if args.is_a?(String)
+                { id: tc[:id], name: tc[:name].to_s, arguments: args || {} }
               end
             }
             pending.clear
+          end
+
+          def safe_parse_json(str)
+            return {} if str.to_s.empty?
+
+            Legion::JSON.load(str)
+          rescue StandardError
+            str
           end
 
           def build_tools(raw_tools)
