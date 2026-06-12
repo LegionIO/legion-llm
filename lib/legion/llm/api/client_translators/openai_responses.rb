@@ -27,6 +27,12 @@ module Legion
 
           Canonical = Legion::Extensions::Llm::Canonical
 
+          # G24 — declares which execution-proxy contract shape this translator
+          # surfaces. Consumed by the lex-llm conformance shared examples.
+          def g24_format
+            :openai_responses
+          end
+
           def parse_request(body, env = {})
             log.debug('[llm][client_translator][openai_responses] action=parse_request')
             body = symbolize(body)
@@ -86,18 +92,28 @@ module Legion
             content = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']).to_s : raw_msg.to_s
             resolved_model = (routing[:model] || routing['model'] || model).to_s
 
-            tool_calls = build_output_tool_calls(pipeline_response)
+            actionable_tool_calls = build_output_tool_calls(pipeline_response)
+            server_tool_items = build_output_server_tool_items(pipeline_response)
             reasoning = build_output_reasoning(pipeline_response)
 
-            output = [*reasoning, *tool_calls, {
-              type:    'message',
-              id:      "msg_#{SecureRandom.hex(12)}",
-              role:    'assistant',
-              content: [{ type: 'output_text', text: content }],
-              status:  'completed'
-            }]
+            output = [
+              *reasoning,
+              *server_tool_items,
+              *actionable_tool_calls,
+              {
+                type:    'message',
+                id:      "msg_#{SecureRandom.hex(12)}",
+                role:    'assistant',
+                content: [{ type: 'output_text', text: content }],
+                status:  'completed'
+              }
+            ]
 
-            status = tool_calls.any? ? 'requires_action' : 'completed'
+            # G24 — server-executed tools are completed non-actionable items.
+            # `requires_action` is reserved for client-callable tools awaiting
+            # client execution. When ALL tool calls are server-resolved, the
+            # response status is `completed` and there is no action_required.
+            status = actionable_tool_calls.any? ? 'requires_action' : 'completed'
 
             result = {
               id:         request_id,
@@ -109,7 +125,7 @@ module Legion
               status:     status
             }
 
-            result[:action_required] = { type: 'function_calls', function_calls: tool_calls } if tool_calls.any?
+            result[:action_required] = { type: 'function_calls', function_calls: actionable_tool_calls } if actionable_tool_calls.any?
 
             result
           end
@@ -134,14 +150,47 @@ module Legion
               { type: 'response.thinking.delta', delta: canonical_chunk.delta.to_s,
                 output_index: canonical_chunk.block_index || 0 }
             when :tool_call_delta
-              tc = canonical_chunk.tool_call
-              args = tc.respond_to?(:arguments) ? tc.arguments : {}
-              { type:         'response.function_call_arguments.delta',
-                output_index: canonical_chunk.block_index || 0,
-                delta:        serialize_args(args) }
+              format_tool_call_delta_chunk(canonical_chunk)
             when :done
               { type: 'response.completed' }
             end
+          end
+
+          # G24 — server-executed tool chunks surface as completed
+          # function_call output items so the client sees the call name AND
+          # result inline. Plain client-callable chunks remain plain
+          # function_call_arguments.delta events.
+          def format_tool_call_delta_chunk(canonical_chunk)
+            tc = canonical_chunk.tool_call
+            args = tc.respond_to?(:arguments) ? tc.arguments : {}
+            output_index = canonical_chunk.block_index || 0
+
+            if server_tool_chunk?(tc)
+              {
+                type:         'response.output_item.done',
+                output_index: output_index,
+                item:         {
+                  type:      'function_call',
+                  id:        "fc_#{SecureRandom.hex(12)}",
+                  call_id:   tc.respond_to?(:id) ? tc.id : nil,
+                  name:      tc.respond_to?(:name) ? tc.name.to_s : '',
+                  arguments: serialize_args(args),
+                  status:    'completed'
+                }
+              }
+            else
+              { type:         'response.function_call_arguments.delta',
+                output_index: output_index,
+                delta:        serialize_args(args) }
+            end
+          end
+
+          def server_tool_chunk?(tool_call)
+            source = tool_call.respond_to?(:source) ? tool_call.source : nil
+            return false if source.nil?
+
+            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
+            %i[special registry extension mcp].include?(type&.to_sym)
           end
 
           # SSE Events emitter for /v1/responses. Emits sequence_number'd events
@@ -626,6 +675,11 @@ module Legion
             refs.empty? ? nil : refs
           end
 
+          # Actionable tool calls — emitted with status 'in_progress' so the
+          # client knows it must execute and post the result back. Server-
+          # executed (resolved) LegionIO tools are filtered out here; they
+          # surface as completed non-actionable items via
+          # build_output_server_tool_items below (G24).
           def build_output_tool_calls(pipeline_response)
             tools = pipeline_response.respond_to?(:tools) ? pipeline_response.tools : nil
             return [] unless tools.respond_to?(:any?) && tools.any?
@@ -635,10 +689,75 @@ module Legion
               args = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
               tc_id = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'] || "call_#{SecureRandom.hex(8)}")
               next if name.nil?
+              next if server_tool_resolved?(tc)
 
               { type: 'function_call', id: "fc_#{SecureRandom.hex(12)}", call_id: tc_id,
                 name: name.to_s, arguments: args.is_a?(String) ? args : Legion::JSON.dump(args), status: 'completed' }
             end
+          end
+
+          # G24 — emit completed function_call + function_call_output items
+          # for every resolved server-side tool. The model must see the call
+          # happened AND the client must NOT re-execute, so we pair a
+          # `status: 'completed'` function_call with a `function_call_output`
+          # carrying the tool result — the same shape Codex sends back on the
+          # next turn, so the surface is round-trippable through
+          # parse_request without invention.
+          def build_output_server_tool_items(pipeline_response)
+            tools = pipeline_response.respond_to?(:tools) ? pipeline_response.tools : nil
+            return [] unless tools.respond_to?(:any?) && tools.any?
+
+            tools.flat_map do |tc|
+              next [] unless server_tool_resolved?(tc)
+
+              name = tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'])
+              args = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
+              tc_id = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'] || "call_#{SecureRandom.hex(8)}")
+              result = tc.respond_to?(:result) ? tc.result : (tc[:result] || tc['result'])
+
+              [
+                {
+                  type:      'function_call',
+                  id:        "fc_#{SecureRandom.hex(12)}",
+                  call_id:   tc_id,
+                  name:      name.to_s,
+                  arguments: args.is_a?(String) ? args : Legion::JSON.dump(args),
+                  status:    'completed'
+                },
+                {
+                  type:    'function_call_output',
+                  call_id: tc_id,
+                  output:  serialize_server_tool_result(result),
+                  status:  'completed'
+                }
+              ]
+            end
+          end
+
+          def serialize_server_tool_result(result)
+            return '' if result.nil?
+            return result if result.is_a?(String)
+
+            Legion::JSON.dump(result)
+          rescue StandardError
+            result.to_s
+          end
+
+          def server_tool_resolved?(tool_call)
+            source = read_tool_call_field(tool_call, :source)
+            return false if source.nil?
+
+            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
+            return false unless %i[special registry extension mcp].include?(type&.to_sym)
+
+            !read_tool_call_field(tool_call, :result).nil?
+          end
+
+          def read_tool_call_field(tool_call, field)
+            return tool_call.public_send(field) if tool_call.respond_to?(field)
+            return tool_call[field] if tool_call.is_a?(Hash)
+
+            nil
           end
 
           # Surface provider thinking as a Responses-API reasoning item. Codex

@@ -32,6 +32,12 @@ module Legion
             pause_turn:     'tool_calls'
           }.freeze
 
+          # G24 — declares which execution-proxy contract shape this translator
+          # surfaces. Consumed by the lex-llm conformance shared examples.
+          def g24_format
+            :openai_chat
+          end
+
           def parse_request(body, env = {})
             log.debug('[llm][client_translator][openai_chat] action=parse_request')
             body = symbolize(body)
@@ -102,15 +108,21 @@ module Legion
             content = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s
             stop_reason = pipeline_response.respond_to?(:stop) ? pipeline_response.stop&.dig(:reason)&.to_s : nil
 
-            tool_calls = build_tool_calls(pipeline_response)
+            actionable_tool_calls = build_tool_calls(pipeline_response)
             resolved_model = (routing[:model] || routing['model'] || model).to_s
 
-            finish_reason = tool_calls.empty? ? map_finish_reason(stop_reason) : 'tool_calls'
+            # G24 — server-executed tools are not actionable. When all tool
+            # calls were server-resolved, finish_reason is 'stop' (not
+            # 'tool_calls') and the model's text content is the only
+            # client-visible turn. The server-resolved exchange is recorded
+            # in the conversation history (via the executor's tool loop),
+            # not on this response.
+            finish_reason = actionable_tool_calls.empty? ? map_finish_reason(stop_reason) : 'tool_calls'
 
-            content = nil if tool_calls.any? && content_looks_like_tool_json?(content)
+            content = nil if actionable_tool_calls.any? && content_looks_like_tool_json?(content)
 
             message_body = { role: 'assistant', content: content }
-            message_body[:tool_calls] = tool_calls unless tool_calls.empty?
+            message_body[:tool_calls] = actionable_tool_calls unless actionable_tool_calls.empty?
 
             if include_reasoning && pipeline_response.respond_to?(:thinking) && pipeline_response.thinking
               text = extract_thinking_text(pipeline_response.thinking)
@@ -470,6 +482,10 @@ module Legion
             end
           end
 
+          # Actionable tool_calls only — server-executed (resolved) LegionIO
+          # tools are filtered out per G24. The server-side exchange landed
+          # in the conversation history via the executor's tool loop; the
+          # chat.completions surface only carries client-callable tools.
           def build_tool_calls(pipeline_response)
             tools = pipeline_response.respond_to?(:tools) ? pipeline_response.tools : nil
             return [] unless tools.respond_to?(:any?) && tools.any?
@@ -479,6 +495,7 @@ module Legion
               args = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
               tc_id = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'] || "call_#{SecureRandom.hex(8)}")
               next if name.nil?
+              next if server_tool_resolved?(tc)
 
               {
                 id:       tc_id,
@@ -490,6 +507,25 @@ module Legion
                 }
               }
             end
+          end
+
+          def server_tool_resolved?(tool_call)
+            source = if tool_call.respond_to?(:source)
+                       tool_call.source
+                     elsif tool_call.is_a?(Hash)
+                       tool_call[:source] || tool_call['source']
+                     end
+            return false if source.nil?
+
+            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
+            return false unless %i[special registry extension mcp].include?(type&.to_sym)
+
+            result = if tool_call.respond_to?(:result)
+                       tool_call.result
+                     elsif tool_call.is_a?(Hash)
+                       tool_call[:result] || tool_call['result']
+                     end
+            !result.nil?
           end
 
           def map_finish_reason(stop_reason)

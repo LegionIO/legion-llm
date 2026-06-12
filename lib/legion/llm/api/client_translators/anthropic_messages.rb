@@ -37,6 +37,12 @@ module Legion
             pause_turn:     'pause_turn'
           }.freeze
 
+          # G24 — declares which execution-proxy contract shape this translator
+          # surfaces. Consumed by the lex-llm conformance shared examples.
+          def g24_format
+            :claude_messages
+          end
+
           # Parse an Anthropic Messages API body + Rack env into a
           # Canonical::Request. R9: conversation_id is the Legion-internal id;
           # external refs (HTTP_THREAD_ID, claude session ids, body
@@ -310,16 +316,51 @@ module Legion
                 delta: { type: 'thinking_delta', thinking: canonical_chunk.delta.to_s }
               }
             when :tool_call_delta
-              tc = canonical_chunk.tool_call
-              args = tc.respond_to?(:arguments) ? tc.arguments : {}
-              {
-                type:  'content_block_delta',
-                index: canonical_chunk.block_index || 0,
-                delta: { type: 'input_json_delta', partial_json: serialize_args(args) }
-              }
+              format_tool_call_delta_chunk(canonical_chunk)
             when :done
               { type: 'message_stop' }
             end
+          end
+
+          # G24 — when the canonical chunk carries a server-executed tool
+          # (registry/special/extension/mcp source) the streaming surface is
+          # `content_block_start` with `server_tool_use` rather than
+          # `input_json_delta`. The accompanying server_tool_result emits as
+          # a sibling block on close (handled by the StreamAssembler which
+          # owns block-index bookkeeping). This single-chunk shape just
+          # surfaces the call shape so consumers can preview names/args
+          # without buffering through the assembler.
+          def format_tool_call_delta_chunk(canonical_chunk)
+            tc = canonical_chunk.tool_call
+            args = tc.respond_to?(:arguments) ? tc.arguments : {}
+            block_index = canonical_chunk.block_index || 0
+
+            if server_tool_chunk?(tc)
+              {
+                type:          'content_block_start',
+                index:         block_index,
+                content_block: {
+                  type:  'server_tool_use',
+                  id:    tc.respond_to?(:id) ? tc.id : nil,
+                  name:  tc.respond_to?(:name) ? tc.name.to_s : '',
+                  input: args
+                }
+              }
+            else
+              {
+                type:  'content_block_delta',
+                index: block_index,
+                delta: { type: 'input_json_delta', partial_json: serialize_args(args) }
+              }
+            end
+          end
+
+          def server_tool_chunk?(tool_call)
+            source = tool_call.respond_to?(:source) ? tool_call.source : nil
+            return false if source.nil?
+
+            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
+            %i[special registry extension mcp].include?(type&.to_sym)
           end
 
           private
