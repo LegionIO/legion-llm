@@ -37,7 +37,7 @@ module Legion
               )
 
               log.info("[llm][api][anthropic] action=request request_id=#{request_id} " \
-                       "messages=#{inference_request.messages.size} tools=#{inference_request.tools.size} stream=#{streaming}")
+                       "messages=#{canonical_request.messages.size} tools=#{canonical_request.tools.size} stream=#{streaming}")
 
               executor = Legion::LLM::Inference::Executor.new(inference_request)
               conv_id = inference_request.conversation_id

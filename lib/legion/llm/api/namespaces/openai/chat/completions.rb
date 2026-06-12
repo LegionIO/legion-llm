@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
-require 'securerandom'
 require 'legion/logging/helper'
-require 'legion/llm/types'
 require 'legion/llm/api/namespaces/helpers'
-require 'legion/llm/api/translators/openai_request'
-require 'legion/llm/api/translators/openai_response'
+require 'legion/llm/api/client_translators/openai_chat'
+require 'legion/llm/api/stream_assembler'
 
 module Legion
   module LLM
@@ -13,10 +11,12 @@ module Legion
       module Namespaces
         module OpenAI
           module Chat
+            # Sinatra extension for /v1/chat/completions —
+            # parse → translate → execute → respond.
             module Completions
               extend Legion::Logging::Helper
 
-              def self.registered(app) # rubocop:disable Metrics/AbcSize
+              def self.registered(app)
                 log.debug('[llm][api][namespaces][openai][chat] registering routes')
 
                 app.post '/v1/chat/completions' do
@@ -29,98 +29,73 @@ module Legion
                                         type: 'invalid_request_error', code: nil, status_code: 400)
                   end
 
-                  request_id = body[:request_id] || SecureRandom.uuid
-                  normalized = Legion::LLM::API::Translators::OpenAIRequest.normalize(body)
-                  model      = normalized[:model] || Legion::Settings[:llm][:default_model] || 'default'
-                  streaming  = normalized[:stream] == true
-                  include_reasoning = body[:include_reasoning] != false && body[:include_thinking] != false
-                  tool_decls = Completions.build_tool_declarations(normalized[:tools])
-
-                  ext = Completions.extract_extended_fields(body, env)
-
-                  msg_count = normalized[:messages].size
-                  msg_chars = normalized[:messages].sum { |m| m[:content].to_s.length }
-                  log.info('[llm][api][namespaces][openai][chat] action=accepted ' \
-                           "request_id=#{request_id} model=#{model} stream=#{streaming} " \
-                           "messages=#{msg_count} chars=#{msg_chars} tools=#{tool_decls.size} " \
-                           "conversation_id=#{ext[:conversation_id] || 'none'} tier=#{ext[:tier] || 'auto'}")
+                  translator = Legion::LLM::API::ClientTranslators::OpenAIChat.new
+                  canonical_request = translator.parse_request(body, env)
+                  request_id = canonical_request.id
+                  model = body[:model] || Legion::Settings[:llm][:default_model] || 'default'
+                  streaming = canonical_request.stream
+                  include_reasoning = canonical_request.metadata[:include_reasoning] != false
 
                   Completions.gaia_ingest(body[:messages], request_id, identity_canonical_name(env))
 
-                  effective_caller = build_server_caller(
-                    source: 'openai_compat', path: request.path, env: env,
-                    caller_context: ext[:caller_context]
+                  inference_request = translator.build_inference_request(
+                    canonical_request,
+                    request_id:    request_id,
+                    server_caller: build_server_caller(
+                      source: 'openai_compat', path: request.path, env: env,
+                      caller_context: canonical_request.metadata[:caller_context]
+                    )
                   )
 
-                  inference_request = Completions.build_inference_request(
-                    request_id: request_id, normalized: normalized, model: model,
-                    tool_declarations: tool_decls, caller: effective_caller,
-                    streaming: streaming, ext: ext
-                  )
+                  log.info('[llm][api][namespaces][openai][chat] action=accepted ' \
+                           "request_id=#{request_id} model=#{model} stream=#{streaming} " \
+                           "messages=#{canonical_request.messages.size} tools=#{canonical_request.tools.size}")
+
                   executor = Legion::LLM::Inference::Executor.new(inference_request)
 
                   if streaming
                     content_type 'text/event-stream'
                     headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive', 'X-Accel-Buffering' => 'no'
                     stream do |out|
-                      pipeline_response = executor.call_stream do |chunk|
-                        Completions.emit_reasoning_delta(out, chunk, model, request_id, include_reasoning)
-                        text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
-                        next if text.empty?
-
-                        chunk_obj = Legion::LLM::API::Translators::OpenAIResponse.format_stream_chunk(
-                          text, model: model, request_id: request_id
-                        )
-                        out << "data: #{Legion::JSON.dump(chunk_obj)}\n\n"
-                      end
-
-                      routing     = pipeline_response.routing || {}
-                      final_model = (routing[:model] || routing['model'] || model).to_s
-                      tool_calls  = Legion::LLM::API::Translators::OpenAIResponse.build_tool_calls(pipeline_response)
-
-                      tool_calls.each_with_index do |tc, idx|
-                        tc_chunk = Legion::LLM::API::Translators::OpenAIResponse.format_stream_tool_call_chunk(
-                          tc, model: final_model, request_id: request_id, index: idx
-                        )
-                        out << "data: #{Legion::JSON.dump(tc_chunk)}\n\n"
-                      end
-
-                      done_chunk = Legion::LLM::API::Translators::OpenAIResponse.format_stream_chunk(
-                        nil, model: final_model, request_id: request_id,
-                        finish_reason: tool_calls.empty? ? 'stop' : 'tool_calls'
+                      emitter = translator.events_emitter(
+                        out, request_id: request_id, model: model,
+                             include_reasoning: include_reasoning
                       )
-                      Completions.append_usage_stats(done_chunk, pipeline_response, include_reasoning)
-                      out << "data: #{Legion::JSON.dump(done_chunk)}\n\n"
-                      out << "data: [DONE]\n\n"
+                      assembler = Legion::LLM::API::StreamAssembler.new(
+                        emitter:    emitter,
+                        request_id: request_id,
+                        model:      model
+                      )
+                      pipeline_response = executor.call_stream { |c| assembler.push(c) }
+                      assembler.finalize(pipeline_response)
                       log_api_completion_summary(
                         namespace:         'namespaces][openai][chat',
                         request_id:        request_id,
                         pipeline_response: pipeline_response,
                         stream:            true,
-                        started_at:        request_started_at,
-                        tool_calls:        tool_calls,
-                        stop_reason:       tool_calls.empty? ? 'stop' : 'tool_calls'
+                        started_at:        request_started_at
                       )
+                    rescue Legion::LLM::API::StreamAssembler::StreamClosed
+                      # Client disconnected — caller treats as cancellation per G10.
+                    rescue IOError, Errno::EPIPE
+                      # Client disconnected mid-write before assembler caught it.
                     rescue StandardError => e
                       handle_exception(e, level: :error, handled: false,
-                                       operation: 'llm.api.namespaces.openai.chat.stream', request_id: request_id)
+                                          operation: 'llm.api.namespaces.openai.chat.stream', request_id: request_id)
                       out << "data: #{Legion::JSON.dump({ error: { message: e.message, type: 'server_error' } })}\n\n"
                       out << "data: [DONE]\n\n"
                     end
                   else
                     pipeline_response = executor.call
-                    response_body = Legion::LLM::API::Translators::OpenAIResponse.format_chat_completion(
-                      pipeline_response, model: model, request_id: request_id,
-                      include_reasoning: include_reasoning
+                    response_body = translator.format_response(
+                      pipeline_response, model: model, request_id: request_id, include_reasoning: include_reasoning
                     )
                     log_api_completion_summary(
                       namespace:         'namespaces][openai][chat',
                       request_id:        request_id,
                       pipeline_response: pipeline_response,
                       stream:            false,
-                      started_at:        request_started_at,
-                      tool_calls:        response_body.dig(:choices, 0, :message, :tool_calls),
-                      stop_reason:       response_body.dig(:choices, 0, :finish_reason)
+                      started_at:        request_started_at
                     )
                     content_type :json
                     status 200
@@ -139,6 +114,7 @@ module Legion
                   handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.chat')
                   openai_error(e.message, type: 'server_error', status_code: 500)
                 end
+
                 app.get '/v1/chat/completions' do
                   content_type :json
                   Legion::JSON.dump({ object: 'list', data: [], has_more: false })
@@ -164,96 +140,10 @@ module Legion
                 handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.chat.register')
               end
 
-              def self.extract_extended_fields(body, env)
-                ctp = if env.key?('HTTP_X_LEGION_CLIENT_TOOL_PASSTHROUGH')
-                        env['HTTP_X_LEGION_CLIENT_TOOL_PASSTHROUGH'] == 'true'
-                      elsif [true, false].include?(body[:client_tool_passthrough])
-                        body[:client_tool_passthrough]
-                      end
-
-                {
-                  conversation_id:         env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id],
-                  provider:                env['HTTP_X_LEGION_PROVIDER'] || body[:provider],
-                  tier:                    env['HTTP_X_LEGION_TIER'] || body[:tier],
-                  instance:                env['HTTP_X_LEGION_INSTANCE'] || body[:instance],
-                  cwd:                     env['HTTP_X_LEGION_CWD'] || body[:cwd],
-                  requested_tools:         body[:requested_tools] || [],
-                  client_tool_passthrough: ctp,
-                  caller_context:          body[:caller]
-                }
-              end
-
-              def self.build_inference_request(request_id:, normalized:, model:, tool_declarations:, caller:, streaming:, ext:)
-                extra = {}
-                extra[:tier] = ext[:tier].to_sym if ext[:tier]
-                extra[:cwd] = ext[:cwd] if ext[:cwd]
-
-                metadata = { requested_tools: ext[:requested_tools] }
-                metadata[:client_tool_passthrough] = ext[:client_tool_passthrough] unless ext[:client_tool_passthrough].nil?
-                metadata[:client_tool_request_count] = normalized[:tools]&.size if normalized[:tools]&.any?
-
-                Legion::LLM::Inference::Request.build(
-                  id:              request_id,
-                  messages:        normalized[:messages],
-                  system:          normalized[:system],
-                  routing:         { provider: ext[:provider], model: model, instance: ext[:instance] }.compact,
-                  tools:           tool_declarations,
-                  caller:          caller,
-                  conversation_id: ext[:conversation_id],
-                  metadata:        metadata.compact,
-                  stream:          streaming,
-                  cache:           { strategy: :default, cacheable: true },
-                  extra:           extra.empty? ? {} : extra
-                )
-              end
-
-              def self.build_tool_declarations(tools)
-                return [] unless tools.is_a?(Array) && !tools.empty?
-
-                tools.filter_map do |tool|
-                  t = nil
-                  t = tool.respond_to?(:transform_keys) ? tool.transform_keys(&:to_sym) : tool
-                  next unless t[:name].to_s.length.positive?
-
-                  Legion::LLM::Types::ToolDefinition.build(
-                    name:        t[:name].to_s,
-                    description: t[:description].to_s,
-                    parameters:  t[:parameters] || {},
-                    source:      { type: :client, executable: true }
-                  )
-                rescue StandardError => e
-                  tool_name = t.is_a?(Hash) ? t[:name] : nil
-                  log.warn("[llm][api][namespaces][openai][chat] build_tool failed name=#{tool_name} error=#{e.message}")
-                  nil
-                end
-              end
-
-              def self.emit_reasoning_delta(out, chunk, model, request_id, include_reasoning)
-                return unless include_reasoning && chunk.respond_to?(:thinking)
-
-                thinking_text = extract_thinking_text(chunk.thinking)
-                return if thinking_text.empty?
-
-                reasoning_chunk = Legion::LLM::API::Translators::OpenAIResponse.format_stream_delta_chunk(
-                  { reasoning_content: thinking_text },
-                  model: model, request_id: request_id
-                )
-                out << "data: #{Legion::JSON.dump(reasoning_chunk)}\n\n"
-              end
-
-              def self.append_usage_stats(done_chunk, pipeline_response, include_reasoning)
-                _ = include_reasoning
-                tokens = pipeline_response.tokens || {}
-                oai = Legion::LLM::API::Translators::OpenAIResponse
-                input_count = oai.extract_token_count(tokens, :input).to_i
-                output_count = oai.extract_token_count(tokens, :output).to_i
-                done_chunk[:usage] = {
-                  prompt_tokens:     input_count,
-                  completion_tokens: output_count,
-                  total_tokens:      input_count + output_count
-                }
-              end
-
+              # Optional GAIA ingestion for the last user message — preserved
+              # from the legacy route. The translator handles parsing; this is
+              # a sidecar enrichment that continues to live on the route since
+              # it depends on the GAIA singleton + identity helpers.
               def self.gaia_ingest(messages, request_id, caller_identity)
                 return unless defined?(Legion::Gaia) && Legion::Gaia.respond_to?(:started?) && Legion::Gaia.started?
 
@@ -272,21 +162,6 @@ module Legion
                 log.debug("[llm][api][namespaces][openai][chat] action=gaia_ingest request_id=#{request_id}")
               rescue StandardError => e
                 log.warn("[llm][api][namespaces][openai][chat] gaia_ingest failed: #{e.message}")
-              end
-
-              def self.extract_thinking_text(value)
-                return '' if value.nil?
-                return value.to_s if value.is_a?(String)
-
-                if value.is_a?(Hash)
-                  text = value[:content] || value['content'] || value[:text] || value['text']
-                  return text.to_s if text
-                end
-
-                return value.content.to_s if value.respond_to?(:content) && value.content
-                return value.text.to_s if value.respond_to?(:text) && value.text
-
-                value.to_s
               end
             end
           end
