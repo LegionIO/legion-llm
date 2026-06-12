@@ -69,6 +69,24 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
         expect(body[:output]).to be_an(Array)
       end
 
+      it 'returns requires_action status when client tool calls are present' do
+        tool_call = double('ToolCall', name: 'get_weather', id: 'tc_1', arguments: { location: 'NYC' })
+        allow(executor_double).to receive(:call_responses).and_return(
+          double('Response',
+                 routing: { model: 'legionio' },
+                 tokens:  { input_tokens: 5, output_tokens: 10 },
+                 message: { content: 'Let me check.' },
+                 tools:   [tool_call])
+        )
+        post '/v1/responses',
+             Legion::JSON.dump({ input: 'Weather?', model: 'legionio', stream: false }),
+             'CONTENT_TYPE' => 'application/json'
+        expect(last_response.status).to eq(200)
+        body = Legion::JSON.load(last_response.body)
+        expect(body[:status]).to eq('requires_action')
+        expect(body[:action_required][:type]).to eq('function_calls')
+      end
+
       it 'streams typed SSE events via call_responses fallback when stream is true' do
         pipeline_response = double('Response',
                                    routing: { model: 'legionio' },

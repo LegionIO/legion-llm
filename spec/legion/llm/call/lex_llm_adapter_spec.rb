@@ -609,4 +609,21 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       described_class.new(:fake_llm, Class.new)
     end.to raise_error(NameError, /lex-llm provider namespace/)
   end
+
+  it 'normalize_message_tool_calls returns Array of ToolCall objects, not a Hash' do
+    tool_calls_input = [
+      { id: 'call-1', name: 'legion_list_all_tools', arguments: {} },
+      { id: 'call-2', name: 'ruby', arguments: { code: 'puts 1' } }
+    ]
+
+    result = adapter.send(:normalize_message_tool_calls, tool_calls_input)
+
+    expect(result).to be_an(Array)
+    expect(result.size).to eq(2)
+    expect(result.first).to be_a(lex_llm_test_namespace::ToolCall)
+    expect(result.first.name).to eq('legion_list_all_tools')
+    expect(result.first.id).to eq('call-1')
+    expect(result.last.name).to eq('ruby')
+    expect(result.last.arguments).to eq(code: 'puts 1')
+  end
 end

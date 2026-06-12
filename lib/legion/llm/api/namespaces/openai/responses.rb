@@ -286,10 +286,7 @@ module Legion
                 status:  'completed'
               }]
 
-              # Per OpenAI Responses API spec: when tool calls are present, the response
-              # must signal that client-side execution is required. Using 'completed' tells
-              # the client the turn is done and it should not execute the tool calls.
-              status = tool_calls.any? ? 'in_progress' : 'completed'
+              status = tool_calls.any? ? 'requires_action' : 'completed'
 
               result = { id: request_id, object: 'response', created_at: Time.now.to_i,
                 model: resolved_model, output: output, usage: build_usage(tokens), status: status }

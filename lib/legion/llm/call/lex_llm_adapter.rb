@@ -742,15 +742,12 @@ module Legion
             next if name.to_s.empty?
 
             arguments = normalized[:arguments] || {}
-            [
-              name.to_sym,
-              lex_llm_namespace::ToolCall.new(
-                id:        normalized[:id],
-                name:      name.to_s,
-                arguments: arguments
-              )
-            ]
-          end.to_h
+            lex_llm_namespace::ToolCall.new(
+              id:        normalized[:id],
+              name:      name.to_s,
+              arguments: arguments
+            )
+          end
         end
 
         def message_response(response, offering_metadata: nil)
