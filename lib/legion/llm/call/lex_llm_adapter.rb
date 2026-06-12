@@ -737,16 +737,33 @@ module Legion
           return tool_calls unless tool_calls.is_a?(Array)
 
           tool_calls.filter_map do |tool_call|
-            normalized = normalize_hash(tool_call)
-            name = normalized[:name]
+            id, name, arguments = read_tool_call_fields(tool_call)
             next if name.to_s.empty?
 
-            arguments = normalized[:arguments] || {}
             lex_llm_namespace::ToolCall.new(
-              id:        normalized[:id],
+              id:        id,
               name:      name.to_s,
-              arguments: arguments
+              arguments: arguments || {}
             )
+          end
+        end
+
+        # Read id/name/arguments from a tool call regardless of shape:
+        # plain Hash, Canonical::ToolCall (Data struct without
+        # transform_keys), or anything else with the canonical readers.
+        def read_tool_call_fields(tool_call)
+          if tool_call.is_a?(Hash)
+            normalized = tool_call.transform_keys(&:to_sym)
+            [normalized[:id], normalized[:name], normalized[:arguments]]
+          elsif tool_call.respond_to?(:name)
+            id        = tool_call.respond_to?(:id) ? tool_call.id : nil
+            arguments = tool_call.respond_to?(:arguments) ? tool_call.arguments : nil
+            [id, tool_call.name, arguments]
+          elsif tool_call.respond_to?(:to_h)
+            h = tool_call.to_h.transform_keys(&:to_sym)
+            [h[:id], h[:name], h[:arguments]]
+          else
+            [nil, nil, nil]
           end
         end
 
