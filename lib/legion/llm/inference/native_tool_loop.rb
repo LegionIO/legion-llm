@@ -6,6 +6,22 @@ module Legion
   module LLM
     module Inference
       module NativeToolLoop
+        # Tag-based markup some Qwen variants emit when a tool is selected via
+        # the chat template instead of being returned through the tool_calls
+        # field. Captures one block per tool call:
+        #   <tool_use_name>NAME</tool_use_name>
+        #   (<tool_use_parameter>KEY</tool_use_parameter>
+        #    <tool_use_value>VALUE</tool_use_value>)+
+        QWEN_TOOL_USE_RE = %r{
+          <tool_use_name>(?<name>[^<]+)</tool_use_name>
+          (?<body>(?:\s*<tool_use_parameter>[^<]+</tool_use_parameter>
+                       \s*<tool_use_value>[^<]*</tool_use_value>)*)
+        }mx
+        QWEN_PARAM_RE = %r{
+          <tool_use_parameter>(?<param>[^<]+)</tool_use_parameter>
+          \s*<tool_use_value>(?<value>[^<]*)</tool_use_value>
+        }mx
+
         private
 
         def execute_native_tool_loop
@@ -309,22 +325,35 @@ module Legion
           end.join(' ')
         end
 
-        # When a tool choice is forced and the provider outputs the arguments as
-        # plain text JSON (e.g. vLLM/qwen), synthesize a structured tool call
-        # from the content so downstream translators emit the correct
-        # client-native shape (tool_use / function_call etc).
+        # When the provider's response carries tool-call intent in plain text
+        # rather than the structured tool_calls field, synthesize a structured
+        # tool call so downstream translators emit the correct client-native
+        # shape. Two formats are recognized:
+        #   1. forced-choice JSON args (vLLM with tool_choice forcing a tool):
+        #      result text starts with `{"` and parses to a Hash.
+        #   2. Qwen tag markup (no forced choice required):
+        #      <tool_use_name>NAME</tool_use_name>...<tool_use_value>VAL</tool_use_value>
+        #      The named tool must be in native_dispatch_tools.
         #
         # Returns an array of synthesized tool call hashes. Does NOT mutate the
         # result — the caller rebuilds the canonical response if synthesis occurs.
         def maybe_synthesize_tool_call_from_content(result, round)
+          text = result_text_for_synthesis(result)
+          return [] if text.empty?
+
+          forced = synthesize_forced_choice_tool_call(text, round)
+          return forced if forced.any?
+
+          synthesize_qwen_markup_tool_call(text, round)
+        end
+
+        def synthesize_forced_choice_tool_call(text, round)
           tool_prefs = native_tool_prefs
           return [] unless tool_prefs
 
           forced_name = tool_prefs[:choice]
           return [] unless forced_name && native_dispatch_tools.key?(forced_name)
-
-          text = result_text_for_synthesis(result)
-          return [] if text.empty? || !text.start_with?('{"')
+          return [] unless text.start_with?('{"')
 
           parsed = nil
           begin
@@ -340,10 +369,30 @@ module Legion
             name:      forced_name.to_s,
             arguments: parsed
           }]
-
-          log.info "[llm][native_tool_loop] action=synthesized_tool_call round=#{round} " \
+          log.info "[llm][native_tool_loop] action=synthesized_tool_call source=forced_choice round=#{round} " \
                    "tool=#{forced_name} arg_keys=#{parsed.keys.join(',')}"
+          synthesized
+        end
 
+        def synthesize_qwen_markup_tool_call(text, round)
+          match = text.match(QWEN_TOOL_USE_RE)
+          return [] unless match
+
+          name = match[:name].to_s.strip
+          return [] if name.empty?
+          return [] unless native_dispatch_tools.key?(name) || native_dispatch_tools.key?(name.to_sym)
+
+          arguments = match[:body].to_s.scan(QWEN_PARAM_RE).each_with_object({}) do |(key, value), acc|
+            acc[key.to_s.strip] = value.to_s
+          end
+
+          synthesized = [{
+            id:        "call_#{SecureRandom.hex(10)}",
+            name:      name,
+            arguments: arguments
+          }]
+          log.info "[llm][native_tool_loop] action=synthesized_tool_call source=qwen_markup round=#{round} " \
+                   "tool=#{name} arg_keys=#{arguments.keys.join(',')}"
           synthesized
         end
 
