@@ -4,27 +4,31 @@ require 'spec_helper'
 require 'legion/llm/inference/native_tool_loop'
 
 # Failing-test for the legionio-e2e codex/vllm tool_call regression.
-# vLLM/qwen3.6-27b emits tool calls as plain text using a tag-based markup
-# template instead of structured tool_calls in the response object:
+# Live qwen3.6-27b on vLLM emits tool calls as plain text — but the format
+# is NOT structured tool_calls AND is nondeterministic across runs.
+# Captured evidence (codex/vllm tool_call, run 3 times in sequence):
 #
-#   <tool_use_name>bash</tool_use_name>
-#   <tool_use_parameter>command</tool_use_parameter>
-#   <tool_use_value>ls -la</tool_use_value>
+#   run 1 (recoverable): "<bash>ls -la</bash>"
+#   run 2 (UNRECOVERABLE): "Running `ls -la`..."   — no tool markup at all
+#   run 3 (recoverable): "<bash>ls -la</bash>"
 #
-# Recorded from
-#   legionio-e2e/results/codex/vllm_tool_call_returns_valid_tool_calls_response_response.json
+# The previous synthesizer fix in this spec assumed a different markup
+# (`<tool_use_name>bash</tool_use_name>...<tool_use_value>...</tool_use_value>`)
+# captured from a stale recording — that pattern does NOT fire on the
+# current model output. Replaced with the actual `<TOOL>args</TOOL>` form.
 #
-# The native tool loop's synthesizer only recognized JSON-string arguments
-# (text starting with `{"`) under a forced tool choice. Without forced
-# choice it didn't synthesize at all, and the qwen markup format wasn't
-# recognized — the response shipped back as plain text and the
-# CodexValidate.validate_responses_tool_calls assertion failed with
-# 0 function_call items vs the expected 1.
+# Synthesizer behavior pinned here:
+#   * `<bash>ls -la</bash>` where `bash` is in native_dispatch_tools and
+#     declares a single required string param → synthesize a function_call
+#     with that param set to the wrapped text.
+#   * Tools with multi-param schemas don't synthesize from a single
+#     wrapped tag (we don't know which param the text belongs to).
+#   * Plain narrative text (no tags) returns [] — that run is
+#     unrecoverable; the codex/vllm tool_call cell is therefore
+#     NONDETERMINISTIC and may still fail when qwen picks the
+#     no-markup path.
 #
-# After the fix, the synthesizer recognizes the qwen markup, picks the
-# tool name from <tool_use_name>, and assembles the
-# <tool_use_parameter>/<tool_use_value> pairs into a structured arguments
-# hash. The forced-choice JSON path is unchanged.
+# Forced-choice JSON synthesis is preserved (legacy path, unchanged).
 RSpec.describe 'NativeToolLoop qwen markup tool synthesis' do
   let(:host_class) do
     Class.new do
@@ -41,19 +45,25 @@ RSpec.describe 'NativeToolLoop qwen markup tool synthesis' do
     end
   end
 
+  # Real shape: native_dispatch_tools is Hash<Symbol, Hash> per
+  # executor/tool_injection.rb:65 — `tool.name.to_sym, tool.to_h`.
+  let(:bash_tool_hash) do
+    {
+      name:        'bash',
+      description: 'Run a shell command',
+      parameters:  {
+        type:       'object',
+        properties: { command: { type: 'string' } },
+        required:   ['command']
+      }
+    }
+  end
+
   let(:host) do
     instance = host_class.new
     instance.native_tool_prefs_value = nil
-    instance.native_dispatch_tools_value = { bash: true }
+    instance.native_dispatch_tools_value = { bash: bash_tool_hash }
     instance
-  end
-
-  let(:qwen_markup) do
-    '<tool_use_name>bash</tool_use_name>' \
-      '<tool_use_parameter>command</tool_use_parameter>' \
-      '<tool_use_value>ls -la</tool_use_value>' \
-      '<tool_use_parameter>description</tool_use_parameter>' \
-      '<tool_use_value>List files</tool_use_value>'
   end
 
   def canonical_response_with(text)
@@ -68,42 +78,68 @@ RSpec.describe 'NativeToolLoop qwen markup tool synthesis' do
     )
   end
 
-  it 'synthesizes a structured tool call from qwen <tool_use_name> markup without forced choice' do
-    result = canonical_response_with(qwen_markup)
+  describe 'recoverable runs (captured live from qwen3.6-27b)' do
+    it 'synthesizes from the <bash>ls -la</bash> form (single-required-string-param tool)' do
+      result = canonical_response_with('<bash>ls -la</bash>')
 
-    synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
+      synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
 
-    expect(synthesized.size).to eq(1)
-    expect(synthesized.first[:name]).to eq('bash')
-    expect(synthesized.first[:arguments]).to eq('command' => 'ls -la', 'description' => 'List files')
-    expect(synthesized.first[:id]).to start_with('call_')
+      expect(synthesized.size).to eq(1)
+      expect(synthesized.first[:name]).to eq('bash')
+      expect(synthesized.first[:arguments]).to eq('command' => 'ls -la')
+      expect(synthesized.first[:id]).to start_with('call_')
+    end
   end
 
-  it 'preserves forced-choice JSON synthesis (regression guard)' do
-    host.native_tool_prefs_value = { choice: :bash }
-    result = canonical_response_with('{"command":"ls -la"}')
+  describe 'unrecoverable runs (captured live)' do
+    it 'returns [] for plain narrative text with no tool markup' do
+      result = canonical_response_with('Running `ls -la`...')
 
-    synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
+      synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
 
-    expect(synthesized.size).to eq(1)
-    expect(synthesized.first[:name]).to eq('bash')
-    expect(synthesized.first[:arguments]).to eq('command' => 'ls -la')
+      expect(synthesized).to eq([])
+    end
   end
 
-  it 'returns [] when no tool prefs and no qwen markup match' do
-    result = canonical_response_with('Just plain text response.')
+  describe 'safety bounds' do
+    it 'returns [] when the tag name is not in native_dispatch_tools' do
+      host.native_dispatch_tools_value = { other_tool: bash_tool_hash }
+      result = canonical_response_with('<bash>ls -la</bash>')
 
-    synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
+      synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
 
-    expect(synthesized).to eq([])
+      expect(synthesized).to eq([])
+    end
+
+    it 'returns [] when the named tool has multiple required params (ambiguous)' do
+      multi_param_hash = {
+        name:        'bash',
+        description: 'Run a shell command',
+        parameters:  {
+          type:       'object',
+          properties: { command: { type: 'string' }, cwd: { type: 'string' } },
+          required:   %w[command cwd]
+        }
+      }
+      host.native_dispatch_tools_value = { bash: multi_param_hash }
+      result = canonical_response_with('<bash>ls -la</bash>')
+
+      synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
+
+      expect(synthesized).to eq([])
+    end
   end
 
-  it 'returns [] when qwen markup names a tool that is not in native_dispatch_tools' do
-    host.native_dispatch_tools_value = { other_tool: true }
-    result = canonical_response_with(qwen_markup)
+  describe 'regression guard' do
+    it 'preserves forced-choice JSON synthesis' do
+      host.native_tool_prefs_value = { choice: :bash }
+      result = canonical_response_with('{"command":"ls -la"}')
 
-    synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
+      synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
 
-    expect(synthesized).to eq([])
+      expect(synthesized.size).to eq(1)
+      expect(synthesized.first[:name]).to eq('bash')
+      expect(synthesized.first[:arguments]).to eq('command' => 'ls -la')
+    end
   end
 end

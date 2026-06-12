@@ -328,12 +328,20 @@ module Legion
         # When the provider's response carries tool-call intent in plain text
         # rather than the structured tool_calls field, synthesize a structured
         # tool call so downstream translators emit the correct client-native
-        # shape. Two formats are recognized:
+        # shape. Three formats are recognized (in order):
         #   1. forced-choice JSON args (vLLM with tool_choice forcing a tool):
         #      result text starts with `{"` and parses to a Hash.
         #   2. Qwen tag markup (no forced choice required):
         #      <tool_use_name>NAME</tool_use_name>...<tool_use_value>VAL</tool_use_value>
         #      The named tool must be in native_dispatch_tools.
+        #   3. Qwen single-tag form (live capture from qwen3.6-27b 2026-06):
+        #      <TOOL>arg-string</TOOL> — only synthesizable when the named
+        #      tool's schema declares a single required string param.
+        #
+        # NONDETERMINISM NOTE: qwen3.6-27b also frequently emits plain
+        # narrative text (e.g. "Running `ls -la`...") with NO recoverable
+        # markup. Those runs return [] and the cell fails — the synthesizer
+        # cannot invent structure that isn't there.
         #
         # Returns an array of synthesized tool call hashes. Does NOT mutate the
         # result — the caller rebuilds the canonical response if synthesis occurs.
@@ -344,7 +352,10 @@ module Legion
           forced = synthesize_forced_choice_tool_call(text, round)
           return forced if forced.any?
 
-          synthesize_qwen_markup_tool_call(text, round)
+          markup = synthesize_qwen_markup_tool_call(text, round)
+          return markup if markup.any?
+
+          synthesize_qwen_single_tag_tool_call(text, round)
         end
 
         def synthesize_forced_choice_tool_call(text, round)
@@ -394,6 +405,71 @@ module Legion
           log.info "[llm][native_tool_loop] action=synthesized_tool_call source=qwen_markup round=#{round} " \
                    "tool=#{name} arg_keys=#{arguments.keys.join(',')}"
           synthesized
+        end
+
+        # Single-tag qwen form: <TOOL>arg-string</TOOL> with no parameter
+        # markup. Only synthesizes when the named tool is in
+        # native_dispatch_tools AND its parameter schema declares exactly one
+        # required string param — that's the only case where the wrapped
+        # text has an unambiguous home. Otherwise returns []; the caller
+        # surfaces the response as plain text.
+        def synthesize_qwen_single_tag_tool_call(text, round)
+          stripped = text.strip
+          single_tag_re = %r{\A<([A-Za-z_][A-Za-z0-9_]*)>(.*)</\1>\z}m
+          match = stripped.match(single_tag_re)
+          return [] unless match
+
+          name = match[1].to_s
+          inner = match[2].to_s
+          tool_def = lookup_native_tool_definition(name)
+          return [] if tool_def.nil?
+
+          single_required = single_required_string_param(tool_def)
+          return [] if single_required.nil?
+
+          synthesized = [{
+            id:        "call_#{SecureRandom.hex(10)}",
+            name:      name,
+            arguments: { single_required => inner }
+          }]
+          log.info "[llm][native_tool_loop] action=synthesized_tool_call source=qwen_single_tag round=#{round} " \
+                   "tool=#{name} param=#{single_required}"
+          synthesized
+        end
+
+        # Look up a tool definition in native_dispatch_tools by name; tries
+        # both string and symbol keys since the executor stores symbols but
+        # the synthesizer may receive either.
+        def lookup_native_tool_definition(name)
+          native_dispatch_tools[name] || native_dispatch_tools[name.to_sym]
+        end
+
+        # Returns the param name if the tool schema declares exactly ONE
+        # required parameter that is a string. Otherwise nil.
+        def single_required_string_param(tool_def)
+          parameters = tool_def_parameters(tool_def)
+          return nil unless parameters.is_a?(Hash)
+
+          required = parameters[:required] || parameters['required']
+          return nil unless required.is_a?(Array) && required.size == 1
+
+          name = required.first.to_s
+          properties = parameters[:properties] || parameters['properties']
+          return nil unless properties.is_a?(Hash)
+
+          prop = properties[name.to_sym] || properties[name]
+          return nil unless prop.is_a?(Hash)
+
+          type = prop[:type] || prop['type']
+          type.to_s == 'string' ? name : nil
+        end
+
+        def tool_def_parameters(tool_def)
+          if tool_def.respond_to?(:parameters)
+            tool_def.parameters
+          elsif tool_def.is_a?(Hash)
+            tool_def[:parameters] || tool_def['parameters']
+          end
         end
 
         # Extract text from canonical or hash-shaped result for tool-call synthesis.
