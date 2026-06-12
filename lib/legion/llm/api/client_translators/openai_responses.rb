@@ -641,16 +641,24 @@ module Legion
             end
           end
 
+          # Surface provider thinking as a Responses-API reasoning item. Codex
+          # (and the legionio-e2e reasoning gate) consume reasoning as a
+          # `message` output item tagged `phase: "reasoning"` whose content
+          # carries `output_text` blocks — NOT a `type: "thinking"` item, which
+          # the client silently drops. Keep both shapes' text identical so the
+          # canonical debug surface and the client surface agree.
           def build_output_reasoning(pipeline_response)
             thinking = pipeline_response.respond_to?(:thinking) ? pipeline_response.thinking : nil
             text = extract_thinking_text(thinking)
             return [] if text.empty?
 
             [{
-              type:     'thinking',
-              id:       "thnk_#{SecureRandom.hex(12)}",
-              thinking: text,
-              status:   'completed'
+              type:    'message',
+              id:      "msg_#{SecureRandom.hex(12)}",
+              role:    'assistant',
+              phase:   'reasoning',
+              content: [{ type: 'output_text', text: text }],
+              status:  'completed'
             }]
           end
 
