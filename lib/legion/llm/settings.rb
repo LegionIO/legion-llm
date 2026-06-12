@@ -211,10 +211,15 @@ module Legion
 
       def self.routing_defaults
         {
-          enabled:        true,
-          tier_priority:  %w[local direct fleet cloud frontier],
-          default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
-          tiers:          {
+          enabled:              true,
+          tier_priority:        %w[local direct fleet cloud frontier],
+          default_intent:       { privacy: 'normal', capability: 'moderate', cost: 'normal' },
+          # Last-resort fallback model when both `default_model` and the
+          # discovered provider chain are empty. Owned by routing because
+          # the chain builder is the only consumer.
+          last_resort_model:    'claude-sonnet-4-6',
+          last_resort_provider: :anthropic,
+          tiers:                {
             local:    { provider: 'ollama' },
             fleet:    {
               queue:           'llm.fleet',
@@ -225,20 +230,20 @@ module Legion
             cloud:    { providers: %w[bedrock azure gemini] },
             frontier: { providers: %w[anthropic openai] }
           },
-          health:         {
+          health:               {
             window_seconds:               300,
             circuit_breaker:              { failure_threshold: 3, cooldown_seconds: 60 },
             latency_penalty_threshold_ms: 5000,
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },
-          escalation:     {
+          escalation:           {
             enabled:           false,
             pipeline_enabled:  true,
             max_attempts:      3,
             quality_threshold: 0
           },
-          rules:          [],
-          tier_mappings:  []
+          rules:                [],
+          tier_mappings:        []
         }
       end
 
@@ -355,7 +360,9 @@ module Legion
 
       def self.telemetry_defaults
         {
-          pipeline_spans: true
+          pipeline_spans:    true,
+          # Tag substitute when default_model is nil during span emission.
+          unknown_model_tag: 'unknown'
         }
       end
 

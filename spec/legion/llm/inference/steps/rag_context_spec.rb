@@ -445,7 +445,7 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       apollo = Module.new do
         def self.started? = true
 
-        def self.retrieve(**_)
+        def self.retrieve(**)
           { success: true, entries: [{ id: 1, content: 'fact', confidence: 0.8 }], count: 1 }
         end
       end

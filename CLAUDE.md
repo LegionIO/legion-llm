@@ -718,9 +718,39 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` uses real `Legion::Logging` and `Legion::Settings` (no stubs — hard dependencies are always present). Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 2379 examples, 0 failures
+bundle exec rspec    # 3044 examples, 0 failures
 bundle exec rubocop  # 0 offenses
 ```
+
+### Matrix harness (G23) — the commit gate
+
+`spec/legion/llm/api/matrix/` runs the FULL client × scenario matrix in-process against a deterministic FakeProvider (`spec/support/fake_provider.rb`). It boots the real Sinatra app, mounts `/v1/messages`, `/v1/responses`, `/v1/chat/completions`, and replays the same scenarios `legionio-e2e` exercises live (text, thinking, single tool call, parallel same-name tool calls, multi-turn continuation, streaming text/thinking/tool, server-side LegionIO tool execution, provider error). It runs in ~250ms and ships with the default `bundle exec rspec` run (no opt-out tag).
+
+**The in-process matrix is the commit gate. Live e2e is confirmation only.**
+Every PR that touches `lib/legion/llm/api/`, the executor, or the canonical/translator boundary must pass the matrix locally before push. Live `legionio-e2e` runs against a daemon, costs cloud credits, and surfaces regressions hours after they ship — the matrix surfaces them in milliseconds with deterministic fixtures. If a regression breaks live e2e but not the matrix, the matrix is missing a scenario; add it.
+
+The harness has been proven to catch this week's translator-boundary regressions: `9771ae8` (ThinkingConfig kwargs), `cb7a08b` (flat tool_call hashes in OpenAI Responses), and `172c756` (reasoning output item shape). See `docs/work/planning/reports/G23-matrix-harness.md` for the proof and the scenario catalog.
+
+## LLM Routing Invariants
+
+These are non-negotiable contracts that govern how requests flow through the daemon. Violations have produced production incidents (silent provider divergence, vendor lock-in to a single tier, server-executed tools surfacing as client-pending actions). They are committed here so every session starts with the rules loaded; they are *also* enforced by `rubocop-legion`'s `Legion/Framework` cops, conformance fixtures in `lex-llm`, and the in-process matrix harness (`spec/legion/llm/api/matrix/`).
+
+1. **Execution-proxy contract.** The daemon is an execution proxy, not a passthrough. The route through legion-llm has two distinct sides:
+   - **To the client (caller)**: the daemon looks like a *server-side* execution surface. LegionIO-resolved tools are dispatched server-side; their tool-use + tool-result blocks appear in the response in canonical client-format shapes (Anthropic `server_tool_use`/`server_tool_result`, OpenAI Responses *non-actionable* output items with name+result). The client never sees a pending function_call/`requires_action` for a server-executed tool.
+   - **To the provider (upstream)**: the daemon looks like the *client*. Whatever the upstream provider expects to see in its message history — the same tool-use / tool-result exchange — is what it sees in the next turn, in that provider's wire format. The model must know files changed.
+   The single canonical source of truth for this shape lives in lex-llm conformance fixtures + shared examples; the in-process matrix and `legionio-e2e` validators assert it identically. No suite encodes a private interpretation.
+
+2. **Always translate; never passthrough.** Every request entering legion-llm parses to a `Canonical::Request`; every response is rendered back from canonical to the client format. There is no "the body is already in OpenAI shape so we'll just forward it" branch — that branch is how block ordering, thinking signatures, and tool shapes drift between providers.
+
+3. **No provider-name conditionals outside translators.** Routes, the executor, the tool loop, the stream assembler, and the router never branch on `provider == :vllm` / `provider == :anthropic` / etc. Provider-specific behaviour (text-JSON tool synthesis, `<think>` extraction, forced tool choice, Responses-API rendering) lives in that provider's translator and is exposed through `capabilities` flags consumed by callers. The R10 cop (`Legion/Framework/NoShapeDuckTyping`) and the conformance kit catch leakage.
+
+4. **Thinking never crosses providers.** Reasoning content, signatures, and `redacted_thinking` blocks survive same-provider history replay; on any cross-provider transition (escalation, mid-stream failover, tier swap) thinking is stripped from replayed history. Signatures are cryptographically provider-bound and wire formats have no lossless mapping; foreign chain-of-thought is out-of-distribution for the new model.
+
+5. **Mid-stream provider failover is a first-class requirement.** A provider outage must never kill an in-flight conversation — that is vendor lock-in, not resiliency. The `StreamAssembler` decouples client protocol state from provider stream state: the client keeps one continuous SSE session while the canonical chunk source switches providers underneath. Failover phase points (`:before_first_byte`, `:mid_text`, `:mid_thinking`, `:mid_tool_call`) drive what the assembler replays vs. discards. Tool-call argument buffering policy (`llm.streaming.tool_call_buffering`) is configurable; the default is `:buffered` with periodic SSE keep-alive pings so large tool args don't make the upstream look dead.
+
+6. **Every pipeline exit emits ledger events.** Every terminal path — success/sync, success/stream, error, escalation-exhausted, fleet-success, fleet-error, timeout, client-disconnect — routes through the same emission function and produces the metering, prompt-audit, and (for tool scenarios) tool-audit rows the ledger consumer expects. Pipeline bypasses are not allowed (the `_direct` shims are deprecated and route through the governed pipeline; see `Legion/Framework/NoDirectDispatch`). If you cannot record the event trail, fail closed when `llm.compliance.fail_closed` is set.
+
+7. **The canary prompt.** When the smoke test asks *"how many legionio tools do you have available?"*, the daemon must reply with a single response per prompt, server-executed LegionIO tools must run server-side (not echoed back to the client as pending actions), and client-passthrough tools must appear as pending function_calls/tool_uses for the client to execute. This is the simplest end-to-end check that the execution-proxy contract is intact across both client formats.
 
 ## Coding Constraints
 

@@ -128,8 +128,6 @@ module Legion
           chunks.empty? ? [text[0, max_chars]] : chunks
         end
 
-        private
-
         def safe_add_index(table, column, name:)
           db.add_index(table, column, name: name)
         rescue StandardError => e

@@ -404,7 +404,7 @@ module Legion
           normalized_call = normalize_native_tool_call(tool_call)
           source = find_tool_source(normalized_call[:name])
           log.debug "[llm][executor] action=dispatch_native_tool_call round=#{round} tool=#{normalized_call[:name]} source_type=#{source[:type]}"
-          emit_tool_call_event(normalized_call, round)
+          emit_tool_call_event(normalized_call, round, source: source)
           result = ToolDispatcher.dispatch(
             tool_call:   normalized_call,
             source:      source,
@@ -547,7 +547,7 @@ module Legion
           text_parts.empty? ? nil : text_parts.join("\n\n")
         end
 
-        def emit_tool_call_event(tool_call, round)
+        def emit_tool_call_event(tool_call, round, source: nil)
           tc_id   = tool_call_field(tool_call, :id)
           tc_name = tool_call_field(tool_call, :name)
           tc_args = tool_call_field(tool_call, :arguments)
@@ -555,6 +555,7 @@ module Legion
 
           typed_call = Types::ToolCall.build(
             id: tc_id, name: tc_name, arguments: tc_args,
+            source: source,
             exchange_id: @exchange_id, started_at: started_at
           )
 

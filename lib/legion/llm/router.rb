@@ -75,7 +75,7 @@ module Legion
         # @param provider [Symbol, nil] provider preference hint
         # @param estimated_tokens [Integer, nil] estimated total token count for context window filtering
         # @return [Resolution, nil]
-        def resolve(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, exclude: {}, estimated_tokens: nil, **_opts)
+        def resolve(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, exclude: {}, estimated_tokens: nil)
           log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider} instance=#{instance} estimated_tokens=#{estimated_tokens}"
 
           merged = merge_defaults(intent)
@@ -99,7 +99,7 @@ module Legion
         end
 
         def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil,
-                          exclude: {}, allow_default_fallback: true, estimated_tokens: nil, **_opts)
+                          exclude: {}, allow_default_fallback: true, estimated_tokens: nil)
           log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations} estimated_tokens=#{estimated_tokens}"
           max = max_escalations || escalation_max_attempts
 
@@ -310,7 +310,7 @@ module Legion
           (manual + (@auto_rules || [])).sort_by { |r| -r.priority }
         end
 
-        def select_candidates(rules, intent, exclude: {}, estimated_tokens: nil, **_opts)
+        def select_candidates(rules, intent, exclude: {}, estimated_tokens: nil)
           log.debug "[llm][router] action=select_candidates total_rules=#{rules.size} estimated_tokens=#{estimated_tokens}"
 
           # 1. Collect constraints from constraint rules that match the intent
@@ -625,10 +625,12 @@ module Legion
 
           resolutions = enabled_provider_chain
           if resolutions.empty? && allow_default_fallback
-            p = Legion::Settings[:llm][:default_provider]&.to_sym || :anthropic
+            p = Legion::Settings[:llm][:default_provider]&.to_sym ||
+                Legion::Settings[:llm][:routing][:last_resort_provider]
             resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
-                                          model:    Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6')]
+                                          model:    Legion::Settings[:llm][:default_model] ||
+                                                    Legion::Settings[:llm][:routing][:last_resort_model])]
           end
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end
@@ -672,20 +674,22 @@ module Legion
           end
         end
 
-        def chain_from_intent(intent, max, hints: {}, exclude: {}, allow_default_fallback: true, **_opts)
+        def chain_from_intent(intent, max, hints: {}, exclude: {}, allow_default_fallback: true, estimated_tokens: nil)
           merged     = intent ? merge_defaults(intent) : {}
           rules      = load_rules
-          candidates = select_candidates(rules, merged, exclude: exclude)
+          candidates = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
           sorted     = candidates.sort_by { |r| -effective_priority(r, hints: hints) }
           resolutions = sorted.map(&:to_resolution)
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
           resolutions = resolutions.uniq { |r| [r.provider, r.model] }
           resolutions = enabled_provider_chain if resolutions.empty?
           if resolutions.empty? && allow_default_fallback
-            p = Legion::Settings[:llm][:default_provider]&.to_sym || :anthropic
+            p = Legion::Settings[:llm][:default_provider]&.to_sym ||
+                Legion::Settings[:llm][:routing][:last_resort_provider]
             resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
-                                          model:    Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6')]
+                                          model:    Legion::Settings[:llm][:default_model] ||
+                                                    Legion::Settings[:llm][:routing][:last_resort_model])]
           end
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end

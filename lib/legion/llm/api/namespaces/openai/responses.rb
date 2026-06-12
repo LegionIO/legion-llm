@@ -33,6 +33,10 @@ module Legion
 
                 translator = Legion::LLM::API::ClientTranslators::OpenAIResponses.new
                 canonical_request = translator.parse_request(body, env)
+                # Default reasoning.summary to 'auto' when the caller asked
+                # for reasoning but didn't pin a summary mode — OpenAI's
+                # /v1/responses lane omits reasoning content otherwise (B3).
+                body = translator.ensure_reasoning_summary(body)
                 request_id = canonical_request.id
                 model = body[:model] || Legion::Settings[:llm][:default_model] || 'default'
                 streaming = canonical_request.stream

@@ -284,6 +284,45 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
     end
   end
 
+  describe 'instance-level capabilities propagate to chat rules' do
+    # Regression test for the claude/vllm legionio_tool_injection symptom:
+    # vLLM's lex extension declares `capabilities: %i[completion streaming
+    # vision tools]` at the instance tier (DEFAULT_INSTANCE_TIER), but the
+    # per-model offerings hash only carries `[:completion]`. Without the
+    # instance-level merge, the chat rule's model_capabilities is
+    # `[:completion]`, and the router's
+    # satisfies_required_capabilities?([:tools]) check rejects every chat
+    # rule on every tool request — silently falling through to the default
+    # provider chain.
+    let(:vllm_with_instance_caps) do
+      {
+        vllm: {
+          gpu1: {
+            models:       [{ name: 'qwen3.6-27b', capabilities: [:completion] }],
+            capabilities: %i[completion streaming vision tools]
+          }
+        }
+      }
+    end
+
+    subject(:rules) { described_class.generate(vllm_with_instance_caps) }
+
+    it 'merges instance-level :tools into the chat rule model_capabilities' do
+      chat_rule = rules.find { |r| r[:when] == { capability: :chat } && r[:then][:provider] == :vllm }
+      expect(chat_rule[:then][:model_capabilities]).to include(:tools)
+    end
+
+    it 'generates a :tools capability rule when the instance advertises tools' do
+      tools_rule = rules.find { |r| r[:when] == { capability: :tools } && r[:then][:provider] == :vllm }
+      expect(tools_rule).not_to be_nil
+    end
+
+    it 'generates a :stream capability rule when the instance advertises streaming' do
+      stream_rule = rules.find { |r| r[:when] == { capability: :stream } && r[:then][:provider] == :vllm }
+      expect(stream_rule).not_to be_nil
+    end
+  end
+
   describe 'configured provider rules without KNOWN_MODEL_CAPABILITIES' do
     before do
       Legion::Settings[:extensions][:llm][:anthropic] = { enabled: true, default_model: 'claude-sonnet-4-6' }

@@ -137,43 +137,49 @@ module Legion
 
       def chat(...) = Inference.chat(...)
       def ask(...) = Inference.ask(...)
+      # rubocop:disable Legion/Framework/NoDirectDispatch -- deprecated shim per CHANGELOG 0.12.16; routes through governed pipeline.
       def chat_direct(...) = Inference.chat_direct(...)
+      # rubocop:enable Legion/Framework/NoDirectDispatch
 
       def embed(text, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.embedding_span(
-            model: (Legion::Settings[:llm][:default_model] || 'unknown').to_s
+            model: (Legion::Settings[:llm][:default_model] || Legion::Settings[:llm][:telemetry][:unknown_model_tag]).to_s
           ) { |_span| Inference::EmbedPipeline.call(text: text, **) }
         else
           Inference::EmbedPipeline.call(text: text, **)
         end
       end
 
+      # rubocop:disable Legion/Framework/NoDirectDispatch -- deprecated shim per CHANGELOG 0.12.16.
       def embed_direct(text, **)
         Deprecation.warn_once(:embed_direct, replacement: 'Legion::LLM.embed')
         result = Call::Embeddings.generate(text: text, **)
         emit_embed_metering(result)
         result
       end
+      # rubocop:enable Legion/Framework/NoDirectDispatch
 
       def embed_batch(texts, **) = Call::Embeddings.generate_batch(texts: texts, **)
 
       def structured(messages:, schema:, **)
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.llm_span(
-            model: (Legion::Settings[:llm][:default_model] || 'unknown').to_s, input: messages.to_s
+            model: (Legion::Settings[:llm][:default_model] || Legion::Settings[:llm][:telemetry][:unknown_model_tag]).to_s, input: messages.to_s
           ) { |_span| Call::StructuredOutput.generate(messages: messages, schema: schema, **) }
         else
           Call::StructuredOutput.generate(messages: messages, schema: schema, **)
         end
       end
 
+      # rubocop:disable Legion/Framework/NoDirectDispatch -- deprecated shim per CHANGELOG 0.12.16.
       def structured_direct(messages:, schema:, **)
         Deprecation.warn_once(:structured_direct, replacement: 'Legion::LLM.structured')
         result = Call::StructuredOutput.generate(messages: messages, schema: schema, **)
         emit_structured_metering(result)
         result
       end
+      # rubocop:enable Legion/Framework/NoDirectDispatch
 
       # These methods check Discovery first, then fall back to instance ivars set directly on LLM
       # (ivar fallback preserves backwards compat for specs that do Legion::LLM.instance_variable_set)

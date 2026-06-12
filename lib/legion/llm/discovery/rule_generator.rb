@@ -48,6 +48,7 @@ module Legion
             order = 0
             instances.each do |instance_id, data|
               models = data.is_a?(Hash) ? Array(data[:models]) : []
+              instance_capabilities = data.is_a?(Hash) ? extract_instance_capabilities(data) : []
 
               models.each do |model|
                 model_data = model.is_a?(Hash) ? model : { name: model.to_s }
@@ -59,10 +60,17 @@ module Legion
                              tier
                 capability = embedding_model?(model_data) ? :embed : :chat
                 priority = tier_weight(model_tier) - order
-                rules << build_rule(provider, instance_id, model_data, capability, model_tier, priority)
+                rules << build_rule(provider, instance_id, model_data, capability, model_tier, priority,
+                                    instance_capabilities: instance_capabilities)
                 if capability == :chat
-                  rules << build_rule(provider, instance_id, model_data, :stream, model_tier, priority) if supports_streaming?(model_data)
-                  rules << build_rule(provider, instance_id, model_data, :tools, model_tier, priority) if supports_tools?(model_data)
+                  if supports_streaming?(model_data, instance_capabilities: instance_capabilities)
+                    rules << build_rule(provider, instance_id, model_data, :stream, model_tier, priority,
+                                        instance_capabilities: instance_capabilities)
+                  end
+                  if supports_tools?(model_data, instance_capabilities: instance_capabilities)
+                    rules << build_rule(provider, instance_id, model_data, :tools, model_tier, priority,
+                                        instance_capabilities: instance_capabilities)
+                  end
                 end
                 order += 1
               end
@@ -71,6 +79,17 @@ module Legion
 
           rules += generate_configured_provider_rules
           rules.sort_by { |r| -r[:priority] }
+        end
+
+        # Capabilities advertised by the *instance* (provider-level) — the
+        # provider extension's `discover_instances` may declare e.g.
+        # `capabilities: %i[completion streaming vision tools]` for an
+        # OpenAI-compatible instance even when its per-model offerings hash
+        # does not. Those capabilities flow through to chat rules so the
+        # router can satisfy `required_capabilities=[:tools]` intents (G14).
+        def extract_instance_capabilities(instance_data)
+          caps = instance_data[:capabilities] || instance_data['capabilities']
+          normalize_capabilities(caps)
         end
 
         def embedding_model?(model_data)
@@ -113,14 +132,14 @@ module Legion
           []
         end
 
-        def build_rule(provider, instance, model_data, capability, tier, priority)
+        def build_rule(provider, instance, model_data, capability, tier, priority, instance_capabilities: [])
           model_name = model_data.is_a?(Hash) ? (model_data[:name] || model_data['name']).to_s : model_data.to_s
           target = {
             provider:           provider.to_sym,
             instance:           instance.to_sym,
             model:              model_name,
             tier:               tier,
-            model_capabilities: extract_capabilities(model_data),
+            model_capabilities: merged_capabilities(model_data, instance_capabilities),
             context_length:     extract_field(model_data, :context_length),
             parameter_count:    extract_field(model_data, :parameter_count)
           }.compact
@@ -130,6 +149,18 @@ module Legion
             then:     target,
             priority: priority
           }
+        end
+
+        # Merge per-model capabilities with instance-level capabilities so the
+        # router's `required_capabilities` filter (e.g. `[:tools]` on every
+        # tool request) finds a match even when the per-model offerings hash
+        # only carries `[:completion]`. The provider extension's instance
+        # config is the authoritative source for tools/streaming when the
+        # offerings endpoint doesn't surface them.
+        def merged_capabilities(model_data, instance_capabilities)
+          per_model = extract_capabilities(model_data) || []
+          merged = (per_model + Array(instance_capabilities)).uniq
+          merged.empty? ? nil : merged
         end
 
         def extract_capabilities(model_data)
@@ -142,18 +173,18 @@ module Legion
           nil
         end
 
-        def supports_streaming?(model_data)
-          capabilities = extract_capabilities(model_data)
-          return true if capabilities.nil?
+        def supports_streaming?(model_data, instance_capabilities: [])
+          merged = merged_capabilities(model_data, instance_capabilities)
+          return true if merged.nil?
 
-          capabilities.include?(:streaming)
+          merged.include?(:streaming)
         end
 
-        def supports_tools?(model_data)
-          capabilities = extract_capabilities(model_data)
-          return false if capabilities.nil?
+        def supports_tools?(model_data, instance_capabilities: [])
+          merged = merged_capabilities(model_data, instance_capabilities)
+          return false if merged.nil?
 
-          capabilities.include?(:tools)
+          merged.include?(:tools)
         end
 
         def normalize_capabilities(capabilities)

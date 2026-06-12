@@ -68,7 +68,14 @@ module Legion
         end
 
         # Returns discovered instances grouped by provider for RuleGenerator compatibility.
-        # Each provider maps to a hash of instance_id => { models: [...], base_url: ... }
+        # Each provider maps to a hash of instance_id => { models: [...], capabilities: [...] }.
+        # Instance-level capabilities come from the Call::Registry metadata that the
+        # provider extension's `discover_instances` populates (e.g. lex-llm-vllm declares
+        # `capabilities: %i[completion streaming vision tools]` on its DEFAULT_INSTANCE_TIER).
+        # Threading them through here means RuleGenerator's chat rules carry `:tools` even
+        # when the per-model offerings hash only surfaces `:completion` — without it, the
+        # router logs `resolve.no_rules_matched required_capabilities=[:tools]` on every
+        # tool request and falls through to the default-provider fallback.
         def discovered_instances
           models = discovered_models
           result = {}
@@ -76,10 +83,32 @@ module Legion
             provider = m[:provider]
             instance = m[:instance] || :default
             result[provider] ||= {}
-            result[provider][instance] ||= { models: [] }
+            result[provider][instance] ||= { models: [], capabilities: [] }
             result[provider][instance][:models] << normalize_model_for_rules(m)
           end
+          merge_registry_instance_capabilities!(result)
           result
+        end
+
+        def merge_registry_instance_capabilities!(grouped)
+          return grouped unless defined?(Call::Registry)
+
+          Call::Registry.all_instances.each do |entry|
+            provider = entry[:provider]
+            instance = entry[:instance]
+            metadata = entry[:metadata] || {}
+            capabilities = Array(metadata[:capabilities] || metadata['capabilities'])
+            next if capabilities.empty?
+
+            grouped[provider] ||= {}
+            grouped[provider][instance] ||= { models: [], capabilities: [] }
+            existing = Array(grouped[provider][instance][:capabilities])
+            grouped[provider][instance][:capabilities] = (existing + capabilities).uniq
+          end
+          grouped
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.discovery.merge_registry_capabilities')
+          grouped
         end
 
         # Flat list of all discovered models across all registry adapters.

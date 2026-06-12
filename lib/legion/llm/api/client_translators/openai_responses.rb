@@ -6,6 +6,7 @@ require 'legion/logging/helper'
 require 'legion/extensions/llm'
 require 'legion/llm/types'
 require 'legion/llm/inference/request'
+require 'legion/llm/api/client_translators/shared_extractors'
 
 module Legion
   module LLM
@@ -24,6 +25,7 @@ module Legion
         class OpenAIResponses
           extend Legion::Logging::Helper
           include Legion::Logging::Helper
+          include SharedExtractors
 
           Canonical = Legion::Extensions::Llm::Canonical
 
@@ -42,6 +44,7 @@ module Legion
             params = build_params(body)
             thinking = build_thinking(body[:reasoning])
             tool_choice = build_tool_choice(body[:tool_choice])
+            upstream_body = ensure_reasoning_summary(body)
 
             Canonical::Request.build(
               id:              env['HTTP_X_CLIENT_REQUEST_ID'] || "resp_#{SecureRandom.hex(16)}",
@@ -56,9 +59,26 @@ module Legion
               metadata:        {
                 tier:          env['HTTP_X_LEGION_TIER'],
                 external_refs: external_refs(body, env),
-                upstream_body: body # preserved for native call_responses path until executor is canonical
+                upstream_body: upstream_body # preserved for native call_responses path until executor is canonical
               }.compact
             )
+          end
+
+          # When the caller asks for reasoning (`reasoning.effort` set) but
+          # didn't pin a summary mode, default to `summary: 'auto'`. OpenAI's
+          # /v1/responses lane omits reasoning summary content unless the
+          # request opts in — without this, codex→openai cells return only
+          # the message item (no reasoning), and the e2e validator
+          # reports "reasoning never produced" (P5-final-cells.md B3).
+          def ensure_reasoning_summary(body)
+            reasoning = body[:reasoning]
+            return body unless reasoning.is_a?(Hash)
+
+            normalized = reasoning.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
+            return body.merge(reasoning: normalized) if normalized.key?(:summary)
+            return body unless normalized[:effort]
+
+            body.merge(reasoning: normalized.merge(summary: 'auto'))
           end
 
           def build_inference_request(canonical_request, request_id:, server_caller:, modality: nil)
@@ -809,22 +829,6 @@ module Legion
             }]
           end
 
-          def extract_thinking_text(value)
-            return '' if value.nil?
-            return value.to_s if value.is_a?(String)
-
-            if value.is_a?(Hash)
-              normalized = value.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
-              text = normalized[:content] || normalized[:text] || normalized[:thinking] || normalized[:reasoning]
-              return text.to_s if text
-            end
-
-            return value.content.to_s if value.respond_to?(:content) && value.content
-            return value.text.to_s if value.respond_to?(:text) && value.text
-
-            value.to_s
-          end
-
           def build_usage(tokens)
             i = token_value(tokens, :input_tokens, :input).to_i
             o = token_value(tokens, :output_tokens, :output).to_i
@@ -832,28 +836,6 @@ module Legion
             details = tokens[:output_tokens_details] || tokens['output_tokens_details']
             result[:output_tokens_details] = details if details.is_a?(Hash) && !details.empty?
             result
-          end
-
-          def token_value(tokens, *keys)
-            return 0 if tokens.nil?
-
-            keys.each do |key|
-              value = if tokens.is_a?(Hash)
-                        tokens[key] || tokens[key.to_s]
-                      elsif tokens.respond_to?(key)
-                        tokens.public_send(key)
-                      end
-              return value.to_i unless value.nil?
-            end
-            0
-          end
-
-          def serialize_args(args)
-            return args.to_s if args.is_a?(String)
-
-            Legion::JSON.dump(args || {})
-          rescue StandardError
-            args.to_s
           end
         end
       end

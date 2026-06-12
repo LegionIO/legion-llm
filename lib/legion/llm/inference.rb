@@ -124,6 +124,9 @@ module Legion
         raise
       end
 
+      # rubocop:disable Legion/Framework/NoDirectDispatch
+      # chat_direct is a deprecated shim per CHANGELOG 0.12.16 that routes
+      # through the governed pipeline; see Legion::LLM::Deprecation.warn_once.
       def chat_direct(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
                       max_escalations: nil, quality_check: nil, message: nil, **, &)
         Legion::LLM::Deprecation.warn_once(:chat_direct, replacement: 'Legion::LLM.chat')
@@ -138,6 +141,7 @@ module Legion
                              escalate: escalate, max_escalations: max_escalations,
                              quality_check: quality_check, message: message, **, &)
       end
+      # rubocop:enable Legion/Framework/NoDirectDispatch
 
       def chat_direct_governed(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
                                max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
@@ -484,9 +488,18 @@ module Legion
         end
       end
 
+      # rubocop:disable Legion/Framework/NoDirectDispatch
+      # ask_direct is a deprecated shim. The previous body routed through
+      # `chat_direct_raw`, an ungoverned path that bypasses metering/audit
+      # — the same compliance gap that motivated the chat_direct/embed_direct/
+      # structured_direct deprecation in 0.12.16. It now routes through the
+      # governed pipeline via `chat_direct` and adapts the response to the
+      # legacy `{status:, response:, meta:}` shape ask() callers expect.
       def ask_direct(message:, model: nil, provider: nil, intent: nil, tier: nil, &)
+        Legion::LLM::Deprecation.warn_once(:ask_direct, replacement: 'Legion::LLM.ask')
         assert_external_allowed! if effective_tier_is_external?(tier, provider)
-        result = chat_direct_raw(
+
+        result = chat_direct(
           model:    model,
           provider: provider,
           intent:   intent,
@@ -494,6 +507,7 @@ module Legion
           message:  message,
           &
         )
+
         return result if result.is_a?(Hash) && result[:deferred]
         return normalize_ask_direct_hash(result, fallback_model: model || Legion::Settings[:llm][:default_model]) if result.is_a?(Hash)
 
@@ -510,6 +524,7 @@ module Legion
           }
         }
       end
+      # rubocop:enable Legion/Framework/NoDirectDispatch
 
       def direct_chat_session?(result)
         result.respond_to?(:ask) && result.respond_to?(:model) && !result.respond_to?(:content)

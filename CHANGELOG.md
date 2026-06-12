@@ -1,5 +1,26 @@
 # Legion LLM Changelog
 
+## [0.12.17] - 2026-06-12
+
+### Deprecated
+- **Legacy flat API tree under `lib/legion/llm/api/{anthropic,openai,native}/`** — The flat-file route tree is deprecated. `llm.api.use_namespaces` defaults to `true`; setting it to `false` continues to register the legacy chain but now logs a deprecation warning at registration time. The legacy tree (`api/anthropic/messages.rb`, `api/openai/{chat_completions,embeddings,models,responses}.rb`, `api/native/*.rb` flat files) and the `register_legacy` dispatcher will be **deleted in the next minor release**. All routing is consolidated under `api/namespaces/` and the new `api/client_translators/` + `api/stream_assembler.rb` (P5). (lib/legion/llm/api.rb)
+- **`Legion::LLM::Inference.ask_direct` is a deprecated shim** — Previously routed through `chat_direct_raw`, an ungoverned path that bypassed metering/audit. Now routes through the governed pipeline via `chat_direct` and emits a `Deprecation.warn_once` warning. Same compliance gap closure as the `chat_direct`/`embed_direct`/`structured_direct` deprecation in 0.12.16. Use `Legion::LLM.ask` instead. (lib/legion/llm/inference.rb)
+
+### Removed
+- **Absorbed translator shims** — `lib/legion/llm/api/translators/{anthropic,openai}_{request,response}.rb`, `Legion::LLM::Call::NativeResponseAdapter`, and the per-route thinking/token/tool-call extractor duplicates absorbed by `api/client_translators/` and `api/stream_assembler.rb` are removed.
+
+### Added
+- **rubocop-legion guard cops adopted** — Repo-wide enable for `Legion/Framework/NoUnderscorePrefixedKwargs` (G13), `Legion/Framework/NoInlineSettingDefaults` (G13), and `Legion/Framework/NoDirectDispatch` (G16). `Legion/Framework/NoShapeDuckTyping` (R10) enabled scoped to `lib/legion/llm/api/**` and `lib/legion/llm/inference/**`. (.rubocop.yml, Gemfile)
+- **CLAUDE.md "LLM Routing Invariants" section (G2)** — Public-safe invariant set: execution-proxy contract (LegionIO tools look server-side to clients, client-side to providers), always-translate (never passthrough), no provider-name conditionals outside translators, thinking never crosses providers, mid-stream failover required, every pipeline exit emits ledger events, the canary prompt.
+- **RuleGenerator merges instance-level capabilities into chat rules** — Auto-generated chat rules now carry the provider's instance-level `:tools`/`:streaming`/`:vision` capabilities (e.g. lex-llm-vllm declares `capabilities: %i[completion streaming vision tools]` on its DEFAULT_INSTANCE_TIER) when the per-model offerings hash only surfaces `[:completion]`. Without this, the router logged `resolve.no_rules_matched required_capabilities=[:tools]` on every tool request and fell through to the default-provider chain. `Discovery.discovered_instances` threads `Call::Registry` instance metadata into the grouped instance hash; `RuleGenerator.merged_capabilities` unions per-model and instance-level caps. (lib/legion/llm/discovery.rb, lib/legion/llm/discovery/rule_generator.rb)
+- **B3 OpenAI Responses reasoning summary opt-in** — `OpenAIResponses#ensure_reasoning_summary` defaults `reasoning.summary` to `'auto'` when the caller asked for reasoning (effort set) but didn't pin a summary mode. OpenAI's `/v1/responses` lane omits reasoning content otherwise, which left codex→openai cells returning only the message item with no reasoning. (lib/legion/llm/api/client_translators/openai_responses.rb, lib/legion/llm/api/namespaces/openai/responses.rb)
+- **Matrix harness regression encoding** — `spec/legion/llm/api/matrix/tool_injection_matrix_spec.rb` asserts that registered LegionIO tools reach the upstream provider's `tools:` kwarg on all three client formats. The cell that previously surfaced this failure live (claude/vllm legionio_tool_injection answering "There is no tool") now fails offline with a deterministic FakeProvider when injection drops out.
+
+### Changed
+- **`Legion::LLM::Router` signature cleanup** — Removed unused `**_opts` swallow-splats from `resolve`, `resolve_chain`, `select_candidates`, `chain_from_intent` (no callers passed extra kwargs).
+- **`routing.last_resort_{model,provider}` settings** — Replace inline `'claude-sonnet-4-6'`/`:anthropic` defaults in the router's last-resort fallback chain.
+- **`telemetry.unknown_model_tag` setting** — Replaces the inline `'unknown'` default in OpenInference span tagging.
+
 ## [0.12.16] - 2026-06-11
 
 ### Deprecated

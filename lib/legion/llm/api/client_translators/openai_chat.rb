@@ -6,6 +6,7 @@ require 'legion/logging/helper'
 require 'legion/extensions/llm'
 require 'legion/llm/types'
 require 'legion/llm/inference/request'
+require 'legion/llm/api/client_translators/shared_extractors'
 
 module Legion
   module LLM
@@ -19,6 +20,7 @@ module Legion
         class OpenAIChat
           extend Legion::Logging::Helper
           include Legion::Logging::Helper
+          include SharedExtractors
 
           Canonical = Legion::Extensions::Llm::Canonical
 
@@ -574,35 +576,6 @@ module Legion
             parsed.is_a?(Hash) && parsed.keys.any?
           rescue Legion::JSON::ParseError, StandardError
             false
-          end
-
-          def extract_thinking_text(value)
-            return '' if value.nil?
-            return value.to_s if value.is_a?(String)
-
-            if value.is_a?(Hash)
-              text = value[:content] || value['content'] || value[:text] || value['text']
-              return text.to_s if text
-            end
-
-            return value.content.to_s if value.respond_to?(:content) && value.content
-            return value.text.to_s if value.respond_to?(:text) && value.text
-
-            value.to_s
-          end
-
-          def token_value(tokens, *keys)
-            return 0 if tokens.nil?
-
-            keys.each do |key|
-              value = if tokens.is_a?(Hash)
-                        tokens[key] || tokens[key.to_s]
-                      elsif tokens.respond_to?(key)
-                        tokens.public_send(key)
-                      end
-              return value.to_i unless value.nil?
-            end
-            0
           end
 
           def safe_parse_args(str)

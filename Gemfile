@@ -37,7 +37,12 @@ group :test do
   gem 'rspec'
   gem 'rspec_junit_formatter'
   gem 'rubocop'
-  gem 'rubocop-legion'
+  rubocop_legion_path = File.expand_path('../rubocop-legion', __dir__)
+  if Dir.exist?(rubocop_legion_path)
+    gem 'rubocop-legion', path: rubocop_legion_path
+  else
+    gem 'rubocop-legion'
+  end
   gem 'simplecov'
   gem 'sinatra'
   gem 'webmock'

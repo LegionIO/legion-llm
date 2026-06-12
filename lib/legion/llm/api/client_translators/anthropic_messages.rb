@@ -5,6 +5,7 @@ require 'legion/logging/helper'
 require 'legion/extensions/llm'
 require 'legion/llm/types'
 require 'legion/llm/inference/request'
+require 'legion/llm/api/client_translators/shared_extractors'
 
 module Legion
   module LLM
@@ -24,6 +25,7 @@ module Legion
         class AnthropicMessages
           extend Legion::Logging::Helper
           include Legion::Logging::Helper
+          include SharedExtractors
 
           Canonical = Legion::Extensions::Llm::Canonical
 
@@ -721,28 +723,6 @@ module Legion
               pipeline_response.respond_to?(:stop_sequence) && pipeline_response.stop_sequence ? 'stop_sequence' : 'end_turn'
             else 'end_turn'
             end
-          end
-
-          def token_value(tokens, *keys)
-            return nil if tokens.nil?
-
-            keys.each do |key|
-              value = if tokens.is_a?(Hash)
-                        tokens[key] || tokens[key.to_s]
-                      elsif tokens.respond_to?(key)
-                        tokens.public_send(key)
-                      end
-              return value.to_i unless value.nil?
-            end
-            nil
-          end
-
-          def serialize_args(args)
-            return args.to_s if args.is_a?(String)
-
-            Legion::JSON.dump(args || {})
-          rescue StandardError
-            args.to_s
           end
 
           def serialize_result(result)

@@ -110,7 +110,7 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
     it 'does not ingest to local when Legion::Apollo::Local is not started' do
       apollo_local = Module.new do
         def self.started? = false
-        def self.ingest(**_) = raise('should not be called')
+        def self.ingest(**) = raise('should not be called')
       end
       stub_const('Legion::Apollo::Local', apollo_local)
 
@@ -124,7 +124,7 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       apollo_local = Module.new do
         def self.started? = true
 
-        def self.ingest(**_kwargs)
+        def self.ingest(**)
           { success: true, mode: :local, id: 1 }
         end
       end
@@ -147,7 +147,7 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
     it 'adds no warnings on successful local ingest' do
       apollo_local = Module.new do
         def self.started? = true
-        def self.ingest(**_) = { success: true, mode: :local }
+        def self.ingest(**) = { success: true, mode: :local }
       end
       stub_const('Legion::Apollo::Local', apollo_local)
 
@@ -163,7 +163,7 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
     it 'does not fail when local ingest raises (async error handling)' do
       apollo_local = Module.new do
         def self.started? = true
-        def self.ingest(**_) = raise(StandardError, 'db locked')
+        def self.ingest(**) = raise(StandardError, 'db locked')
       end
       stub_const('Legion::Apollo::Local', apollo_local)
 

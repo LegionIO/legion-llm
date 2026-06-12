@@ -11,11 +11,41 @@ RSpec.describe Legion::LLM::API do
   end
 
   describe '.registered' do
-    context 'when use_namespaces is false (default)' do
+    context 'when use_namespaces is unset (default true)' do
       before do
         allow(Legion::Settings).to receive(:dig)
           .with(:llm, :api, :use_namespaces)
           .and_return(nil)
+      end
+
+      it 'calls Namespaces::Registration and skips legacy chain' do
+        expect(Legion::LLM::API::Namespaces::Registration).to receive(:registered).with(app)
+        expect(Legion::LLM::API::Auth).not_to receive(:registered)
+        expect(Legion::LLM::API::Native::Inference).not_to receive(:registered)
+        Legion::LLM::API.registered(app)
+      end
+    end
+
+    context 'when use_namespaces is true' do
+      before do
+        allow(Legion::Settings).to receive(:dig)
+          .with(:llm, :api, :use_namespaces)
+          .and_return(true)
+      end
+
+      it 'calls Namespaces::Registration and skips legacy chain' do
+        expect(Legion::LLM::API::Namespaces::Registration).to receive(:registered).with(app)
+        expect(Legion::LLM::API::Auth).not_to receive(:registered)
+        expect(Legion::LLM::API::Native::Inference).not_to receive(:registered)
+        Legion::LLM::API.registered(app)
+      end
+    end
+
+    context 'when use_namespaces is false (deprecated legacy opt-in)' do
+      before do
+        allow(Legion::Settings).to receive(:dig)
+          .with(:llm, :api, :use_namespaces)
+          .and_return(false)
       end
 
       it 'calls legacy flat registration chain' do
@@ -37,8 +67,7 @@ RSpec.describe Legion::LLM::API do
         Legion::LLM::API.registered(app)
       end
 
-      it 'does not call Namespaces::Registration' do
-        # Stub out the legacy chain so nothing breaks
+      it 'emits a deprecation log.warn before registering the legacy chain' do
         [
           Legion::LLM::API::Auth,
           Legion::LLM::API::Native::Helpers,
@@ -57,22 +86,8 @@ RSpec.describe Legion::LLM::API do
           Legion::LLM::API::Anthropic::Messages
         ].each { |mod| allow(mod).to receive(:registered) }
 
+        expect(Legion::LLM::API.log).to receive(:warn).with(a_string_including('DEPRECATED'))
         expect(Legion::LLM::API::Namespaces::Registration).not_to receive(:registered)
-        Legion::LLM::API.registered(app)
-      end
-    end
-
-    context 'when use_namespaces is true' do
-      before do
-        allow(Legion::Settings).to receive(:dig)
-          .with(:llm, :api, :use_namespaces)
-          .and_return(true)
-      end
-
-      it 'calls Namespaces::Registration and skips legacy chain' do
-        expect(Legion::LLM::API::Namespaces::Registration).to receive(:registered).with(app)
-        expect(Legion::LLM::API::Auth).not_to receive(:registered)
-        expect(Legion::LLM::API::Native::Inference).not_to receive(:registered)
         Legion::LLM::API.registered(app)
       end
     end
