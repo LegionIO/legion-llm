@@ -35,7 +35,9 @@ require_relative 'llm/router/escalation/history'
 require_relative 'llm/hooks'
 require_relative 'llm/cache'
 require_relative 'llm/cache/response'
+require_relative 'llm/content_hash'
 require_relative 'llm/inference'
+require_relative 'llm/inference/embed_pipeline'
 require_relative 'llm/fleet'
 require_relative 'llm/inventory'
 require_relative 'llm/metering'
@@ -141,9 +143,9 @@ module Legion
         if defined?(Legion::Telemetry::OpenInference)
           Legion::Telemetry::OpenInference.embedding_span(
             model: (Legion::Settings[:llm][:default_model] || 'unknown').to_s
-          ) { |_span| Call::Embeddings.generate(text: text, **) }
+          ) { |_span| Inference::EmbedPipeline.call(text: text, **) }
         else
-          Call::Embeddings.generate(text: text, **)
+          Inference::EmbedPipeline.call(text: text, **)
         end
       end
 

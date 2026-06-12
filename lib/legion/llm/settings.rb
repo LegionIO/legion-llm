@@ -339,6 +339,15 @@ module Legion
           prefix_registry:              {
             'nomic-embed-text'  => { document: 'search_document: ', query: 'search_query: ' },
             'mxbai-embed-large' => { query: 'Represent this sentence for searching relevant passages: ' }
+          },
+          # G19: content-addressed embedding cache (lookup keyed by
+          # llm:embed:<model>:<dims>:<sha256>). Embeddings are deterministic per
+          # model so the default TTL is long; cache hits still emit metering with
+          # cost: 0, cache_hit: true so the savings are auditable.
+          cache:                        {
+            enabled:    true,
+            ttl:        86_400,
+            key_prefix: 'llm:embed'
           }
         }
       end

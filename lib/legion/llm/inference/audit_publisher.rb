@@ -2,6 +2,7 @@
 
 require 'digest'
 require 'legion/logging/helper'
+require_relative '../content_hash'
 require_relative '../publisher_identity'
 module Legion
   module LLM
@@ -91,16 +92,7 @@ module Legion
         end
 
         def content_hash(content)
-          return nil if content.nil?
-
-          text = if content.is_a?(Array)
-                   content.map { |m| (hash_value(m, :content) || m).to_s }.join("\n")
-                 else
-                   content.to_s
-                 end
-          return nil if text.empty?
-
-          Digest::SHA256.hexdigest(text)
+          Legion::LLM::ContentHash.call(content)
         end
 
         def extract_identity(caller_data)
