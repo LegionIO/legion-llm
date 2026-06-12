@@ -525,7 +525,15 @@ module Legion
 
             if sys.is_a?(Array)
               text_blocks = sys.select { |b| symbolize(b)[:type].to_s == 'text' }
-              text_blocks.map { |b| symbolize(b)[:text] }.join("\n\n")
+              has_cache_control = text_blocks.any? { |b| symbolize(b)[:cache_control] }
+              if has_cache_control
+                text_blocks.map do |b|
+                  s = symbolize(b)
+                  { text: s[:text], cache_control: s[:cache_control] }.compact
+                end
+              else
+                text_blocks.map { |b| symbolize(b)[:text] }.join("\n\n")
+              end
             else
               sys.to_s
             end
