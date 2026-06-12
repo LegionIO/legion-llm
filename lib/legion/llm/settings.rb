@@ -60,6 +60,7 @@ module Legion
           provider_layer:                 provider_layer_defaults,
           tool_trigger:                   tool_trigger_defaults,
           api:                            api_defaults,
+          streaming:                      streaming_defaults,
           compliance:                     compliance_defaults,
           skills:                         skills_defaults,
           claude_cli:                     claude_cli_defaults,
@@ -437,6 +438,20 @@ module Legion
             api_keys:     [],
             pass_through: false
           }
+        }
+      end
+
+      def self.streaming_defaults
+        {
+          # Per G6: tool_call argument buffering policy.
+          # :buffered  — block emits atomically when arguments are complete (safe for failover at any point);
+          #              SSE keep-alive pings sent during buffering so the client doesn't perceive a hang.
+          # :unbuffered — real-time tool_call_delta arguments forwarded as they arrive (lower perceived latency,
+          #              mid-tool-call failover degrades to resubmit-discarding-partials).
+          tool_call_buffering:    :buffered,
+          keep_alive_interval_ms: 5_000,
+          # Emit a thinking content block for clients that render reasoning (Anthropic + Responses API).
+          emit_thinking_blocks:   false
         }
       end
 
