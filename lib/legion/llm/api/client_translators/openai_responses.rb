@@ -529,9 +529,11 @@ module Legion
             params.empty? ? nil : params
           end
 
-          # /v1/responses uses `reasoning: { effort: low|medium|high }`. We
-          # convert to a thinking config the executor understands while
-          # preserving the effort key for OpenAI-compatible providers.
+          # /v1/responses uses `reasoning: { effort: low|medium|high }`.
+          # Canonical::ThinkingConfig accepts {effort:, budget:} — anything
+          # else raises ArgumentError downstream. The Anthropic-budget mapping
+          # for cross-provider routing lives in the provider translator
+          # (lex-llm-anthropic) where the budget translates to budget_tokens.
           def build_thinking(reasoning)
             return nil if reasoning.nil?
 
@@ -543,17 +545,26 @@ module Legion
 
             case effort.to_s
             when 'low'
-              { enabled: true, type: 'enabled', budget_tokens: 512, effort: effort.to_s }
-            when 'high', 'medium'
-              { enabled: true, type: 'enabled', budget_tokens: 1024, effort: effort.to_s }
+              { effort: effort.to_s, budget: 512 }
+            when 'medium', 'high'
+              { effort: effort.to_s, budget: 1024 }
             end
           end
 
+          # Canonical::ThinkingConfig#to_h is {effort:, budget:}. Downstream
+          # providers (anthropic native + lex-llm-openai responses) expect the
+          # {type: 'enabled', budget_tokens:, effort:} shape originally
+          # produced by extract_thinking_config in the legacy route.
           def thinking_to_inference(thinking)
             return nil if thinking.nil?
-            return thinking.to_h if thinking.respond_to?(:to_h)
 
-            thinking
+            h = thinking.respond_to?(:to_h) ? thinking.to_h : thinking
+            return nil unless h.is_a?(Hash) && !h.empty?
+
+            inference = { type: 'enabled' }
+            inference[:budget_tokens] = h[:budget] if h[:budget]
+            inference[:effort] = h[:effort] if h[:effort]
+            inference
           end
 
           def build_tool_definitions(canonical_tools)

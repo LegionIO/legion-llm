@@ -488,19 +488,41 @@ module Legion
             params.empty? ? nil : params
           end
 
+          # Map an Anthropic-style thinking block ({type:, budget_tokens:}) to
+          # the canonical {effort:, budget:} kwargs that
+          # Canonical::ThinkingConfig.new accepts. Anthropic doesn't carry an
+          # effort spelling — only a budget — so effort stays nil.
           def extract_thinking(thinking)
             return nil if thinking.nil?
-            return thinking if thinking.is_a?(Hash)
 
-            { enabled: true, type: thinking.to_s }
+            if thinking.is_a?(Hash)
+              h = thinking.transform_keys(&:to_sym)
+              return nil if h[:type].to_s == 'disabled'
+
+              budget = h[:budget] || h[:budget_tokens]
+              effort = h[:effort]
+              return nil if budget.nil? && effort.nil?
+
+              { effort: effort, budget: budget }.compact
+            else
+              # Anything else is a "thinking is on" flag — no concrete budget.
+              { effort: thinking.to_s }
+            end
           end
 
+          # Canonical::ThinkingConfig#to_h is {effort:, budget:}. The Inference
+          # request and downstream provider translators expect the
+          # Anthropic-style {type: 'enabled', budget_tokens:} shape; map back.
           def thinking_to_inference(thinking_obj)
             return nil if thinking_obj.nil?
 
-            return thinking_obj.to_h if thinking_obj.respond_to?(:to_h)
+            h = thinking_obj.respond_to?(:to_h) ? thinking_obj.to_h : thinking_obj
+            return nil unless h.is_a?(Hash) && !h.empty?
 
-            thinking_obj
+            inference = { type: 'enabled' }
+            inference[:budget_tokens] = h[:budget] if h[:budget]
+            inference[:effort] = h[:effort] if h[:effort]
+            inference
           end
 
           def build_tool_definitions(canonical_tools)
