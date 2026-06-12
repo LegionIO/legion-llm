@@ -41,11 +41,13 @@ module Legion
             tools = build_tools(body[:tools])
             params = build_params(body)
             thinking = build_thinking(body[:reasoning])
+            tool_choice = build_tool_choice(body[:tool_choice])
 
             Canonical::Request.build(
               id:              env['HTTP_X_CLIENT_REQUEST_ID'] || "resp_#{SecureRandom.hex(16)}",
               messages:        messages,
               tools:           tools,
+              tool_choice:     tool_choice,
               params:          params,
               thinking:        thinking,
               stream:          body[:stream] == true,
@@ -74,6 +76,7 @@ module Legion
               system:          canonical_request.system,
               routing:         canonical_request.routing,
               tools:           tool_defs,
+              tool_choice:     canonical_request.tool_choice,
               caller:          server_caller,
               conversation_id: canonical_request.conversation_id,
               stream:          canonical_request.stream == true,
@@ -83,6 +86,31 @@ module Legion
               extra:           extra,
               metadata:        canonical_request.metadata.except(:upstream_body)
             )
+          end
+
+          # OpenAI Responses tool_choice shapes:
+          #   "auto" / "none" / "required"          → corresponding sym
+          #   {type: 'function', name: 'X'}         → {type: 'function', name: 'X'}
+          #   {type: 'function', function: {name:}} → flatten to {type: 'function', name: 'X'}
+          def build_tool_choice(raw)
+            return nil if raw.nil?
+
+            case raw
+            when Hash
+              symbolized = raw.transform_keys(&:to_sym)
+              type = symbolized[:type].to_s
+              if type == 'function'
+                fn = symbolized[:function].is_a?(Hash) ? symbolized[:function].transform_keys(&:to_sym) : nil
+                name = symbolized[:name] || fn&.[](:name)
+                return { type: :function, name: name.to_s } if name
+
+                symbolized
+              else
+                %w[auto none required any].include?(type) ? type.to_sym : symbolized
+              end
+            when String, Symbol
+              raw.to_sym
+            end
           end
 
           def format_response(pipeline_response, model:, request_id:)

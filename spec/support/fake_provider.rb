@@ -104,8 +104,14 @@ module FakeProvider
       Thread.current[:fake_provider_calls] ||= []
     end
 
-    def record_call(kind:, model:, messages:)
-      calls << { kind: kind, model: model, messages: deep_dup(messages) }
+    def record_call(kind:, model:, messages:, tool_prefs: nil, tools: nil)
+      calls << {
+        kind:       kind,
+        model:      model,
+        messages:   deep_dup(messages),
+        tool_prefs: deep_dup(tool_prefs),
+        tools:      deep_dup(tools)
+      }
     end
 
     def deep_dup(value)
@@ -139,18 +145,21 @@ module FakeProvider
       mod.define_singleton_method(:supports?) do |capability|
         %i[chat stream responses embed count_tokens].include?(capability.to_sym)
       end
-      mod.define_singleton_method(:chat) do |model:, messages:, **|
-        FakeProvider.record_call(kind: :chat, model: model, messages: messages)
+      mod.define_singleton_method(:chat) do |model:, messages:, **opts|
+        FakeProvider.record_call(kind: :chat, model: model, messages: messages,
+                                 tool_prefs: opts[:tool_prefs], tools: opts[:tools])
         scenario = FakeProvider.resolve_scenario(messages)
         ext.chat_response(scenario, model: model, messages: messages)
       end
-      mod.define_singleton_method(:stream) do |model:, messages:, **, &block|
-        FakeProvider.record_call(kind: :stream, model: model, messages: messages)
+      mod.define_singleton_method(:stream) do |model:, messages:, **opts, &block|
+        FakeProvider.record_call(kind: :stream, model: model, messages: messages,
+                                 tool_prefs: opts[:tool_prefs], tools: opts[:tools])
         scenario = FakeProvider.resolve_scenario(messages)
         ext.stream_response(scenario, model: model, messages: messages, &block)
       end
-      mod.define_singleton_method(:responses) do |body:, messages:, stream:, **, &block|
-        FakeProvider.record_call(kind: :responses, model: body[:model] || body['model'], messages: messages)
+      mod.define_singleton_method(:responses) do |body:, messages:, stream:, **opts, &block|
+        FakeProvider.record_call(kind: :responses, model: body[:model] || body['model'],
+                                 messages: messages, tool_prefs: opts[:tool_prefs], tools: opts[:tools])
         scenario = FakeProvider.resolve_scenario(messages)
         if stream
           ext.stream_response(scenario, model: body[:model] || body['model'], messages: messages, &block)

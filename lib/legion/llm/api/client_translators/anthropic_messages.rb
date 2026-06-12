@@ -56,6 +56,7 @@ module Legion
             tools = extract_tools(body[:tools])
             params = extract_params(body)
             thinking = extract_thinking(body[:thinking])
+            tool_choice = extract_tool_choice(body[:tool_choice])
             external_refs = extract_external_refs(body, env)
 
             Canonical::Request.build(
@@ -63,6 +64,7 @@ module Legion
               messages:        messages,
               system:          system,
               tools:           tools,
+              tool_choice:     tool_choice,
               params:          params,
               thinking:        thinking,
               stream:          body[:stream] == true,
@@ -95,6 +97,7 @@ module Legion
               system:          canonical_request.system,
               routing:         canonical_request.routing,
               tools:           tool_defs,
+              tool_choice:     canonical_request.tool_choice,
               caller:          server_caller,
               conversation_id: canonical_request.conversation_id,
               stream:          canonical_request.stream == true,
@@ -104,6 +107,26 @@ module Legion
               extra:           extra,
               metadata:        canonical_request.metadata
             )
+          end
+
+          # Anthropic tool_choice shapes:
+          #   {type: 'auto'}            → :auto
+          #   {type: 'any'}             → :any (force-some-tool)
+          #   {type: 'tool', name: 'X'} → {type: 'tool', name: 'X'}
+          #   {type: 'none'}            → :none
+          def extract_tool_choice(raw)
+            return nil if raw.nil?
+
+            case raw
+            when Hash
+              symbolized = raw.transform_keys(&:to_sym)
+              type = symbolized[:type].to_s
+              return symbolized if type == 'tool' && symbolized[:name]
+
+              %w[auto any none required].include?(type) ? type.to_sym : symbolized
+            when String, Symbol
+              raw.to_sym
+            end
           end
 
           # Non-streaming response formatting — pipeline_response is an

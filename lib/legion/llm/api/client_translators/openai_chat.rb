@@ -45,6 +45,7 @@ module Legion
             messages, system = extract_messages_and_system(body[:messages] || [])
             tools = build_tools(body[:tools])
             params = extract_params(body)
+            tool_choice = extract_tool_choice(body[:tool_choice])
             external = external_refs(body, env)
 
             Canonical::Request.build(
@@ -52,6 +53,7 @@ module Legion
               messages:        messages,
               system:          system,
               tools:           tools,
+              tool_choice:     tool_choice,
               params:          params,
               stream:          body[:stream] == true,
               conversation_id: env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id],
@@ -90,6 +92,7 @@ module Legion
               system:          canonical_request.system,
               routing:         canonical_request.routing,
               tools:           tool_defs,
+              tool_choice:     canonical_request.tool_choice,
               caller:          server_caller,
               conversation_id: canonical_request.conversation_id,
               metadata:        metadata.compact,
@@ -98,6 +101,31 @@ module Legion
               cache:           { strategy: :default, cacheable: true },
               extra:           extra.empty? ? {} : extra
             )
+          end
+
+          # OpenAI chat-completions tool_choice shapes:
+          #   "auto" / "none" / "required"                       → sym
+          #   {type: 'function', function: {name: 'X'}}          → {type: 'function', name: 'X'}
+          #   {type: 'function', name: 'X'} (lenient passthrough)→ {type: 'function', name: 'X'}
+          def extract_tool_choice(raw)
+            return nil if raw.nil?
+
+            case raw
+            when Hash
+              symbolized = raw.transform_keys(&:to_sym)
+              type = symbolized[:type].to_s
+              if type == 'function'
+                fn = symbolized[:function].is_a?(Hash) ? symbolized[:function].transform_keys(&:to_sym) : nil
+                name = symbolized[:name] || fn&.[](:name)
+                return { type: :function, name: name.to_s } if name
+
+                symbolized
+              else
+                %w[auto none required].include?(type) ? type.to_sym : symbolized
+              end
+            when String, Symbol
+              raw.to_sym
+            end
           end
 
           def format_response(pipeline_response, model:, request_id:, include_reasoning: false)
