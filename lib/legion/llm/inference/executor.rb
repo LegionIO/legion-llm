@@ -149,19 +149,58 @@ module Legion
 
         def call_responses(body:, stream: false, &)
           set_log_context
+          Thread.current[:legion_llm_in_pipeline] = true
           log.debug "[llm][executor] action=call_responses request_id=#{@request.id} profile=#{@profile} stream=#{stream}"
 
+          # Pre-routing gate: cheap reject for cases where the request hint
+          # already names a non-responses provider.
           unless provider_supports_responses?
-            log.debug "[llm][executor] action=call_responses_fallback reason=provider_unsupported request_id=#{@request.id}"
+            log.debug "[llm][executor] action=call_responses_fallback reason=hint_unsupported request_id=#{@request.id}"
             return stream ? call_stream(&) : call
           end
 
           execute_pre_provider_steps
+
+          # Post-routing gate (the real one): routing may have resolved to a
+          # different provider than the request hint suggested (failover,
+          # escalation, health-tracker rerouting). Re-check capability now
+          # that @resolved_provider reflects the actual dispatch target —
+          # otherwise dispatch_responses_request raises ProviderError
+          # "unsupported capability :responses for provider X".
+          unless resolved_provider_supports_responses?
+            log.debug '[llm][executor] action=call_responses_fallback reason=resolved_unsupported ' \
+                      "request_id=#{@request.id} resolved_provider=#{@resolved_provider}"
+            execute_provider_request_stream(&) if stream
+            execute_provider_request(&) unless stream
+            execute_post_provider_steps
+            return build_response
+          end
+
           execute_provider_request_responses(body: body, stream: stream, &)
           execute_post_provider_steps
           build_response
         ensure
+          Thread.current[:legion_llm_in_pipeline] = nil
           clear_log_context
+        end
+
+        # Post-routing capability check — same shape as
+        # provider_supports_responses? but anchored to the resolved provider
+        # only (no fallback to the request hint).
+        def resolved_provider_supports_responses?
+          provider = @resolved_provider
+          instance = @resolved_instance
+          return false unless provider && use_native_dispatch?(provider)
+
+          ext = Call::Registry.for(provider, instance: instance)
+          return false unless ext
+
+          ext.respond_to?(:supports?) ? ext.supports?(:responses) : false
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true,
+                              operation: 'llm.executor.resolved_provider_supports_responses',
+                              provider: provider)
+          false
         end
 
         # Returns true when the resolved provider's adapter natively supports the Responses API.
