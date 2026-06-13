@@ -21,42 +21,32 @@ module Legion
           end
 
           def run_provider_call_single
-            providers_tried = []
-            begin
-              execute_provider_request
-            rescue Legion::LLM::AuthError, Faraday::UnauthorizedError, Faraday::ForbiddenError => e
-              try_fallback_or_raise(e, providers_tried, operation: 'provider_call.auth',
-                                                        reason: 'auth_failed', error_class: Legion::LLM::AuthError)
-              retry
-            rescue Legion::LLM::ContextOverflow => e
-              try_fallback_or_raise(e, providers_tried, operation: 'provider_call.context_overflow',
-                                                        reason: 'context_overflow', error_class: Legion::LLM::ContextOverflow)
-              retry
-            rescue Legion::LLM::ProviderError => e
-              try_fallback_or_raise(e, providers_tried, operation: 'provider_call.bad_request',
-                                                        reason: 'bad_request', error_class: Legion::LLM::ProviderError)
-              retry
-            rescue Legion::LLM::RateLimitError => e
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.rate_limit',
-                                provider: @resolved_provider, model: @resolved_model)
-              emit_error_audit(e, status: 'rate_limited')
-              raise Legion::LLM::RateLimitError, e.message
-            rescue Legion::LLM::ProviderDown, Faraday::ServerError => e
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_error',
-                                provider: @resolved_provider, model: @resolved_model)
-              emit_error_audit(e, status: 'provider_error')
-              raise Legion::LLM::ProviderError, e.message
-            rescue Faraday::TooManyRequestsError => e
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.http_rate_limit',
-                                provider: @resolved_provider, model: @resolved_model)
-              emit_error_audit(e, status: 'rate_limited')
-              raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
-            rescue Faraday::ConnectionFailed, Faraday::TimeoutError, Faraday::SSLError => e
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_down',
-                                provider: @resolved_provider, model: @resolved_model)
-              emit_error_audit(e, status: 'provider_down')
-              raise Legion::LLM::ProviderDown, e.message
-            end
+            execute_provider_request
+          rescue Legion::LLM::AuthError, Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.auth',
+                             provider: @resolved_provider, model: @resolved_model)
+            report_provider_failure(e, status: 'auth_failed')
+            raise e.is_a?(Legion::LLM::AuthError) ? e : Legion::LLM::AuthError.new(e.message)
+          rescue Legion::LLM::ContextOverflow => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.context_overflow',
+                             provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'context_overflow')
+            raise
+          rescue Legion::LLM::RateLimitError, Faraday::TooManyRequestsError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.rate_limit',
+                             provider: @resolved_provider, model: @resolved_model)
+            report_provider_failure(e, status: 'rate_limited')
+            raise e.is_a?(Legion::LLM::RateLimitError) ? e : Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
+          rescue Legion::LLM::ProviderDown, Faraday::ConnectionFailed, Faraday::TimeoutError, Faraday::SSLError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_down',
+                             provider: @resolved_provider, model: @resolved_model)
+            report_provider_failure(e, status: 'provider_down')
+            raise e.is_a?(Legion::LLM::ProviderDown) ? e : Legion::LLM::ProviderDown.new(e.message)
+          rescue Legion::LLM::ProviderError, Faraday::ServerError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call.provider_error',
+                             provider: @resolved_provider, model: @resolved_model)
+            report_provider_failure(e, status: 'provider_error')
+            raise e.is_a?(Legion::LLM::ProviderError) ? e : Legion::LLM::ProviderError.new(e.message)
           end
 
           def run_provider_call_with_escalation(stream_block: nil)
@@ -384,6 +374,23 @@ module Legion
             )
           end
 
+          def report_provider_failure(error, provider: @resolved_provider, instance: @resolved_instance,
+                                      model: @resolved_model, offering_id: @resolved_offering_id,
+                                      status: 'provider_error')
+            emit_error_audit(error, status: status, provider: provider, model: model)
+            return if request_payload_error?(error)
+            return if context_overflow_error?(error)
+            return if client_stream_error?(error)
+
+            Router.health_tracker.report(
+              provider: provider, instance: instance,
+              offering_id: offering_id, signal: :error, value: 1,
+              metadata: { reason: error.class.name, message: error.message.to_s[0, 500], model: model }
+            )
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.report_provider_failure')
+          end
+
           def report_provider_health(signal, duration_ms, metadata: {})
             return unless defined?(Router) && Router.routing_enabled?
 
@@ -549,42 +556,37 @@ module Legion
               return
             end
 
-            providers_tried = []
-            begin
-              execute_provider_request_stream(&block)
-            rescue Legion::LLM::AuthError, Faraday::UnauthorizedError, Faraday::ForbiddenError => e
-              try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.auth',
-                                                        reason: 'auth_failed', error_class: Legion::LLM::AuthError)
-              retry
-            rescue Legion::LLM::ContextOverflow => e
-              try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.context_overflow',
-                                                        reason: 'context_overflow', error_class: Legion::LLM::ContextOverflow)
-              retry
-            rescue Legion::LLM::ProviderError => e
-              try_fallback_or_raise(e, providers_tried, operation: 'provider_call_stream.bad_request',
-                                                        reason: 'bad_request', error_class: Legion::LLM::ProviderError)
-              retry
-            rescue Legion::LLM::RateLimitError => e
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.rate_limit',
-                                provider: @resolved_provider, model: @resolved_model)
-              emit_error_audit(e, status: 'rate_limited')
-              raise Legion::LLM::RateLimitError, e.message
-            rescue Legion::LLM::ProviderDown, Faraday::ServerError => e
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_error',
-                                provider: @resolved_provider, model: @resolved_model)
-              emit_error_audit(e, status: 'provider_error')
-              raise Legion::LLM::ProviderError, e.message
-            rescue Faraday::TooManyRequestsError => e
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.http_rate_limit',
-                                provider: @resolved_provider, model: @resolved_model)
-              emit_error_audit(e, status: 'rate_limited')
-              raise Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
-            rescue Faraday::ConnectionFailed, Faraday::TimeoutError, Faraday::SSLError => e
-              handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_down',
-                                provider: @resolved_provider, model: @resolved_model)
-              emit_error_audit(e, status: 'provider_down')
-              raise Legion::LLM::ProviderDown, e.message
-            end
+            execute_provider_request_stream(&block)
+          rescue Legion::LLM::AuthError, Faraday::UnauthorizedError, Faraday::ForbiddenError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.auth',
+                             provider: @resolved_provider, model: @resolved_model)
+            report_provider_failure(e, status: 'auth_failed')
+            raise e.is_a?(Legion::LLM::AuthError) ? e : Legion::LLM::AuthError.new(e.message)
+          rescue Legion::LLM::ContextOverflow => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.context_overflow',
+                             provider: @resolved_provider, model: @resolved_model)
+            emit_error_audit(e, status: 'context_overflow')
+            raise
+          rescue Legion::LLM::RateLimitError, Faraday::TooManyRequestsError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.rate_limit',
+                             provider: @resolved_provider, model: @resolved_model)
+            report_provider_failure(e, status: 'rate_limited')
+            raise e.is_a?(Legion::LLM::RateLimitError) ? e : Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
+          rescue Legion::LLM::ProviderDown, Faraday::ConnectionFailed, Faraday::TimeoutError, Faraday::SSLError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_down',
+                             provider: @resolved_provider, model: @resolved_model)
+            report_provider_failure(e, status: 'provider_down')
+            raise e.is_a?(Legion::LLM::ProviderDown) ? e : Legion::LLM::ProviderDown.new(e.message)
+          rescue Legion::LLM::ProviderError, Faraday::ServerError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_error',
+                             provider: @resolved_provider, model: @resolved_model)
+            report_provider_failure(e, status: 'provider_error')
+            raise e.is_a?(Legion::LLM::ProviderError) ? e : Legion::LLM::ProviderError.new(e.message)
+          rescue StandardError => e
+            raise if client_stream_error?(e)
+
+            report_provider_failure(e, status: 'provider_error')
+            raise
           end
 
           def execute_provider_request_stream(&)

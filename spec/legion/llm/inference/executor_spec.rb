@@ -3,6 +3,12 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inference::Executor do
+  before do
+    Legion::Settings[:llm][:routing] ||= {}
+    Legion::Settings[:llm][:routing][:escalation] ||= {}
+    Legion::Settings[:llm][:routing][:escalation][:enabled] = false
+  end
+
   let(:request) do
     Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
@@ -906,38 +912,6 @@ confidence: 0.9 }],
       expect(toolless_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end
 
-    it 'finds fallback provider configs' do
-      Legion::Settings.set_prop(:llm, {
-                                  providers: {
-                                    ollama:  {
-                                      enabled:       true,
-                                      default_model: 'qwen3.6:27b'
-                                    },
-                                    bedrock: {
-                                      enabled:       true,
-                                      default_model: 'claude-sonnet-4-6'
-                                    }
-                                  }
-                                })
-
-      expect(executor.send(:find_fallback_provider, exclude: [])).to eq(
-        { provider: :ollama, model: 'qwen3.6:27b' }
-      )
-    end
-
-    it 'skips local providers when allow_local is false' do
-      Legion::Settings.set_prop(:llm, {
-                                  fallback:  { allow_local: false },
-                                  providers: {
-                                    ollama:  { enabled: true, default_model: 'qwen3.6:27b' },
-                                    bedrock: { enabled: true, default_model: 'claude-sonnet-4-6' }
-                                  }
-                                })
-
-      expect(executor.send(:find_fallback_provider, exclude: [])).to eq(
-        { provider: :bedrock, model: 'claude-sonnet-4-6' }
-      )
-    end
   end
 
   describe 'offering-aware routing metadata' do
@@ -1235,63 +1209,6 @@ confidence: 0.9 }],
       end
     end
 
-    describe ':model_fallback event' do
-      it 'fires :model_fallback with from_provider, to_provider, from_model, to_model on auth failure' do
-        Legion::LLM::Call::Registry.register(:anthropic, Module.new do
-          define_singleton_method(:chat) { |**| raise Faraday::UnauthorizedError.new(nil, { status: 401 }) }
-        end)
-        Legion::LLM::Call::Registry.register(:openai, Module.new do
-          define_singleton_method(:chat) do |**|
-            { content: 'provider response', usage: { input_tokens: 5, output_tokens: 3 } }
-          end
-        end)
-
-        allow(executor).to receive(:find_fallback_provider).with(exclude: [:anthropic]).and_return(
-          { provider: :openai, model: 'gpt-4o' }
-        )
-        allow(executor).to receive(:step_response_normalization)
-
-        executor.call
-
-        fallback_events = events.select { |e| e[:type] == :model_fallback }
-
-        ev = fallback_events.first
-        expect(ev).to have_key(:from_provider)
-        expect(ev).to have_key(:to_provider)
-        expect(ev).to have_key(:from_model)
-        expect(ev).to have_key(:to_model)
-        expect(ev[:reason]).to eq('auth_failed')
-      end
-
-      it ':model_fallback event payload includes provider fields' do
-        # Test emit_tool_result_event directly to avoid needing full session wiring
-        executor_instance = described_class.new(request)
-        captured = []
-        executor_instance.tool_event_handler = ->(event) { captured << event }
-
-        # Simulate what happens inside execute_provider_request when fallback fires
-        executor_instance.instance_variable_set(:@resolved_provider, :anthropic)
-        executor_instance.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
-        executor_instance.instance_variable_set(:@warnings, [])
-        executor_instance.instance_variable_set(:@timeline, Legion::LLM::Inference::Timeline.new)
-
-        # Directly invoke the event handler as it would be called
-        executor_instance.tool_event_handler.call(
-          type: :model_fallback,
-          from_provider: :anthropic, to_provider: :openai,
-          from_model: 'claude-opus-4-6', to_model: 'gpt-4o',
-          error: 'Unauthorized', reason: 'auth_failed'
-        )
-
-        expect(captured.size).to eq(1)
-        ev = captured.first
-        expect(ev[:from_provider]).to eq(:anthropic)
-        expect(ev[:to_provider]).to eq(:openai)
-        expect(ev[:from_model]).to eq('claude-opus-4-6')
-        expect(ev[:to_model]).to eq('gpt-4o')
-        expect(ev[:reason]).to eq('auth_failed')
-      end
-    end
   end
 
   describe 'sticky tool tracking ivars' do

@@ -71,6 +71,8 @@ module MatrixHelper
     Legion::Settings[:llm][:pipeline_enabled] = true
     Legion::Settings[:llm][:pipeline_async_post_steps] = false
     Legion::Settings[:llm][:routing][:enabled] = false
+    Legion::Settings[:llm][:routing][:escalation] ||= {}
+    Legion::Settings[:llm][:routing][:escalation][:enabled] = false
     Legion::Settings[:llm][:streaming][:emit_thinking_blocks] = true
     Legion::Settings[:llm][:streaming][:tool_call_buffering] = :unbuffered
     Legion::Settings[:llm][:api][:debug_formats][:enabled] = true

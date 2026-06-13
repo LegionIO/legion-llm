@@ -49,7 +49,9 @@ module Legion
 
           if required_capabilities.any?
             caps = available_capabilities(resolution)
-            return :missing_capability if !Capabilities.include_all?(caps, required_capabilities)
+            if caps.any?
+              return :missing_capability unless Capabilities.include_all?(caps, required_capabilities)
+            end
           end
 
           nil

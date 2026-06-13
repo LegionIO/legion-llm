@@ -434,60 +434,6 @@ module Legion
             @resolved_offering_id = @resolved_offering_metadata[:offering_id] if @resolved_offering_id.nil?
           end
 
-          def try_fallback_or_raise(error, providers_tried, operation:, reason:, error_class:)
-            providers_tried << @resolved_provider
-            fallback = find_fallback_provider(exclude: providers_tried)
-            handle_exception(
-              error,
-              level: :warn, operation: "llm.pipeline.#{operation}",
-              provider: @resolved_provider, model: @resolved_model,
-              fallback_provider: fallback&.dig(:provider)
-            )
-            unless fallback
-              log.warn "[llm][fallback] action=no_fallback_available provider=#{@resolved_provider} model=#{@resolved_model} reason=#{reason} error=#{error.class.name}"
-              raise error_class, "#{@resolved_provider}:#{@resolved_model} #{reason} — #{error.message}"
-            end
-
-            from_tier = @resolved_tier
-            to_tier = inferred_provider_tier(fallback[:provider])
-            log.warn "[llm][fallback] action=provider_switch from_provider=#{@resolved_provider} from_model=#{@resolved_model} " \
-                     "to_provider=#{fallback[:provider]} to_model=#{fallback[:model]} reason=#{reason}"
-            if %i[local fleet vllm].include?(from_tier) && %i[cloud frontier].include?(to_tier)
-              log.warn "[llm][fallback] action=tier_upgrade from_tier=#{from_tier} to_tier=#{to_tier} reason=#{reason}"
-            end
-            from_provider = @resolved_provider
-            from_model = @resolved_model
-            @resolved_provider = fallback[:provider]
-            @resolved_model = fallback[:model]
-            @warnings << { type: :provider_fallback, original_error: error.message,
-                           fallback: "#{@resolved_provider}:#{@resolved_model}" }
-            @tool_event_handler&.call(
-              type: :model_fallback,
-              from_provider: from_provider, to_provider: @resolved_provider,
-              from_model: from_model, to_model: @resolved_model,
-              error: error.message, reason: reason
-            )
-          end
-
-          def find_fallback_provider(exclude: [])
-            providers = Legion::Settings[:llm][:providers]
-            providers.each do |name, config|
-              normalized_name = name.to_sym
-              next unless config.is_a?(Hash) && config[:enabled]
-              next if exclude.include?(name) || exclude.include?(name.to_s) || exclude.include?(normalized_name)
-              next if %i[ollama vllm].include?(normalized_name) && !fallback_local_providers?
-              next unless config[:default_model]
-
-              return { provider: normalized_name, model: config[:default_model] }
-            end
-            nil
-          end
-
-          def fallback_local_providers?
-            return @fallback_local_providers if defined?(@fallback_local_providers)
-
-            @fallback_local_providers = Legion::Settings[:llm].dig(:fallback, :allow_local) != false
-          end
         end
       end
     end
