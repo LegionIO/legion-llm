@@ -170,6 +170,23 @@ module Legion
             estimate_message_tokens(all_messages)
           end
 
+          def chain_required_capabilities
+            caps = []
+            caps << :streaming if @request.stream == true
+            caps << :tools     if native_tools_requested_for_routing?
+            caps
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.chain_required_capabilities')
+            []
+          end
+
+          def native_tools_requested_for_routing?
+            tools = @request.respond_to?(:tools) ? @request.tools : nil
+            tools.is_a?(Hash) ? !tools.empty? : !Array(tools).empty?
+          rescue StandardError
+            false
+          end
+
           def routing_intent_present?(intent)
             intent.is_a?(Hash) && intent.any?
           end

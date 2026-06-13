@@ -284,11 +284,13 @@ module Legion
 
           def build_default_escalation_chain
             chain = Router.build_escalation_chain(
-              provider:     @resolved_provider,
-              model:        @resolved_model,
-              tier:         @resolved_tier,
-              instance:     @resolved_instance,
-              max_attempts: pipeline_escalation_max_attempts
+              provider:              @resolved_provider,
+              model:                 @resolved_model,
+              tier:                  @resolved_tier,
+              instance:              @resolved_instance,
+              max_attempts:          pipeline_escalation_max_attempts,
+              estimated_tokens:      estimate_request_tokens,
+              required_capabilities: chain_required_capabilities
             )
             log.debug "[llm][escalation] action=chain_built size=#{chain.size} max_attempts=#{chain.max_attempts} " \
                       "primary=#{@resolved_provider}:#{@resolved_model} fallbacks=#{chain.size - 1}"

@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require_relative 'capabilities'
 require_relative 'router/resolution'
 require_relative 'router/rule'
 require_relative 'router/health_tracker'
+require_relative 'router/availability'
 require_relative 'router/escalation/chain'
 require_relative 'discovery/rule_generator'
 require_relative 'discovery/system'
@@ -98,17 +100,17 @@ module Legion
           resolution || arbitrage_fallback(intent)
         end
 
-        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, max_escalations: nil,
+        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, max_escalations: nil,
                           exclude: {}, allow_default_fallback: true, estimated_tokens: nil)
           log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations} estimated_tokens=#{estimated_tokens}"
           max = max_escalations || escalation_max_attempts
 
           if routing_enabled? && intent
-            chain_from_intent(intent, max, hints: { tier: tier, provider: provider, model: model },
+            chain_from_intent(intent, max, hints: { tier: tier, provider: provider, model: model, instance: instance },
                               exclude: exclude, allow_default_fallback: allow_default_fallback,
                               estimated_tokens: estimated_tokens)
           else
-            chain_from_defaults(model, provider, max, hints: { tier: tier }, allow_default_fallback: allow_default_fallback)
+            chain_from_defaults(model, provider, max, hints: { tier: tier, instance: instance }, allow_default_fallback: allow_default_fallback)
           end
         end
 
@@ -226,7 +228,8 @@ module Legion
           )
         end
 
-        def build_escalation_chain(provider:, model:, tier:, instance: nil, max_attempts: nil)
+        def build_escalation_chain(provider:, model:, tier:, instance: nil, max_attempts: nil,
+                                    estimated_tokens: nil, required_capabilities: [])
           primary = explicit_resolution(tier, provider, model, instance)
           fallbacks = build_fallback_resolutions(
             exclude_provider: provider,
@@ -234,6 +237,11 @@ module Legion
             primary_tier:     tier
           )
           resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
+          resolutions = Availability.filter_resolutions(
+            resolutions,
+            estimated_tokens: estimated_tokens,
+            required_capabilities: required_capabilities
+          )
           max = max_attempts || escalation_max_attempts
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end
