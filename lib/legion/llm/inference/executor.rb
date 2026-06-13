@@ -74,12 +74,19 @@ module Legion
         ].freeze
 
         CONFIG_ERROR_PATTERNS = [
-          /ValidationException/,
           /AccessDeniedException/,
           /InvalidModel/i,
           /model.*not found/i,
           /not authorized/i,
           /AWS Marketplace/i
+        ].freeze
+
+        REQUEST_PAYLOAD_ERROR_PATTERNS = [
+          /input_schema/i,
+          /tools\.\d+/,
+          /messages\.\d+/,
+          /Field required/i,
+          /ValidationException/
         ].freeze
 
         ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, :status, keyword_init: true)

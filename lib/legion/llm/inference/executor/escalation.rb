@@ -218,7 +218,11 @@ module Legion
             duration_ms = ((Time.now - start_time) * 1000).round
             handle_exception(err, level: :warn, handled: handled, operation: operation,
                                  provider: resolution.provider, model: resolution.model, duration_ms: duration_ms)
-            if config_error?(err)
+            if request_payload_error?(err)
+              log.error "[llm][escalation] action=request_payload_error provider=#{resolution.provider} " \
+                        "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
+                        "error=#{err.message.to_s[0, 500]} daemon_side_payload_bug=true provider_health=false"
+            elsif config_error?(err)
               Router.health_tracker.deny_model(
                 provider: resolution.provider,
                 model:    resolution.model,
@@ -226,9 +230,11 @@ module Legion
                 reason:   err.message
               )
             elsif !context_overflow_error?(err)
-              Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+              Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
+                                           offering_id: resolution.offering_id,
                                            signal: :error, value: 1,
-                                           metadata: { reason: err.class.name, message: err.message })
+                                           metadata: { reason: err.class.name, message: err.message.to_s[0, 500],
+                                                       model: resolution.model })
             end
             @escalation_history << escalation_attempt_hash(
               resolution,
@@ -469,6 +475,12 @@ module Legion
             Steps::Metering.publish_or_spool(event)
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_escalation_attempt_metering')
+          end
+
+          def request_payload_error?(err)
+            name = err.class.name.to_s
+            msg = err.message.to_s
+            REQUEST_PAYLOAD_ERROR_PATTERNS.any? { |pat| pat.match?(name) || pat.match?(msg) }
           end
 
           def config_error?(err)
