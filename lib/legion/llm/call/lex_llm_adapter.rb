@@ -138,6 +138,10 @@ module Legion
         def offerings(live: false, **filters)
           return [] unless provider.respond_to?(:discover_offerings)
 
+          provider.discover_offerings(live: live, raise_on_unreachable: live, **filters)
+        rescue ArgumentError => e
+          raise unless e.message.include?('raise_on_unreachable')
+
           provider.discover_offerings(live: live, **filters)
         end
 
