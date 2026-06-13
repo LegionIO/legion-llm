@@ -1,5 +1,32 @@
 # Legion LLM Changelog
 
+## [0.12.19] - 2026-06-12
+
+### Fixed
+- **Request-payload errors no longer deny models or trip circuit breakers** — `ValidationException` for malformed tool schemas (e.g., `tools.16.custom.input_schema.type: Field required`) is now classified as a request-payload error, not a provider config error. Models are no longer permanently denied for client-side schema bugs. (lib/legion/llm/inference/executor/escalation.rb)
+- **HealthTracker honors signal value and logs honestly** — Error handler now uses `payload[:value]` (default 1.0) instead of always incrementing by 1. Already-open circuits no longer re-log fake `closed→open` transitions. (lib/legion/llm/router/health_tracker.rb)
+- **Health keying consistency** — All `health_tracker.report` calls now include `instance:` from the resolution, ensuring discovery/escalation/post-request signals accumulate on the same provider/instance key. (lib/legion/llm/inference.rb, lib/legion/llm/inference/executor/escalation.rb)
+- **Discovery unreachable trips circuit immediately** — Connection failures during discovery now call `trip_circuit` instead of a `value: 1` report. A boot-time unreachable vLLM is marked `:open` without requiring 3 separate failures. (lib/legion/llm/discovery.rb)
+- **Tool schema normalization at canonical boundary** — `Canonical::ToolDefinition.normalize_parameters` guarantees every tool schema has a valid top-level `type`. Prevents Bedrock `tools.16.custom.input_schema.type: Field required` rejections. (lex-llm, legion-llm types/tool_definition.rb)
+- **Anthropic translator double-wrap eliminated** — `render_tools` no longer wraps the full JSON schema inside `{type: 'object', properties: schema}`. Passes canonical schemas through directly. (lex-llm-anthropic translator.rb, provider.rb)
+- **Provider tool renderers accept canonical ToolDefinition objects** — All provider gems (Gemini, Ollama, Vertex, vLLM, OpenAI-compatible) now use `ToolSchema.extract` instead of calling `tool.params_schema` directly. (lex-llm, lex-llm-gemini, lex-llm-ollama, lex-llm-vertex)
+- **Discovery unreachable propagates to legion-llm** — `discover_offerings(raise_on_unreachable: true)` raises transport failures instead of swallowing into `[]`. (lex-llm provider.rb, legion-llm lex_llm_adapter.rb)
+
+### Added
+- **Router::Availability oracle** — Single availability filter for routing and escalation. Checks circuit state, denied models, discovery status, context length, and required capabilities before building escalation chains. (lib/legion/llm/router/availability.rb)
+- **Legion::LLM::Capabilities module** — Normalized capability alias handling (`:function_calling` → `:tools`, `:stream` → `:streaming`). Shared across Router, Discovery, RuleGenerator. (lib/legion/llm/capabilities.rb)
+- **Escalation loop circuit guard** — Open circuits are skipped in the escalation loop (`:half_open` allowed as recovery probe). Empty chains raise `EscalationExhausted` immediately without opening sockets. (lib/legion/llm/inference/executor/escalation.rb)
+- **G6 streaming failover hooks** — `StreamAssembler` gains `provider_failed`/`provider_switched`/`safe_replay_snapshot` observer hooks. All client emitters gain `on_tool_call_abort`. Executor accepts `stream_observer:` kwarg. (lib/legion/llm/api/stream_assembler.rb, client_translators/*)
+- **Canonical::ToolSchema extractor** — Shared tool schema extraction regardless of input shape (ToolDefinition, Hash, legacy tool). (lex-llm canonical/tool_schema.rb)
+- **Provider contract strengthened** — `discover_offerings` requires `raise_on_unreachable:` parameter. Providers must accept canonical `ToolDefinition` objects. (lex-llm provider_contract.rb)
+
+### Removed
+- **Legacy non-stateful fallback path** — `try_fallback_or_raise`, `find_fallback_provider`, `fallback_local_providers?` deleted. One provider-switching mechanism: stateful escalation through `Router::EscalationChain`. (lib/legion/llm/inference/executor/routing.rb)
+
+### Changed
+- **Settings defaults** — `escalation.enabled: true`, `gaia.advisory_enabled: true`, `context_curation.thinking_eviction: true`, `context_curation.exchange_folding: true`, `streaming.emit_thinking_blocks: true`, `discovery.trip_circuit_on_unreachable: true`, `escalation.skip_open_circuits: true`.
+- **Provider capabilities include `:tools`** — All tool-capable providers now emit canonical `:tools` in capability metadata alongside aliases. (lex-llm-openai, lex-llm-gemini, lex-llm-vertex, lex-llm-bedrock, lex-llm-azure-foundry, lex-llm-ollama)
+
 ## [0.12.18] - 2026-06-12
 
 ### Fixed
