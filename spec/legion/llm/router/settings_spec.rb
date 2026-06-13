@@ -170,9 +170,10 @@ RSpec.describe Legion::LLM::Settings do
     it 'includes escalation settings in routing defaults' do
       routing = Legion::LLM::Settings.routing_defaults
       expect(routing[:escalation]).to be_a(Hash)
-      expect(routing[:escalation][:enabled]).to be false
+      expect(routing[:escalation][:enabled]).to be true
       expect(routing[:escalation][:max_attempts]).to eq(3)
       expect(routing[:escalation][:quality_threshold]).to eq(0)
+      expect(routing[:escalation][:skip_open_circuits]).to be true
     end
   end
 

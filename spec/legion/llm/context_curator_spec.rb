@@ -557,12 +557,12 @@ RSpec.describe Legion::LLM::Context::Curator do
       expect(Legion::Settings.dig(:llm, :context_curation, :tool_result_max_chars)).to eq(10_000)
     end
 
-    it 'thinking_eviction defaults to false' do
-      expect(Legion::Settings.dig(:llm, :context_curation, :thinking_eviction)).to be false
+    it 'thinking_eviction defaults to true' do
+      expect(Legion::Settings.dig(:llm, :context_curation, :thinking_eviction)).to be true
     end
 
-    it 'exchange_folding defaults to false' do
-      expect(Legion::Settings.dig(:llm, :context_curation, :exchange_folding)).to be false
+    it 'exchange_folding defaults to true' do
+      expect(Legion::Settings.dig(:llm, :context_curation, :exchange_folding)).to be true
     end
 
     it 'superseded_eviction defaults to true' do

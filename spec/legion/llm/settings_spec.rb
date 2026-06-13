@@ -5,8 +5,8 @@ require 'legion/llm/settings'
 
 RSpec.describe Legion::LLM::Settings do
   describe '.default' do
-    it 'disables GAIA advisory by default' do
-      expect(described_class.default.dig(:gaia, :advisory_enabled)).to be false
+    it 'enables GAIA advisory by default' do
+      expect(described_class.default.dig(:gaia, :advisory_enabled)).to be true
     end
 
     it 'defaults client tool passthrough on with an empty whitelist and shell escalation blacklist' do
