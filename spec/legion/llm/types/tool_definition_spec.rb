@@ -13,7 +13,7 @@ RSpec.describe Legion::LLM::Types::ToolDefinition do
     end
 
     it 'normalizes parameters at construction — injects type when missing' do
-      td = described_class.build(name: 'multi_agent_v1',
+      td = described_class.build(name:       'multi_agent_v1',
                                  parameters: { properties: { task: { type: 'string' } } })
       expect(td.parameters[:type]).to eq('object')
       expect(td.parameters[:properties]).to eq(task: { type: 'string' })
@@ -25,7 +25,7 @@ RSpec.describe Legion::LLM::Types::ToolDefinition do
     end
 
     it 'wraps a bare property map under type:object/properties' do
-      td = described_class.build(name: 'location_tool',
+      td = described_class.build(name:       'location_tool',
                                  parameters: { location: { type: 'string' } })
       expect(td.parameters).to eq(type: 'object', properties: { location: { type: 'string' } })
     end

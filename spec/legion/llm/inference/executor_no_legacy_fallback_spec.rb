@@ -9,6 +9,6 @@ RSpec.describe 'No legacy non-stateful fallback', :contract do
     forbidden = /try_fallback_or_raise|find_fallback_provider|fallback_local_providers\?/
     offenders = body.filter_map { |path, text| path if text.match?(forbidden) }
     expect(offenders).to be_empty,
-      "Found legacy fallback helpers in: #{offenders.join(', ')}"
+                         "Found legacy fallback helpers in: #{offenders.join(', ')}"
   end
 end

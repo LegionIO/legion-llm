@@ -12,10 +12,10 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
   let(:executor) { described_class.new(request) }
   let(:resolution) do
     Legion::LLM::Router::Resolution.new(
-      tier: :cloud,
-      provider: :bedrock,
-      instance: :primary,
-      model: 'anthropic.claude-sonnet-4',
+      tier:        :cloud,
+      provider:    :bedrock,
+      instance:    :primary,
+      model:       'anthropic.claude-sonnet-4',
       offering_id: 'bedrock-primary-sonnet'
     )
   end
@@ -65,10 +65,10 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
 
       expect(Legion::LLM::Router.health_tracker).to receive(:report).with(
         hash_including(
-          provider: :bedrock,
-          instance: :primary,
+          provider:    :bedrock,
+          instance:    :primary,
           offering_id: 'bedrock-primary-sonnet',
-          signal: :error
+          signal:      :error
         )
       )
 

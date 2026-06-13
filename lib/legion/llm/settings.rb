@@ -238,11 +238,11 @@ module Legion
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },
           escalation:           {
-            enabled:              true,
-            pipeline_enabled:     true,
-            max_attempts:         3,
-            quality_threshold:    0,
-            skip_open_circuits:   true
+            enabled:            true,
+            pipeline_enabled:   true,
+            max_attempts:       3,
+            quality_threshold:  0,
+            skip_open_circuits: true
           },
           rules:                [],
           tier_mappings:        []

@@ -10,7 +10,7 @@ RSpec.describe Legion::LLM::Capabilities do
     end
 
     it 'handles string inputs' do
-      result = described_class.normalize(['Function_Calling', 'Stream'])
+      result = described_class.normalize(%w[Function_Calling Stream])
       expect(result).to include(:function_calling, :tools, :stream, :streaming)
     end
 

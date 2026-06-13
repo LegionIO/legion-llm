@@ -195,9 +195,9 @@ module Legion
           @failover_events << {
             provider: resolution.provider,
             instance: resolution.instance,
-            model: resolution.model,
-            phase: @phase,
-            error: error.class.name
+            model:    resolution.model,
+            phase:    @phase,
+            error:    error.class.name
           }
 
           case @phase
@@ -212,7 +212,7 @@ module Legion
           end
         end
 
-        def provider_switched(from:, to:)
+        def provider_switched(from:, to:) # rubocop:disable Lint/UnusedMethodArgument
           return if @closed
 
           @model = to.model.to_s
@@ -222,11 +222,11 @@ module Legion
 
         def safe_replay_snapshot
           {
-            emitted_text: @full_text.dup,
-            thinking_emitted: @thinking_block_open || @thinking_block_closed,
+            emitted_text:               @full_text.dup,
+            thinking_emitted:           @thinking_block_open || @thinking_block_closed,
             thinking_signature_present: !@full_thinking_signature.to_s.empty?,
-            open_tool_call_count: @open_tool_calls.size,
-            phase: @phase
+            open_tool_call_count:       @open_tool_calls.size,
+            phase:                      @phase
           }
         end
 
@@ -249,9 +249,7 @@ module Legion
           @open_tool_calls.each_value do |state|
             next if @tool_call_buffering == :buffered
 
-            if @emitter.respond_to?(:on_tool_call_abort)
-              guard { @emitter.on_tool_call_abort(block_index: state[:block_index], reason: reason) }
-            end
+            guard { @emitter.on_tool_call_abort(block_index: state[:block_index], reason: reason) } if @emitter.respond_to?(:on_tool_call_abort)
           end
           @open_tool_calls.clear
         end

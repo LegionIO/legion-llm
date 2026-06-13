@@ -298,8 +298,8 @@ module Legion
               # 'tool_calls' on the final done covers it.
             end
 
-            def on_tool_call_abort(block_index:, reason:)
-              _ = block_index
+            def on_tool_call_abort(block_index:, reason:) # rubocop:disable Lint/UnusedMethodArgument
+              nil
             end
 
             def on_server_tool_result(block_index:, tool_call_id:, result_text:)

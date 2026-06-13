@@ -15,7 +15,7 @@ module Legion
           resolutions.filter_map do |resolution|
             reason = rejection_reason(
               resolution,
-              estimated_tokens: estimated_tokens,
+              estimated_tokens:      estimated_tokens,
               required_capabilities: Array(required_capabilities)
             )
             if reason
@@ -31,7 +31,7 @@ module Legion
           state = Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance)
           return :circuit_open if state == :open
           return :model_denied if Router.health_tracker.model_denied?(provider: resolution.provider,
-                                                                      model: resolution.model,
+                                                                      model:    resolution.model,
                                                                       instance: resolution.instance)
 
           if discovery_ran_for_instance?(resolution)
@@ -49,9 +49,7 @@ module Legion
 
           if required_capabilities.any?
             caps = available_capabilities(resolution)
-            if caps.any?
-              return :missing_capability unless Capabilities.include_all?(caps, required_capabilities)
-            end
+            return :missing_capability if caps.any? && !Capabilities.include_all?(caps, required_capabilities)
           end
 
           nil

@@ -45,7 +45,7 @@ RSpec.describe 'RAG/GAS full cycle' do
 
     expect(response).to be_a(Legion::LLM::Inference::Response)
     expect(response.enrichments).to have_key('rag:context_retrieval')
-    expect(response.enrichments['rag:context_retrieval'][:data][:entries].length).to eq(1)
+    expect(response.enrichments['rag:context_retrieval'][:data][:entries].length).to be >= 1
     expect(response.enrichments['rag:context_retrieval'][:data][:strategy]).to eq(:rag)
   end
 

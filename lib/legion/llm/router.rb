@@ -229,7 +229,7 @@ module Legion
         end
 
         def build_escalation_chain(provider:, model:, tier:, instance: nil, max_attempts: nil,
-                                    estimated_tokens: nil, required_capabilities: [])
+                                   estimated_tokens: nil, required_capabilities: [])
           primary = explicit_resolution(tier, provider, model, instance)
           fallbacks = build_fallback_resolutions(
             exclude_provider: provider,
@@ -239,7 +239,7 @@ module Legion
           resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
           resolutions = Availability.filter_resolutions(
             resolutions,
-            estimated_tokens: estimated_tokens,
+            estimated_tokens:      estimated_tokens,
             required_capabilities: required_capabilities
           )
           max = max_attempts || escalation_max_attempts

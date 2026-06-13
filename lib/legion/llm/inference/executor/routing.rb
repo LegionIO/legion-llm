@@ -180,13 +180,6 @@ module Legion
             []
           end
 
-          def native_tools_requested_for_routing?
-            tools = @request.respond_to?(:tools) ? @request.tools : nil
-            tools.is_a?(Hash) ? !tools.empty? : !Array(tools).empty?
-          rescue StandardError
-            false
-          end
-
           def routing_intent_present?(intent)
             intent.is_a?(Hash) && intent.any?
           end
@@ -433,7 +426,6 @@ module Legion
             @resolved_offering_metadata = @resolved_offering_metadata.merge(offering)
             @resolved_offering_id = @resolved_offering_metadata[:offering_id] if @resolved_offering_id.nil?
           end
-
         end
       end
     end

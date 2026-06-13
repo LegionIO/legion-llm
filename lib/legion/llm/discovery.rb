@@ -32,13 +32,9 @@ module Legion
           @discovery_status[key] || :unknown
         end
 
-        def record_discovery_status(provider:, instance: nil, status:)
+        def record_discovery_status(provider:, status:, instance: nil)
           key = discovery_status_key(provider, instance)
           @discovery_status[key] = status.to_sym
-        end
-
-        def cached_discovered_models
-          @discovered_models_cache
         end
 
         def run

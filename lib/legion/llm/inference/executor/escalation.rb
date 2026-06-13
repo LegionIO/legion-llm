@@ -63,7 +63,7 @@ module Legion
 
             if chain.empty?
               err = EscalationExhausted.new('No available providers after routing availability filtering')
-              log.warn "[llm][escalation] action=empty_chain reason=no_available_provider"
+              log.warn '[llm][escalation] action=empty_chain reason=no_available_provider'
               emit_error_audit(err, status: 'no_available_provider')
               raise err
             end
@@ -515,8 +515,8 @@ module Legion
 
           def notify_stream_provider_failed(error, resolution)
             @stream_observer&.provider_failed(error: error, resolution: resolution)
-          rescue StandardError => observer_error
-            handle_exception(observer_error, level: :warn, handled: true,
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
                              operation: 'llm.pipeline.stream_observer.provider_failed')
           end
 
@@ -524,8 +524,8 @@ module Legion
             return unless from
 
             @stream_observer&.provider_switched(from: from, to: to)
-          rescue StandardError => observer_error
-            handle_exception(observer_error, level: :warn, handled: true,
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
                              operation: 'llm.pipeline.stream_observer.provider_switched')
           end
 

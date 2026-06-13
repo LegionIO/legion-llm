@@ -7,9 +7,9 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
   before do
     allow(Legion::Settings).to receive(:enterprise_privacy?).and_return(true)
     allow(Legion::Settings).to receive(:[]).and_call_original
-    allow(Legion::Settings).to receive(:[]).with(:llm).and_return(
-      Legion::LLM::Settings.default
-    )
+    defaults = Legion::LLM::Settings.default
+    defaults[:routing][:escalation][:enabled] = false
+    allow(Legion::Settings).to receive(:[]).with(:llm).and_return(defaults)
     allow(Legion::Settings).to receive(:[]).with(:transport).and_return({ connected: false })
     allow(Legion::Settings).to receive(:[]).with(:extensions).and_return({})
   end
