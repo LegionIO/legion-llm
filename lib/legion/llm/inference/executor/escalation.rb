@@ -111,12 +111,17 @@ module Legion
             end
 
             start_time = Time.now
+            prev_resolution = if stream_block && tried.any?
+                                Resolution.new(tier: prev_tier, provider: prev_provider,
+                                               instance: @resolved_instance, model: @resolved_model)
+                              end
             @resolved_provider = resolution.provider
             @resolved_instance = resolution.instance
             @resolved_model = resolution.model
             @resolved_tier = resolution.tier
             @resolved_offering_id = resolution.offering_id
             @resolved_offering_metadata = resolution.offering_metadata
+            notify_stream_provider_switched(prev_resolution, resolution) if prev_resolution
             succeeded = attempt_escalation(resolution, threshold, quality_check, start_time, stream_block: stream_block)
             tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model } unless succeeded
             succeeded
@@ -151,6 +156,7 @@ module Legion
               raise
             end
 
+            notify_stream_provider_failed(e, resolution) if stream_block
             skip_all_provider_model_instances!(resolution, tried)
             record_escalation_failure(e, resolution, start_time,
                                       outcome:   :error,
@@ -505,6 +511,22 @@ module Legion
             Steps::Metering.publish_or_spool(event)
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_escalation_attempt_metering')
+          end
+
+          def notify_stream_provider_failed(error, resolution)
+            @stream_observer&.provider_failed(error: error, resolution: resolution)
+          rescue StandardError => observer_error
+            handle_exception(observer_error, level: :warn, handled: true,
+                             operation: 'llm.pipeline.stream_observer.provider_failed')
+          end
+
+          def notify_stream_provider_switched(from, to)
+            return unless from
+
+            @stream_observer&.provider_switched(from: from, to: to)
+          rescue StandardError => observer_error
+            handle_exception(observer_error, level: :warn, handled: true,
+                             operation: 'llm.pipeline.stream_observer.provider_switched')
           end
 
           def skip_open_circuits?

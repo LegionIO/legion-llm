@@ -276,6 +276,11 @@ module Legion
               emit('content_block_stop', { type: 'content_block_stop', index: block_index })
             end
 
+            def on_tool_call_abort(block_index:, reason:)
+              # No client-visible abort primitive in the Anthropic protocol.
+              # Partial tool call was buffered and never emitted, or discarded.
+            end
+
             def on_server_tool_result(block_index:, tool_call_id:, result_text:)
               emit('content_block_start', {
                      type:          'content_block_start',

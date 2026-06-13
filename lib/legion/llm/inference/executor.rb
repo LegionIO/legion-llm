@@ -139,7 +139,8 @@ module Legion
           clear_log_context
         end
 
-        def call_stream(&block)
+        def call_stream(stream_observer: nil, &block)
+          @stream_observer = stream_observer
           return call unless block
 
           set_log_context
@@ -150,11 +151,13 @@ module Legion
           execute_post_provider_steps
           build_response
         ensure
+          @stream_observer = nil
           Thread.current[:legion_llm_in_pipeline] = nil
           clear_log_context
         end
 
-        def call_responses(body:, stream: false, &)
+        def call_responses(body:, stream: false, stream_observer: nil, &)
+          @stream_observer = stream_observer
           set_log_context
           Thread.current[:legion_llm_in_pipeline] = true
           log.debug "[llm][executor] action=call_responses request_id=#{@request.id} profile=#{@profile} stream=#{stream}"
@@ -163,7 +166,7 @@ module Legion
           # already names a non-responses provider.
           unless provider_supports_responses?
             log.debug "[llm][executor] action=call_responses_fallback reason=hint_unsupported request_id=#{@request.id}"
-            return stream ? call_stream(&) : call
+            return stream ? call_stream(stream_observer: stream_observer, &) : call
           end
 
           execute_pre_provider_steps

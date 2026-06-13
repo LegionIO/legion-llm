@@ -186,6 +186,50 @@ module Legion
           mark_closed!(e)
         end
 
+        attr_reader :failover_events
+
+        def provider_failed(error:, resolution:)
+          return if @closed
+
+          @failover_events ||= []
+          @failover_events << {
+            provider: resolution.provider,
+            instance: resolution.instance,
+            model: resolution.model,
+            phase: @phase,
+            error: error.class.name
+          }
+
+          case @phase
+          when :before_first_byte
+            keep_alive! if @started
+          when :mid_text
+            close_text_block
+          when :mid_thinking
+            close_thinking_block
+          when :mid_tool_call
+            abort_open_tool_calls(reason: error.class.name)
+          end
+        end
+
+        def provider_switched(from:, to:)
+          return if @closed
+
+          @model = to.model.to_s
+          keep_alive! if @started && @phase != :finished
+          @phase = :before_first_byte if @phase == :mid_tool_call
+        end
+
+        def safe_replay_snapshot
+          {
+            emitted_text: @full_text.dup,
+            thinking_emitted: @thinking_block_open || @thinking_block_closed,
+            thinking_signature_present: !@full_thinking_signature.to_s.empty?,
+            open_tool_call_count: @open_tool_calls.size,
+            phase: @phase
+          }
+        end
+
         # Emitters call this to send a keep-alive ping while a buffered tool
         # call is being assembled (so large tool args don't make the provider
         # look dead, per G6c). The assembler invokes it from push() when it
@@ -200,6 +244,17 @@ module Legion
         end
 
         private
+
+        def abort_open_tool_calls(reason:)
+          @open_tool_calls.each_value do |state|
+            next if @tool_call_buffering == :buffered
+
+            if @emitter.respond_to?(:on_tool_call_abort)
+              guard { @emitter.on_tool_call_abort(block_index: state[:block_index], reason: reason) }
+            end
+          end
+          @open_tool_calls.clear
+        end
 
         def guard
           yield

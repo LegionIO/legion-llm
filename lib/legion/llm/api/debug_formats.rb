@@ -213,6 +213,10 @@ module Legion
             emit_event({ type: 'tool_call_close', block_index: block_index })
           end
 
+          def on_tool_call_abort(block_index:, reason:)
+            emit_event({ type: 'tool_call_abort', block_index: block_index, reason: reason })
+          end
+
           def on_server_tool_result(block_index:, tool_call_id:, result_text:)
             emit_event({
                          type:         'server_tool_result',
