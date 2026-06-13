@@ -237,10 +237,11 @@ module Legion
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },
           escalation:           {
-            enabled:           false,
-            pipeline_enabled:  true,
-            max_attempts:      3,
-            quality_threshold: 0
+            enabled:              true,
+            pipeline_enabled:     true,
+            max_attempts:         3,
+            quality_threshold:    0,
+            skip_open_circuits:   true
           },
           rules:                [],
           tier_mappings:        []
@@ -286,13 +287,13 @@ module Legion
 
       def self.rag_defaults
         {
-          enabled:                       false,
+          enabled:                       true,
           full_limit:                    5,
           compact_limit:                 3,
           min_confidence:                0.92,
           utilization_compact_threshold: 0.7,
           utilization_skip_threshold:    0.9,
-          conversation_history_enabled:  false,
+          conversation_history_enabled:  true,
           trivial_max_chars:             20,
           trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank],
           exclude_source_agents:         %w[teams-api-ingest unknown teams-entity-extractor legion-interlink]
@@ -309,7 +310,7 @@ module Legion
 
       def self.gaia_defaults
         {
-          advisory_enabled: false
+          advisory_enabled: true
         }
       end
 
@@ -382,8 +383,8 @@ module Legion
           llm_assisted:            false,
           llm_model:               nil,
           tool_result_max_chars:   10_000,
-          thinking_eviction:       false,
-          exchange_folding:        false,
+          thinking_eviction:       true,
+          exchange_folding:        true,
           superseded_eviction:     true,
           dedup_enabled:           true,
           dedup_threshold:         0.85,
@@ -473,7 +474,7 @@ module Legion
           tool_call_buffering:    :buffered,
           keep_alive_interval_ms: 5_000,
           # Emit a thinking content block for clients that render reasoning (Anthropic + Responses API).
-          emit_thinking_blocks:   false
+          emit_thinking_blocks:   true
         }
       end
 

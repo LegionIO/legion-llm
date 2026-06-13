@@ -71,8 +71,27 @@ module Legion
 
             primary_tier = @escalation_chain.primary&.tier
 
+            if chain.empty?
+              err = EscalationExhausted.new('No available providers after routing availability filtering')
+              log.warn "[llm][escalation] action=empty_chain reason=no_available_provider"
+              emit_error_audit(err, status: 'no_available_provider')
+              raise err
+            end
+
             chain.each do |resolution|
               next if tried.any? { |t| t[:provider] == resolution.provider && t[:instance] == resolution.instance && t[:model] == resolution.model }
+
+              if skip_open_circuits? && circuit_open?(resolution)
+                log.info "[llm][escalation] action=skip_open_circuit provider=#{resolution.provider} " \
+                         "instance=#{resolution.instance} model=#{resolution.model}"
+                @escalation_history << escalation_attempt_hash(
+                  resolution,
+                  outcome:     :skipped_open_circuit,
+                  failures:    ['circuit_open'],
+                  duration_ms: 0
+                )
+                next
+              end
 
               succeeded = run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier,
                                                     stream_block: stream_block)
@@ -475,6 +494,18 @@ module Legion
             Steps::Metering.publish_or_spool(event)
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_escalation_attempt_metering')
+          end
+
+          def skip_open_circuits?
+            esc = Legion::Settings[:llm].dig(:routing, :escalation) || {}
+            esc[:skip_open_circuits] != false
+          end
+
+          def circuit_open?(resolution)
+            Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance) == :open
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.escalation.circuit_check')
+            false
           end
 
           def request_payload_error?(err)
