@@ -749,9 +749,11 @@ module Legion
 
         metadata = { duration_ms: duration_ms }
         metadata[:failures] = failures if failures
-        Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+        Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
+                                     offering_id: resolution.offering_id,
                                      signal: signal, value: 1, metadata: metadata)
-        Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+        Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
+                                     offering_id: resolution.offering_id,
                                      signal: :latency, value: duration_ms, metadata: {})
       end
 

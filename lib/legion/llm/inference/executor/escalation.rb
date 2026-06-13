@@ -385,9 +385,11 @@ module Legion
           def report_provider_health(signal, duration_ms, metadata: {})
             return unless defined?(Router) && Router.routing_enabled?
 
-            Router.health_tracker.report(provider: @resolved_provider, offering_id: @resolved_offering_id,
+            Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
+                                         offering_id: @resolved_offering_id,
                                          signal: signal, value: 1, metadata: metadata.merge(duration_ms: duration_ms))
-            Router.health_tracker.report(provider: @resolved_provider, offering_id: @resolved_offering_id,
+            Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
+                                         offering_id: @resolved_offering_id,
                                          signal: :latency, value: duration_ms, metadata: {})
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.report_provider_health')
