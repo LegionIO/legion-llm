@@ -162,10 +162,11 @@ module Legion
 
       def self.discovery_defaults
         {
-          enabled:                true,
-          refresh_seconds:        60,
-          memory_floor_mb:        2048,
-          memory_overhead_factor: 1.4
+          enabled:                     true,
+          refresh_seconds:             60,
+          memory_floor_mb:             2048,
+          memory_overhead_factor:      1.4,
+          trip_circuit_on_unreachable: true
         }
       end
 

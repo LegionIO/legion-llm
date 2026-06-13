@@ -16,6 +16,7 @@ module Legion
       @embedding_fallback_chain = nil
       @discovered_models_cache = nil
       @discovered_models_at = nil
+      @discovery_status = {}
 
       EMBEDDING_TIER_ORDER = %w[local direct fleet cloud frontier].freeze
 
@@ -24,6 +25,20 @@ module Legion
 
         def can_embed?
           @can_embed == true
+        end
+
+        def discovery_status(provider:, instance: nil)
+          key = discovery_status_key(provider, instance)
+          @discovery_status[key] || :unknown
+        end
+
+        def record_discovery_status(provider:, instance: nil, status:)
+          key = discovery_status_key(provider, instance)
+          @discovery_status[key] = status.to_sym
+        end
+
+        def cached_discovered_models
+          @discovered_models_cache
         end
 
         def run
@@ -217,14 +232,20 @@ module Legion
           @embedding_fallback_chain = nil
           @discovered_models_cache = nil
           @discovered_models_at = nil
+          @discovery_status = {}
         end
 
         private
+
+        def discovery_status_key(provider, instance)
+          "#{provider}/#{instance || :default}"
+        end
 
         def report_discovery_failure(entry, error)
           provider = entry[:provider]
           instance = entry[:instance]
           connection_error = error.is_a?(Faraday::ConnectionFailed) ||
+                             error.is_a?(Faraday::TimeoutError) ||
                              error.message.match?(/connection refused|connect.*timeout|no route to host/i)
 
           if connection_error
@@ -234,13 +255,24 @@ module Legion
                                     operation: "discovery.offerings.#{provider}/#{instance}")
           end
 
+          record_discovery_status(provider: provider, instance: instance,
+                                  status: connection_error ? :unreachable : :error)
+
           return unless defined?(Router) && Router.respond_to?(:health_tracker)
 
-          Router.health_tracker.report(
-            provider: provider, instance: instance,
-            signal: :error, value: 1,
-            metadata: { reason: error.class.name, source: :discovery }
-          )
+          trip_on_unreachable = Legion::Settings[:llm].dig(:discovery, :trip_circuit_on_unreachable) != false
+          if connection_error && trip_on_unreachable
+            Router.health_tracker.trip_circuit(
+              provider: provider, instance: instance,
+              reason: "discovery_unreachable: #{error.class.name}"
+            )
+          else
+            Router.health_tracker.report(
+              provider: provider, instance: instance,
+              signal: :error, value: 1,
+              metadata: { reason: error.class.name, source: :discovery }
+            )
+          end
         end
 
         def normalize_offering(offering)

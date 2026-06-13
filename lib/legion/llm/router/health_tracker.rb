@@ -110,6 +110,19 @@ module Legion
           worst_circuit_state(instances)
         end
 
+        # Open a circuit immediately, bypassing the failure threshold.
+        # Used when a single observation is conclusive (e.g., discovery unreachable).
+        def trip_circuit(provider:, instance: nil, reason: nil)
+          key = instance ? instance_key(provider, instance) : provider.to_s
+          @mutex.synchronize do
+            ensure_circuit(key)
+            @circuits[key][:failures]  = @failure_threshold.to_f
+            @circuits[key][:state]     = :open
+            @circuits[key][:opened_at] = Time.now
+          end
+          log.warn("[llm][health_tracker] action=circuit_tripped provider=#{key} reason=#{reason}")
+        end
+
         # Record that a model is denied for a provider+instance (e.g. AccessDenied).
         # Excluded from routing until restart or explicit clear.
         def deny_model(provider:, model:, instance: nil, reason: nil)
@@ -229,13 +242,17 @@ module Legion
             key = payload[:provider]
             ensure_circuit(key)
             circuit = @circuits[key]
+            increment = [payload[:value].to_f, 1.0].max
 
             if circuit_state_for_key(key) == :half_open
               circuit[:state]     = :open
               circuit[:opened_at] = Time.now
               log.warn("[llm][health_tracker] action=circuit_state_change from=half_open to=open provider=#{key} reason=error_during_probe")
+            elsif circuit[:state] == :open
+              circuit[:failures] += increment
+              log.debug "[llm][health_tracker] action=error_recorded provider=#{key} failures=#{circuit[:failures]} state=already_open"
             else
-              circuit[:failures] += 1.0
+              circuit[:failures] += increment
               log.debug "[llm][health_tracker] action=error_recorded provider=#{key} failures=#{circuit[:failures]} threshold=#{@failure_threshold}"
               if circuit[:failures] >= @failure_threshold
                 circuit[:state]     = :open
