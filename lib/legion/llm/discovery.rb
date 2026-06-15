@@ -19,7 +19,7 @@ module Legion
       @discovery_status = {}
       @discovery_mutex = Mutex.new
 
-      DISCOVERED_MODELS_SCHEMA_VERSION = 2
+      DISCOVERED_MODELS_SCHEMA_VERSION = 3
       EMBEDDING_TIER_ORDER = %w[local direct fleet cloud frontier].freeze
 
       class << self
@@ -208,17 +208,18 @@ module Legion
               data = normalize_offering(offering)
               report_discovery_health(entry, data)
               {
-                schema_version:  DISCOVERED_MODELS_SCHEMA_VERSION,
-                model:           (data[:id] || data[:name] || data[:model]).to_s,
-                provider:        entry[:provider],
-                instance:        normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
-                tier:            data[:tier] || entry.dig(:metadata, :tier),
-                size_bytes:      data[:size_bytes] || data[:size],
-                capabilities:    Capabilities.merge(data[:capabilities], entry.dig(:metadata, :capabilities)),
-                context_length:  data[:context_length] || data[:max_model_len] || data.dig(:limits, :context_window),
-                parameter_count: data[:parameter_count] || data.dig(:metadata, :parameter_count),
-                health:          data[:health] || data['health'] || data.dig(:metadata, :health),
-                loaded:          extract_loaded_field(data)
+                schema_version:     DISCOVERED_MODELS_SCHEMA_VERSION,
+                model:              (data[:id] || data[:name] || data[:model]).to_s,
+                provider:           entry[:provider],
+                instance:           normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
+                tier:               data[:tier] || entry.dig(:metadata, :tier),
+                size_bytes:         data[:size_bytes] || data[:size],
+                capabilities:       source_aware_capabilities(data, entry),
+                capability_sources: data[:capability_sources],
+                context_length:     data[:context_length] || data[:max_model_len] || data.dig(:limits, :context_window),
+                parameter_count:    data[:parameter_count] || data.dig(:metadata, :parameter_count),
+                health:             data[:health] || data['health'] || data.dig(:metadata, :health),
+                loaded:             extract_loaded_field(data)
               }
             end
 
@@ -262,6 +263,23 @@ module Legion
           return nil unless metadata.is_a?(Hash)
 
           metadata.key?(:loaded) ? metadata[:loaded] : metadata['loaded']
+        end
+
+        # Build capabilities from offering data. When the offering carries
+        # capability_sources, its capabilities are authoritative and registry
+        # metadata must NOT blindly override them. Registry metadata is only
+        # merged when no source-tagged data is present.
+        def source_aware_capabilities(data, entry)
+          offering_caps = data[:capabilities]
+          sources = data[:capability_sources]
+
+          if sources.is_a?(Hash) && sources.any?
+            # Offering has source-tagged capabilities — authoritative.
+            Capabilities.normalize(offering_caps)
+          else
+            # Legacy path: merge offering + registry metadata.
+            Capabilities.merge(offering_caps, entry.dig(:metadata, :capabilities))
+          end
         end
 
         def report_discovery_health(entry, offering_data)
@@ -379,6 +397,7 @@ module Legion
           h = { 'name' => model_entry[:model] }
           h['tier'] = model_entry[:tier] if model_entry[:tier]
           h['capabilities'] = model_entry[:capabilities] if model_entry[:capabilities]&.any?
+          h['capability_sources'] = model_entry[:capability_sources] if model_entry[:capability_sources].is_a?(Hash) && model_entry[:capability_sources].any?
           h['context_length'] = model_entry[:context_length] if model_entry[:context_length]
           h['parameter_count'] = model_entry[:parameter_count] if model_entry[:parameter_count]
           h['size'] = model_entry[:size_bytes] if model_entry[:size_bytes]

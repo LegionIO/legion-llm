@@ -56,7 +56,7 @@ module Legion
           end
         end
 
-        ENRICHMENT_KEYS = %i[model_capabilities context_length parameter_count].freeze
+        ENRICHMENT_KEYS = %i[model_capabilities capability_sources context_length parameter_count].freeze
         SCORING_KEYS = %i[effort loaded].freeze
 
         def to_resolution

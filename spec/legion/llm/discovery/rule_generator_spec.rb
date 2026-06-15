@@ -492,6 +492,107 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
       expect(stream_rule[:then][:tier]).to eq(:direct)
     end
   end
+
+  describe 'capability_sources-aware rule generation' do
+    it 'does NOT generate streaming rules when capability_sources says streaming: false' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models: [{
+              name:               'restricted-model',
+              capabilities:       %i[completion],
+              capability_sources: {
+                streaming: { value: false, source: :default_false },
+                tools:     { value: false, source: :default_false }
+              }
+            }]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      stream_rules = rules.select { |r| r[:name].include?('restricted-model') && r[:when][:operation] == :stream }
+      expect(stream_rules).to be_empty
+    end
+
+    it 'does NOT generate tools rules when capability_sources says tools: false' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models: [{
+              name:               'restricted-model',
+              capabilities:       %i[completion],
+              capability_sources: {
+                streaming: { value: false, source: :default_false },
+                tools:     { value: false, source: :default_false }
+              }
+            }]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      tools_rules = rules.select { |r| r[:name].include?('restricted-model') && r[:name].end_with?(':tools') }
+      expect(tools_rules).to be_empty
+    end
+
+    it 'DOES include tools in generated rule capabilities when capability_sources says tools: true from :instance_override' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models: [{
+              name:               'tool-model',
+              capabilities:       %i[completion streaming tools],
+              capability_sources: {
+                tools:     { value: true, source: :instance_override },
+                streaming: { value: true, source: :instance_override }
+              }
+            }]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      chat_rule = rules.find { |r| r[:name].include?('tool-model') && r[:when][:operation] == :chat && !r[:name].end_with?(':tools') }
+      expect(chat_rule[:then][:model_capabilities]).to include(:tools)
+    end
+
+    it 'includes capability_sources in generated rule target' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models: [{
+              name:               'sourced-model',
+              capabilities:       %i[completion tools],
+              capability_sources: {
+                tools: { value: true, source: :instance_override }
+              }
+            }]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      chat_rule = rules.find { |r| r[:name].include?('sourced-model') && r[:when][:operation] == :chat && !r[:name].end_with?(':tools') }
+      expect(chat_rule[:then][:capability_sources]).to eq(tools: { value: true, source: :instance_override })
+    end
+
+    it 'does not override instance capabilities when model has no capability_sources' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models:       [{ name: 'basic-model', capabilities: [:completion] }],
+            capabilities: %i[completion streaming tools]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      chat_rule = rules.find { |r| r[:name].include?('basic-model') && r[:when][:operation] == :chat && !r[:name].end_with?(':tools') }
+      # Legacy merge: instance caps are added
+      expect(chat_rule[:then][:model_capabilities]).to include(:tools)
+    end
+  end
 end
 
 RSpec.describe Legion::LLM::Discovery do

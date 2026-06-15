@@ -182,6 +182,21 @@ RSpec.describe Legion::LLM::Router::Rule do
       expect(resolution.metadata[:fallback]).to eq(:fleet)
     end
 
+    it 'stores capability_sources in resolution metadata' do
+      r = described_class.from_hash(
+        name: :source_tagged,
+        when: { operation: :chat },
+        then: {
+          tier: :direct, provider: :vllm, instance: :apollo, model: 'gemma-4-12b-it',
+          capability_sources: { tools: { value: true, source: :instance_override } }
+        }
+      )
+
+      resolution = r.to_resolution
+
+      expect(resolution.metadata[:capability_sources]).to eq(tools: { value: true, source: :instance_override })
+    end
+
     it 'compacts metadata when fallback is nil' do
       r = described_class.from_hash(
         name:            :no_fallback_rule,

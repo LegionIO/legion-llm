@@ -134,6 +134,7 @@ module Legion
 
         def build_rule(provider, instance, model_data, capability, tier, priority, instance_capabilities: [])
           model_name = model_data.is_a?(Hash) ? (model_data[:name] || model_data['name']).to_s : model_data.to_s
+          sources = extract_capability_sources(model_data)
           target = {
             provider:           provider.to_sym,
             instance:           instance.to_sym,
@@ -141,6 +142,7 @@ module Legion
             tier:               tier,
             effort:             effort_for_tier(tier),
             model_capabilities: merged_capabilities(model_data, instance_capabilities),
+            capability_sources: sources.empty? ? nil : sources,
             context_length:     extract_field(model_data, :context_length),
             parameter_count:    extract_field(model_data, :parameter_count),
             loaded:             extract_boolean_field(model_data, :loaded)
@@ -175,13 +177,28 @@ module Legion
           end
         end
 
-        # Merge per-model capabilities with instance-level capabilities so the
-        # router's `required_capabilities` filter (e.g. `[:tools]` on every
-        # tool request) finds a match even when the per-model offerings hash
-        # only carries `[:completion]`. The provider extension's instance
-        # config is the authoritative source for tools/streaming when the
-        # offerings endpoint doesn't surface them.
+        # Merge per-model capabilities with instance-level capabilities.
+        # When the model carries source-tagged capability data (capability_sources),
+        # only capabilities with a positive (truthy) value are included. Instance
+        # capabilities are NOT merged in this case — the source-tagged data is
+        # authoritative and instance caps must not override an explicit false.
+        # When no sources are present, fall back to the legacy merge behavior.
         def merged_capabilities(model_data, instance_capabilities)
+          sources = extract_capability_sources(model_data)
+          if sources.any?
+            # Source-tagged: only include capabilities confirmed true by sources.
+            confirmed = sources.each_with_object([]) do |(cap, meta), acc|
+              acc << cap.to_sym if meta.is_a?(Hash) && meta[:value] != false
+            end
+            normalized = normalize_capabilities(confirmed)
+            # Also include per-model capabilities that are not overridden by sources
+            per_model = extract_capabilities(model_data) || []
+            source_keys = sources.keys.map { |k| k.to_s.downcase.strip.to_sym }
+            non_overridden = per_model.reject { |c| source_keys.include?(c) }
+            merged = (normalized + non_overridden).uniq
+            return merged.empty? ? nil : merged
+          end
+
           per_model = extract_capabilities(model_data) || []
           merged = (per_model + Array(instance_capabilities)).uniq
           merged.empty? ? nil : merged
@@ -198,6 +215,18 @@ module Legion
         end
 
         def supports_streaming?(model_data, instance_capabilities: [])
+          sources = extract_capability_sources(model_data)
+          if sources.any?
+            streaming_source = sources[:streaming] || sources['streaming']
+            # If source explicitly says false, no streaming rule
+            return false if streaming_source.is_a?(Hash) && streaming_source[:value] == false
+            # If source explicitly says true, emit streaming rule
+            return true if streaming_source.is_a?(Hash) && streaming_source[:value] == true
+
+            # No explicit streaming source — do NOT assume streaming
+            return false
+          end
+
           merged = merged_capabilities(model_data, instance_capabilities)
           return true if merged.nil?
 
@@ -205,6 +234,15 @@ module Legion
         end
 
         def supports_tools?(model_data, instance_capabilities: [])
+          sources = extract_capability_sources(model_data)
+          if sources.any?
+            tools_source = sources[:tools] || sources['tools']
+            return false if tools_source.is_a?(Hash) && tools_source[:value] == false
+            return true if tools_source.is_a?(Hash) && tools_source[:value] == true
+
+            return false
+          end
+
           merged = merged_capabilities(model_data, instance_capabilities)
           return false if merged.nil?
 
@@ -237,6 +275,15 @@ module Legion
           return model_data[field.to_s] if model_data.key?(field.to_s)
 
           nil
+        end
+
+        def extract_capability_sources(model_data)
+          return {} unless model_data.is_a?(Hash)
+
+          sources = model_data[:capability_sources] || model_data['capability_sources']
+          return {} unless sources.is_a?(Hash)
+
+          sources.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
         end
 
         def tier_weight(tier)

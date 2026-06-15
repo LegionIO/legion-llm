@@ -100,5 +100,85 @@ RSpec.describe Legion::LLM::Router::Availability do
     it 'returns nil when all checks pass' do
       expect(described_class.rejection_reason(bedrock_resolution, estimated_tokens: nil, required_capabilities: [:tools])).to be_nil
     end
+
+    it 'returns :missing_capability when capabilities are empty and discovery is :ok' do
+      Legion::LLM::Discovery.record_discovery_status(provider: :ollama, instance: :local, status: :ok)
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
+        [{ provider: :ollama, instance: :local, model: 'phi:3b', capabilities: [] }]
+      )
+
+      empty_caps_resolution = Legion::LLM::Router::Resolution.new(
+        tier: :local, provider: :ollama, instance: :local,
+        model: 'phi:3b', metadata: {}
+      )
+
+      reason = described_class.rejection_reason(
+        empty_caps_resolution,
+        estimated_tokens:      nil,
+        required_capabilities: [:tools]
+      )
+      expect(reason).to eq(:missing_capability)
+    end
+
+    it 'returns :capability_unconfirmed when discovery is :unknown and source data denies required cap' do
+      unconfirmed_resolution = Legion::LLM::Router::Resolution.new(
+        tier: :fleet, provider: :vllm, instance: :gpu1,
+        model: 'test-model',
+        metadata: {
+          capability_sources: {
+            tools: { value: false, source: :default_false }
+          }
+        }
+      )
+
+      reason = described_class.rejection_reason(
+        unconfirmed_resolution,
+        estimated_tokens:      nil,
+        required_capabilities: [:tools]
+      )
+      expect(reason).to eq(:capability_unconfirmed)
+    end
+
+    it 'returns :instance_unresolved when instance is nil and provider has multiple discovered instances' do
+      Legion::LLM::Discovery.record_discovery_status(provider: :ollama, instance: nil, status: :ok)
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
+        [
+          { provider: :ollama, instance: :local, model: 'llama3', capabilities: %i[completion] },
+          { provider: :ollama, instance: :remote, model: 'llama3', capabilities: %i[completion] }
+        ]
+      )
+
+      nil_instance_resolution = Legion::LLM::Router::Resolution.new(
+        tier: :local, provider: :ollama, instance: nil,
+        model: 'llama3', metadata: {}
+      )
+
+      reason = described_class.rejection_reason(
+        nil_instance_resolution,
+        estimated_tokens:      nil,
+        required_capabilities: []
+      )
+      expect(reason).to eq(:instance_unresolved)
+    end
+
+    it 'passes when capabilities confirmed from :instance_override source during cold boot' do
+      confirmed_resolution = Legion::LLM::Router::Resolution.new(
+        tier: :fleet, provider: :vllm, instance: :gpu1,
+        model: 'test-model',
+        metadata: {
+          capabilities:       %i[completion streaming tools],
+          capability_sources: {
+            tools: { value: true, source: :instance_override }
+          }
+        }
+      )
+
+      reason = described_class.rejection_reason(
+        confirmed_resolution,
+        estimated_tokens:      nil,
+        required_capabilities: [:tools]
+      )
+      expect(reason).to be_nil
+    end
   end
 end

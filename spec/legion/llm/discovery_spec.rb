@@ -144,8 +144,8 @@ RSpec.describe Legion::LLM::Discovery do
   end
 
   describe 'DISCOVERED_MODELS_SCHEMA_VERSION' do
-    it 'is set to 2' do
-      expect(described_class::DISCOVERED_MODELS_SCHEMA_VERSION).to eq(2)
+    it 'is set to 3' do
+      expect(described_class::DISCOVERED_MODELS_SCHEMA_VERSION).to eq(3)
     end
 
     it 'rejects stale discovered model entries with an older schema version' do
@@ -320,6 +320,83 @@ RSpec.describe Legion::LLM::Discovery do
 
       expect(qwen_rule[:then][:loaded]).to be(true)
       expect(llama_rule[:then][:loaded]).to be(false)
+    end
+  end
+
+  describe 'capability_sources preservation' do
+    it 'preserves capability_sources from offerings in discovered model entries' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{
+          id:                 'test-model',
+          capabilities:       %i[completion streaming tools],
+          capability_sources: {
+            streaming: { value: true, source: :instance_override },
+            tools:     { value: true, source: :instance_override }
+          }
+        }]
+      )
+
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:capability_sources]).to eq(
+        streaming: { value: true, source: :instance_override },
+        tools:     { value: true, source: :instance_override }
+      )
+    end
+
+    it 'does not blindly merge registry metadata capabilities when offering has capability_sources' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{
+          id:                 'restricted-model',
+          capabilities:       %i[completion],
+          capability_sources: {
+            tools:     { value: false, source: :default_false },
+            streaming: { value: false, source: :default_false }
+          }
+        }]
+      )
+
+      # Registry metadata claims tools capability — must NOT override the offering
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter,
+                metadata: { capabilities: %i[completion streaming tools] } }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:capabilities]).to eq(%i[completion])
+      expect(models.first[:capabilities]).not_to include(:tools)
+      expect(models.first[:capabilities]).not_to include(:streaming)
+    end
+
+    it 'accepts live offering tools: true from :instance_override source' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{
+          id:                 'tool-model',
+          capabilities:       %i[completion streaming tools],
+          capability_sources: {
+            tools: { value: true, source: :instance_override }
+          }
+        }]
+      )
+
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:capabilities]).to include(:tools)
+    end
+
+    it 'includes capability_sources in normalize_model_for_rules output' do
+      model_entry = {
+        model:              'test-model',
+        provider:           :vllm,
+        instance:           :apollo,
+        capabilities:       %i[completion tools],
+        capability_sources: { tools: { value: true, source: :instance_override } }
+      }
+      result = described_class.send(:normalize_model_for_rules, model_entry)
+      expect(result['capability_sources']).to eq(tools: { value: true, source: :instance_override })
     end
   end
 end

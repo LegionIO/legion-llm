@@ -206,6 +206,24 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
         expect(text).to include('string key content')
       end
     end
+
+    context 'with system-reminder markup embedded in user content' do
+      let(:messages) do
+        [
+          {
+            role: :user,
+            content: '<system-reminder>startup handoff tool routing instructions</system-reminder>hello who are you'
+          }
+        ]
+      end
+
+      it 'strips system-reminder blocks only from trigger matching text' do
+        text = step.send(:extract_recent_text)
+
+        expect(text).to eq(' hello who are you')
+        expect(request.messages.first[:content]).to include('<system-reminder>')
+      end
+    end
   end
 
   describe '#trigger_scan_depth' do

@@ -1,5 +1,23 @@
 # Legion LLM Changelog
 
+## [0.12.21] - 2026-06-15
+
+### Added
+
+- **Capability source metadata** — Discovery, rule generation, and availability logs now carry per-capability source tags (`:model_override`, `:instance_override`, `:provider_override`, `:model_metadata`, `:provider_catalog`, `:probe`, `:provider_envelope`, `:default_false`).
+- **Conservative router hard gates** — Empty or unconfirmed capability data no longer passes `required_capabilities` checks. Absent means false.
+- **Source-aware cold boot** — During `:unknown` discovery status, capabilities must be explicitly confirmed by settings overrides or explicit metadata to satisfy hard gates.
+- **Typed routing errors** — `RoutingTooEarly` (425) when discovery not authoritative; `RoutingFailedDependency` (424) when no candidate satisfies hard gates. Replaces generic `EscalationExhausted` for routing-policy failures.
+- **Instance resolution enforcement** — `nil` instance on a resolution returns `:instance_unresolved` rejection.
+- **Diagnostic logging** — Missing-capability rejections include `sources=thinking:default_false` detail for operator visibility.
+- **Discovery schema v3** — `DISCOVERED_MODELS_SCHEMA_VERSION` bumped to invalidate cached entries lacking `capability_sources`.
+- **Rule generator source awareness** — Generated rules only include capabilities confirmed by source-tagged offering truth; stale registry metadata no longer blindly merged.
+- **Operator contract documentation** — `docs/work/planning/2026-06-15-capability-source-operator-contract.md`.
+
+### Fixed
+
+- Discovery no longer merges stale registry metadata capabilities over live offering data when offerings carry `capability_sources`.
+
 ## [0.12.20] - 2026-06-15
 
 ### Breaking

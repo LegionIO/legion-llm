@@ -62,8 +62,8 @@ module Legion
             primary_tier = @escalation_chain.primary&.tier
 
             if chain.empty?
-              err = EscalationExhausted.new('No available providers after routing availability filtering')
-              log.warn '[llm][escalation] action=empty_chain reason=no_available_provider'
+              err = routing_empty_chain_error
+              log.warn "[llm][escalation] action=empty_chain reason=#{err.class.name}"
               emit_error_audit(err, status: 'no_available_provider')
               raise err
             end
@@ -291,6 +291,21 @@ module Legion
             log.debug "[llm][escalation] action=chain_built size=#{chain.size} max_attempts=#{chain.max_attempts} " \
                       "primary=#{@resolved_provider}:#{@resolved_model} fallbacks=#{chain.size - 1}"
             chain
+          end
+
+          # Determine the appropriate typed error when the escalation chain is empty.
+          # Uses the last rejection reasons from availability filtering to distinguish
+          # between "too early" (prerequisites not yet confirmed) and "failed dependency"
+          # (no provider can satisfy the requirements).
+          def routing_empty_chain_error
+            reasons = Router::Availability.last_rejection_reasons
+            if reasons.include?(:capability_unconfirmed)
+              RoutingTooEarly.new
+            elsif reasons.any?
+              RoutingFailedDependency.new
+            else
+              EscalationExhausted.new('No available providers after routing availability filtering')
+            end
           end
 
           def skip_same_tier!(failed_resolution, tried)

@@ -91,7 +91,11 @@ module Legion
               else
                 content.to_s
               end
-            end.join(' ')
+            end.join(' ').then { |text| strip_system_reminders(text) }
+          end
+
+          def strip_system_reminders(text)
+            text.to_s.gsub(%r{<system-reminder\b[^>]*>.*?</system-reminder>}mi, ' ')
           end
 
           def normalize_message_words(text)

@@ -329,4 +329,46 @@ RSpec.describe 'Router determinism and regression coverage' do
       expect(reason).to eq(:provider_instance_has_no_models)
     end
   end
+
+  # ─── resolve_chain returns empty when no confirmed candidate has :thinking ──
+
+  describe 'resolve_chain with unmet thinking requirement' do
+    before do
+      rules = [
+        {
+          name:     'chat-no-thinking',
+          when:     { operation: 'chat' },
+          then:     {
+            tier: 'direct', provider: 'vllm', instance: 'apollo',
+            model: 'legion-code-27b-v1',
+            model_capabilities: %i[completion streaming tools]
+          },
+          priority: 100
+        }
+      ]
+      configure_with_rules(rules)
+
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
+        [
+          {
+            provider:       :vllm,
+            instance:       :apollo,
+            model:          'legion-code-27b-v1',
+            capabilities:   %i[completion streaming tools],
+            context_length: 262_144
+          }
+        ]
+      )
+      Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :apollo, status: :ok)
+    end
+
+    it 'returns empty chain when no confirmed candidate has :thinking' do
+      chain = Legion::LLM::Router.resolve_chain(
+        intent:                 { operation: :chat, effort: :moderate, required_capabilities: [:thinking] },
+        allow_default_fallback: false
+      )
+
+      expect(chain).to be_empty
+    end
+  end
 end
