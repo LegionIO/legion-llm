@@ -80,7 +80,7 @@ module Legion
           def alternate_retry_route(model, provider)
             return {} unless defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:resolve_chain)
 
-            chain = Legion::LLM::Router.resolve_chain(intent: { capability: :structured_output }, max_escalations: max_retries + 1)
+            chain = Legion::LLM::Router.resolve_chain(intent: { operation: :structured_output }, max_escalations: max_retries + 1)
             route = Array(chain).find do |candidate|
               candidate_model = route_value(candidate, :model)
               candidate_provider = route_value(candidate, :provider)

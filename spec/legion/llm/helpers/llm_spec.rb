@@ -69,7 +69,7 @@ RSpec.describe Legion::LLM::Helper do
 
   describe '#llm_default_intent' do
     it 'returns the settings value' do
-      intent = { privacy: 'normal', capability: 'moderate', cost: 'normal' }
+      intent = { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' }
       allow(Legion::Settings).to receive(:dig).with(:llm, :routing, :default_intent).and_return(intent)
       expect(instance.llm_default_intent).to eq(intent)
     end
@@ -79,10 +79,10 @@ RSpec.describe Legion::LLM::Helper do
         include Legion::LLM::Helper
 
         def llm_default_intent
-          { privacy: :strict, capability: :basic }
+          { privacy: :strict, effort: :low }
         end
       end
-      expect(custom_class.new.llm_default_intent).to eq({ privacy: :strict, capability: :basic })
+      expect(custom_class.new.llm_default_intent).to eq({ privacy: :strict, effort: :low })
     end
   end
 
@@ -128,7 +128,7 @@ RSpec.describe Legion::LLM::Helper do
     end
 
     it 'does not apply default intent by default (routing opt-in)' do
-      intent = { privacy: 'normal', capability: 'moderate' }
+      intent = { privacy: 'normal', effort: 'moderate' }
       allow(instance).to receive(:llm_default_intent).and_return(intent)
 
       instance.llm_chat('hello')
@@ -138,7 +138,7 @@ RSpec.describe Legion::LLM::Helper do
     end
 
     it 'applies default intent when use_default_intent: true' do
-      intent = { privacy: 'normal', capability: 'moderate' }
+      intent = { privacy: 'normal', effort: 'moderate' }
       allow(instance).to receive(:llm_default_intent).and_return(intent)
 
       instance.llm_chat('hello', use_default_intent: true)
@@ -149,7 +149,7 @@ RSpec.describe Legion::LLM::Helper do
 
     it 'explicit intent: always takes precedence over use_default_intent' do
       explicit = { privacy: :strict }
-      default_intent = { privacy: 'normal', capability: 'moderate' }
+      default_intent = { privacy: 'normal', effort: 'moderate' }
       allow(instance).to receive(:llm_default_intent).and_return(default_intent)
 
       instance.llm_chat('hello', intent: explicit, use_default_intent: true)
@@ -225,13 +225,13 @@ RSpec.describe Legion::LLM::Helper do
     end
 
     it 'does not apply default intent by default' do
-      allow(instance).to receive(:llm_default_intent).and_return({ capability: :reasoning })
+      allow(instance).to receive(:llm_default_intent).and_return({ effort: :reasoning })
       instance.llm_session
       expect(Legion::LLM).to have_received(:chat).with(hash_including(intent: nil))
     end
 
     it 'applies default intent when use_default_intent: true' do
-      intent = { capability: :reasoning }
+      intent = { effort: :reasoning }
       allow(instance).to receive(:llm_default_intent).and_return(intent)
       instance.llm_session(use_default_intent: true)
       expect(Legion::LLM).to have_received(:chat).with(hash_including(intent: intent))

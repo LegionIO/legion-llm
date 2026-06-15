@@ -48,8 +48,8 @@ RSpec.describe Legion::LLM::Prompt do
       end
 
       it 'passes intent to the Router' do
-        described_class.dispatch('Hello', intent: { capability: :reasoning })
-        expect(Legion::LLM::Router).to have_received(:resolve).with(hash_including(intent: { capability: :reasoning })).at_least(:once)
+        described_class.dispatch('Hello', intent: { effort: :reasoning })
+        expect(Legion::LLM::Router).to have_received(:resolve).with(hash_including(intent: { effort: :reasoning })).at_least(:once)
       end
     end
 
@@ -104,7 +104,7 @@ RSpec.describe Legion::LLM::Prompt do
         result = described_class.dispatch('Hello', model: 'legionio')
 
         expect(Legion::LLM::Router).to have_received(:resolve_chain).with(
-          hash_including(intent: hash_including(capability: :chat), provider: nil, instance: nil, model: nil)
+          hash_including(intent: hash_including(operation: :chat), provider: nil, instance: nil, model: nil)
         )
         expect(result.routing[:provider]).to eq(:anthropic)
         expect(result.routing[:instance]).to be_nil
@@ -161,7 +161,7 @@ RSpec.describe Legion::LLM::Prompt do
       it 'accepts the full parameter set' do
         result = described_class.dispatch(
           'Hello',
-          intent:          { capability: :reasoning },
+          intent:          { effort: :reasoning },
           exclude:         {},
           schema:          { type: :object },
           tools:           [],
@@ -184,11 +184,11 @@ RSpec.describe Legion::LLM::Prompt do
       before do
         Legion::Settings[:llm][:routing] = {
           enabled:        true,
-          default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
+          default_intent: { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
           rules:          [
             {
               name:     'test-cloud-rule',
-              when:     { capability: 'moderate' },
+              when:     { effort: 'moderate' },
               then:     { tier: 'cloud', provider: 'anthropic', model: 'claude-sonnet-4-6' },
               priority: 10
             }
@@ -200,7 +200,7 @@ RSpec.describe Legion::LLM::Prompt do
       after { Legion::LLM::Router.reset! }
 
       it 'does not raise ArgumentError when calling the real Router.resolve with intent' do
-        result = described_class.dispatch('Hello', intent: { capability: :moderate })
+        result = described_class.dispatch('Hello', intent: { effort: :moderate })
         expect(result).to be_a(Legion::LLM::Inference::Response)
         expect(result.routing[:provider]).to eq(:anthropic)
         expect(result.routing[:model]).to eq('claude-sonnet-4-6')
@@ -210,7 +210,7 @@ RSpec.describe Legion::LLM::Prompt do
         # exclude: is accepted by dispatch but forwarded to Router only when Router supports it (WS-00E)
         # This verifies dispatch does not crash when exclude is passed, even if Router ignores it
         result = described_class.dispatch('Hello',
-                                          intent:  { capability: :moderate },
+                                          intent:  { effort: :moderate },
                                           exclude: { anthropic: ['claude-sonnet-4-6'] })
         expect(result).to be_a(Legion::LLM::Inference::Response)
       end

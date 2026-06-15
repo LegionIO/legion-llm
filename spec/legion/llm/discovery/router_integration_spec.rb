@@ -8,14 +8,14 @@ RSpec.describe 'Router discovery integration' do
     [
       {
         name:            'local-small',
-        when:            { capability: 'basic' },
+        when:            { operation: :chat, effort: :low },
         then:            { tier: 'local', provider: 'ollama', model: 'llama3.1:8b' },
         priority:        80,
         cost_multiplier: 0.1
       },
       {
         name:            'cloud-fallback',
-        when:            { capability: 'basic' },
+        when:            { operation: :chat, effort: :low },
         then:            { tier: 'cloud', provider: 'bedrock', model: 'claude-sonnet-4-6' },
         priority:        20,
         cost_multiplier: 1.0
@@ -35,7 +35,7 @@ RSpec.describe 'Router discovery integration' do
                                       routing:   {
                                         enabled:        true,
                                         rules:          rules,
-                                        default_intent: { privacy: 'normal', capability: 'basic' }
+                                        default_intent: { privacy: 'normal', effort: 'low', operation: 'chat' }
                                       },
                                       discovery: { enabled: true, refresh_seconds: 60, memory_floor_mb: 2048 }
                                     ))
@@ -50,7 +50,7 @@ RSpec.describe 'Router discovery integration' do
     end
 
     it 'skips the local rule and falls through to cloud' do
-      result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat, effort: :low })
       expect(result).not_to be_nil
       expect(result.rule).to eq('cloud-fallback')
       expect(result.tier).to eq(:cloud)
@@ -66,7 +66,7 @@ RSpec.describe 'Router discovery integration' do
     end
 
     it 'selects the local rule' do
-      result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat, effort: :low })
       expect(result).not_to be_nil
       expect(result.rule).to eq('local-small')
       expect(result.tier).to eq(:local)
@@ -83,7 +83,7 @@ RSpec.describe 'Router discovery integration' do
     end
 
     it 'skips the local rule (insufficient memory after floor)' do
-      result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat, effort: :low })
       expect(result).not_to be_nil
       expect(result.rule).to eq('cloud-fallback')
     end
@@ -95,7 +95,7 @@ RSpec.describe 'Router discovery integration' do
                                         routing:   {
                                           enabled:        true,
                                           rules:          rules_with_local,
-                                          default_intent: { privacy: 'normal', capability: 'basic' }
+                                          default_intent: { privacy: 'normal', effort: 'low', operation: 'chat' }
                                         },
                                         discovery: { enabled: false }
                                       ))
@@ -103,7 +103,7 @@ RSpec.describe 'Router discovery integration' do
     end
 
     it 'does not filter by discovery -- local rule passes through' do
-      result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat, effort: :low })
       expect(result).not_to be_nil
       expect(result.rule).to eq('local-small')
     end
@@ -118,7 +118,7 @@ RSpec.describe 'Router discovery integration' do
     end
 
     it 'bypasses memory check (permissive) and selects local rule' do
-      result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat, effort: :low })
       expect(result).not_to be_nil
       expect(result.rule).to eq('local-small')
     end
@@ -129,7 +129,7 @@ RSpec.describe 'Router discovery integration' do
       [
         {
           name:            'cloud-reasoning',
-          when:            { capability: 'reasoning' },
+          when:            { effort: :reasoning },
           then:            { tier: 'cloud', provider: 'bedrock', model: 'claude-sonnet-4-6' },
           priority:        50,
           cost_multiplier: 1.0
@@ -141,7 +141,7 @@ RSpec.describe 'Router discovery integration' do
 
     it 'does not check discovery for cloud rules' do
       expect(Legion::LLM::Discovery).not_to receive(:model_available?)
-      Legion::LLM::Router.resolve(intent: { capability: 'reasoning' })
+      Legion::LLM::Router.resolve(intent: { effort: :reasoning })
     end
   end
 end

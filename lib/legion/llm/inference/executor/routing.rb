@@ -190,19 +190,36 @@ module Legion
                          else
                            {}
                          end
+            if normalized.key?(:capability)
+              raise ArgumentError,
+                    'routing intent key :capability was removed; use :operation and :effort'
+            end
             required = normalize_required_capabilities(
               normalized.delete(:required_capabilities) || normalized.delete(:requires)
             )
 
-            if @request.stream == true
-              normalized[:capability] = :stream if stream_routable_capability?(normalized[:capability])
-              required << :streaming
-            end
+            normalized[:operation] = :stream if @request.stream == true
+            normalized[:operation] ||= :chat
+            normalized[:effort] ||= :moderate
 
+            required << :streaming if @request.stream == true
             required << :tools if native_tools_requested_for_routing?
             required << :vision if request_has_vision_content?
+            required << :thinking if request_requires_thinking?
             normalized[:required_capabilities] = required.uniq if required.any?
             normalized
+          end
+
+          def request_requires_thinking?
+            thinking = @request.thinking
+            return true if thinking.is_a?(Hash) && thinking.any?
+            return true if thinking.respond_to?(:to_h) && thinking.to_h.any?
+
+            extra = @request.extra || {}
+            return false unless extra.is_a?(Hash)
+
+            normalized_extra = extra.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+            !!(normalized_extra[:thinking] || normalized_extra[:reasoning] || normalized_extra[:max_thinking_tokens])
           end
 
           def request_has_vision_content?
@@ -220,10 +237,6 @@ module Legion
                   (block[:source] && (block.dig(:source, :type) || block.dig(:source, 'type')).to_s == 'base64')
               end
             end
-          end
-
-          def stream_routable_capability?(capability)
-            capability.nil? || %i[chat completion stream].include?(capability.to_s.downcase.to_sym)
           end
 
           def native_tools_requested_for_routing?

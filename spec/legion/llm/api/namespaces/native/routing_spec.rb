@@ -31,7 +31,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Routing' do
       'Rule',
       name:       'test_rule',
       priority:   10,
-      conditions: { capability: 'moderate' },
+      conditions: { effort: 'moderate' },
       target:     { tier: 'local' },
       constraint: nil
     )

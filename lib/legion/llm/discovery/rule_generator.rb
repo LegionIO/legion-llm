@@ -139,16 +139,40 @@ module Legion
             instance:           instance.to_sym,
             model:              model_name,
             tier:               tier,
+            effort:             effort_for_tier(tier),
             model_capabilities: merged_capabilities(model_data, instance_capabilities),
             context_length:     extract_field(model_data, :context_length),
-            parameter_count:    extract_field(model_data, :parameter_count)
+            parameter_count:    extract_field(model_data, :parameter_count),
+            loaded:             extract_boolean_field(model_data, :loaded)
           }.compact
           {
             name:     "auto:#{provider}/#{instance}:#{model_name}:#{capability}",
-            when:     { capability: capability },
+            when:     { operation: operation_for(capability) },
             then:     target,
             priority: priority
           }
+        end
+
+        def operation_for(capability)
+          case capability.to_sym
+          when :chat, :tools
+            :chat
+          when :stream
+            :stream
+          when :embed
+            :embed
+          else
+            capability.to_sym
+          end
+        end
+
+        def effort_for_tier(tier)
+          case tier&.to_sym
+          when :local, :direct then :low
+          when :fleet then :moderate
+          when :cloud then :high
+          when :frontier then :reasoning
+          end
         end
 
         # Merge per-model capabilities with instance-level capabilities so the
@@ -204,6 +228,15 @@ module Legion
           return nil unless model_data.is_a?(Hash)
 
           model_data[field] || model_data[field.to_s]
+        end
+
+        def extract_boolean_field(model_data, field)
+          return nil unless model_data.is_a?(Hash)
+
+          return model_data[field] if model_data.key?(field)
+          return model_data[field.to_s] if model_data.key?(field.to_s)
+
+          nil
         end
 
         def tier_weight(tier)

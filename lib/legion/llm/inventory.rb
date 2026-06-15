@@ -45,6 +45,11 @@ module Legion
       }.freeze
 
       class << self
+        def invalidate_offerings_cache!
+          log.debug '[llm][inventory] action=invalidate_offerings_cache'
+          @offerings_cache = nil
+        end
+
         def offerings(filters = {})
           log.debug "[llm][inventory] action=offerings.enter filters=#{filters.keys}"
           normalized_filters = normalize_filter_hash(filters)

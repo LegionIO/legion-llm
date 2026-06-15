@@ -53,7 +53,7 @@ RSpec.describe Legion::LLM::Inference::Request do
 
       expect(req.routing).to eq({ provider: nil, model: nil })
       expect(req.extra[:tier]).to be_nil
-      expect(req.extra[:intent]).to include(capability: :chat)
+      expect(req.extra[:intent]).to include(operation: :chat)
       expect(req.extra[:auto_route]).to be(true)
       expect(req.extra[:requested_model_alias]).to eq('legionio')
     end

@@ -214,7 +214,7 @@ module Legion
         {
           enabled:              true,
           tier_priority:        %w[local direct fleet cloud frontier],
-          default_intent:       { privacy: 'normal', capability: 'moderate', cost: 'normal' },
+          default_intent:       { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
           # Last-resort fallback model when both `default_model` and the
           # discovered provider chain are empty. Owned by routing because
           # the chain builder is the only consumer.

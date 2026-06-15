@@ -8,7 +8,7 @@ RSpec.describe Legion::LLM::Router::Rule do
   let(:rule_hash) do
     {
       name:            :privacy_local,
-      when:            { privacy: :high, capability: :chat },
+      when:            { privacy: :high, operation: :chat },
       then:            { tier: :local, provider: :ollama, model: 'llama3' },
       priority:        10,
       constraint:      'privacy_high',
@@ -24,7 +24,7 @@ RSpec.describe Legion::LLM::Router::Rule do
   describe '.from_hash' do
     it 'constructs a Rule with all fields' do
       expect(rule.name).to eq(:privacy_local)
-      expect(rule.conditions).to eq({ privacy: :high, capability: :chat })
+      expect(rule.conditions).to eq({ privacy: :high, operation: :chat })
       expect(rule.target).to eq({ tier: :local, provider: :ollama, model: 'llama3' })
       expect(rule.priority).to eq(10)
       expect(rule.constraint).to eq('privacy_high')
@@ -70,14 +70,14 @@ RSpec.describe Legion::LLM::Router::Rule do
   describe '#matches_intent?' do
     context 'when all conditions are satisfied' do
       it 'returns true' do
-        intent = { privacy: :high, capability: :chat }
+        intent = { privacy: :high, operation: :chat }
         expect(rule.matches_intent?(intent)).to be true
       end
     end
 
     context 'with string or symbol values' do
       it 'matches when intent uses strings and conditions use symbols' do
-        intent = { privacy: 'high', capability: 'chat' }
+        intent = { privacy: 'high', operation: 'chat' }
         expect(rule.matches_intent?(intent)).to be true
       end
 
@@ -100,7 +100,7 @@ RSpec.describe Legion::LLM::Router::Rule do
 
     context 'when a condition value does not match' do
       it 'returns false' do
-        intent = { privacy: :low, capability: :chat }
+        intent = { privacy: :low, operation: :chat }
         expect(rule.matches_intent?(intent)).to be false
       end
     end
@@ -112,7 +112,7 @@ RSpec.describe Legion::LLM::Router::Rule do
           when: {},
           then: { tier: :cloud, provider: :anthropic, model: 'claude-sonnet-4-6' }
         )
-        expect(r.matches_intent?({ privacy: :high, capability: :anything })).to be true
+        expect(r.matches_intent?({ privacy: :high, operation: :anything })).to be true
       end
 
       it 'returns true even for an empty intent' do
@@ -209,7 +209,7 @@ RSpec.describe Legion::LLM::Router::Rule do
     it 'passes compress_level from target to resolution' do
       r = described_class.from_hash(
         name: :compressed_cloud,
-        when: { capability: :chat },
+        when: { operation: :chat },
         then: { tier: :cloud, provider: :bedrock, model: 'claude-sonnet-4-6', compress_level: 2 }
       )
       resolution = r.to_resolution

@@ -11,6 +11,7 @@ module Legion
       extend ::Legion::Cache::Helper
 
       DEFAULT_TTL = 300
+      RESPONSE_CACHE_SCHEMA_VERSION = 2
 
       module_function
 
@@ -19,12 +20,13 @@ module Legion
       # Generates a deterministic SHA256 cache key from request parameters.
       def key(model:, provider:, messages:, temperature: nil, tools: nil, schema: nil)
         payload = Legion::JSON.dump({
-                                      model:       model.to_s,
-                                      provider:    provider.to_s,
-                                      messages:    messages,
-                                      temperature: temperature,
-                                      tools:       tools,
-                                      schema:      schema
+                                      schema_version: RESPONSE_CACHE_SCHEMA_VERSION,
+                                      model:          model.to_s,
+                                      provider:       provider.to_s,
+                                      messages:       messages,
+                                      temperature:    temperature,
+                                      tools:          tools,
+                                      schema:         schema
                                     })
         Digest::SHA256.hexdigest(payload)
       end

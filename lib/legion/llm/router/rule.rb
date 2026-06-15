@@ -57,10 +57,11 @@ module Legion
         end
 
         ENRICHMENT_KEYS = %i[model_capabilities context_length parameter_count].freeze
+        SCORING_KEYS = %i[effort loaded].freeze
 
         def to_resolution
           enrichment = @target.slice(*ENRICHMENT_KEYS)
-          resolution_target = @target.except(:compress_level, :offering_metadata, *ENRICHMENT_KEYS)
+          resolution_target = @target.except(:compress_level, :offering_metadata, *ENRICHMENT_KEYS, *SCORING_KEYS)
           Resolution.new(
             **resolution_target,
             rule:              @name,

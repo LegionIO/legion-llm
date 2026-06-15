@@ -12,15 +12,23 @@ module Legion
         module_function
 
         def filter_resolutions(resolutions, estimated_tokens: nil, required_capabilities: [])
+          req_caps = Array(required_capabilities)
           resolutions.filter_map do |resolution|
             reason = rejection_reason(
               resolution,
               estimated_tokens:      estimated_tokens,
-              required_capabilities: Array(required_capabilities)
+              required_capabilities: req_caps
             )
             if reason
+              detail = if reason == :missing_capability
+                         caps = available_capabilities(resolution)
+                         " required=#{req_caps} available=#{caps}"
+                       else
+                         ''
+                       end
               log.info "[llm][router] action=resolution_unavailable provider=#{resolution.provider} " \
-                       "instance=#{resolution.instance || 'default'} model=#{resolution.model} reason=#{reason}"
+                       "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
+                       "reason=#{reason}#{detail}"
               next
             end
             resolution
@@ -34,17 +42,24 @@ module Legion
                                                                       model:    resolution.model,
                                                                       instance: resolution.instance)
 
-          if discovery_ran_for_instance?(resolution)
+          case discovery_status_for(resolution)
+          when :unknown
+            # Cold boot: no live catalog contradiction established yet.
+          when :empty
+            return :provider_instance_has_no_models
+          when :ok
             models = instance_models(resolution)
             return :provider_instance_has_no_models if models.empty?
 
             offering = find_offering(resolution, models)
             return :model_not_offered if offering.nil?
 
-            if offering && estimated_tokens&.positive?
+            if estimated_tokens&.positive?
               ctx = (offering[:context_length] || 0).to_i
               return :context_too_small if ctx.positive? && estimated_tokens > (ctx * context_headroom).to_i
             end
+          when :unreachable, :error
+            return :discovery_unavailable
           end
 
           if required_capabilities.any?
@@ -74,19 +89,22 @@ module Legion
           end
         end
 
-        def discovery_ran_for_instance?(resolution)
-          return false unless defined?(Discovery)
+        def discovery_status_for(resolution)
+          return :unknown unless defined?(Discovery)
 
           discovery_settings = Legion::Settings[:llm][:discovery] || {}
-          return false if discovery_settings[:enabled] == false
+          return :unknown if discovery_settings[:enabled] == false
 
-          Discovery.discovery_status(provider: resolution.provider, instance: resolution.instance) != :unknown
+          Discovery.discovery_status(provider: resolution.provider, instance: resolution.instance)
         end
 
         def available_capabilities(resolution)
           offering = find_offering(resolution)
+          return Capabilities.merge(offering[:capabilities], offering['capabilities']) if discovery_status_for(resolution) == :ok && offering
+
           Capabilities.merge(
             offering&.dig(:capabilities),
+            offering&.dig('capabilities'),
             resolution.metadata[:model_capabilities],
             resolution.metadata['model_capabilities'],
             resolution.metadata[:capabilities],

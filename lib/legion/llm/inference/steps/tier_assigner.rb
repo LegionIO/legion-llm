@@ -14,9 +14,9 @@ module Legion
           DEFAULT_MAPPINGS = [
             { pattern: 'gaia:tick:*', tier: :local, intent: { cost: :minimize } },
             { pattern: 'gaia:dream:*', tier: :local, intent: { cost: :minimize } },
-            { pattern: 'system:guardrails', tier: :local, intent: { cost: :minimize, capability: :basic } },
-            { pattern: 'system:reflection', tier: :local, intent: { cost: :minimize, capability: :moderate } },
-            { pattern: 'user:*', tier: :frontier, intent: { capability: :reasoning } }
+            { pattern: 'system:guardrails', tier: :local, intent: { cost: :minimize, effort: :low } },
+            { pattern: 'system:reflection', tier: :local, intent: { cost: :minimize, effort: :moderate } },
+            { pattern: 'user:*', tier: :frontier, intent: { effort: :reasoning } }
           ].freeze
 
           def assign(caller:, classification:, priority:, gaia_hint:, existing_tier:, existing_intent: nil) # rubocop:disable Lint/UnusedMethodArgument
@@ -47,7 +47,7 @@ module Legion
             case priority&.to_sym
             when :critical, :high
               log.info("[llm][routing] tier_assigned source=priority tier=frontier priority=#{priority}")
-              { tier: :frontier, intent: { capability: :reasoning }, source: :priority }
+              { tier: :frontier, intent: { effort: :reasoning }, source: :priority }
             when :low, :background
               log.info("[llm][routing] tier_assigned source=priority tier=local priority=#{priority}")
               { tier: :local, intent: { cost: :minimize }, source: :priority }

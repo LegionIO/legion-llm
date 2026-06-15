@@ -390,7 +390,7 @@ confidence: 0.9 }],
       privacy_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'patient diagnosis is hypertension' }],
         routing:  { provider: nil, model: nil },
-        extra:    { tier: :cloud, intent: { capability: :reasoning } }
+        extra:    { tier: :cloud, intent: { effort: :reasoning } }
       )
       executor = described_class.new(privacy_request)
       executor.instance_variable_set(
@@ -579,7 +579,7 @@ confidence: 0.9 }],
       chain = Legion::LLM::Router::EscalationChain.new(resolutions: [fleet_resolution, direct_resolution], max_attempts: 2)
       escalation_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
-        extra:    { intent: { capability: :chat } }
+        extra:    { intent: { operation: :chat } }
       )
 
       Legion::LLM::Router.health_tracker.reset_all
@@ -1031,7 +1031,7 @@ confidence: 0.9 }],
       executor.send(:step_routing)
 
       expect(Legion::LLM::Router).to have_received(:resolve_chain).with(
-        hash_including(intent: hash_including(capability: :chat), provider: nil, instance: nil, model: nil)
+        hash_including(intent: hash_including(operation: :chat), provider: nil, instance: nil, model: nil)
       )
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
       expect(executor.instance_variable_get(:@resolved_instance)).to be_nil

@@ -71,9 +71,14 @@ RSpec.describe Legion::LLM::Settings do
         expect(intent[:privacy]).to eq('normal')
       end
 
-      it 'has a capability dimension' do
-        expect(intent).to have_key(:capability)
-        expect(intent[:capability]).to eq('moderate')
+      it 'has an effort dimension' do
+        expect(intent).to have_key(:effort)
+        expect(intent[:effort]).to eq('moderate')
+      end
+
+      it 'has an operation dimension' do
+        expect(intent).to have_key(:operation)
+        expect(intent[:operation]).to eq('chat')
       end
 
       it 'has a cost dimension' do

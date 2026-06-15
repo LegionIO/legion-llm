@@ -17,7 +17,9 @@ module Legion
       @discovered_models_cache = nil
       @discovered_models_at = nil
       @discovery_status = {}
+      @discovery_mutex = Mutex.new
 
+      DISCOVERED_MODELS_SCHEMA_VERSION = 2
       EMBEDDING_TIER_ORDER = %w[local direct fleet cloud frontier].freeze
 
       class << self
@@ -29,12 +31,12 @@ module Legion
 
         def discovery_status(provider:, instance: nil)
           key = discovery_status_key(provider, instance)
-          @discovery_status[key] || :unknown
+          @discovery_mutex.synchronize { @discovery_status[key] || :unknown }
         end
 
         def record_discovery_status(provider:, status:, instance: nil)
           key = discovery_status_key(provider, instance)
-          @discovery_status[key] = status.to_sym
+          @discovery_mutex.synchronize { @discovery_status[key] = status.to_sym }
         end
 
         def run
@@ -132,6 +134,8 @@ module Legion
         end
 
         def cached_discovered_models
+          return [] if discovered_models_cache_schema_stale?
+
           @discovered_models_cache || []
         end
 
@@ -200,19 +204,30 @@ module Legion
           return [] unless adapter.respond_to?(:offerings)
 
           begin
-            Array(adapter.offerings(live: true)).map do |offering|
+            models = Array(adapter.offerings(live: true)).map do |offering|
               data = normalize_offering(offering)
+              report_discovery_health(entry, data)
               {
+                schema_version:  DISCOVERED_MODELS_SCHEMA_VERSION,
                 model:           (data[:id] || data[:name] || data[:model]).to_s,
                 provider:        entry[:provider],
                 instance:        normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
                 tier:            data[:tier] || entry.dig(:metadata, :tier),
                 size_bytes:      data[:size_bytes] || data[:size],
-                capabilities:    data[:capabilities] || [],
+                capabilities:    Capabilities.merge(data[:capabilities], entry.dig(:metadata, :capabilities)),
                 context_length:  data[:context_length] || data[:max_model_len] || data.dig(:limits, :context_window),
-                parameter_count: data[:parameter_count] || data.dig(:metadata, :parameter_count)
+                parameter_count: data[:parameter_count] || data.dig(:metadata, :parameter_count),
+                health:          data[:health] || data['health'] || data.dig(:metadata, :health),
+                loaded:          extract_loaded_field(data)
               }
             end
+
+            record_discovery_status(
+              provider: entry[:provider],
+              instance: entry[:instance],
+              status:   models.empty? ? :empty : :ok
+            )
+            models
           rescue StandardError => e
             report_discovery_failure(entry, e)
             []
@@ -221,20 +236,60 @@ module Legion
 
         def reset!
           log.debug '[llm][discovery] reset'
-          @can_embed = nil
-          @embedding_provider = nil
-          @embedding_model = nil
-          @embedding_instance = nil
-          @embedding_fallback_chain = nil
-          @discovered_models_cache = nil
-          @discovered_models_at = nil
-          @discovery_status = {}
+          @discovery_mutex.synchronize do
+            @can_embed = nil
+            @embedding_provider = nil
+            @embedding_model = nil
+            @embedding_instance = nil
+            @embedding_fallback_chain = nil
+            @discovered_models_cache = nil
+            @discovered_models_at = nil
+            @discovery_status = {}
+          end
         end
 
         private
 
         def discovery_status_key(provider, instance)
           "#{provider}/#{instance || :default}"
+        end
+
+        def extract_loaded_field(data)
+          return data[:loaded] if data.key?(:loaded)
+          return data['loaded'] if data.key?('loaded')
+
+          metadata = data[:metadata] || data['metadata']
+          return nil unless metadata.is_a?(Hash)
+
+          metadata.key?(:loaded) ? metadata[:loaded] : metadata['loaded']
+        end
+
+        def report_discovery_health(entry, offering_data)
+          return unless defined?(Router) && Router.respond_to?(:health_tracker)
+
+          provider = entry[:provider]
+          instance = normalize_instance_id(
+            offering_data[:instance_id] || offering_data[:provider_instance] || entry[:instance]
+          )
+          health = offering_data[:health] || offering_data['health'] || {}
+          health = {} unless health.is_a?(Hash)
+          status = (health[:status] || health['status'] || health[:circuit_state] || health['circuit_state']).to_s
+          latency_ms = health[:latency_ms] || health['latency_ms']
+
+          if %w[healthy ready closed available].include?(status) || health[:ready] == true || health['ready'] == true
+            Router.health_tracker.report(provider: provider, instance: instance, signal: :success, value: 1,
+                                         metadata: { source: :discovery })
+          elsif %w[unhealthy down unavailable open tripped].include?(status)
+            Router.health_tracker.report(provider: provider, instance: instance, signal: :error, value: 1,
+                                         metadata: { source: :discovery, status: status })
+          end
+
+          return unless latency_ms.to_i.positive?
+
+          Router.health_tracker.report(provider: provider, instance: instance, signal: :latency,
+                                       value: latency_ms.to_i, metadata: { source: :discovery })
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'discovery.report_health')
         end
 
         def report_discovery_failure(entry, error)
@@ -294,9 +349,16 @@ module Legion
 
         def discovered_models_stale?
           return true if @discovered_models_at.nil?
+          return true if discovered_models_cache_schema_stale?
 
           ttl = discovery_refresh_seconds
           Time.now - @discovered_models_at > ttl
+        end
+
+        def discovered_models_cache_schema_stale?
+          Array(@discovered_models_cache).any? do |entry|
+            entry[:schema_version] != DISCOVERED_MODELS_SCHEMA_VERSION
+          end
         end
 
         def discovery_refresh_seconds

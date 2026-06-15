@@ -7,19 +7,19 @@ RSpec.describe Legion::LLM::Router do
     [
       {
         name:     'cloud-anthropic',
-        when:     { capability: 'reasoning' },
+        when:     { effort: :reasoning },
         then:     { tier: 'cloud', provider: 'anthropic', model: 'claude-opus-4-6' },
         priority: 10
       },
       {
         name:     'cloud-openai',
-        when:     { capability: 'reasoning' },
+        when:     { effort: :reasoning },
         then:     { tier: 'cloud', provider: 'openai', model: 'gpt-4o' },
         priority: 5
       },
       {
         name:     'local-ollama',
-        when:     { capability: 'moderate' },
+        when:     { effort: :moderate },
         then:     { tier: 'local', provider: 'ollama', model: 'llama3' },
         priority: 8
       }
@@ -31,7 +31,7 @@ RSpec.describe Legion::LLM::Router do
                                       routing: {
                                         enabled:        true,
                                         rules:          rules,
-                                        default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' }
+                                        default_intent: { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' }
                                       }
                                     ))
     described_class.populate_auto_rules({})
@@ -49,13 +49,13 @@ RSpec.describe Legion::LLM::Router do
   describe '.resolve with exclude:' do
     it 'accepts exclude: parameter without error' do
       expect do
-        described_class.resolve(intent: { capability: :reasoning }, exclude: {})
+        described_class.resolve(intent: { effort: :reasoning }, exclude: {})
       end.not_to raise_error
     end
 
     it 'excludes a specific provider when exclude: { provider: } is given' do
       resolution = described_class.resolve(
-        intent:  { capability: :reasoning },
+        intent:  { effort: :reasoning },
         exclude: { provider: :anthropic }
       )
       expect(resolution).not_to be_nil
@@ -65,7 +65,7 @@ RSpec.describe Legion::LLM::Router do
 
     it 'excludes a specific model when exclude: { model: } is given' do
       resolution = described_class.resolve(
-        intent:  { capability: :reasoning },
+        intent:  { effort: :reasoning },
         exclude: { model: 'claude-opus-4-6' }
       )
       expect(resolution).not_to be_nil
@@ -74,7 +74,7 @@ RSpec.describe Legion::LLM::Router do
 
     it 'falls back to arbitrage when all candidates are excluded' do
       resolution = described_class.resolve(
-        intent:  { capability: :reasoning },
+        intent:  { effort: :reasoning },
         exclude: { provider: :anthropic, model: 'gpt-4o' }
       )
       # New behavior: router falls back to explicit resolution/arbitrage
@@ -84,7 +84,7 @@ RSpec.describe Legion::LLM::Router do
 
     it 'does not exclude when exclude: is empty {}' do
       resolution = described_class.resolve(
-        intent:  { capability: :reasoning },
+        intent:  { effort: :reasoning },
         exclude: {}
       )
       expect(resolution).not_to be_nil
@@ -94,13 +94,13 @@ RSpec.describe Legion::LLM::Router do
   describe '.resolve_chain with exclude:' do
     it 'accepts exclude: parameter' do
       expect do
-        described_class.resolve_chain(intent: { capability: :reasoning }, exclude: {})
+        described_class.resolve_chain(intent: { effort: :reasoning }, exclude: {})
       end.not_to raise_error
     end
 
     it 'excludes specified provider from the chain' do
       chain = described_class.resolve_chain(
-        intent:  { capability: :reasoning },
+        intent:  { effort: :reasoning },
         exclude: { provider: :anthropic }
       )
       providers = chain.to_a.map(&:provider)

@@ -73,4 +73,21 @@ RSpec.describe Legion::LLM::Cache do
       expect { described_class.set('ttl_key', { x: 1 }, ttl: 60) }.not_to raise_error
     end
   end
+
+  describe 'RESPONSE_CACHE_SCHEMA_VERSION' do
+    it 'is set to 2' do
+      expect(described_class::RESPONSE_CACHE_SCHEMA_VERSION).to eq(2)
+    end
+
+    it 'includes the schema version in deterministic keys' do
+      key_v2 = described_class.key(model: 'claude', provider: 'anthropic',
+                                   messages: [{ role: :user, content: 'hi' }])
+
+      stub_const('Legion::LLM::Cache::RESPONSE_CACHE_SCHEMA_VERSION', 3)
+
+      key_v3 = described_class.key(model: 'claude', provider: 'anthropic',
+                                   messages: [{ role: :user, content: 'hi' }])
+      expect(key_v3).not_to eq(key_v2)
+    end
+  end
 end

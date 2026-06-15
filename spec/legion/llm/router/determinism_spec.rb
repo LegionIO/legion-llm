@@ -1,0 +1,332 @@
+# frozen_string_literal: true
+
+require 'spec_helper'
+require 'legion/llm/router'
+require 'legion/llm/router/availability'
+
+RSpec.describe 'Router determinism and regression coverage' do
+  before do
+    Legion::LLM::Router.reset!
+    allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
+    allow(Legion::LLM::Discovery).to receive(:model_available?).and_return(true)
+    allow(Legion::LLM::Discovery).to receive(:model_size).and_return(nil)
+    allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
+  end
+
+  def configure_with_rules(rules, default_intent: { privacy: 'normal', effort: 'moderate', operation: 'chat' })
+    Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                      routing: {
+                                        enabled:        true,
+                                        rules:          rules,
+                                        default_intent: default_intent
+                                      }
+                                    ))
+    Legion::LLM::Router.populate_auto_rules({})
+  end
+
+  # ─── Regression: stale default_intent[:capability] raises ────────────────────
+
+  describe 'stale settings with capability: key' do
+    it 'raises ArgumentError from Router.resolve when default_intent contains capability:' do
+      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                        routing: {
+                                          enabled:        true,
+                                          rules:          [],
+                                          default_intent: { privacy: 'normal', capability: 'moderate' }
+                                        }
+                                      ))
+      Legion::LLM::Router.populate_auto_rules({})
+
+      expect do
+        Legion::LLM::Router.resolve(intent: { effort: :moderate })
+      end.to raise_error(ArgumentError, /capability.*removed/i)
+    end
+
+    it 'raises ArgumentError from Router.resolve_chain when default_intent contains capability:' do
+      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                        routing: {
+                                          enabled:        true,
+                                          rules:          [],
+                                          default_intent: { privacy: 'normal', capability: 'moderate' }
+                                        }
+                                      ))
+      Legion::LLM::Router.populate_auto_rules({})
+
+      expect do
+        Legion::LLM::Router.resolve_chain(intent: { effort: :moderate })
+      end.to raise_error(ArgumentError, /capability.*removed/i)
+    end
+  end
+
+  # ─── Regression: last-resort fallback is filtered through live availability ──
+
+  describe 'last-resort fallback availability filtering' do
+    before do
+      configure_with_rules([])
+      Legion::Settings[:llm][:default_provider] = :vllm
+      Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
+
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
+        [
+          {
+            provider:       :vllm,
+            instance:       :default,
+            model:          'legion-code-27b-v1',
+            capabilities:   %i[completion streaming tools thinking],
+            context_length: 262_144
+          }
+        ]
+      )
+      Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: nil, status: :ok)
+    end
+
+    it 'rejects stale last-resort model when live catalog has contradicting data' do
+      chain = Legion::LLM::Router.resolve_chain(
+        intent:                 { operation: :chat, effort: :moderate },
+        allow_default_fallback: true
+      )
+
+      models = chain.map(&:model)
+      expect(models).not_to include('qwen3.6-27b')
+    end
+  end
+
+  # ─── Deterministic routing fingerprint ───────────────────────────────────────
+
+  describe 'deterministic routing' do
+    before do
+      rules = [
+        {
+          name:     'chat-tools-vllm',
+          when:     { operation: 'chat' },
+          then:     {
+            tier: 'direct', provider: 'vllm', instance: 'apollo',
+            model: 'legion-code-27b-v1', effort: 'moderate',
+            model_capabilities: %i[completion streaming tools thinking]
+          },
+          priority: 100
+        }
+      ]
+      configure_with_rules(rules)
+    end
+
+    it 'resolves identically across repeated calls with the same intent' do
+      intent = {
+        privacy:               :normal,
+        effort:                :moderate,
+        operation:             :chat,
+        cost:                  :normal,
+        required_capabilities: [:tools]
+      }
+
+      fingerprints = 3.times.map do
+        resolution = Legion::LLM::Router.resolve(intent: intent)
+        [resolution.provider, resolution.instance, resolution.model]
+      end
+
+      expect(fingerprints.uniq.size).to eq(1)
+    end
+  end
+
+  # ─── Hard capability filtering: tools, streaming, thinking ───────────────────
+
+  describe 'hard capability filtering' do
+    before do
+      rules = [
+        {
+          name:     'chat-no-tools',
+          when:     { operation: 'chat' },
+          then:     {
+            tier: 'local', provider: 'ollama', model: 'tiny-model',
+            model_capabilities: %i[completion streaming]
+          },
+          priority: 200
+        },
+        {
+          name:     'chat-with-tools',
+          when:     { operation: 'chat' },
+          then:     {
+            tier: 'direct', provider: 'vllm', instance: 'apollo',
+            model: 'legion-code-27b-v1',
+            model_capabilities: %i[completion streaming tools]
+          },
+          priority: 100
+        },
+        {
+          name:     'stream-with-tools',
+          when:     { operation: 'stream' },
+          then:     {
+            tier: 'direct', provider: 'vllm', instance: 'apollo',
+            model: 'legion-code-27b-v1',
+            model_capabilities: %i[completion streaming tools]
+          },
+          priority: 100
+        },
+        {
+          name:     'chat-with-thinking',
+          when:     { operation: 'chat' },
+          then:     {
+            tier: 'cloud', provider: 'bedrock', model: 'claude-sonnet-4-6',
+            model_capabilities: %i[completion streaming tools thinking]
+          },
+          priority: 50
+        }
+      ]
+      configure_with_rules(rules)
+    end
+
+    it 'selects tool-capable route when tools are required, not the higher-priority non-tool route' do
+      result = Legion::LLM::Router.resolve(
+        intent: { operation: :chat, effort: :moderate, required_capabilities: [:tools] }
+      )
+
+      expect(result).not_to be_nil
+      expect(result.model).to eq('legion-code-27b-v1')
+      expect(result.provider).to eq(:vllm)
+    end
+
+    it 'selects streaming-capable route when streaming is required' do
+      result = Legion::LLM::Router.resolve(
+        intent: { operation: :stream, effort: :moderate, required_capabilities: [:streaming] }
+      )
+
+      expect(result).not_to be_nil
+      expect(result.metadata[:model_capabilities]).to include(:streaming)
+    end
+
+    it 'selects thinking-capable route when thinking is required' do
+      result = Legion::LLM::Router.resolve(
+        intent: { operation: :chat, effort: :moderate, required_capabilities: [:thinking] }
+      )
+
+      expect(result).not_to be_nil
+      expect(result.metadata[:model_capabilities]).to include(:thinking)
+    end
+  end
+
+  # ─── Stale vLLM model rejected by live catalog ──────────────────────────────
+
+  describe 'live catalog enforcement' do
+    before do
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
+        [
+          {
+            provider:       :vllm,
+            instance:       :apollo,
+            model:          'legion-code-27b-v1',
+            capabilities:   %i[completion streaming tools thinking],
+            context_length: 262_144
+          }
+        ]
+      )
+      Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :apollo, status: :ok)
+    end
+
+    it 'rejects a stale model not present in live offerings' do
+      resolution = Legion::LLM::Router::Resolution.new(
+        tier:     :direct,
+        provider: :vllm,
+        instance: :apollo,
+        model:    'qwen3.6-27b',
+        metadata: { model_capabilities: %i[completion streaming tools] }
+      )
+
+      reason = Legion::LLM::Router::Availability.rejection_reason(
+        resolution,
+        estimated_tokens:      nil,
+        required_capabilities: [:tools]
+      )
+
+      expect(reason).to eq(:model_not_offered)
+    end
+
+    it 'accepts a model present in live offerings' do
+      resolution = Legion::LLM::Router::Resolution.new(
+        tier:     :direct,
+        provider: :vllm,
+        instance: :apollo,
+        model:    'legion-code-27b-v1',
+        metadata: {}
+      )
+
+      reason = Legion::LLM::Router::Availability.rejection_reason(
+        resolution,
+        estimated_tokens:      nil,
+        required_capabilities: [:tools]
+      )
+
+      expect(reason).to be_nil
+    end
+
+    it 'rejects a live model missing required capabilities' do
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
+        [
+          {
+            provider:       :vllm,
+            instance:       :apollo,
+            model:          'legion-code-27b-v1',
+            capabilities:   %i[completion streaming],
+            context_length: 262_144
+          }
+        ]
+      )
+
+      resolution = Legion::LLM::Router::Resolution.new(
+        tier:     :direct,
+        provider: :vllm,
+        instance: :apollo,
+        model:    'legion-code-27b-v1',
+        metadata: {}
+      )
+
+      reason = Legion::LLM::Router::Availability.rejection_reason(
+        resolution,
+        estimated_tokens:      nil,
+        required_capabilities: [:tools]
+      )
+
+      expect(reason).to eq(:missing_capability)
+    end
+
+    it 'is permissive when discovery status is :unknown (cold boot)' do
+      Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :apollo, status: :unknown)
+
+      resolution = Legion::LLM::Router::Resolution.new(
+        tier:     :direct,
+        provider: :vllm,
+        instance: :apollo,
+        model:    'any-model-whatever',
+        metadata: {}
+      )
+
+      reason = Legion::LLM::Router::Availability.rejection_reason(
+        resolution,
+        estimated_tokens:      nil,
+        required_capabilities: []
+      )
+
+      expect(reason).to be_nil
+    end
+
+    it 'rejects when discovery status is :empty' do
+      Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :apollo, status: :empty)
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
+
+      resolution = Legion::LLM::Router::Resolution.new(
+        tier:     :direct,
+        provider: :vllm,
+        instance: :apollo,
+        model:    'legion-code-27b-v1',
+        metadata: {}
+      )
+
+      reason = Legion::LLM::Router::Availability.rejection_reason(
+        resolution,
+        estimated_tokens:      nil,
+        required_capabilities: []
+      )
+
+      expect(reason).to eq(:provider_instance_has_no_models)
+    end
+  end
+end

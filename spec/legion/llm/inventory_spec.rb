@@ -251,4 +251,14 @@ RSpec.describe Legion::LLM::Inventory do
 
     expect(described_class.offerings(provider: 'bedrock')).to be_empty
   end
+
+  describe '.invalidate_offerings_cache!' do
+    it 'responds to invalidate_offerings_cache!' do
+      expect(described_class).to respond_to(:invalidate_offerings_cache!)
+    end
+
+    it 'does not raise when called' do
+      expect { described_class.invalidate_offerings_cache! }.not_to raise_error
+    end
+  end
 end

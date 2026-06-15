@@ -126,7 +126,11 @@ module Legion
         def self.default_auto_routing_intent
           intent = Legion::Settings[:llm][:routing][:default_intent]
           intent = intent.is_a?(Hash) ? normalize_hash(intent) : {}
-          intent.merge(capability: :chat)
+          if intent.key?(:capability)
+            raise ArgumentError,
+                  'routing settings default_intent contains :capability which was removed; use :operation and :effort'
+          end
+          intent.merge(operation: :chat, effort: :moderate)
         end
 
         def self.normalize_auto_routing(routing, extra)

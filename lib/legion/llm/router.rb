@@ -30,6 +30,15 @@ module Legion
         stream_chat:      :streaming
       }.freeze
 
+      CANONICAL_EFFORT_LEVELS = %i[low moderate high reasoning].freeze
+      EFFORT_ALIASES = { medium: :moderate }.freeze
+      EFFORT_LEVELS = (CANONICAL_EFFORT_LEVELS + EFFORT_ALIASES.keys).freeze
+      EFFORT_RANK = { low: 0, moderate: 1, high: 2, reasoning: 3 }.freeze
+      OPERATIONS = %i[chat stream embed image structured_output].freeze
+      OPERATION_ALIASES = { completion: :chat, stream_chat: :stream, embedding: :embed }.freeze
+      DEFAULT_OPERATION = :chat
+      DEFAULT_EFFORT = :moderate
+
       OLLAMA_MODEL_PATTERN = %r{[:/]}
 
       @auto_rules = []
@@ -83,7 +92,7 @@ module Legion
           merged = merge_defaults(intent)
           rules = load_rules
           candidates = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
-          best = pick_best(candidates, hints: { tier: tier, provider: provider, model: model })
+          best = pick_best(candidates, intent: merged, hints: { tier: tier, provider: provider, model: model })
           resolution = best&.to_resolution
 
           if resolution
@@ -93,7 +102,9 @@ module Legion
 
           # If no rules matched, fall back to explicit resolution from hints, then arbitrage.
           unless resolution
-            log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size}"
+            trace_info = (@last_candidate_trace || {}).reject { |_, v| v.zero? }
+            log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size} " \
+                     "rejections=#{trace_info}"
             resolution = explicit_resolution(tier, provider, model, instance)
           end
 
@@ -237,11 +248,8 @@ module Legion
             primary_tier:     tier
           )
           resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
-          resolutions = Availability.filter_resolutions(
-            resolutions,
-            estimated_tokens:      estimated_tokens,
-            required_capabilities: required_capabilities
-          )
+          resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                              required_capabilities: required_capabilities)
           max = max_attempts || escalation_max_attempts
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end
@@ -261,7 +269,7 @@ module Legion
             Resolution.new(
               tier:     entry_tier,
               provider: entry[:provider],
-              instance: entry[:instance] == :default ? nil : entry[:instance],
+              instance: entry[:instance],
               model:    model,
               rule:     'escalation_fallback'
             )
@@ -286,8 +294,8 @@ module Legion
         def arbitrage_fallback(intent)
           return nil unless defined?(Arbitrage) && Arbitrage.enabled?
 
-          capability = intent&.dig(:capability) || :moderate
-          model = Arbitrage.cheapest_for(capability: capability)
+          effort = intent&.dig(:effort) || DEFAULT_EFFORT
+          model = Arbitrage.cheapest_for(capability: effort)
           return nil unless model
 
           provider = infer_provider_for_model(model)
@@ -298,15 +306,131 @@ module Legion
           Resolution.new(tier: tier, provider: provider, model: model, rule: 'arbitrage_fallback')
         end
 
+        def normalize_intent(intent)
+          normalized = symbolize_intent_keys(intent)
+          reject_removed_capability_key!(normalized)
+
+          normalized[:operation] = normalize_operation_value!(normalized[:operation] || DEFAULT_OPERATION)
+          normalized[:effort] = normalize_effort_value!(normalized[:effort] || DEFAULT_EFFORT)
+          required = normalize_capabilities(normalized.delete(:requires) || normalized[:required_capabilities])
+          normalized[:required_capabilities] = required if required.any?
+          normalized
+        end
+
+        def symbolize_intent_keys(intent)
+          return {} unless intent.is_a?(Hash)
+
+          intent.each_with_object({}) do |(key, value), memo|
+            memo[key.respond_to?(:to_sym) ? key.to_sym : key] = value
+          end
+        end
+
+        def normalize_enum_value(value)
+          return nil unless value.respond_to?(:to_s)
+
+          value.to_s.downcase.strip.to_sym
+        end
+
+        def normalize_effort(value)
+          sym = normalize_enum_value(value)
+          return nil unless sym
+
+          canonical = EFFORT_ALIASES.fetch(sym, sym)
+          CANONICAL_EFFORT_LEVELS.include?(canonical) ? canonical : nil
+        end
+
+        def normalize_operation(value)
+          sym = normalize_enum_value(value)
+          return nil unless sym
+
+          canonical = OPERATION_ALIASES.fetch(sym, sym)
+          OPERATIONS.include?(canonical) ? canonical : nil
+        end
+
+        def normalize_effort_value!(value)
+          normalized = normalize_effort(value)
+          return normalized if normalized
+
+          raise ArgumentError, "unknown effort #{value.inspect}; expected #{CANONICAL_EFFORT_LEVELS.join(', ')}"
+        end
+
+        def normalize_operation_value!(value)
+          normalized = normalize_operation(value)
+          return normalized if normalized
+
+          raise ArgumentError, "unknown operation #{value.inspect}; expected #{OPERATIONS.join(', ')}"
+        end
+
+        def reject_removed_capability_key!(intent)
+          return unless intent.key?(:capability)
+
+          raise ArgumentError,
+                'routing intent key :capability was removed; use :operation for chat/stream/embed/image/structured_output ' \
+                'and :effort for low/moderate/high/reasoning'
+        end
+
+        def effort_matching_bonus(rule, intent)
+          effort = normalize_effort(intent&.dig(:effort))
+          return 0 unless effort
+
+          rule_effort = normalize_effort(
+            rule.target[:effort] || rule.target['effort'] ||
+              effort_for_tier(rule.target[:tier] || rule.target['tier'])
+          )
+          return 0 unless rule_effort
+
+          distance = (EFFORT_RANK.fetch(rule_effort) - EFFORT_RANK.fetch(effort)).abs
+          return 25 if distance.zero?
+          return 10 if distance == 1
+
+          0
+        end
+
+        def effort_for_tier(tier)
+          case tier&.to_sym
+          when :local, :direct then :low
+          when :fleet then :moderate
+          when :cloud then :high
+          when :frontier then :reasoning
+          end
+        end
+
+        def loaded_model_bonus(rule)
+          loaded = rule.target[:loaded] || rule.target['loaded']
+          loaded == true ? 5 : 0
+        end
+
+        def filter_chain_resolutions(resolutions, estimated_tokens:, required_capabilities:)
+          filtered = Availability.filter_resolutions(
+            resolutions,
+            estimated_tokens:      estimated_tokens,
+            required_capabilities: required_capabilities
+          )
+          return filtered unless filtered.empty? && resolutions.any?
+
+          reasons = resolutions.filter_map do |resolution|
+            Availability.rejection_reason(
+              resolution,
+              estimated_tokens:      estimated_tokens,
+              required_capabilities: required_capabilities
+            )
+          end
+          return filtered unless reasons.any? && reasons.all? { |reason| reason == :provider_instance_has_no_models }
+
+          log.warn "[llm][router] action=availability.empty_catalog_preserve_chain candidates=#{resolutions.size}"
+          resolutions
+        end
+
         def merge_defaults(intent)
           defaults = (Legion::Settings.dig(:llm, :routing, :default_intent) || {})
                      .transform_keys(&:to_sym)
-                     .transform_values { |v| v.respond_to?(:to_sym) ? v.to_sym : v }
+                     .each_with_object({}) do |(k, v), memo|
+                       memo[k] = v.respond_to?(:to_sym) ? v.to_sym : v
+                     end
 
-          normalized_intent = intent&.transform_keys(&:to_sym)
-                                    &.transform_values { |v| v.respond_to?(:to_sym) ? v.to_sym : v } || {}
-
-          defaults.merge(normalized_intent)
+          raw_intent = intent&.transform_keys(&:to_sym) || {}
+          merged = defaults.merge(raw_intent)
+          normalize_intent(merged)
         end
 
         def load_rules
@@ -320,51 +444,52 @@ module Legion
 
         def select_candidates(rules, intent, exclude: {}, estimated_tokens: nil)
           log.debug "[llm][router] action=select_candidates total_rules=#{rules.size} estimated_tokens=#{estimated_tokens}"
+          trace = Hash.new(0)
 
-          # 1. Collect constraints from constraint rules that match the intent
           constraints = rules
                         .select { |r| r.constraint && r.matches_intent?(intent) }
                         .map(&:constraint)
 
-          # 2. Filter by intent match
           matched = rules.select { |r| r.matches_intent?(intent) }
+          trace[:intent_mismatch] = rules.size - matched.size
 
-          # 3. Filter by schedule
           scheduled = matched.select(&:within_schedule?)
+          trace[:schedule] = matched.size - scheduled.size
 
-          # 4. Reject rules that cannot satisfy required model capabilities
           capable = scheduled.select { |r| satisfies_required_capabilities?(r, intent) }
+          trace[:missing_capability] = scheduled.size - capable.size
 
-          # 5. Reject rules excluded by active constraints
           unconstrained = capable.reject { |r| excluded_by_constraint?(r, constraints) }
+          trace[:constraint] = capable.size - unconstrained.size
 
-          # 5.5 Reject Ollama rules where model is not pulled or doesn't fit
           discovered = unconstrained.reject { |r| excluded_by_discovery?(r) }
+          trace[:discovery] = unconstrained.size - discovered.size
 
-          # 5.55 Reject local-tier rules where model exceeds available memory
           memory_checked = discovered.reject { |r| excluded_by_memory?(r) }
+          trace[:memory] = discovered.size - memory_checked.size
 
-          # 5.56 Reject rules whose context window can't fit the estimated token count
           context_fitted = if estimated_tokens&.positive?
                              memory_checked.reject { |r| excluded_by_context_window?(r, estimated_tokens) }
                            else
                              memory_checked
                            end
+          trace[:context] = memory_checked.size - context_fitted.size
 
-          # 5.6 Reject rules matching caller-provided exclude list
           normalized_exclude = exclude.is_a?(Hash) ? exclude : {}
           not_excluded = if normalized_exclude.empty?
                            context_fitted
                          else
                            context_fitted.reject { |r| excluded_by_caller?(r, normalized_exclude) }
                          end
+          trace[:caller_exclude] = context_fitted.size - not_excluded.size
 
-          # 5.7 Reject rules for models denied by health tracker
           not_denied = not_excluded.reject { |r| excluded_by_denial?(r) }
+          trace[:denied] = not_excluded.size - not_denied.size
 
-          # 6. Filter by tier availability
           final = not_denied.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
+          trace[:tier_unavailable] = not_denied.size - final.size
 
+          @last_candidate_trace = trace
           log.debug "[llm][router] action=select_candidates.done candidates_remaining=#{final.size} started_with=#{rules.size}"
 
           final
@@ -509,19 +634,25 @@ module Legion
           TIER_EXTERNAL.include?(tier)
         end
 
-        def pick_best(candidates, hints: {})
+        def pick_best(candidates, intent: nil, hints: {})
           return nil if candidates.empty?
 
-          candidates.max_by { |r| effective_priority(r, hints: hints) }
+          candidates.max_by { |r| effective_priority(r, intent: intent, hints: hints) }
         end
 
-        def effective_priority(rule, hints: {})
+        def effective_priority(rule, intent: nil, hints: {})
           provider = (rule.target[:provider] || rule.target['provider'])&.to_sym
+          instance = (rule.target[:instance] || rule.target['instance'])&.to_sym
           offering_id = rule.target[:offering_id] || rule.target['offering_id']
           cost_bonus = (1.0 - rule.cost_multiplier) * 10
           tier_bonus = tier_priority_bonus(rule)
           hint_bonus = hint_matching_bonus(rule, hints)
-          rule.priority + health_tracker.adjustment(provider, offering_id: offering_id) + cost_bonus + tier_bonus + hint_bonus
+          effort_bonus = effort_matching_bonus(rule, intent)
+          loaded_bonus = loaded_model_bonus(rule)
+
+          rule.priority +
+            health_tracker.adjustment(provider, instance: instance, offering_id: offering_id) +
+            cost_bonus + tier_bonus + hint_bonus + effort_bonus + loaded_bonus
         end
 
         # Score bonus when a rule's target matches caller-provided hints.
@@ -603,13 +734,11 @@ module Legion
           end
         end
 
-        # rubocop:disable Lint/UnusedMethodArgument
-        def chain_from_defaults(model, provider, max, hints: {}, allow_default_fallback: true)
+        def chain_from_defaults(model, provider, max, hints: {}, allow_default_fallback: true, # rubocop:disable Lint/UnusedMethodArgument
+                                estimated_tokens: nil, required_capabilities: [])
           if provider || model || (allow_default_fallback && (Legion::Settings[:llm][:default_provider] || Legion::Settings[:llm][:default_model]))
             p = (provider || Legion::Settings[:llm][:default_provider])&.to_sym
 
-            # If the resolved provider differs from the model's natural provider, swap to the
-            # provider's default model — sending "claude-sonnet-4-6" to vllm would fail.
             resolved_model = model
             if resolved_model
               model_natural = infer_provider_for_model(resolved_model)
@@ -619,30 +748,41 @@ module Legion
                 resolved_model = nil
               end
             end
-            resolved_model ||= registry_default_model(registry_entry_for_provider(p)) ||
+            registry_entry = registry_entry_for_provider(p)
+            resolved_model ||= registry_default_model(registry_entry) ||
                                Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6'
+            resolved_instance = registry_entry&.[](:instance)
 
             primary = Resolution.new(tier:     PROVIDER_TIER.fetch(p || :anthropic, :frontier),
                                      provider: p || :anthropic,
-                                     model:    resolved_model)
-            # Append remaining registered providers as fallbacks (sorted by tier rank)
-            fallbacks = enabled_provider_chain.reject { |r| r.provider == primary.provider }
+                                     model:    resolved_model,
+                                     instance: resolved_instance)
+            fallbacks = enabled_provider_chain.reject do |r|
+              r.provider == primary.provider && r.instance == primary.instance
+            end
             resolutions = ([primary] + fallbacks).uniq { |r| [r.provider, r.instance, r.model] }
+            resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                                required_capabilities: required_capabilities)
             return EscalationChain.new(resolutions: resolutions, max_attempts: max)
           end
 
           resolutions = enabled_provider_chain
+          if resolutions.any?
+            resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                                required_capabilities: required_capabilities)
+          end
           if resolutions.empty? && allow_default_fallback
             p = Legion::Settings[:llm][:default_provider]&.to_sym ||
                 Legion::Settings[:llm][:routing][:last_resort_provider]
-            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
+            last_resort = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
                                           model:    Legion::Settings[:llm][:default_model] ||
                                                     Legion::Settings[:llm][:routing][:last_resort_model])]
+            resolutions = filter_chain_resolutions(last_resort, estimated_tokens:      estimated_tokens,
+                                                                required_capabilities: required_capabilities)
           end
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end
-        # rubocop:enable Lint/UnusedMethodArgument
 
         def enabled_provider_chain
           instances = begin
@@ -653,51 +793,52 @@ module Legion
           end
           return [] if instances.empty?
 
-          # Deduplicate by provider (take the first instance per provider family)
-          seen = {}
-          instances.each do |entry|
-            pname = entry[:provider]
-            seen[pname] ||= entry
-          end
-
-          # Build resolutions ordered by configured tier priority, preserving provider preference inside a tier.
           provider_index = PROVIDER_ORDER.each_with_index.to_h
-          sorted_entries = seen.values.sort_by do |entry|
+          sorted_entries = instances.sort_by do |entry|
             tier = registry_tier(entry[:provider], entry[:metadata])
             [tier_rank.fetch(tier, 99), provider_index.fetch(entry[:provider], PROVIDER_ORDER.size)]
           end
 
           sorted_entries.filter_map do |entry|
             pname = entry[:provider]
-            entry = seen[pname]
-            next unless entry
-
             tier = registry_tier(pname, entry[:metadata])
             next unless tier_available?(tier)
 
             model = registry_default_model(entry)
             next if model.nil? || model.to_s.empty?
 
-            Resolution.new(tier: tier, provider: pname, model: model, rule: 'auto_chain')
+            Resolution.new(
+              tier: tier, provider: pname, model: model,
+              instance: entry[:instance], rule: 'auto_chain'
+            )
           end
         end
 
         def chain_from_intent(intent, max, hints: {}, exclude: {}, allow_default_fallback: true, estimated_tokens: nil)
           merged     = intent ? merge_defaults(intent) : {}
+          req_caps   = required_capabilities(merged)
           rules      = load_rules
           candidates = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
-          sorted     = candidates.sort_by { |r| -effective_priority(r, hints: hints) }
+          sorted     = candidates.sort_by { |r| -effective_priority(r, intent: merged, hints: hints) }
           resolutions = sorted.map(&:to_resolution)
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
-          resolutions = resolutions.uniq { |r| [r.provider, r.model] }
+          resolutions = resolutions.uniq { |r| [r.provider, r.instance, r.model] }
+          resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                              required_capabilities: req_caps)
           resolutions = enabled_provider_chain if resolutions.empty?
+          if resolutions.any?
+            resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                                required_capabilities: req_caps)
+          end
           if resolutions.empty? && allow_default_fallback
             p = Legion::Settings[:llm][:default_provider]&.to_sym ||
                 Legion::Settings[:llm][:routing][:last_resort_provider]
-            resolutions = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
+            last_resort = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
                                           provider: p,
                                           model:    Legion::Settings[:llm][:default_model] ||
                                                     Legion::Settings[:llm][:routing][:last_resort_model])]
+            resolutions = filter_chain_resolutions(last_resort, estimated_tokens:      estimated_tokens,
+                                                                required_capabilities: req_caps)
           end
           EscalationChain.new(resolutions: resolutions, max_attempts: max)
         end

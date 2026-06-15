@@ -1,5 +1,43 @@
 # Legion LLM Changelog
 
+## [0.12.20] - 2026-06-15
+
+### Breaking
+
+- Routing intent key `:capability` removed; use `:operation` and `:effort`. Supplying `capability:` raises `ArgumentError`.
+- Settings `default_intent` must use `effort:`/`operation:` instead of `capability:`.
+
+### Added
+
+- Routing intent separates `effort` (soft preference), `operation` (hard filter), and `required_capabilities` (hard filter).
+- Effort levels: `:low`, `:moderate`, `:high`, `:reasoning`. `:medium` normalizes to `:moderate`.
+- Thinking is a hard capability only when explicitly requested via thinking config.
+- Router chains reject stale registry defaults not present in live discovered offerings.
+- Discovery status policy: `:unknown` permissive, `:ok` authoritative, `:empty` rejects, `:unreachable`/`:error` rejects.
+- `Discovery::DISCOVERED_MODELS_SCHEMA_VERSION` and `Cache::RESPONSE_CACHE_SCHEMA_VERSION` invalidate stale payloads.
+- Multi-instance provider routing: same provider with different instances carries distinct capabilities and availability.
+- `Inventory.invalidate_offerings_cache!` public method for discovery refresh actors.
+- Per-offering health bridging: discovery reports `:success`, `:error`, `:latency` to `Router.health_tracker`.
+- Discovered model entries include `health` and `loaded` fields from live offerings.
+- `loaded_model_bonus` scoring (+5) for models confirmed running by provider.
+- `resolve.no_rules_matched` warning includes rejection trace breakdown.
+- `missing_capability` availability log includes required and available capabilities.
+- Determinism and regression spec coverage (`spec/legion/llm/router/determinism_spec.rb`, `multi_instance_spec.rb`).
+
+### Fixed
+
+- vLLM live catalog IDs honored before dispatch; stale `qwen3.6-27b` rejected when only `legion-code-27b-v1` is offered.
+- `enabled_provider_chain` includes all registered instances, not just first per provider family.
+- `chain_from_defaults` primary resolution carries registered instance.
+- `chain_from_intent` dedup includes instance (same-model/different-instance preserved).
+- `build_fallback_resolutions` preserves instance directly.
+- Last-resort fallback resolutions filtered through live availability.
+- `enterprise_privacy_spec` order-dependency fixed.
+
+### Removed
+
+- `Discovery::System.memory_pressure?` (confirmed dead, no production callers).
+
 ## [0.12.19] - 2026-06-12
 
 ### Fixed
