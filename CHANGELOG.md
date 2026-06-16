@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.12.27] - 2026-06-16
+
+### Fixed
+
+- **Context-window escalation** — Provider-wrapped maximum-context-length errors now classify as `ContextOverflow` even when a provider gem reports them as a generic server/provider error, allowing escalation to skip same-tier candidates and seek a larger-context model.
+
 ## [0.12.26] - 2026-06-16
 
 ### Fixed

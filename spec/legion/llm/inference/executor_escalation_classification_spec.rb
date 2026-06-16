@@ -160,6 +160,43 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
         include('action=attempt', 'move=escalation', 'provider=vllm', 'previous_error=Legion::LLM::ProviderDown')
       )
     end
+
+    it 'treats provider-wrapped context overflow as a larger-window escalation signal' do
+      first = Legion::LLM::Router::Resolution.new(
+        tier: :fleet, provider: :vllm, instance: :h200, model: 'gemma-4-31b-it'
+      )
+      same_tier_other = Legion::LLM::Router::Resolution.new(
+        tier: :fleet, provider: :vllm, instance: :h100, model: 'qwen3.6-27b'
+      )
+      larger_window = Legion::LLM::Router::Resolution.new(
+        tier: :frontier, provider: :bedrock, instance: :claude, model: 'claude-1m'
+      )
+      chain = Legion::LLM::Router::EscalationChain.new(
+        resolutions:  [first, same_tier_other, larger_window],
+        max_attempts: 3
+      )
+      context_error = Legion::LLM::ProviderDown.new(
+        "vllm:gemma-4-31b-it — This model's maximum context length is 262144 tokens. " \
+        'However, your prompt contains at least 262145 input tokens.'
+      )
+      attempted = []
+
+      allow(executor).to receive(:build_default_escalation_chain).and_return(chain)
+      allow(executor).to receive(:attempt_escalation) do |resolution, *_args|
+        attempted << resolution.model
+        raise context_error if resolution == first
+
+        resolution == larger_window
+      end
+
+      expect do
+        executor.send(:run_provider_call_with_escalation)
+      end.not_to raise_error
+
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:bedrock)
+      expect(executor.instance_variable_get(:@resolved_model)).to eq('claude-1m')
+      expect(attempted).not_to include('qwen3.6-27b')
+    end
   end
 
   describe '#report_provider_failure' do

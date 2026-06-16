@@ -163,6 +163,18 @@ module Legion
               raise
             end
 
+            if context_overflow_error?(e)
+              tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+              record_escalation_failure(e, resolution, start_time,
+                                        outcome:   :context_overflow,
+                                        operation: 'llm.pipeline.escalation_attempt.context_overflow',
+                                        handled:   true)
+              log.warn "[llm][escalation] context_overflow provider=#{resolution.provider} " \
+                       "model=#{resolution.model} — skipping same-tier, seeking larger context window"
+              skip_same_tier!(resolution, tried)
+              return false
+            end
+
             notify_stream_provider_failed(e, resolution) if stream_block
             skip_all_provider_model_instances!(resolution, tried)
             record_escalation_failure(e, resolution, start_time,
@@ -641,7 +653,8 @@ module Legion
 
           def context_overflow_error?(err)
             err.is_a?(Legion::LLM::ContextOverflow) ||
-              err.class.name.to_s.include?('ContextLength')
+              err.class.name.to_s.include?('ContextLength') ||
+              CONTEXT_OVERFLOW_ERROR_PATTERNS.any? { |pat| pat.match?(err.message.to_s) }
           end
 
           # Detect client-side stream errors (disconnects, broken pipes, socket timeouts)

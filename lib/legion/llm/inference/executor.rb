@@ -93,6 +93,12 @@ module Legion
           /ValidationException/
         ].freeze
 
+        CONTEXT_OVERFLOW_ERROR_PATTERNS = [
+          /maximum context length/i,
+          /context length.*input_tokens/i,
+          /prompt contains at least \d+ input tokens/i
+        ].freeze
+
         ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, :status, keyword_init: true)
 
         ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)

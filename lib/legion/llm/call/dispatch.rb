@@ -477,6 +477,8 @@ module Legion
         end
 
         def map_lex_llm_error(error, provider:, model:)
+          raise Legion::LLM::ContextOverflow, "#{provider}:#{model} — #{error.message}" if context_length_error_message?(error.message)
+
           case error
           when Legion::Extensions::Llm::ContextLengthExceededError
             raise Legion::LLM::ContextOverflow, "#{provider}:#{model} — #{error.message}"
@@ -492,6 +494,13 @@ module Legion
           else
             raise
           end
+        end
+
+        def context_length_error_message?(message)
+          text = message.to_s
+          text.match?(/maximum context length/i) ||
+            text.match?(/context length.*input_tokens/i) ||
+            text.match?(/prompt contains at least \d+ input tokens/i)
         end
       end
     end
