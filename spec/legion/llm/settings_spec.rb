@@ -22,6 +22,10 @@ RSpec.describe Legion::LLM::Settings do
         'plugin__cron__delete', 'plugin__cron__get_history', 'plugin__cron__run_now', 'plugin__cron__stop'
       )
     end
+
+    it 'defaults tool error log summaries to 500 characters' do
+      expect(described_class.default[:tool_error_log_chars]).to eq(500)
+    end
   end
 
   describe '.register_defaults!' do

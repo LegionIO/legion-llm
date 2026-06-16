@@ -29,6 +29,7 @@ module Legion
           max_output_tokens:              16_384,
           max_tool_rounds:                200,
           max_tool_calls_per_turn:        100,
+          tool_error_log_chars:           500,
           tool_result_max_dispatch_chars: 10_000,
           default_model:                  model_override,
           default_temperature:            0.9,

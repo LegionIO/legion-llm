@@ -29,8 +29,8 @@ module Legion
           max_rounds = Legion::Settings[:llm][:max_tool_rounds].to_i
           max_rounds = 200 unless max_rounds.positive?
           round = 0
-          # Track which (tool_name, args) pairs have been executed server-side,
-          # and how many consecutive rounds ended in all-server failures.
+          # Track which (tool_name, args) pairs LegionIO executed,
+          # and how many consecutive rounds ended in all Legion-tool failures.
           executed_calls = {} # "name:hash(args)" => count
           consecutive_failures = 0
 
@@ -52,29 +52,30 @@ module Legion
               @last_tool_loop_messages = messages
               return result
             end
-            # Split tool calls into server-executable (LegionIO) and client-passthrough.
-            # Execute LegionIO tools server-side first; return only client tools to
+            # Split tool calls into LegionIO-executable and client-passthrough.
+            # Execute LegionIO tools first; return only client tools to
             # the client at the end. This prevents sending LegionIO tool calls to
             # clients (Claude terminal, Codex) that can't execute them.
-            server_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
+            legion_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
 
             if client_calls.any?
               passthrough_names = client_calls.map { |tc| tc[:name] }.join(',')
-              log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} client_tools=#{passthrough_names} server_tools=#{server_calls.map { |tc| tc[:name] }.join(',')}"
+              log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} " \
+                       "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map { |tc| tc[:name] }.join(',')}"
             end
 
-            # Execute all LegionIO tools server-side
-            unless server_calls.empty?
+            # Execute all LegionIO tools.
+            unless legion_calls.empty?
               round += 1
-              tool_names = server_calls.map { |tc| tc[:name] }.join(',')
-              log.debug "[llm][executor] action=native_tool_loop.round round=#{round} tool_count=#{server_calls.size} tools=#{tool_names}"
+              tool_names = legion_calls.map { |tc| tc[:name] }.join(',')
+              log.debug "[llm][executor] action=native_tool_loop.round round=#{round} tool_count=#{legion_calls.size} tools=#{tool_names}"
               if round > max_rounds
                 log.warn "[llm][native_tool_loop] action=max_rounds_exceeded max_rounds=#{max_rounds} last_tools=#{tool_names}"
                 raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds"
               end
 
               # Detect repeated tool calls before executing again.
-              repeated = detect_repeated_tool_calls(server_calls, executed_calls)
+              repeated = detect_repeated_tool_calls(legion_calls, executed_calls)
               if repeated.any?
                 log.warn "[llm][native_tool_loop] action=repeated_tool_calls detected round=#{round} " \
                          "repeated=#{repeated.map { |tc| tc[:name] }.join(',')} total_calls=#{executed_calls.size}"
@@ -82,8 +83,8 @@ module Legion
                 return client_passthrough_tool_loop_result(result, client_calls, round)
               end
 
-              messages << native_assistant_tool_message(result, server_calls)
-              execute, deferred = split_tool_calls_by_cap(server_calls, round)
+              messages << native_assistant_tool_message(result, legion_calls)
+              execute, deferred = split_tool_calls_by_cap(legion_calls, round)
               round_results = []
 
               execute.each do |tool_call|
@@ -109,10 +110,10 @@ module Legion
               if all_failed
                 consecutive_failures += 1
                 failed_names = round_results.map { |e| e[:tool_call][:name] }.join(',')
-                log.warn "[llm][native_tool_loop] action=all_server_tools_failed round=#{round} " \
+                log.warn "[llm][native_tool_loop] action=all_legion_executed_tools_failed round=#{round} " \
                          "consecutive_failures=#{consecutive_failures} tools=#{failed_names}"
                 if consecutive_failures >= 2
-                  log.warn "[llm][native_tool_loop] action=server_failure_loop_broken consecutive_failures=#{consecutive_failures}"
+                  log.warn "[llm][native_tool_loop] action=legion_tool_failure_loop_broken consecutive_failures=#{consecutive_failures}"
                   return client_passthrough_tool_loop_result(result, client_calls, round)
                 end
               else
@@ -122,7 +123,7 @@ module Legion
 
             # If there are client passthrough tools, exit the loop and return them
             # to the client for execution. client_passthrough_tool_loop_result
-            # merges server-executed LegionIO tool calls (with results) alongside
+            # merges LegionIO-executed tool calls (with results) alongside
             # client tool calls (passthrough) in the result.
             return client_passthrough_tool_loop_result(result, client_calls, round) if client_calls.any?
           end
@@ -158,31 +159,32 @@ module Legion
               @last_tool_loop_messages = messages
               return result
             end
-            server_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
+            legion_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
 
             if client_calls.any?
               passthrough_names = client_calls.map { |tc| tc[:name] }.join(',')
-              log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} client_tools=#{passthrough_names} server_tools=#{server_calls.map { |tc| tc[:name] }.join(',')}"
+              log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} " \
+                       "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map { |tc| tc[:name] }.join(',')}"
             end
 
-            unless server_calls.empty?
+            unless legion_calls.empty?
               round += 1
-              tool_names = server_calls.map { |tc| tc[:name] }.join(',')
-              log.debug "[llm][native_tool_loop] action=native_streaming_tool_loop.round round=#{round} tool_count=#{server_calls.size} tools=#{tool_names}"
+              tool_names = legion_calls.map { |tc| tc[:name] }.join(',')
+              log.debug "[llm][native_tool_loop] action=native_streaming_tool_loop.round round=#{round} tool_count=#{legion_calls.size} tools=#{tool_names}"
               if round > max_rounds
                 log.warn "[llm][native_tool_loop] action=max_rounds_exceeded max_rounds=#{max_rounds} last_tools=#{tool_names}"
                 raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds"
               end
 
-              repeated = detect_repeated_tool_calls(server_calls, executed_calls)
+              repeated = detect_repeated_tool_calls(legion_calls, executed_calls)
               if repeated.any?
                 log.warn "[llm][native_tool_loop] action=repeated_tool_calls detected round=#{round} " \
                          "repeated=#{repeated.map { |tc| tc[:name] }.join(',')} total_calls=#{executed_calls.size}"
                 return client_passthrough_tool_loop_result(result, client_calls, round)
               end
 
-              messages << native_assistant_tool_message(result, server_calls)
-              execute, deferred = split_tool_calls_by_cap(server_calls, round)
+              messages << native_assistant_tool_message(result, legion_calls)
+              execute, deferred = split_tool_calls_by_cap(legion_calls, round)
               round_results = []
 
               execute.each do |tool_call|
@@ -206,10 +208,10 @@ module Legion
               if all_failed
                 consecutive_failures += 1
                 failed_names = round_results.map { |e| e[:tool_call][:name] }.join(',')
-                log.warn "[llm][native_tool_loop] action=all_server_tools_failed round=#{round} " \
+                log.warn "[llm][native_tool_loop] action=all_legion_executed_tools_failed round=#{round} " \
                          "consecutive_failures=#{consecutive_failures} tools=#{failed_names}"
                 if consecutive_failures >= 2
-                  log.warn "[llm][native_tool_loop] action=server_failure_loop_broken consecutive_failures=#{consecutive_failures}"
+                  log.warn "[llm][native_tool_loop] action=legion_tool_failure_loop_broken consecutive_failures=#{consecutive_failures}"
                   return client_passthrough_tool_loop_result(result, client_calls, round)
                 end
               else
@@ -249,32 +251,32 @@ module Legion
               return result
             end
 
-            server_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
+            legion_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
             if client_calls.any?
               passthrough_names = client_calls.map { |tc| tc[:name] }.join(',')
               log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} " \
-                       "client_tools=#{passthrough_names} server_tools=#{server_calls.map { |tc| tc[:name] }.join(',')}"
+                       "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map { |tc| tc[:name] }.join(',')}"
             end
 
-            unless server_calls.empty?
+            unless legion_calls.empty?
               round += 1
-              tool_names = server_calls.map { |tc| tc[:name] }.join(',')
+              tool_names = legion_calls.map { |tc| tc[:name] }.join(',')
               log.debug "[llm][native_tool_loop] action=native_responses_tool_loop.round round=#{round} " \
-                        "tool_count=#{server_calls.size} tools=#{tool_names}"
+                        "tool_count=#{legion_calls.size} tools=#{tool_names}"
               if round > max_rounds
                 log.warn "[llm][native_tool_loop] action=max_rounds_exceeded max_rounds=#{max_rounds} last_tools=#{tool_names}"
                 raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds"
               end
 
-              repeated = detect_repeated_tool_calls(server_calls, executed_calls)
+              repeated = detect_repeated_tool_calls(legion_calls, executed_calls)
               if repeated.any?
                 log.warn "[llm][native_tool_loop] action=repeated_tool_calls detected round=#{round} " \
                          "repeated=#{repeated.map { |tc| tc[:name] }.join(',')} total_calls=#{executed_calls.size}"
                 return client_passthrough_tool_loop_result(result, client_calls, round)
               end
 
-              messages << native_assistant_tool_message(result, server_calls)
-              execute, deferred = split_tool_calls_by_cap(server_calls, round)
+              messages << native_assistant_tool_message(result, legion_calls)
+              execute, deferred = split_tool_calls_by_cap(legion_calls, round)
               round_results = []
 
               execute.each do |tool_call|
@@ -298,10 +300,10 @@ module Legion
               if all_failed
                 consecutive_failures += 1
                 failed_names = round_results.map { |e| e[:tool_call][:name] }.join(',')
-                log.warn "[llm][native_tool_loop] action=all_server_tools_failed round=#{round} " \
+                log.warn "[llm][native_tool_loop] action=all_legion_executed_tools_failed round=#{round} " \
                          "consecutive_failures=#{consecutive_failures} tools=#{failed_names}"
                 if consecutive_failures >= 2
-                  log.warn '[llm][native_tool_loop] action=server_failure_loop_broken ' \
+                  log.warn '[llm][native_tool_loop] action=legion_tool_failure_loop_broken ' \
                            "consecutive_failures=#{consecutive_failures}"
                   return client_passthrough_tool_loop_result(result, client_calls, round)
                 end

@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.12.26] - 2026-06-16
+
+### Fixed
+
+- **Legion tool failure diagnostics** — Tool dispatch failure logs now use configurable `llm.tool_error_log_chars` with a 500-character default and prefer structured runtime failure details (`exit_status`, error line, output tail) over generated command prefixes.
+- **Legion-executed tool wording** — Native tool-loop logs now report `legion_executed_tools` and `all_legion_executed_tools_failed`, avoiding ambiguous server/client terminology while preserving client wire protocols.
+
 ## [0.12.25] - 2026-06-16
 
 ### Fixed

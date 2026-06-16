@@ -318,7 +318,8 @@ module Legion
               log.warn(
                 "[llm][tool_calls] action=tool_call_failed request_id=#{@request.id} " \
                 "tool_call_id=#{tool_call_id || 'none'} name=#{tool_name} " \
-                "duration_ms=#{result[:duration_ms]} error=#{(result[:error] || result[:result]).to_s[0..200]}"
+                "duration_ms=#{result[:duration_ms]} " \
+                "error=#{Legion::LLM::Tools::Dispatcher.error_log_detail(result)}"
               )
             else
               log.info(

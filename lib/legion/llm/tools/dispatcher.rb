@@ -45,7 +45,7 @@ module Legion
 
           duration_ms = ((Time.now - start_time) * 1000).to_i
           if result[:status] == :error
-            err_detail = (result[:error] || result[:result]).to_s[0..200]
+            err_detail = error_log_detail(result)
             log.warn "[llm][tools_dispatcher] action=dispatch_failed tool=#{tool_call[:name]} " \
                      "path=#{source[:type]} duration_ms=#{duration_ms} error=#{err_detail}"
           else
@@ -59,8 +59,9 @@ module Legion
           )
         rescue StandardError => e
           duration_ms = ((Time.now - start_time) * 1000).to_i
+          err_detail = trim_error_detail("#{e.class}:#{e.message}")
           log.warn "[llm][tools_dispatcher] action=dispatch_exception tool=#{tool_call[:name]} " \
-                   "path=#{source&.[](:type)} duration_ms=#{duration_ms} error=#{e.class}:#{e.message[0..200]}"
+                   "path=#{source&.[](:type)} duration_ms=#{duration_ms} error=#{err_detail}"
           handle_exception(e, level: :warn, operation: 'llm.tools.dispatcher.dispatch_tool_call', tool_name: tool_call[:name])
           { status: :error, error: e.message, source: source, exchange_id: exchange_id, duration_ms: duration_ms }
         end
@@ -178,6 +179,48 @@ module Legion
 
         def result_error?(result)
           result.is_a?(Hash) && (result[:error] || result['error'])
+        end
+
+        def error_log_detail(result)
+          detail = structured_error_detail(result)
+          detail = result_value(result, :error).to_s if detail.empty?
+          detail = result_value(result, :result).to_s if detail.empty?
+          trim_error_detail(detail)
+        end
+
+        def structured_error_detail(result)
+          fields = []
+          exit_status = result_value(result, :exit_status)
+          error = result_value(result, :error)
+          output_tail = result_value(result, :output_tail)
+          command_preview = result_value(result, :command_preview)
+
+          fields << "exit_status=#{exit_status}" unless exit_status.nil?
+          fields << "error=#{single_line(error)}" unless error.to_s.empty?
+          fields << "output_tail=#{single_line(output_tail)}" unless output_tail.to_s.empty?
+          fields << "command_preview=#{single_line(command_preview)}" if fields.empty? && !command_preview.to_s.empty?
+          fields.join(' ')
+        end
+
+        def result_value(result, key)
+          return nil unless result.respond_to?(:[])
+
+          result[key] || result[key.to_s]
+        end
+
+        def single_line(value)
+          value.to_s.gsub(/\s+/, ' ').strip
+        end
+
+        def trim_error_detail(value)
+          value.to_s[0, tool_error_log_chars]
+        end
+
+        def tool_error_log_chars
+          configured = Legion::Settings[:llm][:tool_error_log_chars].to_i
+          configured.positive? ? configured : 500
+        rescue StandardError
+          500
         end
       end
     end

@@ -470,7 +470,7 @@ module Legion
             exchange_id: Tracing.exchange_id
           )
           if result[:status] == :error
-            err_detail = (result[:error] || result[:result]).to_s[0..200]
+            err_detail = Legion::LLM::Tools::Dispatcher.error_log_detail(result)
             log.warn "[llm][native_tool_loop] action=tool_call_failed round=#{round} " \
                      "tool=#{normalized_call[:name]} source_type=#{source[:type]} error=#{err_detail}"
           else
