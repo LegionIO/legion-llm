@@ -161,20 +161,19 @@ module Legion
           clear_log_context
         end
 
-        def call_responses(body:, stream: false, stream_observer: nil, &)
+        def call_responses(body:, stream: false, stream_observer: nil, &block)
           @stream_observer = stream_observer
           set_log_context
           Thread.current[:legion_llm_in_pipeline] = true
           log.debug "[llm][executor] action=call_responses request_id=#{@request.id} profile=#{@profile} stream=#{stream}"
 
-          # Pre-routing gate: cheap reject for cases where the request hint
-          # already names a non-responses provider.
-          unless provider_supports_responses?
-            log.debug "[llm][executor] action=call_responses_fallback reason=hint_unsupported request_id=#{@request.id}"
-            return stream ? call_stream(stream_observer: stream_observer, &) : call
-          end
-
           execute_pre_provider_steps
+          if pipeline_escalation_enabled?
+            run_provider_call_with_escalation(responses_body: body, responses_stream: stream,
+                                              stream_block: (stream ? block : nil))
+            execute_post_provider_steps
+            return build_response
+          end
 
           # Post-routing gate (the real one): routing may have resolved to a
           # different provider than the request hint suggested (failover,
@@ -185,13 +184,12 @@ module Legion
           unless resolved_provider_supports_responses?
             log.debug '[llm][executor] action=call_responses_fallback reason=resolved_unsupported ' \
                       "request_id=#{@request.id} resolved_provider=#{@resolved_provider}"
-            execute_provider_request_stream(&) if stream
-            execute_provider_request(&) unless stream
+            stream ? step_provider_call_stream(&block) : step_provider_call
             execute_post_provider_steps
             return build_response
           end
 
-          execute_provider_request_responses(body: body, stream: stream, &)
+          execute_provider_request_responses(body: body, stream: stream, &block)
           execute_post_provider_steps
           build_response
         ensure

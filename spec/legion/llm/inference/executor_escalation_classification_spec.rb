@@ -128,6 +128,38 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
         to:   second
       )
     end
+
+    it 'logs non-primary failover attempts as warnings with the previous failure reason' do
+      first = Legion::LLM::Router::Resolution.new(
+        tier: :frontier, provider: :openai, instance: :env, model: 'gpt-5.4-mini'
+      )
+      second = Legion::LLM::Router::Resolution.new(
+        tier: :direct, provider: :vllm, instance: :h200, model: 'gemma-4-31b-it'
+      )
+      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [first, second], max_attempts: 2)
+      logger = instance_double(Logger, debug: nil, info: nil, warn: nil)
+
+      allow(executor).to receive(:build_default_escalation_chain).and_return(chain)
+      allow(executor).to receive(:log).and_return(logger)
+      allow(executor).to receive(:attempt_escalation) do |resolution, *_args|
+        if resolution.provider == :openai
+          executor.instance_variable_set(:@last_escalation_error,
+                                         Legion::LLM::ProviderDown.new('first provider failed'))
+          false
+        else
+          true
+        end
+      end
+
+      expect do
+        executor.send(:run_provider_call_with_escalation)
+      end.not_to raise_error
+
+      expect(logger).to have_received(:info).with(include('action=attempt', 'move=primary', 'provider=openai'))
+      expect(logger).to have_received(:warn).with(
+        include('action=attempt', 'move=escalation', 'provider=vllm', 'previous_error=Legion::LLM::ProviderDown')
+      )
+    end
   end
 
   describe '#report_provider_failure' do

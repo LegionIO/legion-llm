@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.12.24] - 2026-06-16
+
+### Fixed
+
+- **Codex Responses routing** — `/v1/responses` no longer performs a provider-capability shortcut before routing. Codex requests always run through the router first, then dispatch via upstream Responses only when the resolved provider supports it.
+- **Responses escalation dispatch** — Escalation attempts for Responses-origin requests now use upstream Responses for capable providers and fall back to the normal routed chat/stream path for providers without Responses support.
+- **Escalation visibility** — Non-primary escalation attempts now log at `WARN` and include previous failure context so actual failover is visible in live logs. Primary attempts remain `INFO`.
+
 ## [0.12.23] - 2026-06-16
 
 ### Fixed

@@ -49,7 +49,7 @@ module Legion
             raise e.is_a?(Legion::LLM::ProviderError) ? e : Legion::LLM::ProviderError.new(e.message)
           end
 
-          def run_provider_call_with_escalation(stream_block: nil)
+          def run_provider_call_with_escalation(stream_block: nil, responses_body: nil, responses_stream: false)
             @escalation_chain ||= build_default_escalation_chain
             chain = @escalation_chain
             threshold = pipeline_escalation_quality_threshold
@@ -84,7 +84,9 @@ module Legion
               end
 
               succeeded = run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier,
-                                                    stream_block: stream_block)
+                                                    stream_block:     stream_block,
+                                                    responses_body:   responses_body,
+                                                    responses_stream: responses_stream)
               break if succeeded
             end
             return if succeeded
@@ -98,12 +100,12 @@ module Legion
             raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed"
           end
 
-          def run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier, stream_block: nil)
+          def run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier, stream_block: nil,
+                                        responses_body: nil, responses_stream: false)
             move_type = escalation_move_type(resolution, tried, primary_tier)
             prev_provider = @resolved_provider
             prev_tier = @resolved_tier
-            log.info "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} " \
-                     "model=#{resolution.model} tier=#{resolution.tier} attempt=#{tried.size + 1}"
+            log_escalation_attempt(resolution, move_type, tried.size + 1)
             if move_type == :escalation && %i[local fleet vllm].include?(prev_tier) && %i[cloud frontier].include?(resolution.tier)
               log.warn "[llm][escalation] action=tier_upgrade from_tier=#{prev_tier} " \
                        "from_provider=#{prev_provider} to_tier=#{resolution.tier} " \
@@ -124,7 +126,10 @@ module Legion
             @resolved_offering_id = resolution.offering_id
             @resolved_offering_metadata = resolution.offering_metadata
             notify_stream_provider_switched(prev_resolution, resolution) if prev_resolution
-            succeeded = attempt_escalation(resolution, threshold, quality_check, start_time, stream_block: stream_block)
+            succeeded = attempt_escalation(resolution, threshold, quality_check, start_time,
+                                           stream_block:     stream_block,
+                                           responses_body:   responses_body,
+                                           responses_stream: responses_stream)
             tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model } unless succeeded
             succeeded
           rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
@@ -173,21 +178,47 @@ module Legion
             :escalation
           end
 
-          def attempt_escalation(resolution, threshold, quality_check, start_time, stream_block: nil)
+          def log_escalation_attempt(resolution, move_type, attempt)
+            message = "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} " \
+                      "model=#{resolution.model} tier=#{resolution.tier} attempt=#{attempt}"
+            if move_type == :primary
+              log.info message
+            else
+              log.warn "#{message} #{escalation_previous_failure_summary}"
+            end
+          end
+
+          def escalation_previous_failure_summary
+            error = @last_escalation_error
+            return "previous_error=#{error.class.name} previous_message=#{error.message.to_s[0, 200]}" if error
+
+            previous = @escalation_history.last
+            return 'previous_error=unknown' unless previous
+
+            failures = Array(previous[:failures]).join(',')
+            "previous_outcome=#{previous[:outcome]} previous_failures=#{failures}"
+          end
+
+          def attempt_escalation(resolution, threshold, quality_check, start_time, stream_block: nil,
+                                 responses_body: nil, responses_stream: false)
             @current_escalation_context = {
               attempt:      @escalation_history.size + 1,
               max_attempts: @escalation_chain&.max_attempts
             }.compact
-            if stream_block
+            if responses_body && resolved_provider_supports_responses?
+              execute_provider_request_responses(body: responses_body, stream: responses_stream, &stream_block)
+              result = Legion::LLM::Quality::Checker::QualityResult.new(passed: true, failures: [])
+            elsif stream_block
               execute_provider_request_stream(&stream_block)
               # NOTE: Streaming escalation attempts always pass quality check (B-05).
               # Quality-checking a stream in-flight is not supported; the first provider
               # in the chain wins for streaming requests. If quality gating is required
               # for streaming, handle it at the caller level.
-              result = Quality::Checker::QualityResult.new(passed: true, failures: [])
+              result = Legion::LLM::Quality::Checker::QualityResult.new(passed: true, failures: [])
             else
               execute_provider_request
-              result = Quality::Checker.check(@raw_response, quality_threshold: threshold, quality_check: quality_check)
+              result = Legion::LLM::Quality::Checker.check(@raw_response, quality_threshold: threshold,
+                                                                          quality_check:     quality_check)
             end
             duration_ms = ((Time.now - start_time) * 1000).round
             outcome = result.passed ? :success : :quality_failure
@@ -689,7 +720,7 @@ module Legion
             @raw_response = result
           end
 
-          def execute_provider_request_responses(body:, stream:, &block)
+          def execute_provider_request_responses(body:, stream:, &)
             @timestamps[:provider_start] = Time.now
             @timeline.record(
               category: :provider, key: 'provider:request_sent',
@@ -700,12 +731,7 @@ module Legion
 
             raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless use_native_dispatch?(@resolved_provider)
 
-            result = dispatch_responses_request(
-              body:         body,
-              messages:     native_dispatch_messages,
-              stream:       stream,
-              stream_block: block
-            )
+            result = execute_native_responses_tool_loop(body: body, stream: stream, &)
             merge_response_offering_metadata(result.metadata) if result.respond_to?(:metadata)
             @raw_response = result
 
