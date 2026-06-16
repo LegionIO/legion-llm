@@ -84,6 +84,7 @@ module Legion
             entries = result[:entries] || []
             unless result && result[:success] && entries.any?
               log_step_debug(:rag_context, :no_context_added, strategy: strategy)
+              @context_accounting&.dig(:component_status)&.[]=(:rag, :observed)
               return
             end
             total_chars = entries.sum { |e| (e[:content] || e['content']).to_s.length }
@@ -96,6 +97,23 @@ module Legion
               "strategy=#{strategy} count=#{entries.size} scores=#{scores.inspect} " \
               "types=#{entries.map { |e| e[:content_type] }.compact.tally.inspect}"
             )
+
+            if @context_accounting
+              rag_text = entries.map { |e| "[#{e[:content_type] || e['content_type']}] #{e[:content] || e['content']}" }.join("\n")
+              rag_tokens = ContextAccounting.estimate_text_tokens(rag_text)
+              @context_accounting[:tokens][:rag_injected_estimated_tokens] = rag_tokens
+              @context_accounting[:counts][:rag_entry_count] = entries.size
+              @context_accounting[:component_status][:rag] = :observed
+              @context_accounting[:events] << ContextAccounting.event(
+                event_type:    :rag_injected,
+                component:     :rag,
+                before_tokens: 0,
+                after_tokens:  rag_tokens,
+                before_count:  0,
+                after_count:   entries.size,
+                metadata:      { strategy: strategy }
+              )
+            end
 
             @enrichments['rag:context_retrieval'] = {
               content:   "#{result[:count]} entries retrieved via #{strategy}",

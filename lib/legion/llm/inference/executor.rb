@@ -36,6 +36,10 @@ module Legion
                     :escalation_chain
         attr_accessor :tool_event_handler
 
+        def context_accounting
+          @context_accounting ||= ContextAccounting.empty
+        end
+
         include Steps::TriggerMatch
         include Steps::SkillInjector
         include Steps::ToolDiscovery
@@ -126,6 +130,7 @@ module Legion
           @injected_tool_map = {}
           @native_tool_source_map = {}
           @freshly_triggered_keys = []
+          @context_accounting = ContextAccounting.empty
         end
 
         def call
@@ -314,20 +319,48 @@ module Legion
           conv_id = @request.conversation_id
           unless conv_id
             log.debug '[llm][executor] action=step_context_load skipped=no_conversation_id'
+            @context_accounting[:component_status][:context_load] = :observed
             return
           end
 
           history = Conversation.messages(conv_id)
           if history.empty?
             log.debug "[llm][executor] action=step_context_load conversation_id=#{conv_id} history=empty"
+            @context_accounting[:component_status][:context_load] = :observed
             return
           end
           log.debug "[llm][executor] action=step_context_load conversation_id=#{conv_id} history_size=#{history.size}"
+
+          loaded_tokens = ContextAccounting.estimate_message_tokens(history)
+          @context_accounting[:tokens][:loaded_history_estimated_tokens] = loaded_tokens
+          @context_accounting[:counts][:loaded_history_message_count] = history.size
+          @context_accounting[:component_status][:context_load] = :observed
+          @context_accounting[:events] << ContextAccounting.event(
+            event_type:    :context_load,
+            component:     :conversation_history,
+            before_tokens: 0,
+            after_tokens:  loaded_tokens,
+            before_count:  0,
+            after_count:   history.size
+          )
 
           curator = Context::Curator.new(conversation_id: conv_id)
           curated = curator.curated_messages
 
           history = if curated && !curated.empty?
+                      curated_tokens = ContextAccounting.estimate_message_tokens(curated)
+                      @context_accounting[:tokens][:curated_history_estimated_tokens] = curated_tokens
+                      @context_accounting[:tokens][:curation_saved_estimated_tokens] = [loaded_tokens - curated_tokens, 0].max
+                      @context_accounting[:counts][:curated_history_message_count] = curated.size
+                      @context_accounting[:component_status][:curation] = :observed
+                      @context_accounting[:events] << ContextAccounting.event(
+                        event_type:    :curation_applied,
+                        component:     :curated_history,
+                        before_tokens: loaded_tokens,
+                        after_tokens:  curated_tokens,
+                        before_count:  history.size,
+                        after_count:   curated.size
+                      )
                       @timeline.record(
                         category: :internal, key: 'context:curated',
                         direction: :internal, detail: "curated #{curated.size} of #{history.size} messages",
@@ -335,11 +368,27 @@ module Legion
                       )
                       curated
                     else
+                      @context_accounting[:component_status][:curation] = :observed
                       maybe_compact_history(conv_id, history)
                     end
 
+          before_archive_tokens = ContextAccounting.estimate_message_tokens(history)
           archived_history = curator.drop_and_archive(history, conversation_id: conv_id)
           if archived_history.size < history.size
+            after_archive_tokens = ContextAccounting.estimate_message_tokens(archived_history)
+            archived_tokens = [before_archive_tokens - after_archive_tokens, 0].max
+            @context_accounting[:tokens][:archived_history_estimated_tokens] = archived_tokens
+            @context_accounting[:tokens][:archive_saved_estimated_tokens] = archived_tokens
+            @context_accounting[:counts][:archived_history_message_count] = history.size - archived_history.size
+            @context_accounting[:component_status][:archive] = :observed
+            @context_accounting[:events] << ContextAccounting.event(
+              event_type:    :archive_applied,
+              component:     :archived_history,
+              before_tokens: before_archive_tokens,
+              after_tokens:  after_archive_tokens,
+              before_count:  history.size,
+              after_count:   archived_history.size
+            )
             @timeline.record(
               category: :internal, key: 'context:archived',
               direction: :outbound,
@@ -348,6 +397,8 @@ module Legion
             )
             Conversation.replace(conv_id, archived_history)
             history = archived_history
+          else
+            @context_accounting[:component_status][:archive] = :observed
           end
 
           @enrichments['context:conversation_history'] = history
@@ -822,33 +873,34 @@ module Legion
           cost_usd = actual_cost || estimate_cost(input_tokens, output_tokens)
           log.debug("[pipeline][metering] action=build provider=#{@resolved_provider} model=#{@resolved_model} input=#{input_tokens} output=#{output_tokens}")
           event = Steps::Metering.build_event(
-            provider:          @resolved_provider,
-            model_id:          @resolved_model,
-            offering_id:       @resolved_offering_id,
-            offering_metadata: @resolved_offering_metadata,
-            tier:              tier,
-            request_type:      if @request.respond_to?(:request_type)
-                                 @request.request_type
-                               else
-                                 (@request.respond_to?(:metadata) && @request.metadata.is_a?(Hash) ? (@request.metadata[:task] || @request.metadata[:request_type] || 'chat') : 'chat')
-                               end,
-            input_tokens:      input_tokens,
-            output_tokens:     output_tokens,
-            latency_ms:        latency_ms,
-            wall_clock_ms:     wall_clock_ms,
-            cost_usd:          cost_usd,
-            request_id:        @request.id,
-            conversation_id:   @request.conversation_id,
-            correlation_id:    @tracing&.dig(:correlation_id),
-            caller:            @request.caller,
-            identity:          metering_identity,
-            billing:           @request.billing,
-            agent_id:          agent[:id],
-            task_id:           agent[:task_id],
-            routing_reason:    @audit.dig(:'routing:provider_selection', :data, :reason),
-            messages:          @request.messages,
-            response_content:  extract_response_content,
-            response_thinking: extract_thinking
+            provider:           @resolved_provider,
+            model_id:           @resolved_model,
+            offering_id:        @resolved_offering_id,
+            offering_metadata:  @resolved_offering_metadata,
+            tier:               tier,
+            request_type:       if @request.respond_to?(:request_type)
+                                  @request.request_type
+                                else
+                                  (@request.respond_to?(:metadata) && @request.metadata.is_a?(Hash) ? (@request.metadata[:task] || @request.metadata[:request_type] || 'chat') : 'chat')
+                                end,
+            input_tokens:       input_tokens,
+            output_tokens:      output_tokens,
+            latency_ms:         latency_ms,
+            wall_clock_ms:      wall_clock_ms,
+            cost_usd:           cost_usd,
+            request_id:         @request.id,
+            conversation_id:    @request.conversation_id,
+            correlation_id:     @tracing&.dig(:correlation_id),
+            caller:             @request.caller,
+            identity:           metering_identity,
+            billing:            @request.billing,
+            agent_id:           agent[:id],
+            task_id:            agent[:task_id],
+            routing_reason:     @audit.dig(:'routing:provider_selection', :data, :reason),
+            messages:           @request.messages,
+            response_content:   extract_response_content,
+            response_thinking:  extract_thinking,
+            context_accounting: finalize_context_accounting
           )
           Steps::Metering.publish_or_spool(event)
           flush_deferred_tool_audits
@@ -1043,6 +1095,86 @@ module Legion
 
         def step_response_return; end
 
+        def finalize_context_accounting
+          tokens = @context_accounting[:tokens]
+          tokens[:request_message_estimated_tokens] = ContextAccounting.estimate_message_tokens(@request.messages)
+
+          final_estimate =
+            tokens[:request_message_estimated_tokens].to_i +
+            effective_history_tokens(tokens) +
+            tokens[:rag_injected_estimated_tokens].to_i +
+            tokens[:system_prompt_estimated_tokens].to_i +
+            tokens[:tool_definition_estimated_tokens].to_i
+
+          tokens[:final_context_estimated_tokens] = final_estimate
+
+          provider_input = provider_input_tokens_for_accounting
+          provider_cached = provider_cached_input_tokens_for_accounting
+          provider_cache_creation = provider_cache_creation_tokens_for_accounting
+          provider_thinking = provider_thinking_tokens_for_accounting
+          if provider_input.positive? || provider_cached.positive? || provider_cache_creation.positive? || provider_thinking.positive?
+            @context_accounting[:status] = :provider_reconciled
+            @context_accounting[:reconciliation] = {
+              provider_input_tokens:          provider_input,
+              provider_cached_input_tokens:   provider_cached,
+              provider_cache_creation_tokens: provider_cache_creation,
+              provider_thinking_tokens:       provider_thinking,
+              estimated_input_tokens:         final_estimate,
+              delta_tokens:                   provider_input - final_estimate
+            }
+            @context_accounting[:events] << ContextAccounting.event(
+              event_type:    :provider_reconciliation,
+              component:     :provider_input,
+              before_tokens: final_estimate,
+              after_tokens:  provider_input
+            )
+          end
+
+          @context_accounting
+        end
+
+        def effective_history_tokens(tokens)
+          loaded = tokens[:loaded_history_estimated_tokens].to_i
+          saved = tokens[:curation_saved_estimated_tokens].to_i +
+                  tokens[:archive_saved_estimated_tokens].to_i +
+                  tokens[:stripped_thinking_estimated_tokens].to_i +
+                  tokens[:context_window_saved_estimated_tokens].to_i
+          [loaded - saved, 0].max
+        end
+
+        def provider_input_tokens_for_accounting
+          @extracted_tokens ||= extract_tokens
+          return @extracted_tokens.input_tokens.to_i if @extracted_tokens.respond_to?(:input_tokens)
+
+          0
+        end
+
+        def provider_cached_input_tokens_for_accounting
+          @extracted_tokens ||= extract_tokens
+          return @extracted_tokens.cache_read_tokens.to_i if @extracted_tokens.respond_to?(:cache_read_tokens)
+          return @extracted_tokens.cached_input_tokens.to_i if @extracted_tokens.respond_to?(:cached_input_tokens)
+
+          0
+        end
+
+        def provider_cache_creation_tokens_for_accounting
+          @extracted_tokens ||= extract_tokens
+          return @extracted_tokens.cache_write_tokens.to_i if @extracted_tokens.respond_to?(:cache_write_tokens)
+          return @extracted_tokens.cache_creation_tokens.to_i if @extracted_tokens.respond_to?(:cache_creation_tokens)
+
+          0
+        end
+
+        def provider_thinking_tokens_for_accounting
+          @extracted_tokens ||= extract_tokens
+          return @extracted_tokens.thinking_tokens.to_i if @extracted_tokens.respond_to?(:thinking_tokens)
+
+          details = @extracted_tokens.output_tokens_details if @extracted_tokens.respond_to?(:output_tokens_details)
+          return details[:reasoning_tokens].to_i if details.is_a?(Hash) && details[:reasoning_tokens]
+
+          0
+        end
+
         def build_response
           @extracted_tokens ||= extract_tokens
 
@@ -1080,7 +1212,7 @@ module Legion
             cost:            estimate_response_cost,
             timestamps:      @timestamps,
             enrichments:     @enrichments,
-            audit:           @audit,
+            audit:           @audit.merge(context_accounting: @context_accounting),
             timeline:        timeline_events,
             participants:    timeline_parts,
             warnings:        warnings_snapshot,

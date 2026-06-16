@@ -211,7 +211,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
       let(:messages) do
         [
           {
-            role: :user,
+            role:    :user,
             content: '<system-reminder>startup handoff tool routing instructions</system-reminder>hello who are you'
           }
         ]
@@ -222,6 +222,45 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
 
         expect(text).to eq(' hello who are you')
         expect(request.messages.first[:content]).to include('<system-reminder>')
+      end
+    end
+
+    context 'with session markup embedded in user content' do
+      let(:messages) do
+        [
+          {
+            role:    :user,
+            content: "<session>\nhello who are you\n</session>\n\nWrite the title in the language the user wrote in"
+          }
+        ]
+      end
+
+      it 'uses only session content for trigger matching text' do
+        text = step.send(:extract_recent_text)
+
+        expect(text).to eq("\nhello who are you\n")
+        expect(text).not_to include('Write the title')
+        expect(request.messages.first[:content]).to include('Write the title')
+      end
+    end
+
+    context 'with system-reminder and session markup in the same user content' do
+      let(:messages) do
+        [
+          {
+            role:    :user,
+            content: '<system-reminder>startup handoff tool routing instructions</system-reminder>' \
+                     "<session>\nhello who are you\n</session>\n\nWrite the title in the language"
+          }
+        ]
+      end
+
+      it 'removes system reminders and uses only session content' do
+        text = step.send(:extract_recent_text)
+
+        expect(text).to eq("\nhello who are you\n")
+        expect(text).not_to include('startup handoff')
+        expect(text).not_to include('Write the title')
       end
     end
   end

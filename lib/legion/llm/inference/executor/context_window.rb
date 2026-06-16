@@ -23,6 +23,7 @@ module Legion
 
           def enforce_context_window(messages)
             context_window = resolved_context_window
+            @context_accounting[:component_status][:context_window] = :observed
             return messages unless context_window&.positive?
 
             threshold = (context_window * 0.90).to_i
@@ -39,10 +40,27 @@ module Legion
             target_tokens = threshold - estimate_message_tokens(recent)
             compacted = compact_to_fit(older, target_tokens)
 
+            result = compacted + recent
+            after_tokens = estimate_message_tokens(result)
+            saved = [estimated - after_tokens, 0].max
+
+            @context_accounting[:tokens][:context_window_saved_estimated_tokens] += saved
+            @context_accounting[:counts][:context_window_message_count_before] = messages.size
+            @context_accounting[:counts][:context_window_message_count_after] = result.size
+            @context_accounting[:events] << ContextAccounting.event(
+              event_type:    :context_window_enforcement,
+              component:     :context_window,
+              before_tokens: estimated,
+              after_tokens:  after_tokens,
+              before_count:  messages.size,
+              after_count:   result.size,
+              metadata:      { context_window: context_window, threshold: threshold }
+            )
+
             log.info "[llm][executor] action=context_compaction_complete request_id=#{@request.id} " \
-                     "before=#{messages.size} after=#{compacted.size + recent.size} " \
-                     "tokens_before=#{estimated} tokens_after=#{estimate_message_tokens(compacted + recent)}"
-            compacted + recent
+                     "before=#{messages.size} after=#{result.size} " \
+                     "tokens_before=#{estimated} tokens_after=#{after_tokens}"
+            result
           end
 
           def compact_to_fit(messages, target_tokens)
@@ -77,6 +95,7 @@ module Legion
           end
 
           def strip_thinking_from_history(messages)
+            before_tokens = ContextAccounting.estimate_message_tokens(messages)
             preserve_after = last_user_message_index(messages)
             stripped_count = 0
             result = messages.each_with_index.map do |msg, idx|
@@ -91,6 +110,23 @@ module Legion
 
               stripped_count += 1
               msg.merge(content: cleaned)
+            end
+
+            after_tokens = ContextAccounting.estimate_message_tokens(result)
+            saved = [before_tokens - after_tokens, 0].max
+            @context_accounting[:component_status][:thinking_strip] = :observed
+            if saved.positive?
+              @context_accounting[:tokens][:stripped_thinking_estimated_tokens] += saved
+              @context_accounting[:counts][:stripped_thinking_message_count] += stripped_count
+              @context_accounting[:events] << ContextAccounting.event(
+                event_type:    :thinking_stripped,
+                component:     :stripped_thinking,
+                before_tokens: before_tokens,
+                after_tokens:  after_tokens,
+                before_count:  messages.size,
+                after_count:   result.size,
+                metadata:      { stripped_count: stripped_count }
+              )
             end
 
             log.info "[llm][executor] action=strip_thinking_history request_id=#{@request.id} stripped=#{stripped_count}" if stripped_count.positive?

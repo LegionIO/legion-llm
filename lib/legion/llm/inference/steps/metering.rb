@@ -85,11 +85,13 @@ module Legion
           end
 
           def content_fields(opts)
-            {
+            fields = {
               messages:          opts[:messages],
               response_content:  opts[:response_content],
               response_thinking: opts[:response_thinking]
-            }.compact
+            }
+            fields[:context_accounting] = opts[:context_accounting] if opts[:context_accounting]
+            fields.compact
           end
 
           def publish_event(event)

@@ -20,6 +20,8 @@ module Legion
                                 )
                               end
 
+            record_system_accounting(injected_system) if @native_tool_loop_round.to_i.zero?
+
             options = {
               system:            injected_system,
               offering_id:       @resolved_offering_id,
@@ -71,6 +73,7 @@ module Legion
               add_pinned_special_tool_definitions(definitions)
               Array(@request.tools).each { |tool| add_native_tool_definition(definitions, tool) }
               add_registry_tool_definitions(definitions) if registry_tool_injection_requested?
+              record_tool_accounting(definitions)
               log.debug "[llm][executor] action=native_tool_definitions.built count=#{definitions.size}"
               log_native_tool_definitions(definitions)
               definitions
@@ -348,6 +351,43 @@ module Legion
               definitions << definition
               injected_names << definition.name
             end
+          end
+
+          def record_tool_accounting(definitions)
+            return if definitions.empty?
+
+            tool_tokens = ContextAccounting.estimate_json_tokens(definitions.map(&:to_h))
+            @context_accounting[:tokens][:tool_definition_estimated_tokens] = tool_tokens
+            @context_accounting[:counts][:tool_definition_count] = definitions.size
+            @context_accounting[:component_status][:tools] = :observed
+            @context_accounting[:events] << ContextAccounting.event(
+              event_type:    :tools_injected,
+              component:     :tools,
+              before_tokens: 0,
+              after_tokens:  tool_tokens,
+              before_count:  0,
+              after_count:   definitions.size
+            )
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.record_tool_accounting')
+          end
+
+          def record_system_accounting(injected_system)
+            baseline = EnrichmentInjector.resolve_baseline
+            baseline_tokens = ContextAccounting.estimate_text_tokens(baseline)
+            system_tokens = ContextAccounting.estimate_text_tokens(injected_system)
+            @context_accounting[:tokens][:baseline_system_estimated_tokens] = baseline_tokens
+            @context_accounting[:tokens][:system_prompt_estimated_tokens] = system_tokens
+            @context_accounting[:component_status][:system] = :observed
+            @context_accounting[:events] << ContextAccounting.event(
+              event_type:    :system_injected,
+              component:     :system,
+              before_tokens: 0,
+              after_tokens:  system_tokens,
+              metadata:      { baseline_tokens: baseline_tokens }
+            )
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.record_system_accounting')
           end
         end
       end

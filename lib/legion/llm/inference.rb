@@ -3,6 +3,7 @@
 require 'legion/logging/helper'
 require_relative 'publisher_identity'
 require_relative 'metering/usage'
+require_relative 'inference/context_accounting'
 require_relative 'inference/request'
 require_relative 'inference/response'
 require_relative 'inference/profile'

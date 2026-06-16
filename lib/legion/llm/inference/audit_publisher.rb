@@ -69,6 +69,7 @@ module Legion
           event[:response_content_hash] = content_hash(msg_content)
           provider_metrics = extract_provider_metrics(provider_payload)
           event[:provider_metrics] = provider_metrics if provider_metrics.any?
+          event[:context_accounting] = hash_value(audit_data, :context_accounting) if hash_value(audit_data, :context_accounting)
           event[:agent_id] = request.agent_id if request.respond_to?(:agent_id) && request.agent_id
           event[:node_id] = Legion::LLM.node_id if Legion::LLM.respond_to?(:node_id) && Legion::LLM.node_id
           event.compact

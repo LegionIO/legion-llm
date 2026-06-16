@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.12.22] - 2026-06-16
+
+### Added
+
+- **Context token accounting** — `llm_message_inference_metrics` is now the canonical source of truth for all pipeline context token metrics. Every inference request emits a normalized `context_accounting` payload with per-component token estimates covering: loaded history, curated history, curation savings, thinking strip savings, archive savings, context-window enforcement savings, RAG injection, system/baseline prompt, tool definitions, and final estimated context size.
+- **`Inference::ContextAccounting` module** — Deterministic char/4 estimator with structured event builder for pipeline instrumentation.
+- **Executor instrumentation** — `step_context_load` records loaded/curated/archived history tokens; `ContextWindow` records thinking-strip and context-window enforcement savings; `RagContext` records RAG injection tokens; `ToolInjection` records tool definition payload tokens; system/baseline enrichment tokens recorded at dispatch.
+- **Provider reconciliation** — Finalized accounting includes a reconciliation block comparing estimated input tokens against provider-reported input tokens with delta.
+- **Metering event enrichment** — `Steps::Metering.build_event` carries the `context_accounting` payload for downstream ledger persistence.
+- **Audit event enrichment** — `AuditPublisher.build_event` exposes `context_accounting` as a top-level key for ledger writer convenience.
+- **Component status tracking** — Each accounting-producing pipeline step sets its component status (`:observed`, `:not_observed`, `:profile_skipped`) so zero-valued columns are distinguishable from skipped steps.
+
 ## [0.12.21] - 2026-06-15
 
 ### Added
@@ -17,6 +29,7 @@
 ### Fixed
 
 - Discovery no longer merges stale registry metadata capabilities over live offering data when offerings carry `capability_sources`.
+- Tool trigger matching strips `<system-reminder>...</system-reminder>` blocks from its scan text without mutating request history, preventing startup/handoff prompts from triggering broad tool injection.
 
 ## [0.12.20] - 2026-06-15
 
