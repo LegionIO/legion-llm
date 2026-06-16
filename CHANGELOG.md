@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.12.25] - 2026-06-16
+
+### Fixed
+
+- **Codex Responses rendering** — `/v1/responses` now unwraps canonical content-block arrays into plain `output_text` strings for both non-streaming responses and streaming fallback finalization, preventing Ruby object inspect strings from leaking into Codex.
+
 ## [0.12.24] - 2026-06-16
 
 ### Fixed

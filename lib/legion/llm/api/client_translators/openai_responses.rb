@@ -137,7 +137,7 @@ module Legion
             routing = pipeline_response.respond_to?(:routing) ? pipeline_response.routing || {} : {}
             tokens = pipeline_response.respond_to?(:tokens) ? pipeline_response.tokens || {} : {}
             raw_msg = pipeline_response.respond_to?(:message) ? pipeline_response.message : nil
-            content = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']).to_s : raw_msg.to_s
+            content = extract_content_text(raw_msg)
             resolved_model = (routing[:model] || routing['model'] || model).to_s
 
             actionable_tool_calls = build_output_tool_calls(pipeline_response)
@@ -192,7 +192,7 @@ module Legion
 
             case canonical_chunk.type
             when :text_delta
-              { type: 'response.output_text.delta', delta: canonical_chunk.delta.to_s,
+              { type: 'response.output_text.delta', delta: extract_content_text(canonical_chunk.delta),
                 output_index: canonical_chunk.block_index || 0 }
             when :thinking_delta
               { type: 'response.thinking.delta', delta: canonical_chunk.delta.to_s,

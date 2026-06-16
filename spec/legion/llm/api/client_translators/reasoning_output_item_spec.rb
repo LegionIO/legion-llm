@@ -65,5 +65,22 @@ RSpec.describe Legion::LLM::API::ClientTranslators::OpenAIResponses do
       out = translator.format_response(no_thinking, model: 'qwen3.6-27b', request_id: 'resp_test')[:output]
       expect(out.none? { |o| o[:phase] == 'reasoning' }).to be(true)
     end
+
+    it 'unwraps canonical content blocks instead of leaking Ruby object inspect strings' do
+      block_response = pipeline_response.dup.tap do |response|
+        response.message = {
+          role:    :assistant,
+          content: [
+            Legion::Extensions::Llm::Canonical::ContentBlock.text('visible answer')
+          ]
+        }
+      end
+
+      out = translator.format_response(block_response, model: 'qwen3.6-27b', request_id: 'resp_test')[:output]
+      answer = out.find { |o| o[:type] == 'message' && o[:phase] != 'reasoning' }
+
+      expect(answer[:content].first[:text]).to eq('visible answer')
+      expect(answer[:content].first[:text]).not_to include('Legion::Extensions::Llm::Canonical::ContentBlock')
+    end
   end
 end

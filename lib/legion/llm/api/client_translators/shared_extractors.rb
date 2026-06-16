@@ -38,6 +38,47 @@ module Legion
             value.to_s
           end
 
+          def extract_content_text(value)
+            return '' if value.nil?
+            return value if value.is_a?(String)
+
+            if value.is_a?(Array)
+              return value.filter_map do |part|
+                text = extract_content_text(part)
+                text.empty? ? nil : text
+              end.join
+            end
+
+            if value.is_a?(Hash)
+              normalized = value.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+              content = normalized[:content]
+              return extract_content_text(content) unless content.nil?
+
+              return '' unless text_content_type?(normalized[:type])
+
+              text = normalized[:text] || normalized[:output_text] || normalized[:value]
+              return extract_content_text(text) unless text.nil?
+
+              return ''
+            end
+
+            if value.respond_to?(:text)
+              type = value.respond_to?(:type) ? value.type : nil
+              return '' unless text_content_type?(type)
+
+              return value.text.to_s
+            end
+
+            return extract_content_text(value.content) if value.respond_to?(:content)
+
+            value.to_s
+          end
+
+          def text_content_type?(type)
+            type_string = type.to_s
+            type_string.empty? || %w[text output_text input_text].include?(type_string)
+          end
+
           # Tool-call argument coercion is FORMAT-SPECIFIC. The two client
           # surfaces have incompatible wire requirements:
           #

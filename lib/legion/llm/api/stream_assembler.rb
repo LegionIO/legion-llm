@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/api/client_translators/shared_extractors'
 
 module Legion
   module LLM
@@ -30,6 +31,7 @@ module Legion
       class StreamAssembler
         extend Legion::Logging::Helper
         include Legion::Logging::Helper
+        include Legion::LLM::API::ClientTranslators::SharedExtractors
 
         class StreamClosed < StandardError; end
 
@@ -491,8 +493,7 @@ module Legion
 
         def extract_fallback_text(final_response)
           msg = final_response.respond_to?(:message) ? final_response.message : nil
-          text = msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg.to_s
-          text.to_s.strip
+          extract_content_text(msg).strip
         end
 
         def extract_thinking_payload(final_response)
