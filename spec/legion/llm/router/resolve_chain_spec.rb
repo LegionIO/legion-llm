@@ -7,6 +7,10 @@ require 'legion/llm/router/escalation/chain'
 RSpec.describe 'Legion::LLM::Router.resolve_chain' do
   before do
     Legion::LLM::Router.reset!
+    # Reset the registry so a provider registered by one example (e.g. the
+    # routing-disabled multi-provider case) does not leak into another under
+    # random spec order — provider registration now influences chain primaries.
+    Legion::LLM::Call::Registry.reset!
     Legion::Settings.set_prop(:llm, {
                                 default_model:    'claude-sonnet-4-6',
                                 default_provider: :bedrock,
@@ -61,6 +65,30 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
       chain = Legion::LLM::Router.resolve_chain(intent: { effort: :low })
       expect(chain.size).to be >= 2
       expect(chain.primary.tier).to eq(:local)
+    end
+  end
+
+  context 'with provider preference and no matching provider rule' do
+    let(:rules) do
+      [
+        { name: 'openai-tools', when: { operation: 'chat', required_capabilities: [:tools] },
+          then: { tier: :frontier, provider: :openai, model: 'gpt-5.5' },
+          priority: 100 },
+        { name: 'vllm-tools', when: { operation: 'chat', required_capabilities: [:tools] },
+          then: { tier: :direct, provider: :vllm, instance: :h200, model: 'gemma-4-31b-it' },
+          priority: 80 }
+      ]
+    end
+
+    it 'falls back to the normal chain when no candidate matches the provider preference' do
+      chain = Legion::LLM::Router.resolve_chain(
+        intent:   { operation: :chat, required_capabilities: [:tools] },
+        provider: :bedrock,
+        model:    'anthropic.claude-sonnet-4'
+      )
+
+      expect(chain.primary.provider).to eq(:bedrock)
+      expect(chain.primary.model).to eq('claude-sonnet-4-6')
     end
   end
 

@@ -46,6 +46,23 @@ module MatrixHelper
     end
   end
 
+  class FakeLegionFailure
+    def self.tool_name = 'fake_legion_failure'
+    def self.description = 'Raises a deterministic test failure.'
+
+    def self.input_schema
+      {
+        type:       'object',
+        properties: {},
+        required:   []
+      }
+    end
+
+    def self.call(**)
+      raise ArgumentError, 'deterministic fake LegionIO tool failure'
+    end
+  end
+
   module_function
 
   # Real Sinatra app with all three client-format routes mounted. Reused by
@@ -110,6 +127,24 @@ module MatrixHelper
 
   def unregister_legion_tool!
     Legion::Settings::Extensions.unregister_tool(FakeLegionEcho.tool_name)
+  rescue StandardError
+    nil
+  end
+
+  def register_legion_failure_tool!
+    Legion::Settings::Extensions.register_tool(
+      FakeLegionFailure.tool_name,
+      extension:    'lex-fake',
+      runner:       'FakeRunner',
+      tool_class:   FakeLegionFailure,
+      description:  FakeLegionFailure.description,
+      input_schema: FakeLegionFailure.input_schema,
+      deferred:     false
+    )
+  end
+
+  def unregister_legion_failure_tool!
+    Legion::Settings::Extensions.unregister_tool(FakeLegionFailure.tool_name)
   rescue StandardError
     nil
   end

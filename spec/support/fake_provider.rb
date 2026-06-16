@@ -35,6 +35,7 @@ module FakeProvider
     stream_thinking
     stream_tool
     server_tool_legion
+    server_tool_failure_with_client_passthrough
     tool_degraded_args
     error
   ].freeze
@@ -200,8 +201,10 @@ module FakeProvider
       when :tool_parallel_same_name then tool_parallel_response(model)
       when :multi_turn_continuation then multi_turn_response(model, messages)
       when :server_tool_legion      then server_tool_legion_response(model)
-      when :tool_degraded_args      then tool_degraded_args_response(model)
-      else                               text_response(model)
+      when :server_tool_failure_with_client_passthrough
+        server_tool_failure_with_client_passthrough_response(model)
+      when :tool_degraded_args then tool_degraded_args_response(model)
+      else text_response(model)
       end
     end
 
@@ -330,6 +333,24 @@ module FakeProvider
           metadata:    { fake: true, scenario: :server_tool_legion, round: 2 }
         )
       end
+    end
+
+    # Regression shape from Codex/vLLM live failure:
+    # one LegionIO-executed tool plus one client passthrough tool in the same
+    # provider response. When the LegionIO tool result is attached, the executor
+    # must update the immutable canonical ToolCall without Hash mutation.
+    def server_tool_failure_with_client_passthrough_response(model)
+      Canonical::Response.build(
+        text:        '',
+        tool_calls:  [
+          tool_call(name: 'fake_legion_failure', args: {}, id: 'call_fake_legion_bad'),
+          tool_call(name: 'exec_command', args: { cmd: 'pwd' }, id: 'call_fake_client_exec')
+        ],
+        usage:       usage(input: 9, output: 4),
+        stop_reason: :tool_use,
+        model:       model.to_s,
+        metadata:    { fake: true, scenario: :server_tool_failure_with_client_passthrough }
+      )
     end
 
     def stream_text(model, prefix: '')

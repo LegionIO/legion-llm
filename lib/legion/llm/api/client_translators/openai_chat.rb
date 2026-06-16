@@ -59,10 +59,11 @@ module Legion
               params:          params,
               stream:          body[:stream] == true,
               conversation_id: env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id],
-              routing:         { model: body[:model], provider: env['HTTP_X_LEGION_PROVIDER'] || body[:provider],
-                                 instance: env['HTTP_X_LEGION_INSTANCE'] || body[:instance] }.compact,
+              routing:         legion_routing_from_env(env),
               metadata:        {
+                client_model:            body[:model],
                 tier:                    env['HTTP_X_LEGION_TIER'] || body[:tier],
+                routing_explicit:        legion_routing_explicit_from_env(env),
                 cwd:                     env['HTTP_X_LEGION_CWD'] || body[:cwd],
                 requested_tools:         body[:requested_tools] || [],
                 client_tool_passthrough: extract_client_tool_passthrough(body, env),
@@ -81,6 +82,8 @@ module Legion
             cwd = canonical_request.metadata[:cwd]
             extra[:tier] = tier.to_sym if tier
             extra[:cwd] = cwd if cwd
+            routing_explicit = canonical_request.metadata[:routing_explicit]
+            extra[:routing_explicit] = routing_explicit if routing_explicit
 
             metadata = { requested_tools: canonical_request.metadata[:requested_tools] || [] }
             metadata[:client_tool_passthrough] = canonical_request.metadata[:client_tool_passthrough] unless canonical_request.metadata[:client_tool_passthrough].nil?
@@ -135,7 +138,8 @@ module Legion
             routing = pipeline_response.respond_to?(:routing) ? pipeline_response.routing || {} : {}
             tokens = pipeline_response.respond_to?(:tokens) ? pipeline_response.tokens || {} : {}
             raw_msg = pipeline_response.respond_to?(:message) ? pipeline_response.message : nil
-            content = raw_msg.is_a?(Hash) ? (raw_msg[:content] || raw_msg['content']) : raw_msg.to_s
+            content = extract_content_text(raw_msg)
+            content = server_tool_results_text(pipeline_response) if content.empty?
             stop_reason = pipeline_response.respond_to?(:stop) ? pipeline_response.stop&.dig(:reason)&.to_s : nil
 
             actionable_tool_calls = build_tool_calls(pipeline_response)
@@ -560,6 +564,31 @@ module Legion
                        tool_call[:result] || tool_call['result']
                      end
             !result.nil?
+          end
+
+          def server_tool_results_text(pipeline_response)
+            tools = pipeline_response.respond_to?(:tools) ? pipeline_response.tools : nil
+            return '' unless tools.respond_to?(:any?) && tools.any?
+
+            tools.filter_map do |tool_call|
+              next unless server_tool_resolved?(tool_call)
+
+              result = if tool_call.respond_to?(:result)
+                         tool_call.result
+                       elsif tool_call.is_a?(Hash)
+                         tool_call[:result] || tool_call['result']
+                       end
+              serialize_server_tool_result(result)
+            end.join("\n")
+          end
+
+          def serialize_server_tool_result(result)
+            return '' if result.nil?
+            return result if result.is_a?(String)
+
+            Legion::JSON.dump(result)
+          rescue StandardError
+            extract_content_text(result)
           end
 
           def map_finish_reason(stop_reason)

@@ -154,7 +154,7 @@ module Legion
           end
 
           def client_passthrough_tool_call?(tool_call)
-            client_passthrough_source?(find_tool_source(tool_call[:name]))
+            client_passthrough_source?(find_tool_source(tool_call_value(tool_call, :name)))
           end
 
           def client_passthrough_tool_loop_result(result, tool_calls, round)
@@ -169,20 +169,20 @@ module Legion
             # doesn't have the results yet. Without this, format_stop_reason
             # sees LegionIO tools with nil results → returns 'pause_turn' →
             # causes Claude Code to auto-send a follow-up → duplicate responses.
-            all_tc = Array(result[:tool_calls])
-            all_tc.each do |tc|
-              next if client_passthrough_tool_call?(tc)
+            updated_tool_calls = Array(tool_call_value(result, :tool_calls)).map do |tc|
+              next tc if client_passthrough_tool_call?(tc)
 
-              tc_id = tc[:id] || tc['id']
-              tc_name = tc[:name] || tc['name']
+              tc_id = tool_call_value(tc, :id)
+              tc_name = tool_call_value(tc, :name)
               entry = @pending_tool_history&.find { |e| e[:tool_call_id] == tc_id || e[:tool_name] == tc_name }
-              next unless entry && entry[:result]
+              next tc unless entry && entry[:result]
 
-              tc[:result] = entry[:result]
-              tc['result'] = entry[:result]
+              tc = tool_call_with_execution_result(tc, entry)
               log.debug("[llm][tool_loop] action=populate_legionio_result tool=#{tc_name} " \
                         "tc_id=#{tc_id} result_length=#{entry[:result].to_s.length}")
+              tc
             end
+            result = response_with_tool_calls(result, updated_tool_calls)
 
             # Only emit events for client passthrough tools here.
             tool_calls.each do |tool_call|
@@ -202,6 +202,58 @@ module Legion
             end
             log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=client_passthrough"
             result
+          end
+
+          def tool_call_value(tool_call, field)
+            return tool_call.public_send(field) if tool_call.respond_to?(field)
+
+            tool_call[field] || tool_call[field.to_s]
+          end
+
+          def response_with_tool_calls(result, tool_calls)
+            return result.with(tool_calls: tool_calls) if result.respond_to?(:with)
+
+            if result.respond_to?(:[]=)
+              result[:tool_calls] = tool_calls
+              result['tool_calls'] = tool_calls
+            end
+            result
+          end
+
+          def tool_call_with_execution_result(tool_call, entry)
+            typed_call = entry[:typed_call]
+            source = typed_call&.source || tool_call_value(tool_call, :source)
+            status = entry[:error] ? :error : :success
+            duration_ms = typed_call&.duration_ms || tool_call_value(tool_call, :duration_ms)
+
+            if tool_call.respond_to?(:with_result)
+              base = tool_call.respond_to?(:with) ? tool_call.with(source: source) : tool_call
+              return base.with_result(
+                result:      entry[:result],
+                status:      status,
+                duration_ms: duration_ms,
+                finished_at: typed_call&.finished_at
+              )
+            end
+
+            if tool_call.respond_to?(:with)
+              return tool_call.with(
+                source:      source,
+                status:      status,
+                duration_ms: duration_ms,
+                result:      entry[:result],
+                error:       (entry[:result] if entry[:error])
+              )
+            end
+
+            tool_call.merge(
+              result:      entry[:result],
+              'result'    => entry[:result],
+              source:      source,
+              status:      status,
+              duration_ms: duration_ms,
+              error:       (entry[:result] if entry[:error])
+            ).compact
           end
 
           def normalize_tool_arguments(arguments)

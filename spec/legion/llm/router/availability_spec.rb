@@ -24,6 +24,34 @@ RSpec.describe Legion::LLM::Router::Availability do
     )
   end
 
+  let(:bedrock_offering) do
+    {
+      model:           'anthropic.claude-sonnet-4',
+      provider_family: 'bedrock',
+      instance_id:     'primary',
+      capabilities:    %w[chat completion streaming tools],
+      limits:          { context_window: 200_000 }
+    }
+  end
+
+  let(:vllm_offering) do
+    {
+      model:           'qwen3:32b',
+      provider_family: 'vllm',
+      instance_id:     'h200',
+      capabilities:    %w[chat completion streaming tools],
+      limits:          { context_window: 32_768 }
+    }
+  end
+
+  before do
+    allow(Legion::LLM::Inventory).to receive(:offerings).and_call_original
+    allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :bedrock)).and_return([bedrock_offering])
+    allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :vllm)).and_return([vllm_offering])
+    allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :ollama)).and_return([])
+    allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :anthropic)).and_return([])
+  end
+
   describe '.filter_resolutions' do
     it 'drops resolutions with open circuits' do
       4.times { Legion::LLM::Router.health_tracker.report(provider: :vllm, instance: :h200, signal: :error, value: 1) }
@@ -52,6 +80,10 @@ RSpec.describe Legion::LLM::Router::Availability do
     end
 
     it 'drops resolutions missing required capabilities' do
+      ollama_offering = { model: 'phi:3b', provider_family: 'ollama', instance_id: 'local',
+                          capabilities: %w[completion], limits: {} }
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :ollama)).and_return([ollama_offering])
+
       no_tools = Legion::LLM::Router::Resolution.new(
         tier: :local, provider: :ollama, instance: :local,
         model: 'phi:3b', metadata: { capabilities: %i[completion] }
@@ -72,7 +104,7 @@ RSpec.describe Legion::LLM::Router::Availability do
       expect(result).to be_empty
     end
 
-    it 'passes through when discovery has not run (unknown status)' do
+    it 'passes through when Inventory confirms models exist' do
       result = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
       expect(result.size).to eq(2)
     end
@@ -90,6 +122,10 @@ RSpec.describe Legion::LLM::Router::Availability do
     end
 
     it 'returns :missing_capability when capabilities do not match' do
+      ollama_offering = { model: 'phi:3b', provider_family: 'ollama', instance_id: 'local',
+                          capabilities: %w[completion], limits: {} }
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :ollama)).and_return([ollama_offering])
+
       no_tools_resolution = Legion::LLM::Router::Resolution.new(
         tier: :local, provider: :ollama, instance: :local,
         model: 'phi:3b', metadata: { capabilities: %i[completion] }
@@ -101,11 +137,10 @@ RSpec.describe Legion::LLM::Router::Availability do
       expect(described_class.rejection_reason(bedrock_resolution, estimated_tokens: nil, required_capabilities: [:tools])).to be_nil
     end
 
-    it 'returns :missing_capability when capabilities are empty and discovery is :ok' do
-      Legion::LLM::Discovery.record_discovery_status(provider: :ollama, instance: :local, status: :ok)
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
-        [{ provider: :ollama, instance: :local, model: 'phi:3b', capabilities: [] }]
-      )
+    it 'returns :missing_capability when Inventory offering has no tools capability' do
+      ollama_offering = { model: 'phi:3b', provider_family: 'ollama', instance_id: 'local',
+                          capabilities: %w[completion], limits: {} }
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :ollama)).and_return([ollama_offering])
 
       empty_caps_resolution = Legion::LLM::Router::Resolution.new(
         tier: :local, provider: :ollama, instance: :local,
@@ -120,23 +155,50 @@ RSpec.describe Legion::LLM::Router::Availability do
       expect(reason).to eq(:missing_capability)
     end
 
-    it 'returns :capability_unconfirmed when discovery is :unknown and source data denies required cap' do
-      unconfirmed_resolution = Legion::LLM::Router::Resolution.new(
-        tier: :fleet, provider: :vllm, instance: :gpu1,
-        model: 'test-model',
-        metadata: {
-          capability_sources: {
-            tools: { value: false, source: :default_false }
-          }
-        }
-      )
+    it 'does not reject cloud providers when discovery reports empty — Inventory is authoritative' do
+      Legion::LLM::Discovery.record_discovery_status(provider: :bedrock, instance: :primary, status: :empty)
 
       reason = described_class.rejection_reason(
-        unconfirmed_resolution,
+        bedrock_resolution,
         estimated_tokens:      nil,
         required_capabilities: [:tools]
       )
-      expect(reason).to eq(:capability_unconfirmed)
+
+      expect(reason).to be_nil
+    end
+
+    it 'rejects discoverable providers when Inventory has no models' do
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :vllm)).and_return([])
+
+      reason = described_class.rejection_reason(
+        vllm_resolution,
+        estimated_tokens:      nil,
+        required_capabilities: []
+      )
+
+      expect(reason).to eq(:provider_instance_has_no_models)
+    end
+
+    it 'rejects discoverable providers when discovery is unreachable' do
+      Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :h200, status: :unreachable)
+
+      reason = described_class.rejection_reason(
+        vllm_resolution,
+        estimated_tokens:      nil,
+        required_capabilities: []
+      )
+      expect(reason).to eq(:discovery_unavailable)
+    end
+
+    it 'does not reject cloud providers when discovery is unreachable' do
+      Legion::LLM::Discovery.record_discovery_status(provider: :bedrock, instance: :primary, status: :unreachable)
+
+      reason = described_class.rejection_reason(
+        bedrock_resolution,
+        estimated_tokens:      nil,
+        required_capabilities: []
+      )
+      expect(reason).to be_nil
     end
 
     it 'returns :instance_unresolved when instance is nil and provider has multiple discovered instances' do
@@ -161,22 +223,52 @@ RSpec.describe Legion::LLM::Router::Availability do
       expect(reason).to eq(:instance_unresolved)
     end
 
-    it 'passes when capabilities confirmed from :instance_override source during cold boot' do
+    it 'passes when Inventory confirms the model with matching capabilities' do
+      vllm_tools_offering = vllm_offering.merge(model: 'test-model', capabilities: %w[completion streaming tools])
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :vllm)).and_return([vllm_tools_offering])
+
       confirmed_resolution = Legion::LLM::Router::Resolution.new(
         tier: :fleet, provider: :vllm, instance: :gpu1,
         model: 'test-model',
-        metadata: {
-          capabilities:       %i[completion streaming tools],
-          capability_sources: {
-            tools: { value: true, source: :instance_override }
-          }
-        }
+        metadata: { capabilities: %i[completion streaming tools] }
       )
 
       reason = described_class.rejection_reason(
         confirmed_resolution,
         estimated_tokens:      nil,
         required_capabilities: [:tools]
+      )
+      expect(reason).to be_nil
+    end
+
+    it 'returns :model_not_offered when Inventory has models but not the requested one' do
+      reason = described_class.rejection_reason(
+        Legion::LLM::Router::Resolution.new(
+          tier: :fleet, provider: :vllm, instance: :h200,
+          model: 'nonexistent-model', metadata: {}
+        ),
+        estimated_tokens:      nil,
+        required_capabilities: []
+      )
+      expect(reason).to eq(:model_not_offered)
+    end
+
+    it 'returns :context_too_small when estimated tokens exceed context window' do
+      reason = described_class.rejection_reason(
+        vllm_resolution,
+        estimated_tokens:      31_000,
+        required_capabilities: []
+      )
+      expect(reason).to eq(:context_too_small)
+    end
+
+    it 'is permissive when Inventory lookup fails' do
+      allow(Legion::LLM::Inventory).to receive(:offerings).and_raise(StandardError, 'boom')
+
+      reason = described_class.rejection_reason(
+        bedrock_resolution,
+        estimated_tokens:      nil,
+        required_capabilities: []
       )
       expect(reason).to be_nil
     end

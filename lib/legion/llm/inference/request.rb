@@ -138,12 +138,17 @@ module Legion
           normalized_extra = normalize_hash(extra)
           return [normalized_routing, normalized_extra] unless auto_routing_model?(normalized_routing[:model])
 
-          normalized_routing = { provider: nil, model: nil }
+          normalized_routing = normalized_routing.dup
+          normalized_routing[:model] = nil
           normalized_extra = normalized_extra.dup
-          normalized_extra.delete(:tier)
+          normalized_extra[:requested_model_alias] = Legion::LLM::Inference::AUTO_ROUTING_MODEL_KEY
+          if normalized_routing.values_at(:provider, :instance, :instance_id, :provider_instance).compact.any? ||
+             normalized_extra[:tier]
+            return [normalized_routing, normalized_extra]
+          end
+
           normalized_extra[:intent] ||= default_auto_routing_intent
           normalized_extra[:auto_route] = true
-          normalized_extra[:requested_model_alias] = Legion::LLM::Inference::AUTO_ROUTING_MODEL_KEY
           [normalized_routing, normalized_extra]
         end
 

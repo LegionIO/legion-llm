@@ -207,6 +207,16 @@ RSpec.describe 'Router determinism and regression coverage' do
   # ─── Stale vLLM model rejected by live catalog ──────────────────────────────
 
   describe 'live catalog enforcement' do
+    let(:vllm_apollo_offering) do
+      {
+        model:           'legion-code-27b-v1',
+        provider_family: 'vllm',
+        instance_id:     'apollo',
+        capabilities:    %w[completion streaming tools thinking],
+        limits:          { context_window: 262_144 }
+      }
+    end
+
     before do
       allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
         [
@@ -220,6 +230,7 @@ RSpec.describe 'Router determinism and regression coverage' do
         ]
       )
       Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :apollo, status: :ok)
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :vllm)).and_return([vllm_apollo_offering])
     end
 
     it 'rejects a stale model not present in live offerings' do
@@ -259,17 +270,8 @@ RSpec.describe 'Router determinism and regression coverage' do
     end
 
     it 'rejects a live model missing required capabilities' do
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
-        [
-          {
-            provider:       :vllm,
-            instance:       :apollo,
-            model:          'legion-code-27b-v1',
-            capabilities:   %i[completion streaming],
-            context_length: 262_144
-          }
-        ]
-      )
+      no_tools_offering = vllm_apollo_offering.merge(capabilities: %w[completion streaming])
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :vllm)).and_return([no_tools_offering])
 
       resolution = Legion::LLM::Router::Resolution.new(
         tier:     :direct,
@@ -288,8 +290,8 @@ RSpec.describe 'Router determinism and regression coverage' do
       expect(reason).to eq(:missing_capability)
     end
 
-    it 'is permissive when discovery status is :unknown (cold boot)' do
-      Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :apollo, status: :unknown)
+    it 'is permissive when Inventory is unavailable (cold boot fallback)' do
+      allow(Legion::LLM::Inventory).to receive(:offerings).and_raise(StandardError, 'not ready')
 
       resolution = Legion::LLM::Router::Resolution.new(
         tier:     :direct,
@@ -308,9 +310,8 @@ RSpec.describe 'Router determinism and regression coverage' do
       expect(reason).to be_nil
     end
 
-    it 'rejects when discovery status is :empty' do
-      Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :apollo, status: :empty)
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
+    it 'rejects when Inventory returns no models for a provider' do
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :vllm)).and_return([])
 
       resolution = Legion::LLM::Router::Resolution.new(
         tier:     :direct,
@@ -369,6 +370,56 @@ RSpec.describe 'Router determinism and regression coverage' do
       )
 
       expect(chain).to be_empty
+    end
+  end
+
+  # ─── Regression: explicit provider hint honored on EVERY entry point ─────────
+  # The bedrock→vLLM live failure (codex_fuck_up.txt): a Claude→Bedrock tool
+  # request carried provider: :bedrock but routed to vLLM, because only the
+  # discoverable providers (ollama/mlx/vllm) get auto-rules and resolve_chain's
+  # chain_from_intent honors a provider hint only as a scoring bonus — with no
+  # bedrock rule to boost, the vLLM rule wins. Router.resolve already falls
+  # through to explicit_resolution (router_spec.rb); resolve_chain MUST reach the
+  # same primary. (NxN G14 routing consolidation / redesign issue #95.)
+  describe 'explicit provider hint parity across resolve and resolve_chain' do
+    before do
+      # Only a vLLM rule exists — bedrock has no auto-rule, exactly like the live
+      # daemon where RuleGenerator emits rules only for ollama/mlx/vllm.
+      configure_with_rules(
+        [
+          {
+            name:     'chat-vllm',
+            when:     { operation: 'chat' },
+            then:     {
+              tier: 'direct', provider: 'vllm', instance: 'apollo',
+              model: 'legion-code-27b-v1', model_capabilities: %i[completion streaming tools]
+            },
+            priority: 100
+          }
+        ]
+      )
+      # Bedrock is a registered, serveable provider with a default model.
+      Legion::LLM::Call::Registry.register(
+        :bedrock, Module.new,
+        metadata: { tier: :cloud, default_model: 'anthropic.claude-sonnet-4' }
+      )
+      # Isolate the bug from availability: keep every candidate so a vLLM primary
+      # proves the hint was ignored, not that availability filtered vLLM out.
+      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| resolutions }
+    end
+
+    after { Legion::LLM::Call::Registry.deregister_provider(:bedrock) }
+
+    let(:bedrock_hint_intent) { { operation: :chat, effort: :moderate, required_capabilities: [:tools] } }
+
+    it 'Router.resolve routes an explicit bedrock hint to bedrock, not the vLLM rule' do
+      result = Legion::LLM::Router.resolve(provider: :bedrock, intent: bedrock_hint_intent)
+      expect(result.provider).to eq(:bedrock)
+    end
+
+    it 'Router.resolve_chain primary routes an explicit bedrock hint to bedrock, not the vLLM rule' do
+      chain = Legion::LLM::Router.resolve_chain(provider: :bedrock, intent: bedrock_hint_intent)
+      expect(chain.primary.provider).to eq(:bedrock)
     end
   end
 end

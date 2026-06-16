@@ -41,6 +41,125 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
     MatrixHelper.restore_started_state!
   end
 
+  shared_examples 'mixed failed LegionIO tool result plus client passthrough tool' do |client_format|
+    it "keeps server failure visible and client passthrough actionable for #{client_format}" do
+      MatrixHelper.register_legion_failure_tool!
+
+      FakeProvider.with_scenario(:server_tool_failure_with_client_passthrough) do
+        case client_format
+        when :anthropic_messages
+          post '/v1/messages',
+               Legion::JSON.dump({
+                                   model:      'fake-default',
+                                   max_tokens: 1024,
+                                   messages:   [{ role: 'user', content: 'try a server tool and a client tool' }],
+                                   tools:      [
+                                     {
+                                       name:         'exec_command',
+                                       description:  'Run a local command in the client.',
+                                       input_schema: {
+                                         type:       'object',
+                                         properties: { cmd: { type: 'string' } },
+                                         required:   %w[cmd]
+                                       }
+                                     }
+                                   ]
+                                 }),
+               'CONTENT_TYPE' => 'application/json'
+        when :openai_responses
+          post '/v1/responses',
+               Legion::JSON.dump({
+                                   model: 'fake-default',
+                                   input: 'try a server tool and a client tool',
+                                   tools: [
+                                     {
+                                       type:        'function',
+                                       name:        'exec_command',
+                                       description: 'Run a local command in the client.',
+                                       parameters:  {
+                                         type:       'object',
+                                         properties: { cmd: { type: 'string' } },
+                                         required:   %w[cmd]
+                                       }
+                                     }
+                                   ]
+                                 }),
+               'CONTENT_TYPE' => 'application/json'
+        when :openai_chat
+          post '/v1/chat/completions',
+               Legion::JSON.dump({
+                                   model:    'fake-default',
+                                   messages: [{ role: 'user', content: 'try a server tool and a client tool' }],
+                                   tools:    [
+                                     {
+                                       type:     'function',
+                                       function: {
+                                         name:        'exec_command',
+                                         description: 'Run a local command in the client.',
+                                         parameters:  {
+                                           type:       'object',
+                                           properties: { cmd: { type: 'string' } },
+                                           required:   %w[cmd]
+                                         }
+                                       }
+                                     }
+                                   ]
+                                 }),
+               'CONTENT_TYPE' => 'application/json'
+        else
+          raise "unknown client_format=#{client_format.inspect}"
+        end
+      end
+
+      expect(last_response.status).to eq(200), -> { "got #{last_response.status}: #{last_response.body[0, 500]}" }
+      body = Legion::JSON.load(last_response.body)
+
+      case client_format
+      when :anthropic_messages
+        content = body[:content]
+        server_use = content.find { |item| item[:type] == 'server_tool_use' && item[:name] == 'fake_legion_failure' }
+        server_result = content.find { |item| item[:type] == 'server_tool_result' }
+        client_use = content.find { |item| item[:type] == 'tool_use' && item[:name] == 'exec_command' }
+
+        expect(server_use).not_to be_nil
+        expect(server_result).not_to be_nil
+        expect(server_result.dig(:content, 0, :text)).to include('deterministic fake LegionIO tool failure')
+        expect(client_use).not_to be_nil
+        expect(body[:stop_reason]).to eq('tool_use')
+      when :openai_responses
+        output = body[:output]
+        server_call = output.find { |item| item[:type] == 'function_call' && item[:name] == 'fake_legion_failure' }
+        server_result = output.find { |item| item[:type] == 'function_call_output' && item[:call_id] == 'call_fake_legion_bad' }
+        client_call = output.find { |item| item[:type] == 'function_call' && item[:name] == 'exec_command' }
+
+        expect(server_call).not_to be_nil
+        expect(server_call[:status]).to eq('completed')
+        expect(server_result).not_to be_nil
+        expect(server_result[:output]).to include('deterministic fake LegionIO tool failure')
+        expect(client_call).not_to be_nil
+        expect(body[:status]).to eq('requires_action')
+      when :openai_chat
+        choice = body[:choices].first
+        message = choice[:message]
+        server_text = message[:content].to_s
+        client_tool_calls = message[:tool_calls] || []
+
+        expect(server_text).to include('deterministic fake LegionIO tool failure')
+        expect(choice[:finish_reason]).to eq('tool_calls')
+        expect(client_tool_calls.map { |item| item.dig(:function, :name) }).to include('exec_command')
+        expect(client_tool_calls.map { |item| item.dig(:function, :name) }).not_to include('fake_legion_failure')
+      end
+    ensure
+      MatrixHelper.unregister_legion_failure_tool!
+    end
+  end
+
+  describe 'mixed failed LegionIO tool result plus client passthrough tool' do
+    include_examples 'mixed failed LegionIO tool result plus client passthrough tool', :anthropic_messages
+    include_examples 'mixed failed LegionIO tool result plus client passthrough tool', :openai_responses
+    include_examples 'mixed failed LegionIO tool result plus client passthrough tool', :openai_chat
+  end
+
   describe '/v1/messages — server-side LegionIO tool execution' do
     it 'surfaces server_tool_use+server_tool_result and provider sees the tool result on next turn' do
       received_args = nil

@@ -84,6 +84,40 @@ RSpec.describe Legion::LLM::Router do
       result = described_class.resolve(intent: { operation: :chat, effort: :low })
       expect(result.model).to eq('qwen3:7b')
     end
+
+    it 'uses a provider hint as the primary candidate instead of a higher-scored different provider' do
+      configured_rules = sample_rules + [
+        {
+          name:            'chat-bedrock',
+          when:            { operation: 'chat', effort: 'low' },
+          then:            { tier: 'cloud', provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', effort: 'high' },
+          priority:        1,
+          cost_multiplier: 2.0
+        }
+      ]
+      configure_routing(rules: configured_rules)
+
+      result = described_class.resolve(intent: { operation: :chat, effort: :low }, provider: :bedrock)
+
+      expect(result.provider).to eq(:bedrock)
+      expect(result.rule).to eq('chat-bedrock')
+    end
+
+    it 'falls through to explicit resolution when hinted provider is registered but has no rules' do
+      result = described_class.resolve(intent: { operation: :chat, effort: :low }, provider: :openai)
+
+      expect(result.provider).to eq(:openai)
+      expect(result.rule).to eq('explicit')
+    end
+
+    it 'uses normal scoring when hinted provider is not registered' do
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).with(:fakeprovider).and_return(false)
+
+      result = described_class.resolve(intent: { operation: :chat, effort: :low }, provider: :fakeprovider)
+
+      expect(result.provider).to eq(:ollama)
+      expect(result.rule).to eq('chat-local')
+    end
   end
 
   # ─── 2. Routes reasoning effort to cloud ────────────────────────────────────────────

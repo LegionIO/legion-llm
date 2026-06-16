@@ -95,12 +95,24 @@ module Legion
           best = pick_best(candidates, intent: merged, hints: { tier: tier, provider: provider, model: model })
           resolution = best&.to_resolution
 
+          # When a provider hint is explicitly passed but the best rule targets a DIFFERENT provider,
+          # the hint has no matching rule to boost. If the hinted provider is registered (can actually
+          # serve requests), fall through to explicit_resolution which honors the hint directly.
+          # Without this, auto-rules for discoverable providers (vllm/ollama) always win over
+          # non-discoverable providers (bedrock/anthropic) that have no auto-generated rules.
+          if resolution && provider && resolution.provider.to_sym != provider.to_sym &&
+             Call::Registry.registered?(provider.to_sym)
+            log.info "[llm][router] action=resolve.hint_mismatch hinted_provider=#{provider} " \
+                     "matched_provider=#{resolution.provider} falling_through_to_explicit"
+            resolution = nil
+          end
+
           if resolution
             log.info "[llm][router] action=resolve.matched tier=#{resolution.tier} provider=#{resolution.provider} " \
                      "model=#{resolution.model} rule=#{resolution.rule}"
           end
 
-          # If no rules matched, fall back to explicit resolution from hints, then arbitrage.
+          # If no rules matched (or hint mismatch), fall back to explicit resolution from hints, then arbitrage.
           unless resolution
             trace_info = (@last_candidate_trace || {}).reject { |_, v| v.zero? }
             log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size} " \
@@ -656,8 +668,8 @@ module Legion
         end
 
         # Score bonus when a rule's target matches caller-provided hints.
-        # Each matching hint adds +50 to the priority, so a rule matching all three
-        # hints gets +150. This makes hints strong preferences without overriding
+        # Each matching hint adds +50,000 to the priority, so header preferences
+        # dominate normal scoring without converting preferences into constraints.
         # rule priority, health, or cost considerations.
         def hint_matching_bonus(rule, hints)
           return 0 if hints.nil? || hints.empty?
@@ -668,9 +680,9 @@ module Legion
           target_model    = target[:model] || target['model']
 
           bonus = 0
-          bonus += 50 if hints[:provider] && target_provider == hints[:provider].to_sym
-          bonus += 50 if hints[:tier]     && target_tier     == hints[:tier].to_sym
-          bonus += 50 if hints[:model]    && target_model && target_model == hints[:model].to_s
+          bonus += 50_000 if hints[:provider] && target_provider == hints[:provider].to_sym
+          bonus += 50_000 if hints[:tier]     && target_tier     == hints[:tier].to_sym
+          bonus += 50_000 if hints[:model]    && target_model && target_model == hints[:model].to_s
           bonus
         end
 
@@ -814,15 +826,39 @@ module Legion
           end
         end
 
+        # Honor an explicit provider hint as the chain PRIMARY even when no rule
+        # targets that provider — mirroring Router.resolve's hint-mismatch
+        # fallthrough so resolve and resolve_chain reach the same primary
+        # (NxN G14 / redesign #95). The hinted provider must be registered (able
+        # to serve); otherwise the normal scored chain stands. The displaced
+        # candidates remain as escalation fallbacks.
+        def prepend_hinted_provider(resolutions, hints)
+          provider = hints && hints[:provider]
+          return resolutions unless provider
+
+          provider_sym = provider.to_sym
+          return resolutions if resolutions.first&.provider == provider_sym
+          return resolutions unless Call::Registry.registered?(provider_sym)
+
+          primary = explicit_resolution(hints[:tier], provider, hints[:model], hints[:instance])
+          return resolutions unless primary && primary.provider == provider_sym
+
+          [primary] + resolutions.reject do |resolution|
+            resolution.provider == primary.provider && resolution.instance == primary.instance &&
+              resolution.model == primary.model
+          end
+        end
+
         def chain_from_intent(intent, max, hints: {}, exclude: {}, allow_default_fallback: true, estimated_tokens: nil)
           merged     = intent ? merge_defaults(intent) : {}
           req_caps   = required_capabilities(merged)
           rules      = load_rules
           candidates = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
-          sorted     = candidates.sort_by { |r| -effective_priority(r, intent: merged, hints: hints) }
+          sorted = candidates.sort_by { |r| -effective_priority(r, intent: merged, hints: hints) }
           resolutions = sorted.map(&:to_resolution)
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
           resolutions = resolutions.uniq { |r| [r.provider, r.instance, r.model] }
+          resolutions = prepend_hinted_provider(resolutions, hints)
           resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
                                                               required_capabilities: req_caps)
           resolutions = enabled_provider_chain if resolutions.empty?

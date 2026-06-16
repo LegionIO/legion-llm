@@ -82,7 +82,59 @@ module Legion
           offerings.group_by { |offering| offering[:provider_family] }
         end
 
+        # Bounded routing-candidate set: ONE representative offering per enabled
+        # provider-instance for the given operation, drawn from the SAME merged
+        # catalog the API serves (settings + native adapter static catalogs +
+        # discovery). This is the set the Router scores — it never enumerates a
+        # provider's full catalog (e.g. OpenAI's 100+ models). The representative
+        # is the provider's declared default_model when that model is offered,
+        # else the settings-default offering, else the first offering.
+        def routing_candidates(operation: :generation, **filters)
+          type = normalize_type(operation)
+          catalog = offerings(filters.merge(type: type))
+          catalog
+            .group_by { |offering| [offering[:provider_family].to_s, offering_instance_key(offering)] }
+            .filter_map { |(provider_family, instance_key), group| representative_offering(provider_family, instance_key, group) }
+        end
+
         private
+
+        # --- routing-candidate selection (one representative offering / instance) ---
+
+        def offering_instance_key(offering)
+          inst = offering[:instance_id] || offering[:provider_instance]
+          inst.to_s.empty? ? 'default' : inst.to_s
+        end
+
+        def representative_offering(provider_family, instance_key, group)
+          return group.first if group.size <= 1
+
+          default_model = registry_default_model_for(provider_family, instance_key)
+          if default_model
+            match = group.find do |offering|
+              offering[:model] == default_model || offering[:canonical_model_alias] == default_model
+            end
+            return match if match
+          end
+          group.find { |offering| offering[:source].to_s == 'settings_default' } || group.first
+        end
+
+        def registry_default_model_for(provider_family, instance_key)
+          return nil unless defined?(Legion::LLM::Call::Registry)
+
+          provider = provider_family.to_sym
+          # A settings-configured offering defaults its instance to the provider
+          # family, while the registry registers under :default — try both.
+          [instance_key.to_sym, :default].uniq.each do |inst|
+            meta = Legion::LLM::Call::Registry.metadata_for(provider, inst)
+            dm = meta.is_a?(Hash) ? (meta[:default_model] || meta['default_model']) : nil
+            return dm.to_s if dm && !dm.to_s.empty?
+          end
+          nil
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.inventory.registry_default_model')
+          nil
+        end
 
         def providers_config
           ext = Legion::Settings[:extensions]
@@ -200,7 +252,7 @@ module Legion
             enabled:               option(entry, :enabled, true),
             capabilities:          normalize_capabilities(option(entry, :capabilities), type),
             limits:                limits,
-            health:                provider_health(provider_family, resolved_offering_id),
+            health:                provider_health(provider_family, resolved_offering_id, model: model),
             cost:                  option(entry, :cost) || {},
             policy_tags:           Array(option(entry, :policy_tags) || option(config, :policy_tags)).map(&:to_s),
             metadata:              metadata,
@@ -266,15 +318,21 @@ module Legion
           nil
         end
 
-        def provider_health(provider_family, offering_id = nil)
-          if defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:routing_enabled?) &&
-             Legion::LLM::Router.routing_enabled?
-            tracker = Legion::LLM::Router.health_tracker
-            { circuit_state: tracker.circuit_state(provider_family, offering_id: offering_id).to_s,
-              adjustment:    tracker.adjustment(provider_family, offering_id: offering_id) }
-          else
-            { circuit_state: 'unknown' }
+        def provider_health(provider_family, offering_id = nil, model: nil)
+          unless defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:routing_enabled?) &&
+                 Legion::LLM::Router.routing_enabled?
+            return { circuit_state: 'unknown' }
           end
+
+          tracker = Legion::LLM::Router.health_tracker
+          circuit = tracker.circuit_state(provider_family, offering_id: offering_id).to_s
+          denied = model ? tracker.model_denied?(provider: provider_family, model: model) : false
+          {
+            circuit_state: circuit,
+            adjustment:    tracker.adjustment(provider_family, offering_id: offering_id),
+            denied:        denied,
+            available:     !denied && %w[closed half_open unknown].include?(circuit)
+          }
         end
 
         def add_fleet_lane(offering)
@@ -428,7 +486,7 @@ module Legion
               offering[:tier].to_s == value.to_s
             when :healthy
               healthy_filter_matches?(offering, value)
-            when :type, :purpose
+            when :type, :purpose, :operation
               offering[:type].to_s == normalize_type(value).to_s
             when :capability
               offering[:capabilities].include?(value.to_s)

@@ -55,11 +55,13 @@ module Legion
               thinking:        thinking,
               stream:          body[:stream] == true,
               conversation_id: env['HTTP_X_LEGION_CONVERSATION_ID'] || env['HTTP_THREAD_ID'] || body[:conversation],
-              routing:         { model: body[:model], provider: env['HTTP_X_LEGION_PROVIDER'], instance: env['HTTP_X_LEGION_INSTANCE'] }.compact,
+              routing:         legion_routing_from_env(env),
               metadata:        {
-                tier:          env['HTTP_X_LEGION_TIER'],
-                external_refs: external_refs(body, env),
-                upstream_body: upstream_body # preserved for native call_responses path until executor is canonical
+                client_model:     body[:model],
+                tier:             env['HTTP_X_LEGION_TIER'],
+                routing_explicit: legion_routing_explicit_from_env(env),
+                external_refs:    external_refs(body, env),
+                upstream_body:    upstream_body # preserved for native call_responses path until executor is canonical
               }.compact
             )
           end
@@ -87,6 +89,8 @@ module Legion
             extra = {}
             tier = canonical_request.metadata[:tier]
             extra[:tier] = tier.to_sym if tier
+            routing_explicit = canonical_request.metadata[:routing_explicit]
+            extra[:routing_explicit] = routing_explicit if routing_explicit
 
             messages = inference_messages(canonical_request.messages)
 

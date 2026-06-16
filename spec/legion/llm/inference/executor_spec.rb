@@ -1011,17 +1011,16 @@ confidence: 0.9 }],
       expect(executor.instance_variable_get(:@resolved_model)).to eq('qwen3.6-27b')
     end
 
-    it 'routes the LegionIO placeholder without applying configured provider defaults' do
+    it 'routes provider preferences while ignoring the LegionIO placeholder model' do
       Legion::Settings[:llm][:default_provider] = 'vllm'
       Legion::Settings[:llm][:default_instance] = 'apollo'
       Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
       resolution = Legion::LLM::Router::Resolution.new(
-        tier: :frontier, provider: :anthropic, model: 'claude-sonnet-4-6', rule: 'auto:test'
+        tier: :fleet, provider: :vllm, instance: :apollo, model: 'qwen3.6-27b', rule: 'preference:test'
       )
-      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 3)
       allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+      allow(Legion::LLM::Router).to receive(:resolve).and_return(resolution)
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: 'vllm', instance: 'apollo', model: 'legionio' }
@@ -1030,12 +1029,12 @@ confidence: 0.9 }],
 
       executor.send(:step_routing)
 
-      expect(Legion::LLM::Router).to have_received(:resolve_chain).with(
-        hash_including(intent: hash_including(operation: :chat), provider: nil, instance: nil, model: nil)
+      expect(Legion::LLM::Router).to have_received(:resolve).with(
+        hash_including(provider: 'vllm', instance: 'apollo', model: nil)
       )
-      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
-      expect(executor.instance_variable_get(:@resolved_instance)).to be_nil
-      expect(executor.instance_variable_get(:@resolved_model)).to eq('claude-sonnet-4-6')
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:vllm)
+      expect(executor.instance_variable_get(:@resolved_instance)).to eq(:apollo)
+      expect(executor.instance_variable_get(:@resolved_model)).to eq('qwen3.6-27b')
     end
 
     it 'still uses the router chain for the LegionIO placeholder when rule routing is unavailable' do

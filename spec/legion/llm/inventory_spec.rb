@@ -252,6 +252,57 @@ RSpec.describe Legion::LLM::Inventory do
     expect(described_class.offerings(provider: 'bedrock')).to be_empty
   end
 
+  describe '.routing_candidates' do
+    before { Legion::LLM::Call::Registry.reset! }
+    after  { Legion::LLM::Call::Registry.reset! }
+
+    it 'returns one representative offering per provider-instance, not the full catalog' do
+      Legion::Settings[:extensions][:llm][:bedrock] = {
+        enabled:   true,
+        offerings: [
+          { model: 'anthropic.claude-sonnet-4', type: :inference },
+          { model: 'anthropic.claude-opus-4',   type: :inference },
+          { model: 'meta.llama3-70b',           type: :inference }
+        ]
+      }
+      Legion::LLM::Call::Registry.register(:bedrock, Module.new,
+                                           metadata: { tier: :cloud, default_model: 'anthropic.claude-sonnet-4' })
+
+      candidates = described_class.routing_candidates(operation: :generation, provider: 'bedrock')
+
+      expect(candidates.size).to eq(1)
+      expect(candidates.first[:model]).to eq('anthropic.claude-sonnet-4')
+    end
+
+    it 'surfaces cloud providers as routing candidates (the catalog the router must see)' do
+      Legion::Settings[:extensions][:llm][:bedrock] = { enabled: true, default_model: 'anthropic.claude-sonnet-4' }
+      Legion::LLM::Call::Registry.register(:bedrock, Module.new,
+                                           metadata: { tier: :cloud, default_model: 'anthropic.claude-sonnet-4' })
+
+      families = described_class.routing_candidates(operation: :generation).map { |candidate| candidate[:provider_family] }
+
+      expect(families).to include('bedrock')
+    end
+
+    it 'separates generation from embedding candidates by operation' do
+      Legion::Settings[:extensions][:llm][:ollama] = { enabled: true }
+      discovered = [
+        { model: 'qwen3:7b', provider: :ollama, instance: :default },
+        { model: 'nomic-embed-text', provider: :ollama, instance: :default }
+      ]
+      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered)
+      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered)
+
+      gen = described_class.routing_candidates(operation: :generation, provider: 'ollama').map { |candidate| candidate[:model] }
+      embed = described_class.routing_candidates(operation: :embed, provider: 'ollama').map { |candidate| candidate[:model] }
+
+      expect(gen).to include('qwen3:7b')
+      expect(gen.none? { |model| model.include?('embed') }).to be(true)
+      expect(embed).not_to be_empty
+      expect(embed.all? { |model| model.include?('embed') }).to be(true)
+    end
+  end
+
   describe '.invalidate_offerings_cache!' do
     it 'responds to invalidate_offerings_cache!' do
       expect(described_class).to respond_to(:invalidate_offerings_cache!)

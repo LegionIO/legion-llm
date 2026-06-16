@@ -72,10 +72,12 @@ module Legion
               stream:          body[:stream] == true,
               conversation_id: resolve_conversation_id(body, env),
               caller:          nil,
-              routing:         { model: body[:model], provider: env['HTTP_X_LEGION_PROVIDER'], instance: env['HTTP_X_LEGION_INSTANCE'] }.compact,
+              routing:         legion_routing_from_env(env),
               metadata:        {
+                client_model:      body[:model],
                 anthropic_version: body[:anthropic_version],
                 tier:              env['HTTP_X_LEGION_TIER'],
+                routing_explicit:  legion_routing_explicit_from_env(env),
                 external_refs:     external_refs
               }.compact
             )
@@ -90,6 +92,8 @@ module Legion
             extra = {}
             tier = canonical_request.metadata[:tier]
             extra[:tier] = tier.to_sym if tier
+            routing_explicit = canonical_request.metadata[:routing_explicit]
+            extra[:routing_explicit] = routing_explicit if routing_explicit
 
             messages = inference_messages(canonical_request.messages)
 
@@ -650,11 +654,7 @@ module Legion
             blocks << thinking_block if thinking_block
 
             text = pipeline_response.respond_to?(:message) ? pipeline_response.message : nil
-            text_content = if text.is_a?(Hash)
-                             (text[:content] || text['content']).to_s
-                           else
-                             text.to_s
-                           end
+            text_content = extract_content_text(text)
 
             blocks << { type: 'text', text: text_content } unless text_content.empty? && !tool_calls.empty?
 

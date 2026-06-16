@@ -1,5 +1,27 @@
 # Legion LLM Changelog
 
+## [0.12.30] - 2026-06-16
+
+### Fixed
+
+- **Legion routing header precedence** — Client translators now ignore protocol body `model` values for Legion routing and route only from `X-Legion-Provider`, `X-Legion-Model`, `X-Legion-Instance`, and `X-Legion-Tier` preferences.
+- **LegionIO alias routing** — The internal `legionio` model alias no longer erases existing provider, instance, or tier routing preferences when normalizing inference requests.
+- **Routing preference scoring** — Router hint matches now carry a dominant preference bonus without filtering fallback candidates, so `X-Legion-*` headers bias routing strongly while preserving normal fallback behavior.
+
+## [0.12.29] - 2026-06-16
+
+### Fixed
+
+- **Canonical content-block rendering** — Claude Messages and OpenAI Chat responses now unwrap canonical content blocks before client formatting, preventing Ruby object inspect strings from crossing HTTP response boundaries.
+- **OpenAI Chat server tool visibility** — Mixed LegionIO-executed tool failures and client passthrough tool calls now render the server tool result in assistant content while leaving only client tools actionable.
+
+## [0.12.28] - 2026-06-16
+
+### Fixed
+
+- **Canonical tool-loop result propagation** — Native tool loops now attach LegionIO-executed tool results to immutable canonical `ToolCall` objects without Hash mutation, preserving server-resolved source/result state alongside client passthrough tool calls for `/v1/responses`.
+- **Tool error result preservation** — Dispatcher failure details now survive native tool result content rendering so failed LegionIO-executed tools surface useful server-side tool output instead of `{}`.
+
 ## [0.12.27] - 2026-06-16
 
 ### Fixed

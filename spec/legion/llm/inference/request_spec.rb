@@ -44,17 +44,29 @@ RSpec.describe Legion::LLM::Inference::Request do
       expect(req1.id).not_to eq(req2.id)
     end
 
-    it 'normalizes the LegionIO placeholder model into automatic routing' do
+    it 'normalizes the LegionIO placeholder model into automatic routing when no routing preference is present' do
+      req = described_class.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'LegionIO' }
+      )
+
+      expect(req.routing).to eq({ model: nil })
+      expect(req.extra[:intent]).to include(operation: :chat)
+      expect(req.extra[:auto_route]).to be(true)
+      expect(req.extra[:requested_model_alias]).to eq('legionio')
+    end
+
+    it 'ignores the LegionIO placeholder model without erasing routing preferences' do
       req = described_class.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: 'anthropic', instance: 'apollo', model: 'LegionIO' },
         extra:    { tier: 'frontier' }
       )
 
-      expect(req.routing).to eq({ provider: nil, model: nil })
-      expect(req.extra[:tier]).to be_nil
-      expect(req.extra[:intent]).to include(operation: :chat)
-      expect(req.extra[:auto_route]).to be(true)
+      expect(req.routing).to eq({ provider: 'anthropic', instance: 'apollo', model: nil })
+      expect(req.extra[:tier]).to eq('frontier')
+      expect(req.extra[:intent]).to be_nil
+      expect(req.extra[:auto_route]).to be_nil
       expect(req.extra[:requested_model_alias]).to eq('legionio')
     end
   end

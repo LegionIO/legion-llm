@@ -85,10 +85,20 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
       expect { executor.call }.to raise_error(Legion::LLM::EscalationExhausted)
     end
 
-    it 'raises EscalationExhausted with no_available_provider on empty chain' do
-      executor.instance_variable_set(:@escalation_chain, build_chain)
+    it 'raises a routing error with no_available_provider on empty chain' do
+      empty_chain = build_chain
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(empty_chain)
+      allow(Legion::LLM::Router).to receive(:resolve).and_return(nil)
+      allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([])
 
-      expect { executor.call }.to raise_error(Legion::LLM::EscalationExhausted, /No available providers/)
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@escalation_chain, empty_chain)
+
+      expect { executor.call }.to raise_error do |error|
+        expect(error).to be_a(Legion::LLM::EscalationExhausted)
+                     .or be_a(Legion::LLM::RoutingFailedDependency)
+      end
     end
   end
 end

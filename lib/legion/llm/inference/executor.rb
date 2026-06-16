@@ -518,7 +518,14 @@ module Legion
         end
 
         def native_tool_result_content(result)
-          raw = result[:result] || result[:content] || result['result'] || result['content']
+          status = result[:status] || result['status']
+          if status.respond_to?(:to_sym) && status.to_sym == :error
+            raw = Legion::LLM::Tools::Dispatcher.error_log_detail(result)
+            return raw unless raw.to_s.empty?
+          end
+
+          raw = result[:result] || result[:content] || result[:error] ||
+                result['result'] || result['content'] || result['error']
           raw.is_a?(String) ? raw : Legion::JSON.dump(raw || {})
         end
 
@@ -1474,25 +1481,44 @@ module Legion
           call_index = Hash.new(0)
 
           Array(tool_calls).map do |tool_call|
-            tc_id   = tool_call[:id] || tool_call['id']
-            tc_name = tool_call[:name] || tool_call['name']
-            tc_args = tool_call[:arguments] || tool_call['arguments'] || {}
+            tc_id   = tool_call_field(tool_call, :id)
+            tc_name = tool_call_field(tool_call, :name)
+            tc_args = tool_call_field(tool_call, :arguments) || {}
 
             call_index[tc_name] += 1
             entry_key = call_index[tc_name] > 1 ? "#{tc_name}:#{call_index[tc_name]}" : tc_name
             timeline_data = tool_timeline[entry_key] || tool_timeline[tc_name] || {}
+            pending_data = pending_tool_call_data(tc_id, tc_name)
 
-            Types::ToolCall.build(
+            Legion::LLM::Types::ToolCall.build(
               id:          tc_id,
               name:        tc_name,
               arguments:   tc_args,
-              exchange_id: timeline_data[:exchange_id],
-              source:      timeline_data[:source],
-              status:      timeline_data[:status],
-              duration_ms: timeline_data[:duration_ms],
-              result:      timeline_data[:result]
+              exchange_id: tool_call_field(tool_call, :exchange_id) || pending_data[:exchange_id] || timeline_data[:exchange_id],
+              source:      tool_call_field(tool_call, :source) || pending_data[:source] || timeline_data[:source],
+              status:      tool_call_field(tool_call, :status) || pending_data[:status] || timeline_data[:status],
+              duration_ms: tool_call_field(tool_call, :duration_ms) || pending_data[:duration_ms] || timeline_data[:duration_ms],
+              result:      tool_call_field(tool_call, :result) || pending_data[:result] || timeline_data[:result],
+              error:       tool_call_field(tool_call, :error) || pending_data[:error]
             )
           end
+        end
+
+        def pending_tool_call_data(tool_call_id, tool_name)
+          entry = @pending_tool_history&.find do |candidate|
+            candidate[:tool_call_id] == tool_call_id || candidate[:tool_name] == tool_name
+          end
+          return {} unless entry
+
+          typed_call = entry[:typed_call]
+          {
+            exchange_id: typed_call&.exchange_id,
+            source:      typed_call&.source,
+            status:      typed_call&.status,
+            duration_ms: typed_call&.duration_ms,
+            result:      typed_call&.result || entry[:result],
+            error:       typed_call&.error || (entry[:result] if entry[:error])
+          }.compact
         end
 
         def build_tool_timeline_index

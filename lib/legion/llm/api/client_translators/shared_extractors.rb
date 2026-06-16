@@ -79,6 +79,24 @@ module Legion
             type_string.empty? || %w[text output_text input_text].include?(type_string)
           end
 
+          def legion_routing_from_env(env)
+            {
+              model:    env['HTTP_X_LEGION_MODEL'],
+              provider: env['HTTP_X_LEGION_PROVIDER'],
+              instance: env['HTTP_X_LEGION_INSTANCE']
+            }.compact
+          end
+
+          def legion_routing_explicit_from_env(env)
+            flags = {
+              model:    env.key?('HTTP_X_LEGION_MODEL'),
+              provider: env.key?('HTTP_X_LEGION_PROVIDER'),
+              instance: env.key?('HTTP_X_LEGION_INSTANCE'),
+              tier:     env.key?('HTTP_X_LEGION_TIER')
+            }.select { |_, value| value }
+            flags.empty? ? nil : flags
+          end
+
           # Tool-call argument coercion is FORMAT-SPECIFIC. The two client
           # surfaces have incompatible wire requirements:
           #
