@@ -26,7 +26,9 @@ module Legion
           raise Legion::LLM::ProviderError, 'Responses API upstream dispatch is not supported for fleet providers' if fleet_dispatch?
 
           idempotency_key = next_route_idempotency_key
-          result = Call::Dispatch.call(
+          dispatch_options = native_dispatch_options
+          enforce_final_context_budget!(messages, dispatch_options)
+          result = Legion::LLM::Call::Dispatch.call(
             provider:   @resolved_provider,
             instance:   @resolved_instance,
             capability: :responses,
@@ -34,7 +36,7 @@ module Legion
             body:       body,
             messages:   messages,
             stream:     stream,
-            **native_dispatch_options,
+            **dispatch_options,
             &stream_block
           )
           record_route_attempt(
@@ -59,13 +61,15 @@ module Legion
 
         def dispatch_direct_request(capability:, operation:, messages:, stream_block: nil)
           idempotency_key = next_route_idempotency_key
-          result = Call::Dispatch.call(
+          dispatch_options = native_dispatch_options
+          enforce_final_context_budget!(messages, dispatch_options)
+          result = Legion::LLM::Call::Dispatch.call(
             provider:   @resolved_provider,
             instance:   @resolved_instance,
             capability: capability,
             model:      @resolved_model,
             messages:   messages,
-            **native_dispatch_options,
+            **dispatch_options,
             &stream_block
           )
           record_route_attempt(
@@ -122,6 +126,39 @@ module Legion
             selected_lane:   selected_lane
           )
           normalized
+        end
+
+        def enforce_final_context_budget!(messages, dispatch_options)
+          context_window = final_context_window
+          return unless context_window.positive?
+
+          threshold = (context_window * 0.90).to_i
+          estimated_tokens = final_dispatch_token_estimate(messages, dispatch_options)
+          return if estimated_tokens <= threshold
+
+          raise Legion::LLM::ContextOverflow,
+                "#{@resolved_provider}:#{@resolved_model} - final payload estimate #{estimated_tokens} " \
+                "tokens exceeds dispatch threshold #{threshold} for context window #{context_window}"
+        end
+
+        def final_dispatch_token_estimate(messages, dispatch_options)
+          estimated = Legion::LLM::Inference::ContextAccounting.estimate_message_tokens(messages)
+          estimated += Legion::LLM::Inference::ContextAccounting.estimate_text_tokens(dispatch_options[:system]) if
+            dispatch_options[:system]
+          estimated += Legion::LLM::Inference::ContextAccounting.estimate_json_tokens(dispatch_options[:tools]) if
+            dispatch_options[:tools]
+          estimated += Legion::LLM::Inference::ContextAccounting.estimate_json_tokens(dispatch_options[:tool_prefs]) if
+            dispatch_options[:tool_prefs]
+          estimated += Legion::LLM::Inference::ContextAccounting.estimate_json_tokens(dispatch_options[:thinking]) if
+            dispatch_options[:thinking]
+          estimated
+        end
+
+        def final_context_window
+          metadata = @resolved_offering_metadata || {}
+          limits = metadata[:limits] || metadata['limits'] || {}
+          limits = normalize_offering_metadata(limits) if limits.is_a?(Hash)
+          (metadata[:context_window] || metadata['context_window'] || limits[:context_window]).to_i
         end
 
         def fleet_dispatch_request(messages, idempotency_key)

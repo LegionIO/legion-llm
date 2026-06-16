@@ -112,8 +112,10 @@ module Legion
 
             start_time = Time.now
             prev_resolution = if stream_block && tried.any?
-                                Resolution.new(tier: prev_tier, provider: prev_provider,
-                                               instance: @resolved_instance, model: @resolved_model)
+                                Legion::LLM::Router::Resolution.new(
+                                  tier: prev_tier, provider: prev_provider,
+                                  instance: @resolved_instance, model: @resolved_model
+                                )
                               end
             @resolved_provider = resolution.provider
             @resolved_instance = resolution.instance
@@ -237,19 +239,24 @@ module Legion
               log.error "[llm][escalation] action=request_payload_error provider=#{resolution.provider} " \
                         "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
                         "error=#{err.message.to_s[0, 500]} daemon_side_payload_bug=true provider_health=false"
-            elsif config_error?(err)
-              Router.health_tracker.deny_model(
+            elsif authentication_error?(err) || config_error?(err)
+              Legion::LLM::Router.health_tracker.deny_model(
                 provider: resolution.provider,
                 model:    resolution.model,
                 instance: resolution.instance,
                 reason:   err.message
               )
+              Legion::LLM::Router.health_tracker.trip_circuit(
+                provider: resolution.provider,
+                instance: resolution.instance,
+                reason:   err.message
+              )
             elsif !context_overflow_error?(err)
-              Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
-                                           offering_id: resolution.offering_id,
-                                           signal: :error, value: 1,
-                                           metadata: { reason: err.class.name, message: err.message.to_s[0, 500],
-                                                       model: resolution.model })
+              Legion::LLM::Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
+                                                        offering_id: resolution.offering_id,
+                                                        signal: :error, value: 1,
+                                                        metadata: { reason: err.class.name, message: err.message.to_s[0, 500],
+                                                                    model: resolution.model })
             end
             @escalation_history << escalation_attempt_hash(
               resolution,
@@ -266,7 +273,9 @@ module Legion
               provider:    resolution.provider,
               model:       resolution.model,
               duration_ms: duration_ms,
-              attempt:     @escalation_history.size
+              attempt:     @escalation_history.size,
+              status:      'error',
+              error:       err
             )
             emit_escalation_attempt_audit(
               provider:    resolution.provider,
@@ -279,7 +288,7 @@ module Legion
           end
 
           def build_default_escalation_chain
-            chain = Router.build_escalation_chain(
+            chain = Legion::LLM::Router.build_escalation_chain(
               provider:              @resolved_provider,
               model:                 @resolved_model,
               tier:                  @resolved_tier,
@@ -298,7 +307,7 @@ module Legion
           # between "too early" (prerequisites not yet confirmed) and "failed dependency"
           # (no provider can satisfy the requirements).
           def routing_empty_chain_error
-            reasons = Router::Availability.last_rejection_reasons
+            reasons = Legion::LLM::Router::Availability.last_rejection_reasons
             if reasons.include?(:capability_unconfirmed)
               RoutingTooEarly.new
             elsif reasons.any?
@@ -403,7 +412,22 @@ module Legion
             return if context_overflow_error?(error)
             return if client_stream_error?(error)
 
-            Router.health_tracker.report(
+            if authentication_error?(error) || config_error?(error)
+              Legion::LLM::Router.health_tracker.deny_model(
+                provider: provider,
+                model:    model,
+                instance: instance,
+                reason:   error.message
+              )
+              Legion::LLM::Router.health_tracker.trip_circuit(
+                provider: provider,
+                instance: instance,
+                reason:   error.message
+              )
+              return
+            end
+
+            Legion::LLM::Router.health_tracker.report(
               provider: provider, instance: instance,
               offering_id: offering_id, signal: :error, value: 1,
               metadata: { reason: error.class.name, message: error.message.to_s[0, 500], model: model }
@@ -413,14 +437,14 @@ module Legion
           end
 
           def report_provider_health(signal, duration_ms, metadata: {})
-            return unless defined?(Router) && Router.routing_enabled?
+            return unless defined?(Legion::LLM::Router) && Legion::LLM::Router.routing_enabled?
 
-            Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
-                                         offering_id: @resolved_offering_id,
-                                         signal: signal, value: 1, metadata: metadata.merge(duration_ms: duration_ms))
-            Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
-                                         offering_id: @resolved_offering_id,
-                                         signal: :latency, value: duration_ms, metadata: {})
+            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
+                                                      offering_id: @resolved_offering_id,
+                                                      signal: signal, value: 1, metadata: metadata.merge(duration_ms: duration_ms))
+            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
+                                                      offering_id: @resolved_offering_id,
+                                                      signal: :latency, value: duration_ms, metadata: {})
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.report_provider_health')
           end
@@ -490,40 +514,44 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_escalation_attempt_audit')
           end
 
-          def emit_escalation_attempt_metering(provider:, model:, duration_ms:, attempt: 1)
+          def emit_escalation_attempt_metering(provider:, model:, duration_ms:, attempt: 1, status: 'success',
+                                               error: nil, provider_submitted: true)
             @extracted_tokens ||= extract_tokens
             input_tokens  = @extracted_tokens.respond_to?(:input_tokens)  ? @extracted_tokens.input_tokens.to_i  : 0
             output_tokens = @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens.to_i : 0
             cost_usd = estimate_cost(input_tokens, output_tokens)
 
-            event = Steps::Metering.build_event(
-              provider:          provider,
-              model_id:          model,
-              offering_id:       @resolved_offering_id,
-              offering_metadata: @resolved_offering_metadata,
-              tier:              @resolved_tier,
-              request_type:      if @request.respond_to?(:request_type)
-                                   @request.request_type
-                                 else
-                                   'chat'
-                                 end,
-              input_tokens:      input_tokens,
-              output_tokens:     output_tokens,
-              latency_ms:        duration_ms,
-              wall_clock_ms:     duration_ms,
-              cost_usd:          cost_usd,
-              request_id:        @request.id,
-              conversation_id:   @request.conversation_id,
-              correlation_id:    @tracing&.dig(:correlation_id),
-              caller:            @request.caller,
-              identity:          metering_identity,
-              billing:           @request.billing,
-              routing_reason:    "escalation_attempt:#{attempt}",
-              messages:          @request.messages,
-              response_content:  extract_response_content,
-              response_thinking: extract_thinking
+            event = Legion::LLM::Inference::Steps::Metering.build_event(
+              provider:           provider,
+              model_id:           model,
+              offering_id:        @resolved_offering_id,
+              offering_metadata:  @resolved_offering_metadata,
+              tier:               @resolved_tier,
+              request_type:       if @request.respond_to?(:request_type)
+                                    @request.request_type
+                                  else
+                                    'chat'
+                                  end,
+              input_tokens:       input_tokens,
+              output_tokens:      output_tokens,
+              latency_ms:         duration_ms,
+              wall_clock_ms:      duration_ms,
+              cost_usd:           cost_usd,
+              request_id:         @request.id,
+              conversation_id:    @request.conversation_id,
+              correlation_id:     @tracing&.dig(:correlation_id),
+              caller:             @request.caller,
+              identity:           metering_identity,
+              billing:            @request.billing,
+              routing_reason:     "escalation_attempt:#{attempt}",
+              messages:           @request.messages,
+              response_content:   extract_response_content,
+              response_thinking:  extract_thinking,
+              status:             status,
+              error:              error_metadata(error),
+              provider_submitted: provider_submitted
             )
-            Steps::Metering.publish_or_spool(event)
+            Legion::LLM::Inference::Steps::Metering.publish_or_spool(event)
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_escalation_attempt_metering')
           end
@@ -550,7 +578,7 @@ module Legion
           end
 
           def circuit_open?(resolution)
-            Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance) == :open
+            Legion::LLM::Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance) == :open
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.escalation.circuit_check')
             false
@@ -566,6 +594,18 @@ module Legion
             name = err.class.name.to_s
             msg = err.message.to_s
             CONFIG_ERROR_PATTERNS.any? { |pat| pat.match?(name) || pat.match?(msg) }
+          end
+
+          def authentication_error?(err)
+            err.is_a?(Legion::LLM::AuthError) ||
+              err.is_a?(Faraday::UnauthorizedError) ||
+              err.is_a?(Faraday::ForbiddenError)
+          end
+
+          def error_metadata(err)
+            return nil unless err
+
+            { class: err.class.name, message: err.message.to_s }
           end
 
           def context_overflow_error?(err)

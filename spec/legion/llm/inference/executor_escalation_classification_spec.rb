@@ -54,6 +54,24 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
       expect(Legion::LLM::Router.health_tracker).to receive(:deny_model).with(
         hash_including(provider: :bedrock, model: 'anthropic.claude-sonnet-4')
       )
+      expect(Legion::LLM::Router.health_tracker).to receive(:trip_circuit).with(
+        hash_including(provider: :bedrock, instance: :primary)
+      )
+      expect(Legion::LLM::Router.health_tracker).not_to receive(:report)
+
+      executor.send(:record_escalation_failure, err, resolution, Time.now,
+                    outcome: :auth_error, operation: 'llm.pipeline.escalation_attempt.auth')
+    end
+
+    it 'denies the model and trips the instance circuit for typed auth failures' do
+      err = Legion::LLM::AuthError.new('vllm:qwen3.6-27b - Unauthorized')
+
+      expect(Legion::LLM::Router.health_tracker).to receive(:deny_model).with(
+        hash_including(provider: :bedrock, instance: :primary, model: 'anthropic.claude-sonnet-4')
+      )
+      expect(Legion::LLM::Router.health_tracker).to receive(:trip_circuit).with(
+        hash_including(provider: :bedrock, instance: :primary)
+      )
       expect(Legion::LLM::Router.health_tracker).not_to receive(:report)
 
       executor.send(:record_escalation_failure, err, resolution, Time.now,
@@ -84,6 +102,50 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
 
       executor.send(:record_escalation_failure, err, resolution, Time.now,
                     outcome: :error, operation: 'llm.pipeline.escalation_attempt')
+    end
+  end
+
+  describe '#run_provider_call_with_escalation' do
+    it 'notifies streaming provider switches with router resolutions after a failed first attempt' do
+      first = Legion::LLM::Router::Resolution.new(
+        tier: :direct, provider: :vllm, instance: :v100, model: 'qwen3.6-27b'
+      )
+      second = Legion::LLM::Router::Resolution.new(
+        tier: :direct, provider: :vllm, instance: :h200, model: 'gemma-4-31b-it'
+      )
+      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [first, second], max_attempts: 2)
+      observer = instance_double('StreamObserver', provider_switched: nil)
+
+      allow(executor).to receive(:build_default_escalation_chain).and_return(chain)
+      allow(executor).to receive(:attempt_escalation).and_return(false, true)
+      executor.instance_variable_set(:@stream_observer, observer)
+
+      expect do
+        executor.send(:run_provider_call_with_escalation, stream_block: proc {})
+      end.not_to raise_error
+      expect(observer).to have_received(:provider_switched).with(
+        from: an_instance_of(Legion::LLM::Router::Resolution),
+        to:   second
+      )
+    end
+  end
+
+  describe '#report_provider_failure' do
+    it 'denies the model and trips the instance circuit for direct auth failures' do
+      err = Legion::LLM::AuthError.new('vllm:qwen3.6-27b - Unauthorized')
+      executor.instance_variable_set(:@resolved_provider, :vllm)
+      executor.instance_variable_set(:@resolved_instance, :v100)
+      executor.instance_variable_set(:@resolved_model, 'qwen3.6-27b')
+
+      expect(Legion::LLM::Router.health_tracker).to receive(:deny_model).with(
+        hash_including(provider: :vllm, instance: :v100, model: 'qwen3.6-27b')
+      )
+      expect(Legion::LLM::Router.health_tracker).to receive(:trip_circuit).with(
+        hash_including(provider: :vllm, instance: :v100)
+      )
+      expect(Legion::LLM::Router.health_tracker).not_to receive(:report)
+
+      executor.send(:report_provider_failure, err, status: 'auth_failed')
     end
   end
 end

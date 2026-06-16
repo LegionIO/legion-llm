@@ -1404,4 +1404,31 @@ confidence: 0.9 }],
       end
     end
   end
+
+  describe 'final context preflight' do
+    it 'raises ContextOverflow before dispatch when system payload pushes the selected model over its window' do
+      request = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        system:   's' * 400,
+        routing:  { provider: :vllm, model: 'qwen3.6-27b' }
+      )
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@resolved_provider, :vllm)
+      executor.instance_variable_set(:@resolved_instance, :v100)
+      executor.instance_variable_set(:@resolved_model, 'qwen3.6-27b')
+      executor.instance_variable_set(:@resolved_tier, :direct)
+      executor.instance_variable_set(:@resolved_offering_metadata, { limits: { context_window: 64 } })
+
+      expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
+
+      expect do
+        executor.send(
+          :dispatch_direct_request,
+          capability: :stream,
+          operation:  :chat,
+          messages:   [{ role: :user, content: 'hello' }]
+        )
+      end.to raise_error(Legion::LLM::ContextOverflow, /final payload estimate/)
+    end
+  end
 end

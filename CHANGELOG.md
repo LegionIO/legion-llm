@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.12.23] - 2026-06-16
+
+### Fixed
+
+- **Streaming escalation failover** — Provider switch notifications now build `Legion::LLM::Router::Resolution` with the fully-qualified namespace, preventing `NameError` after the first streaming attempt fails.
+- **Auth failure health handling** — Authentication and provider configuration failures now deny the affected provider instance/model and immediately trip that instance circuit instead of waiting for normal error-threshold health decay.
+- **Final context preflight** — Direct and Responses dispatch now re-estimate the final provider payload after system enrichment, tool definitions, tool preferences, and thinking options are materialized, raising `ContextOverflow` before submitting an oversized request to the provider.
+- **Failed attempt metering** — Escalation attempt metering events now include `status`, `error`, and `provider_submitted` fields so submitted failed calls can be audited without looking like successful zero-token completions.
+
 ## [0.12.22] - 2026-06-16
 
 ### Added
