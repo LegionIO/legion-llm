@@ -24,37 +24,36 @@ RSpec.describe 'Router determinism and regression coverage' do
     Legion::LLM::Router.populate_auto_rules({})
   end
 
-  # ─── Regression: stale default_intent[:capability] raises ────────────────────
+  # ─── Regression (C15): stale default_intent[:capability] must NOT brick routing ──
+  # The :capability dimension was renamed to :operation + :effort. On-disk config (and
+  # caller intent) predating the rename must be tolerated — the legacy key is ignored,
+  # not raised on. Previously this raised ArgumentError on every resolve, bricking any
+  # install whose default_intent still carried the old shipped { capability: 'moderate' }.
 
   describe 'stale settings with capability: key' do
-    it 'raises ArgumentError from Router.resolve when default_intent contains capability:' do
+    before do
       Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
-                                        routing: {
+                                        default_provider: :vllm,
+                                        default_model:    'qwen3.6-27b',
+                                        routing:          {
                                           enabled:        true,
                                           rules:          [],
                                           default_intent: { privacy: 'normal', capability: 'moderate' }
                                         }
                                       ))
       Legion::LLM::Router.populate_auto_rules({})
-
-      expect do
-        Legion::LLM::Router.resolve(intent: { effort: :moderate })
-      end.to raise_error(ArgumentError, /capability.*removed/i)
     end
 
-    it 'raises ArgumentError from Router.resolve_chain when default_intent contains capability:' do
-      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
-                                        routing: {
-                                          enabled:        true,
-                                          rules:          [],
-                                          default_intent: { privacy: 'normal', capability: 'moderate' }
-                                        }
-                                      ))
-      Legion::LLM::Router.populate_auto_rules({})
+    it 'does not raise from Router.resolve when default_intent contains capability:' do
+      expect { Legion::LLM::Router.resolve(intent: { effort: :moderate }) }.not_to raise_error
+    end
 
-      expect do
-        Legion::LLM::Router.resolve_chain(intent: { effort: :moderate })
-      end.to raise_error(ArgumentError, /capability.*removed/i)
+    it 'does not raise from Router.resolve_chain when default_intent contains capability:' do
+      expect { Legion::LLM::Router.resolve_chain(intent: { effort: :moderate }) }.not_to raise_error
+    end
+
+    it 'does not raise when a caller passes a legacy capability: intent directly' do
+      expect { Legion::LLM::Router.resolve(intent: { capability: 'moderate' }) }.not_to raise_error
     end
   end
 

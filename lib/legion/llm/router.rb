@@ -355,7 +355,6 @@ module Legion
 
         def normalize_intent(intent)
           normalized = symbolize_intent_keys(intent)
-          reject_removed_capability_key!(normalized)
 
           normalized[:operation] = normalize_operation_value!(normalized[:operation] || DEFAULT_OPERATION)
           normalized[:effort] = normalize_effort_value!(normalized[:effort] || DEFAULT_EFFORT)
@@ -406,14 +405,6 @@ module Legion
           return normalized if normalized
 
           raise ArgumentError, "unknown operation #{value.inspect}; expected #{OPERATIONS.join(', ')}"
-        end
-
-        def reject_removed_capability_key!(intent)
-          return unless intent.key?(:capability)
-
-          raise ArgumentError,
-                'routing intent key :capability was removed; use :operation for chat/stream/embed/image/structured_output ' \
-                'and :effort for low/moderate/high/reasoning'
         end
 
         def filter_chain_resolutions(resolutions, estimated_tokens:, required_capabilities:)

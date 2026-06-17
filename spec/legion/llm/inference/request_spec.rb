@@ -95,4 +95,18 @@ RSpec.describe Legion::LLM::Inference::Request do
       expect(req.extra).not_to have_key(:request_id)
     end
   end
+
+  describe '.default_auto_routing_intent' do
+    # Regression (C15): a stale default_intent[:capability] (the pre-rename shipped
+    # default) must be tolerated on the daemon auto-routing path, not raise on every call.
+    it 'tolerates a legacy capability: key in settings default_intent' do
+      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                        routing: { default_intent: { privacy: 'normal', capability: 'moderate' } }
+                                      ))
+
+      intent = nil
+      expect { intent = described_class.default_auto_routing_intent }.not_to raise_error
+      expect(intent).to include(operation: :chat, effort: :moderate)
+    end
+  end
 end

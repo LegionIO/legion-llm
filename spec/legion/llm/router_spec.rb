@@ -581,16 +581,12 @@ RSpec.describe Legion::LLM::Router do
       expect(described_class.send(:normalize_intent, { operation: 'chat', model: 'custom-model' })[:model]).to eq('custom-model')
     end
 
-    it 'raises ArgumentError when capability key is supplied' do
-      expect do
-        described_class.send(:normalize_intent, { capability: :moderate })
-      end.to raise_error(ArgumentError, /capability.*removed.*operation.*effort/i)
-    end
-
-    it 'raises ArgumentError for capability: :chat too' do
-      expect do
-        described_class.send(:normalize_intent, { capability: :chat })
-      end.to raise_error(ArgumentError, /capability.*removed.*operation.*effort/i)
+    # Regression (C15): the removed :capability dimension must be tolerated (ignored),
+    # not raised on — a stale key in settings or caller intent previously bricked routing.
+    it 'tolerates a legacy capability: key (ignored, not raised)' do
+      normalized = nil
+      expect { normalized = described_class.send(:normalize_intent, { capability: :moderate }) }.not_to raise_error
+      expect(normalized).to include(:operation, :effort)
     end
 
     it 'raises ArgumentError for unknown effort values' do

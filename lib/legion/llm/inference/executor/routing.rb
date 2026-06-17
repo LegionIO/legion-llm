@@ -213,10 +213,6 @@ module Legion
                          else
                            {}
                          end
-            if normalized.key?(:capability)
-              raise ArgumentError,
-                    'routing intent key :capability was removed; use :operation and :effort'
-            end
             required = normalize_required_capabilities(
               normalized.delete(:required_capabilities) || normalized.delete(:requires)
             )

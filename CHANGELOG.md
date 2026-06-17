@@ -32,6 +32,16 @@ detail; this section summarizes the themes.
 - **CI / observability** — RSpec and RuboCop dependency pins corrected (`lex-llm >= 0.5.4`,
   `rubocop-legion >= 0.1.8`); discovery model-divergence warning made tolerant of versioned families.
 
+### Fixed
+
+- **A legacy `:capability` routing-intent key no longer bricks routing.** The `:capability`
+  dimension was renamed to `:operation` + `:effort`, but three paths (`Router#normalize_intent`,
+  `Inference::Request.default_auto_routing_intent`, and the executor's `routing_intent_for_request`)
+  *raised* `ArgumentError` whenever the key was present — so any install whose on-disk
+  `default_intent` still carried the pre-rename `{ capability: 'moderate' }` default hit an error on
+  **every** request. The key is now tolerated (ignored) wherever it appears; `:operation`/`:effort`
+  are what's read.
+
 ### Docs
 
 - README rewritten with an N × N overview, the execution-proxy contract, and a validated
