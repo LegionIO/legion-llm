@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.12.31] - 2026-06-16
+
+### Changed
+
+- **lex-llm dependency** — Require `lex-llm >= 0.5.3`, the first published release carrying the `Legion::Extensions::Llm::Canonical` types the native dispatch path depends on. Resolves CI `NameError: uninitialized constant Legion::Extensions::Llm::Canonical` when the published gem (rather than a local checkout) is resolved.
+
+### Build
+
+- **RuboCop tooling** — Track `rubocop-legion` main until `0.1.8` (which ships the four `Legion/Framework` N×N guard cops referenced by `.rubocop.yml`, including `NoShapeDuckTyping`) is published; the published `0.1.7` predates those cops.
+
 ## [0.12.30] - 2026-06-16
 
 ### Fixed

@@ -8,14 +8,11 @@ legion_settings_path = File.expand_path('../legion-settings', __dir__)
 gem 'legion-settings', path: legion_settings_path if Dir.exist?(legion_settings_path)
 
 group :test do
+  # The published lex-llm (>= 0.5.3, declared in the gemspec) provides the Canonical
+  # types and fleet security behavior these specs require. Use the local checkout when
+  # present (development); CI resolves the published gem via the gemspec dependency.
   lex_llm_path = File.expand_path('../extensions-ai/lex-llm', __dir__)
-  if Dir.exist?(lex_llm_path)
-    gem 'lex-llm', path: lex_llm_path
-  else
-    # TEMP (revert to `gem 'lex-llm'` once 0.4.16 is published): track lex-llm PR #16, which
-    # adds the fleet TokenValidator verify_issuer + WorkerExecution policy-warn behavior these specs require.
-    gem 'lex-llm', git: 'https://github.com/LegionIO/lex-llm.git', branch: 'fix/audit-fleet-security'
-  end
+  gem 'lex-llm', path: lex_llm_path if Dir.exist?(lex_llm_path)
 
   %w[
     lex-llm-ollama
@@ -41,7 +38,11 @@ group :test do
   if Dir.exist?(rubocop_legion_path)
     gem 'rubocop-legion', path: rubocop_legion_path
   else
-    gem 'rubocop-legion'
+    # TEMP: the N×N guard cops (incl. Legion/Framework/NoShapeDuckTyping, referenced in
+    # .rubocop.yml) are merged to rubocop-legion main but the published 0.1.7 predates
+    # them. Track main until 0.1.8 publishes, then revert this whole branch to
+    # `gem 'rubocop-legion', '>= 0.1.8'`.
+    gem 'rubocop-legion', git: 'https://github.com/LegionIO/rubocop-legion.git', branch: 'main'
   end
   gem 'simplecov'
   gem 'sinatra'
