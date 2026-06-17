@@ -219,7 +219,19 @@ module Legion
           if circuit[:state] == :open
             elapsed = Time.now - circuit[:opened_at]
             if elapsed >= @cooldown_seconds
-              log.info("[llm][health_tracker] action=circuit_state_change from=open to=half_open provider=#{key} cooldown_elapsed_s=#{elapsed.round}")
+              # Persist the open->half_open transition and log it ONCE. Without
+              # persisting, every read recomputed :half_open and re-logged the
+              # transition (flooding logs, since circuit_state is read for many
+              # candidates per request) and let every concurrent request probe at
+              # once. @mutex is a reentrant Monitor, so this is safe whether or not
+              # the caller already holds the lock (e.g. the :error handler).
+              @mutex.synchronize do
+                entry = @circuits[key]
+                if entry && entry[:state] == :open
+                  entry[:state] = :half_open
+                  log.info("[llm][health_tracker] action=circuit_state_change from=open to=half_open provider=#{key} cooldown_elapsed_s=#{elapsed.round}")
+                end
+              end
               return :half_open
             end
           end

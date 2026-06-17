@@ -190,22 +190,61 @@ module Legion
         end
 
         def responses_input(messages)
-          Array(messages).map do |message|
+          Array(messages).flat_map do |message|
             normalized = normalize_hash(message)
-            if normalized[:role].to_s == 'tool'
-              next({
-                type:    'function_call_output',
-                call_id: normalized[:tool_call_id].to_s,
-                output:  normalize_message_content(normalized[:content]).to_s
-              })
-            end
+            role = normalized[:role].to_s
 
-            {
-              role:         normalized[:role]&.to_s || 'user',
+            next [responses_function_call_output_item(normalized)] if role == 'tool'
+
+            tool_calls = normalized[:tool_calls]
+            next responses_assistant_tool_items(normalized, tool_calls) if role == 'assistant' && tool_calls.is_a?(Array) && tool_calls.any?
+
+            [{
+              role:         role.empty? ? 'user' : role,
               content:      responses_message_content(normalized[:content]),
               tool_call_id: normalized[:tool_call_id]
-            }.compact
+            }.compact]
           end
+        end
+
+        def responses_function_call_output_item(normalized)
+          {
+            type:    'function_call_output',
+            call_id: normalized[:tool_call_id].to_s,
+            output:  normalize_message_content(normalized[:content]).to_s
+          }
+        end
+
+        # An assistant turn that issued tool calls must render each call as a
+        # Responses `function_call` item so the matching `function_call_output`
+        # has a referent — otherwise the Responses API rejects the next turn with
+        # "No tool call found for function call output with call_id ...". The
+        # function_call items are emitted before their outputs (history order).
+        def responses_assistant_tool_items(normalized, tool_calls)
+          items = []
+          text = normalize_message_content(normalized[:content]).to_s
+          items << { role: 'assistant', content: responses_message_content(normalized[:content]) } unless text.strip.empty?
+          items.concat(
+            tool_calls.filter_map do |tool_call|
+              id, name, arguments = read_tool_call_fields(tool_call)
+              next if name.to_s.empty?
+
+              {
+                type:      'function_call',
+                call_id:   id.to_s,
+                name:      name.to_s,
+                arguments: responses_tool_call_arguments(arguments)
+              }
+            end
+          )
+          items
+        end
+
+        # OpenAI Responses requires function_call.arguments to be a JSON string.
+        def responses_tool_call_arguments(arguments)
+          return arguments if arguments.is_a?(String)
+
+          Legion::JSON.dump(arguments || {})
         end
 
         def responses_payload_input(payload, messages)

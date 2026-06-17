@@ -228,6 +228,7 @@ module Legion
               instance: entry[:instance],
               status:   models.empty? ? :empty : :ok
             )
+            warn_on_model_divergence(entry, models)
             models
           rescue StandardError => e
             report_discovery_failure(entry, e)
@@ -253,6 +254,29 @@ module Legion
 
         def discovery_status_key(provider, instance)
           "#{provider}/#{instance || :default}"
+        end
+
+        # Observability guardrail: when an instance's live discovered models do not
+        # include its configured default_model, the backend is almost certainly
+        # stale or misconfigured (e.g. a vLLM node behind a load balancer that
+        # wasn't restarted after a model swap). Pure logging — no effect on routing.
+        # Rescue-guarded so it can never break discovery.
+        def warn_on_model_divergence(entry, models)
+          return if models.empty?
+
+          metadata = entry[:metadata]
+          configured = metadata.is_a?(Hash) ? (metadata[:default_model] || metadata['default_model']) : nil
+          return if configured.nil? || configured.to_s.empty?
+
+          configured = configured.to_s
+          discovered = models.map { |model| model[:model].to_s }
+          return if discovered.any? { |name| name == configured || name.start_with?("#{configured}:") }
+
+          log.warn "[llm][discovery] action=model_divergence provider=#{entry[:provider]} " \
+                   "instance=#{entry[:instance] || :default} configured=#{configured} " \
+                   "discovered=#{discovered.join(',')} — backend may be stale or misconfigured"
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.discovery.model_divergence')
         end
 
         def extract_loaded_field(data)
