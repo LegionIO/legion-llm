@@ -36,7 +36,7 @@ module Legion
             'llm',
             'fleet',
             'offering',
-            public_segment(:instance_id, instance_id),
+            label_segment(:instance_id, instance_id),
             sanitize_model(model),
             operation_slug(operation)
           ].join('.')
@@ -86,6 +86,21 @@ module Legion
         def public_segment(label, value)
           raise ArgumentError, "#{label} contains sensitive content" if sensitive_segment?(value)
 
+          segment = sanitize_segment(value)
+          raise ArgumentError, "#{label} is empty after sanitization" if segment.empty?
+          raise ArgumentError, "#{label} exceeds #{MAX_PUBLIC_SEGMENT_LENGTH} characters" if segment.length > MAX_PUBLIC_SEGMENT_LENGTH
+
+          segment
+        end
+
+        # A trusted, operator-configured identifier (e.g. an instance_id) rendered
+        # into a routing segment. Unlike #public_segment it is NOT subject to the
+        # credential-word denylist: an instance LABEL that merely contains a word
+        # like "bearer" (e.g. "env_bearer") or a name/org token is a routing label,
+        # not secret material — and Legion::Transport's RabbitMQ is internal
+        # (datacenter-hosted), not a cloud/frontier surface. The label is still
+        # sanitized to [a-z0-9-] and length-bounded.
+        def label_segment(label, value)
           segment = sanitize_segment(value)
           raise ArgumentError, "#{label} is empty after sanitization" if segment.empty?
           raise ArgumentError, "#{label} exceeds #{MAX_PUBLIC_SEGMENT_LENGTH} characters" if segment.length > MAX_PUBLIC_SEGMENT_LENGTH

@@ -440,7 +440,7 @@ RSpec.describe 'Router determinism and regression coverage' do
       # Inventory (SSOT) knows anthropic offers only haiku.
       allow(Legion::LLM::Inventory).to receive(:routing_candidates).and_call_original
       allow(Legion::LLM::Inventory).to receive(:routing_candidates).with(provider: :anthropic).and_return(
-        [{ model: 'claude-haiku-4-5-20251001', provider_family: 'anthropic', instance_id: 'matt-individual-optum' }]
+        [{ model: 'claude-haiku-4-5-20251001', provider_family: 'anthropic', instance_id: 'primary' }]
       )
     end
 

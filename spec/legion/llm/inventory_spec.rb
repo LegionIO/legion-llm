@@ -188,6 +188,31 @@ RSpec.describe Legion::LLM::Inventory do
     expect(offering).not_to have_key(:credentials)
   end
 
+  it 'attributes native offerings to the registry instance, not the adapter self-reported default' do
+    # The adapter reports a generic 'default' instance (it was not told its
+    # registration name); the registry registered it under two named instances.
+    # The registry instance is authoritative — it must win so two configured
+    # accounts (e.g. two Anthropic API keys) are not collapsed into one 'default'.
+    haiku = {
+      provider_family: :anthropic, model: 'claude-haiku-4-5-20251001',
+      provider_instance: 'default', usage_type: :inference, capabilities: %i[chat tools]
+    }
+    adapter1 = double('Adapter1')
+    adapter2 = double('Adapter2')
+    allow(adapter1).to receive(:offerings).with(live: false).and_return([haiku])
+    allow(adapter2).to receive(:offerings).with(live: false).and_return([haiku])
+    allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([
+                                                                               { provider: :anthropic, instance: :primary,
+                                                                                 adapter: adapter1, metadata: {} },
+                                                                               { provider: :anthropic, instance: :secondary,
+                                                                                 adapter: adapter2, metadata: {} }
+                                                                             ])
+
+    offerings = described_class.offerings(provider: 'anthropic')
+
+    expect(offerings.map { |offering| offering[:instance_id] }).to contain_exactly('primary', 'secondary')
+  end
+
   it 'uses cached discovery for inventory reads without forcing provider refresh' do
     Legion::Settings[:extensions][:llm][:vllm] = { enabled: true }
     adapter = double('Adapter')

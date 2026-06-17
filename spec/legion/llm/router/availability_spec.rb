@@ -271,7 +271,7 @@ RSpec.describe Legion::LLM::Router::Availability do
         {
           model:           'claude-haiku-4-5-20251001',
           provider_family: 'anthropic',
-          instance_id:     'matt-individual-optum',
+          instance_id:     'primary',
           capabilities:    %w[completion streaming tools],
           limits:          { context_window: 200_000 }
         }
@@ -285,7 +285,7 @@ RSpec.describe Legion::LLM::Router::Availability do
       it 'rejects anthropic + a qwen model as :model_not_offered' do
         reason = described_class.rejection_reason(
           Legion::LLM::Router::Resolution.new(
-            tier: :frontier, provider: :anthropic, instance: :'matt-individual-optum',
+            tier: :frontier, provider: :anthropic, instance: :primary,
             model: 'qwen3.6-27b', metadata: {}
           ),
           estimated_tokens: nil, required_capabilities: []
@@ -296,7 +296,7 @@ RSpec.describe Legion::LLM::Router::Availability do
       it 'allows anthropic + its own offered model' do
         reason = described_class.rejection_reason(
           Legion::LLM::Router::Resolution.new(
-            tier: :frontier, provider: :anthropic, instance: :'matt-individual-optum',
+            tier: :frontier, provider: :anthropic, instance: :primary,
             model: 'claude-haiku-4-5-20251001', metadata: {}
           ),
           estimated_tokens: nil, required_capabilities: []

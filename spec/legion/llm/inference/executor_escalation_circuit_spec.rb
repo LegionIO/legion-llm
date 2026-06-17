@@ -101,4 +101,57 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
       end
     end
   end
+
+  describe 'failing over across instances of the same provider' do
+    let(:anthropic_primary) do
+      Legion::LLM::Router::Resolution.new(tier: :frontier, provider: :anthropic, instance: :primary, model: 'claude-haiku-4-5')
+    end
+    let(:anthropic_secondary) do
+      Legion::LLM::Router::Resolution.new(tier: :frontier, provider: :anthropic, instance: :secondary, model: 'claude-haiku-4-5')
+    end
+
+    it 'tries a sibling instance after an account-scoped (credit) error rather than skipping the whole model' do
+      # First account is out of credits; the second account serving the SAME model
+      # must still be tried before the chain would cross to another provider.
+      primary = Module.new do
+        define_singleton_method(:chat) do |**_|
+          raise Legion::LLM::ProviderError, 'Your credit balance is too low to access the Anthropic API'
+        end
+      end
+      secondary = Module.new do
+        define_singleton_method(:chat) { |**_| { content: 'from the second account', usage: { input_tokens: 5, output_tokens: 3 } } }
+      end
+      Legion::LLM::Call::Registry.register(:anthropic, primary, instance: :primary)
+      Legion::LLM::Call::Registry.register(:anthropic, secondary, instance: :secondary)
+
+      executor.instance_variable_set(:@escalation_chain, build_chain(anthropic_primary, anthropic_secondary))
+      executor.call
+
+      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
+      expect(executor.instance_variable_get(:@resolved_instance)).to eq(:secondary)
+    end
+
+    it 'deprioritizes the creditless instance (per-instance circuit) without denying the model or touching siblings' do
+      tracker = Legion::LLM::Router.health_tracker
+      primary = Module.new do
+        define_singleton_method(:chat) do |**_|
+          raise Legion::LLM::ProviderError, 'Your credit balance is too low to access the Anthropic API'
+        end
+      end
+      secondary = Module.new do
+        define_singleton_method(:chat) { |**_| { content: 'from the second account', usage: { input_tokens: 5, output_tokens: 3 } } }
+      end
+      Legion::LLM::Call::Registry.register(:anthropic, primary, instance: :primary)
+      Legion::LLM::Call::Registry.register(:anthropic, secondary, instance: :secondary)
+
+      executor.instance_variable_set(:@escalation_chain, build_chain(anthropic_primary, anthropic_secondary))
+      executor.call
+
+      # Creditless account's circuit is open (skipped on future requests); the healthy
+      # sibling is untouched; the model is NOT denied (it works on the sibling).
+      expect(tracker.circuit_state(:anthropic, instance: :primary)).to eq(:open)
+      expect(tracker.circuit_state(:anthropic, instance: :secondary)).to eq(:closed)
+      expect(tracker.model_denied?(provider: :anthropic, model: 'claude-haiku-4-5', instance: :primary)).to be(false)
+    end
+  end
 end

@@ -304,7 +304,12 @@ module Legion
             next if entry[:provider] == exclude_provider&.to_sym &&
                     (exclude_instance.nil? || entry[:instance] == (exclude_instance&.to_sym || :default))
 
-            model = registry_default_model(entry)
+            # Source from Inventory (SSOT) when the instance has no configured
+            # registry default — e.g. a whitelist-restricted instance whose
+            # policy-aware default resolved to nil. Without this, such a sibling
+            # instance (a second account offering the same model) is dropped from
+            # the escalation chain entirely.
+            model = registry_default_model(entry) || inventory_default_model(entry[:provider], entry[:instance])
             next unless model
 
             entry_tier = PROVIDER_TIER.fetch(entry[:provider], :frontier)
@@ -609,7 +614,7 @@ module Legion
             tier = registry_tier(pname, entry[:metadata])
             next unless tier_available?(tier)
 
-            model = registry_default_model(entry)
+            model = registry_default_model(entry) || inventory_default_model(pname, entry[:instance])
             next if model.nil? || model.to_s.empty?
 
             Resolution.new(
@@ -623,23 +628,53 @@ module Legion
         # targets that provider — mirroring Router.resolve's hint-mismatch
         # fallthrough so resolve and resolve_chain reach the same primary
         # (NxN G14 / redesign #95). The hinted provider must be registered (able
-        # to serve); otherwise the normal scored chain stands. The displaced
-        # candidates remain as escalation fallbacks.
+        # to serve); otherwise the normal scored chain stands.
+        #
+        # When the caller did not pin a specific instance, prepend EVERY registered
+        # instance of the hinted provider, in registry order. This makes failover
+        # exhaust the provider's own instances (e.g. a second Anthropic account)
+        # before the chain ever crosses to a different provider — a creditless
+        # instance fails over to a sibling instance, not silently to vLLM.
         def prepend_hinted_provider(resolutions, hints)
           provider = hints && hints[:provider]
           return resolutions unless provider
 
           provider_sym = provider.to_sym
-          return resolutions if resolutions.first&.provider == provider_sym
           return resolutions unless Call::Registry.registered?(provider_sym)
 
-          primary = explicit_resolution(hints[:tier], provider, hints[:model], hints[:instance])
-          return resolutions unless primary && primary.provider == provider_sym
+          primaries = hinted_provider_resolutions(provider_sym, hints)
+          return resolutions if primaries.empty?
 
-          [primary] + resolutions.reject do |resolution|
-            resolution.provider == primary.provider && resolution.instance == primary.instance &&
-              resolution.model == primary.model
+          keys = primaries.map { |r| [r.provider, r.instance, r.model] }
+          primaries + resolutions.reject { |r| keys.include?([r.provider, r.instance, r.model]) }
+        end
+
+        # Resolutions for the hinted provider: a pinned instance yields just that
+        # one; otherwise one resolution per registered instance (multi-instance
+        # failover within the provider).
+        def hinted_provider_resolutions(provider_sym, hints)
+          if hints[:instance]
+            res = explicit_resolution(hints[:tier], provider_sym, hints[:model], hints[:instance])
+            return res && res.provider == provider_sym ? [res] : []
           end
+
+          instances = registered_instances_for(provider_sym)
+          list = if instances.empty?
+                   [explicit_resolution(hints[:tier], provider_sym, hints[:model], nil)]
+                 else
+                   instances.map { |inst| explicit_resolution(hints[:tier], provider_sym, hints[:model], inst) }
+                 end
+          list.compact.select { |r| r.provider == provider_sym }.uniq { |r| [r.provider, r.instance, r.model] }
+        end
+
+        def registered_instances_for(provider_sym)
+          Call::Registry.all_instances
+                        .select { |entry| entry[:provider] == provider_sym }
+                        .filter_map { |entry| entry[:instance] }
+                        .uniq
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'router.registered_instances_for')
+          []
         end
 
         def chain_from_intent(intent, max, hints: {}, exclude: {}, allow_default_fallback: true, estimated_tokens: nil)

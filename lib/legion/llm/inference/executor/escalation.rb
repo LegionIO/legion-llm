@@ -183,11 +183,29 @@ module Legion
             end
 
             notify_stream_provider_failed(e, resolution) if stream_block
-            skip_all_provider_model_instances!(resolution, tried)
+            if account_specific_error?(e)
+              # Account/instance-scoped failure (credit balance, payment, quota): a
+              # sibling instance of the SAME provider+model — a different account/key
+              # — may still work, so skip ONLY the failing instance and let failover
+              # try the siblings before crossing to another provider.
+              tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
+            else
+              # Model-intrinsic failure: don't burn the attempt budget re-trying a
+              # broken model on every instance — skip all instances of this model.
+              skip_all_provider_model_instances!(resolution, tried)
+            end
             record_escalation_failure(e, resolution, start_time,
                                       outcome:   :error,
                                       operation: 'llm.pipeline.escalation_attempt')
             false
+          end
+
+          # Errors scoped to a single account/instance (its credentials, billing, or
+          # quota) rather than to the model itself. A sibling instance of the same
+          # provider+model can still succeed, so these must not skip the whole model.
+          def account_specific_error?(error)
+            message = error.respond_to?(:message) ? error.message.to_s : error.to_s
+            message.match?(/credit balance|insufficient (?:credit|funds|quota|balance)|payment required|billing|quota (?:exceeded|exhausted)|over quota/i)
           end
 
           def escalation_move_type(resolution, tried, primary_tier)
@@ -289,6 +307,21 @@ module Legion
               log.error "[llm][escalation] action=request_payload_error provider=#{resolution.provider} " \
                         "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
                         "error=#{err.message.to_s[0, 500]} daemon_side_payload_bug=true provider_health=false"
+            elsif account_specific_error?(err)
+              # Account-scoped failure (credit balance, payment, quota). It is
+              # deterministic — it will fail every call until the operator tops up —
+              # so DEPRIORITIZE this instance immediately by tripping its per-instance
+              # circuit, to stop wasting calls on an account that cannot work. The
+              # circuit is per (provider, instance), so healthy sibling instances and
+              # the provider globally are unaffected, and its cooldown -> half_open
+              # re-probe auto-recovers the instance once credits return. Do NOT
+              # deny_model — the model is fine on other instances/accounts.
+              log.warn "[llm][escalation] action=account_scoped_error provider=#{resolution.provider} " \
+                       "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
+                       "error=#{err.message.to_s[0, 300]} deprioritized=true model_denied=false"
+              Legion::LLM::Router.health_tracker.trip_circuit(
+                provider: resolution.provider, instance: resolution.instance, reason: err.message
+              )
             elsif authentication_error?(err) || config_error?(err)
               Legion::LLM::Router.health_tracker.deny_model(
                 provider: resolution.provider,

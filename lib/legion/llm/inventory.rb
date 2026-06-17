@@ -339,15 +339,29 @@ module Legion
           return offering unless defined?(Legion::LLM::Fleet::Lane)
 
           context_window = offering.dig(:limits, :context_window)
-          offering.merge(fleet_lane: Legion::LLM::Fleet::Lane.routing_key(
+          # The model-keyed routing lane never carries the instance name, so it is
+          # always safe to build.
+          lanes = { fleet_lane: Legion::LLM::Fleet::Lane.routing_key(
             operation:      offering[:type],
             model:          offering[:model],
             context_window: context_window
-          ), fleet_offering_lane: Legion::LLM::Fleet::Lane.offering_key(
-            instance_id: offering[:provider_instance],
-            model:       offering[:model],
-            operation:   offering[:type]
-          ))
+          ) }
+          # The per-offering lane embeds the instance id. Fleet::Lane sanitizes the
+          # label (internal datacenter RabbitMQ, so a label like "env_bearer" is a
+          # routing label, not secret material) but still raises if it is empty or
+          # over-length after sanitization. A malformed label must not break the
+          # offering or make the instance unroutable — it just gets no fleet lane.
+          begin
+            lanes[:fleet_offering_lane] = Legion::LLM::Fleet::Lane.offering_key(
+              instance_id: offering[:provider_instance],
+              model:       offering[:model],
+              operation:   offering[:type]
+            )
+          rescue ArgumentError => e
+            log.debug('[llm][inventory] action=fleet_offering_lane.skipped ' \
+                      "instance=#{offering[:provider_instance]} model=#{offering[:model]} reason=#{e.message}")
+          end
+          offering.merge(lanes)
         end
 
         def discovery_offerings(provider: nil, exclude_providers: [])
@@ -406,14 +420,22 @@ module Legion
         def normalize_native_offering(provider_name, offering, instance: nil)
           data = normalize_hash(offering.respond_to?(:to_h) ? offering.to_h : offering)
           provider_family = normalize_symbol(option(data, :provider_family) || option(data, :provider) || provider_name)
-          provider_instance = option(data, :provider_instance) || option(data, :instance_id) || instance
+          # The registry instance Inventory is enumerating is authoritative — it is the
+          # key dispatch routes by (Registry.for(provider, instance:)). Prefer it over
+          # the adapter's self-reported instance, which is often a generic "default"
+          # because the adapter was not told its registration name — that collapsed
+          # multiple configured cloud instances (e.g. two Anthropic accounts) into one.
+          provider_instance = instance || option(data, :provider_instance) || option(data, :instance_id)
           usage_type = option(data, :usage_type)
           entry = data.merge(
-            model:       option(data, :model),
-            instance_id: provider_instance,
-            type:        normalize_type(usage_type || option(data, :type)),
-            source:      :native_provider,
-            metadata:    normalize_hash(option(data, :metadata))
+            model:             option(data, :model),
+            # Override BOTH keys so build_offering (which prefers :provider_instance)
+            # can't fall back to the adapter's stale self-reported value.
+            provider_instance: provider_instance,
+            instance_id:       provider_instance,
+            type:              normalize_type(usage_type || option(data, :type)),
+            source:            :native_provider,
+            metadata:          normalize_hash(option(data, :metadata))
           )
           build_offering(provider_family, {}, entry)
         end

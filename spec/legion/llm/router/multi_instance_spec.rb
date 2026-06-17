@@ -215,4 +215,36 @@ RSpec.describe 'Router multi-instance provider routing' do
       expect(vllm_resolutions.first.instance).to eq(:apollo)
     end
   end
+
+  # Regression: an explicit provider hint must exhaust ALL of that provider's
+  # registered instances (e.g. two accounts of the same provider) before the chain
+  # crosses to a different provider. Previously only the first instance was
+  # prepended, so a failing primary instance failed straight over to another
+  # provider, skipping the provider's second instance entirely.
+  describe 'explicit provider hint fails over across all its instances first' do
+    before do
+      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                        routing: { enabled: true, rules: [], default_intent: { operation: 'chat' } }
+                                      ))
+      Legion::LLM::Router.populate_auto_rules({})
+      Legion::LLM::Call::Registry.register(:anthropic, Module.new, instance: :primary,
+                                                                   metadata: { default_model: 'claude-haiku-4-5-20251001', tier: :frontier })
+      Legion::LLM::Call::Registry.register(:anthropic, Module.new, instance: :secondary,
+                                                                   metadata: { default_model: 'claude-haiku-4-5-20251001', tier: :frontier })
+      Legion::LLM::Call::Registry.register(:vllm, Module.new, instance: :apollo,
+                                                              metadata: { default_model: 'gemma-4-12b-it', tier: :direct })
+      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| resolutions }
+    end
+
+    it 'includes both anthropic instances ahead of any other provider' do
+      chain = Legion::LLM::Router.resolve_chain(provider: :anthropic, intent: { operation: :chat, effort: :moderate })
+      providers_in_order = chain.to_a.map(&:provider)
+      anthropic_instances = chain.to_a.select { |r| r.provider == :anthropic }.map(&:instance)
+
+      expect(anthropic_instances).to contain_exactly(:primary, :secondary)
+      # No non-anthropic provider appears before both anthropic instances are tried.
+      first_non_anthropic = providers_in_order.index { |p| p != :anthropic }
+      expect(first_non_anthropic).to be >= 2 if first_non_anthropic
+    end
+  end
 end

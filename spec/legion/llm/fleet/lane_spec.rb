@@ -66,9 +66,18 @@ RSpec.describe Legion::LLM::Fleet::Lane do
       )
     end
 
-    it 'rejects sensitive offering instance identifiers' do
+    it 'sanitizes an operator instance label rather than rejecting it' do
+      # An instance_id is a trusted operator label on internal datacenter RabbitMQ,
+      # not secret material — a label that merely contains a credential-ish word
+      # (e.g. "env_bearer") is sanitized into the lane, not rejected.
+      expect(described_class.offering_key(instance_id: 'env_bearer', model: 'qwen3.6:27b', operation: :generation)).to eq(
+        'llm.fleet.offering.env-bearer.qwen3-6-27b.inference'
+      )
+    end
+
+    it 'raises only when the instance label is empty after sanitization' do
       expect do
-        described_class.offering_key(instance_id: 'client_secret', model: 'qwen3.6:27b', operation: :generation)
+        described_class.offering_key(instance_id: '///', model: 'qwen3.6:27b', operation: :generation)
       end.to raise_error(ArgumentError, /instance_id/)
     end
   end
