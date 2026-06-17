@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.12.34] - 2026-06-17
+
+### Fixed
+
+- **Never dispatch a model the provider doesn't offer** — routing could pair an explicit provider with a foreign/stale model (observed: `anthropic` + `qwen3.6-27b`, which Anthropic never offered). Two sources closed: (1) `Router#explicit_resolution` now sources the model from `Inventory` (the SSOT, already whitelist/blacklist-filtered) before any stale registry/tier default, so an explicit provider resolves to a model it actually offers; (2) the executor's no-model fallback no longer drops the global `default_model` onto an unrelated provider — a resolved provider gets *its own* catalog model, and the global default applies only when no provider resolved (or it belongs to the resolved provider).
+- **Availability enforces the live catalog for every provider** — the Inventory model-existence gate previously exempted cloud/frontier providers; it now applies to all of them. A `(provider, model)` the catalog doesn't list is rejected (`:model_not_offered`), so a foreign or policy-excluded model can never reach dispatch. Empty/nil catalogs stay permissive (cold-boot safe).
+
 ## [0.12.33] - 2026-06-17
 
 ### Added

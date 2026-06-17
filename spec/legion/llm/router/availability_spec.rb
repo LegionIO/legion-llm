@@ -262,6 +262,49 @@ RSpec.describe Legion::LLM::Router::Availability do
       expect(reason).to eq(:context_too_small)
     end
 
+    # Regression: a cloud/frontier provider paired with a model from a different
+    # family (the anthropic->qwen e2e failure). Inventory knows anthropic offers
+    # only haiku, so a qwen model for anthropic must be rejected — the daemon never
+    # dispatches a (provider, model) the live catalog does not list, for ANY tier.
+    context 'when a cloud provider is paired with a foreign model not in its catalog' do
+      let(:anthropic_offering) do
+        {
+          model:           'claude-haiku-4-5-20251001',
+          provider_family: 'anthropic',
+          instance_id:     'matt-individual-optum',
+          capabilities:    %w[completion streaming tools],
+          limits:          { context_window: 200_000 }
+        }
+      end
+
+      before do
+        allow(Legion::LLM::Inventory).to receive(:offerings)
+          .with(hash_including(provider: :anthropic)).and_return([anthropic_offering])
+      end
+
+      it 'rejects anthropic + a qwen model as :model_not_offered' do
+        reason = described_class.rejection_reason(
+          Legion::LLM::Router::Resolution.new(
+            tier: :frontier, provider: :anthropic, instance: :'matt-individual-optum',
+            model: 'qwen3.6-27b', metadata: {}
+          ),
+          estimated_tokens: nil, required_capabilities: []
+        )
+        expect(reason).to eq(:model_not_offered)
+      end
+
+      it 'allows anthropic + its own offered model' do
+        reason = described_class.rejection_reason(
+          Legion::LLM::Router::Resolution.new(
+            tier: :frontier, provider: :anthropic, instance: :'matt-individual-optum',
+            model: 'claude-haiku-4-5-20251001', metadata: {}
+          ),
+          estimated_tokens: nil, required_capabilities: []
+        )
+        expect(reason).to be_nil
+      end
+    end
+
     it 'is permissive when Inventory lookup fails' do
       allow(Legion::LLM::Inventory).to receive(:offerings).and_raise(StandardError, 'boom')
 

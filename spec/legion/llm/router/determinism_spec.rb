@@ -422,4 +422,39 @@ RSpec.describe 'Router determinism and regression coverage' do
       expect(chain.primary.provider).to eq(:bedrock)
     end
   end
+
+  # Regression: the anthropic->qwen e2e failure. The request hinted provider=anthropic
+  # with no model; the per-instance default was stale and routing leaked a foreign
+  # global default (qwen) onto anthropic. explicit_resolution now sources the model
+  # from Inventory (the SSOT, already whitelist-filtered), so an explicit provider is
+  # paired only with a model it actually offers — never a foreign/stale one.
+  describe 'explicit provider sources its model from Inventory, never a foreign default' do
+    before do
+      configure_with_rules([])
+      # Registry carries a stale/contaminated default for anthropic (qwen) — the bug.
+      Legion::LLM::Call::Registry.register(
+        :anthropic, Module.new,
+        metadata: { tier: :frontier, default_model: 'qwen3.6-27b' }
+      )
+      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| resolutions }
+      # Inventory (SSOT) knows anthropic offers only haiku.
+      allow(Legion::LLM::Inventory).to receive(:routing_candidates).and_call_original
+      allow(Legion::LLM::Inventory).to receive(:routing_candidates).with(provider: :anthropic).and_return(
+        [{ model: 'claude-haiku-4-5-20251001', provider_family: 'anthropic', instance_id: 'matt-individual-optum' }]
+      )
+    end
+
+    after { Legion::LLM::Call::Registry.deregister_provider(:anthropic) }
+
+    it 'resolves anthropic to its Inventory model, not the stale registry/global default' do
+      result = Legion::LLM::Router.resolve(provider: :anthropic, intent: { operation: :chat, effort: :moderate })
+      expect(result.provider).to eq(:anthropic)
+      expect(result.model).to eq('claude-haiku-4-5-20251001')
+    end
+
+    it 'reaches the same Inventory-sourced model via resolve_chain' do
+      chain = Legion::LLM::Router.resolve_chain(provider: :anthropic, intent: { operation: :chat, effort: :moderate })
+      expect([chain.primary.provider, chain.primary.model]).to eq([:anthropic, 'claude-haiku-4-5-20251001'])
+    end
+  end
 end

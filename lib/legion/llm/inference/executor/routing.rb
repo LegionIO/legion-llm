@@ -92,7 +92,7 @@ module Legion
                 resolved_model = nil
               end
             end
-            @resolved_model = resolved_model || (Legion::Settings[:llm][:default_model] unless auto_route)
+            @resolved_model = resolved_model || fallback_model_for_resolved_provider(auto_route)
             raise ProviderError, 'Auto routing could not resolve an available LLM provider/model' if auto_route && (@resolved_provider.nil? || @resolved_model.nil?)
 
             @resolved_tier = state[:tier]&.to_sym || inferred_provider_tier(@resolved_provider)
@@ -108,6 +108,29 @@ module Legion
               direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
               from: 'router', to: 'pipeline'
             )
+          end
+
+          # When routing resolved a provider but no model, source the model from that
+          # provider's own catalog (Inventory SSOT) — never the global default_model,
+          # which may belong to a different provider. This prevents pairing e.g.
+          # anthropic with a vllm-family global default. The global default applies
+          # only when no provider resolved, or the resolved provider IS the configured
+          # default_provider (so the global default legitimately belongs to it).
+          def fallback_model_for_resolved_provider(auto_route)
+            return nil if auto_route
+
+            if @resolved_provider && Router.respond_to?(:inventory_default_model)
+              provider_model = Router.inventory_default_model(@resolved_provider, @resolved_instance)
+              return provider_model if provider_model
+            end
+
+            global = Legion::Settings[:llm][:default_model]
+            return nil if global.nil? || global.to_s.empty?
+
+            default_provider = Legion::Settings[:llm][:default_provider]&.to_sym
+            return global if @resolved_provider.nil? || @resolved_provider.to_sym == default_provider
+
+            nil
           end
 
           def resolve_provider_instance(requested_instance, provider)

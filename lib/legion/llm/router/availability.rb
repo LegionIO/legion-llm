@@ -61,21 +61,24 @@ module Legion
           end
 
           # Model existence is checked against Inventory — the single source of truth
-          # (settings + native-adapter static catalogs + discovery). For discoverable
-          # local/fleet providers (ollama/vllm/mlx) discovery feeds Inventory the live
-          # catalog, so Inventory is AUTHORITATIVE: a model it doesn't list — including
-          # a stale registry default not currently served — is rejected. This gate
-          # only applies when discovery is enabled; with discovery off there is no live
-          # catalog to judge against, so we stay permissive. Cloud/frontier providers
-          # are never gated here (Inventory can't enumerate them as a liveness signal
-          # and they don't self-report offline). An Inventory lookup error is permissive
-          # (cold-boot fallback) via inventory_offerings_for returning nil.
+          # (settings + native-adapter static catalogs + discovery), already
+          # whitelist/blacklist-filtered. The invariant: the daemon never dispatches a
+          # (provider, instance, model) the catalog doesn't list — for EVERY provider,
+          # cloud/frontier included. This is what blocks anthropic+qwen (qwen is not an
+          # anthropic offering) and any policy-excluded model (filtered out of the
+          # catalog upstream).
+          #
+          # Empty/nil catalog handling stays permissive so we never block on a cold
+          # boot: an Inventory lookup error (nil) is permissive; an empty catalog is
+          # authoritative ONLY for discoverable local/fleet providers with discovery on
+          # (an empty live catalog means the instance genuinely serves nothing) —
+          # otherwise an empty catalog is a not-yet-populated signal, not absence.
           discoverable = Discovery::RuleGenerator::DISCOVERABLE_PROVIDERS.include?(resolution.provider&.to_sym)
-          if discoverable && discovery_enabled?
-            offerings = inventory_offerings_for(resolution)
-            unless offerings.nil?
-              return :provider_instance_has_no_models if offerings.empty?
-
+          offerings = inventory_offerings_for(resolution)
+          unless offerings.nil?
+            if offerings.empty?
+              return :provider_instance_has_no_models if discoverable && discovery_enabled?
+            else
               offering = offerings.find { |o| model_matches_offering?(resolution.model, o) }
               return :model_not_offered if offering.nil?
 

@@ -77,6 +77,29 @@ module Legion
           entry&.dig(:provider)
         end
 
+        # The provider's own default model from Inventory — the single source of
+        # truth (already whitelist/blacklist-filtered and discovery-fed). Sourcing
+        # a model here guarantees an explicit provider is paired only with a model
+        # it actually offers: anthropic resolves to its own offered model, never a
+        # stale registry default or a global default that belongs to a different
+        # provider (the anthropic->qwen pairing class). Returns nil when Inventory
+        # has no catalog for the provider (cold boot), so callers fall through to
+        # their existing fallbacks.
+        def inventory_default_model(provider, instance = nil)
+          return nil unless provider && defined?(Inventory)
+
+          candidates = Inventory.routing_candidates(provider: provider.to_sym)
+          return nil if candidates.nil? || candidates.empty?
+
+          inst = (instance || :default).to_s
+          offering = candidates.find { |o| (o[:instance_id] || o[:provider_instance]).to_s == inst } || candidates.first
+          model = offering[:model] || offering[:canonical_model_alias]
+          model&.to_s
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'router.inventory_default_model')
+          nil
+        end
+
         # Resolve an LLM routing intent to a tier/provider/model decision.
         #
         # Model, provider, and tier are treated as preference hints — they bias scoring
@@ -241,8 +264,11 @@ module Legion
             model = nil
           end
 
-          resolved_model    = model || registry_default_model(registry_entry) || (tier && default_model_for_tier(tier))
           resolved_instance = registry_entry&.[](:instance) || instance
+          resolved_model    = model ||
+                              inventory_default_model(resolved_provider, resolved_instance) ||
+                              registry_default_model(registry_entry) ||
+                              (tier && default_model_for_tier(tier))
           resolved_tier     = tier || PROVIDER_TIER.fetch(resolved_provider, :frontier)
 
           Resolution.new(
