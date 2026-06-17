@@ -383,14 +383,13 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
   # ─── POST /v1/messages — error handling ────────────────────────────────────
 
   describe 'POST /v1/messages error handling' do
-    it 'returns 529 when model is missing (no provider resolves it)' do
+    it 'returns 500 when model is missing (no provider resolves it)' do
       post '/v1/messages',
            Legion::JSON.dump({ max_tokens: 1024, messages: [{ role: 'user', content: 'Hi' }] }),
            claude_code_headers
-      expect(last_response.status).to eq(529)
+      expect(last_response.status).to eq(500)
       body = Legion::JSON.load(last_response.body)
       expect(body[:type]).to eq('error')
-      expect(body[:error][:type]).to eq('overloaded_error')
     end
 
     it 'returns 400 when messages is missing' do

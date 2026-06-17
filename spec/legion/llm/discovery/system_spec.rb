@@ -88,50 +88,6 @@ RSpec.describe Legion::LLM::Discovery::System do
     end
   end
 
-  describe '.memory_pressure?' do
-    before do
-      allow(described_class).to receive(:platform).and_return(:macos)
-      allow(described_class).to receive(:`).with('sysctl -n hw.memsize').and_return("68719476736\n")
-    end
-
-    context 'when available memory is below floor' do
-      before do
-        vm_stat_output = <<~VMSTAT
-          Mach Virtual Memory Statistics: (page size of 16384 bytes)
-          Pages free:                               50000.
-          Pages active:                            200000.
-          Pages inactive:                           50000.
-          Pages speculative:                            0.
-        VMSTAT
-        allow(described_class).to receive(:`).with('vm_stat').and_return(vm_stat_output)
-      end
-
-      it 'returns true' do
-        described_class.refresh!
-        # (50000 + 50000) * 16384 / 1024 / 1024 = 1562 MB < 2048 default floor
-        expect(described_class.memory_pressure?).to be true
-      end
-    end
-
-    context 'when available memory is above floor' do
-      before do
-        vm_stat_output = <<~VMSTAT
-          Mach Virtual Memory Statistics: (page size of 16384 bytes)
-          Pages free:                              500000.
-          Pages active:                            200000.
-          Pages inactive:                          300000.
-          Pages speculative:                            0.
-        VMSTAT
-        allow(described_class).to receive(:`).with('vm_stat').and_return(vm_stat_output)
-      end
-
-      it 'returns false' do
-        described_class.refresh!
-        expect(described_class.memory_pressure?).to be false
-      end
-    end
-  end
-
   describe '.stale?' do
     it 'returns true when never refreshed' do
       expect(described_class.stale?).to be true

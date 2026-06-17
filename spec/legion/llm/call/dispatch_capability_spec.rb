@@ -41,7 +41,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         model: 'llama3', messages: [{ role: 'user', content: 'hi' }]
       )
       expect(result[:result]).to eq('chat response')
-      expect(result[:usage]).to be_a(Legion::LLM::Usage)
+      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
       expect(result[:usage].input_tokens).to eq(10)
     end
 
@@ -50,7 +50,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         provider: :ollama, capability: :embed, instance: :local,
         model: 'nomic-embed', text: 'hello world'
       )
-      expect(result[:usage]).to be_a(Legion::LLM::Usage)
+      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
       expect(result[:usage].input_tokens).to eq(3)
     end
 
@@ -110,6 +110,19 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         model: 'llama3', messages: [{ role: 'user', content: 'hi' }]
       )
       expect(result[:result]).to eq('chat response')
+    end
+  end
+
+  describe '.map_lex_llm_error' do
+    it 'maps provider-wrapped maximum context length errors to ContextOverflow' do
+      error = Legion::Extensions::Llm::ServerError.new(
+        "This model's maximum context length is 262144 tokens. However, you requested 0 output tokens " \
+        'and your prompt contains at least 262145 input tokens.'
+      )
+
+      expect do
+        described_class.send(:map_lex_llm_error, error, provider: :vllm, model: 'gemma-4-31b-it')
+      end.to raise_error(Legion::LLM::ContextOverflow, /maximum context length/)
     end
   end
 

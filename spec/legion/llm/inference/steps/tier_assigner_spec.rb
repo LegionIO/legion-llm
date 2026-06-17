@@ -26,7 +26,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           priority:        :normal,
           gaia_hint:       nil,
           existing_tier:   :cloud,
-          existing_intent: { capability: :reasoning }
+          existing_intent: { effort: :reasoning }
         )
 
         expect(result).to include(tier: :local, source: :classification, forced: true)
@@ -124,7 +124,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           existing_intent: nil
         )
         expect(result[:tier]).to eq(:local)
-        expect(result[:intent]).to include(capability: :basic)
+        expect(result[:intent]).to include(effort: :low)
         expect(result[:source]).to eq(:role_mapping)
       end
 
@@ -138,7 +138,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           existing_intent: nil
         )
         expect(result[:tier]).to eq(:local)
-        expect(result[:intent]).to include(capability: :moderate)
+        expect(result[:intent]).to include(effort: :moderate)
         expect(result[:source]).to eq(:role_mapping)
       end
 
@@ -152,7 +152,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           existing_intent: nil
         )
         expect(result[:tier]).to eq(:frontier)
-        expect(result[:intent]).to include(capability: :reasoning)
+        expect(result[:intent]).to include(effort: :reasoning)
         expect(result[:source]).to eq(:role_mapping)
       end
 
@@ -317,7 +317,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
           existing_intent: nil
         )
         expect(result[:tier]).to eq(:frontier)
-        expect(result[:intent]).to include(capability: :reasoning)
+        expect(result[:intent]).to include(effort: :reasoning)
         expect(result[:source]).to eq(:priority)
       end
 

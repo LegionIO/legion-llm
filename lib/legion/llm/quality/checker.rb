@@ -65,7 +65,11 @@ module Legion
           end
 
           def effective_content(response)
-            content = response.respond_to?(:content) ? response.content.to_s : ''
+            content = if response.respond_to?(:text)
+                        response.text.to_s
+                      else
+                        (response.respond_to?(:content) ? response.content.to_s : (response.respond_to?(:[]) && response[:result]&.to_s))
+                      end
             return content unless content.to_s.strip.empty?
 
             thinking = response.respond_to?(:thinking) ? response.thinking : nil

@@ -45,6 +45,11 @@ module Legion
       }.freeze
 
       class << self
+        def invalidate_offerings_cache!
+          log.debug '[llm][inventory] action=invalidate_offerings_cache'
+          @offerings_cache = nil
+        end
+
         def offerings(filters = {})
           log.debug "[llm][inventory] action=offerings.enter filters=#{filters.keys}"
           normalized_filters = normalize_filter_hash(filters)
@@ -77,7 +82,59 @@ module Legion
           offerings.group_by { |offering| offering[:provider_family] }
         end
 
+        # Bounded routing-candidate set: ONE representative offering per enabled
+        # provider-instance for the given operation, drawn from the SAME merged
+        # catalog the API serves (settings + native adapter static catalogs +
+        # discovery). This is the set the Router scores — it never enumerates a
+        # provider's full catalog (e.g. OpenAI's 100+ models). The representative
+        # is the provider's declared default_model when that model is offered,
+        # else the settings-default offering, else the first offering.
+        def routing_candidates(operation: :generation, **filters)
+          type = normalize_type(operation)
+          catalog = offerings(filters.merge(type: type))
+          catalog
+            .group_by { |offering| [offering[:provider_family].to_s, offering_instance_key(offering)] }
+            .filter_map { |(provider_family, instance_key), group| representative_offering(provider_family, instance_key, group) }
+        end
+
         private
+
+        # --- routing-candidate selection (one representative offering / instance) ---
+
+        def offering_instance_key(offering)
+          inst = offering[:instance_id] || offering[:provider_instance]
+          inst.to_s.empty? ? 'default' : inst.to_s
+        end
+
+        def representative_offering(provider_family, instance_key, group)
+          return group.first if group.size <= 1
+
+          default_model = registry_default_model_for(provider_family, instance_key)
+          if default_model
+            match = group.find do |offering|
+              offering[:model] == default_model || offering[:canonical_model_alias] == default_model
+            end
+            return match if match
+          end
+          group.find { |offering| offering[:source].to_s == 'settings_default' } || group.first
+        end
+
+        def registry_default_model_for(provider_family, instance_key)
+          return nil unless defined?(Legion::LLM::Call::Registry)
+
+          provider = provider_family.to_sym
+          # A settings-configured offering defaults its instance to the provider
+          # family, while the registry registers under :default — try both.
+          [instance_key.to_sym, :default].uniq.each do |inst|
+            meta = Legion::LLM::Call::Registry.metadata_for(provider, inst)
+            dm = meta.is_a?(Hash) ? (meta[:default_model] || meta['default_model']) : nil
+            return dm.to_s if dm && !dm.to_s.empty?
+          end
+          nil
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.inventory.registry_default_model')
+          nil
+        end
 
         def providers_config
           ext = Legion::Settings[:extensions]
@@ -195,7 +252,7 @@ module Legion
             enabled:               option(entry, :enabled, true),
             capabilities:          normalize_capabilities(option(entry, :capabilities), type),
             limits:                limits,
-            health:                provider_health(provider_family, resolved_offering_id),
+            health:                provider_health(provider_family, resolved_offering_id, model: model),
             cost:                  option(entry, :cost) || {},
             policy_tags:           Array(option(entry, :policy_tags) || option(config, :policy_tags)).map(&:to_s),
             metadata:              metadata,
@@ -261,30 +318,50 @@ module Legion
           nil
         end
 
-        def provider_health(provider_family, offering_id = nil)
-          if defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:routing_enabled?) &&
-             Legion::LLM::Router.routing_enabled?
-            tracker = Legion::LLM::Router.health_tracker
-            { circuit_state: tracker.circuit_state(provider_family, offering_id: offering_id).to_s,
-              adjustment:    tracker.adjustment(provider_family, offering_id: offering_id) }
-          else
-            { circuit_state: 'unknown' }
+        def provider_health(provider_family, offering_id = nil, model: nil)
+          unless defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:routing_enabled?) &&
+                 Legion::LLM::Router.routing_enabled?
+            return { circuit_state: 'unknown' }
           end
+
+          tracker = Legion::LLM::Router.health_tracker
+          circuit = tracker.circuit_state(provider_family, offering_id: offering_id).to_s
+          denied = model ? tracker.model_denied?(provider: provider_family, model: model) : false
+          {
+            circuit_state: circuit,
+            adjustment:    tracker.adjustment(provider_family, offering_id: offering_id),
+            denied:        denied,
+            available:     !denied && %w[closed half_open unknown].include?(circuit)
+          }
         end
 
         def add_fleet_lane(offering)
           return offering unless defined?(Legion::LLM::Fleet::Lane)
 
           context_window = offering.dig(:limits, :context_window)
-          offering.merge(fleet_lane: Legion::LLM::Fleet::Lane.routing_key(
+          # The model-keyed routing lane never carries the instance name, so it is
+          # always safe to build.
+          lanes = { fleet_lane: Legion::LLM::Fleet::Lane.routing_key(
             operation:      offering[:type],
             model:          offering[:model],
             context_window: context_window
-          ), fleet_offering_lane: Legion::LLM::Fleet::Lane.offering_key(
-            instance_id: offering[:provider_instance],
-            model:       offering[:model],
-            operation:   offering[:type]
-          ))
+          ) }
+          # The per-offering lane embeds the instance id. Fleet::Lane sanitizes the
+          # label (internal datacenter RabbitMQ, so a label like "env_bearer" is a
+          # routing label, not secret material) but still raises if it is empty or
+          # over-length after sanitization. A malformed label must not break the
+          # offering or make the instance unroutable — it just gets no fleet lane.
+          begin
+            lanes[:fleet_offering_lane] = Legion::LLM::Fleet::Lane.offering_key(
+              instance_id: offering[:provider_instance],
+              model:       offering[:model],
+              operation:   offering[:type]
+            )
+          rescue ArgumentError => e
+            log.debug('[llm][inventory] action=fleet_offering_lane.skipped ' \
+                      "instance=#{offering[:provider_instance]} model=#{offering[:model]} reason=#{e.message}")
+          end
+          offering.merge(lanes)
         end
 
         def discovery_offerings(provider: nil, exclude_providers: [])
@@ -343,14 +420,22 @@ module Legion
         def normalize_native_offering(provider_name, offering, instance: nil)
           data = normalize_hash(offering.respond_to?(:to_h) ? offering.to_h : offering)
           provider_family = normalize_symbol(option(data, :provider_family) || option(data, :provider) || provider_name)
-          provider_instance = option(data, :provider_instance) || option(data, :instance_id) || instance
+          # The registry instance Inventory is enumerating is authoritative — it is the
+          # key dispatch routes by (Registry.for(provider, instance:)). Prefer it over
+          # the adapter's self-reported instance, which is often a generic "default"
+          # because the adapter was not told its registration name — that collapsed
+          # multiple configured cloud instances (e.g. two Anthropic accounts) into one.
+          provider_instance = instance || option(data, :provider_instance) || option(data, :instance_id)
           usage_type = option(data, :usage_type)
           entry = data.merge(
-            model:       option(data, :model),
-            instance_id: provider_instance,
-            type:        normalize_type(usage_type || option(data, :type)),
-            source:      :native_provider,
-            metadata:    normalize_hash(option(data, :metadata))
+            model:             option(data, :model),
+            # Override BOTH keys so build_offering (which prefers :provider_instance)
+            # can't fall back to the adapter's stale self-reported value.
+            provider_instance: provider_instance,
+            instance_id:       provider_instance,
+            type:              normalize_type(usage_type || option(data, :type)),
+            source:            :native_provider,
+            metadata:          normalize_hash(option(data, :metadata))
           )
           build_offering(provider_family, {}, entry)
         end
@@ -423,7 +508,7 @@ module Legion
               offering[:tier].to_s == value.to_s
             when :healthy
               healthy_filter_matches?(offering, value)
-            when :type, :purpose
+            when :type, :purpose, :operation
               offering[:type].to_s == normalize_type(value).to_s
             when :capability
               offering[:capabilities].include?(value.to_s)

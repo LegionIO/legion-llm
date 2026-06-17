@@ -14,29 +14,29 @@ RSpec.describe Legion::LLM::Router do
       {
         name:            'privacy-lockdown',
         when:            { privacy: 'strict' },
-        then:            { tier: 'local', provider: 'ollama', model: 'qwen3:7b' },
+        then:            { tier: 'local', provider: 'ollama', model: 'qwen3:7b', effort: 'low' },
         constraint:      'never_cloud',
         priority:        200,
         cost_multiplier: 0.1
       },
       {
         name:            'reasoning-cloud',
-        when:            { capability: 'reasoning' },
-        then:            { tier: 'cloud', provider: 'bedrock', model: 'claude-sonnet-4-6' },
+        when:            { effort: 'reasoning' },
+        then:            { tier: 'cloud', provider: 'bedrock', model: 'claude-sonnet-4-6', effort: 'reasoning' },
         priority:        50,
         cost_multiplier: 2.0
       },
       {
-        name:            'basic-local',
-        when:            { capability: 'basic' },
-        then:            { tier: 'local', provider: 'ollama', model: 'qwen3:7b' },
+        name:            'chat-local',
+        when:            { operation: 'chat', effort: 'low' },
+        then:            { tier: 'local', provider: 'ollama', model: 'qwen3:7b', effort: 'low' },
         priority:        80,
         cost_multiplier: 0.2
       },
       {
         name:            'moderate-default',
-        when:            { capability: 'moderate' },
-        then:            { tier: 'fleet', provider: 'ollama', model: 'llama4:70b' },
+        when:            { effort: 'moderate' },
+        then:            { tier: 'fleet', provider: 'ollama', model: 'llama4:70b', effort: 'moderate' },
         priority:        60,
         cost_multiplier: 0.5
       }
@@ -53,7 +53,7 @@ RSpec.describe Legion::LLM::Router do
     allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
   end
 
-  def configure_routing(enabled: true, rules: sample_rules, extra: {}, auto_rules_populated: true, default_intent: { privacy: 'normal', capability: 'basic' })
+  def configure_routing(enabled: true, rules: sample_rules, extra: {}, auto_rules_populated: true, default_intent: { privacy: 'normal', effort: 'moderate', operation: 'chat' })
     Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
                                       routing: {
                                         enabled:        enabled,
@@ -64,46 +64,80 @@ RSpec.describe Legion::LLM::Router do
     described_class.populate_auto_rules({}) if auto_rules_populated && enabled
   end
 
-  # ─── 1. Routes basic capability to local ─────────────────────────────────────
+  # ─── 1. Routes chat operation to local ─────────────────────────────────────
 
-  describe '.resolve with basic capability intent' do
+  describe '.resolve with chat operation intent' do
     before { configure_routing }
 
-    it 'routes basic capability to local tier' do
-      result = described_class.resolve(intent: { capability: 'basic' })
+    it 'routes chat operation to local tier' do
+      result = described_class.resolve(intent: { operation: :chat, effort: :low })
       expect(result).not_to be_nil
       expect(result.tier).to eq(:local)
     end
 
-    it 'selects the basic-local rule' do
-      result = described_class.resolve(intent: { capability: 'basic' })
-      expect(result.rule).to eq('basic-local')
+    it 'selects the chat-local rule' do
+      result = described_class.resolve(intent: { operation: :chat, effort: :low })
+      expect(result.rule).to eq('chat-local')
     end
 
     it 'returns the correct model' do
-      result = described_class.resolve(intent: { capability: 'basic' })
+      result = described_class.resolve(intent: { operation: :chat, effort: :low })
       expect(result.model).to eq('qwen3:7b')
+    end
+
+    it 'uses a provider hint as the primary candidate instead of a higher-scored different provider' do
+      configured_rules = sample_rules + [
+        {
+          name:            'chat-bedrock',
+          when:            { operation: 'chat', effort: 'low' },
+          then:            { tier: 'cloud', provider: 'bedrock', model: 'anthropic.claude-sonnet-4-6', effort: 'high' },
+          priority:        1,
+          cost_multiplier: 2.0
+        }
+      ]
+      configure_routing(rules: configured_rules)
+
+      result = described_class.resolve(intent: { operation: :chat, effort: :low }, provider: :bedrock)
+
+      expect(result.provider).to eq(:bedrock)
+      expect(result.rule).to eq('chat-bedrock')
+    end
+
+    it 'falls through to explicit resolution when hinted provider is registered but has no rules' do
+      result = described_class.resolve(intent: { operation: :chat, effort: :low }, provider: :openai)
+
+      expect(result.provider).to eq(:openai)
+      expect(result.rule).to eq('explicit')
+    end
+
+    it 'uses normal scoring when hinted provider is not registered' do
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).with(:fakeprovider).and_return(false)
+
+      result = described_class.resolve(intent: { operation: :chat, effort: :low }, provider: :fakeprovider)
+
+      expect(result.provider).to eq(:ollama)
+      expect(result.rule).to eq('chat-local')
     end
   end
 
-  # ─── 2. Routes reasoning to cloud ────────────────────────────────────────────
+  # ─── 2. Routes reasoning effort to cloud ────────────────────────────────────────────
 
-  describe '.resolve with reasoning capability intent' do
+  describe '.resolve with reasoning effort intent' do
     before { configure_routing }
 
-    it 'routes reasoning to cloud tier' do
-      result = described_class.resolve(intent: { capability: 'reasoning' })
+    it 'routes reasoning effort to cloud tier' do
+      result = described_class.resolve(intent: { effort: :reasoning })
       expect(result).not_to be_nil
       expect(result.tier).to eq(:cloud)
     end
 
     it 'selects the reasoning-cloud rule' do
-      result = described_class.resolve(intent: { capability: 'reasoning' })
+      result = described_class.resolve(intent: { effort: :reasoning })
       expect(result.rule).to eq('reasoning-cloud')
     end
 
     it 'uses the bedrock provider' do
-      result = described_class.resolve(intent: { capability: 'reasoning' })
+      result = described_class.resolve(intent: { effort: :reasoning })
       expect(result.provider).to eq(:bedrock)
     end
   end
@@ -114,13 +148,13 @@ RSpec.describe Legion::LLM::Router do
     before { configure_routing }
 
     it 'never routes strict privacy to cloud' do
-      result = described_class.resolve(intent: { privacy: 'strict', capability: 'reasoning' })
+      result = described_class.resolve(intent: { privacy: :strict, effort: :reasoning })
       expect(result).not_to be_nil
       expect(result.tier).not_to eq(:cloud)
     end
 
     it 'routes strict privacy + reasoning to local (constraint excludes cloud)' do
-      result = described_class.resolve(intent: { privacy: 'strict', capability: 'reasoning' })
+      result = described_class.resolve(intent: { privacy: :strict, effort: :reasoning })
       expect(result.tier).to eq(:local)
       expect(result.rule).to eq('privacy-lockdown')
     end
@@ -132,30 +166,28 @@ RSpec.describe Legion::LLM::Router do
     before { configure_routing }
 
     it 'returns the highest effective_priority candidate' do
-      # Add a second matching rule with lower priority
       rules_with_extra = sample_rules + [
         {
-          name:            'basic-fallback',
-          when:            { capability: 'basic' },
-          then:            { tier: 'fleet', provider: 'ollama', model: 'llama4:70b' },
+          name:            'chat-fallback',
+          when:            { operation: 'chat' },
+          then:            { tier: 'fleet', provider: 'ollama', model: 'llama4:70b', effort: 'moderate' },
           priority:        10,
           cost_multiplier: 1.0
         }
       ]
       configure_routing(rules: rules_with_extra)
 
-      result = described_class.resolve(intent: { capability: 'basic' })
-      # basic-local has priority 80, basic-fallback has priority 10
-      # basic-local cost_multiplier 0.2 -> cost_bonus = (1.0 - 0.2) * 10 = 8 -> effective = 88
-      # basic-fallback cost_multiplier 1.0 -> cost_bonus = 0 -> effective = 10
-      expect(result.rule).to eq('basic-local')
+      result = described_class.resolve(intent: { operation: :chat, effort: :low })
+      # chat-local has priority 80, chat-fallback has priority 10
+      # chat-local cost_multiplier 0.2 -> cost_bonus = 8, effort_bonus = 25 (exact match low) -> effective > chat-fallback
+      expect(result.rule).to eq('chat-local')
     end
 
     it 'requires declared model capabilities when the intent asks for them' do
       rules_with_capabilities = [
         {
           name:     'stream-local-no-tools',
-          when:     { capability: 'stream' },
+          when:     { operation: 'stream' },
           then:     {
             tier:               'local',
             provider:           'ollama',
@@ -166,7 +198,7 @@ RSpec.describe Legion::LLM::Router do
         },
         {
           name:     'stream-direct-tools',
-          when:     { capability: 'stream' },
+          when:     { operation: 'stream' },
           then:     {
             tier:               'direct',
             provider:           'vllm',
@@ -179,7 +211,7 @@ RSpec.describe Legion::LLM::Router do
       ]
       configure_routing(rules: rules_with_capabilities)
 
-      result = described_class.resolve(intent: { capability: 'stream', required_capabilities: %i[tools streaming] })
+      result = described_class.resolve(intent: { operation: :stream, required_capabilities: %i[tools streaming] })
 
       expect(result.rule).to eq('stream-direct-tools')
       expect(result.provider).to eq(:vllm)
@@ -193,16 +225,14 @@ RSpec.describe Legion::LLM::Router do
     before { configure_routing }
 
     it 'merges default_intent when intent is partial' do
-      # Provide only privacy, capability defaults to 'basic' from default_intent
-      result = described_class.resolve(intent: { privacy: 'normal' })
+      result = described_class.resolve(intent: { privacy: :normal })
       expect(result).not_to be_nil
-      # basic rule matches because default capability=basic is merged
-      expect(result.rule).to eq('basic-local')
+      # moderate-default matches because default effort=moderate is merged
+      expect(result.rule).to eq('moderate-default')
     end
 
     it 'intent values override defaults' do
-      # Provide capability=reasoning, overriding default basic
-      result = described_class.resolve(intent: { capability: 'reasoning' })
+      result = described_class.resolve(intent: { effort: :reasoning })
       expect(result.tier).to eq(:cloud)
     end
   end
@@ -213,9 +243,7 @@ RSpec.describe Legion::LLM::Router do
     before { configure_routing }
 
     it 'falls back to explicit resolution or arbitrage when no rules match the intent' do
-      result = described_class.resolve(intent: { capability: 'unknown_capability_xyz' })
-      # New behavior: router falls back to explicit resolution (from defaults) then arbitrage
-      # rather than returning nil, so a resolution is always returned when possible
+      result = described_class.resolve(intent: { operation: :embed })
       expect(result).not_to be_nil
     end
   end
@@ -224,9 +252,9 @@ RSpec.describe Legion::LLM::Router do
 
   describe '.resolve with explicit tier override' do
     before do
-      # Configure routing without default_intent so tier/provider hints
+      # Configure with empty rules so tier/provider hints
       # fall through to explicit resolution rather than matching rules
-      configure_routing(default_intent: {})
+      configure_routing(rules: [])
     end
 
     it 'returns a resolution with the given tier' do
@@ -265,9 +293,7 @@ RSpec.describe Legion::LLM::Router do
     end
 
     it 'uses tier/provider as preference hints during rule matching' do
-      # New behavior: tier/provider are hints that bias scoring, not hard overrides
-      # that skip rule matching. Rules are still evaluated but matching candidates
-      # receive a priority bonus.
+      configure_routing
       result = described_class.resolve(tier: :cloud)
       expect(result).not_to be_nil
     end
@@ -279,31 +305,21 @@ RSpec.describe Legion::LLM::Router do
     before { configure_routing }
 
     it 'deprioritizes a provider whose circuit is open' do
-      # Open bedrock's circuit by injecting failures into the health tracker
       tracker = described_class.health_tracker
       3.times { tracker.report(provider: :bedrock, signal: :error, value: nil) }
       expect(tracker.circuit_state(:bedrock)).to eq(:open)
 
-      # With bedrock penalized -50, reasoning-cloud effective_priority becomes:
-      # 50 + (-50) + (1.0 - 2.0) * 10 = 50 - 50 - 10 = -10
-      # No other rule matches reasoning, so result is either nil or basic-local
-      # (basic-local doesn't match pure reasoning intent after defaults merge)
-      result = described_class.resolve(intent: { capability: 'reasoning' })
-      # Result may be nil (only cloud rule matches reasoning) but circuit penalty doesn't
-      # filter by tier — it only reduces priority. The rule still matches but gets penalized.
-      # basic-local matches if default_intent merges capability=basic... but intent has reasoning.
-      # So only reasoning-cloud matches — it still resolves (circuit penalty doesn't filter),
-      # but with a very low effective_priority.
+      result = described_class.resolve(intent: { effort: :reasoning })
+      # reasoning-cloud still matches but gets penalized heavily
       expect(result.rule).to eq('reasoning-cloud') if result
     end
 
     it 'selects lower-priority local rule over penalized cloud when multiple rules match' do
-      # Create scenario with two matching rules for same intent
       rules_with_local_alt = sample_rules + [
         {
           name:            'reasoning-local-alt',
-          when:            { capability: 'reasoning' },
-          then:            { tier: 'local', provider: 'ollama', model: 'qwen3:7b' },
+          when:            { effort: 'reasoning' },
+          then:            { tier: 'local', provider: 'ollama', model: 'qwen3:7b', effort: 'reasoning' },
           priority:        30,
           cost_multiplier: 0.1
         }
@@ -318,11 +334,9 @@ RSpec.describe Legion::LLM::Router do
       tracker = described_class.health_tracker
       3.times { tracker.report(provider: :bedrock, signal: :error, value: nil) }
 
-      result = described_class.resolve(intent: { capability: 'reasoning' })
+      result = described_class.resolve(intent: { effort: :reasoning })
       expect(result).not_to be_nil
-      # reasoning-cloud: 50 + (-50) + (1.0-2.0)*10 = -10
-      # reasoning-local-alt: 30 + 0 + (1.0-0.1)*10 = 30 + 9 = 39
-      # local-alt wins
+      # reasoning-cloud penalized by circuit; reasoning-local-alt wins
       expect(result.rule).to eq('reasoning-local-alt')
     end
   end
@@ -533,6 +547,72 @@ RSpec.describe Legion::LLM::Router do
       expect(described_class::TIER_EXTERNAL).to be_a(Set)
       expect(described_class::TIER_EXTERNAL).to be_frozen
       expect(described_class::TIER_EXTERNAL).to eq(Set[:cloud, :frontier])
+    end
+  end
+
+  # ─── normalize_intent ────────────────────────────────────────────────────────
+
+  describe '.normalize_intent' do
+    it 'passes through the new intent shape unchanged' do
+      normalized = described_class.send(
+        :normalize_intent,
+        { privacy: :normal, effort: :moderate, cost: :normal, operation: :chat, required_capabilities: [:tools] }
+      )
+
+      expect(normalized).to include(
+        privacy:               :normal,
+        effort:                :moderate,
+        cost:                  :normal,
+        operation:             :chat,
+        required_capabilities: [:tools]
+      )
+      expect(normalized).not_to have_key(:capability)
+    end
+
+    it 'preserves effort: :high' do
+      expect(described_class.send(:normalize_intent, { effort: :high, operation: :chat })[:effort]).to eq(:high)
+    end
+
+    it 'normalizes effort: :medium to :moderate' do
+      expect(described_class.send(:normalize_intent, { effort: :medium })[:effort]).to eq(:moderate)
+    end
+
+    it 'preserves model passthrough in intent' do
+      expect(described_class.send(:normalize_intent, { operation: 'chat', model: 'custom-model' })[:model]).to eq('custom-model')
+    end
+
+    # Regression (C15): the removed :capability dimension must be tolerated (ignored),
+    # not raised on — a stale key in settings or caller intent previously bricked routing.
+    it 'tolerates a legacy capability: key (ignored, not raised)' do
+      normalized = nil
+      expect { normalized = described_class.send(:normalize_intent, { capability: :moderate }) }.not_to raise_error
+      expect(normalized).to include(:operation, :effort)
+    end
+
+    it 'raises ArgumentError for unknown effort values' do
+      expect do
+        described_class.send(:normalize_intent, { effort: :basic })
+      end.to raise_error(ArgumentError, /unknown effort/i)
+    end
+
+    it 'defaults operation to :chat' do
+      normalized = described_class.send(:normalize_intent, { effort: :moderate })
+      expect(normalized[:operation]).to eq(:chat)
+    end
+
+    it 'defaults effort to :moderate' do
+      normalized = described_class.send(:normalize_intent, { operation: :stream })
+      expect(normalized[:effort]).to eq(:moderate)
+    end
+
+    it 'normalizes string operation values' do
+      normalized = described_class.send(:normalize_intent, { operation: 'stream' })
+      expect(normalized[:operation]).to eq(:stream)
+    end
+
+    it 'normalizes operation aliases' do
+      normalized = described_class.send(:normalize_intent, { operation: :completion })
+      expect(normalized[:operation]).to eq(:chat)
     end
   end
 end

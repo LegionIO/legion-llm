@@ -106,5 +106,53 @@ RSpec.describe Legion::LLM::Tools::Special do
       expect(result[:status]).to eq(:success)
       expect(result[:result]).to include('exit=0', "1\n")
     end
+
+    it 'returns structured runtime failure details without hiding stderr behind command text' do
+      status = instance_double(Process::Status, success?: false, exitstatus: 1)
+      allow(described_class).to receive(:executable_file?).with('/usr/bin/ruby').and_return(true)
+      allow(described_class).to receive(:run_process)
+        .with('/usr/bin/ruby', ['-e', 'raise "boom"'], code: 'raise "boom"')
+        .and_return(["RuntimeError: boom\n\tfrom -e:1\n", status])
+
+      result = described_class.dispatch('ruby', code: 'raise "boom"')
+
+      expect(result[:status]).to eq(:error)
+      expect(result[:exit_status]).to eq(1)
+      expect(result[:command_preview]).to include('/usr/bin/ruby -e')
+      expect(result[:error]).to eq('RuntimeError: boom')
+      expect(result[:output_tail]).to include('from -e:1')
+      expect(result[:result]).to include('exit=1', 'RuntimeError: boom')
+    end
+  end
+end
+
+RSpec.describe Legion::LLM::Tools::Dispatcher do
+  describe '.error_log_detail' do
+    it 'uses llm.tool_error_log_chars instead of a hardcoded 200 character limit' do
+      allow(Legion::Settings).to receive(:[]).with(:llm).and_return(tool_error_log_chars: 500)
+      result = { status: :error, error: 'x' * 700 }
+
+      detail = described_class.error_log_detail(result)
+
+      expect(detail.length).to eq(500)
+    end
+
+    it 'prefers structured runtime error fields over the rendered command prefix' do
+      result = {
+        status:          :error,
+        result:          'command=/usr/bin/ruby -e very long generated code',
+        exit_status:     1,
+        error:           'RuntimeError: boom',
+        command_preview: '/usr/bin/ruby -e ...',
+        output_tail:     "RuntimeError: boom\n\tfrom -e:1"
+      }
+
+      detail = described_class.error_log_detail(result)
+
+      expect(detail).to include('exit_status=1')
+      expect(detail).to include('error=RuntimeError: boom')
+      expect(detail).to include('output_tail=RuntimeError: boom')
+      expect(detail).not_to start_with('command=')
+    end
   end
 end

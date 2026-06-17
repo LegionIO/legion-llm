@@ -16,14 +16,33 @@ module Legion
       @embedding_fallback_chain = nil
       @discovered_models_cache = nil
       @discovered_models_at = nil
+      @discovery_status = {}
+      @discovery_mutex = Mutex.new
 
+      DISCOVERED_MODELS_SCHEMA_VERSION = 3
       EMBEDDING_TIER_ORDER = %w[local direct fleet cloud frontier].freeze
+      # Version/tag delimiters that separate a model family base from its concrete
+      # discovered id (Ollama "model:tag", Bedrock "family-YYYYMMDD-v1:0" / "family-6").
+      MODEL_FAMILY_DELIMITERS = %w[: -].freeze
+      # Cap how many discovered ids a divergence warning prints — multi-model cloud
+      # providers (Bedrock lists ~90) otherwise dump an unreadable single log line.
+      MODEL_DIVERGENCE_SAMPLE_SIZE = 10
 
       class << self
         attr_reader :embedding_provider, :embedding_model, :embedding_instance, :embedding_fallback_chain
 
         def can_embed?
           @can_embed == true
+        end
+
+        def discovery_status(provider:, instance: nil)
+          key = discovery_status_key(provider, instance)
+          @discovery_mutex.synchronize { @discovery_status[key] || :unknown }
+        end
+
+        def record_discovery_status(provider:, status:, instance: nil)
+          key = discovery_status_key(provider, instance)
+          @discovery_mutex.synchronize { @discovery_status[key] = status.to_sym }
         end
 
         def run
@@ -68,7 +87,14 @@ module Legion
         end
 
         # Returns discovered instances grouped by provider for RuleGenerator compatibility.
-        # Each provider maps to a hash of instance_id => { models: [...], base_url: ... }
+        # Each provider maps to a hash of instance_id => { models: [...], capabilities: [...] }.
+        # Instance-level capabilities come from the Call::Registry metadata that the
+        # provider extension's `discover_instances` populates (e.g. lex-llm-vllm declares
+        # `capabilities: %i[completion streaming vision tools]` on its DEFAULT_INSTANCE_TIER).
+        # Threading them through here means RuleGenerator's chat rules carry `:tools` even
+        # when the per-model offerings hash only surfaces `:completion` — without it, the
+        # router logs `resolve.no_rules_matched required_capabilities=[:tools]` on every
+        # tool request and falls through to the default-provider fallback.
         def discovered_instances
           models = discovered_models
           result = {}
@@ -76,10 +102,32 @@ module Legion
             provider = m[:provider]
             instance = m[:instance] || :default
             result[provider] ||= {}
-            result[provider][instance] ||= { models: [] }
+            result[provider][instance] ||= { models: [], capabilities: [] }
             result[provider][instance][:models] << normalize_model_for_rules(m)
           end
+          merge_registry_instance_capabilities!(result)
           result
+        end
+
+        def merge_registry_instance_capabilities!(grouped)
+          return grouped unless defined?(Call::Registry)
+
+          Call::Registry.all_instances.each do |entry|
+            provider = entry[:provider]
+            instance = entry[:instance]
+            metadata = entry[:metadata] || {}
+            capabilities = Array(metadata[:capabilities] || metadata['capabilities'])
+            next if capabilities.empty?
+
+            grouped[provider] ||= {}
+            grouped[provider][instance] ||= { models: [], capabilities: [] }
+            existing = Array(grouped[provider][instance][:capabilities])
+            grouped[provider][instance][:capabilities] = (existing + capabilities).uniq
+          end
+          grouped
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.discovery.merge_registry_capabilities')
+          grouped
         end
 
         # Flat list of all discovered models across all registry adapters.
@@ -92,6 +140,8 @@ module Legion
         end
 
         def cached_discovered_models
+          return [] if discovered_models_cache_schema_stale?
+
           @discovered_models_cache || []
         end
 
@@ -160,19 +210,32 @@ module Legion
           return [] unless adapter.respond_to?(:offerings)
 
           begin
-            Array(adapter.offerings(live: true)).map do |offering|
+            models = Array(adapter.offerings(live: true)).map do |offering|
               data = normalize_offering(offering)
+              report_discovery_health(entry, data)
               {
-                model:           (data[:id] || data[:name] || data[:model]).to_s,
-                provider:        entry[:provider],
-                instance:        normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
-                tier:            data[:tier] || entry.dig(:metadata, :tier),
-                size_bytes:      data[:size_bytes] || data[:size],
-                capabilities:    data[:capabilities] || [],
-                context_length:  data[:context_length] || data[:max_model_len] || data.dig(:limits, :context_window),
-                parameter_count: data[:parameter_count] || data.dig(:metadata, :parameter_count)
+                schema_version:     DISCOVERED_MODELS_SCHEMA_VERSION,
+                model:              (data[:id] || data[:name] || data[:model]).to_s,
+                provider:           entry[:provider],
+                instance:           normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
+                tier:               data[:tier] || entry.dig(:metadata, :tier),
+                size_bytes:         data[:size_bytes] || data[:size],
+                capabilities:       source_aware_capabilities(data, entry),
+                capability_sources: data[:capability_sources],
+                context_length:     data[:context_length] || data[:max_model_len] || data.dig(:limits, :context_window),
+                parameter_count:    data[:parameter_count] || data.dig(:metadata, :parameter_count),
+                health:             data[:health] || data['health'] || data.dig(:metadata, :health),
+                loaded:             extract_loaded_field(data)
               }
             end
+
+            record_discovery_status(
+              provider: entry[:provider],
+              instance: entry[:instance],
+              status:   models.empty? ? :empty : :ok
+            )
+            warn_on_model_divergence(entry, models)
+            models
           rescue StandardError => e
             report_discovery_failure(entry, e)
             []
@@ -181,21 +244,121 @@ module Legion
 
         def reset!
           log.debug '[llm][discovery] reset'
-          @can_embed = nil
-          @embedding_provider = nil
-          @embedding_model = nil
-          @embedding_instance = nil
-          @embedding_fallback_chain = nil
-          @discovered_models_cache = nil
-          @discovered_models_at = nil
+          @discovery_mutex.synchronize do
+            @can_embed = nil
+            @embedding_provider = nil
+            @embedding_model = nil
+            @embedding_instance = nil
+            @embedding_fallback_chain = nil
+            @discovered_models_cache = nil
+            @discovered_models_at = nil
+            @discovery_status = {}
+          end
         end
 
         private
+
+        def discovery_status_key(provider, instance)
+          "#{provider}/#{instance || :default}"
+        end
+
+        # Observability guardrail: when an instance's live discovered models do not
+        # include its configured default_model, the backend is almost certainly
+        # stale or misconfigured (e.g. a vLLM node behind a load balancer that
+        # wasn't restarted after a model swap). Pure logging — no effect on routing.
+        # Rescue-guarded so it can never break discovery.
+        def warn_on_model_divergence(entry, models)
+          return if models.empty?
+
+          metadata = entry[:metadata]
+          configured = metadata.is_a?(Hash) ? (metadata[:default_model] || metadata['default_model']) : nil
+          return if configured.nil? || configured.to_s.empty?
+
+          configured = configured.to_s
+          discovered = models.map { |model| model[:model].to_s }
+          return if discovered.any? { |name| model_family_match?(name, configured) }
+
+          sample = discovered.first(MODEL_DIVERGENCE_SAMPLE_SIZE)
+          overflow = discovered.size - sample.size
+          discovered_detail = overflow.positive? ? "#{sample.join(',')},+#{overflow} more" : sample.join(',')
+          log.warn "[llm][discovery] action=model_divergence provider=#{entry[:provider]} " \
+                   "instance=#{entry[:instance] || :default} configured=#{configured} " \
+                   "discovered_count=#{discovered.size} discovered=#{discovered_detail} — backend may be stale or misconfigured"
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.discovery.model_divergence')
+        end
+
+        # A configured default is "present" when a discovered id equals it or extends
+        # it as a versioned family member (e.g. configured "anthropic.claude-sonnet-4"
+        # matches discovered "anthropic.claude-sonnet-4-6" / "...-20250514-v1:0").
+        # Without this, every multi-model cloud provider false-warns because its
+        # default is a family base while discovery returns fully-versioned ids.
+        def model_family_match?(discovered_name, configured)
+          return true if discovered_name == configured
+
+          MODEL_FAMILY_DELIMITERS.any? { |delimiter| discovered_name.start_with?("#{configured}#{delimiter}") }
+        end
+
+        def extract_loaded_field(data)
+          return data[:loaded] if data.key?(:loaded)
+          return data['loaded'] if data.key?('loaded')
+
+          metadata = data[:metadata] || data['metadata']
+          return nil unless metadata.is_a?(Hash)
+
+          metadata.key?(:loaded) ? metadata[:loaded] : metadata['loaded']
+        end
+
+        # Build capabilities from offering data. When the offering carries
+        # capability_sources, its capabilities are authoritative and registry
+        # metadata must NOT blindly override them. Registry metadata is only
+        # merged when no source-tagged data is present.
+        def source_aware_capabilities(data, entry)
+          offering_caps = data[:capabilities]
+          sources = data[:capability_sources]
+
+          if sources.is_a?(Hash) && sources.any?
+            # Offering has source-tagged capabilities — authoritative.
+            Capabilities.normalize(offering_caps)
+          else
+            # Legacy path: merge offering + registry metadata.
+            Capabilities.merge(offering_caps, entry.dig(:metadata, :capabilities))
+          end
+        end
+
+        def report_discovery_health(entry, offering_data)
+          return unless defined?(Router) && Router.respond_to?(:health_tracker)
+
+          provider = entry[:provider]
+          instance = normalize_instance_id(
+            offering_data[:instance_id] || offering_data[:provider_instance] || entry[:instance]
+          )
+          health = offering_data[:health] || offering_data['health'] || {}
+          health = {} unless health.is_a?(Hash)
+          status = (health[:status] || health['status'] || health[:circuit_state] || health['circuit_state']).to_s
+          latency_ms = health[:latency_ms] || health['latency_ms']
+
+          if %w[healthy ready closed available].include?(status) || health[:ready] == true || health['ready'] == true
+            Router.health_tracker.report(provider: provider, instance: instance, signal: :success, value: 1,
+                                         metadata: { source: :discovery })
+          elsif %w[unhealthy down unavailable open tripped].include?(status)
+            Router.health_tracker.report(provider: provider, instance: instance, signal: :error, value: 1,
+                                         metadata: { source: :discovery, status: status })
+          end
+
+          return unless latency_ms.to_i.positive?
+
+          Router.health_tracker.report(provider: provider, instance: instance, signal: :latency,
+                                       value: latency_ms.to_i, metadata: { source: :discovery })
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'discovery.report_health')
+        end
 
         def report_discovery_failure(entry, error)
           provider = entry[:provider]
           instance = entry[:instance]
           connection_error = error.is_a?(Faraday::ConnectionFailed) ||
+                             error.is_a?(Faraday::TimeoutError) ||
                              error.message.match?(/connection refused|connect.*timeout|no route to host/i)
 
           if connection_error
@@ -205,13 +368,24 @@ module Legion
                                     operation: "discovery.offerings.#{provider}/#{instance}")
           end
 
+          record_discovery_status(provider: provider, instance: instance,
+                                  status: connection_error ? :unreachable : :error)
+
           return unless defined?(Router) && Router.respond_to?(:health_tracker)
 
-          Router.health_tracker.report(
-            provider: provider, instance: instance,
-            signal: :error, value: 1,
-            metadata: { reason: error.class.name, source: :discovery }
-          )
+          trip_on_unreachable = Legion::Settings[:llm].dig(:discovery, :trip_circuit_on_unreachable) != false
+          if connection_error && trip_on_unreachable
+            Router.health_tracker.trip_circuit(
+              provider: provider, instance: instance,
+              reason: "discovery_unreachable: #{error.class.name}"
+            )
+          else
+            Router.health_tracker.report(
+              provider: provider, instance: instance,
+              signal: :error, value: 1,
+              metadata: { reason: error.class.name, source: :discovery }
+            )
+          end
         end
 
         def normalize_offering(offering)
@@ -237,9 +411,16 @@ module Legion
 
         def discovered_models_stale?
           return true if @discovered_models_at.nil?
+          return true if discovered_models_cache_schema_stale?
 
           ttl = discovery_refresh_seconds
           Time.now - @discovered_models_at > ttl
+        end
+
+        def discovered_models_cache_schema_stale?
+          Array(@discovered_models_cache).any? do |entry|
+            entry[:schema_version] != DISCOVERED_MODELS_SCHEMA_VERSION
+          end
         end
 
         def discovery_refresh_seconds
@@ -260,6 +441,7 @@ module Legion
           h = { 'name' => model_entry[:model] }
           h['tier'] = model_entry[:tier] if model_entry[:tier]
           h['capabilities'] = model_entry[:capabilities] if model_entry[:capabilities]&.any?
+          h['capability_sources'] = model_entry[:capability_sources] if model_entry[:capability_sources].is_a?(Hash) && model_entry[:capability_sources].any?
           h['context_length'] = model_entry[:context_length] if model_entry[:context_length]
           h['parameter_count'] = model_entry[:parameter_count] if model_entry[:parameter_count]
           h['size'] = model_entry[:size_bytes] if model_entry[:size_bytes]

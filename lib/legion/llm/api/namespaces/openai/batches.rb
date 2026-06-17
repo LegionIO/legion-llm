@@ -23,7 +23,7 @@ module Legion
 
               BATCH_POOL_MUTEX.synchronize do
                 @batch_pool ||= begin
-                  pool_size = Legion::Settings[:llm][:api][:batch_pool_size] || 4
+                  pool_size = Legion::Settings[:llm][:api][:batch_pool_size]
                   Concurrent::FixedThreadPool.new(pool_size, fallback_policy: :caller_runs)
                 end
               end

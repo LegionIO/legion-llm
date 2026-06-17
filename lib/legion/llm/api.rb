@@ -29,12 +29,16 @@ module Legion
       extend Legion::Logging::Helper
 
       def self.registered(app)
-        if Legion::Settings.dig(:llm, :api, :use_namespaces) == true
+        if Legion::Settings.dig(:llm, :api, :use_namespaces) == false
+          log.warn(
+            '[llm][api] routing=legacy DEPRECATED — the flat api/{anthropic,openai,native}/ tree ' \
+            'will be deleted next minor; flip llm.api.use_namespaces back to true (the default) ' \
+            'to register the namespaced routes instead'
+          )
+          register_legacy(app)
+        else
           log.debug('[llm][api] routing=namespaces registering via Namespaces::Registration')
           Namespaces::Registration.registered(app)
-        else
-          log.debug('[llm][api] routing=legacy registering flat route chain')
-          register_legacy(app)
         end
         log.debug('[llm][api] all routes registered')
       end

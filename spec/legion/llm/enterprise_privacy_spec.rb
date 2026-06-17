@@ -7,9 +7,9 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
   before do
     allow(Legion::Settings).to receive(:enterprise_privacy?).and_return(true)
     allow(Legion::Settings).to receive(:[]).and_call_original
-    allow(Legion::Settings).to receive(:[]).with(:llm).and_return(
-      Legion::LLM::Settings.default
-    )
+    defaults = Legion::LLM::Settings.default
+    defaults[:routing][:escalation][:enabled] = false
+    allow(Legion::Settings).to receive(:[]).with(:llm).and_return(defaults)
     allow(Legion::Settings).to receive(:[]).with(:transport).and_return({ connected: false })
     allow(Legion::Settings).to receive(:[]).with(:extensions).and_return({})
   end
@@ -38,10 +38,10 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
 
   describe '.chat_direct with tier: :local' do
     it 'does not raise PrivacyModeError for local tier' do
-      double('session', ask: double('response', content: 'pong'))
+      Legion::LLM::Call::Registry.register(:ollama, Module.new, metadata: { default_model: 'llama3', tier: :local })
       allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: 'pipeline response'))
       expect do
-        Legion::LLM.chat_direct(tier: :local, message: 'hello')
+        Legion::LLM.chat_direct(tier: :local, provider: :ollama, model: 'llama3', message: 'hello')
       end.not_to raise_error
     end
   end

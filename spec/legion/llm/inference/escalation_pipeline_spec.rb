@@ -210,7 +210,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       request_with_check = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
-        extra:    { quality_check: ->(r) { r.content.include?('SELECT') } }
+        extra:    { quality_check: ->(r) { r.text.include?('SELECT') } }
       )
 
       call_count = 0

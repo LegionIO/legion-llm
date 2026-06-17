@@ -9,7 +9,7 @@ RSpec.describe 'Router memory gate integration' do
   let(:local_rule) do
     {
       name:     'local-ollama',
-      when:     { capability: 'basic' },
+      when:     { operation: :chat, effort: :low },
       then:     { tier: 'local', provider: 'ollama', model: 'llama3:latest' },
       priority: 80
     }
@@ -18,7 +18,7 @@ RSpec.describe 'Router memory gate integration' do
   let(:fleet_rule) do
     {
       name:     'fleet-vllm',
-      when:     { capability: 'basic' },
+      when:     { operation: :chat, effort: :low },
       then:     { tier: 'fleet', provider: 'vllm', model: 'qwen3.6-27b' },
       priority: 60
     }
@@ -29,7 +29,7 @@ RSpec.describe 'Router memory gate integration' do
                                       routing: {
                                         enabled:        true,
                                         rules:          rules,
-                                        default_intent: { privacy: 'normal', capability: 'basic' }
+                                        default_intent: { privacy: 'normal', effort: 'low', operation: 'chat' }
                                       }
                                     ))
     Legion::LLM::Router.populate_auto_rules({})
@@ -49,7 +49,7 @@ RSpec.describe 'Router memory gate integration' do
     it 'does not reject fleet-tier vllm rules' do
       configure_routing(rules: [fleet_rule])
       # vllm is :fleet tier, memory gate only checks :local
-      result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat, effort: :low })
       expect(result).not_to be_nil
       expect(result.provider).to eq(:vllm)
     end
@@ -60,7 +60,7 @@ RSpec.describe 'Router memory gate integration' do
       allow(Legion::LLM::Discovery::MemoryGate).to receive(:allow?).and_return(true)
       configure_routing(rules: [local_rule])
 
-      result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat, effort: :low })
       expect(result).not_to be_nil
       expect(result.provider).to eq(:ollama)
     end
@@ -69,7 +69,7 @@ RSpec.describe 'Router memory gate integration' do
       allow(Legion::LLM::Discovery::MemoryGate).to receive(:allow?).and_return(false)
       configure_routing(rules: [local_rule])
 
-      result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat, effort: :low })
       # New behavior: when all rules are rejected, falls back to arbitrage
       # rather than returning nil
       expect(result).not_to be_nil
@@ -80,7 +80,7 @@ RSpec.describe 'Router memory gate integration' do
 
       configure_routing(rules: [local_rule, fleet_rule])
 
-      result = Legion::LLM::Router.resolve(intent: { capability: 'basic' })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat, effort: :low })
       expect(result).not_to be_nil
       expect(result.provider).to eq(:vllm)
       expect(result.tier).to eq(:fleet)

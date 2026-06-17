@@ -75,7 +75,7 @@ module Legion
           def extract_recent_text
             depth = trigger_scan_depth
             messages = @request.messages.last(depth)
-            messages.filter_map do |msg|
+            text = messages.filter_map do |msg|
               next unless msg.is_a?(Hash)
               next unless (msg[:role] || msg['role']).to_s == 'user'
 
@@ -92,6 +92,25 @@ module Legion
                 content.to_s
               end
             end.join(' ')
+
+            sanitize_trigger_text(text)
+          end
+
+          def sanitize_trigger_text(text)
+            stripped = strip_system_reminders(text)
+            session_text = extract_session_text(stripped)
+            session_text || stripped
+          end
+
+          def strip_system_reminders(text)
+            text.to_s.gsub(%r{<system-reminder\b[^>]*>.*?</system-reminder>}mi, ' ')
+          end
+
+          def extract_session_text(text)
+            matches = text.to_s.scan(%r{<session\b[^>]*>(.*?)</session>}mi).flatten
+            return nil if matches.empty?
+
+            matches.join(' ')
           end
 
           def normalize_message_words(text)

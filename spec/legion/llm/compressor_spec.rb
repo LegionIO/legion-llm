@@ -165,7 +165,7 @@ RSpec.describe Legion::LLM::Context::Compressor do
       fake_response = double('Response', content: 'Summary of conversation')
       expect(Legion::LLM).to receive(:chat_direct)
         .with(hash_including(
-                intent:  { capability: :basic, cost: :minimize },
+                intent:  { effort: :low, cost: :minimize },
                 message: include('Summarize this conversation concisely')
               ))
         .and_return(fake_response)

@@ -7,7 +7,7 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
   before do
     described_class.reset!
     Legion::Settings[:llm][:batch] = { enabled: true, window_seconds: 0, max_batch_size: 100 }
-    allow(Legion::LLM).to receive(:chat_direct).and_return({ content: 'test response' })
+    allow(Legion::LLM).to receive(:chat).and_return({ content: 'test response' })
   end
 
   after do
@@ -151,9 +151,9 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
       end
     end
 
-    context 'with the real chat_direct path' do
+    context 'with the real governed pipeline path' do
       before do
-        allow(Legion::LLM).to receive(:chat_direct).and_call_original
+        allow(Legion::LLM).to receive(:chat).and_call_original
         Legion::Settings[:llm][:scheduling] = {
           enabled:         true,
           peak_hours_utc:  '0-23',
@@ -174,7 +174,13 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
 
         expect(Legion::LLM::Call::Dispatch).to have_received(:call).with(hash_including(model: 'gpt-4o', provider: :openai))
         expect(results.first[:status]).to eq(:completed)
-        expect(results.first[:result][:response].content).to eq('batched response')
+        response = results.first[:result][:response]
+        content = if response.is_a?(Legion::LLM::Inference::Response)
+                    response.message[:content] || response.message['content']
+                  else
+                    response.respond_to?(:content) ? response.content : response[:content]
+                  end
+        expect(content).to eq('batched response')
       end
     end
   end

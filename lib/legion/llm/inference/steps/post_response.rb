@@ -38,19 +38,25 @@ module Legion
           private
 
           def extract_tokens
-            unless @raw_response.respond_to?(:input_tokens)
+            usage_source = if @raw_response.respond_to?(:usage) && @raw_response.usage.respond_to?(:input_tokens)
+                             @raw_response.usage
+                           elsif @raw_response.respond_to?(:input_tokens)
+                             @raw_response
+                           end
+
+            unless usage_source
               log_step_debug(:post_response, :token_extraction_skipped, reason: :no_token_accessors)
               return {}
             end
 
-            input  = @raw_response.input_tokens.to_i
-            output = @raw_response.output_tokens.to_i
+            input  = usage_source.input_tokens.to_i
+            output = usage_source.output_tokens.to_i
 
-            cache_read  = @raw_response.respond_to?(:cache_read_tokens) ? @raw_response.cache_read_tokens.to_i : 0
-            cache_write = @raw_response.respond_to?(:cache_write_tokens) ? @raw_response.cache_write_tokens.to_i : 0
+            cache_read  = usage_source.respond_to?(:cache_read_tokens) ? usage_source.cache_read_tokens.to_i : 0
+            cache_write = usage_source.respond_to?(:cache_write_tokens) ? usage_source.cache_write_tokens.to_i : 0
 
-            details = if @raw_response.respond_to?(:output_tokens_details) && @raw_response.output_tokens_details.is_a?(Hash)
-                        @raw_response.output_tokens_details
+            details = if usage_source.respond_to?(:output_tokens_details) && usage_source.output_tokens_details.is_a?(Hash)
+                        usage_source.output_tokens_details
                       else
                         {}
                       end
@@ -68,47 +74,13 @@ module Legion
             )
           end
 
+          # Audit the SAME rich envelope the pipeline returns (routing with
+          # instance/tier/route_attempts/escalation_chain/latency, stop reason,
+          # thinking, cache, cost). The previous local rebuild dropped all of
+          # those fields, which is why the ledger showed them as null at scale.
           def current_response
             @extracted_tokens ||= extract_tokens
-
-            content = if @raw_response.respond_to?(:content)
-                        @raw_response.content
-                      elsif @raw_response.is_a?(Hash) && @raw_response[:content]
-                        @raw_response[:content]
-                      else
-                        @raw_response.to_s
-                      end
-
-            msg = Types::Message.build(
-              role:            :assistant,
-              content:         content,
-              provider:        @resolved_provider,
-              model:           @resolved_model,
-              input_tokens:    @extracted_tokens.respond_to?(:input_tokens) ? @extracted_tokens.input_tokens : nil,
-              output_tokens:   @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : nil,
-              conversation_id: @request.conversation_id
-            )
-
-            Response.build(
-              request_id:      @request.id,
-              conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
-              message:         msg.to_h,
-              routing:         { provider: @resolved_provider, model: @resolved_model },
-              tokens:          @extracted_tokens,
-              tools:           current_response_tool_calls,
-              enrichments:     @enrichments,
-              audit:           @audit,
-              timeline:        @timeline.events,
-              tracing:         @tracing,
-              caller:          @request.caller,
-              classification:  @request.classification
-            )
-          end
-
-          def current_response_tool_calls
-            return response_tool_calls if respond_to?(:response_tool_calls, true)
-
-            []
+            build_response
           end
 
           def log_zero_token_usage(input, output)

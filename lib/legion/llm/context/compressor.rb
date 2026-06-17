@@ -197,7 +197,7 @@ module Legion
             if model
               payload[:model] = model
             else
-              payload[:intent] = { capability: :basic, cost: :minimize }
+              payload[:intent] = { effort: :low, cost: :minimize }
             end
 
             response = Legion::LLM.chat_direct(**payload)

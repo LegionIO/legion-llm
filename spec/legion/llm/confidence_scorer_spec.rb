@@ -199,6 +199,7 @@ RSpec.describe Legion::LLM::Quality::Confidence::Scorer do
     context 'response without #content method' do
       it 'treats it as empty and returns score 0.0' do
         bare_response = double('BareResponse')
+        allow(bare_response).to receive(:respond_to?).with(:text).and_return(false)
         allow(bare_response).to receive(:respond_to?).with(:content).and_return(false)
         allow(bare_response).to receive(:respond_to?).with(:logprobs).and_return(false)
         allow(bare_response).to receive(:respond_to?).with(:metadata).and_return(false)

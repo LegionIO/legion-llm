@@ -21,14 +21,14 @@ unless Legion::Cache.respond_to?(:get)
           entry[:value]
         end
 
-        def set(key, value, ttl: 180, **_opts)
+        def set(key, value, ttl: 180, **)
           @store ||= {}
           expires_at = ttl.positive? ? ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) + ttl : nil
           @store[key] = { value: value, expires_at: expires_at }
           true
         end
 
-        def delete(key, **_opts)
+        def delete(key, **)
           @store&.delete(key)
         end
 

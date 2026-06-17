@@ -124,8 +124,8 @@ RSpec.describe Legion::LLM do
         expect(defaults).to include(:enabled, :connected, :default_model, :default_provider)
       end
 
-      it 'does not include providers (defaults now live in lex-llm-* extensions via Settings[:extensions][:llm])' do
-        expect(described_class.default).not_to include(:providers)
+      it 'includes an empty providers hash (provider configs come from lex-llm-* extensions at runtime)' do
+        expect(described_class.default[:providers]).to eq({})
       end
     end
   end

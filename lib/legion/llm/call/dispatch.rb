@@ -1,181 +1,92 @@
 # frozen_string_literal: true
 
-require 'legion/logging/helper'
+require 'securerandom'
 
-require 'legion/extensions/llm/responses/thinking_extractor'
+require 'legion/logging/helper'
+require 'legion/extensions/llm'
 
 module Legion
   module LLM
     module Call
-      # Wraps a native dispatch result hash so Pipeline::Executor and
-      # ConversationStore can consume a stable provider response object.
-      class NativeResponseAdapter
-        extend Legion::Logging::Helper
+      # Canonical module convenience aliases (lex-llm 0.5.0+).
+      Canonical = Legion::Extensions::Llm::Canonical
 
-        attr_reader :content, :model, :input_tokens, :output_tokens,
-                    :cache_read_tokens, :cache_write_tokens, :usage, :metadata,
-                    :tool_calls, :stop_reason, :thinking, :output_tokens_details
-
-        HASH_KEY_MAP = {
-          result: :content, content: :content,
-          input_tokens: :input_tokens, output_tokens: :output_tokens,
-          cache_read_tokens: :cache_read_tokens, cache_write_tokens: :cache_write_tokens,
-          usage: :usage, metadata: :metadata,
-          tool_calls: :tool_calls, stop_reason: :stop_reason, thinking: :thinking,
-          data: :content, model: :model
-        }.freeze
-
-        def initialize(result_hash)
-          result_hash = self.class.coerce_result(result_hash)
-          extracted = self.class.extract_result(
-            result_hash[:result],
-            metadata: result_hash[:metadata] || {},
-            thinking: result_hash[:thinking]
-          )
-          @content                 = extracted[:result].to_s
-          @model                   = result_hash[:model]
-          @metadata                = extracted[:metadata] || {}
-          @tool_calls              = self.class.coerce_tool_calls(result_hash[:tool_calls])
-          @stop_reason             = result_hash[:stop_reason]
-          @thinking                = extracted[:thinking]
-          @output_tokens_details   = self.class.extract_output_token_details(result_hash[:usage]) || {}
-          usage                    = self.class.coerce_usage(result_hash[:usage])
-          @usage                   = usage
-          @input_tokens            = usage.input_tokens
-          @output_tokens       = usage.output_tokens
-          @cache_read_tokens   = usage.cache_read_tokens
-          @cache_write_tokens  = usage.cache_write_tokens
-        end
+      # DEPRECATED(P6): Hash-key compatibility adapters for Canonical types.
+      # These exist ONLY to avoid wholesale rewrites in the P4a batch. They are
+      # deleted in Phase 6 — do NOT build new code against hash-key access on
+      # Canonical::Response, Canonical::ToolCall, or Canonical::Usage.
+      # Each access logs a deprecation breadcrumb so P6 can find survivors.
+      module CanonicalResponseCompat
+        KEY_MAP = { content: :text, result: :text, text: :text }.freeze
 
         def [](key)
-          attr = HASH_KEY_MAP[key.to_sym]
-          attr ? public_send(attr) : nil
-        end
-
-        def dig(*keys)
-          value = self[keys.first]
-          return value if keys.length == 1
-          return nil unless value.respond_to?(:dig)
-
-          value.dig(*keys[1..])
-        end
-
-        def self.coerce_result(raw)
-          return raw if raw.is_a?(Hash)
-
-          {
-            result:      raw.respond_to?(:content) ? raw.content : raw,
-            usage:       Usage.new(
-              input_tokens:       raw.respond_to?(:input_tokens) ? raw.input_tokens.to_i : 0,
-              output_tokens:      raw.respond_to?(:output_tokens) ? raw.output_tokens.to_i : 0,
-              cache_read_tokens:  raw.respond_to?(:cached_tokens) ? raw.cached_tokens.to_i : 0,
-              cache_write_tokens: raw.respond_to?(:cache_creation_tokens) ? raw.cache_creation_tokens.to_i : 0
-            ),
-            metadata:    raw.respond_to?(:metadata) && raw.metadata.is_a?(Hash) ? raw.metadata : {},
-            tool_calls:  raw.respond_to?(:tool_calls) ? coerce_tool_calls(raw.tool_calls) : [],
-            stop_reason: raw.respond_to?(:stop_reason) ? raw.stop_reason : nil,
-            thinking:    raw.respond_to?(:thinking) ? raw.thinking : nil
-          }.compact
-        end
-
-        def self.extract_result(result, metadata: {}, thinking: nil)
-          extractor = defined?(::Legion::Extensions::Llm::Responses::ThinkingExtractor) &&
-                      ::Legion::Extensions::Llm::Responses::ThinkingExtractor
-          log.info "[llm][dispatch] extract_result thinking_param=#{thinking ? 'present' : 'nil'}"
-          return { result: result, metadata: metadata || {}, thinking: normalize_thinking_payload(thinking) } unless extractor
-
-          extraction = extractor.extract(result, metadata: metadata || {})
-          {
-            result:   extraction.content,
-            metadata: extraction.metadata,
-            thinking: merge_thinking_payloads(
-              normalize_thinking_payload(thinking),
-              normalize_thinking_payload(content: extraction.thinking, signature: extraction.signature)
-            )
-          }
-        end
-
-        def self.coerce_usage(raw_usage)
-          return raw_usage if raw_usage.is_a?(Usage)
-          return Usage.new unless raw_usage.is_a?(Hash)
-
-          details = raw_usage[:output_tokens_details] || raw_usage['output_tokens_details'] || {}
-
-          Usage.new(
-            input_tokens:          (raw_usage[:input_tokens] || raw_usage['input_tokens']).to_i,
-            output_tokens:         (raw_usage[:output_tokens] || raw_usage['output_tokens']).to_i,
-            cache_read_tokens:     (raw_usage[:cache_read_tokens] || raw_usage['cache_read_tokens']).to_i,
-            cache_write_tokens:    (raw_usage[:cache_write_tokens] || raw_usage['cache_write_tokens']).to_i,
-            output_tokens_details: details
-          )
-        end
-
-        def self.coerce_tool_calls(raw)
-          return [] if raw.nil?
-          return raw if raw.is_a?(Array)
-
-          return raw.values.filter_map { |entry| coerce_single_tool_call(entry) } if raw.is_a?(Hash) && !single_tool_call_hash?(raw)
-
-          [coerce_single_tool_call(raw)].compact
-        end
-
-        def self.single_tool_call_hash?(hash)
-          hash.key?(:name) || hash.key?('name') || hash.key?(:function) || hash.key?('function')
-        end
-
-        def self.extract_output_token_details(raw_usage)
-          return nil unless raw_usage
-
-          if raw_usage.respond_to?(:output_tokens_details) && raw_usage.output_tokens_details.is_a?(Hash)
-            raw_usage.output_tokens_details
-          elsif raw_usage.is_a?(Hash)
-            raw_usage[:output_tokens_details] || raw_usage['output_tokens_details']
+          Legion::Logging.log.debug do
+            "[llm][DEPRECATED(P6)] canonical_hash_access key=#{key} caller=#{caller_locations(1, 1)&.first}"
           end
+          sym = key.to_sym
+          sym = KEY_MAP[sym] || sym
+          public_send(sym) if respond_to?(sym)
         end
 
-        def self.coerce_single_tool_call(entry)
-          if entry.respond_to?(:id) && entry.respond_to?(:name)
-            return { id: entry.id, name: entry.name, arguments: entry.respond_to?(:arguments) ? entry.arguments : {} }
+        def has_key?(key) # rubocop:disable Naming/PredicatePrefix -- Hash API compat requires this name
+          Legion::Logging.log.debug do
+            "[llm][DEPRECATED(P6)] canonical_has_key? key=#{key} caller=#{caller_locations(1, 1)&.first}"
           end
-
-          return entry if entry.is_a?(Hash)
-
-          nil
+          sym = key.respond_to?(:to_sym) ? key.to_sym : key.to_s.to_sym
+          sym = KEY_MAP[sym] || sym
+          respond_to?(sym)
         end
 
-        def self.merge_thinking_payloads(existing, extracted)
-          return existing || extracted unless existing && extracted
-
-          content = [existing[:content], extracted[:content]].compact.map(&:to_s).reject(&:empty?).join
-          existing.merge(
-            content:   content.empty? ? nil : content,
-            signature: existing[:signature] || extracted[:signature],
-            enabled:   true
-          ).compact
-        end
-
-        def self.normalize_thinking_payload(value = nil, content: nil, signature: nil)
-          value = { content: content, signature: signature } if value.nil? && (content || signature)
-          return nil if value.nil?
-
-          if value.is_a?(Hash)
-            normalized = value.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-            content = normalized[:content] || normalized[:text]
-            signature = normalized[:signature]
-          elsif value.respond_to?(:text)
-            content = value.text
-            signature = value.respond_to?(:signature) ? value.signature : nil
-          else
-            content = value
-            signature = nil
+        def dig(key, *rest)
+          Legion::Logging.log.debug do
+            "[llm][DEPRECATED(P6)] canonical_dig key=#{key} caller=#{caller_locations(1, 1)&.first}"
           end
+          val = self[key]
+          return val if rest.empty?
+          return nil unless val.respond_to?(:dig)
 
-          content = content.to_s.strip unless content.nil?
-          return nil if content.to_s.empty? && signature.to_s.empty?
-
-          { content: content, signature: signature, enabled: true }.compact
+          val.dig(*rest)
         end
       end
+
+      # DEPRECATED(P6): Hash-key compatibility adapter for Canonical::ToolCall.
+      # Deleted in Phase 6.
+      module CanonicalToolCallCompat
+        def [](key)
+          Legion::Logging.log.debug do
+            "[llm][DEPRECATED(P6)] tool_call_hash_access key=#{key} caller=#{caller_locations(1, 1)&.first}"
+          end
+          sym = key.to_sym
+          public_send(sym) if respond_to?(sym)
+        end
+      end
+
+      # DEPRECATED(P6): Monkey-patch canonical types for Hash-like access.
+      # These adapters exist ONLY to avoid wholesale rewrites in the P4a batch.
+      # They are deleted in Phase 6 — do not build new code against hash-key access.
+      if defined?(Canonical::Response)
+        Canonical::Response.include(CanonicalResponseCompat)
+        Canonical::Response.class_eval do
+          def [](key)
+            Legion::Logging.log.debug do
+              "[llm][DEPRECATED(P6)] response_hash_access key=#{key} caller=#{caller_locations(1, 1)&.first}"
+            end
+            sym = key.respond_to?(:to_sym) ? key.to_sym : key.to_s.to_sym
+            if %i[result content].include?(sym)
+              txt = text
+              return txt unless txt.to_s.empty?
+
+              metadata[:raw_result] if respond_to?(:metadata) && metadata.is_a?(Hash) && metadata[:raw_result]
+            elsif sym == :text
+              text
+            else
+              super
+            end
+          end
+        end
+      end
+      Canonical::ToolCall.include(CanonicalToolCallCompat) if defined?(Canonical::ToolCall)
+      Canonical::Usage.include(CanonicalResponseCompat) if defined?(Canonical::Usage)
 
       module Dispatch
         extend self
@@ -199,7 +110,7 @@ module Legion
         # @param instance   [Symbol, String, nil] provider instance (nil = default)
         # @param model      [String, nil] model identifier forwarded to the extension
         # @param block      [Proc, nil] block forwarded to the extension (e.g. for streaming)
-        # @return [Hash] standardized { result:, usage: } hash
+        # @return [Canonical::Response] canonical provider response
         # @raise [Legion::LLM::ProviderError] if provider is not registered or capability is unsupported
         def call(provider:, capability:, instance: nil, model: nil, **, &)
           cap_sym = capability.to_sym
@@ -209,11 +120,19 @@ module Legion
           ext = fetch_extension!(provider, instance: instance)
           raise Legion::LLM::ProviderError, "unsupported capability #{capability} for provider #{provider}" if ext.respond_to?(:supports?) && !ext.supports?(cap_sym)
 
+          enforce_model_policy!(ext, provider: provider, model: model)
+
           log.info("[llm][dispatch] capability=#{cap_sym} provider=#{provider} " \
                    "instance=#{instance || 'default'} model=#{model}")
 
           raw = ext.public_send(method_name, model: model, **, &)
           normalize_response(raw)
+        rescue Legion::LLM::LLMError
+          raise
+        rescue StandardError => e
+          raise unless defined?(Legion::Extensions::Llm)
+
+          map_lex_llm_error(e, provider: provider, model: model)
         end
 
         # --- Deprecated per-type dispatch methods ---
@@ -284,97 +203,268 @@ module Legion
                 'Ensure the lex-* extension is loaded before dispatching.'
         end
 
-        # Normalize a raw extension response into a standard hash.
+        # Normalize a raw extension response into a Canonical::Response.
         #
         # Expected extension return shapes (any subset is acceptable):
         #   { content:, usage: { input_tokens:, output_tokens: }, model: }
         #   { result:, usage: ... }
         #
-        # Normalizes to: { result:, usage: Usage }
+        # @return [Canonical::Response]
         def normalize_response(raw)
-          return NativeResponseAdapter.coerce_result(raw) unless raw.is_a?(Hash)
+          # Already a canonical response — no conversion needed
+          return raw if defined?(Canonical::Response) && raw.is_a?(Canonical::Response)
 
-          result    = raw[:result] || raw[:content] || raw[:response]
+          # Non-hash objects (object with .content) or plain values → hash first
+          raw = coerce_to_hash(raw) unless raw.is_a?(Hash)
+
+          text = extract_response_text(raw)
           raw_usage = raw[:usage] || {}
 
-          usage = if raw_usage.is_a?(Usage)
-                    raw_usage
-                  elsif raw_usage.is_a?(Hash)
-                    details = raw_usage[:output_tokens_details] || raw_usage['output_tokens_details'] || {}
-                    Usage.new(
-                      input_tokens:          raw_usage[:input_tokens].to_i,
-                      output_tokens:         raw_usage[:output_tokens].to_i,
-                      cache_read_tokens:     raw_usage[:cache_read_tokens].to_i,
-                      cache_write_tokens:    raw_usage[:cache_write_tokens].to_i,
-                      output_tokens_details: details
-                    )
-                  else
-                    Usage.new
-                  end
+          # Preserve non-string payload (e.g., image URLs, embedding vectors as metadata)
+          # so the compat adapter can return [:result] / [:content] for non-chat results.
+          metadata = raw[:metadata] || raw[:offering_metadata] || {}
+          raw_result = [raw[:result], raw[:content], raw[:response]].find { |v| !v.nil? && !v.is_a?(String) }
+          metadata[:raw_result] = raw_result if raw_result
+
+          usage = coerce_usage(raw_usage)
 
           log.debug("[llm][native] normalized_response usage_class=#{usage.class}")
-          metadata = raw[:metadata] || raw[:offering_metadata] || {}
-          extracted = NativeResponseAdapter.extract_result(
-            result,
-            metadata: metadata,
-            thinking: raw[:thinking] || raw['thinking']
-          )
-          result = extracted[:result]
-          metadata = extracted[:metadata]
-          thinking = extracted[:thinking]
+          text, thinking = extract_thinking_payload(text, raw, metadata)
 
-          tool_calls = normalize_tool_calls(raw[:tool_calls] || raw['tool_calls'] || raw[:tools] || raw['tools'] || result)
-          stop_reason = raw[:stop_reason] || raw['stop_reason'] || (tool_calls.any? ? :tool_use : nil)
-          {
-            result:      result,
-            model:       raw[:model] || raw['model'],
-            usage:       usage,
-            metadata:    metadata,
+          tool_calls = to_canonical_tool_calls(
+            raw[:tool_calls] || raw['tool_calls'] || raw[:tools] || raw['tools'] || text
+          )
+          stop_reason = to_canonical_stop_reason(raw[:stop_reason] || raw['stop_reason'], tool_calls)
+
+          Canonical::Response.new(
+            text:        text.to_s,
+            thinking:    thinking,
             tool_calls:  tool_calls,
+            usage:       usage,
             stop_reason: stop_reason,
-            thinking:    thinking
+            model:       raw[:model] || raw['model'],
+            routing:     {},
+            metadata:    metadata
+          )
+        end
+
+        # Extract the text content from a raw hash response.
+        # Returns the first String value from :result, :content, :response keys.
+        # For non-String text (arrays/embeddings), stores as metadata and returns ''.
+        def extract_response_text(raw)
+          text_val = [raw[:result], raw[:content], raw[:response]].find { |v| !v.nil? && v.is_a?(String) }
+          return text_val || '' if text_val
+
+          # Non-string payload (images, embeddings) — preserve in metadata
+          raw[:raw_payload] = [raw[:result], raw[:content], raw[:response]].find { |v| !v.nil? }
+          ''
+        end
+
+        # Coerce a non-hash raw response (object with reader methods or a plain value) to a hash.
+        def coerce_to_hash(raw)
+          {
+            result:      raw.respond_to?(:content) ? raw.content : raw,
+            usage:       {
+              input_tokens:       raw.respond_to?(:input_tokens) ? raw.input_tokens.to_i : 0,
+              output_tokens:      raw.respond_to?(:output_tokens) ? raw.output_tokens.to_i : 0,
+              cache_read_tokens:  raw.respond_to?(:cached_tokens) ? raw.cached_tokens.to_i : 0,
+              cache_write_tokens: raw.respond_to?(:cache_creation_tokens) ? raw.cache_creation_tokens.to_i : 0
+            },
+            metadata:    raw.respond_to?(:metadata) && raw.metadata.is_a?(Hash) ? raw.metadata : {},
+            tool_calls:  raw.respond_to?(:tool_calls) ? raw.tool_calls : nil,
+            stop_reason: raw.respond_to?(:stop_reason) ? raw.stop_reason : nil,
+            thinking:    raw.respond_to?(:thinking) ? raw.thinking : nil
           }.compact
         end
 
-        def normalize_tool_calls(value)
-          case value
-          when Hash
-            return value.values.filter_map { |entry| normalize_tool_call(entry) } unless tool_call_hash?(value)
+        # Convert raw usage to Canonical::Usage with best-effort field mapping.
+        def coerce_usage(raw_usage)
+          return raw_usage if defined?(Canonical::Usage) && raw_usage.is_a?(Canonical::Usage)
 
-            [normalize_tool_call(value)].compact
-          when Array
-            value.filter_map { |entry| normalize_tool_call(entry) }
+          hash = if raw_usage.is_a?(Hash)
+                   raw_usage
+                 elsif raw_usage.respond_to?(:input_tokens)
+                   { input_tokens: raw_usage.input_tokens, output_tokens: raw_usage.respond_to?(:output_tokens) ? raw_usage.output_tokens : 0,
+                     cache_read_tokens: raw_usage.respond_to?(:cache_read_tokens) ? raw_usage.cache_read_tokens : 0,
+                     cache_write_tokens: raw_usage.respond_to?(:cache_write_tokens) ? raw_usage.cache_write_tokens : 0 }
+                 else
+                   {}
+                 end
+          Canonical::Usage.new(
+            input_tokens:       (hash[:input_tokens] || hash['input_tokens'] || 0).to_i,
+            output_tokens:      (hash[:output_tokens] || hash['output_tokens'] || 0).to_i,
+            cache_read_tokens:  (hash[:cache_read_tokens] || hash['cache_read_tokens'] || 0).to_i,
+            cache_write_tokens: (hash[:cache_write_tokens] || hash['cache_write_tokens'] || 0).to_i,
+            thinking_tokens:    (hash[:thinking_tokens] || hash['thinking_tokens'] || 0).to_i,
+            units:              raw_units(hash[:units] || hash['units'])
+          )
+        end
+
+        def raw_units(value)
+          value.is_a?(Hash) ? value : {}
+        end
+
+        # Normalize thinking payload to Canonical::Thinking | nil.
+        # Returns [cleaned_text, Canonical::Thinking | nil].
+        def extract_thinking_payload(text, raw, metadata)
+          content_out = nil
+          sig_out     = nil
+          cleaned_text = text
+          thinking_param = raw[:thinking] || raw['thinking']
+
+          thinker = defined?(::Legion::Extensions::Llm::Responses::ThinkingExtractor) &&
+                    ::Legion::Extensions::Llm::Responses::ThinkingExtractor
+
+          if thinker
+            extraction = thinker.extract(text.to_s, metadata: metadata || {})
+            cleaned_text = extraction.content || ''
+            content_out = extraction.thinking || ''
+            sig_out     = extraction.signature
+            explicit_thinking = normalize_thinking_value(thinking_param)
+            merged = if explicit_thinking && content_out.to_s.empty?
+                       explicit_thinking
+                     else
+                       {
+                         content:   [explicit_thinking&.dig(:content), content_out].compact.reject(&:empty?).join,
+                         signature: sig_out || explicit_thinking&.dig(:signature)
+                       }
+                     end
+            thinking_param = merged
           else
-            return value.values.filter_map { |entry| normalize_tool_call(entry) } if value.respond_to?(:values)
+            thinking_param = normalize_thinking_value(thinking_param) ||
+                             normalize_thinking_value(metadata[:thinking] || metadata['thinking'])
+          end
+
+          [cleaned_text, build_canonical_thinking(thinking_param)]
+        end
+
+        # Normalize a raw thinking value to { content: String, signature: String? } | nil.
+        def normalize_thinking_value(value)
+          return nil if value.nil? || (value.is_a?(String) && value.strip.empty?)
+
+          if value.is_a?(Hash)
+            normalized = value.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
+            content = normalized[:content] || normalized[:text] || ''
+            signature = normalized[:signature]
+          elsif value.respond_to?(:text)
+            content = value.text
+            signature = value.respond_to?(:signature) ? value.signature : nil
+          else
+            content = value.to_s
+            signature = nil
+          end
+
+          content = content.to_s.strip unless content.nil?
+          return nil if content.to_s.empty? && (signature || '').to_s.empty?
+
+          { content: content, signature: signature }
+        end
+
+        # Build a Canonical::Thinking or nil.
+        def build_canonical_thinking(payload)
+          return nil if payload.nil? || payload.to_s.empty?
+
+          content   = payload[:content] || payload['content'] || ''
+          signature = payload[:signature] || payload['signature']
+          return nil if content.to_s.empty? && signature.to_s.empty?
+
+          Canonical::Thinking.new(content: content.to_s, signature: signature&.to_s)
+        end
+
+        # Convert raw tool_calls to Array<Canonical::ToolCall>.
+        def to_canonical_tool_calls(value)
+          raw_calls = inner_tool_calls(value)
+          raw_calls.filter_map { |entry| to_single_canonical_tool_call(entry) }.compact
+        end
+
+        # Extract an array of raw tool-call entries from various shapes.
+        def inner_tool_calls(value)
+          case value
+          when Array
+            value
+          when Hash
+            return [value] if tool_call_hash?(value)
+            return value.values if value.values
 
             []
+          else
+            return [] unless value.respond_to?(:values)
+
+            value.values
           end
         end
 
         def tool_call_hash?(hash)
-          normalized = hash.respond_to?(:transform_keys) ? hash.transform_keys(&:to_sym) : hash
-          normalized.key?(:name) || normalized.key?(:function) || normalized[:type].to_s == 'tool_use'
+          hash.key?(:name) || hash.key?('name') || hash.key?(:function) || hash.key?('function')
         end
 
-        def normalize_tool_call(entry)
-          if entry.respond_to?(:name)
-            return {
-              id:        entry.respond_to?(:id) ? entry.id : nil,
-              name:      entry.name,
-              arguments: entry.respond_to?(:arguments) ? entry.arguments : {}
-            }.compact
-          end
+        # Convert a single raw tool call entry to Canonical::ToolCall.
+        def to_single_canonical_tool_call(entry)
+          # Canonical::ToolCall has many required fields; normalize them with defaults.
+          normalized = if entry.respond_to?(:name)
+                         {
+                           id:        entry.respond_to?(:id) ? entry.id : nil,
+                           name:      entry.name,
+                           arguments: entry.respond_to?(:arguments) ? entry.arguments : {}
+                         }
+                       elsif entry.is_a?(Hash)
+                         symbolized = entry.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
+                         func       = if symbolized[:function].is_a?(Hash)
+                                        symbolized[:function].transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
+                                      else
+                                        {}
+                                      end
+                         name       = symbolized[:name] || func[:name]
+                         args_raw   = symbolized[:arguments] || symbolized[:input] || func[:arguments] || {}
+                         return nil if name.to_s.empty?
 
-          return nil unless entry.is_a?(Hash)
+                         {
+                           id:                           symbolized[:id],
+                           name:                         name.to_s,
+                           arguments:                    parse_arguments(args_raw),
+                           source:                       symbolized[:source],
+                           status:                       symbolized[:status],
+                           result:                       symbolized[:result],
+                           duration_ms:                  symbolized[:duration_ms],
+                           error:                        symbolized[:error],
+                           started_at:                   symbolized[:started_at],
+                           finished_at:                  symbolized[:finished_at],
+                           category:                     symbolized[:category],
+                           data_handling_classification: symbolized[:data_handling_classification],
+                           policy_decision:              symbolized[:policy_decision]
+                         }
+                       end
+          return nil unless normalized && normalized[:name] && !normalized[:name].to_s.empty?
 
-          normalized = entry.respond_to?(:transform_keys) ? entry.transform_keys(&:to_sym) : entry
-          function = normalized[:function].is_a?(Hash) ? normalized[:function].transform_keys(&:to_sym) : {}
-          name = normalized[:name] || function[:name]
-          arguments = normalized[:arguments] || normalized[:input] || function[:arguments] || {}
-          arguments = parse_arguments(arguments)
-          return nil if name.to_s.empty?
+          args_already_parsed = normalized[:arguments].is_a?(Hash) ||
+                                (normalized[:arguments].is_a?(String) && normalized[:arguments].empty?)
+          normalized[:arguments] = parse_arguments(normalized[:arguments]) unless args_already_parsed
 
-          { id: normalized[:id], name: name.to_s, arguments: arguments || {} }.compact
+          Canonical::ToolCall.new(
+            id:                           normalized[:id] || "tc_#{SecureRandom.hex(8)}",
+            exchange_id:                  normalized[:exchange_id],
+            name:                         normalized[:name].to_s,
+            arguments:                    normalized[:arguments] || {},
+            source:                       normalized[:source] || { type: :client },
+            status:                       normalized[:status],
+            duration_ms:                  normalized[:duration_ms],
+            result:                       normalized[:result],
+            error:                        normalized[:error],
+            started_at:                   normalized[:started_at],
+            finished_at:                  normalized[:finished_at],
+            category:                     normalized[:category],
+            data_handling_classification: normalized[:data_handling_classification],
+            policy_decision:              normalized[:policy_decision]
+          )
+        end
+
+        # Map stop reason to canonical stop_reason enum.
+        def to_canonical_stop_reason(reason, tool_calls)
+          return :tool_use if reason.nil? && tool_calls.any?
+          return :end_turn if reason.nil?
+
+          sym = reason.respond_to?(:to_sym) ? reason.to_sym : reason.to_s.to_sym
+          Canonical::STOP_REASONS.include?(sym) ? sym : :end_turn
         end
 
         def parse_arguments(arguments)
@@ -386,6 +476,48 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.dispatch.parse_arguments')
           {}
+        end
+
+        # Fail-fast daemon-side compliance guard: reject a denied model before the
+        # provider call (the provider enforces the same policy as a backstop). Fails
+        # closed with the terminal Legion::LLM::ModelNotAllowed so the escalation
+        # loop treats it as a policy outcome, not a provider failure to escalate.
+        def enforce_model_policy!(ext, provider:, model:)
+          return if model.nil? || model.to_s.empty?
+          return unless ext.respond_to?(:model_allowed?)
+          return if ext.model_allowed?(model)
+
+          log.warn("[llm][dispatch] action=model_denied provider=#{provider} model=#{model} reason=model_policy")
+          raise Legion::LLM::ModelNotAllowed.new(provider: provider, model: model)
+        end
+
+        def map_lex_llm_error(error, provider:, model:)
+          raise Legion::LLM::ContextOverflow, "#{provider}:#{model} — #{error.message}" if context_length_error_message?(error.message)
+
+          case error
+          when Legion::Extensions::Llm::ModelNotAllowedError
+            raise Legion::LLM::ModelNotAllowed.new("#{provider}:#{model} — #{error.message}", provider: provider, model: model)
+          when Legion::Extensions::Llm::ContextLengthExceededError
+            raise Legion::LLM::ContextOverflow, "#{provider}:#{model} — #{error.message}"
+          when Legion::Extensions::Llm::UnauthorizedError, Legion::Extensions::Llm::ForbiddenError
+            raise Legion::LLM::AuthError, "#{provider}:#{model} — #{error.message}"
+          when Legion::Extensions::Llm::RateLimitError
+            raise Legion::LLM::RateLimitError, "#{provider}:#{model} — #{error.message}"
+          when Legion::Extensions::Llm::ServerError, Legion::Extensions::Llm::ServiceUnavailableError,
+               Legion::Extensions::Llm::OverloadedError
+            raise Legion::LLM::ProviderDown, "#{provider}:#{model} — #{error.message}"
+          when Legion::Extensions::Llm::BadRequestError, Legion::Extensions::Llm::Error
+            raise Legion::LLM::ProviderError, "#{provider}:#{model} — #{error.message}"
+          else
+            raise
+          end
+        end
+
+        def context_length_error_message?(message)
+          text = message.to_s
+          text.match?(/maximum context length/i) ||
+            text.match?(/context length.*input_tokens/i) ||
+            text.match?(/prompt contains at least \d+ input tokens/i)
         end
       end
     end

@@ -29,10 +29,13 @@ module Legion
           max_output_tokens:              16_384,
           max_tool_rounds:                200,
           max_tool_calls_per_turn:        100,
+          tool_error_log_chars:           500,
           tool_result_max_dispatch_chars: 10_000,
           default_model:                  model_override,
           default_temperature:            0.9,
           default_provider:               nil,
+          providers:                      {},
+          tier_order:                     nil,
           system_baseline:                system_baseline_default,
           fleet:                          fleet_defaults,
           routing:                        routing_defaults,
@@ -51,12 +54,14 @@ module Legion
           embedding:                      embedding_defaults,
           conversation:                   conversation_defaults,
           telemetry:                      telemetry_defaults,
+          pricing:                        {},
           metering:                       metering_defaults,
           context_curation:               context_curation_defaults,
           debate:                         debate_defaults,
           provider_layer:                 provider_layer_defaults,
           tool_trigger:                   tool_trigger_defaults,
           api:                            api_defaults,
+          streaming:                      streaming_defaults,
           compliance:                     compliance_defaults,
           skills:                         skills_defaults,
           claude_cli:                     claude_cli_defaults,
@@ -158,10 +163,11 @@ module Legion
 
       def self.discovery_defaults
         {
-          enabled:                true,
-          refresh_seconds:        60,
-          memory_floor_mb:        2048,
-          memory_overhead_factor: 1.4
+          enabled:                     true,
+          refresh_seconds:             60,
+          memory_floor_mb:             2048,
+          memory_overhead_factor:      1.4,
+          trip_circuit_on_unreachable: true
         }
       end
 
@@ -207,10 +213,15 @@ module Legion
 
       def self.routing_defaults
         {
-          enabled:        true,
-          tier_priority:  %w[local direct fleet cloud frontier],
-          default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
-          tiers:          {
+          enabled:              true,
+          tier_priority:        %w[local direct fleet cloud frontier],
+          default_intent:       { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
+          # Last-resort fallback model when both `default_model` and the
+          # discovered provider chain are empty. Owned by routing because
+          # the chain builder is the only consumer.
+          last_resort_model:    'claude-sonnet-4-6',
+          last_resort_provider: :anthropic,
+          tiers:                {
             local:    { provider: 'ollama' },
             fleet:    {
               queue:           'llm.fleet',
@@ -221,20 +232,21 @@ module Legion
             cloud:    { providers: %w[bedrock azure gemini] },
             frontier: { providers: %w[anthropic openai] }
           },
-          health:         {
+          health:               {
             window_seconds:               300,
             circuit_breaker:              { failure_threshold: 3, cooldown_seconds: 60 },
             latency_penalty_threshold_ms: 5000,
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },
-          escalation:     {
-            enabled:           false,
-            pipeline_enabled:  true,
-            max_attempts:      3,
-            quality_threshold: 0
+          escalation:           {
+            enabled:            true,
+            pipeline_enabled:   true,
+            max_attempts:       3,
+            quality_threshold:  0,
+            skip_open_circuits: true
           },
-          rules:          [],
-          tier_mappings:  []
+          rules:                [],
+          tier_mappings:        []
         }
       end
 
@@ -277,13 +289,13 @@ module Legion
 
       def self.rag_defaults
         {
-          enabled:                       false,
+          enabled:                       true,
           full_limit:                    5,
           compact_limit:                 3,
           min_confidence:                0.92,
           utilization_compact_threshold: 0.7,
           utilization_skip_threshold:    0.9,
-          conversation_history_enabled:  false,
+          conversation_history_enabled:  true,
           trivial_max_chars:             20,
           trivial_patterns:              %w[hello hi hey ping pong test ok okay yes no thanks thank],
           exclude_source_agents:         %w[teams-api-ingest unknown teams-entity-extractor legion-interlink]
@@ -300,7 +312,7 @@ module Legion
 
       def self.gaia_defaults
         {
-          advisory_enabled: false
+          advisory_enabled: true
         }
       end
 
@@ -336,13 +348,24 @@ module Legion
           prefix_registry:              {
             'nomic-embed-text'  => { document: 'search_document: ', query: 'search_query: ' },
             'mxbai-embed-large' => { query: 'Represent this sentence for searching relevant passages: ' }
+          },
+          # G19: content-addressed embedding cache (lookup keyed by
+          # llm:embed:<model>:<dims>:<sha256>). Embeddings are deterministic per
+          # model so the default TTL is long; cache hits still emit metering with
+          # cost: 0, cache_hit: true so the savings are auditable.
+          cache:                        {
+            enabled:    true,
+            ttl:        86_400,
+            key_prefix: 'llm:embed'
           }
         }
       end
 
       def self.telemetry_defaults
         {
-          pipeline_spans: true
+          pipeline_spans:    true,
+          # Tag substitute when default_model is nil during span emission.
+          unknown_model_tag: 'unknown'
         }
       end
 
@@ -362,8 +385,8 @@ module Legion
           llm_assisted:            false,
           llm_model:               nil,
           tool_result_max_chars:   10_000,
-          thinking_eviction:       false,
-          exchange_folding:        false,
+          thinking_eviction:       true,
+          exchange_folding:        true,
           superseded_eviction:     true,
           dedup_enabled:           true,
           dedup_threshold:         0.85,
@@ -418,12 +441,42 @@ module Legion
 
       def self.api_defaults
         {
-          use_namespaces: true,
-          auth:           {
+          use_namespaces:  true,
+          batch_pool_size: 4,
+          auth:            {
             enabled:      false,
             api_keys:     [],
             pass_through: false
-          }
+          },
+          # G21 — X-Legion-Format and X-Legion-Debug surface. Default ON for
+          # lite/dev because the envelope leaks routing/escalation internals;
+          # production deployments must explicitly opt in.
+          debug_formats:   debug_formats_defaults
+        }
+      end
+
+      def self.debug_formats_defaults
+        { enabled: debug_formats_default_enabled }
+      end
+
+      def self.debug_formats_default_enabled
+        return true if defined?(Legion::Mode) && Legion::Mode.respond_to?(:lite?) && Legion::Mode.lite?
+
+        env = (ENV.fetch('LEGION_ENV', nil) || ENV.fetch('RACK_ENV', nil)).to_s.downcase
+        %w[development dev test].include?(env)
+      end
+
+      def self.streaming_defaults
+        {
+          # Per G6: tool_call argument buffering policy.
+          # :buffered  — block emits atomically when arguments are complete (safe for failover at any point);
+          #              SSE keep-alive pings sent during buffering so the client doesn't perceive a hang.
+          # :unbuffered — real-time tool_call_delta arguments forwarded as they arrive (lower perceived latency,
+          #              mid-tool-call failover degrades to resubmit-discarding-partials).
+          tool_call_buffering:    :buffered,
+          keep_alive_interval_ms: 5_000,
+          # Emit a thinking content block for clients that render reasoning (Anthropic + Responses API).
+          emit_thinking_blocks:   true
         }
       end
 

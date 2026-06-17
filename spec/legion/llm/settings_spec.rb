@@ -5,8 +5,8 @@ require 'legion/llm/settings'
 
 RSpec.describe Legion::LLM::Settings do
   describe '.default' do
-    it 'disables GAIA advisory by default' do
-      expect(described_class.default.dig(:gaia, :advisory_enabled)).to be false
+    it 'enables GAIA advisory by default' do
+      expect(described_class.default.dig(:gaia, :advisory_enabled)).to be true
     end
 
     it 'defaults client tool passthrough on with an empty whitelist and shell escalation blacklist' do
@@ -21,6 +21,10 @@ RSpec.describe Legion::LLM::Settings do
         'plugin__cron__create', 'plugin__cron__list', 'plugin__cron__get', 'plugin__cron__update',
         'plugin__cron__delete', 'plugin__cron__get_history', 'plugin__cron__run_now', 'plugin__cron__stop'
       )
+    end
+
+    it 'defaults tool error log summaries to 500 characters' do
+      expect(described_class.default[:tool_error_log_chars]).to eq(500)
     end
   end
 

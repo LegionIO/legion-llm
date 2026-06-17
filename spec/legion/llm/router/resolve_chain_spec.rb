@@ -7,6 +7,10 @@ require 'legion/llm/router/escalation/chain'
 RSpec.describe 'Legion::LLM::Router.resolve_chain' do
   before do
     Legion::LLM::Router.reset!
+    # Reset the registry so a provider registered by one example (e.g. the
+    # routing-disabled multi-provider case) does not leak into another under
+    # random spec order — provider registration now influences chain primaries.
+    Legion::LLM::Call::Registry.reset!
     Legion::Settings.set_prop(:llm, {
                                 default_model:    'claude-sonnet-4-6',
                                 default_provider: :bedrock,
@@ -17,7 +21,7 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
                                 discovery:        { enabled: false },
                                 routing:          {
                                   enabled:        true,
-                                  default_intent: { privacy: 'normal', capability: 'moderate', cost: 'normal' },
+                                  default_intent: { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
                                   escalation:     { enabled: true, max_attempts: 3, quality_threshold: 50 },
                                   rules:          rules
                                 }
@@ -28,17 +32,17 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
   context 'with explicit fallback chain in rules' do
     let(:rules) do
       [
-        { name: 'local-basic', when: { capability: 'basic' },
+        { name: 'local-low', when: { effort: 'low' },
           then: { tier: :local, provider: :ollama, model: 'llama3' },
           priority: 10, fallback: { tier: :cloud, provider: :bedrock, model: 'us.anthropic.claude-sonnet-4-6-v1' } },
-        { name: 'cloud-moderate', when: { capability: 'moderate' },
+        { name: 'cloud-moderate', when: { effort: 'moderate' },
           then: { tier: :cloud, provider: :bedrock, model: 'us.anthropic.claude-sonnet-4-6-v1' },
           priority: 5 }
       ]
     end
 
     it 'follows fallback fields to build chain' do
-      chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })
+      chain = Legion::LLM::Router.resolve_chain(intent: { effort: :low })
       expect(chain).to be_a(Legion::LLM::Router::EscalationChain)
       expect(chain.size).to be >= 2
       expect(chain.primary.model).to eq('llama3')
@@ -48,33 +52,57 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
   context 'with no fallback fields' do
     let(:rules) do
       [
-        { name: 'local-basic', when: { capability: 'basic' },
+        { name: 'local-low', when: { effort: 'low' },
           then: { tier: :local, provider: :ollama, model: 'llama3' },
           priority: 10 },
-        { name: 'cloud-basic', when: { capability: 'basic' },
+        { name: 'cloud-low', when: { effort: 'low' },
           then: { tier: :cloud, provider: :bedrock, model: 'us.anthropic.claude-sonnet-4-6-v1' },
           priority: 5 }
       ]
     end
 
     it 'auto-generates tier-first chain from candidates' do
-      chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })
+      chain = Legion::LLM::Router.resolve_chain(intent: { effort: :low })
       expect(chain.size).to be >= 2
       expect(chain.primary.tier).to eq(:local)
+    end
+  end
+
+  context 'with provider preference and no matching provider rule' do
+    let(:rules) do
+      [
+        { name: 'openai-tools', when: { operation: 'chat', required_capabilities: [:tools] },
+          then: { tier: :frontier, provider: :openai, model: 'gpt-5.5' },
+          priority: 100 },
+        { name: 'vllm-tools', when: { operation: 'chat', required_capabilities: [:tools] },
+          then: { tier: :direct, provider: :vllm, instance: :h200, model: 'gemma-4-31b-it' },
+          priority: 80 }
+      ]
+    end
+
+    it 'falls back to the normal chain when no candidate matches the provider preference' do
+      chain = Legion::LLM::Router.resolve_chain(
+        intent:   { operation: :chat, required_capabilities: [:tools] },
+        provider: :bedrock,
+        model:    'anthropic.claude-sonnet-4'
+      )
+
+      expect(chain.primary.provider).to eq(:bedrock)
+      expect(chain.primary.model).to eq('claude-sonnet-4-6')
     end
   end
 
   context 'with max_escalations parameter' do
     let(:rules) do
       [
-        { name: 'r1', when: { capability: 'basic' }, then: { tier: :local, provider: :ollama, model: 'llama3' }, priority: 10 },
-        { name: 'r2', when: { capability: 'basic' }, then: { tier: :cloud, provider: :bedrock, model: 'sonnet' }, priority: 5 },
-        { name: 'r3', when: { capability: 'basic' }, then: { tier: :cloud, provider: :bedrock, model: 'opus' }, priority: 1 }
+        { name: 'r1', when: { effort: 'low' }, then: { tier: :local, provider: :ollama, model: 'llama3' }, priority: 10 },
+        { name: 'r2', when: { effort: 'low' }, then: { tier: :cloud, provider: :bedrock, model: 'sonnet' }, priority: 5 },
+        { name: 'r3', when: { effort: 'low' }, then: { tier: :cloud, provider: :bedrock, model: 'opus' }, priority: 1 }
       ]
     end
 
     it 'respects max_escalations parameter' do
-      chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic }, max_escalations: 2)
+      chain = Legion::LLM::Router.resolve_chain(intent: { effort: :low }, max_escalations: 2)
       expect(chain.max_attempts).to eq(2)
       count = 0
       chain.each { count += 1 }
@@ -88,7 +116,7 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
     before { Legion::Settings[:llm][:routing][:enabled] = false }
 
     it 'honours explicit default provider/model before auto-enabled providers' do
-      chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })
+      chain = Legion::LLM::Router.resolve_chain(intent: { effort: :low })
       expect(chain.size).to eq(1)
       expect(chain.primary.provider).to eq(:bedrock)
       expect(chain.primary.model).to eq('claude-sonnet-4-6')
@@ -96,7 +124,7 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
 
     it 'can suppress settings default fallback for strict auto routing' do
       chain = Legion::LLM::Router.resolve_chain(
-        intent:                 { capability: :basic },
+        intent:                 { effort: :low },
         allow_default_fallback: false
       )
 
@@ -109,11 +137,10 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
                                   'routing'   => { 'enabled' => false, 'rules' => [] }
                                 })
 
-      # Register providers in the Registry with default_model metadata
       Legion::LLM::Call::Registry.register(:ollama, Module.new, metadata: { default_model: 'llama3' })
       Legion::LLM::Call::Registry.register(:bedrock, Module.new, metadata: { default_model: 'us.anthropic.claude-sonnet-4-6-v1' })
 
-      chain = Legion::LLM::Router.resolve_chain(intent: { capability: :basic })
+      chain = Legion::LLM::Router.resolve_chain(intent: { effort: :low })
 
       expect(chain.map(&:provider)).to include(:bedrock, :ollama)
     end

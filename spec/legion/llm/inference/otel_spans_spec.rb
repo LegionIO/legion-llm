@@ -143,7 +143,7 @@ RSpec.describe 'Pipeline OTEL child spans' do
             true
           end
 
-          def self.with_span(_name, **_opts)
+          def self.with_span(_name, **)
             raise 'telemetry broken'
           end
         end

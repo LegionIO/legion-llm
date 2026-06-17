@@ -79,7 +79,7 @@ module Legion
           end
 
           def knowledge_capture_setting(key, default)
-            settings = Legion::Settings.dig(:llm, :knowledge_capture) || {}
+            settings = Legion::Settings[:llm][:knowledge_capture]
             return default unless settings.is_a?(Hash)
 
             return settings[key] if settings.key?(key)

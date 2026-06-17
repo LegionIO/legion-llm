@@ -206,6 +206,50 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     provider_class.connection = nil
   end
 
+  it 'renders assistant tool_calls as function_call items paired with their outputs (Responses tool loop)' do
+    connection = Class.new do
+      attr_reader :payload
+
+      def post(_url, payload)
+        @payload = payload
+        Struct.new(:body).new({
+                                'model'  => 'gpt-5.4',
+                                'output' => [{ 'content' => [{ 'type' => 'output_text', 'text' => 'done' }] }],
+                                'usage'  => { 'input_tokens' => 8, 'output_tokens' => 5 }
+                              })
+      end
+    end.new
+    provider_class.connection = connection
+
+    # Mirrors the native responses tool loop: body carries no :input, so the
+    # adapter rebuilds the Responses input from the message history, which
+    # includes the assistant turn that issued the tool call plus the tool result.
+    responses_adapter.responses(
+      model:    'gpt-5.4',
+      body:     { stream: false },
+      messages: [
+        { role: 'user', content: 'list tools' },
+        { role: 'assistant', content: '',
+          tool_calls: [{ id: 'call_x', name: 'legion_list_all_tools', arguments: { value: 'ping' } }] },
+        { role: 'tool', tool_call_id: 'call_x', name: 'legion_list_all_tools', content: 'echo:ping' }
+      ]
+    )
+
+    input = connection.payload[:input]
+    function_call = input.find { |item| item[:type] == 'function_call' && item[:call_id] == 'call_x' }
+    function_output = input.find { |item| item[:type] == 'function_call_output' && item[:call_id] == 'call_x' }
+
+    # Without the function_call item, OpenAI rejects the function_call_output with
+    # "No tool call found for function call output with call_id call_x".
+    expect(function_call).not_to(be_nil, -> { "missing function_call item; input=#{input.inspect}" })
+    expect(function_call[:name]).to eq('legion_list_all_tools')
+    expect(function_call[:arguments]).to be_a(String) # OpenAI requires a JSON string
+    expect(function_output).not_to be_nil
+    expect(input.index(function_call)).to be < input.index(function_output)
+  ensure
+    provider_class.connection = nil
+  end
+
   it 'preserves Responses input_text content parts when building upstream payloads' do
     connection = Class.new do
       attr_reader :payload
@@ -608,5 +652,22 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect do
       described_class.new(:fake_llm, Class.new)
     end.to raise_error(NameError, /lex-llm provider namespace/)
+  end
+
+  it 'normalize_message_tool_calls returns Array of ToolCall objects, not a Hash' do
+    tool_calls_input = [
+      { id: 'call-1', name: 'legion_list_all_tools', arguments: {} },
+      { id: 'call-2', name: 'ruby', arguments: { code: 'puts 1' } }
+    ]
+
+    result = adapter.send(:normalize_message_tool_calls, tool_calls_input)
+
+    expect(result).to be_an(Array)
+    expect(result.size).to eq(2)
+    expect(result.first).to be_a(lex_llm_test_namespace::ToolCall)
+    expect(result.first.name).to eq('legion_list_all_tools')
+    expect(result.first.id).to eq('call-1')
+    expect(result.last.name).to eq('ruby')
+    expect(result.last.arguments).to eq(code: 'puts 1')
   end
 end

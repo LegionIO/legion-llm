@@ -290,10 +290,18 @@ module Legion
           return { status: :error, result: "#{runtime_name} tool requires `code`, `command`, or `args`." } if argv.empty?
 
           output, status = run_process(executable, argv, **args)
-          result = "command=#{Shellwords.join([executable, *argv])}\nexit=#{status.exitstatus}\n#{output}"
-          { status: status.success? ? :success : :error, result: result }
+          command = Shellwords.join([executable, *argv])
+          result = "command=#{command}\nexit=#{status.exitstatus}\n#{output}"
+          runtime_result(status: status, result: result, command: command, output: output)
         rescue Timeout::Error
-          { status: :error, result: "#{runtime_name} tool timed out after #{timeout_ms(args)}ms." }
+          timeout_result = "#{runtime_name} tool timed out after #{timeout_ms(args)}ms."
+          {
+            status:      :error,
+            result:      timeout_result,
+            error:       timeout_result,
+            exit_status: nil,
+            output_tail: ''
+          }
         end
 
         def runtime_argv(runtime_name, **args)
@@ -372,6 +380,40 @@ module Legion
 
         def normalize_tool_name(tool_name)
           tool_name.to_s.tr('.', '_')
+        end
+
+        def runtime_result(status:, result:, command:, output:)
+          payload = {
+            status:          status.success? ? :success : :error,
+            result:          result,
+            exit_status:     status.exitstatus,
+            command_preview: trim_for_tool_log(command),
+            output_tail:     trim_tail_for_tool_log(output)
+          }
+          payload[:error] = runtime_error_summary(output, status.exitstatus) unless status.success?
+          payload
+        end
+
+        def runtime_error_summary(output, exit_status)
+          first_line = output.to_s.lines.map(&:strip).find { |line| !line.empty? }
+          first_line || "process exited with status #{exit_status}"
+        end
+
+        def trim_for_tool_log(value)
+          value.to_s[0, tool_error_log_chars]
+        end
+
+        def trim_tail_for_tool_log(value)
+          text = value.to_s
+          limit = tool_error_log_chars
+          text.length > limit ? text[-limit, limit] : text
+        end
+
+        def tool_error_log_chars
+          configured = Legion::Settings[:llm][:tool_error_log_chars].to_i
+          configured.positive? ? configured : 500
+        rescue StandardError
+          500
         end
       end
     end

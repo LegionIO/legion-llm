@@ -86,7 +86,7 @@ module Legion
           end
 
           def settings_pricing
-            pricing = Legion::Settings[:llm][:pricing] || {}
+            pricing = Legion::Settings[:llm][:pricing]
             return {} unless pricing.is_a?(Hash)
 
             pricing.transform_values do |entry|

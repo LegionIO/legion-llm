@@ -5,6 +5,7 @@ require 'spec_helper'
 RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
   before do
     Legion::Settings[:llm][:routing][:escalation][:enabled] = false
+    Legion::LLM::Router.health_tracker.reset_all
   end
 
   let(:request) do
@@ -49,6 +50,7 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
   end
 
   it 'runs post-provider steps after stream completes' do
+    Legion::LLM::Call::Registry.reset! if Legion::LLM::Call::Registry.respond_to?(:reset!)
     register_native_stream { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }
     executor = described_class.new(request)
 

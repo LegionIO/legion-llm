@@ -142,4 +142,261 @@ RSpec.describe Legion::LLM::Discovery do
       expect(described_class.embedding_instance).to eq(:local)
     end
   end
+
+  describe 'DISCOVERED_MODELS_SCHEMA_VERSION' do
+    it 'is set to 3' do
+      expect(described_class::DISCOVERED_MODELS_SCHEMA_VERSION).to eq(3)
+    end
+
+    it 'rejects stale discovered model entries with an older schema version' do
+      described_class.instance_variable_set(
+        :@discovered_models_cache,
+        [
+          {
+            schema_version: 1,
+            provider:       :vllm,
+            instance:       :apollo,
+            model:          'old-shape',
+            capabilities:   %i[completion]
+          }
+        ]
+      )
+
+      expect(described_class.cached_discovered_models).to eq([])
+    end
+
+    it 'returns entries with the current schema version' do
+      described_class.instance_variable_set(
+        :@discovered_models_cache,
+        [
+          {
+            schema_version: described_class::DISCOVERED_MODELS_SCHEMA_VERSION,
+            provider:       :vllm,
+            instance:       :apollo,
+            model:          'legion-code-27b-v1',
+            capabilities:   %i[completion streaming tools]
+          }
+        ]
+      )
+
+      expect(described_class.cached_discovered_models.size).to eq(1)
+    end
+
+    it 'stamps new offerings with the current schema version' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{ id: 'test-model', capabilities: %i[completion] }]
+      )
+
+      entry = { provider: :vllm, instance: :default, adapter: adapter, metadata: {} }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:schema_version]).to eq(described_class::DISCOVERED_MODELS_SCHEMA_VERSION)
+    end
+  end
+
+  describe 'health and loaded field preservation' do
+    before { Legion::LLM::Router.reset! }
+
+    it 'preserves health metadata from offerings' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{ id: 'model-a', capabilities: %i[completion], health: { status: 'healthy', latency_ms: 42 } }]
+      )
+
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:health]).to eq({ status: 'healthy', latency_ms: 42 })
+    end
+
+    it 'preserves loaded: true from offering data' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{ id: 'model-a', capabilities: %i[completion], loaded: true }]
+      )
+
+      entry = { provider: :ollama, instance: :local, adapter: adapter, metadata: {} }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:loaded]).to be(true)
+    end
+
+    it 'preserves loaded: false without losing it' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{ id: 'model-b', capabilities: %i[completion], loaded: false }]
+      )
+
+      entry = { provider: :ollama, instance: :local, adapter: adapter, metadata: {} }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:loaded]).to be(false)
+    end
+
+    it 'extracts loaded from metadata when not at top level' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{ id: 'model-c', capabilities: %i[completion], metadata: { loaded: true } }]
+      )
+
+      entry = { provider: :ollama, instance: :local, adapter: adapter, metadata: {} }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:loaded]).to be(true)
+    end
+
+    it 'reports :success signal to health tracker for healthy offerings' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{ id: 'model-a', capabilities: %i[completion], health: { status: 'healthy' } }]
+      )
+
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
+      expect(Legion::LLM::Router.health_tracker).to receive(:report).with(
+        hash_including(provider: :vllm, instance: :apollo, signal: :success)
+      )
+
+      described_class.send(:fetch_offering_models, entry)
+    end
+
+    it 'reports :error signal for unhealthy offerings' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{ id: 'model-a', capabilities: %i[completion], health: { status: 'unhealthy' } }]
+      )
+
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
+      expect(Legion::LLM::Router.health_tracker).to receive(:report).with(
+        hash_including(provider: :vllm, instance: :apollo, signal: :error)
+      )
+
+      described_class.send(:fetch_offering_models, entry)
+    end
+
+    it 'reports :latency signal when latency_ms is present' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{ id: 'model-a', capabilities: %i[completion], health: { status: 'healthy', latency_ms: 150 } }]
+      )
+
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
+      expect(Legion::LLM::Router.health_tracker).to receive(:report).with(
+        hash_including(signal: :success)
+      )
+      expect(Legion::LLM::Router.health_tracker).to receive(:report).with(
+        hash_including(signal: :latency, value: 150)
+      )
+
+      described_class.send(:fetch_offering_models, entry)
+    end
+  end
+
+  describe 'loaded_model_bonus reachability' do
+    before do
+      Legion::LLM::Router.reset!
+      allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
+      allow(described_class).to receive(:model_available?).and_return(true)
+      allow(described_class).to receive(:model_size).and_return(nil)
+      allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
+    end
+
+    it 'gives loaded models a scoring bonus in generated rules' do
+      discovered = {
+        ollama: {
+          local: {
+            models:       [
+              { name: 'qwen3:7b', capabilities: %i[completion streaming tools], loaded: true },
+              { name: 'llama3:8b', capabilities: %i[completion streaming tools], loaded: false }
+            ],
+            capabilities: %i[completion streaming tools]
+          }
+        }
+      }
+
+      rules = Legion::LLM::Discovery::RuleGenerator.generate(discovered)
+      qwen_rule = rules.find { |r| r[:name].include?('qwen3:7b') && r[:when][:operation] == :chat }
+      llama_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:operation] == :chat }
+
+      expect(qwen_rule[:then][:loaded]).to be(true)
+      expect(llama_rule[:then][:loaded]).to be(false)
+    end
+  end
+
+  describe 'capability_sources preservation' do
+    it 'preserves capability_sources from offerings in discovered model entries' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{
+          id:                 'test-model',
+          capabilities:       %i[completion streaming tools],
+          capability_sources: {
+            streaming: { value: true, source: :instance_override },
+            tools:     { value: true, source: :instance_override }
+          }
+        }]
+      )
+
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:capability_sources]).to eq(
+        streaming: { value: true, source: :instance_override },
+        tools:     { value: true, source: :instance_override }
+      )
+    end
+
+    it 'does not blindly merge registry metadata capabilities when offering has capability_sources' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{
+          id:                 'restricted-model',
+          capabilities:       %i[completion],
+          capability_sources: {
+            tools:     { value: false, source: :default_false },
+            streaming: { value: false, source: :default_false }
+          }
+        }]
+      )
+
+      # Registry metadata claims tools capability — must NOT override the offering
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter,
+                metadata: { capabilities: %i[completion streaming tools] } }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:capabilities]).to eq(%i[completion])
+      expect(models.first[:capabilities]).not_to include(:tools)
+      expect(models.first[:capabilities]).not_to include(:streaming)
+    end
+
+    it 'accepts live offering tools: true from :instance_override source' do
+      adapter = instance_double('Adapter')
+      allow(adapter).to receive(:offerings).with(live: true).and_return(
+        [{
+          id:                 'tool-model',
+          capabilities:       %i[completion streaming tools],
+          capability_sources: {
+            tools: { value: true, source: :instance_override }
+          }
+        }]
+      )
+
+      entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
+      models = described_class.send(:fetch_offering_models, entry)
+
+      expect(models.first[:capabilities]).to include(:tools)
+    end
+
+    it 'includes capability_sources in normalize_model_for_rules output' do
+      model_entry = {
+        model:              'test-model',
+        provider:           :vllm,
+        instance:           :apollo,
+        capabilities:       %i[completion tools],
+        capability_sources: { tools: { value: true, source: :instance_override } }
+      }
+      result = described_class.send(:normalize_model_for_rules, model_entry)
+      expect(result['capability_sources']).to eq(tools: { value: true, source: :instance_override })
+    end
+  end
 end

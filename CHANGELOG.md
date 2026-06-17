@@ -1,5 +1,298 @@
 # Legion LLM Changelog
 
+## [0.13.0] - 2026-06-17
+
+Consolidated release. This single version bundles every change from `0.12.14` through `0.12.35`
+into one published release — the patch series was developed on a long-running branch and is shipped
+together as `0.13.0`. The per-patch entries below (`0.12.14`–`0.12.35`) remain the authoritative
+detail; this section summarizes the themes.
+
+### Highlights
+
+- **N × N routing with Inventory as the single source of truth** — `Inventory.offerings` is now the
+  one catalog (registration + liveness + health/circuit/denied); `Call::Registry`, `Discovery`, and
+  `HealthTracker` are feeders only. Routing, availability, and the executor read Inventory exclusively.
+  Cloud/frontier providers (Bedrock, Anthropic, OpenAI) are first-class routable and are no longer
+  shadowed by discovered local models.
+- **Canonical / execution-proxy translation boundary** — every request parses into `Canonical::Request`
+  and every response renders from canonical back to the caller's dialect; no passthrough, no
+  provider-name branching outside translators. Tool-loop linkage (OpenAI Responses
+  `function_call`/`function_call_output`, qwen single-tag synthesis), per-format tool-arg typing, and
+  prompt-cache `cache_control` preservation are aligned and asserted by the in-process matrix harness.
+- **Resilient multi-tier routing** — automatic escalation, mid-stream provider failover,
+  per-instance circuit breakers, multi-instance failover that exhausts a provider's own instances
+  before crossing providers, and account-scoped (credit/quota) errors that deprioritize the failing
+  instance instead of denying the model.
+- **Model-policy compliance** — `model_whitelist`/`model_blacklist` enforced at dispatch, fail-closed;
+  a policy-denied model is terminal (never escalated, never trips circuits). Requires `lex-llm >= 0.5.4`.
+- **Context curation, validated** — the Curator's deterministic strategies were validated against
+  ground-truth wire payloads (86.8% context reduction across 29 turns).
+- **G14 router decomposition** — `Router::Candidates` and `Router::RegistryLookup` extracted from the
+  router (1030 → 694 lines) with no behavior change.
+- **CI / observability** — RSpec and RuboCop dependency pins corrected (`lex-llm >= 0.5.4`,
+  `rubocop-legion >= 0.1.8`); discovery model-divergence warning made tolerant of versioned families.
+
+### Fixed
+
+- **A legacy `:capability` routing-intent key no longer bricks routing.** The `:capability`
+  dimension was renamed to `:operation` + `:effort`, but three paths (`Router#normalize_intent`,
+  `Inference::Request.default_auto_routing_intent`, and the executor's `routing_intent_for_request`)
+  *raised* `ArgumentError` whenever the key was present — so any install whose on-disk
+  `default_intent` still carried the pre-rename `{ capability: 'moderate' }` default hit an error on
+  **every** request. The key is now tolerated (ignored) wherever it appears; `:operation`/`:effort`
+  are what's read.
+
+### Docs
+
+- README rewritten with an N × N overview, the execution-proxy contract, and a validated
+  context-curation showcase. `CLAUDE.md` trimmed to the high-value invariants and gotchas; `AGENTS.md`
+  refreshed with current entry points and guardrails.
+
+## [0.12.35] - 2026-06-17
+
+### Fixed
+
+- **Explicit provider failover exhausts all of the provider's instances first** — an explicit `X-Legion-Provider` hint only prepended the provider's first registered instance to the escalation chain, so a failing instance (e.g. one account hitting a provider error) failed straight over to a *different* provider, skipping the provider's other configured instances. `prepend_hinted_provider` now prepends every registered instance of the hinted provider (registry order), so failover stays within the provider — across all its accounts/instances — before ever crossing to another provider. The fallback-chain builders (`build_fallback_resolutions`, `enabled_provider_chain`) also source a sibling instance's model from `Inventory` when it has no configured registry default (e.g. a whitelist-restricted instance whose policy-aware default resolved to `nil`), so such siblings are no longer dropped from the chain.
+- **Native offerings attributed to the registry instance, not a generic default** — `Inventory#native_provider_offerings` honored the adapter's self-reported instance (often a generic `default`, because the adapter is not told its registration name) over the authoritative registry instance Inventory was enumerating. That collapsed multiple configured instances of a cloud provider into a single `default` offering. The registry instance now wins, so each configured instance appears as its own offering.
+- **Account-scoped errors fail over to a sibling instance and deprioritize the failing one** — the escalation loop's generic provider-error handler called `skip_all_provider_model_instances!`, marking *every* instance of the failing provider+model as tried, and reported a provider-health failure that opened the instance's circuit. So a credit-balance error on one account (`anthropic` instance A) skipped the *other* account (instance B, same model) and crossed to a different provider — making the outcome depend on instance order. Account/instance-scoped errors (credit balance, payment, quota) now (a) skip only the failing instance so failover walks the provider's sibling instances first, and (b) **deprioritize** the failing instance by tripping *its* per-instance circuit (immediate, since the condition is deterministic) without `deny_model` and without penalizing the provider globally — so future requests prefer the healthy sibling and the circuit's cooldown→half_open re-probe auto-recovers the instance once topped up. Model-intrinsic errors still skip all instances of the model to preserve the attempt budget.
+- **Fleet lane renders the instance label, not rejects it** — an `instance_id` is a trusted operator label on the internal (datacenter-hosted) `Legion::Transport` RabbitMQ, not secret material, so `Fleet::Lane.offering_key` now *sanitizes* it (`Fleet::Lane.label_segment`) rather than rejecting any label containing a credential-ish word (e.g. an instance named `env_bearer`). The credential denylist still applies to genuinely untrusted values (`boundary`, eligibility facts). `Inventory#add_fleet_lane` also no longer lets a malformed (empty/over-length) label break offering construction — the offering builds without a fleet lane. Previously a credential-word instance name raised `ArgumentError` mid-build and made that instance unroutable.
+
+## [0.12.34] - 2026-06-17
+
+### Fixed
+
+- **Never dispatch a model the provider doesn't offer** — routing could pair an explicit provider with a foreign/stale model (observed: `anthropic` + `qwen3.6-27b`, which Anthropic never offered). Two sources closed: (1) `Router#explicit_resolution` now sources the model from `Inventory` (the SSOT, already whitelist/blacklist-filtered) before any stale registry/tier default, so an explicit provider resolves to a model it actually offers; (2) the executor's no-model fallback no longer drops the global `default_model` onto an unrelated provider — a resolved provider gets *its own* catalog model, and the global default applies only when no provider resolved (or it belongs to the resolved provider).
+- **Availability enforces the live catalog for every provider** — the Inventory model-existence gate previously exempted cloud/frontier providers; it now applies to all of them. A `(provider, model)` the catalog doesn't list is rejected (`:model_not_offered`), so a foreign or policy-excluded model can never reach dispatch. Empty/nil catalogs stay permissive (cold-boot safe).
+
+## [0.12.33] - 2026-06-17
+
+### Added
+
+- **Daemon-side model-policy enforcement (compliance)** — `Call::Dispatch.call` now refuses to dispatch a model excluded by a provider's `model_whitelist`/`model_blacklist`, failing closed with the new terminal `Legion::LLM::ModelNotAllowed` error before the provider call (the provider enforces the same policy as a backstop). Provider-raised `lex-llm` `ModelNotAllowedError` is mapped to the same type.
+
+### Fixed
+
+- **A policy-denied model is not an escalation** — both escalation paths (`Inference::Executor#run_escalation_resolution` and `Inference.chat_with_escalation`) now treat `ModelNotAllowed` as terminal: it is re-raised immediately rather than escalated to the next model, and it does not record a health failure, trip a circuit breaker, or deny-record the model. `ModelNotAllowed` is non-retryable.
+
+## [0.12.32] - 2026-06-16
+
+### Fixed
+
+- **Discovery model-divergence false positives** — The divergence warning now treats a configured default as present when a discovered id is a versioned family member of it (e.g. `anthropic.claude-sonnet-4` matches `anthropic.claude-sonnet-4-6`), instead of requiring an exact string or Ollama-style `:` tag. Multi-model cloud providers (Bedrock lists ~90 models) no longer warn on every boot. The warning also reports `discovered_count` and truncates the id list to a sample, so a divergence no longer dumps the full catalog into a single log line.
+
+## [0.12.31] - 2026-06-16
+
+### Changed
+
+- **lex-llm dependency** — Require `lex-llm >= 0.5.3`, the first published release carrying the `Legion::Extensions::Llm::Canonical` types the native dispatch path depends on. Resolves CI `NameError: uninitialized constant Legion::Extensions::Llm::Canonical` when the published gem (rather than a local checkout) is resolved.
+
+### Build
+
+- **RuboCop tooling** — Track `rubocop-legion` main until `0.1.8` (which ships the four `Legion/Framework` N×N guard cops referenced by `.rubocop.yml`, including `NoShapeDuckTyping`) is published; the published `0.1.7` predates those cops.
+
+## [0.12.30] - 2026-06-16
+
+### Fixed
+
+- **Legion routing header precedence** — Client translators now ignore protocol body `model` values for Legion routing and route only from `X-Legion-Provider`, `X-Legion-Model`, `X-Legion-Instance`, and `X-Legion-Tier` preferences.
+- **LegionIO alias routing** — The internal `legionio` model alias no longer erases existing provider, instance, or tier routing preferences when normalizing inference requests.
+- **Routing preference scoring** — Router hint matches now carry a dominant preference bonus without filtering fallback candidates, so `X-Legion-*` headers bias routing strongly while preserving normal fallback behavior.
+
+## [0.12.29] - 2026-06-16
+
+### Fixed
+
+- **Canonical content-block rendering** — Claude Messages and OpenAI Chat responses now unwrap canonical content blocks before client formatting, preventing Ruby object inspect strings from crossing HTTP response boundaries.
+- **OpenAI Chat server tool visibility** — Mixed LegionIO-executed tool failures and client passthrough tool calls now render the server tool result in assistant content while leaving only client tools actionable.
+
+## [0.12.28] - 2026-06-16
+
+### Fixed
+
+- **Canonical tool-loop result propagation** — Native tool loops now attach LegionIO-executed tool results to immutable canonical `ToolCall` objects without Hash mutation, preserving server-resolved source/result state alongside client passthrough tool calls for `/v1/responses`.
+- **Tool error result preservation** — Dispatcher failure details now survive native tool result content rendering so failed LegionIO-executed tools surface useful server-side tool output instead of `{}`.
+
+## [0.12.27] - 2026-06-16
+
+### Fixed
+
+- **Context-window escalation** — Provider-wrapped maximum-context-length errors now classify as `ContextOverflow` even when a provider gem reports them as a generic server/provider error, allowing escalation to skip same-tier candidates and seek a larger-context model.
+
+## [0.12.26] - 2026-06-16
+
+### Fixed
+
+- **Legion tool failure diagnostics** — Tool dispatch failure logs now use configurable `llm.tool_error_log_chars` with a 500-character default and prefer structured runtime failure details (`exit_status`, error line, output tail) over generated command prefixes.
+- **Legion-executed tool wording** — Native tool-loop logs now report `legion_executed_tools` and `all_legion_executed_tools_failed`, avoiding ambiguous server/client terminology while preserving client wire protocols.
+
+## [0.12.25] - 2026-06-16
+
+### Fixed
+
+- **Codex Responses rendering** — `/v1/responses` now unwraps canonical content-block arrays into plain `output_text` strings for both non-streaming responses and streaming fallback finalization, preventing Ruby object inspect strings from leaking into Codex.
+
+## [0.12.24] - 2026-06-16
+
+### Fixed
+
+- **Codex Responses routing** — `/v1/responses` no longer performs a provider-capability shortcut before routing. Codex requests always run through the router first, then dispatch via upstream Responses only when the resolved provider supports it.
+- **Responses escalation dispatch** — Escalation attempts for Responses-origin requests now use upstream Responses for capable providers and fall back to the normal routed chat/stream path for providers without Responses support.
+- **Escalation visibility** — Non-primary escalation attempts now log at `WARN` and include previous failure context so actual failover is visible in live logs. Primary attempts remain `INFO`.
+
+## [0.12.23] - 2026-06-16
+
+### Fixed
+
+- **Streaming escalation failover** — Provider switch notifications now build `Legion::LLM::Router::Resolution` with the fully-qualified namespace, preventing `NameError` after the first streaming attempt fails.
+- **Auth failure health handling** — Authentication and provider configuration failures now deny the affected provider instance/model and immediately trip that instance circuit instead of waiting for normal error-threshold health decay.
+- **Final context preflight** — Direct and Responses dispatch now re-estimate the final provider payload after system enrichment, tool definitions, tool preferences, and thinking options are materialized, raising `ContextOverflow` before submitting an oversized request to the provider.
+- **Failed attempt metering** — Escalation attempt metering events now include `status`, `error`, and `provider_submitted` fields so submitted failed calls can be audited without looking like successful zero-token completions.
+
+## [0.12.22] - 2026-06-16
+
+### Added
+
+- **Context token accounting** — `llm_message_inference_metrics` is now the canonical source of truth for all pipeline context token metrics. Every inference request emits a normalized `context_accounting` payload with per-component token estimates covering: loaded history, curated history, curation savings, thinking strip savings, archive savings, context-window enforcement savings, RAG injection, system/baseline prompt, tool definitions, and final estimated context size.
+- **`Inference::ContextAccounting` module** — Deterministic char/4 estimator with structured event builder for pipeline instrumentation.
+- **Executor instrumentation** — `step_context_load` records loaded/curated/archived history tokens; `ContextWindow` records thinking-strip and context-window enforcement savings; `RagContext` records RAG injection tokens; `ToolInjection` records tool definition payload tokens; system/baseline enrichment tokens recorded at dispatch.
+- **Provider reconciliation** — Finalized accounting includes a reconciliation block comparing estimated input tokens against provider-reported input tokens with delta.
+- **Metering event enrichment** — `Steps::Metering.build_event` carries the `context_accounting` payload for downstream ledger persistence.
+- **Audit event enrichment** — `AuditPublisher.build_event` exposes `context_accounting` as a top-level key for ledger writer convenience.
+- **Component status tracking** — Each accounting-producing pipeline step sets its component status (`:observed`, `:not_observed`, `:profile_skipped`) so zero-valued columns are distinguishable from skipped steps.
+
+## [0.12.21] - 2026-06-15
+
+### Added
+
+- **Capability source metadata** — Discovery, rule generation, and availability logs now carry per-capability source tags (`:model_override`, `:instance_override`, `:provider_override`, `:model_metadata`, `:provider_catalog`, `:probe`, `:provider_envelope`, `:default_false`).
+- **Conservative router hard gates** — Empty or unconfirmed capability data no longer passes `required_capabilities` checks. Absent means false.
+- **Source-aware cold boot** — During `:unknown` discovery status, capabilities must be explicitly confirmed by settings overrides or explicit metadata to satisfy hard gates.
+- **Typed routing errors** — `RoutingTooEarly` (425) when discovery not authoritative; `RoutingFailedDependency` (424) when no candidate satisfies hard gates. Replaces generic `EscalationExhausted` for routing-policy failures.
+- **Instance resolution enforcement** — `nil` instance on a resolution returns `:instance_unresolved` rejection.
+- **Diagnostic logging** — Missing-capability rejections include `sources=thinking:default_false` detail for operator visibility.
+- **Discovery schema v3** — `DISCOVERED_MODELS_SCHEMA_VERSION` bumped to invalidate cached entries lacking `capability_sources`.
+- **Rule generator source awareness** — Generated rules only include capabilities confirmed by source-tagged offering truth; stale registry metadata no longer blindly merged.
+- **Operator contract documentation** — `docs/work/planning/2026-06-15-capability-source-operator-contract.md`.
+
+### Fixed
+
+- Discovery no longer merges stale registry metadata capabilities over live offering data when offerings carry `capability_sources`.
+- Tool trigger matching strips `<system-reminder>...</system-reminder>` blocks from its scan text without mutating request history, preventing startup/handoff prompts from triggering broad tool injection.
+
+## [0.12.20] - 2026-06-15
+
+### Breaking
+
+- Routing intent key `:capability` removed; use `:operation` and `:effort`. Supplying `capability:` raises `ArgumentError`.
+- Settings `default_intent` must use `effort:`/`operation:` instead of `capability:`.
+
+### Added
+
+- Routing intent separates `effort` (soft preference), `operation` (hard filter), and `required_capabilities` (hard filter).
+- Effort levels: `:low`, `:moderate`, `:high`, `:reasoning`. `:medium` normalizes to `:moderate`.
+- Thinking is a hard capability only when explicitly requested via thinking config.
+- Router chains reject stale registry defaults not present in live discovered offerings.
+- Discovery status policy: `:unknown` permissive, `:ok` authoritative, `:empty` rejects, `:unreachable`/`:error` rejects.
+- `Discovery::DISCOVERED_MODELS_SCHEMA_VERSION` and `Cache::RESPONSE_CACHE_SCHEMA_VERSION` invalidate stale payloads.
+- Multi-instance provider routing: same provider with different instances carries distinct capabilities and availability.
+- `Inventory.invalidate_offerings_cache!` public method for discovery refresh actors.
+- Per-offering health bridging: discovery reports `:success`, `:error`, `:latency` to `Router.health_tracker`.
+- Discovered model entries include `health` and `loaded` fields from live offerings.
+- `loaded_model_bonus` scoring (+5) for models confirmed running by provider.
+- `resolve.no_rules_matched` warning includes rejection trace breakdown.
+- `missing_capability` availability log includes required and available capabilities.
+- Determinism and regression spec coverage (`spec/legion/llm/router/determinism_spec.rb`, `multi_instance_spec.rb`).
+
+### Fixed
+
+- vLLM live catalog IDs honored before dispatch; stale `qwen3.6-27b` rejected when only `legion-code-27b-v1` is offered.
+- `enabled_provider_chain` includes all registered instances, not just first per provider family.
+- `chain_from_defaults` primary resolution carries registered instance.
+- `chain_from_intent` dedup includes instance (same-model/different-instance preserved).
+- `build_fallback_resolutions` preserves instance directly.
+- Last-resort fallback resolutions filtered through live availability.
+- `enterprise_privacy_spec` order-dependency fixed.
+
+### Removed
+
+- `Discovery::System.memory_pressure?` (confirmed dead, no production callers).
+
+## [0.12.19] - 2026-06-12
+
+### Fixed
+- **Request-payload errors no longer deny models or trip circuit breakers** — `ValidationException` for malformed tool schemas (e.g., `tools.16.custom.input_schema.type: Field required`) is now classified as a request-payload error, not a provider config error. Models are no longer permanently denied for client-side schema bugs. (lib/legion/llm/inference/executor/escalation.rb)
+- **HealthTracker honors signal value and logs honestly** — Error handler now uses `payload[:value]` (default 1.0) instead of always incrementing by 1. Already-open circuits no longer re-log fake `closed→open` transitions. (lib/legion/llm/router/health_tracker.rb)
+- **Health keying consistency** — All `health_tracker.report` calls now include `instance:` from the resolution, ensuring discovery/escalation/post-request signals accumulate on the same provider/instance key. (lib/legion/llm/inference.rb, lib/legion/llm/inference/executor/escalation.rb)
+- **Discovery unreachable trips circuit immediately** — Connection failures during discovery now call `trip_circuit` instead of a `value: 1` report. A boot-time unreachable vLLM is marked `:open` without requiring 3 separate failures. (lib/legion/llm/discovery.rb)
+- **Tool schema normalization at canonical boundary** — `Canonical::ToolDefinition.normalize_parameters` guarantees every tool schema has a valid top-level `type`. Prevents Bedrock `tools.16.custom.input_schema.type: Field required` rejections. (lex-llm, legion-llm types/tool_definition.rb)
+- **Anthropic translator double-wrap eliminated** — `render_tools` no longer wraps the full JSON schema inside `{type: 'object', properties: schema}`. Passes canonical schemas through directly. (lex-llm-anthropic translator.rb, provider.rb)
+- **Provider tool renderers accept canonical ToolDefinition objects** — All provider gems (Gemini, Ollama, Vertex, vLLM, OpenAI-compatible) now use `ToolSchema.extract` instead of calling `tool.params_schema` directly. (lex-llm, lex-llm-gemini, lex-llm-ollama, lex-llm-vertex)
+- **Discovery unreachable propagates to legion-llm** — `discover_offerings(raise_on_unreachable: true)` raises transport failures instead of swallowing into `[]`. (lex-llm provider.rb, legion-llm lex_llm_adapter.rb)
+
+### Added
+- **Router::Availability oracle** — Single availability filter for routing and escalation. Checks circuit state, denied models, discovery status, context length, and required capabilities before building escalation chains. (lib/legion/llm/router/availability.rb)
+- **Legion::LLM::Capabilities module** — Normalized capability alias handling (`:function_calling` → `:tools`, `:stream` → `:streaming`). Shared across Router, Discovery, RuleGenerator. (lib/legion/llm/capabilities.rb)
+- **Escalation loop circuit guard** — Open circuits are skipped in the escalation loop (`:half_open` allowed as recovery probe). Empty chains raise `EscalationExhausted` immediately without opening sockets. (lib/legion/llm/inference/executor/escalation.rb)
+- **G6 streaming failover hooks** — `StreamAssembler` gains `provider_failed`/`provider_switched`/`safe_replay_snapshot` observer hooks. All client emitters gain `on_tool_call_abort`. Executor accepts `stream_observer:` kwarg. (lib/legion/llm/api/stream_assembler.rb, client_translators/*)
+- **Canonical::ToolSchema extractor** — Shared tool schema extraction regardless of input shape (ToolDefinition, Hash, legacy tool). (lex-llm canonical/tool_schema.rb)
+- **Provider contract strengthened** — `discover_offerings` requires `raise_on_unreachable:` parameter. Providers must accept canonical `ToolDefinition` objects. (lex-llm provider_contract.rb)
+
+### Removed
+- **Legacy non-stateful fallback path** — `try_fallback_or_raise`, `find_fallback_provider`, `fallback_local_providers?` deleted. One provider-switching mechanism: stateful escalation through `Router::EscalationChain`. (lib/legion/llm/inference/executor/routing.rb)
+
+### Changed
+- **Settings defaults** — `escalation.enabled: true`, `gaia.advisory_enabled: true`, `context_curation.thinking_eviction: true`, `context_curation.exchange_folding: true`, `streaming.emit_thinking_blocks: true`, `discovery.trip_circuit_on_unreachable: true`, `escalation.skip_open_circuits: true`.
+- **Provider capabilities include `:tools`** — All tool-capable providers now emit canonical `:tools` in capability metadata alongside aliases. (lex-llm-openai, lex-llm-gemini, lex-llm-vertex, lex-llm-bedrock, lex-llm-azure-foundry, lex-llm-ollama)
+
+## [0.12.18] - 2026-06-12
+
+### Fixed
+- **Anthropic `tool_use.input` regression — must be Object, not JSON string** — The P6 SharedExtractors dedup folded `serialize_args` into a single uniform helper that always returned a JSON string. The two client wire formats are incompatible: Anthropic `/v1/messages` REQUIRES `tool_use.input` (and `server_tool_use.input`) to be an Object; OpenAI `/v1/responses` and `/v1/chat/completions` REQUIRE `function_call.arguments` to be a JSON String. Replaced the uniform helper with two explicit per-format helpers — `args_as_object` (Anthropic) and `args_as_json_string` (OpenAI). Both helpers also defensively coerce degraded provider output (e.g. `1.01` numeric or unparsed JSON string from a qwen3.6-27b run that fell back to plain content) to the format-correct shape — `{}` for Anthropic, `"{}"` for OpenAI — rather than letting an off-spec value reach the wire. Live evidence: `legionio-e2e/results/claude/vllm_multi_turn_*` showed `"input": 1.01` against an Anthropic spec demanding an Object. Sibling check: G24 `server_tool_use.input` (Anthropic) and server `function_call.arguments` (Responses + chat completions) all use the per-format helper. (lib/legion/llm/api/client_translators/{shared_extractors,anthropic_messages,openai_chat,openai_responses}.rb)
+
+### Added
+- **Matrix harness oracle: `tool_args_typing_matrix_spec.rb`** — Asserts `tool_use.input is Hash` for Anthropic and `function_call.arguments is String` for OpenAI Responses + chat completions, on three input shapes (normal Hash args, degraded numeric, G24 server-tool block). Verified to fail with the exact regression signature ("got Float: 1.01") when the per-format coercion is reverted. Closes the assertion gap that let 3056 specs pass while the regression shipped to live e2e. (spec/legion/llm/api/matrix/tool_args_typing_matrix_spec.rb, spec/support/fake_provider.rb new `:tool_degraded_args` scenario)
+
+## [0.12.17] - 2026-06-12
+
+### Deprecated
+- **Legacy flat API tree under `lib/legion/llm/api/{anthropic,openai,native}/`** — The flat-file route tree is deprecated. `llm.api.use_namespaces` defaults to `true`; setting it to `false` continues to register the legacy chain but now logs a deprecation warning at registration time. The legacy tree (`api/anthropic/messages.rb`, `api/openai/{chat_completions,embeddings,models,responses}.rb`, `api/native/*.rb` flat files) and the `register_legacy` dispatcher will be **deleted in the next minor release**. All routing is consolidated under `api/namespaces/` and the new `api/client_translators/` + `api/stream_assembler.rb` (P5). (lib/legion/llm/api.rb)
+- **`Legion::LLM::Inference.ask_direct` is a deprecated shim** — Previously routed through `chat_direct_raw`, an ungoverned path that bypassed metering/audit. Now routes through the governed pipeline via `chat_direct` and emits a `Deprecation.warn_once` warning. Same compliance gap closure as the `chat_direct`/`embed_direct`/`structured_direct` deprecation in 0.12.16. Use `Legion::LLM.ask` instead. (lib/legion/llm/inference.rb)
+
+### Removed
+- **Absorbed translator shims** — `lib/legion/llm/api/translators/{anthropic,openai}_{request,response}.rb`, `Legion::LLM::Call::NativeResponseAdapter`, and the per-route thinking/token/tool-call extractor duplicates absorbed by `api/client_translators/` and `api/stream_assembler.rb` are removed.
+
+### Added
+- **rubocop-legion guard cops adopted** — Repo-wide enable for `Legion/Framework/NoUnderscorePrefixedKwargs` (G13), `Legion/Framework/NoInlineSettingDefaults` (G13), and `Legion/Framework/NoDirectDispatch` (G16). `Legion/Framework/NoShapeDuckTyping` (R10) enabled scoped to `lib/legion/llm/api/**` and `lib/legion/llm/inference/**`. (.rubocop.yml, Gemfile)
+- **CLAUDE.md "LLM Routing Invariants" section (G2)** — Public-safe invariant set: execution-proxy contract (LegionIO tools look server-side to clients, client-side to providers), always-translate (never passthrough), no provider-name conditionals outside translators, thinking never crosses providers, mid-stream failover required, every pipeline exit emits ledger events, the canary prompt.
+- **RuleGenerator merges instance-level capabilities into chat rules** — Auto-generated chat rules now carry the provider's instance-level `:tools`/`:streaming`/`:vision` capabilities (e.g. lex-llm-vllm declares `capabilities: %i[completion streaming vision tools]` on its DEFAULT_INSTANCE_TIER) when the per-model offerings hash only surfaces `[:completion]`. Without this, the router logged `resolve.no_rules_matched required_capabilities=[:tools]` on every tool request and fell through to the default-provider chain. `Discovery.discovered_instances` threads `Call::Registry` instance metadata into the grouped instance hash; `RuleGenerator.merged_capabilities` unions per-model and instance-level caps. (lib/legion/llm/discovery.rb, lib/legion/llm/discovery/rule_generator.rb)
+- **B3 OpenAI Responses reasoning summary opt-in** — `OpenAIResponses#ensure_reasoning_summary` defaults `reasoning.summary` to `'auto'` when the caller asked for reasoning (effort set) but didn't pin a summary mode. OpenAI's `/v1/responses` lane omits reasoning content otherwise, which left codex→openai cells returning only the message item with no reasoning. (lib/legion/llm/api/client_translators/openai_responses.rb, lib/legion/llm/api/namespaces/openai/responses.rb)
+- **Matrix harness regression encoding** — `spec/legion/llm/api/matrix/tool_injection_matrix_spec.rb` asserts that registered LegionIO tools reach the upstream provider's `tools:` kwarg on all three client formats. The cell that previously surfaced this failure live (claude/vllm legionio_tool_injection answering "There is no tool") now fails offline with a deterministic FakeProvider when injection drops out.
+
+### Changed
+- **`Legion::LLM::Router` signature cleanup** — Removed unused `**_opts` swallow-splats from `resolve`, `resolve_chain`, `select_candidates`, `chain_from_intent` (no callers passed extra kwargs).
+- **`routing.last_resort_{model,provider}` settings** — Replace inline `'claude-sonnet-4-6'`/`:anthropic` defaults in the router's last-resort fallback chain.
+- **`telemetry.unknown_model_tag` setting** — Replaces the inline `'unknown'` default in OpenInference span tagging.
+
+## [0.12.16] - 2026-06-11
+
+### Deprecated
+- **`chat_direct`, `embed_direct`, `structured_direct` are deprecated shims** — These methods previously bypassed the Inference pipeline (no metering/audit). They are now rerouted through the governed pipeline using a `:system` caller profile that skips governance steps but preserves metering and audit emission. Use `Legion::LLM.chat`, `Legion::LLM.embed`, and `Legion::LLM.structured` instead. The deprecated names will be removed in the next major version. (lib/legion/llm/inference.rb, lib/legion/llm.rb, lib/legion/llm/deprecation.rb)
+
+### Changed
+- **scheduling/batch.rb uses governed pipeline** — `Batch.submit_single` now calls `Legion::LLM.chat` with a `:system` caller identity instead of `chat_direct`, ensuring batched requests are metered (lib/legion/llm/scheduling/batch.rb)
+- **inference/steps/debate.rb uses governed pipeline** — Debate role calls now use `Legion::LLM.chat` with a `:system` caller identity instead of `chat_direct`, ensuring debate invocations are metered (lib/legion/llm/inference/steps/debate.rb)
+
+### Added
+- **Deprecation helper** — `Legion::LLM::Deprecation.warn_once` emits a single `log.warn` per process per method name, thread-safe via Mutex (lib/legion/llm/deprecation.rb)
+- **Recursion guard in Executor** — `Thread.current[:legion_llm_in_pipeline]` prevents infinite loops when pipeline steps internally call `chat_direct` (lib/legion/llm/inference/executor.rb)
+
+## [0.12.15] - 2026-06-10
+
+### Fixed
+- **Async post-step race condition in test suite** — Disabled `pipeline_async_post_steps` in spec_helper's global `before(:each)` to prevent `ASYNC_THREAD_POOL` from racing with `Settings.reset!` between examples, which caused 4 intermittent `NoMethodError: undefined method '[]' for nil` failures in executor_stream_spec and pre_rollout_integration_spec (spec_helper.rb)
+- **knowledge_capture_spec missing build_response** — Added minimal `build_response` to the test harness klass so `current_response` (from PostResponse) can construct a Response object instead of silently failing, which caused the ingest assertion to never fire (steps/knowledge_capture_spec.rb)
+- **executor_async_spec stale stub target** — Fixed string-keyed async test that stubbed `Legion::LLM.settings` (unused by production code) instead of setting `Legion::Settings[:llm][:pipeline_async_post_steps]` directly (executor_async_spec.rb)
+
 ## [0.12.14] - 2026-06-10
 
 ### Added

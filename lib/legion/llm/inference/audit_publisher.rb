@@ -2,6 +2,7 @@
 
 require 'digest'
 require 'legion/logging/helper'
+require_relative '../content_hash'
 require_relative '../publisher_identity'
 module Legion
   module LLM
@@ -54,8 +55,21 @@ module Legion
           event[:message_id] = msg_id if msg_id
           event[:task_id] = msg_task_id || (request.respond_to?(:task_id) ? request.task_id : nil)
           event[:message_conversation_id] = msg_conversation_id if msg_conversation_id
+
+          # Ledger column sources (official_record_writer reads these keys directly).
+          routing = response.routing.is_a?(Hash) ? response.routing : {}
+          event[:finish_reason] = finish_reason_value(response)
+          event[:provider_instance] = hash_value(routing, :instance)
+          event[:dispatch_path] = hash_value(routing, :tier)
+          event[:latency_ms] = hash_value(routing, :latency_ms)
+          event[:route_attempts] = Array(hash_value(routing, :route_attempts)).size
+          event[:route_attempt_details] = hash_value(routing, :route_attempts) if hash_value(routing, :route_attempts)
+          event[:escalation_chain] = hash_value(routing, :escalation_chain) if hash_value(routing, :escalation_chain)
+          event[:request_content_hash] = content_hash(request.messages)
+          event[:response_content_hash] = content_hash(msg_content)
           provider_metrics = extract_provider_metrics(provider_payload)
           event[:provider_metrics] = provider_metrics if provider_metrics.any?
+          event[:context_accounting] = hash_value(audit_data, :context_accounting) if hash_value(audit_data, :context_accounting)
           event[:agent_id] = request.agent_id if request.respond_to?(:agent_id) && request.agent_id
           event[:node_id] = Legion::LLM.node_id if Legion::LLM.respond_to?(:node_id) && Legion::LLM.node_id
           event.compact
@@ -69,6 +83,17 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn)
           nil
+        end
+
+        def finish_reason_value(response)
+          stop = response.respond_to?(:stop) ? response.stop : nil
+          return hash_value(stop, :reason) if stop.is_a?(Hash)
+
+          stop&.to_s
+        end
+
+        def content_hash(content)
+          Legion::LLM::ContentHash.call(content)
         end
 
         def extract_identity(caller_data)

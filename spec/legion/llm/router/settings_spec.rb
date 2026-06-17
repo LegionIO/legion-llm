@@ -71,9 +71,14 @@ RSpec.describe Legion::LLM::Settings do
         expect(intent[:privacy]).to eq('normal')
       end
 
-      it 'has a capability dimension' do
-        expect(intent).to have_key(:capability)
-        expect(intent[:capability]).to eq('moderate')
+      it 'has an effort dimension' do
+        expect(intent).to have_key(:effort)
+        expect(intent[:effort]).to eq('moderate')
+      end
+
+      it 'has an operation dimension' do
+        expect(intent).to have_key(:operation)
+        expect(intent[:operation]).to eq('chat')
       end
 
       it 'has a cost dimension' do
@@ -170,9 +175,10 @@ RSpec.describe Legion::LLM::Settings do
     it 'includes escalation settings in routing defaults' do
       routing = Legion::LLM::Settings.routing_defaults
       expect(routing[:escalation]).to be_a(Hash)
-      expect(routing[:escalation][:enabled]).to be false
+      expect(routing[:escalation][:enabled]).to be true
       expect(routing[:escalation][:max_attempts]).to eq(3)
       expect(routing[:escalation][:quality_threshold]).to eq(0)
+      expect(routing[:escalation][:skip_open_circuits]).to be true
     end
   end
 

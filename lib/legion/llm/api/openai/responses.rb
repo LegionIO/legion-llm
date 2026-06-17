@@ -355,7 +355,7 @@ module Legion
           end
 
           def self.call_streaming_executor(executor, upstream_body: nil, &)
-            if upstream_body && executor.respond_to?(:call_responses)
+            if executor.respond_to?(:call_responses)
               executor.call_responses(body: upstream_body, stream: true, &)
             else
               executor.call_stream(&)

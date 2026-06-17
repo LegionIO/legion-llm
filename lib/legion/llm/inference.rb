@@ -3,6 +3,7 @@
 require 'legion/logging/helper'
 require_relative 'publisher_identity'
 require_relative 'metering/usage'
+require_relative 'inference/context_accounting'
 require_relative 'inference/request'
 require_relative 'inference/response'
 require_relative 'inference/profile'
@@ -124,10 +125,82 @@ module Legion
         raise
       end
 
+      # rubocop:disable Legion/Framework/NoDirectDispatch
+      # chat_direct is a deprecated shim per CHANGELOG 0.12.16 that routes
+      # through the governed pipeline; see Legion::LLM::Deprecation.warn_once.
       def chat_direct(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
-                      max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
+                      max_escalations: nil, quality_check: nil, message: nil, **, &)
+        Legion::LLM::Deprecation.warn_once(:chat_direct, replacement: 'Legion::LLM.chat')
+
+        if Thread.current[:legion_llm_in_pipeline] || !pipeline_enabled? || !message
+          return chat_direct_raw(model: model, provider: provider, intent: intent, tier: tier,
+                                 escalate: escalate, max_escalations: max_escalations,
+                                 quality_check: quality_check, message: message, **, &)
+        end
+
+        chat_direct_governed(model: model, provider: provider, intent: intent, tier: tier,
+                             escalate: escalate, max_escalations: max_escalations,
+                             quality_check: quality_check, message: message, **, &)
+      end
+      # rubocop:enable Legion/Framework/NoDirectDispatch
+
+      def chat_direct_governed(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
+                               max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
         log.debug(
-          "[llm][inference] chat_direct.enter model=#{model} provider=#{provider} intent=#{intent} " \
+          "[llm][inference] chat_direct_governed.enter model=#{model} provider=#{provider} " \
+          "intent=#{intent} tier=#{tier} message_present=#{!message.nil?}"
+        )
+
+        assert_external_allowed! if effective_tier_is_external?(tier, provider)
+
+        caller_hash = kwargs.delete(:caller) || { requested_by: { type: :system, identity: 'legion:internal:chat_direct' } }
+        cache_opt = kwargs.delete(:cache) { true }
+        temperature = kwargs.delete(:temperature)
+        kwargs.delete(:urgency)
+
+        cache_key = build_cache_key(model, provider, message, temperature) if cacheable?(cache_opt, temperature, message)
+        if cache_key
+          cached = Cache.get(cache_key)
+          if cached
+            log.debug '[llm][inference] chat_direct_governed cache=hit'
+            cached_response = cached.dup
+            cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
+            return cached_response
+          end
+        end
+
+        resolved_provider = provider || Legion::Settings[:llm][:default_provider]
+        resolved_model = model || Legion::Settings[:llm][:default_model]
+
+        unless resolved_provider || resolved_model || (intent && Router.routing_enabled?)
+          log.debug '[llm][inference] chat_direct_governed.fallback_to_raw — no provider/model resolvable'
+          return chat_direct_raw(model: model, provider: provider, intent: intent, tier: tier,
+                                 escalate: escalate, max_escalations: max_escalations,
+                                 quality_check: quality_check, message: message,
+                                 caller: caller_hash, cache: cache_opt, temperature: temperature, **kwargs)
+        end
+
+        result = Prompt.dispatch(
+          message,
+          intent: intent, tier: tier, provider: provider, model: model,
+          escalate: escalate, max_escalations: max_escalations,
+          quality_check: quality_check, caller: caller_hash,
+          temperature: temperature, **kwargs.except(:messages)
+        )
+
+        if cache_key && result.is_a?(Hash)
+          ttl = Legion::Settings[:llm][:prompt_caching][:response_cache][:ttl_seconds]
+          Cache.set(cache_key, result, ttl: ttl)
+        end
+
+        log.debug("[llm][inference] chat_direct_governed.exit result_class=#{result.class}")
+        result
+      end
+
+      def chat_direct_raw(model: nil, provider: nil, intent: nil, tier: nil, escalate: nil,
+                          max_escalations: nil, quality_check: nil, message: nil, **kwargs, &)
+        log.debug(
+          "[llm][inference] chat_direct_raw.enter model=#{model} provider=#{provider} intent=#{intent} " \
           "tier=#{tier} escalate=#{escalate} message_present=#{!message.nil?} kwargs=#{kwargs.keys.sort}"
         )
         cache_opt = kwargs.delete(:cache) { true }
@@ -139,7 +212,7 @@ module Legion
         if cache_key
           cached = Cache.get(cache_key)
           if cached
-            log.debug '[llm][inference] chat_direct cache=hit'
+            log.debug '[llm][inference] chat_direct_raw cache=hit'
             cached_response = cached.dup
             cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
             return cached_response
@@ -151,7 +224,7 @@ module Legion
         return deferred if deferred
 
         log.debug(
-          "[llm][inference] chat_direct.dispatch model=#{model} provider=#{provider} " \
+          "[llm][inference] chat_direct_raw.dispatch model=#{model} provider=#{provider} " \
           "escalate=#{escalate} message_present=#{!message.nil?}"
         )
         result = if escalate && message
@@ -164,10 +237,10 @@ module Legion
                    chat_single(model: model, provider: provider, intent: intent, tier: tier,
                                temperature: temperature, message: message, **kwargs, &)
                  end
-        log.debug("[llm][inference] chat_direct.exit result_class=#{result.class} result_nil=#{result.nil?}")
+        log.debug("[llm][inference] chat_direct_raw.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
-          ttl = Legion::Settings.dig(:llm, :prompt_caching, :response_cache, :ttl_seconds) || Cache::DEFAULT_TTL
+          ttl = Legion::Settings[:llm][:prompt_caching][:response_cache][:ttl_seconds]
           Cache.set(cache_key, result, ttl: ttl)
         end
 
@@ -371,9 +444,9 @@ module Legion
           return blocked[:response] || blocked_hook_response(blocked) if blocked
         end
 
-        result = chat_direct(model: model, provider: provider, intent: intent, tier: tier,
-                             escalate: escalate, max_escalations: max_escalations,
-                             quality_check: quality_check, message: message, **kwargs)
+        result = chat_direct_raw(model: model, provider: provider, intent: intent, tier: tier,
+                                 escalate: escalate, max_escalations: max_escalations,
+                                 quality_check: quality_check, message: message, **kwargs)
 
         if defined?(Legion::LLM::Hooks)
           blocked = Legion::LLM::Hooks.run_after(response: result, messages: messages, model: resolved_model)
@@ -416,8 +489,17 @@ module Legion
         end
       end
 
+      # rubocop:disable Legion/Framework/NoDirectDispatch
+      # ask_direct is a deprecated shim. The previous body routed through
+      # `chat_direct_raw`, an ungoverned path that bypasses metering/audit
+      # — the same compliance gap that motivated the chat_direct/embed_direct/
+      # structured_direct deprecation in 0.12.16. It now routes through the
+      # governed pipeline via `chat_direct` and adapts the response to the
+      # legacy `{status:, response:, meta:}` shape ask() callers expect.
       def ask_direct(message:, model: nil, provider: nil, intent: nil, tier: nil, &)
+        Legion::LLM::Deprecation.warn_once(:ask_direct, replacement: 'Legion::LLM.ask')
         assert_external_allowed! if effective_tier_is_external?(tier, provider)
+
         result = chat_direct(
           model:    model,
           provider: provider,
@@ -426,6 +508,7 @@ module Legion
           message:  message,
           &
         )
+
         return result if result.is_a?(Hash) && result[:deferred]
         return normalize_ask_direct_hash(result, fallback_model: model || Legion::Settings[:llm][:default_model]) if result.is_a?(Hash)
 
@@ -442,6 +525,7 @@ module Legion
           }
         }
       end
+      # rubocop:enable Legion/Framework/NoDirectDispatch
 
       def direct_chat_session?(result)
         result.respond_to?(:ask) && result.respond_to?(:model) && !result.respond_to?(:content)
@@ -522,9 +606,8 @@ module Legion
                    Call::Dispatch.call(provider: provider, instance: instance, capability: :chat, model: model,
                                        messages: messages, **)
                  end
-        response = Call::NativeResponseAdapter.new(result)
-        emit_non_pipeline_metering(response, model: model, provider: provider, caller: caller)
-        response
+        emit_non_pipeline_metering(result, model: model, provider: provider, caller: caller)
+        result
       end
 
       def native_provider_error(operation)
@@ -603,7 +686,10 @@ module Legion
         history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
         log.debug "[llm][inference] chat_with_escalation quality_failure attempt=#{history.size} failures=#{result.failures}"
         [nil, nil]
-      rescue Legion::LLM::PrivacyModeError
+      rescue Legion::LLM::PrivacyModeError, Legion::LLM::ModelNotAllowed
+        # Terminal outcomes — privacy/policy, not provider failures. Re-raise without
+        # recording a health failure or walking the escalation chain (a policy-denied
+        # model is not an escalation).
         raise
       rescue StandardError => e
         duration_ms = ((Time.now - start_time) * 1000).round
@@ -654,6 +740,7 @@ module Legion
 
       def attach_escalation_history(response, history, resolution, chain)
         return unless response.respond_to?(:extend)
+        return if response.frozen?
 
         response.extend(EscalationHistory)
         history.each { |h| response.record_escalation_attempt(**h) }
@@ -666,9 +753,11 @@ module Legion
 
         metadata = { duration_ms: duration_ms }
         metadata[:failures] = failures if failures
-        Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+        Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
+                                     offering_id: resolution.offering_id,
                                      signal: signal, value: 1, metadata: metadata)
-        Router.health_tracker.report(provider: resolution.provider, offering_id: resolution.offering_id,
+        Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
+                                     offering_id: resolution.offering_id,
                                      signal: :latency, value: duration_ms, metadata: {})
       end
 

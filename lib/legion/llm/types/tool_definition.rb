@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'legion/extensions/llm/canonical/tool_definition'
+
 module Legion
   module LLM
     module Types
@@ -9,7 +11,7 @@ module Legion
           new(
             sanitize_tool_name(name),
             description.to_s,
-            parameters || {},
+            Legion::Extensions::Llm::Canonical::ToolDefinition.normalize_parameters(parameters),
             source || { type: :builtin }
           )
         end

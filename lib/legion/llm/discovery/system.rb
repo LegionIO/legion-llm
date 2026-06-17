@@ -18,14 +18,6 @@ module Legion
             @available_memory_mb
           end
 
-          def memory_pressure?
-            avail = available_memory_mb
-            return false if avail.nil?
-
-            floor = discovery_settings[:memory_floor_mb] || 2048
-            avail < floor
-          end
-
           def platform
             @platform ||= detect_platform
           end
@@ -132,7 +124,7 @@ module Legion
           def discovery_settings
             return {} unless Legion.const_defined?('Settings', false)
 
-            Legion::Settings[:llm][:discovery] || {}
+            Legion::Settings[:llm][:discovery]
           rescue StandardError => e
             handle_exception(e, level: :debug)
             {}

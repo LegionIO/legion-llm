@@ -8,6 +8,9 @@ RSpec.describe 'Pipeline streaming end-to-end' do
     Legion::Settings[:llm][:pipeline_async_post_steps] = false
     Legion::Settings[:llm][:default_provider] = :anthropic
     Legion::Settings[:llm][:default_model] = 'claude-opus-4-6'
+    Legion::Settings[:llm][:routing] ||= {}
+    Legion::Settings[:llm][:routing][:escalation] ||= {}
+    Legion::Settings[:llm][:routing][:escalation][:enabled] = false
     Legion::LLM::Inference::Conversation.reset!
   end
 

@@ -17,7 +17,11 @@ module Legion
               "conversation_id=#{opts[:conversation_id] || 'none'} provider=#{opts[:provider]} " \
               "instance=#{opts[:provider_instance] || 'default'} model=#{opts[:model_id]}"
             )
-            identity_fields(opts).merge(token_fields(opts)).merge(timing_and_context(opts)).merge(content_fields(opts))
+            identity_fields(opts)
+              .merge(token_fields(opts))
+              .merge(timing_and_context(opts))
+              .merge(content_fields(opts))
+              .merge(operational_fields(opts))
           end
 
           def publish_or_spool(event)
@@ -85,10 +89,20 @@ module Legion
           end
 
           def content_fields(opts)
-            {
+            fields = {
               messages:          opts[:messages],
               response_content:  opts[:response_content],
               response_thinking: opts[:response_thinking]
+            }
+            fields[:context_accounting] = opts[:context_accounting] if opts[:context_accounting]
+            fields.compact
+          end
+
+          def operational_fields(opts)
+            {
+              status:             opts[:status],
+              error:              opts[:error],
+              provider_submitted: opts[:provider_submitted]
             }.compact
           end
 

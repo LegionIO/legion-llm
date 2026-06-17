@@ -42,6 +42,18 @@ RSpec.describe 'Legion::LLM error hierarchy' do
     end
   end
 
+  describe Legion::LLM::ModelNotAllowed do
+    it 'is not retryable (terminal policy outcome)' do
+      expect(described_class.new(provider: :bedrock, model: 'anthropic.claude-sonnet-4-6')).not_to be_retryable
+    end
+
+    it 'carries the provider and model and a descriptive message' do
+      err = described_class.new(provider: :bedrock, model: 'anthropic.claude-sonnet-4-6')
+      expect([err.provider, err.model]).to eq([:bedrock, 'anthropic.claude-sonnet-4-6'])
+      expect(err.message).to include('not permitted', 'bedrock')
+    end
+  end
+
   describe Legion::LLM::UnsupportedCapability do
     it 'is not retryable' do
       expect(described_class.new('no vision')).not_to be_retryable

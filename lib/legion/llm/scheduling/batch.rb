@@ -127,7 +127,7 @@ module Legion
           end
 
           def settings
-            b = Legion::Settings[:llm][:batch] || {}
+            b = Legion::Settings[:llm][:batch]
             b.is_a?(Hash) ? b.transform_keys(&:to_sym) : {}
           rescue StandardError => e
             handle_exception(e, level: :warn)
@@ -142,12 +142,12 @@ module Legion
                      else
                        msgs.to_s
                      end
-            response = Legion::LLM.chat_direct(
+            response = Legion::LLM.chat(
               **entry[:opts],
               provider: provider,
               model:    model,
               message:  prompt,
-              urgency:  :immediate
+              caller:   { requested_by: { type: :system, identity: 'legion:internal:scheduling:batch' } }
             )
 
             {

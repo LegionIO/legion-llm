@@ -8,16 +8,16 @@ RSpec.describe 'Legion::LLM.chat router integration' do
   let(:sample_rules) do
     [
       {
-        name:            'basic-local',
-        when:            { capability: 'basic' },
-        then:            { tier: 'local', provider: 'ollama', model: 'qwen3:7b' },
+        name:            'low-effort-local',
+        when:            { effort: 'low' },
+        then:            { tier: 'local', provider: 'ollama', model: 'qwen3:7b', effort: 'low' },
         priority:        80,
         cost_multiplier: 0.2
       },
       {
-        name:            'cloud-override',
-        when:            { capability: 'reasoning' },
-        then:            { tier: 'cloud', provider: 'bedrock', model: 'claude-sonnet-4-6' },
+        name:            'cloud-reasoning',
+        when:            { effort: 'reasoning' },
+        then:            { tier: 'cloud', provider: 'bedrock', model: 'claude-sonnet-4-6', effort: 'reasoning' },
         priority:        50,
         cost_multiplier: 2.0
       }
@@ -44,7 +44,7 @@ RSpec.describe 'Legion::LLM.chat router integration' do
       expect(Legion::LLM::Call::Dispatch).to receive(:call)
         .with(hash_including(model: 'qwen3:7b', provider: :ollama))
         .and_return(native_dispatch_result(content: 'pipeline response'))
-      Legion::LLM.chat(intent: { capability: :basic }, message: 'hello')
+      Legion::LLM.chat(intent: { effort: :low }, message: 'hello')
     end
   end
 
@@ -76,7 +76,7 @@ RSpec.describe 'Legion::LLM.chat router integration' do
       # With routing disabled, intent is ignored and Router.resolve is never called
       allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: 'pipeline response'))
       expect(Legion::LLM::Router).not_to receive(:resolve)
-      Legion::LLM.chat(intent: { capability: :basic }, message: 'hello')
+      Legion::LLM.chat(intent: { effort: :low }, message: 'hello')
     end
   end
 
@@ -84,7 +84,7 @@ RSpec.describe 'Legion::LLM.chat router integration' do
     it 'falls through to defaults when no rule matches intent' do
       # Use an intent that matches no rules
       allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: 'pipeline response'))
-      expect { Legion::LLM.chat(intent: { capability: :unknown_capability }, message: 'hello') }.not_to raise_error
+      expect { Legion::LLM.chat(intent: { operation: :embed }, message: 'hello') }.not_to raise_error
     end
   end
 end

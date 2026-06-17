@@ -53,17 +53,19 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
     it 'generates embed rules for embedding models (Ollama name-match)' do
       embed_rules = rules.select { |r| r[:name].include?('nomic-embed-text') }
       expect(embed_rules.size).to eq(1)
-      expect(embed_rules.first[:when]).to eq({ capability: :embed })
+      expect(embed_rules.first[:when]).to eq({ operation: :embed })
     end
 
     it 'generates chat, stream, and tools rules for capable inference models' do
       llama_rules = rules.select { |r| r[:name].include?('llama3.1:8b') }
-      capabilities = llama_rules.map { |r| r[:when][:capability] }
-      expect(capabilities).to contain_exactly(:chat, :stream, :tools)
+      operations = llama_rules.map { |r| r[:when][:operation] }
+      # tools rules also use operation: :chat (tools is a capability, not an operation)
+      expect(operations).to contain_exactly(:chat, :stream, :chat)
+      expect(llama_rules.map { |r| r[:name] }).to include(a_string_matching(/:tools\z/))
     end
 
     it 'does not generate stream rules for embedding models' do
-      embed_stream = rules.select { |r| r[:name].include?('nomic-embed-text') && r[:when][:capability] == :stream }
+      embed_stream = rules.select { |r| r[:name].include?('nomic-embed-text') && r[:when][:operation] == :stream }
       expect(embed_stream).to be_empty
     end
 
@@ -72,8 +74,10 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         ollama: { local: { models: [{ name: 'no-stream-model', capabilities: %i[completion tools] }] } }
       )
 
-      capabilities = no_stream_rules.map { |r| r[:when][:capability] }
-      expect(capabilities).to contain_exactly(:chat, :tools)
+      operations = no_stream_rules.map { |r| r[:when][:operation] }
+      # chat + tools rule (both operation: :chat), no stream
+      expect(operations).to contain_exactly(:chat, :chat)
+      expect(no_stream_rules.none? { |r| r[:when][:operation] == :stream }).to be(true)
     end
 
     it 'assigns :local tier for ollama models' do
@@ -103,7 +107,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         vllm:   { apollo: { models: [{ name: 'direct-model', tier: 'direct' }] } }
       )
 
-      first_chat_rule = direct_first.find { |rule| rule[:when][:capability] == :chat }
+      first_chat_rule = direct_first.find { |rule| rule[:when][:operation] == :chat }
       expect(first_chat_rule[:then][:tier]).to eq(:direct)
     end
 
@@ -114,7 +118,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         vllm:   { apollo: { models: [{ name: 'direct-model', tier: 'direct' }] } }
       )
 
-      first_chat_rule = direct_first.find { |rule| rule[:when][:capability] == :chat }
+      first_chat_rule = direct_first.find { |rule| rule[:when][:operation] == :chat }
       expect(first_chat_rule[:then][:tier]).to eq(:direct)
     end
 
@@ -145,7 +149,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
     it 'handles vllm embedding models via name pattern matching' do
       vllm_embed = rules.select { |r| r[:name].include?('text-embedding-ada-002') }
       expect(vllm_embed.size).to eq(1)
-      expect(vllm_embed.first[:when][:capability]).to eq(:embed)
+      expect(vllm_embed.first[:when][:operation]).to eq(:embed)
     end
   end
 
@@ -215,8 +219,8 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         expect(rule[:name]).to start_with('auto:')
       end
 
-      it 'includes provider, instance, model, and tier in the target' do
-        expect(rule[:then]).to eq({ provider: :ollama, instance: :default, model: 'llama3:8b', tier: :local })
+      it 'includes provider, instance, model, tier, and effort in the target' do
+        expect(rule[:then]).to eq({ provider: :ollama, instance: :default, model: 'llama3:8b', tier: :local, effort: :low })
       end
     end
 
@@ -263,17 +267,17 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
     subject(:rules) { described_class.generate(discovered) }
 
     it 'includes model_capabilities from ollama enrichment' do
-      llama_rule = rules.find { |r| r[:name].include?('llama3.1:8b') && r[:when][:capability] == :chat }
+      llama_rule = rules.find { |r| r[:name].include?('llama3.1:8b') && r[:when][:operation] == :chat }
       expect(llama_rule[:then][:model_capabilities]).to eq(%i[completion streaming tools])
     end
 
     it 'includes context_length from ollama enrichment' do
-      llama_rule = rules.find { |r| r[:name].include?('llama3.1:8b') && r[:when][:capability] == :chat }
+      llama_rule = rules.find { |r| r[:name].include?('llama3.1:8b') && r[:when][:operation] == :chat }
       expect(llama_rule[:then][:context_length]).to eq(131_072)
     end
 
     it 'includes context_length from vllm models' do
-      vllm_rule = rules.find { |r| r[:name].include?('Qwen/Qwen2.5-72B-Instruct') && r[:when][:capability] == :chat }
+      vllm_rule = rules.find { |r| r[:name].include?('Qwen/Qwen2.5-72B-Instruct') && r[:when][:operation] == :chat }
       expect(vllm_rule[:then][:context_length]).to eq(131_072)
     end
 
@@ -281,6 +285,45 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
       vllm_embed = rules.find { |r| r[:name].include?('text-embedding-ada-002') }
       expect(vllm_embed[:then]).not_to have_key(:model_capabilities)
       expect(vllm_embed[:then]).not_to have_key(:parameter_count)
+    end
+  end
+
+  describe 'instance-level capabilities propagate to chat rules' do
+    # Regression test for the claude/vllm legionio_tool_injection symptom:
+    # vLLM's lex extension declares `capabilities: %i[completion streaming
+    # vision tools]` at the instance tier (DEFAULT_INSTANCE_TIER), but the
+    # per-model offerings hash only carries `[:completion]`. Without the
+    # instance-level merge, the chat rule's model_capabilities is
+    # `[:completion]`, and the router's
+    # satisfies_required_capabilities?([:tools]) check rejects every chat
+    # rule on every tool request — silently falling through to the default
+    # provider chain.
+    let(:vllm_with_instance_caps) do
+      {
+        vllm: {
+          gpu1: {
+            models:       [{ name: 'qwen3.6-27b', capabilities: [:completion] }],
+            capabilities: %i[completion streaming vision tools]
+          }
+        }
+      }
+    end
+
+    subject(:rules) { described_class.generate(vllm_with_instance_caps) }
+
+    it 'merges instance-level :tools into the chat rule model_capabilities' do
+      chat_rule = rules.find { |r| r[:when] == { operation: :chat } && r[:then][:provider] == :vllm }
+      expect(chat_rule[:then][:model_capabilities]).to include(:tools)
+    end
+
+    it 'generates a :tools capability rule when the instance advertises tools' do
+      tools_rule = rules.find { |r| r[:when] == { operation: :chat } && r[:then][:provider] == :vllm }
+      expect(tools_rule).not_to be_nil
+    end
+
+    it 'generates a :stream capability rule when the instance advertises streaming' do
+      stream_rule = rules.find { |r| r[:when] == { operation: :stream } && r[:then][:provider] == :vllm }
+      expect(stream_rule).not_to be_nil
     end
   end
 
@@ -292,19 +335,19 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
     it 'generates chat and stream rules for enabled configured providers' do
       rules = described_class.generate({})
       anthropic_rules = rules.select { |r| r[:name].include?('anthropic') }
-      capabilities = anthropic_rules.map { |r| r[:when][:capability] }
+      capabilities = anthropic_rules.map { |r| r[:when][:operation] }
       expect(capabilities).to contain_exactly(:chat, :stream)
     end
 
     it 'sets correct model name from config' do
       rules = described_class.generate({})
-      anthropic_rule = rules.find { |r| r[:name].include?('anthropic') && r[:when][:capability] == :chat }
+      anthropic_rule = rules.find { |r| r[:name].include?('anthropic') && r[:when][:operation] == :chat }
       expect(anthropic_rule[:then][:model]).to eq('claude-sonnet-4-6')
     end
 
     it 'does not include model_capabilities without enrichment data' do
       rules = described_class.generate({})
-      anthropic_rule = rules.find { |r| r[:name].include?('anthropic') && r[:when][:capability] == :chat }
+      anthropic_rule = rules.find { |r| r[:name].include?('anthropic') && r[:when][:operation] == :chat }
       expect(anthropic_rule[:then]).not_to have_key(:model_capabilities)
     end
   end
@@ -315,7 +358,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
                                         routing: {
                                           enabled:        true,
                                           rules:          [],
-                                          default_intent: { privacy: 'normal', capability: 'chat' }
+                                          default_intent: { privacy: 'normal', operation: 'chat', effort: 'moderate' }
                                         }
                                       ))
       allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
@@ -329,7 +372,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
 
     it 'routes using auto-generated rules when no manual rules exist' do
       Legion::LLM::Router.populate_auto_rules(discovered)
-      result = Legion::LLM::Router.resolve(intent: { capability: :chat })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat })
       expect(result).not_to be_nil
       expect(result.model).to include('llama3.1:8b').or include('qwen2.5:32b').or include('Qwen')
     end
@@ -338,7 +381,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
       manual_rules = [
         {
           name:     'manual-chat',
-          when:     { capability: 'chat' },
+          when:     { operation: :chat },
           then:     { tier: 'cloud', provider: 'bedrock', model: 'claude-sonnet-4-6' },
           priority: 10
         }
@@ -346,7 +389,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
       Legion::Settings[:llm][:routing][:rules] = manual_rules
       Legion::LLM::Router.populate_auto_rules(discovered)
 
-      result = Legion::LLM::Router.resolve(intent: { capability: :chat })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat })
       expect(result).not_to be_nil
       # manual rule priority=10 + 1000 = 1010, auto rules max ~100
       expect(result.rule).to eq('manual-chat')
@@ -359,7 +402,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
                                         routing: {
                                           enabled:        true,
                                           rules:          [],
-                                          default_intent: { privacy: 'normal', capability: 'chat' }
+                                          default_intent: { privacy: 'normal', operation: 'chat', effort: 'moderate' }
                                         }
                                       ))
       allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
@@ -368,7 +411,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
       small_discovered = { ollama: { my_gpu: { models: [{ 'name' => 'llama3:8b' }] } } }
       Legion::LLM::Router.populate_auto_rules(small_discovered)
 
-      result = Legion::LLM::Router.resolve(intent: { capability: :chat })
+      result = Legion::LLM::Router.resolve(intent: { operation: :chat })
       expect(result).not_to be_nil
       expect(result.instance).to eq(:my_gpu)
     end
@@ -400,7 +443,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         }
       }
       rules = described_class.generate(direct_vllm)
-      chat_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:capability] == :chat }
+      chat_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:operation] == :chat }
       expect(chat_rule[:then][:tier]).to eq(:direct)
     end
 
@@ -415,7 +458,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         }
       }
       rules = described_class.generate(direct_vllm)
-      chat_rule = rules.find { |r| r[:name].include?('mistral:7b') && r[:when][:capability] == :chat }
+      chat_rule = rules.find { |r| r[:name].include?('mistral:7b') && r[:when][:operation] == :chat }
       expect(chat_rule[:then][:tier]).to eq(:direct)
     end
 
@@ -430,7 +473,7 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         }
       }
       rules = described_class.generate(default_vllm)
-      chat_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:capability] == :chat }
+      chat_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:operation] == :chat }
       expect(chat_rule[:then][:tier]).to eq(:fleet)
     end
 
@@ -445,8 +488,109 @@ RSpec.describe Legion::LLM::Discovery::RuleGenerator do
         }
       }
       rules = described_class.generate(direct_vllm)
-      stream_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:capability] == :stream }
+      stream_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:operation] == :stream }
       expect(stream_rule[:then][:tier]).to eq(:direct)
+    end
+  end
+
+  describe 'capability_sources-aware rule generation' do
+    it 'does NOT generate streaming rules when capability_sources says streaming: false' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models: [{
+              name:               'restricted-model',
+              capabilities:       %i[completion],
+              capability_sources: {
+                streaming: { value: false, source: :default_false },
+                tools:     { value: false, source: :default_false }
+              }
+            }]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      stream_rules = rules.select { |r| r[:name].include?('restricted-model') && r[:when][:operation] == :stream }
+      expect(stream_rules).to be_empty
+    end
+
+    it 'does NOT generate tools rules when capability_sources says tools: false' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models: [{
+              name:               'restricted-model',
+              capabilities:       %i[completion],
+              capability_sources: {
+                streaming: { value: false, source: :default_false },
+                tools:     { value: false, source: :default_false }
+              }
+            }]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      tools_rules = rules.select { |r| r[:name].include?('restricted-model') && r[:name].end_with?(':tools') }
+      expect(tools_rules).to be_empty
+    end
+
+    it 'DOES include tools in generated rule capabilities when capability_sources says tools: true from :instance_override' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models: [{
+              name:               'tool-model',
+              capabilities:       %i[completion streaming tools],
+              capability_sources: {
+                tools:     { value: true, source: :instance_override },
+                streaming: { value: true, source: :instance_override }
+              }
+            }]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      chat_rule = rules.find { |r| r[:name].include?('tool-model') && r[:when][:operation] == :chat && !r[:name].end_with?(':tools') }
+      expect(chat_rule[:then][:model_capabilities]).to include(:tools)
+    end
+
+    it 'includes capability_sources in generated rule target' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models: [{
+              name:               'sourced-model',
+              capabilities:       %i[completion tools],
+              capability_sources: {
+                tools: { value: true, source: :instance_override }
+              }
+            }]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      chat_rule = rules.find { |r| r[:name].include?('sourced-model') && r[:when][:operation] == :chat && !r[:name].end_with?(':tools') }
+      expect(chat_rule[:then][:capability_sources]).to eq(tools: { value: true, source: :instance_override })
+    end
+
+    it 'does not override instance capabilities when model has no capability_sources' do
+      discovered = {
+        vllm: {
+          gpu1: {
+            models:       [{ name: 'basic-model', capabilities: [:completion] }],
+            capabilities: %i[completion streaming tools]
+          }
+        }
+      }
+
+      rules = described_class.generate(discovered)
+      chat_rule = rules.find { |r| r[:name].include?('basic-model') && r[:when][:operation] == :chat && !r[:name].end_with?(':tools') }
+      # Legacy merge: instance caps are added
+      expect(chat_rule[:then][:model_capabilities]).to include(:tools)
     end
   end
 end

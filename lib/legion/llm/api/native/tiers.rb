@@ -162,8 +162,8 @@ module Legion
           def self.tier_priority
             return Legion::LLM::Router.tier_priority if defined?(Legion::LLM::Router)
 
-            routing_config = Legion::Settings[:llm][:routing] || {}
-            top_level = Legion::Settings[:llm][:tier_order] || nil
+            routing_config = Legion::Settings[:llm][:routing]
+            top_level = Legion::Settings[:llm][:tier_order]
             Array(top_level || routing_config[:tier_order] || routing_config[:tier_priority] ||
                   %w[local direct fleet cloud frontier])
           end

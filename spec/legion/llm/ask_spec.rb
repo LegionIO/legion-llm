@@ -106,7 +106,7 @@ RSpec.describe 'Legion::LLM.ask' do
     end
 
     it 'does not call chat_direct' do
-      expect(Legion::LLM).not_to receive(:chat_direct)
+      expect(Legion::LLM::Inference).not_to receive(:chat_direct)
       Legion::LLM.ask(message: 'hello')
     end
   end

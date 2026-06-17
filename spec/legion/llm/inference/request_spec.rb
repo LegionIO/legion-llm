@@ -44,17 +44,29 @@ RSpec.describe Legion::LLM::Inference::Request do
       expect(req1.id).not_to eq(req2.id)
     end
 
-    it 'normalizes the LegionIO placeholder model into automatic routing' do
+    it 'normalizes the LegionIO placeholder model into automatic routing when no routing preference is present' do
+      req = described_class.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'LegionIO' }
+      )
+
+      expect(req.routing).to eq({ model: nil })
+      expect(req.extra[:intent]).to include(operation: :chat)
+      expect(req.extra[:auto_route]).to be(true)
+      expect(req.extra[:requested_model_alias]).to eq('legionio')
+    end
+
+    it 'ignores the LegionIO placeholder model without erasing routing preferences' do
       req = described_class.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: 'anthropic', instance: 'apollo', model: 'LegionIO' },
         extra:    { tier: 'frontier' }
       )
 
-      expect(req.routing).to eq({ provider: nil, model: nil })
-      expect(req.extra[:tier]).to be_nil
-      expect(req.extra[:intent]).to include(capability: :chat)
-      expect(req.extra[:auto_route]).to be(true)
+      expect(req.routing).to eq({ provider: 'anthropic', instance: 'apollo', model: nil })
+      expect(req.extra[:tier]).to eq('frontier')
+      expect(req.extra[:intent]).to be_nil
+      expect(req.extra[:auto_route]).to be_nil
       expect(req.extra[:requested_model_alias]).to eq('legionio')
     end
   end
@@ -81,6 +93,20 @@ RSpec.describe Legion::LLM::Inference::Request do
 
       expect(req.id).to eq('req_api_123')
       expect(req.extra).not_to have_key(:request_id)
+    end
+  end
+
+  describe '.default_auto_routing_intent' do
+    # Regression (C15): a stale default_intent[:capability] (the pre-rename shipped
+    # default) must be tolerated on the daemon auto-routing path, not raise on every call.
+    it 'tolerates a legacy capability: key in settings default_intent' do
+      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
+                                        routing: { default_intent: { privacy: 'normal', capability: 'moderate' } }
+                                      ))
+
+      intent = nil
+      expect { intent = described_class.default_auto_routing_intent }.not_to raise_error
+      expect(intent).to include(operation: :chat, effort: :moderate)
     end
   end
 end
