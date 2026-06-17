@@ -132,6 +132,13 @@ module Legion
                                            responses_stream: responses_stream)
             tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model } unless succeeded
             succeeded
+          rescue Legion::LLM::ModelNotAllowed => e
+            # Policy outcome, not a provider failure: terminate the chain. Do not
+            # escalate, do not record a health failure, do not trip a circuit or
+            # deny-record the model — re-raise so the caller sees the compliance error.
+            log.warn "[llm][escalation] action=model_not_allowed terminal=true provider=#{resolution.provider} " \
+                     "model=#{resolution.model} — not an escalation"
+            raise e
           rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
             tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
             record_escalation_failure(e, resolution, start_time,

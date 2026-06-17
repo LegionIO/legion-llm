@@ -260,4 +260,51 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.normalize_response (canonical)' do
     )
     expect(response[:metadata][:deep][:nested]).to eq('value')
   end
+
+  describe 'model policy enforcement (fail-closed, terminal)' do
+    let(:guarded_ext) do
+      Module.new do
+        module_function
+
+        def model_allowed?(model) = model.to_s.include?('haiku')
+        def chat(model:, messages:, **) = { content: 'should not reach', usage: {} } # rubocop:disable Lint/UnusedMethodArgument
+      end
+    end
+
+    before { Legion::LLM::Call::Registry.register(:anthropic, guarded_ext) }
+
+    it 'raises Legion::LLM::ModelNotAllowed and never invokes the provider for a denied model' do
+      expect(guarded_ext).not_to receive(:chat)
+      expect do
+        described_class.call(provider: :anthropic, capability: :chat, model: 'claude-sonnet-4-6', messages: [])
+      end.to raise_error(Legion::LLM::ModelNotAllowed, /not permitted/)
+    end
+
+    it 'is not retryable (terminal policy outcome)' do
+      described_class.call(provider: :anthropic, capability: :chat, model: 'claude-sonnet-4-6', messages: [])
+    rescue Legion::LLM::ModelNotAllowed => e
+      expect(e).not_to be_retryable
+    end
+
+    it 'dispatches normally for an allowed model' do
+      expect do
+        described_class.call(provider: :anthropic, capability: :chat, model: 'claude-haiku-4-5', messages: [])
+      end.not_to raise_error
+    end
+
+    it 'maps a provider-raised lex ModelNotAllowedError to Legion::LLM::ModelNotAllowed' do
+      raising_ext = Module.new do
+        module_function
+
+        def chat(model:, messages:, **) # rubocop:disable Lint/UnusedMethodArgument
+          raise Legion::Extensions::Llm::ModelNotAllowedError.new(model: model, provider: :anthropic)
+        end
+      end
+      Legion::LLM::Call::Registry.register(:anthropic_raises, raising_ext)
+
+      expect do
+        described_class.call(provider: :anthropic_raises, capability: :chat, model: 'gpt-5.5', messages: [])
+      end.to raise_error(Legion::LLM::ModelNotAllowed)
+    end
+  end
 end

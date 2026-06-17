@@ -31,6 +31,21 @@ module Legion
 
     class UnsupportedCapability < LLMError; end
 
+    # Raised when a request targets a model excluded by a provider's configured
+    # model_whitelist / model_blacklist. This is a terminal policy outcome, not a
+    # provider failure: it is non-retryable (inherited) and must not be escalated,
+    # must not trip a circuit breaker, and must not deny-record the model — the
+    # escalation loop re-raises it immediately rather than trying the next model.
+    class ModelNotAllowed < LLMError
+      attr_reader :provider, :model
+
+      def initialize(message = nil, provider: nil, model: nil)
+        @provider = provider
+        @model = model
+        super(message || "model #{model.inspect} is not permitted by the configured policy for provider #{provider.inspect}")
+      end
+    end
+
     class PipelineError < LLMError
       attr_reader :step
 

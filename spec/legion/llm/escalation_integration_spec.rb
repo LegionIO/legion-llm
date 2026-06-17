@@ -85,6 +85,23 @@ RSpec.describe 'Legion::LLM.chat escalation' do
     end
   end
 
+  describe 'with escalate: true and a policy-denied model' do
+    it 'terminates with ModelNotAllowed on the first attempt without escalating' do
+      call_count = 0
+      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
+        call_count += 1
+        raise Legion::LLM::ModelNotAllowed.new(provider: :bedrock, model: 'claude-sonnet-4-6')
+      end
+
+      expect do
+        Legion::LLM.chat(escalate: true, message: 'test')
+      end.to raise_error(Legion::LLM::ModelNotAllowed)
+      # Terminal policy outcome: it must NOT walk the escalation chain (contrast with
+      # ProviderError, which retries through every fallback to EscalationExhausted).
+      expect(call_count).to eq(1)
+    end
+  end
+
   describe 'with custom quality_check' do
     it 'uses custom check for quality assessment' do
       call_count = 0

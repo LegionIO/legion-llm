@@ -686,7 +686,10 @@ module Legion
         history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
         log.debug "[llm][inference] chat_with_escalation quality_failure attempt=#{history.size} failures=#{result.failures}"
         [nil, nil]
-      rescue Legion::LLM::PrivacyModeError
+      rescue Legion::LLM::PrivacyModeError, Legion::LLM::ModelNotAllowed
+        # Terminal outcomes — privacy/policy, not provider failures. Re-raise without
+        # recording a health failure or walking the escalation chain (a policy-denied
+        # model is not an escalation).
         raise
       rescue StandardError => e
         duration_ms = ((Time.now - start_time) * 1000).round

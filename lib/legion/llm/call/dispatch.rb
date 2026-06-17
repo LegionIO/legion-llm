@@ -120,6 +120,8 @@ module Legion
           ext = fetch_extension!(provider, instance: instance)
           raise Legion::LLM::ProviderError, "unsupported capability #{capability} for provider #{provider}" if ext.respond_to?(:supports?) && !ext.supports?(cap_sym)
 
+          enforce_model_policy!(ext, provider: provider, model: model)
+
           log.info("[llm][dispatch] capability=#{cap_sym} provider=#{provider} " \
                    "instance=#{instance || 'default'} model=#{model}")
 
@@ -476,10 +478,25 @@ module Legion
           {}
         end
 
+        # Fail-fast daemon-side compliance guard: reject a denied model before the
+        # provider call (the provider enforces the same policy as a backstop). Fails
+        # closed with the terminal Legion::LLM::ModelNotAllowed so the escalation
+        # loop treats it as a policy outcome, not a provider failure to escalate.
+        def enforce_model_policy!(ext, provider:, model:)
+          return if model.nil? || model.to_s.empty?
+          return unless ext.respond_to?(:model_allowed?)
+          return if ext.model_allowed?(model)
+
+          log.warn("[llm][dispatch] action=model_denied provider=#{provider} model=#{model} reason=model_policy")
+          raise Legion::LLM::ModelNotAllowed.new(provider: provider, model: model)
+        end
+
         def map_lex_llm_error(error, provider:, model:)
           raise Legion::LLM::ContextOverflow, "#{provider}:#{model} — #{error.message}" if context_length_error_message?(error.message)
 
           case error
+          when Legion::Extensions::Llm::ModelNotAllowedError
+            raise Legion::LLM::ModelNotAllowed.new("#{provider}:#{model} — #{error.message}", provider: provider, model: model)
           when Legion::Extensions::Llm::ContextLengthExceededError
             raise Legion::LLM::ContextOverflow, "#{provider}:#{model} — #{error.message}"
           when Legion::Extensions::Llm::UnauthorizedError, Legion::Extensions::Llm::ForbiddenError

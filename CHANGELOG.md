@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.12.33] - 2026-06-17
+
+### Added
+
+- **Daemon-side model-policy enforcement (compliance)** — `Call::Dispatch.call` now refuses to dispatch a model excluded by a provider's `model_whitelist`/`model_blacklist`, failing closed with the new terminal `Legion::LLM::ModelNotAllowed` error before the provider call (the provider enforces the same policy as a backstop). Provider-raised `lex-llm` `ModelNotAllowedError` is mapped to the same type.
+
+### Fixed
+
+- **A policy-denied model is not an escalation** — both escalation paths (`Inference::Executor#run_escalation_resolution` and `Inference.chat_with_escalation`) now treat `ModelNotAllowed` as terminal: it is re-raised immediately rather than escalated to the next model, and it does not record a health failure, trip a circuit breaker, or deny-record the model. `ModelNotAllowed` is non-retryable.
+
 ## [0.12.32] - 2026-06-16
 
 ### Fixed
