@@ -38,11 +38,9 @@ group :test do
   if Dir.exist?(rubocop_legion_path)
     gem 'rubocop-legion', path: rubocop_legion_path
   else
-    # TEMP: the N×N guard cops (incl. Legion/Framework/NoShapeDuckTyping, referenced in
-    # .rubocop.yml) are merged to rubocop-legion main but the published 0.1.7 predates
-    # them. Track main until 0.1.8 publishes, then revert this whole branch to
-    # `gem 'rubocop-legion', '>= 0.1.8'`.
-    gem 'rubocop-legion', git: 'https://github.com/LegionIO/rubocop-legion.git', branch: 'main'
+    # 0.1.8 is the first published release carrying the four Legion/Framework N×N guard
+    # cops (incl. Legion/Framework/NoShapeDuckTyping, referenced in .rubocop.yml).
+    gem 'rubocop-legion', '>= 0.1.8'
   end
   gem 'simplecov'
   gem 'sinatra'
