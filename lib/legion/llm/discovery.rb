@@ -21,6 +21,12 @@ module Legion
 
       DISCOVERED_MODELS_SCHEMA_VERSION = 3
       EMBEDDING_TIER_ORDER = %w[local direct fleet cloud frontier].freeze
+      # Version/tag delimiters that separate a model family base from its concrete
+      # discovered id (Ollama "model:tag", Bedrock "family-YYYYMMDD-v1:0" / "family-6").
+      MODEL_FAMILY_DELIMITERS = %w[: -].freeze
+      # Cap how many discovered ids a divergence warning prints — multi-model cloud
+      # providers (Bedrock lists ~90) otherwise dump an unreadable single log line.
+      MODEL_DIVERGENCE_SAMPLE_SIZE = 10
 
       class << self
         attr_reader :embedding_provider, :embedding_model, :embedding_instance, :embedding_fallback_chain
@@ -270,13 +276,27 @@ module Legion
 
           configured = configured.to_s
           discovered = models.map { |model| model[:model].to_s }
-          return if discovered.any? { |name| name == configured || name.start_with?("#{configured}:") }
+          return if discovered.any? { |name| model_family_match?(name, configured) }
 
+          sample = discovered.first(MODEL_DIVERGENCE_SAMPLE_SIZE)
+          overflow = discovered.size - sample.size
+          discovered_detail = overflow.positive? ? "#{sample.join(',')},+#{overflow} more" : sample.join(',')
           log.warn "[llm][discovery] action=model_divergence provider=#{entry[:provider]} " \
                    "instance=#{entry[:instance] || :default} configured=#{configured} " \
-                   "discovered=#{discovered.join(',')} — backend may be stale or misconfigured"
+                   "discovered_count=#{discovered.size} discovered=#{discovered_detail} — backend may be stale or misconfigured"
         rescue StandardError => e
           handle_exception(e, level: :debug, handled: true, operation: 'llm.discovery.model_divergence')
+        end
+
+        # A configured default is "present" when a discovered id equals it or extends
+        # it as a versioned family member (e.g. configured "anthropic.claude-sonnet-4"
+        # matches discovered "anthropic.claude-sonnet-4-6" / "...-20250514-v1:0").
+        # Without this, every multi-model cloud provider false-warns because its
+        # default is a family base while discovery returns fully-versioned ids.
+        def model_family_match?(discovered_name, configured)
+          return true if discovered_name == configured
+
+          MODEL_FAMILY_DELIMITERS.any? { |delimiter| discovered_name.start_with?("#{configured}#{delimiter}") }
         end
 
         def extract_loaded_field(data)

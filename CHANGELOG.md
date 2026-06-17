@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.12.32] - 2026-06-16
+
+### Fixed
+
+- **Discovery model-divergence false positives** — The divergence warning now treats a configured default as present when a discovered id is a versioned family member of it (e.g. `anthropic.claude-sonnet-4` matches `anthropic.claude-sonnet-4-6`), instead of requiring an exact string or Ollama-style `:` tag. Multi-model cloud providers (Bedrock lists ~90 models) no longer warn on every boot. The warning also reports `discovered_count` and truncates the id list to a sample, so a divergence no longer dumps the full catalog into a single log line.
+
 ## [0.12.31] - 2026-06-16
 
 ### Changed

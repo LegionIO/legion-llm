@@ -47,4 +47,41 @@ RSpec.describe 'Legion::LLM::Discovery model-divergence warning' do
 
     expect(Legion::LLM::Discovery.log).not_to have_received(:warn).with(/model_divergence/)
   end
+
+  def stub_instance(provider:, instance:, default_model:, discovered_models:)
+    adapter = instance_double('adapter')
+    allow(adapter).to receive(:offerings).with(live: true).and_return(discovered_models.map { |id| { id: id } })
+    allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return(
+      [{ provider: provider, instance: instance, adapter: adapter,
+         metadata: { default_model: default_model, tier: :cloud } }]
+    )
+    allow(Legion::LLM::Discovery.log).to receive(:warn)
+  end
+
+  it 'does not warn when a discovered id is a versioned family member of the configured default' do
+    # Bedrock: configured family base "anthropic.claude-sonnet-4" is present in the
+    # catalog as fully-versioned ids — not an exact string, but the same family.
+    stub_instance(
+      provider: :bedrock, instance: :claude, default_model: 'anthropic.claude-sonnet-4',
+      discovered_models: ['anthropic.claude-sonnet-4-6', 'anthropic.claude-sonnet-4-20250514-v1:0',
+                          'anthropic.claude-opus-4-8', 'amazon.nova-pro-v1:0']
+    )
+
+    Legion::LLM::Discovery.refresh_provider_models(:bedrock)
+
+    expect(Legion::LLM::Discovery.log).not_to have_received(:warn).with(/model_divergence/)
+  end
+
+  it 'truncates the discovered list and reports a count when warning on a large catalog' do
+    discovered = (1..30).map { |n| "vendor.model-#{n}" }
+    stub_instance(
+      provider: :bedrock, instance: :claude, default_model: 'anthropic.claude-sonnet-4',
+      discovered_models: discovered
+    )
+
+    Legion::LLM::Discovery.refresh_provider_models(:bedrock)
+
+    expect(Legion::LLM::Discovery.log).to have_received(:warn)
+      .with(/model_divergence.*discovered_count=30 discovered=.*,\+20 more/)
+  end
 end
