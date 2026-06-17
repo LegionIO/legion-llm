@@ -143,6 +143,11 @@ module Legion
           end
         end
 
+        # Deliberate Discovery feeder read (NOT an Inventory.offerings consumer):
+        # local-tier routing must gate on whether the model is actually pulled and
+        # whether it fits in available RAM right now. Model byte-size and live
+        # system memory are discovery-specific runtime facts that Inventory does
+        # not (and should not) carry, so these gates read Discovery directly.
         def excluded_by_discovery?(rule)
           return false unless discovery_enabled?
 

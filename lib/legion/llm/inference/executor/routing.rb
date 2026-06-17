@@ -292,6 +292,12 @@ module Legion
           # On a hit: pin provider + instance so normal routing runs against the local copy.
           # On a miss: clear the model name and set auto_route so the pipeline picks the best
           # available provider rather than blindly forwarding a frontier model name.
+          #
+          # Deliberate Discovery read (NOT Inventory.offerings): this pin must match
+          # only models that are actually running/pulled locally. Inventory.offerings
+          # also includes static provider catalogs (e.g. the full Anthropic model
+          # list), so routing through it here would pin frontier model names to
+          # providers that merely advertise them — the opposite of "local copy."
           def resolve_model_to_local_provider(state)
             return state if state[:provider_explicit] || state[:tier_explicit] || state[:instance_explicit]
             return state if state[:provider] || state[:tier] || state[:instance]
