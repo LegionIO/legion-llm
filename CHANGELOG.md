@@ -1,5 +1,25 @@
 # Legion LLM Changelog
 
+## [0.13.2] - 2026-06-17
+
+### Fixed
+
+- **Discovery no longer blocks the request path on a live network refresh.** `Discovery#discovered_models`
+  used to refresh synchronously once its 60s TTL lapsed — a serial, per-instance live fetch
+  (`adapter.offerings(live: true)`) on the request thread, so one unreachable/slow instance stalled
+  routing for its socket timeout (~20s, recurring ~once a minute). It surfaced as a fast `[pipeline][timing]`
+  with the time hidden in the `routing` step (which reads candidates via `model_available?`/`model_size`).
+  The request path now only **reads** the cache; refresh is owned by the provider `DiscoveryRefresh`
+  `::Every` actors (background) + the startup `Discovery.run` warm.
+
+### Changed
+
+- **Discovered-models cache is a `Concurrent::Map` keyed by provider.** Each provider's refresh actor
+  writes its own key atomically (no read-modify-write across providers, no lock); reads flatten all
+  values lock-free. `@discovery_status` is likewise a `Concurrent::Map` (the `@discovery_mutex` is
+  removed). Dead read-path TTL machinery (`discovered_models_stale?`, `discovery_refresh_seconds`)
+  deleted; the `llm.discovery.refresh_seconds` setting is now inert (actors use their own interval).
+
 ## [0.13.1] - 2026-06-17
 
 ### Fixed

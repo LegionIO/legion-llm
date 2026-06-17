@@ -78,6 +78,15 @@ def stub_native_provider(content: 'test response', input_tokens: 10, output_toke
   result
 end
 
+# Seed Discovery's per-provider model cache (a Concurrent::Map keyed by provider)
+# the way the provider DiscoveryRefresh ::Every actors do. Accepts a flat list of
+# discovered-model hashes (each carrying :provider).
+def seed_discovered_models(models)
+  map = Concurrent::Map.new
+  Array(models).group_by { |m| m[:provider] }.each { |provider, list| map[provider] = list }
+  Legion::LLM::Discovery.instance_variable_set(:@discovered_models, map)
+end
+
 RSpec.configure do |config|
   config.before(:each) do
     Legion::Settings.reset!

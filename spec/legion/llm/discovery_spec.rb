@@ -25,6 +25,8 @@ RSpec.describe Legion::LLM::Discovery do
 
     Legion::LLM::Call::Registry.register(:vllm, adapter, instance: :apollo, metadata: { tier: :direct })
 
+    # Refresh is now explicit (actor/startup-owned); reads never refresh.
+    described_class.refresh_discovered_models!
     discovered = described_class.discovered_models
 
     expect(discovered).to contain_exactly(
@@ -58,11 +60,32 @@ RSpec.describe Legion::LLM::Discovery do
 
     Legion::LLM::Call::Registry.register(:azure_foundry, adapter, instance: :default)
 
+    described_class.refresh_discovered_models!
     discovered = described_class.discovered_models
 
     expect(discovered.first[:instance]).to eq(:eastus)
     expect(described_class.model_available?('gpt4o-prod', provider: :azure_foundry, instance: :eastus)).to be true
     expect(described_class.model_size('gpt4o-prod', provider: :azure_foundry, instance: :eastus)).to eq(1_024)
+  end
+
+  # Regression: the request path must NEVER trigger a live network refresh.
+  # Pre-0.13.1 `discovered_models` refreshed synchronously once its 60s TTL
+  # lapsed, doing a serial per-instance live fetch on the request thread — one
+  # unreachable instance stalled routing for the socket timeout (~20s). Refresh
+  # is now owned by the provider DiscoveryRefresh ::Every actors; reads serve
+  # the lock-free cache.
+  it 'serves the cached models without a synchronous refresh on read' do
+    # Populate the per-provider Concurrent::Map cache directly (as the provider
+    # DiscoveryRefresh actor would) and leave it "stale" — reads must NOT refresh.
+    map = Concurrent::Map.new
+    map[:vllm] = [{ provider: :vllm, instance: :h200, model: 'gemma-4-31b-it',
+                    schema_version: described_class::DISCOVERED_MODELS_SCHEMA_VERSION }]
+    described_class.instance_variable_set(:@discovered_models, map)
+    described_class.instance_variable_set(:@discovered_models_at, Time.now - 86_400) # very stale
+
+    expect(described_class).not_to receive(:refresh_discovered_models!)
+    expect(described_class.discovered_models.map { |m| m[:model] }).to eq(['gemma-4-31b-it'])
+    expect(described_class.model_available?('gemma-4-31b-it', provider: :vllm)).to be(true)
   end
 
   describe 'embedding instance selection from registry' do
@@ -96,6 +119,7 @@ RSpec.describe Legion::LLM::Discovery do
         provider: 'ollama', instance: 'apollo-embed', default_model: 'mxbai-embed-large:latest'
       }
 
+      described_class.refresh_discovered_models!
       described_class.detect_embedding_capability
 
       expect(described_class.can_embed?).to be true
@@ -112,6 +136,7 @@ RSpec.describe Legion::LLM::Discovery do
         instance: :'apollo-embed', default_model: 'mxbai-embed-large:latest'
       }
 
+      described_class.refresh_discovered_models!
       described_class.detect_embedding_capability
 
       expect(described_class.embedding_instance).to eq(:'apollo-embed')
@@ -124,6 +149,7 @@ RSpec.describe Legion::LLM::Discovery do
       register_embedding_instance(:ollama, :'apollo-embed', :direct, 'mxbai-embed-large:latest',
                                   default_model: 'mxbai-embed-large:latest')
 
+      described_class.refresh_discovered_models!
       described_class.detect_embedding_capability
 
       expect(described_class.can_embed?).to be true
@@ -137,6 +163,7 @@ RSpec.describe Legion::LLM::Discovery do
       register_embedding_instance(:ollama, :'apollo-embed', :direct, 'mxbai-embed-large:latest',
                                   default_model: 'mxbai-embed-large:latest')
 
+      described_class.refresh_discovered_models!
       described_class.detect_embedding_capability
 
       expect(described_class.embedding_instance).to eq(:local)
@@ -149,8 +176,7 @@ RSpec.describe Legion::LLM::Discovery do
     end
 
     it 'rejects stale discovered model entries with an older schema version' do
-      described_class.instance_variable_set(
-        :@discovered_models_cache,
+      seed_discovered_models(
         [
           {
             schema_version: 1,
@@ -166,8 +192,7 @@ RSpec.describe Legion::LLM::Discovery do
     end
 
     it 'returns entries with the current schema version' do
-      described_class.instance_variable_set(
-        :@discovered_models_cache,
+      seed_discovered_models(
         [
           {
             schema_version: described_class::DISCOVERED_MODELS_SCHEMA_VERSION,

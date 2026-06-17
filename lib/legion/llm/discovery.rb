@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'concurrent'
 require 'legion/logging/helper'
 require_relative 'discovery/system'
 require_relative 'discovery/rule_generator'
@@ -14,10 +15,14 @@ module Legion
       @embedding_model = nil
       @embedding_instance = nil
       @embedding_fallback_chain = nil
-      @discovered_models_cache = nil
+      # Discovered models keyed by provider. A Concurrent::Map so each provider's
+      # DiscoveryRefresh ::Every actor writes ITS OWN key atomically — no
+      # read-modify-write across providers, no lock. Reads flatten all values
+      # lock-free. Refresh is actor/startup-owned; the request path only READS.
+      @discovered_models = Concurrent::Map.new
       @discovered_models_at = nil
-      @discovery_status = {}
-      @discovery_mutex = Mutex.new
+      # Per-(provider,instance) discovery status — lock-free reads, atomic writes.
+      @discovery_status = Concurrent::Map.new
 
       DISCOVERED_MODELS_SCHEMA_VERSION = 3
       EMBEDDING_TIER_ORDER = %w[local direct fleet cloud frontier].freeze
@@ -36,13 +41,11 @@ module Legion
         end
 
         def discovery_status(provider:, instance: nil)
-          key = discovery_status_key(provider, instance)
-          @discovery_mutex.synchronize { @discovery_status[key] || :unknown }
+          @discovery_status[discovery_status_key(provider, instance)] || :unknown
         end
 
         def record_discovery_status(provider:, status:, instance: nil)
-          key = discovery_status_key(provider, instance)
-          @discovery_mutex.synchronize { @discovery_status[key] = status.to_sym }
+          @discovery_status[discovery_status_key(provider, instance)] = status.to_sym
         end
 
         def run
@@ -130,19 +133,20 @@ module Legion
           grouped
         end
 
-        # Flat list of all discovered models across all registry adapters.
-        # TTL-cached; call refresh_discovered_models! to force a refresh.
+        # Flat list of all discovered models across every provider.
+        # Read-only and lock-free. NEVER refreshes on the request path — a live
+        # network refresh here is what blocked routing for ~the socket timeout
+        # (a serial per-instance fetch where one unreachable instance stalls the
+        # whole request). Refresh is owned by the provider DiscoveryRefresh
+        # ::Every actors (background) and the startup `run` warm.
         def discovered_models
-          return @discovered_models_cache if @discovered_models_cache && !discovered_models_stale?
-
-          refresh_discovered_models!
-          @discovered_models_cache || []
+          cached_discovered_models
         end
 
         def cached_discovered_models
           return [] if discovered_models_cache_schema_stale?
 
-          @discovered_models_cache || []
+          @discovered_models.values.flatten(1)
         end
 
         # Check whether a specific model is available from any registered provider.
@@ -187,22 +191,25 @@ module Legion
                                        .select { |e| (e[:provider] || '').to_sym == provider }
                                        .flat_map { |entry| fetch_offering_models(entry) }
 
-          existing = @discovered_models_cache || []
-          other_models = existing.reject { |m| (m[:provider] || '').to_sym == provider }
-
-          @discovered_models_cache = other_models + fresh_models
+          # Atomic per-provider write — Concurrent::Map single-key set. No
+          # read-modify-write across providers, so concurrent DiscoveryRefresh
+          # actors can't clobber each other; no lock needed.
+          @discovered_models[provider.to_sym] = fresh_models
           @discovered_models_at = Time.now
-          log.debug "[llm][discovery] action=refresh_provider_models provider=#{provider} count=#{@discovered_models_cache.size}"
+          log.debug "[llm][discovery] action=refresh_provider_models provider=#{provider} count=#{fresh_models.size}"
         end
 
         def refresh_all_provider_models
           return unless defined?(Call::Registry)
 
-          models = Call::Registry.all_instances.flat_map { |entry| fetch_offering_models(entry) }
-
-          @discovered_models_cache = models
+          # Group by provider and set each provider's key atomically.
+          Call::Registry.all_instances
+                        .group_by { |e| (e[:provider] || '').to_sym }
+                        .each do |provider, instances|
+            @discovered_models[provider] = instances.flat_map { |entry| fetch_offering_models(entry) }
+          end
           @discovered_models_at = Time.now
-          log.debug "[llm][discovery] action=refresh_discovered_models count=#{models.size}"
+          log.debug "[llm][discovery] action=refresh_discovered_models count=#{@discovered_models.values.flatten(1).size}"
         end
 
         def fetch_offering_models(entry)
@@ -244,16 +251,14 @@ module Legion
 
         def reset!
           log.debug '[llm][discovery] reset'
-          @discovery_mutex.synchronize do
-            @can_embed = nil
-            @embedding_provider = nil
-            @embedding_model = nil
-            @embedding_instance = nil
-            @embedding_fallback_chain = nil
-            @discovered_models_cache = nil
-            @discovered_models_at = nil
-            @discovery_status = {}
-          end
+          @can_embed = nil
+          @embedding_provider = nil
+          @embedding_model = nil
+          @embedding_instance = nil
+          @embedding_fallback_chain = nil
+          @discovered_models = Concurrent::Map.new
+          @discovered_models_at = nil
+          @discovery_status = Concurrent::Map.new
         end
 
         private
@@ -409,22 +414,10 @@ module Legion
           value.respond_to?(:to_sym) ? value.to_sym : value
         end
 
-        def discovered_models_stale?
-          return true if @discovered_models_at.nil?
-          return true if discovered_models_cache_schema_stale?
-
-          ttl = discovery_refresh_seconds
-          Time.now - @discovered_models_at > ttl
-        end
-
         def discovered_models_cache_schema_stale?
-          Array(@discovered_models_cache).any? do |entry|
+          @discovered_models.values.flatten(1).any? do |entry|
             entry[:schema_version] != DISCOVERED_MODELS_SCHEMA_VERSION
           end
-        end
-
-        def discovery_refresh_seconds
-          Legion::Settings[:llm][:discovery][:refresh_seconds]
         end
 
         # Match model names allowing prefix matching for tagged variants (e.g. "llama3" matches "llama3:8b")

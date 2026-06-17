@@ -69,8 +69,7 @@ RSpec.describe '.detect_embedding_capability' do
         instance: :gpu_box,
         metadata: { capabilities: [:embedding], tier: 'local', default_model: 'mxbai-embed-large' }
       )
-      Legion::LLM::Discovery.instance_variable_set(
-        :@discovered_models_cache,
+      seed_discovered_models(
         [{ schema_version: Legion::LLM::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :ollama, instance: :gpu_box, model: 'mxbai-embed-large', capabilities: [:embedding] }]
       )
       Legion::LLM::Discovery.instance_variable_set(:@discovered_models_at, Time.now)
@@ -123,8 +122,7 @@ RSpec.describe '.detect_embedding_capability' do
         instance: :fleet_gpu,
         metadata: { capabilities: [:embedding], tier: 'fleet', default_model: 'bge-large' }
       )
-      Legion::LLM::Discovery.instance_variable_set(
-        :@discovered_models_cache,
+      seed_discovered_models(
         [
           { schema_version: Legion::LLM::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :ollama, instance: :local_box, model: 'mxbai-embed-large', capabilities: [:embedding] },
           { schema_version: Legion::LLM::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :vllm, instance: :fleet_gpu, model: 'bge-large', capabilities: [:embedding] },
@@ -160,8 +158,7 @@ RSpec.describe '.detect_embedding_capability' do
 
     it 'falls back to Settings embedding default_model' do
       Legion::Settings[:llm][:embedding][:default_model] = 'text-embedding-3-small'
-      Legion::LLM::Discovery.instance_variable_set(
-        :@discovered_models_cache,
+      seed_discovered_models(
         [{ schema_version: Legion::LLM::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :openai, instance: :default, model: 'text-embedding-3-small', capabilities: [:embedding] }]
       )
       Legion::LLM::Discovery.instance_variable_set(:@discovered_models_at, Time.now)
@@ -170,8 +167,7 @@ RSpec.describe '.detect_embedding_capability' do
     end
 
     it 'falls back to discovered model catalog when Settings has no default_model (#121)' do
-      Legion::LLM::Discovery.instance_variable_set(
-        :@discovered_models_cache,
+      seed_discovered_models(
         [{ schema_version: Legion::LLM::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :openai, instance: :default, model: 'text-embedding-ada-002', capabilities: [:embedding] }]
       )
       Legion::LLM::Discovery.instance_variable_set(:@discovered_models_at, Time.now)
@@ -181,7 +177,7 @@ RSpec.describe '.detect_embedding_capability' do
     end
 
     it 'returns false and does not set can_embed when no model is resolvable (#121)' do
-      Legion::LLM::Discovery.instance_variable_set(:@discovered_models_cache, [])
+      seed_discovered_models([])
       Legion::LLM::Discovery.instance_variable_set(:@discovered_models_at, Time.now)
       Legion::LLM::Discovery.detect_embedding_capability
       # No model in metadata, settings, or catalog → falls through to legacy probe
