@@ -1,46 +1,61 @@
-# legion-llm Agent Notes
+# legion-llm — Agent Notes (v0.13.0)
 
-## Scope
-
-`legion-llm` provides provider configuration, chat/embed/structured interfaces, dynamic routing, escalation, quality checks, and pipeline execution for Legion.
+`legion-llm` is a **universal translation proxy** for LLM traffic: N client dialects (OpenAI Chat,
+OpenAI Responses, Anthropic Messages) × N provider backends (Bedrock, Anthropic, OpenAI, vLLM,
+Ollama, fleet), any direction. Every request parses once into `Canonical::Request`, is
+routed/executed, then renders once back to the caller's dialect. See `CLAUDE.md` for the full
+invariant set; `README.md` for detailed reference.
 
 ## Fast Start
 
 ```bash
 bundle install
-bundle exec rspec
-bundle exec rubocop
+bundle exec rspec      # 0 failures required before commit
+bundle exec rubocop    # 0 offenses required
 ```
+
+**The in-process matrix harness (`spec/legion/llm/api/matrix/`) is the commit gate.** Touch
+`lib/legion/llm/api/`, the executor, or the canonical/translator boundary → it must pass before push.
 
 ## Primary Entry Points
 
-- `lib/legion/llm.rb`
-- `lib/legion/llm/providers.rb`
-- `lib/legion/llm/router/`
-- `lib/legion/llm/pipeline/`
-- `lib/legion/llm/structured_output.rb`
-- `lib/legion/llm/embeddings.rb`
-- `lib/legion/llm/fleet/`
+- `lib/legion/llm.rb` — facade (`start`, `chat`, `ask`, `embed`, `structured`)
+- `lib/legion/llm/inventory.rb` — **single source of truth** for the model catalog
+- `lib/legion/llm/router.rb` + `router/{candidates,availability,health_tracker,escalation/}` — routing
+- `lib/legion/llm/inference/executor.rb` + `executor/{routing,escalation}.rb` — pipeline
+- `lib/legion/llm/inference/steps/` — the 18 pipeline steps
+- `lib/legion/llm/api/{openai,anthropic,native}/` — client routes
+- `lib/legion/llm/api/client_translators/` — canonical ↔ client wire formats
+- `lib/legion/llm/context/curator.rb` — async conversation curation (context-cost control)
+- Provider behaviour (defaults, capabilities, model filtering) lives in `../extensions-ai/lex-llm-*`
 
 ## Guardrails
 
-- Keep typed error behavior and retry semantics stable (`ProviderDown`, `RateLimitError`, `EscalationExhausted`, etc.).
-- Routing and escalation must remain deterministic given the same inputs/settings.
-- Preserve pipeline feature-flag behavior; avoid forcing pipeline-only code paths.
-- Keep provider credentials resolved through settings secret resolution flow; never hardcode secrets.
-- Maintain compatibility with direct methods (`chat_direct`, `embed_direct`, `structured_direct`) and daemon-aware flows.
-- Health tracker and rule scoring are contract-sensitive; changes require spec updates.
+- **Always translate, never passthrough**; **no `provider == :x` branches** outside translators.
+- **Inventory is the only catalog**; `Discovery`/`Registry`/`HealthTracker` are feeders.
+- Never dispatch a triple absent from the live catalog or unhealthy; **fail over, don't hard-fail**.
+- **Model policy = compliance**: `model_whitelist`/`model_blacklist` honored at dispatch, fail-closed;
+  a policy-denied model is terminal (never escalated, never trips circuits).
+- Thinking never crosses providers; mid-stream failover must not kill an in-flight conversation.
+- Every pipeline exit emits ledger events (metering/audit) — no bypasses.
+- `Legion::JSON` only (symbol keys); every `rescue` re-raises or `handle_exception`s; no
+  `defined?(Legion::Settings)` guards; `log.*` not `puts`.
+- **No personal/company identifiers in VCS**; never force-push.
+- Routing/escalation deterministic for the same inputs/settings; health-tracker & rule scoring are
+  contract-sensitive — changes require spec updates.
 
 ## Validation
 
-- Run targeted specs for modified router/pipeline/provider code.
-- Before handoff, run full `bundle exec rspec` and `bundle exec rubocop`.
+Run targeted specs for modified router/pipeline/translator code, then full `rspec` + `rubocop` +
+the matrix harness before handoff.
 
 ---
 
 ## Client Request Headers Reference
 
-Verified from source code (Claude Code binary + Codex `codex-rs` Rust source).
+Verified from source (Claude Code binary + Codex `codex-rs`). Useful when working on `/v1/messages`
+and `/v1/responses` handlers. Routing/identity headers `X-Legion-{Provider,Model,Instance,Tier}` are
+honored as **rules** (hard constraints), not hints.
 
 ### Claude Code → `POST /v1/messages`
 
@@ -48,15 +63,10 @@ Verified from source code (Claude Code binary + Codex `codex-rs` Rust source).
 |---|---|---|
 | `X-Claude-Code-Session-Id` | Stable UUID for the CLI session | Yes |
 | `x-app` | `"cli"` (foreground) or `"cli-bg"` (background) | Yes |
-| `x-claude-remote-session-id` | Remote container session ID | Conditional |
-| `x-claude-remote-container-id` | Remote container ID | Conditional |
-| `x-claude-code-agent-id` | Agent UUID for multi-agent sessions | Conditional |
-| `x-claude-code-parent-agent-id` | Parent agent UUID (spawned subagent) | Conditional |
-| `x-client-app` | Additional client app identifier | Conditional |
+| `x-claude-code-agent-id` / `x-claude-code-parent-agent-id` | Agent / parent-agent UUIDs | Conditional |
 
-Conversation threading is **stateless** — full `messages[]` history sent in the body on every request. No conversation ID, turn ID, or `x-client-request-id` header is sent.
-
-In Rack/Sinatra env keys, headers arrive as `HTTP_X_CLAUDE_CODE_SESSION_ID`, `HTTP_X_APP`, etc.
+Threading is **stateless** — full `messages[]` history in the body every request; no conversation/turn
+ID header. In Rack env: `HTTP_X_CLAUDE_CODE_SESSION_ID`, `HTTP_X_APP`, etc.
 
 ### Codex → `POST /v1/responses`
 
@@ -66,34 +76,15 @@ In Rack/Sinatra env keys, headers arrive as `HTTP_X_CLAUDE_CODE_SESSION_ID`, `HT
 | `thread-id` | Stable UUID for the thread/conversation | Yes |
 | `x-client-request-id` | Same value as `thread-id` | Yes |
 | `x-codex-installation-id` | Installation-scoped UUID | Yes |
-| `x-codex-window-id` | `"{thread_id}:{window_generation}"` | Yes |
-| `x-codex-turn-state` | Sticky-routing token returned by server, replayed by client | After first response |
-| `x-codex-turn-metadata` | Per-turn observability metadata | Conditional |
-| `x-codex-parent-thread-id` | Parent thread UUID (sub-agents) | Conditional |
-| `x-openai-subagent` | Sub-agent type (`"review"`, `"compact"`, `"memory_consolidation"`, etc.) | Conditional |
-| `x-openai-memgen-request` | `"true"` for memory generation requests | Conditional |
+| `x-codex-turn-state` | Sticky-routing token, replayed by client | After first response |
+| `x-openai-subagent` | Sub-agent type (`review`, `compact`, …) | Conditional |
 
-In Rack/Sinatra env keys: `HTTP_SESSION_ID`, `HTTP_THREAD_ID`, `HTTP_X_CLIENT_REQUEST_ID`, `HTTP_X_CODEX_INSTALLATION_ID`, etc.
-
-**`HTTP_THREAD_ID` is the stable Codex thread/conversation ID** — it is stable for the lifetime of a thread, not per-request. `HTTP_X_CLIENT_REQUEST_ID` equals `HTTP_THREAD_ID` (Codex sets them to the same value).
-
-Conversation threading over HTTP uses full input in body (stateless like Anthropic). Over WebSocket, `previous_response_id` is sent in the request body to enable delta-only input.
-
-### Practical Usage in `/v1/messages` and `/v1/responses` Handlers
+`HTTP_THREAD_ID` is the stable thread/conversation ID (not per-request); `HTTP_X_CLIENT_REQUEST_ID`
+equals it. HTTP threading is stateless (full input in body); over WebSocket, `previous_response_id`
+enables delta-only input.
 
 ```ruby
-# Stable request ID (Claude Code sends X-Claude-Code-Session-Id; Codex sends x-client-request-id = thread-id)
-request_id = env['HTTP_X_CLIENT_REQUEST_ID'] || "req_#{SecureRandom.hex(12)}"
-
-# Stable conversation/thread ID
-# Claude Code: no header — generate per-request or use Legion conversation tracking
-# Codex: HTTP_THREAD_ID is stable for the thread lifetime
-conversation_id = env['HTTP_THREAD_ID'] ||
-                  env['HTTP_X_LEGION_CONVERSATION_ID'] ||
-                  body[:conversation_id] ||
-                  "conv_#{SecureRandom.hex(8)}"
-
-# Identify the calling client
-claude_code_session = env['HTTP_X_CLAUDE_CODE_SESSION_ID']  # present only for Claude Code
-codex_installation  = env['HTTP_X_CODEX_INSTALLATION_ID']   # present only for Codex
+request_id      = env['HTTP_X_CLIENT_REQUEST_ID'] || "req_#{SecureRandom.hex(12)}"
+conversation_id = env['HTTP_THREAD_ID'] || env['HTTP_X_LEGION_CONVERSATION_ID'] ||
+                  body[:conversation_id] || "conv_#{SecureRandom.hex(8)}"
 ```

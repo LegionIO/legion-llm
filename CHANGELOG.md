@@ -1,5 +1,43 @@
 # Legion LLM Changelog
 
+## [0.13.0] - 2026-06-17
+
+Consolidated release. This single version bundles every change from `0.12.14` through `0.12.35`
+into one published release — the patch series was developed on a long-running branch and is shipped
+together as `0.13.0`. The per-patch entries below (`0.12.14`–`0.12.35`) remain the authoritative
+detail; this section summarizes the themes.
+
+### Highlights
+
+- **N × N routing with Inventory as the single source of truth** — `Inventory.offerings` is now the
+  one catalog (registration + liveness + health/circuit/denied); `Call::Registry`, `Discovery`, and
+  `HealthTracker` are feeders only. Routing, availability, and the executor read Inventory exclusively.
+  Cloud/frontier providers (Bedrock, Anthropic, OpenAI) are first-class routable and are no longer
+  shadowed by discovered local models.
+- **Canonical / execution-proxy translation boundary** — every request parses into `Canonical::Request`
+  and every response renders from canonical back to the caller's dialect; no passthrough, no
+  provider-name branching outside translators. Tool-loop linkage (OpenAI Responses
+  `function_call`/`function_call_output`, qwen single-tag synthesis), per-format tool-arg typing, and
+  prompt-cache `cache_control` preservation are aligned and asserted by the in-process matrix harness.
+- **Resilient multi-tier routing** — automatic escalation, mid-stream provider failover,
+  per-instance circuit breakers, multi-instance failover that exhausts a provider's own instances
+  before crossing providers, and account-scoped (credit/quota) errors that deprioritize the failing
+  instance instead of denying the model.
+- **Model-policy compliance** — `model_whitelist`/`model_blacklist` enforced at dispatch, fail-closed;
+  a policy-denied model is terminal (never escalated, never trips circuits). Requires `lex-llm >= 0.5.4`.
+- **Context curation, validated** — the Curator's deterministic strategies were validated against
+  ground-truth wire payloads (86.8% context reduction across 29 turns).
+- **G14 router decomposition** — `Router::Candidates` and `Router::RegistryLookup` extracted from the
+  router (1030 → 694 lines) with no behavior change.
+- **CI / observability** — RSpec and RuboCop dependency pins corrected (`lex-llm >= 0.5.4`,
+  `rubocop-legion >= 0.1.8`); discovery model-divergence warning made tolerant of versioned families.
+
+### Docs
+
+- README rewritten with an N × N overview, the execution-proxy contract, and a validated
+  context-curation showcase. `CLAUDE.md` trimmed to the high-value invariants and gotchas; `AGENTS.md`
+  refreshed with current entry points and guardrails.
+
 ## [0.12.35] - 2026-06-17
 
 ### Fixed

@@ -1,8 +1,101 @@
-# Legion LLM
+<h1 align="center">Legion LLM</h1>
 
-LLM routing and provider orchestration for the [LegionIO](https://github.com/LegionIO/LegionIO) framework. Routes chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata through Legion-native `lex-llm-*` provider extensions.
+<p align="center"><b>One endpoint. Any client. Any model. Every direction.</b></p>
 
-**Version**: 0.9.0
+<p align="center">
+  A <b>universal translation proxy</b> for LLM traffic — point any OpenAI- or Anthropic-compatible
+  tool at it and reach <i>any</i> backend (Bedrock, Anthropic, OpenAI, vLLM, Ollama, or a shared GPU
+  fleet), with routing, escalation, mid-stream failover, metering, audit, and aggressive context
+  curation handled in between.
+</p>
+
+<p align="center">
+  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
+  <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.13.0-informational.svg">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
+  <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
+</p>
+
+```
+┌───────────────────────────────┐     ┌─────────────────┐     ┌──────────────────────────┐
+│ CLIENTS · any dialect         │     │ CANONICAL CORE  │     │ PROVIDERS · any backend  │
+├───────────────────────────────┤     ├─────────────────┤     ├──────────────────────────┤
+│ OpenAI    /v1/chat/completions│     │ parse once      │     │ Bedrock · Anthropic      │
+│ OpenAI    /v1/responses       │ ──▶ │ route · execute │ ──▶ │ OpenAI · vLLM · Ollama   │
+│ Anthropic /v1/messages        │     │ render once     │     │ Fleet GPUs  (local = $0) │
+└───────────────────────────────┘     └─────────────────┘     └──────────────────────────┘
+       request parses once ───▶   route · execute · curate · meter   ───▶ provider's wire format
+       caller's dialect   ◀─── render once from canonical  ◀───   provider response normalized
+```
+
+> Every request is parsed **once** into a single canonical form, routed and executed, then rendered
+> **once** back into whatever dialect the caller asked for. No passthrough. No provider-name
+> branching outside the translators. A Claude Code session can be served by an OpenAI Responses
+> backend — or the reverse — and never know the difference.
+
+### Highlights
+
+- 🔀 **N × N any-to-any.** N client formats × N providers, in every direction, through one canonical core.
+- ✂️ **86.8% less context, validated** against actual wire-payload size — not an estimate. In a same-task head-to-head review of a 152-file PR: **34.5× less** conversation context, **4× faster**, **$0** on a local GPU, with **equivalent answer quality** on the review and recall tasks. ([details](#context-curation-that-actually-works))
+- 🧰 **True execution proxy.** Server-side tools run server-side and come back as results; the client never sees a phantom pending action, and the upstream model always sees what happened.
+- 🔌 **Drop-in compatible.** Works with existing OpenAI and Anthropic SDKs by changing one `base_url`. ([usage](#usage))
+- ♻️ **Self-healing routing.** Five tiers, automatic escalation, **mid-stream provider failover**, per-instance circuit breakers, capability-aware model selection.
+- 🛡️ **Compliance built in.** `model_whitelist`/`model_blacklist` enforced at dispatch, fail-closed; every request exit emits metering + audit.
+- ✅ **Proven by a millisecond test matrix.** A real in-process Sinatra app replays the full client × scenario matrix on every run, so the contracts above can't silently regress.
+
+## Why Legion LLM
+
+### N × N: any client, any provider, every direction
+
+Most LLM gateways are passthroughs: they shuttle bytes from one OpenAI-shaped client to one OpenAI-shaped backend. Legion is different. The hard problem is the **combinatorial explosion** of client dialects against provider backends:
+
+- **N client formats** — callers speak whatever API they already use: OpenAI Chat (`/v1/chat/completions`), OpenAI Responses (`/v1/responses`), Anthropic Messages (`/v1/messages`).
+- **N provider backends** — a request can land on any provider: Bedrock, Anthropic, OpenAI, vLLM, Ollama, fleet GPUs.
+
+Instead of maintaining a bespoke adapter for every client × provider pair (N × N adapters), **every request is parsed once into a single canonical representation, routed and executed, then rendered once back into the caller's dialect.** Each provider's wire-format translation lives entirely inside its `lex-llm-*` gem — nothing in the router, executor, or routes ever branches on a provider name.
+
+The result: **any client → any provider, in every direction.** A Claude Code session hitting `/v1/messages` can be served transparently by an OpenAI Responses backend (or the reverse), and gets a faithful response in exactly the dialect it asked for.
+
+### Execution proxy, not a passthrough
+
+To the **client**, Legion looks like a server-side execution surface: LegionIO-resolved tools run *server-side* and appear in canonical server-tool shapes — the client never sees a pending action for a tool Legion already executed. To the **provider**, Legion looks like the client: the same tool-use/tool-result exchange shows up in the next turn in that provider's wire format, so the model always knows what happened. This "always translate, never passthrough" contract is verified on every test run by an in-process matrix harness that replays the full client × scenario matrix in milliseconds.
+
+### Context curation that actually works
+
+Long agentic sessions die by a thousand tokens: every turn re-sends the entire history, thinking blocks, and stale tool output, and context grows without bound. Legion's **Curator** (`Legion::LLM::Context::Curator`) runs asynchronously after each turn and keeps the payload bounded — without losing the information the model needs to stay coherent.
+
+**Validated against ground truth** (actual wire-payload size, not estimates), across 29 turns over 8 conversations:
+
+| Metric | Without curation | With curation | Result |
+|--------|------------------|---------------|--------|
+| Tokens that *would* have been sent | 2,556,548 | — | — |
+| Tokens *actually* sent | — | 337,608 | **86.8% reduction** |
+
+A head-to-head review of the *same* 152-file pull request — Claude → Bedrock (Opus) directly vs. Claude → Legion → vLLM (Gemma 4 31B on an H200) — shows what that means in practice:
+
+| Metric (turn 3) | Claude direct | Through Legion | Ratio |
+|-----------------|---------------|----------------|-------|
+| Conversation/messages tokens | 41.4K (growing ~7K/turn, unbounded) | 1.2K (flat, sub-2K) | **34.5× less** |
+| Response time | 29s | 7s | **4× faster** |
+| Cost | frontier pricing | $0 (local GPU) | **∞** |
+
+Both produced correct, specific technical answers and passed a multi-question recall test that required context from earlier turns — so on this class of task the savings are *not* paid for in quality. (Separate reasoning-ceiling testing found the 31B local model handles 80%+ of tasks but can stumble on genuinely hard reasoning; that work should still route to a frontier tier — which is exactly what the router's escalation does automatically.) The Curator composes several deterministic strategies:
+
+| Strategy | Effect |
+|----------|--------|
+| `strip_thinking` | Removes reasoning blocks from prior turns (e.g. 69K chars → ~240) |
+| `distill_tool_result` | Summarizes tool results larger than ~2K chars |
+| `fold_resolved_exchanges` | Collapses completed tool-use/tool-result pairs |
+| `evict_superseded` | Drops a file read once a later read of the same file supersedes it |
+| `dedup_similar` | Jaccard-similarity dedup at a 0.85 threshold |
+| `drop_and_archive` | Archives overflow to the knowledge store rather than discarding it |
+
+Curation runs **after** each turn (async), never inside the tool loop, so it never adds latency to an in-flight request. With a 60K-token target the validated payloads stay comfortably in the 40–56K range.
+
+### And everything else you'd expect from a production gateway
+
+Dynamic weighted routing across five tiers, automatic escalation and mid-stream provider failover, per-instance circuit breakers, capability-aware model selection, prompt compression, structured output, embeddings, fleet dispatch over AMQP, unified metering/audit on every request exit, and config-driven model-policy compliance (`model_whitelist`/`model_blacklist`, fail-closed). All of it is documented below.
 
 ## Installation
 
@@ -891,7 +984,7 @@ bundle exec rubocop -A
 | `legion-settings` | Configuration defaults and file overrides |
 | `legion-transport` (>= 1.4.14) | AMQP transport for fleet dispatch, metering, and audit |
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
-| `lex-llm` (>= 0.4.3) | Provider-neutral contract, model offerings, response normalization, fleet envelopes, and responder-side fleet execution helpers |
+| `lex-llm` (>= 0.5.4) | Provider-neutral contract, `Canonical::Request`/`Canonical::Response`, model offerings, response normalization, fleet envelopes, and responder-side fleet execution helpers |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 
