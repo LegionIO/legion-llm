@@ -1,5 +1,21 @@
 # Legion LLM Changelog
 
+## [0.13.1] - 2026-06-17
+
+### Fixed
+
+- **Streamed responses no longer leak Ruby object inspect strings to the client.** The
+  `StreamAssembler::ChunkAdapter` — the single chunk→wire normalizer — rendered provider value
+  objects with `.to_s` when they weren't plain strings, so the client SSE could carry
+  `#<Legion::Extensions::Llm::Thinking:0x…>` (Claude Code `/v1/messages`, via the legacy-chunk
+  `legacy_thinking` path that only checked `#content` while the legacy `Thinking` exposes `#text`)
+  or `[#<data …Canonical::ContentBlock…>]` (Codex `/v1/responses`, via a `text_delta` whose delta
+  arrived as a `ContentBlock` array). Both paths now unwrap to text and never `.to_s` a value
+  object onto the wire. The metering/audit ledger was already clean — only the streaming wire was
+  affected; the in-process matrix did not catch it because the `FakeProvider` emits canonical
+  chunks only (the documented provider-shape blind spot), so the regression is locked by direct
+  `StreamAssembler` specs.
+
 ## [0.13.0] - 2026-06-17
 
 Consolidated release. This single version bundles every change from `0.12.14` through `0.12.35`

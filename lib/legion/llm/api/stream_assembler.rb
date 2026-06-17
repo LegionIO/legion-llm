@@ -587,12 +587,25 @@ module Legion
             from_legacy(chunk)
           end
 
+          # A canonical chunk delta is normally a String, but a non-incremental
+          # final message can arrive as a Canonical::ContentBlock (or array of
+          # them). Unwrap to text — never `.to_s` a value object onto the wire.
+          def delta_text(delta)
+            return '' if delta.nil?
+            return delta if delta.is_a?(String)
+            return delta.map { |part| delta_text(part) }.join if delta.is_a?(Array)
+            return delta.text.to_s if delta.respond_to?(:text) && delta.text
+            return delta.content.to_s if delta.respond_to?(:content) && delta.content
+
+            ''
+          end
+
           def from_canonical(chunk)
             case chunk.type
             when :text_delta
-              AdaptedChunk.new(text: chunk.delta.to_s)
+              AdaptedChunk.new(text: delta_text(chunk.delta))
             when :thinking_delta
-              AdaptedChunk.new(thinking_text: chunk.delta.to_s, thinking_signature: chunk.signature)
+              AdaptedChunk.new(thinking_text: delta_text(chunk.delta), thinking_signature: chunk.signature)
             when :tool_call_delta
               tc = chunk.tool_call
               return AdaptedChunk.new if tc.nil?
@@ -655,10 +668,14 @@ module Legion
             if thinking.is_a?(Hash)
               normalized = thinking.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
               [normalized[:content] || normalized[:text] || normalized[:thinking], normalized[:signature]]
-            elsif thinking.respond_to?(:content)
+            elsif thinking.respond_to?(:content) && thinking.content
               [thinking.content, thinking.respond_to?(:signature) ? thinking.signature : nil]
+            elsif thinking.respond_to?(:text)
+              # Legacy lex-llm Thinking exposes #text/#signature (no #content) —
+              # extract the text, never the Ruby `#<...Thinking:0x...>` inspect.
+              [thinking.text, thinking.respond_to?(:signature) ? thinking.signature : nil]
             else
-              [thinking.to_s, nil]
+              [thinking.is_a?(String) ? thinking : nil, nil]
             end
           end
 
