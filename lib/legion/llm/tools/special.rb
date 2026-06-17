@@ -412,7 +412,8 @@ module Legion
         def tool_error_log_chars
           configured = Legion::Settings[:llm][:tool_error_log_chars].to_i
           configured.positive? ? configured : 500
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.tool_error_log_chars')
           500
         end
       end

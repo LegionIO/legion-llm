@@ -233,7 +233,7 @@ RSpec.describe 'Router multi-instance provider routing' do
                                                                    metadata: { default_model: 'claude-haiku-4-5-20251001', tier: :frontier })
       Legion::LLM::Call::Registry.register(:vllm, Module.new, instance: :apollo,
                                                               metadata: { default_model: 'gemma-4-12b-it', tier: :direct })
-      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| resolutions }
+      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| [resolutions, []] }
     end
 
     it 'includes both anthropic instances ahead of any other provider' do

@@ -6,7 +6,8 @@ module Legion
   module LLM
     module Inference
       class Executor
-        # Escalation-area methods extracted from Executor verbatim (P4b §1.5, refactor-under-green).
+        # Escalation-area methods extracted from Executor (P4b); since extended
+        # for instance-aware failover (0.12.35).
         # Owns the provider-call lifecycle (single + escalating, sync + stream + responses-API),
         # error/retry classification, and the corresponding audit/metering emission.
         module Escalation
@@ -62,7 +63,8 @@ module Legion
             primary_tier = @escalation_chain.primary&.tier
 
             if chain.empty?
-              err = routing_empty_chain_error
+              reasons = chain.respond_to?(:rejection_reasons) ? Array(chain.rejection_reasons) : []
+              err = routing_empty_chain_error(reasons)
               log.warn "[llm][escalation] action=empty_chain reason=#{err.class.name}"
               emit_error_audit(err, status: 'no_available_provider')
               raise err
@@ -307,6 +309,12 @@ module Legion
               log.error "[llm][escalation] action=request_payload_error provider=#{resolution.provider} " \
                         "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
                         "error=#{err.message.to_s[0, 500]} daemon_side_payload_bug=true provider_health=false"
+            elsif internal_error?(err)
+              # Daemon-internal bug (NoMethodError/NameError/ArgumentError/TypeError/KeyError) —
+              # do NOT report provider health; the provider is not at fault.
+              log.error "[llm][escalation] action=daemon_internal_error provider=#{resolution.provider} " \
+                        "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
+                        "error=#{err.class}: #{err.message.to_s[0, 500]} daemon_internal_bug=true provider_health=false"
             elsif account_specific_error?(err)
               # Account-scoped failure (credit balance, payment, quota). It is
               # deterministic — it will fail every call until the operator tops up —
@@ -322,7 +330,7 @@ module Legion
               Legion::LLM::Router.health_tracker.trip_circuit(
                 provider: resolution.provider, instance: resolution.instance, reason: err.message
               )
-            elsif authentication_error?(err) || config_error?(err)
+            elsif authentication_error?(err) || config_error?(err) || bedrock_availability_error?(err)
               Legion::LLM::Router.health_tracker.deny_model(
                 provider: resolution.provider,
                 model:    resolution.model,
@@ -385,16 +393,20 @@ module Legion
             chain
           end
 
+          COLD_BOOT_REJECTIONS = %i[discovery_unavailable provider_instance_has_no_models].freeze
+          FAILED_DEPENDENCY_REJECTIONS = %i[circuit_open model_denied model_not_offered context_too_small
+                                            missing_capability availability_check_error].freeze
+
           # Determine the appropriate typed error when the escalation chain is empty.
-          # Uses the last rejection reasons from availability filtering to distinguish
-          # between "too early" (prerequisites not yet confirmed) and "failed dependency"
-          # (no provider can satisfy the requirements).
-          def routing_empty_chain_error
-            reasons = Legion::LLM::Router::Availability.last_rejection_reasons
-            if reasons.include?(:capability_unconfirmed)
-              RoutingTooEarly.new
-            elsif reasons.any?
-              RoutingFailedDependency.new
+          # Uses the rejection reasons threaded through from availability filtering to
+          # distinguish between "too early" (prerequisites not yet confirmed) and
+          # "failed dependency" (no provider can satisfy the requirements).
+          def routing_empty_chain_error(reasons)
+            reason_syms = Array(reasons).map { |r| r.is_a?(Hash) ? r[:reason] : r }.compact
+            if reason_syms.any? { |r| COLD_BOOT_REJECTIONS.include?(r) }
+              RoutingTooEarly.new(reasons: reasons)
+            elsif reason_syms.any? { |r| FAILED_DEPENDENCY_REJECTIONS.include?(r) }
+              RoutingFailedDependency.new(reasons: reasons)
             else
               EscalationExhausted.new('No available providers after routing availability filtering')
             end
@@ -476,7 +488,7 @@ module Legion
 
           def record_provider_response
             duration_ms = ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).to_i
-            report_provider_health(:success, duration_ms) if @resolved_offering_id
+            report_provider_health(:success, duration_ms)
             log.debug("[pipeline][provider] action=response_received provider=#{@resolved_provider} model=#{@resolved_model} duration_ms=#{duration_ms}")
             @timeline.record(
               category: :provider, key: 'provider:response_received',
@@ -495,7 +507,7 @@ module Legion
             return if context_overflow_error?(error)
             return if client_stream_error?(error)
 
-            if authentication_error?(error) || config_error?(error)
+            if authentication_error?(error) || config_error?(error) || bedrock_availability_error?(error)
               Legion::LLM::Router.health_tracker.deny_model(
                 provider: provider,
                 model:    model,
@@ -671,6 +683,24 @@ module Legion
             name = err.class.name.to_s
             msg = err.message.to_s
             REQUEST_PAYLOAD_ERROR_PATTERNS.any? { |pat| pat.match?(name) || pat.match?(msg) }
+          end
+
+          # Daemon-internal Ruby exceptions — bugs in the executor/dispatch path
+          # itself, not in the provider. These must never be reported as
+          # provider :error health signals (which would trip a circuit and
+          # blame an innocent backend for our own NoMethodError).
+          def internal_error?(err)
+            err.is_a?(NoMethodError) || err.is_a?(NameError) || err.is_a?(ArgumentError) ||
+              err.is_a?(TypeError) || err.is_a?(KeyError)
+          end
+
+          # Bedrock ValidationException messages that indicate the model is not
+          # available in this account/region — an availability/config outcome,
+          # not a daemon-side request payload bug. Routed to the deny/trip path
+          # (treat like config_error?) so the model is excluded rather than
+          # silently logged.
+          def bedrock_availability_error?(err)
+            err.message.to_s.match?(/model identifier is invalid|not enabled in this region|on-demand throughput|model.*does not support/i)
           end
 
           def config_error?(err)

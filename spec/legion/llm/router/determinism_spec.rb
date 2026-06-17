@@ -24,36 +24,43 @@ RSpec.describe 'Router determinism and regression coverage' do
     Legion::LLM::Router.populate_auto_rules({})
   end
 
-  # ─── Regression: stale default_intent[:capability] raises ────────────────────
+  # ─── Regression: stale default_intent[:capability] is warn-stripped ──────────
 
   describe 'stale settings with capability: key' do
-    it 'raises ArgumentError from Router.resolve when default_intent contains capability:' do
+    before do
       Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
-                                        routing: {
+                                        default_provider: :vllm,
+                                        default_model:    'qwen3.6-27b',
+                                        routing:          {
                                           enabled:        true,
                                           rules:          [],
                                           default_intent: { privacy: 'normal', capability: 'moderate' }
                                         }
                                       ))
       Legion::LLM::Router.populate_auto_rules({})
+      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| [resolutions, []] }
+    end
+
+    it 'warns and strips :capability from default_intent in Router.resolve without raising' do
+      expect(Legion::LLM::Router.log).to receive(:warn).with(/deprecated :capability key/).at_least(:once)
+      expect(Legion::LLM::Router.log).to receive(:warn).with(any_args).at_least(:once)
 
       expect do
         Legion::LLM::Router.resolve(intent: { effort: :moderate })
-      end.to raise_error(ArgumentError, /capability.*removed/i)
+      end.not_to raise_error
     end
 
-    it 'raises ArgumentError from Router.resolve_chain when default_intent contains capability:' do
-      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(
-                                        routing: {
-                                          enabled:        true,
-                                          rules:          [],
-                                          default_intent: { privacy: 'normal', capability: 'moderate' }
-                                        }
-                                      ))
-      Legion::LLM::Router.populate_auto_rules({})
+    it 'warns and strips :capability from default_intent in Router.resolve_chain without raising' do
+      expect(Legion::LLM::Router.log).to receive(:warn).with(/deprecated :capability key/).at_least(:once)
 
       expect do
         Legion::LLM::Router.resolve_chain(intent: { effort: :moderate })
+      end.not_to raise_error
+    end
+
+    it 'still raises ArgumentError when :capability is supplied in the explicit caller intent' do
+      expect do
+        Legion::LLM::Router.resolve(intent: { capability: :moderate })
       end.to raise_error(ArgumentError, /capability.*removed/i)
     end
   end
@@ -405,7 +412,7 @@ RSpec.describe 'Router determinism and regression coverage' do
       )
       # Isolate the bug from availability: keep every candidate so a vLLM primary
       # proves the hint was ignored, not that availability filtered vLLM out.
-      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| resolutions }
+      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| [resolutions, []] }
     end
 
     after { Legion::LLM::Call::Registry.deregister_provider(:bedrock) }
@@ -436,7 +443,7 @@ RSpec.describe 'Router determinism and regression coverage' do
         :anthropic, Module.new,
         metadata: { tier: :frontier, default_model: 'qwen3.6-27b' }
       )
-      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| resolutions }
+      allow(Legion::LLM::Router::Availability).to receive(:filter_resolutions) { |resolutions, **| [resolutions, []] }
       # Inventory (SSOT) knows anthropic offers only haiku.
       allow(Legion::LLM::Inventory).to receive(:routing_candidates).and_call_original
       allow(Legion::LLM::Inventory).to receive(:routing_candidates).with(provider: :anthropic).and_return(

@@ -5,14 +5,15 @@ require 'legion/logging/helper'
 module Legion
   module LLM
     module Router
-      # Candidate selection, exclusion filters, and scoring extracted verbatim
-      # from Router (NxN G14 3c). Mixed into the Router singleton via `extend`,
-      # so every method keeps the same `self` (the Router module), the same
-      # private visibility, the same access to Router constants (EFFORT_RANK),
-      # to sibling helpers that stay on Router (tier_available?, tier_rank,
-      # tier_priority, health_tracker, discovery_enabled?, required_capabilities,
-      # normalize_capabilities, normalize_effort, external_tier?), and to the
-      # @last_candidate_trace ivar. No behavior change.
+      # Candidate selection, exclusion filters, and scoring. Extracted from
+      # Router (G14 P4). Originally a verbatim move; since extended with
+      # effort/loaded scoring (0.12.20) and dominant hint weighting (+50,000,
+      # 0.12.30). Mixed into the Router singleton via `extend`, so every method
+      # keeps the same `self` (the Router module), the same private visibility,
+      # the same access to Router constants (EFFORT_RANK), and to sibling
+      # helpers that stay on Router (tier_available?, tier_rank, tier_priority,
+      # health_tracker, discovery_enabled?, required_capabilities,
+      # normalize_capabilities, normalize_effort, external_tier?).
       module Candidates
         private
 
@@ -94,10 +95,9 @@ module Legion
           final = not_denied.select { |r| tier_available?(r.target[:tier] || r.target['tier']) }
           trace[:tier_unavailable] = not_denied.size - final.size
 
-          @last_candidate_trace = trace
           log.debug "[llm][router] action=select_candidates.done candidates_remaining=#{final.size} started_with=#{rules.size}"
 
-          final
+          [final, trace]
         end
 
         # Reject rules whose model's context_length is too small for the estimated token count.
@@ -106,7 +106,7 @@ module Legion
           context_length = rule.target[:context_length] || rule.target['context_length']
           return false unless context_length&.to_i&.positive?
 
-          threshold = (context_length.to_i * 0.90).to_i
+          threshold = (context_length.to_i * Availability.context_headroom).to_i
           if estimated_tokens > threshold
             log.debug "[llm][router] action=excluded_by_context_window model=#{rule.target[:model]} " \
                       "context_length=#{context_length} estimated_tokens=#{estimated_tokens} threshold=#{threshold}"
@@ -232,7 +232,6 @@ module Legion
         # Score bonus when a rule's target matches caller-provided hints.
         # Each matching hint adds +50,000 to the priority, so header preferences
         # dominate normal scoring without converting preferences into constraints.
-        # rule priority, health, or cost considerations.
         def hint_matching_bonus(rule, hints)
           return 0 if hints.nil? || hints.empty?
 

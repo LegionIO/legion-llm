@@ -60,6 +60,43 @@ RSpec.describe 'Legion::LLM error hierarchy' do
     end
   end
 
+  describe Legion::LLM::RoutingUnavailable do
+    it 'is retryable' do
+      expect(described_class.new).to be_retryable
+    end
+
+    it 'carries reasons through the kwarg' do
+      reasons = [{ provider: :vllm, instance: :h200, model: 'qwen', reason: :circuit_open }]
+      expect(described_class.new(reasons: reasons).reasons).to eq(reasons)
+    end
+  end
+
+  describe Legion::LLM::RoutingTooEarly do
+    it 'is retryable' do
+      expect(described_class.new).to be_retryable
+    end
+
+    it 'carries reasons through the kwarg' do
+      reasons = [{ provider: :vllm, reason: :discovery_unavailable }]
+      err = described_class.new(reasons: reasons)
+      expect(err.reasons).to eq(reasons)
+      expect(err.status_code).to eq(425)
+    end
+  end
+
+  describe Legion::LLM::RoutingFailedDependency do
+    it 'is not retryable' do
+      expect(described_class.new).not_to be_retryable
+    end
+
+    it 'carries reasons through the kwarg' do
+      reasons = [{ provider: :bedrock, reason: :model_denied }]
+      err = described_class.new(reasons: reasons)
+      expect(err.reasons).to eq(reasons)
+      expect(err.status_code).to eq(424)
+    end
+  end
+
   describe Legion::LLM::InferenceError do
     it 'wraps a step name' do
       err = described_class.new('boom', step: :routing)

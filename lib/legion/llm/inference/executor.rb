@@ -89,8 +89,7 @@ module Legion
           /input_schema/i,
           /tools\.\d+/,
           /messages\.\d+/,
-          /Field required/i,
-          /ValidationException/
+          /Field required/i
         ].freeze
 
         CONTEXT_OVERFLOW_ERROR_PATTERNS = [

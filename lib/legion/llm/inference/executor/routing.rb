@@ -6,9 +6,9 @@ module Legion
   module LLM
     module Inference
       class Executor
-        # Routing-area methods extracted from Executor verbatim (P4b §1.5, refactor-under-green).
-        # Operates on Executor instance state; see P4b-decomposition-embed.md §1.1 for the ivar
-        # contract this mixin reads/writes.
+        # Routing-area methods extracted from Executor (P4b); since extended for
+        # instance-aware failover (0.12.35). Reads/writes Executor instance
+        # state; see ivar usage below.
         module Routing
           def normalize_offering_metadata(value)
             return {} unless value.is_a?(Hash)
@@ -64,8 +64,13 @@ module Legion
               from: 'tier_assigner', to: 'pipeline'
             )
           rescue StandardError => e
-            @warnings << "tier assignment error: #{e.message}"
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.step_tier_assignment')
+            # Fail-closed: forced tier assignments carry privacy/security
+            # constraints (see apply_proactive_tier_assignment). Whether this
+            # assignment would have been forced is not determinable when the
+            # assigner itself raised, so re-raise rather than silently continue
+            # with a request that may violate a privacy tier constraint.
+            handle_exception(e, level: :error, operation: 'llm.pipeline.step_tier_assignment')
+            raise
           end
 
           def step_routing

@@ -445,6 +445,7 @@ module Legion
           h['context_length'] = model_entry[:context_length] if model_entry[:context_length]
           h['parameter_count'] = model_entry[:parameter_count] if model_entry[:parameter_count]
           h['size'] = model_entry[:size_bytes] if model_entry[:size_bytes]
+          h['loaded'] = model_entry[:loaded] unless model_entry[:loaded].nil?
           h
         end
 

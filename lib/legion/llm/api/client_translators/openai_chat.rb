@@ -91,11 +91,18 @@ module Legion
 
             messages = inference_messages(canonical_request.messages)
 
+            # C7 — header-supplied X-Legion-Model wins; otherwise fall back to
+            # the client-requested body[:model] so routing is never blank when
+            # the caller named a model.
+            routing = (canonical_request.routing || {}).dup
+            client_model = canonical_request.metadata[:client_model]
+            routing[:model] ||= client_model if client_model
+
             Legion::LLM::Inference::Request.build(
               id:              request_id,
               messages:        messages,
               system:          canonical_request.system,
-              routing:         canonical_request.routing,
+              routing:         routing,
               tools:           tool_defs,
               tool_choice:     canonical_request.tool_choice,
               caller:          server_caller,
@@ -225,6 +232,8 @@ module Legion
               @conv_id = conv_id
               @include_reasoning = include_reasoning
               @done_emitted = false
+              @tool_ordinal = -1
+              @tool_ordinals = {}
             end
 
             def on_start(model:, request_id:, input_tokens:)
@@ -269,12 +278,15 @@ module Legion
 
             def on_tool_call_open(block_index:, tool_call:, server_tool:)
               _ = server_tool
-              # Send the initial tool_call with name. Index is 0-based across
-              # this streaming response; chat.completion.chunk references it
-              # by index in the delta.
+              # Send the initial tool_call with name. Index is the 0-based
+              # tool-call ordinal across this streaming response (NOT the
+              # assembler's global block index); chat.completion.chunk
+              # references it by index in the delta.
+              idx = (@tool_ordinal += 1)
+              @tool_ordinals[block_index] = idx
               emit_chunk(delta_envelope({
                                           tool_calls: [{
-                                            index:    block_index,
+                                            index:    idx,
                                             id:       tool_call[:id],
                                             type:     'function',
                                             function: {
@@ -288,9 +300,10 @@ module Legion
             def on_tool_call_delta(block_index:, partial_arguments_json:)
               return if partial_arguments_json.to_s.empty?
 
+              idx = @tool_ordinals[block_index]
               emit_chunk(delta_envelope({
                                           tool_calls: [{
-                                            index:    block_index,
+                                            index:    idx,
                                             function: { arguments: partial_arguments_json }
                                           }]
                                         }))

@@ -163,13 +163,10 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
   describe '/v1/messages — server-side LegionIO tool execution' do
     it 'surfaces server_tool_use+server_tool_result and provider sees the tool result on next turn' do
       received_args = nil
-      stub = MatrixHelper::FakeLegionEcho.singleton_class.prepend(Module.new do
-        define_method(:call) do |**args|
-          received_args = args
-          super(**args)
-        end
-      end)
-      _ = stub
+      allow(MatrixHelper::FakeLegionEcho).to receive(:call).and_wrap_original do |orig, **args|
+        received_args = args
+        orig.call(**args)
+      end
 
       FakeProvider.with_scenario(:server_tool_legion) do
         post '/v1/messages',

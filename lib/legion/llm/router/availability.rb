@@ -14,15 +14,16 @@ module Legion
 
         def filter_resolutions(resolutions, estimated_tokens: nil, required_capabilities: [])
           req_caps = Array(required_capabilities)
-          @last_rejection_reasons = []
-          resolutions.filter_map do |resolution|
+          reasons = []
+          filtered = resolutions.filter_map do |resolution|
             reason = rejection_reason(
               resolution,
               estimated_tokens:      estimated_tokens,
               required_capabilities: req_caps
             )
             if reason
-              @last_rejection_reasons << reason
+              reasons << { provider: resolution.provider, instance: resolution.instance,
+                           model: resolution.model, reason: reason }
               detail = if reason == :missing_capability
                          caps = available_capabilities(resolution)
                          missing = Capabilities.normalize(req_caps) - Capabilities.normalize(caps)
@@ -37,10 +38,12 @@ module Legion
             end
             resolution
           end
+          [filtered, reasons]
         end
 
+        # DEPRECATED: use the second return value of filter_resolutions
         def last_rejection_reasons
-          @last_rejection_reasons || []
+          []
         end
 
         def rejection_reason(resolution, estimated_tokens: nil, required_capabilities: [])
@@ -96,9 +99,9 @@ module Legion
 
           nil
         rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'router.availability',
+          handle_exception(e, level: :error, handled: true, operation: 'llm.router.availability.rejection_reason',
                               provider: resolution.provider)
-          nil
+          :availability_check_error
         end
 
         def inventory_offerings_for(resolution)
@@ -108,7 +111,7 @@ module Legion
           # A model being offered by ANY instance of the provider confirms availability.
           Inventory.offerings(provider: resolution.provider)
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'router.availability.inventory_lookup')
+          handle_exception(e, level: :warn, handled: true, operation: 'router.availability.inventory_lookup')
           nil
         end
 

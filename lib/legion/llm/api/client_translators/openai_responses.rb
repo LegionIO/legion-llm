@@ -18,7 +18,8 @@ module Legion
         #   - parse_request(body, env) -> Canonical::Request (handles
         #     input/instructions/reasoning/tools shapes specific to /v1/responses)
         #   - format_response(canonical_or_pipeline_response) -> Hash with output[]
-        #     containing {thinking, function_call, message} items
+        #     containing {reasoning (phase: 'reasoning' message), server_tool
+        #     function_call/output pairs, actionable function_call, message} items
         #   - format_error(error, status_code:, type:)
         #   - events_emitter(out, ...) -> Events emitter conforming to the
         #     StreamAssembler contract.
@@ -71,7 +72,7 @@ module Legion
           # /v1/responses lane omits reasoning summary content unless the
           # request opts in — without this, codex→openai cells return only
           # the message item (no reasoning), and the e2e validator
-          # reports "reasoning never produced" (P5-final-cells.md B3).
+          # reports "reasoning never produced".
           def ensure_reasoning_summary(body)
             reasoning = body[:reasoning]
             return body unless reasoning.is_a?(Hash)
@@ -94,11 +95,18 @@ module Legion
 
             messages = inference_messages(canonical_request.messages)
 
+            # C7 — header-supplied X-Legion-Model wins; otherwise fall back to
+            # the client-requested body[:model] so routing is never blank when
+            # the caller named a model.
+            routing = (canonical_request.routing || {}).dup
+            client_model = canonical_request.metadata[:client_model]
+            routing[:model] ||= client_model if client_model
+
             Legion::LLM::Inference::Request.build(
               id:              request_id,
               messages:        messages,
               system:          canonical_request.system,
-              routing:         canonical_request.routing,
+              routing:         routing,
               tools:           tool_defs,
               tool_choice:     canonical_request.tool_choice,
               caller:          server_caller,
@@ -341,7 +349,6 @@ module Legion
             end
 
             def on_tool_call_open(block_index:, tool_call:, server_tool:)
-              _ = server_tool
               tc_id = tool_call[:id] || "call_#{SecureRandom.hex(12)}"
               idx = @output_items.length
               item = { id: tc_id, type: 'function_call', name: tool_call[:name].to_s,
@@ -352,7 +359,8 @@ module Legion
                 name:          tool_call[:name].to_s,
                 arguments_str: '',
                 output_index:  idx,
-                args_emitted:  +''
+                args_emitted:  +'',
+                server_tool:   server_tool
               }
               emit('response.output_item.added', {
                      type: 'response.output_item.added', sequence_number: next_seq,
@@ -446,8 +454,12 @@ module Legion
                 @output_items[@msg_index] = completed_item
               end
 
-              has_tool_calls = @pending_tool_calls.any?
-              status = stop_reason == :tool_use || has_tool_calls ? 'requires_action' : 'completed'
+              _ = stop_reason
+              # G24 — server-executed tool calls are non-actionable; only
+              # client-callable tool calls drive `requires_action`.
+              actionable = @pending_tool_calls.values.reject { |tc| tc[:server_tool] }
+              has_tool_calls = actionable.any?
+              status = has_tool_calls ? 'requires_action' : 'completed'
               event = status == 'requires_action' ? 'response.done' : 'response.completed'
               payload = {
                 type: event, sequence_number: next_seq,
@@ -460,7 +472,7 @@ module Legion
               if status == 'requires_action'
                 payload[:response][:action_required] = {
                   type:           'function_calls',
-                  function_calls: @output_items.select { |i| i[:type] == 'function_call' }
+                  function_calls: actionable.map { |tc| @output_items[tc[:output_index]] }
                 }
               end
               emit(event, payload)

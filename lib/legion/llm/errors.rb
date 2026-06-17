@@ -60,25 +60,34 @@ module Legion
     class DaemonUnavailableError < LLMError; end
 
     class RoutingUnavailable < LLMError
-      attr_reader :status_code, :code
+      attr_reader :status_code, :code, :reasons
 
-      def initialize(message = 'Routing unavailable', status_code: 503, code: 'routing_unavailable')
+      def initialize(message = 'Routing unavailable', status_code: 503, code: 'routing_unavailable', reasons: [])
         @status_code = status_code
         @code = code
+        @reasons = reasons
         super(message)
       end
+
+      def retryable? = true
     end
 
     class RoutingTooEarly < RoutingUnavailable
-      def initialize(message = 'Routing prerequisites are not confirmed yet')
-        super(message, status_code: 425, code: 'routing_too_early')
+      def initialize(message = 'Routing prerequisites are not confirmed yet', reasons: [])
+        super(message, status_code: 425, code: 'routing_too_early', reasons: reasons)
       end
+
+      def retryable? = true
     end
 
     class RoutingFailedDependency < RoutingUnavailable
-      def initialize(message = 'No provider instance satisfies routing prerequisites')
-        super(message, status_code: 424, code: 'routing_failed_dependency')
+      def initialize(message = 'No provider instance satisfies routing prerequisites', reasons: [])
+        super(message, status_code: 424, code: 'routing_failed_dependency', reasons: reasons)
       end
+
+      # 424 indicates a state prerequisite is unmet (circuit open, model denied, capability
+      # missing) — retrying without a state change is futile. Override the parent's `true`.
+      def retryable? = false
     end
   end
 end

@@ -718,7 +718,7 @@ The legacy `vault_path` per-provider setting was removed in v0.3.1.
 Tests run without the full LegionIO stack. `spec/spec_helper.rb` uses real `Legion::Logging` and `Legion::Settings` (no stubs — hard dependencies are always present). Each test resets settings to defaults via `before(:each)`.
 
 ```bash
-bundle exec rspec    # 3044 examples, 0 failures
+bundle exec rspec    # all examples green, 0 failures
 bundle exec rubocop  # 0 offenses
 ```
 
@@ -729,7 +729,7 @@ bundle exec rubocop  # 0 offenses
 **The in-process matrix is the commit gate. Live e2e is confirmation only.**
 Every PR that touches `lib/legion/llm/api/`, the executor, or the canonical/translator boundary must pass the matrix locally before push. Live `legionio-e2e` runs against a daemon, costs cloud credits, and surfaces regressions hours after they ship — the matrix surfaces them in milliseconds with deterministic fixtures. If a regression breaks live e2e but not the matrix, the matrix is missing a scenario; add it.
 
-The harness has been proven to catch this week's translator-boundary regressions: `9771ae8` (ThinkingConfig kwargs), `cb7a08b` (flat tool_call hashes in OpenAI Responses), and `172c756` (reasoning output item shape). See `docs/work/planning/reports/G23-matrix-harness.md` for the proof and the scenario catalog.
+The harness has been proven to catch the P5 translator regressions: `9771ae8` (ThinkingConfig kwargs), `cb7a08b` (flat tool_call hashes in OpenAI Responses), and `172c756` (reasoning output item shape).
 
 ## LLM Routing Invariants
 
@@ -746,7 +746,7 @@ These are non-negotiable contracts that govern how requests flow through the dae
 
 4. **Thinking never crosses providers.** Reasoning content, signatures, and `redacted_thinking` blocks survive same-provider history replay; on any cross-provider transition (escalation, mid-stream failover, tier swap) thinking is stripped from replayed history. Signatures are cryptographically provider-bound and wire formats have no lossless mapping; foreign chain-of-thought is out-of-distribution for the new model.
 
-5. **Mid-stream provider failover is a first-class requirement.** A provider outage must never kill an in-flight conversation — that is vendor lock-in, not resiliency. The `StreamAssembler` decouples client protocol state from provider stream state: the client keeps one continuous SSE session while the canonical chunk source switches providers underneath. Failover phase points (`:before_first_byte`, `:mid_text`, `:mid_thinking`, `:mid_tool_call`) drive what the assembler replays vs. discards. Tool-call argument buffering policy (`llm.streaming.tool_call_buffering`) is configurable; the default is `:buffered` with periodic SSE keep-alive pings so large tool args don't make the upstream look dead.
+5. **Mid-stream provider failover is a first-class requirement.** A provider outage must never kill an in-flight conversation — that is vendor lock-in, not resiliency. The `StreamAssembler` decouples client protocol state from provider stream state: the client keeps one continuous SSE session while the canonical chunk source switches providers underneath. Failover phase points (`:before_first_byte`, `:mid_text`, `:mid_thinking`, `:mid_tool_call`) drive what the assembler replays vs. discards. Tool-call argument buffering policy (`llm.streaming.tool_call_buffering`) is configurable; the default is `:buffered`; a single keep-alive ping fires when a buffered tool-call opens (interval-based pinging is reserved but not yet implemented).
 
 6. **Every pipeline exit emits ledger events.** Every terminal path — success/sync, success/stream, error, escalation-exhausted, fleet-success, fleet-error, timeout, client-disconnect — routes through the same emission function and produces the metering, prompt-audit, and (for tool scenarios) tool-audit rows the ledger consumer expects. Pipeline bypasses are not allowed (the `_direct` shims are deprecated and route through the governed pipeline; see `Legion/Framework/NoDirectDispatch`). If you cannot record the event trail, fail closed when `llm.compliance.fail_closed` is set.
 

@@ -40,6 +40,11 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
   end
 
   describe 'skipping open circuits' do
+    after do
+      Legion::LLM::Call::Registry.deregister_provider(:bedrock)
+      Legion::LLM::Call::Registry.deregister_provider(:vllm)
+    end
+
     it 'skips a resolution whose circuit is open and uses the next one' do
       trip_circuit(provider: :vllm, instance: :h200)
 
@@ -85,7 +90,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
       expect { executor.call }.to raise_error(Legion::LLM::EscalationExhausted)
     end
 
-    it 'raises a routing error with no_available_provider on empty chain' do
+    it 'raises EscalationExhausted on an empty chain with no rejection reasons' do
       empty_chain = build_chain
       allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
       allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(empty_chain)
@@ -95,14 +100,29 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
       executor = described_class.new(request)
       executor.instance_variable_set(:@escalation_chain, empty_chain)
 
-      expect { executor.call }.to raise_error do |error|
-        expect(error).to be_a(Legion::LLM::EscalationExhausted)
-                     .or be_a(Legion::LLM::RoutingFailedDependency)
-      end
+      expect { executor.call }.to raise_error(Legion::LLM::EscalationExhausted)
+    end
+
+    it 'raises RoutingFailedDependency on an empty chain whose rejection reasons indicate a hard prerequisite failure' do
+      empty_chain = build_chain
+      allow(empty_chain).to receive(:rejection_reasons).and_return(
+        [{ provider: :vllm, instance: :h200, model: 'qwen3:32b', reason: :circuit_open }]
+      )
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(empty_chain)
+      allow(Legion::LLM::Router).to receive(:resolve).and_return(nil)
+      allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([])
+
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@escalation_chain, empty_chain)
+
+      expect { executor.call }.to raise_error(Legion::LLM::RoutingFailedDependency)
     end
   end
 
   describe 'failing over across instances of the same provider' do
+    after { Legion::LLM::Call::Registry.deregister_provider(:anthropic) }
+
     let(:anthropic_primary) do
       Legion::LLM::Router::Resolution.new(tier: :frontier, provider: :anthropic, instance: :primary, model: 'claude-haiku-4-5')
     end

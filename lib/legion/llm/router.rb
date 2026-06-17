@@ -45,6 +45,14 @@ module Legion
 
       OLLAMA_MODEL_PATTERN = %r{[:/]}
 
+      # Carry availability rejection reasons on the chain instance so the
+      # executor can raise a typed routing error without reading thread-unsafe
+      # module state (C1). Additive reopen — EscalationChain itself is defined
+      # in router/escalation/chain.rb.
+      class EscalationChain
+        attr_accessor :rejection_reasons
+      end
+
       @auto_rules = []
       @auto_rules_populated = false
 
@@ -118,7 +126,7 @@ module Legion
 
           merged = merge_defaults(intent)
           rules = load_rules
-          candidates = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
+          candidates, trace = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
           best = pick_best(candidates, intent: merged, hints: { tier: tier, provider: provider, model: model })
           resolution = best&.to_resolution
 
@@ -141,7 +149,7 @@ module Legion
 
           # If no rules matched (or hint mismatch), fall back to explicit resolution from hints, then arbitrage.
           unless resolution
-            trace_info = (@last_candidate_trace || {}).reject { |_, v| v.zero? }
+            trace_info = (trace || {}).reject { |_, v| v.zero? }
             log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size} " \
                      "rejections=#{trace_info}"
             resolution = explicit_resolution(tier, provider, model, instance)
@@ -160,7 +168,10 @@ module Legion
                               exclude: exclude, allow_default_fallback: allow_default_fallback,
                               estimated_tokens: estimated_tokens)
           else
-            chain_from_defaults(model, provider, max, hints: { tier: tier, instance: instance }, allow_default_fallback: allow_default_fallback)
+            req_caps = intent ? required_capabilities(intent) : []
+            chain_from_defaults(model, provider, max, hints: { tier: tier, instance: instance },
+                                allow_default_fallback: allow_default_fallback,
+                                estimated_tokens: estimated_tokens, required_capabilities: req_caps)
           end
         end
 
@@ -290,10 +301,12 @@ module Legion
             primary_tier:     tier
           )
           resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
-          resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                              required_capabilities: required_capabilities)
+          resolutions, reasons = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                                       required_capabilities: required_capabilities)
           max = max_attempts || escalation_max_attempts
-          EscalationChain.new(resolutions: resolutions, max_attempts: max)
+          chain = EscalationChain.new(resolutions: resolutions, max_attempts: max)
+          chain.rejection_reasons = reasons
+          chain
         end
 
         def build_fallback_resolutions(exclude_provider: nil, exclude_instance: nil, primary_tier: nil)
@@ -417,24 +430,18 @@ module Legion
         end
 
         def filter_chain_resolutions(resolutions, estimated_tokens:, required_capabilities:)
-          filtered = Availability.filter_resolutions(
+          filtered, reasons = Availability.filter_resolutions(
             resolutions,
             estimated_tokens:      estimated_tokens,
             required_capabilities: required_capabilities
           )
-          return filtered unless filtered.empty? && resolutions.any?
+          return [filtered, reasons] unless filtered.empty? && resolutions.any?
 
-          reasons = resolutions.filter_map do |resolution|
-            Availability.rejection_reason(
-              resolution,
-              estimated_tokens:      estimated_tokens,
-              required_capabilities: required_capabilities
-            )
-          end
-          return filtered unless reasons.any? && reasons.all? { |reason| reason == :provider_instance_has_no_models }
+          reason_syms = reasons.map { |r| r[:reason] }
+          return [filtered, reasons] unless reason_syms.any? && reason_syms.all? { |reason| reason == :provider_instance_has_no_models }
 
           log.warn "[llm][router] action=availability.empty_catalog_preserve_chain candidates=#{resolutions.size}"
-          resolutions
+          [resolutions, reasons]
         end
 
         def merge_defaults(intent)
@@ -443,6 +450,10 @@ module Legion
                      .each_with_object({}) do |(k, v), memo|
                        memo[k] = v.respond_to?(:to_sym) ? v.to_sym : v
                      end
+          if defaults.key?(:capability)
+            log.warn '[llm][router] routing.default_intent contains deprecated :capability key — ignoring; use :effort instead'
+            defaults = defaults.except(:capability)
+          end
 
           raw_intent = intent&.transform_keys(&:to_sym) || {}
           merged = defaults.merge(raw_intent)
@@ -571,15 +582,19 @@ module Legion
               r.provider == primary.provider && r.instance == primary.instance
             end
             resolutions = ([primary] + fallbacks).uniq { |r| [r.provider, r.instance, r.model] }
-            resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: required_capabilities)
-            return EscalationChain.new(resolutions: resolutions, max_attempts: max)
+            resolutions, reasons = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                                         required_capabilities: required_capabilities)
+            chain = EscalationChain.new(resolutions: resolutions, max_attempts: max)
+            chain.rejection_reasons = reasons
+            return chain
           end
 
+          all_reasons = []
           resolutions = enabled_provider_chain
           if resolutions.any?
-            resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: required_capabilities)
+            resolutions, reasons = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                                         required_capabilities: required_capabilities)
+            all_reasons.concat(reasons)
           end
           if resolutions.empty? && allow_default_fallback
             p = Legion::Settings[:llm][:default_provider]&.to_sym ||
@@ -588,10 +603,13 @@ module Legion
                                           provider: p,
                                           model:    Legion::Settings[:llm][:default_model] ||
                                                     Legion::Settings[:llm][:routing][:last_resort_model])]
-            resolutions = filter_chain_resolutions(last_resort, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: required_capabilities)
+            resolutions, reasons = filter_chain_resolutions(last_resort, estimated_tokens:      estimated_tokens,
+                                                                         required_capabilities: required_capabilities)
+            all_reasons.concat(reasons)
           end
-          EscalationChain.new(resolutions: resolutions, max_attempts: max)
+          chain = EscalationChain.new(resolutions: resolutions, max_attempts: max)
+          chain.rejection_reasons = all_reasons
+          chain
         end
 
         def enabled_provider_chain
@@ -681,18 +699,21 @@ module Legion
           merged     = intent ? merge_defaults(intent) : {}
           req_caps   = required_capabilities(merged)
           rules      = load_rules
-          candidates = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
+          candidates, _trace = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
           sorted = candidates.sort_by { |r| -effective_priority(r, intent: merged, hints: hints) }
           resolutions = sorted.map(&:to_resolution)
           resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
           resolutions = resolutions.uniq { |r| [r.provider, r.instance, r.model] }
           resolutions = prepend_hinted_provider(resolutions, hints)
-          resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                              required_capabilities: req_caps)
+          all_reasons = []
+          resolutions, reasons = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                                       required_capabilities: req_caps)
+          all_reasons.concat(reasons)
           resolutions = enabled_provider_chain if resolutions.empty?
           if resolutions.any?
-            resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: req_caps)
+            resolutions, reasons = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
+                                                                         required_capabilities: req_caps)
+            all_reasons.concat(reasons)
           end
           if resolutions.empty? && allow_default_fallback
             p = Legion::Settings[:llm][:default_provider]&.to_sym ||
@@ -701,10 +722,13 @@ module Legion
                                           provider: p,
                                           model:    Legion::Settings[:llm][:default_model] ||
                                                     Legion::Settings[:llm][:routing][:last_resort_model])]
-            resolutions = filter_chain_resolutions(last_resort, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: req_caps)
+            resolutions, reasons = filter_chain_resolutions(last_resort, estimated_tokens:      estimated_tokens,
+                                                                         required_capabilities: req_caps)
+            all_reasons.concat(reasons)
           end
-          EscalationChain.new(resolutions: resolutions, max_attempts: max)
+          chain = EscalationChain.new(resolutions: resolutions, max_attempts: max)
+          chain.rejection_reasons = all_reasons
+          chain
         end
 
         def build_fallback_chain(primary_rule, candidates, default_chain)

@@ -96,6 +96,7 @@ module FakeProvider
     def reset!
       Thread.current[:fake_provider_scenario] = nil
       Thread.current[:fake_provider_calls] = nil
+      Thread.current[:fake_server_tool_round] = nil
     end
 
     # G24 step 5: record every chat/responses dispatch so specs can assert

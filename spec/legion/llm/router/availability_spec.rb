@@ -56,8 +56,9 @@ RSpec.describe Legion::LLM::Router::Availability do
     it 'drops resolutions with open circuits' do
       4.times { Legion::LLM::Router.health_tracker.report(provider: :vllm, instance: :h200, signal: :error, value: 1) }
 
-      result = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
-      expect(result.map(&:provider)).to eq([:bedrock])
+      filtered, reasons = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
+      expect(filtered.map(&:provider)).to eq([:bedrock])
+      expect(reasons).to include(hash_including(provider: :vllm, instance: :h200, reason: :circuit_open))
     end
 
     it 'keeps half-open circuits as recovery probes' do
@@ -68,15 +69,16 @@ RSpec.describe Legion::LLM::Router::Availability do
         tracker.instance_variable_get(:@circuits)[key][:state] = :half_open
       end
 
-      result = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
-      expect(result.map(&:provider)).to include(:vllm)
+      filtered, _reasons = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
+      expect(filtered.map(&:provider)).to include(:vllm)
     end
 
     it 'drops resolutions with denied models' do
       Legion::LLM::Router.health_tracker.deny_model(provider: :vllm, instance: :h200, model: 'qwen3:32b', reason: 'test')
 
-      result = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
-      expect(result.map(&:provider)).to eq([:bedrock])
+      filtered, reasons = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
+      expect(filtered.map(&:provider)).to eq([:bedrock])
+      expect(reasons).to include(hash_including(provider: :vllm, model: 'qwen3:32b', reason: :model_denied))
     end
 
     it 'drops resolutions missing required capabilities' do
@@ -89,24 +91,27 @@ RSpec.describe Legion::LLM::Router::Availability do
         model: 'phi:3b', metadata: { capabilities: %i[completion] }
       )
 
-      result = described_class.filter_resolutions(
+      filtered, reasons = described_class.filter_resolutions(
         [no_tools, bedrock_resolution],
         required_capabilities: [:tools]
       )
-      expect(result.map(&:provider)).to eq([:bedrock])
+      expect(filtered.map(&:provider)).to eq([:bedrock])
+      expect(reasons).to include(hash_including(provider: :ollama, reason: :missing_capability))
     end
 
     it 'returns empty array when all filtered' do
       Legion::LLM::Router.health_tracker.trip_circuit(provider: :vllm, instance: :h200, reason: 'test')
       Legion::LLM::Router.health_tracker.trip_circuit(provider: :bedrock, instance: :primary, reason: 'test')
 
-      result = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
-      expect(result).to be_empty
+      filtered, reasons = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
+      expect(filtered).to be_empty
+      expect(reasons.map { |r| r[:reason] }).to all(eq(:circuit_open))
     end
 
     it 'passes through when Inventory confirms models exist' do
-      result = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
-      expect(result.size).to eq(2)
+      filtered, reasons = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
+      expect(filtered.size).to eq(2)
+      expect(reasons).to be_empty
     end
   end
 
@@ -305,7 +310,7 @@ RSpec.describe Legion::LLM::Router::Availability do
       end
     end
 
-    it 'is permissive when Inventory lookup fails' do
+    it 'is permissive when Inventory lookup fails (inner rescue swallows offerings errors)' do
       allow(Legion::LLM::Inventory).to receive(:offerings).and_raise(StandardError, 'boom')
 
       reason = described_class.rejection_reason(
@@ -314,6 +319,17 @@ RSpec.describe Legion::LLM::Router::Availability do
         required_capabilities: []
       )
       expect(reason).to be_nil
+    end
+
+    it 'returns :availability_check_error when an availability check raises unexpectedly' do
+      allow(described_class).to receive(:discovery_status_for).and_raise(StandardError, 'boom')
+
+      reason = described_class.rejection_reason(
+        bedrock_resolution,
+        estimated_tokens:      nil,
+        required_capabilities: []
+      )
+      expect(reason).to eq(:availability_check_error)
     end
   end
 end

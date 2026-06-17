@@ -472,9 +472,13 @@ module Legion
           return {} if arguments.strip.empty?
 
           parsed = Legion::JSON.parse(arguments)
-          parsed.is_a?(Hash) ? parsed : {}
+          return parsed if parsed.is_a?(Hash)
+
+          log.warn("[llm][dispatch] action=parse_arguments non_hash_tool_args type=#{parsed.class}")
+          {}
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.dispatch.parse_arguments')
+          log.warn("[llm][dispatch] action=parse_arguments parse_failed raw=#{arguments.to_s[0, 200]}")
           {}
         end
 

@@ -27,7 +27,7 @@ RSpec.describe 'client translator Legion routing headers' do
       expect(canonical_request.routing).to eq(
         model: 'gpt-5.4-mini', provider: 'openai', instance: 'env'
       )
-      expect(canonical_request.metadata[:client_model]).to eq('legionio')
+      expect(canonical_request.metadata[:client_model]).to eq('client-body-model')
       expect(inference_request.routing).to eq(
         model: 'gpt-5.4-mini', provider: 'openai', instance: 'env'
       )
@@ -37,7 +37,7 @@ RSpec.describe 'client translator Legion routing headers' do
       )
     end
 
-    it 'does not use body model as routing input when X-Legion-Model is absent' do
+    it 'falls back to the body model for routing[:model] when X-Legion-Model is absent' do
       canonical_request = translator.parse_request(body, env.except('HTTP_X_LEGION_MODEL'))
       inference_request = translator.build_inference_request(
         canonical_request,
@@ -46,7 +46,7 @@ RSpec.describe 'client translator Legion routing headers' do
       )
 
       expect(canonical_request.routing).to eq(provider: 'openai', instance: 'env')
-      expect(inference_request.routing).to eq(provider: 'openai', instance: 'env')
+      expect(inference_request.routing).to eq(model: 'client-body-model', provider: 'openai', instance: 'env')
       expect(inference_request.extra[:auto_route]).to be_nil
       expect(inference_request.extra[:routing_explicit]).to eq(
         provider: true, instance: true, tier: true
@@ -58,20 +58,20 @@ RSpec.describe 'client translator Legion routing headers' do
     let(:translator) { described_class.new }
 
     include_examples 'a translator that ignores the protocol model for routing',
-                     { model: 'legionio', input: 'hello' }
+                     { model: 'client-body-model', input: 'hello' }
   end
 
   describe Legion::LLM::API::ClientTranslators::OpenAIChat do
     let(:translator) { described_class.new }
 
     include_examples 'a translator that ignores the protocol model for routing',
-                     { model: 'legionio', messages: [{ role: 'user', content: 'hello' }] }
+                     { model: 'client-body-model', messages: [{ role: 'user', content: 'hello' }] }
   end
 
   describe Legion::LLM::API::ClientTranslators::AnthropicMessages do
     let(:translator) { described_class.new }
 
     include_examples 'a translator that ignores the protocol model for routing',
-                     { model: 'legionio', max_tokens: 1024, messages: [{ role: 'user', content: 'hello' }] }
+                     { model: 'client-body-model', max_tokens: 1024, messages: [{ role: 'user', content: 'hello' }] }
   end
 end

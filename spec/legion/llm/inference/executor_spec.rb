@@ -573,7 +573,6 @@ confidence: 0.9 }],
     end
 
     it 'keeps failed fleet attempt metadata when escalation succeeds on a direct provider' do
-      skip 'fleet dispatch mock interacts with availability filtering in full-suite context'
       fleet_resolution = Legion::LLM::Router::Resolution.new(tier: :fleet, provider: :vllm, model: 'qwen3.6-27b')
       direct_resolution = Legion::LLM::Router::Resolution.new(tier: :cloud, provider: :anthropic, model: 'claude-opus-4-6')
       chain = Legion::LLM::Router::EscalationChain.new(resolutions: [fleet_resolution, direct_resolution], max_attempts: 2)
@@ -610,6 +609,8 @@ confidence: 0.9 }],
       expect(attempts.first).to include(status: :failure, failure_reason: 'fleet_timeout')
       expect(attempts.last).to include(status: :success, escalation: hash_including(attempt: 2))
       expect(response.message[:content]).to include('direct escalation answer')
+    ensure
+      Legion::LLM::Call::Registry.deregister_provider(:anthropic)
     end
   end
 

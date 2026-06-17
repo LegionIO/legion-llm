@@ -4,14 +4,14 @@ require 'spec_helper'
 
 RSpec.describe Legion::LLM::Capabilities do
   describe '.normalize' do
-    it 'normalizes and adds aliases' do
+    it 'replaces aliases with their canonical capability' do
       result = described_class.normalize(%i[function_calling tool_use stream])
-      expect(result).to include(:function_calling, :tools, :tool_use, :stream, :streaming)
+      expect(result).to contain_exactly(:tools, :streaming)
     end
 
     it 'handles string inputs' do
       result = described_class.normalize(%w[Function_Calling Stream])
-      expect(result).to include(:function_calling, :tools, :stream, :streaming)
+      expect(result).to contain_exactly(:tools, :streaming)
     end
 
     it 'returns empty for nil' do
@@ -22,6 +22,10 @@ RSpec.describe Legion::LLM::Capabilities do
   describe '.include_all?' do
     it 'matches via aliases' do
       expect(described_class.include_all?(%i[completion function_calling], [:tools])).to be true
+    end
+
+    it 'matches when required uses an alias and available uses the canonical' do
+      expect(described_class.include_all?(%i[tools], [:function_calling])).to be true
     end
 
     it 'returns false when capability is absent' do
@@ -40,7 +44,7 @@ RSpec.describe Legion::LLM::Capabilities do
   describe '.merge' do
     it 'merges multiple capability sets with dedup' do
       result = described_class.merge(%i[completion function_calling], %i[streaming tool_use])
-      expect(result).to include(:completion, :function_calling, :tools, :streaming, :tool_use)
+      expect(result).to include(:completion, :tools, :streaming)
       expect(result.uniq).to eq(result)
     end
   end

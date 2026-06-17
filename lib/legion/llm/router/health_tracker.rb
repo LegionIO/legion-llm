@@ -195,8 +195,10 @@ module Legion
         # Returns all tracked instance keys for a given provider (keys matching "provider/...")
         def known_instances(provider)
           prefix = "#{provider}/"
-          all_keys = (@circuits.keys + @latency_window.keys).uniq
-          all_keys.select { |k| k.is_a?(String) && k.start_with?(prefix) }
+          @mutex.synchronize do
+            all_keys = (@circuits.keys + @latency_window.keys).uniq
+            all_keys.select { |k| k.is_a?(String) && k.start_with?(prefix) }
+          end
         end
 
         def build_payload(provider:, instance:, key:, offering_id:, signal:, value:, metadata:)

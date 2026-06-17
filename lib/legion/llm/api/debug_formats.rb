@@ -95,7 +95,9 @@ module Legion
         # on write failure.
         def self.emit_echo_request_sse(out, canonical_request)
           out << "event: legion.debug.echo_request\ndata: #{Legion::JSON.dump(canonical_request.to_h)}\n\n"
-        rescue IOError, Errno::EPIPE
+        rescue IOError, Errno::EPIPE => e
+          handle_exception(e, level: :debug, handled: true,
+                              operation: 'llm.api.debug_formats.emit_echo_request_sse')
           nil
         end
 

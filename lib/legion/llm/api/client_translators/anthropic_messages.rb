@@ -97,11 +97,18 @@ module Legion
 
             messages = inference_messages(canonical_request.messages)
 
+            # C7 — header-supplied X-Legion-Model wins; otherwise fall back to
+            # the client-requested body[:model] so routing is never blank when
+            # the caller named a model.
+            routing = (canonical_request.routing || {}).dup
+            client_model = canonical_request.metadata[:client_model]
+            routing[:model] ||= client_model if client_model
+
             Legion::LLM::Inference::Request.build(
               id:              request_id,
               messages:        messages,
               system:          canonical_request.system,
-              routing:         canonical_request.routing,
+              routing:         routing,
               tools:           tool_defs,
               tool_choice:     canonical_request.tool_choice,
               caller:          server_caller,
@@ -462,6 +469,7 @@ module Legion
 
             text_parts = []
             tool_calls = []
+            thinking_blocks = []
 
             content.each do |block|
               bs = symbolize(block)
@@ -476,12 +484,13 @@ module Legion
                 # multi-turn replay R5 says signatures must round-trip on
                 # same-provider; leave them in the message for now (the
                 # provider translator drops them for cross-provider).
-                next
+                thinking_blocks << bs
               end
             end
 
             msg = { role: :assistant, content: text_parts.join("\n\n") }
             msg[:tool_calls] = tool_calls if tool_calls.any?
+            msg[:thinking_blocks] = thinking_blocks if thinking_blocks.any?
             [msg]
           end
 
@@ -491,6 +500,7 @@ module Legion
 
             messages = []
             text_parts = []
+            content_blocks = []
 
             content.each do |block|
               bs = symbolize(block)
@@ -499,9 +509,12 @@ module Legion
               when 'text'
                 text_parts << bs[:text].to_s
               when 'tool_result'
-                if text_parts.any?
-                  messages << { role: :user, content: text_parts.join("\n\n") }
+                if text_parts.any? || content_blocks.any?
+                  msg = { role: :user, content: text_parts.join("\n\n") }
+                  msg[:content_blocks] = content_blocks if content_blocks.any?
+                  messages << msg
                   text_parts = []
+                  content_blocks = []
                 end
                 result_content = bs[:content]
                 messages << if result_content.is_a?(Array)
@@ -510,11 +523,18 @@ module Legion
                               { role: :tool, tool_call_id: bs[:tool_use_id], content: result_content.to_s }
                             end
               else
-                text_parts << bs.to_s
+                # Preserve structured non-text blocks (image, document, …)
+                # rather than stringifying them — provider translators decide
+                # how to surface these per-modality.
+                content_blocks << bs
               end
             end
 
-            messages << { role: :user, content: text_parts.join } if text_parts.any?
+            if text_parts.any? || content_blocks.any?
+              msg = { role: :user, content: text_parts.join("\n\n") }
+              msg[:content_blocks] = content_blocks if content_blocks.any?
+              messages << msg
+            end
             messages.empty? ? [{ role: :user, content: '' }] : messages
           end
 

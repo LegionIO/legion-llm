@@ -87,7 +87,7 @@ module Legion
                       )
                     rescue Legion::LLM::API::StreamAssembler::StreamClosed
                       # Client disconnected — caller treats as cancellation per G10.
-                    rescue IOError, Errno::EPIPE
+                    rescue IOError, Errno::EPIPE, *(defined?(Puma::ConnectionError) ? [Puma::ConnectionError] : [])
                       # Client disconnected mid-write before assembler caught it.
                     rescue StandardError => e
                       handle_exception(e, level: :error, handled: false,

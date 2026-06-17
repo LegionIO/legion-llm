@@ -139,7 +139,7 @@ module Legion
           handle_text_delta(adapted.text) if adapted.text && !adapted.text.empty?
         rescue StreamClosed
           raise
-        rescue IOError, Errno::EPIPE => e
+        rescue IOError, Errno::EPIPE, *(defined?(Puma::ConnectionError) ? [Puma::ConnectionError] : []) => e
           mark_closed!(e)
           raise StreamClosed, e.message
         end
@@ -234,9 +234,10 @@ module Legion
 
         # Emitters call this to send a keep-alive ping while a buffered tool
         # call is being assembled (so large tool args don't make the provider
-        # look dead, per G6c). The assembler invokes it from push() when it
-        # detects mid-tool-call gaps; keeping it public lets routes call it
-        # directly during long executor pre-steps too.
+        # look dead, per G6c). Invoked once when a buffered tool-call opens
+        # (handle_tool_call_delta) and may be called directly by routes during
+        # long pre-steps. Interval-based pinging is not yet implemented;
+        # @keep_alive_interval_ms is reserved.
         def keep_alive!
           return if @closed
 
@@ -259,7 +260,7 @@ module Legion
         def guard
           yield
           true
-        rescue IOError, Errno::EPIPE => e
+        rescue IOError, Errno::EPIPE, *(defined?(Puma::ConnectionError) ? [Puma::ConnectionError] : []) => e
           mark_closed!(e)
           false
         end
@@ -274,6 +275,7 @@ module Legion
         end
 
         def handle_text_delta(text)
+          close_thinking_block
           unless @text_block_open
             @text_block_index = @next_block_index
             @next_block_index += 1
@@ -344,8 +346,7 @@ module Legion
           end
 
           # Update accumulated arguments (canonical chunks send the cumulative
-          # arguments hash on every delta — see fixture
-          # canonical_streaming_tool_call_chunks.json A7 note).
+          # arguments hash on every delta).
           state[:arguments] = tool_call[:arguments] || state[:arguments]
           state[:result]    = tool_call[:result]    if tool_call.key?(:result)
 
@@ -576,6 +577,8 @@ module Legion
         private_constant :AdaptedChunk
 
         module ChunkAdapter
+          extend Legion::Logging::Helper
+
           module_function
 
           def normalize(chunk)
@@ -642,7 +645,15 @@ module Legion
           # entry point.
           def safe_call(obj, method)
             obj.public_send(method)
-          rescue Exception # rubocop:disable Lint/RescueException -- isolating provider chunk shape probing
+          rescue NoMethodError
+            nil
+          rescue StandardError => e
+            handle_exception(e, level: :debug, handled: true,
+                                operation: 'llm.api.stream_assembler.safe_call')
+            nil
+          rescue Exception => e # rubocop:disable Lint/RescueException -- isolating provider chunk shape probing
+            raise unless defined?(RSpec) && e.class.name&.start_with?('RSpec::')
+
             nil
           end
 
