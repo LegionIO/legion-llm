@@ -3,11 +3,14 @@
 # G23 — In-process matrix harness for /v1/responses (OpenAI Responses API).
 #
 # Mirrors the legionio-e2e codex/* and codex/responses/* scenarios but runs
-# in-process against the deterministic FakeProvider. Asserts what
-# CodexValidate validates: status (completed | requires_action), output[]
-# items (message / function_call / message+phase=reasoning), tool_call counts
-# and call_id presence, usage shape, SSE event types and the terminal
-# response.completed/response.done event.
+# in-process against the deterministic FakeProvider. Asserts the Responses
+# protocol: status is always `completed` (there is no `requires_action`/
+# `response.done` — those are Assistants API concepts that real Responses
+# clients like Codex reject, closing the stream "before response.completed").
+# Client-callable calls ride in output[] as function_call items; the client
+# executes them and continues via function_call_output. Also asserts output[]
+# item types (message / function_call / message+phase=reasoning), tool_call
+# counts and call_id presence, usage shape, and the terminal response.completed.
 
 require_relative 'matrix_helper'
 
@@ -84,7 +87,7 @@ RSpec.describe '[matrix] /v1/responses (OpenAI Responses) × FakeProvider', type
   end
 
   describe 'scenario: tool_single' do
-    it 'returns exactly 1 function_call item with status=requires_action and a call_id' do
+    it 'returns exactly 1 function_call item with status=completed and a call_id' do
       FakeProvider.with_scenario(:tool_single) do
         resp = post_responses(
           model: 'fake-default',
@@ -98,7 +101,8 @@ RSpec.describe '[matrix] /v1/responses (OpenAI Responses) × FakeProvider', type
         expect(function_calls.first[:name]).to eq('bash')
         expect(function_calls.first[:call_id]).not_to be_nil
         expect(function_calls.first[:arguments]).to be_a(String)
-        expect(body[:status]).to eq('requires_action')
+        expect(body[:status]).to eq('completed')
+        expect(body[:action_required]).to be_nil
       end
     end
   end
@@ -116,7 +120,8 @@ RSpec.describe '[matrix] /v1/responses (OpenAI Responses) × FakeProvider', type
         expect(function_calls.size).to eq(2)
         expect(function_calls.map { |c| c[:name] }.uniq).to eq(['bash'])
         expect(function_calls.map { |c| c[:call_id] }.uniq.size).to eq(2)
-        expect(body[:status]).to eq('requires_action')
+        expect(body[:status]).to eq('completed')
+        expect(body[:action_required]).to be_nil
       end
     end
   end
@@ -187,7 +192,7 @@ RSpec.describe '[matrix] /v1/responses (OpenAI Responses) × FakeProvider', type
   end
 
   describe 'scenario: streaming tool_call' do
-    it 'emits response.function_call_arguments.delta and a terminal requires_action response.done' do
+    it 'emits response.function_call_arguments.delta and a terminal response.completed' do
       FakeProvider.with_scenario(:stream_tool) do
         resp = post_responses(
           model: 'fake-default', stream: true,
@@ -199,10 +204,10 @@ RSpec.describe '[matrix] /v1/responses (OpenAI Responses) × FakeProvider', type
         expect(types).to include('response.output_item.added')
         expect(types).to include('response.function_call_arguments.delta')
         expect(types).to include('response.function_call_arguments.done')
-        expect(types.last).to eq('response.done')
+        expect(types.last).to eq('response.completed')
 
         terminal = events.last[1]
-        expect(terminal[:response][:status]).to eq('requires_action')
+        expect(terminal[:response][:status]).to eq('completed')
         function_calls = terminal.dig(:response, :output).select { |i| i[:type] == 'function_call' }
         expect(function_calls.size).to eq(1)
       end

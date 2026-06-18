@@ -69,7 +69,7 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
         expect(body[:output]).to be_an(Array)
       end
 
-      it 'returns requires_action status when client tool calls are present' do
+      it 'returns completed status with a function_call item when client tool calls are present' do
         tool_call = double('ToolCall', name: 'get_weather', id: 'tc_1', arguments: { location: 'NYC' })
         allow(executor_double).to receive(:call_responses).and_return(
           double('Response',
@@ -83,8 +83,12 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
              'CONTENT_TYPE' => 'application/json'
         expect(last_response.status).to eq(200)
         body = Legion::JSON.load(last_response.body)
-        expect(body[:status]).to eq('requires_action')
-        expect(body[:action_required][:type]).to eq('function_calls')
+        # Responses protocol: client-callable calls ride in a completed response as
+        # function_call items; the client executes them and continues via
+        # function_call_output. No requires_action/action_required (Assistants API).
+        expect(body[:status]).to eq('completed')
+        expect(body[:output].any? { |i| i[:type] == 'function_call' && i[:name] == 'get_weather' }).to be(true)
+        expect(body[:action_required]).to be_nil
       end
 
       it 'streams typed SSE events via call_responses fallback when stream is true' do

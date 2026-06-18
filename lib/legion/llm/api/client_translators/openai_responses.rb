@@ -161,25 +161,21 @@ module Legion
               }
             ]
 
-            # G24 — server-executed tools are completed non-actionable items.
-            # `requires_action` is reserved for client-callable tools awaiting
-            # client execution. When ALL tool calls are server-resolved, the
-            # response status is `completed` and there is no action_required.
-            status = actionable_tool_calls.any? ? 'requires_action' : 'completed'
-
-            result = {
+            # Responses protocol: a turn is always status `completed`. Both
+            # client-callable calls (actionable_tool_calls) and LegionIO-run
+            # results ride in output[] — client-callable ones as function_call
+            # items the client executes and continues via function_call_output.
+            # requires_action / action_required are Assistants API concepts that
+            # real Responses clients (Codex) reject.
+            {
               id:         request_id,
               object:     'response',
               created_at: Time.now.to_i,
               model:      resolved_model,
               output:     output,
               usage:      build_usage(tokens),
-              status:     status
+              status:     'completed'
             }
-
-            result[:action_required] = { type: 'function_calls', function_calls: actionable_tool_calls } if actionable_tool_calls.any?
-
-            result
           end
 
           def format_error(error, status_code: 500, type: 'server_error')
@@ -446,24 +442,21 @@ module Legion
                 @output_items[@msg_index] = completed_item
               end
 
-              has_tool_calls = @pending_tool_calls.any?
-              status = stop_reason == :tool_use || has_tool_calls ? 'requires_action' : 'completed'
-              event = status == 'requires_action' ? 'response.done' : 'response.completed'
-              payload = {
-                type: event, sequence_number: next_seq,
-                response: {
-                  id: @request_id, object: 'response', created_at: @created_at,
-                  status: status, model: model.to_s,
-                  output: @output_items, usage: format_usage(usage)
-                }
-              }
-              if status == 'requires_action'
-                payload[:response][:action_required] = {
-                  type:           'function_calls',
-                  function_calls: @output_items.select { |i| i[:type] == 'function_call' }
-                }
-              end
-              emit(event, payload)
+              # Responses protocol: every turn terminates with response.completed
+              # (status completed). Client-callable function_call items ride in
+              # output[]; the client executes them and continues via
+              # function_call_output. requires_action / response.done are Assistants
+              # API concepts that real Responses clients (Codex) reject — emitting
+              # them closes the stream "before response.completed".
+              _ = stop_reason
+              emit('response.completed', {
+                     type: 'response.completed', sequence_number: next_seq,
+                     response: {
+                       id: @request_id, object: 'response', created_at: @created_at,
+                       status: 'completed', model: model.to_s,
+                       output: @output_items, usage: format_usage(usage)
+                     }
+                   })
             end
 
             def on_error(message:, type:, status_code:)
