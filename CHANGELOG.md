@@ -1,5 +1,29 @@
 # Legion LLM Changelog
 
+## [0.13.3] - 2026-06-18
+
+### Fixed
+
+- **OpenAI Responses (`/v1/responses`) tool turns now terminate with `response.completed`.** A turn
+  carrying client-callable `function_call` items was emitting a non-standard `response.done` with
+  `status: requires_action` — Assistants-API vocabulary the Responses protocol has no concept of. Real
+  Responses clients wait for `response.completed`, so each tool turn surfaced to the client as
+  "stream disconnected before completion" and forced a reconnect/retry. The terminal event is now
+  always `response.completed` / `status: completed` with the `function_call` items in `output[]`
+  (streaming **and** non-streaming); `requires_action`/`action_required` removed. Server-executed
+  (LegionIO) tools were already `completed` and are unchanged. Specs updated to assert the protocol.
+- **Router no longer manufactures escalation fallbacks the live catalog doesn't offer.**
+  `build_fallback_resolutions` enumerated registered instances and paired each with a default model
+  without checking the catalog offered it, producing dead candidates (a provider + a model it does
+  not serve) that availability rejected on every request — wasted work plus `resolution_unavailable`
+  log noise. Fallbacks are now gated against `Inventory` (the catalog SSOT) via
+  `fallback_model_offered?`, so an unoffered triple is never proposed.
+
+### Changed
+
+- Removed the per-response `extract_thinking` INFO log spam (it fired 4–6× per request, once per
+  extraction site). The extraction is unchanged; only the diagnostic logging was dropped.
+
 ## [0.13.2] - 2026-06-17
 
 ### Fixed
