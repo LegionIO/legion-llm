@@ -311,6 +311,12 @@ module Legion
             # the escalation chain entirely.
             model = registry_default_model(entry) || inventory_default_model(entry[:provider], entry[:instance])
             next unless model
+            # SSOT: the instance list comes from the registry, but the
+            # (provider, model) fact must come from Inventory. Never manufacture a
+            # fallback the live catalog doesn't offer — otherwise a configured-but-
+            # unoffered default (e.g. bedrock + a model it doesn't serve) becomes a
+            # dead candidate that availability rejects on every single request.
+            next unless fallback_model_offered?(entry[:provider], model)
 
             entry_tier = PROVIDER_TIER.fetch(entry[:provider], :frontier)
             Resolution.new(
@@ -334,6 +340,23 @@ module Legion
                      end
             [bucket, r_rank]
           end
+        end
+
+        # Whether the live catalog (Inventory SSOT) actually offers (provider, model).
+        # Permissive on a nil/empty catalog (cold boot or lookup miss) so we never
+        # over-prune before discovery populates — matching availability's cold-boot
+        # stance. A NON-empty catalog that lacks the model is authoritative: drop it.
+        def fallback_model_offered?(provider, model)
+          offerings = Inventory.offerings(provider: provider)
+          return true if offerings.nil? || offerings.empty?
+
+          offerings.any? do |offering|
+            offered = (offering[:model] || offering[:canonical_model_alias]).to_s
+            offered == model.to_s || offered.start_with?("#{model}:")
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'router.fallback_model_offered')
+          true
         end
 
         private

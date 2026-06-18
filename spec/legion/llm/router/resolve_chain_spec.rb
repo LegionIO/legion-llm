@@ -151,4 +151,31 @@ RSpec.describe 'Legion::LLM::Router.resolve_chain' do
       expect(chain.primary.provider).to eq(:bedrock)
     end
   end
+
+  # SSOT gate: escalation fallbacks must never manufacture a (provider, model)
+  # the live catalog doesn't offer — that produced a dead candidate availability
+  # rejected (model_not_offered) on every request, spamming resolution_unavailable.
+  describe '.fallback_model_offered?' do
+    let(:rules) { [] }
+
+    it 'is false when the catalog has offerings but not the model' do
+      allow(Legion::LLM::Inventory).to receive(:offerings).and_call_original
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :bedrock))
+                                                          .and_return([{ provider_family: 'bedrock', model: 'us.anthropic.claude-3-haiku' }])
+      expect(Legion::LLM::Router.fallback_model_offered?(:bedrock, 'us.anthropic.claude-sonnet-4')).to be(false)
+    end
+
+    it 'is true when the model is offered' do
+      allow(Legion::LLM::Inventory).to receive(:offerings).and_call_original
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :bedrock))
+                                                          .and_return([{ provider_family: 'bedrock', model: 'us.anthropic.claude-sonnet-4' }])
+      expect(Legion::LLM::Router.fallback_model_offered?(:bedrock, 'us.anthropic.claude-sonnet-4')).to be(true)
+    end
+
+    it 'stays permissive on an empty catalog so cold boot does not over-prune' do
+      allow(Legion::LLM::Inventory).to receive(:offerings).and_call_original
+      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(provider: :bedrock)).and_return([])
+      expect(Legion::LLM::Router.fallback_model_offered?(:bedrock, 'anything')).to be(true)
+    end
+  end
 end
