@@ -1324,15 +1324,11 @@ module Legion
         def extract_thinking
           return nil unless @raw_response
 
-          raw_thinking = @raw_response.respond_to?(:thinking) ? @raw_response.thinking : nil
-          log.info "[llm][executor] extract_thinking raw_thinking_present=#{!raw_thinking.nil?} class=#{raw_thinking.class} len=#{raw_thinking.to_s.length}"
-
           thinking = if @raw_response.respond_to?(:thinking) && @raw_response.thinking
                        @raw_response.thinking
                      elsif @raw_response.respond_to?(:metadata) && @raw_response.metadata.is_a?(Hash)
                        @raw_response.metadata[:thinking] || @raw_response.metadata['thinking']
                      end
-          log.info "[llm][executor] extract_thinking thinking_present=#{!thinking.nil?} class=#{thinking.class}"
           return nil unless thinking
 
           payload = normalize_thinking_payload(thinking)
