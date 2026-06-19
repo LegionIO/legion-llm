@@ -13,7 +13,7 @@ module Legion
         # Auto-routed: Router picks the best provider+model based on intent.
         # Primary entry point for most LLM calls.
         # When provider/model are passed explicitly, they take precedence over routing.
-        def dispatch(message, # rubocop:disable Metrics/ParameterLists
+        def dispatch(message,
                      intent: nil,
                      tier: nil,
                      exclude: {},
@@ -75,7 +75,7 @@ module Legion
         end
 
         # Pinned: caller specifies exact provider+model. Full pipeline runs in-process.
-        def request(message, # rubocop:disable Metrics/ParameterLists
+        def request(message,
                     provider:,
                     model:,
                     intent: nil,
@@ -132,7 +132,7 @@ module Legion
 
         # --- Private helpers ---
 
-        def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:, # rubocop:disable Metrics/ParameterLists
+        def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:,
                                    escalate:, max_escalations:, thinking:, temperature:,
                                    max_tokens:, tracing:, agent:, caller:, cache:,
                                    quality_check:, **rest)

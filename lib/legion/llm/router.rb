@@ -49,6 +49,46 @@ module Legion
       @auto_rules_populated = false
 
       class << self
+        # Stateless lane selection — pure function of (Inventory snapshot, routing payload).
+        # Returns one lane Hash or nil (caller raises NoLaneAvailable / EscalationExhausted).
+        #
+        # M1: when filters narrow to a single provider/instance, uses the indexed read
+        # (Inventory.lanes_for) instead of full enumeration — same semantics, cheaper.
+        # B-E / sonnet W2: lanes are Hashes; use { _1[:lane_weight] }, NOT &:lane_weight.
+        def request_lane(
+          type:,
+          tiers: [], providers: [], instances: [], models: [],
+          capabilities: [], thinking: :any, privacy: :normal,
+          estimated_context: nil, tried_lanes: [],
+          rng: default_rng,
+          **
+        )
+          candidates = if providers.size == 1 && instances.size <= 1
+                         Legion::LLM::Inventory.lanes_for(
+                           provider: providers.first, instance: instances.first, type: type
+                         )
+                       else
+                         Legion::LLM::Inventory.lanes
+                       end
+
+          passing = candidates.select do |lane|
+            lane_passes_hard_filters?(
+              lane: lane, type: type, tiers: tiers, providers: providers, instances: instances,
+              models: models, capabilities: capabilities, thinking: thinking, privacy: privacy,
+              estimated_context: estimated_context
+            )
+          end
+          eligible = passing.reject { |lane| tried_lanes.include?(lane[:id]) || lane[:lane_weight].to_i <= 0 }
+
+          return nil if eligible.empty?
+
+          eligible
+            .group_by { |lane| lane[:lane_weight] }
+            .max_by { |weight, _| weight }
+            .last
+            .sample(random: rng)
+        end
+
         def infer_provider_for_model(model)
           return nil if model.nil? || model.to_s.empty?
 
@@ -346,6 +386,31 @@ module Legion
         end
 
         private
+
+        def lane_passes_hard_filters?(lane:, type:, tiers:, providers:, instances:, models:,
+                                      capabilities:, thinking:, privacy:, estimated_context:, **)
+          return false if lane[:type] != type
+          return false if !tiers.empty?     && !tiers.map(&:to_sym).include?(lane[:tier])
+          return false if !providers.empty? && !providers.map(&:to_sym).include?(lane[:provider_family])
+          return false if !instances.empty? && !instances.map(&:to_sym).include?(lane[:instance_id])
+          return false if !models.empty?    && !models.map(&:to_s).include?(lane[:model].to_s)
+
+          # H-C / opus H3 / PR #152 I1: normalize capabilities on BOTH sides so :tools and
+          # :function_calling are treated as aliases (gemini/openai/anthropic vocabularies).
+          requested = Legion::LLM::Inventory::Capabilities.normalize(capabilities)
+          available = Legion::LLM::Inventory::Capabilities.normalize(Array(lane[:capabilities]))
+          return false unless (requested - available).empty?
+
+          return false if thinking == :require && !available.include?(:thinking)
+          return false if estimated_context && lane.dig(:limits, :context_window).to_i < estimated_context
+          return false if privacy == :strict && %i[cloud frontier].include?(lane[:tier])
+
+          true
+        end
+
+        def default_rng
+          @default_rng ||= Random.new
+        end
 
         def arbitrage_fallback(intent)
           return nil unless defined?(Arbitrage) && Arbitrage.enabled?

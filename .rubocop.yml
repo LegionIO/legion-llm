@@ -131,6 +131,7 @@ Naming/PredicateMethod:
   Enabled: false
 Metrics/ParameterLists:
   Max: 9
+  CountKeywordArgs: false
 Style/RedundantConstantBase:
   Exclude:
     - 'spec/**/*'

@@ -85,5 +85,52 @@ module Legion
         super(message, status_code: 424, code: 'routing_failed_dependency')
       end
     end
+
+    module Errors
+      # request_lane returned nil on the very first try — filters/health/policy excluded
+      # everything; no dispatch was attempted. HTTP 400 semantics (caller can fix by
+      # adjusting filters). Distinct from EscalationExhausted: "nothing to call" vs "tried, failed".
+      class NoLaneAvailable < LLMError
+        attr_reader :filters
+
+        def initialize(filters: {}, message: nil, **)
+          @filters = filters
+          super(message || "no lane satisfies request filters: #{filters.inspect}")
+        end
+
+        def retryable? = false
+      end
+
+      # All dispatch attempts failed, or eligible lanes ran out after at least one attempt.
+      # HTTP 503 + Retry-After semantics (transient upstream degradation). Distinct from
+      # NoLaneAvailable: "tried lanes, ran out" vs "nothing was ever eligible".
+      class EscalationExhausted < LLMError
+        attr_reader :attempts, :tried_lanes, :last_error
+
+        def initialize(attempts:, tried_lanes:, last_error: nil, message: nil, **)
+          @attempts    = attempts
+          @tried_lanes = tried_lanes
+          @last_error  = last_error
+          super(message || "exhausted after #{attempts} attempts (tried #{tried_lanes.size} lanes); last_error=#{last_error&.class}")
+        end
+
+        def retryable? = false
+      end
+
+      # An x-legion-* header carried an unrecognized value (e.g. invalid tier name).
+      # Raised by PayloadBuilder at ingress per G31. HTTP 400.
+      class InvalidHeader < LLMError
+        attr_reader :header, :got, :valid
+
+        def initialize(header:, got:, valid: [], message: nil, **)
+          @header = header
+          @got    = got
+          @valid  = valid
+          super(message || "invalid value #{got.inspect} for header #{header.inspect}; valid: #{valid.inspect}")
+        end
+
+        def retryable? = false
+      end
+    end
   end
 end

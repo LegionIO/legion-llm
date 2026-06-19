@@ -34,7 +34,7 @@ module Legion
 
       # --- Core Operations ---
 
-      def llm_chat(message, model: nil, provider: nil, intent: nil, tier: nil, tools: [], # rubocop:disable Metrics/ParameterLists
+      def llm_chat(message, model: nil, provider: nil, intent: nil, tier: nil, tools: [],
                    instructions: nil, compress: 0, escalate: nil, max_escalations: nil,
                    quality_check: nil, caller: nil, use_default_intent: false)
         effective_model = model || llm_default_model
