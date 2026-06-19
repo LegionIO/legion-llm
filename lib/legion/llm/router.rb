@@ -9,8 +9,8 @@ require_relative 'router/candidates'
 require_relative 'router/registry_lookup'
 require_relative 'router/escalation/chain'
 require_relative 'discovery/rule_generator'
-require_relative 'discovery/system'
-require_relative 'discovery/memory_gate'
+require 'legion/llm/inventory/discovery/system'
+require 'legion/llm/inventory/discovery/memory_gate'
 
 require 'legion/logging/helper'
 module Legion

@@ -2,7 +2,7 @@
 
 require 'concurrent'
 require 'legion/logging/helper'
-require 'legion/llm/discovery/system'
+require 'legion/llm/inventory/discovery/system'
 require 'legion/llm/discovery/rule_generator'
 
 module Legion
@@ -51,14 +51,14 @@ module Legion
 
           def run
             log.debug '[llm][discovery] run.enter'
-            Legion::LLM::Discovery::System.refresh! if discovery_enabled?
+            Legion::LLM::Inventory::Discovery::System.refresh! if discovery_enabled?
 
             refresh_discovered_models!
             models = discovered_models
             log.info "[llm][discovery] model_count=#{models.size} " \
                      "models=#{models.map { |m| m[:model] }.join(', ')}"
-            log.info "[llm][discovery] system total_mb=#{Legion::LLM::Discovery::System.total_memory_mb} " \
-                     "available_mb=#{Legion::LLM::Discovery::System.available_memory_mb}"
+            log.info "[llm][discovery] system total_mb=#{Legion::LLM::Inventory::Discovery::System.total_memory_mb} " \
+                     "available_mb=#{Legion::LLM::Inventory::Discovery::System.available_memory_mb}"
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.discovery.run')
           end
