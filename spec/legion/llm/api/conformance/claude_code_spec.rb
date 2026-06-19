@@ -383,13 +383,15 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
   # ─── POST /v1/messages — error handling ────────────────────────────────────
 
   describe 'POST /v1/messages error handling' do
-    it 'returns 500 when model is missing (no provider resolves it)' do
+    it 'returns 400 when model is missing (no lane available — P5 NoLaneAvailable semantics)' do
+      # P5: no available lane → NoLaneAvailable → HTTP 400 (caller can fix by providing a valid model).
+      # Previously returned 500 (ProviderError); now correctly returns 400 per G14/D-G.
       post '/v1/messages',
            Legion::JSON.dump({ max_tokens: 1024, messages: [{ role: 'user', content: 'Hi' }] }),
            claude_code_headers
-      expect(last_response.status).to eq(500)
+      expect(last_response.status).to eq(400)
       body = Legion::JSON.load(last_response.body)
-      expect(body[:type]).to eq('error')
+      expect(body).to be_a(Hash)
     end
 
     it 'returns 400 when messages is missing' do

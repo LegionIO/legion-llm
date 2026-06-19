@@ -60,6 +60,8 @@ RSpec.describe Legion::LLM::Prompt do
         Legion::Settings[:llm][:default_provider] = 'vllm'
         Legion::Settings[:llm][:default_instance] = 'apollo'
         Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
+        # P5: write Inventory lane for gpt-5.4 so the while remaining.positive? loop can dispatch it
+        write_test_lane(provider: :openai, model: 'gpt-5.4', tier: :frontier)
       end
 
       it 'infers the model provider instead of combining it with the default provider' do
@@ -75,11 +77,12 @@ RSpec.describe Legion::LLM::Prompt do
         Legion::Settings[:llm][:default_provider] = 'vllm'
         Legion::Settings[:llm][:default_instance] = 'apollo'
         Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
-        Legion::LLM::Inventory.write_lane(lane: {
-                                            id: 'frontier:anthropic:default:inference:claude-sonnet-4-6',
-                                            tier: :frontier, provider_family: :anthropic, instance_id: :default,
-                                            model: 'claude-sonnet-4-6', type: :inference
-                                          })
+        # P5: reset Inventory so ONLY the anthropic lane exists for claude-sonnet-4-6.
+        # stub_native_provider (outer before) writes claude-sonnet-4-6 for all providers.
+        # With multiple providers offering the same model, routing_resolution_for may pick
+        # a non-anthropic provider, causing model_provider_mismatch → model cleared → raise.
+        Legion::LLM::Inventory.reset_live_store!
+        write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
       end
 
       it 'routes via inventory instead of configured defaults for LegionIO placeholder' do

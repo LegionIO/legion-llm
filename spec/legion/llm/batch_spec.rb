@@ -161,6 +161,8 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
           max_defer_hours: 8
         }
         stub_native_provider(content: 'batched response')
+        # P5: write gpt-4o lane so request_lane finds it (stub_native_provider writes default model)
+        write_test_lane(provider: :openai, model: 'gpt-4o', tier: :frontier)
       end
 
       it 'executes the queued request and preserves provider and model' do

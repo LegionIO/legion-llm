@@ -77,6 +77,9 @@ module Legion
   module LLM
     extend Legion::Logging::Helper
 
+    # Top-level legacy class — kept for backwards compat with old raise/rescue sites.
+    # New code should use Legion::LLM::Errors::EscalationExhausted (HTTP 503 semantics,
+    # requires attempts: and tried_lanes: kwargs). This class is deleted in C6.
     class EscalationExhausted < StandardError; end
     class DaemonDeniedError < StandardError; end
     class DaemonRateLimitedError < StandardError; end

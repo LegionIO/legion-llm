@@ -175,8 +175,9 @@ module Legion
 
           execute_pre_provider_steps
           if pipeline_escalation_enabled?
-            run_provider_call_with_escalation(responses_body: body, responses_stream: stream,
-                                              stream_block: (stream ? block : nil))
+            run_provider_call_with_attempts(routing_payload: build_routing_payload_from_resolved,
+                                            responses_body: body, responses_stream: stream,
+                                            stream_block: (stream ? block : nil))
             execute_post_provider_steps
             return build_response
           end

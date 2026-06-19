@@ -3,8 +3,6 @@
 require 'spec_helper'
 
 RSpec.describe 'Legion::LLM::Errors::NoLaneAvailable (P5)' do
-  before { skip 'P5: NoLaneAvailable error class' }
-
   let(:described_class) { Legion::LLM::Errors::NoLaneAvailable }
 
   it 'inherits from LLMError' do

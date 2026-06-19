@@ -112,6 +112,12 @@ module Legion
                   Legion::JSON.dump(formatted)
                 end
               end
+            rescue Legion::LLM::Errors::NoLaneAvailable => e
+              translate_no_lane_available(e, operation: 'llm.ns.anthropic.messages.no_lane', client: :anthropic)
+            rescue Legion::LLM::Errors::EscalationExhausted => e
+              translate_escalation_exhausted(e, operation: 'llm.ns.anthropic.messages.exhausted', client: :anthropic)
+            rescue Legion::LLM::Errors::InvalidHeader => e
+              translate_invalid_header(e, operation: 'llm.ns.anthropic.messages.invalid_header', client: :anthropic)
             rescue Legion::LLM::AuthError => e
               handle_exception(e, level: :error, handled: true, operation: 'llm.ns.anthropic.messages.auth')
               anthropic_error('authentication_error', e.message, status_code: 401)

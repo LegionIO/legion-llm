@@ -21,8 +21,11 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
     fallback_result = native_dispatch_result(content: content || good_content)
     Legion::LLM::Call::Registry.register(:anthropic, Module.new do
       define_singleton_method(:chat) { |**| fallback_result }
-      define_singleton_method(:offerings) { [{ model: 'claude-opus-4-7' }] }
-    end, metadata: { default_model: 'claude-opus-4-7' })
+      define_singleton_method(:offerings) { [{ model: 'claude-sonnet-4-6' }] }
+    end, metadata: { default_model: 'claude-sonnet-4-6' })
+    # P5: write Inventory lane for anthropic fallback using the SAME model as bedrock
+    # so request_lane (models filter) can find it for cross-provider failover.
+    write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
   end
 
   before do
@@ -44,10 +47,12 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
                                   rules:          []
                                 }
                               })
-    # Register bedrock in the registry so build_default_escalation_chain has a primary resolution
+    # Register bedrock in the registry so dispatching works
     Legion::LLM::Call::Registry.register(:bedrock, Module.new do
       define_singleton_method(:offerings) { [{ model: 'claude-sonnet-4-6' }] }
     end, metadata: { default_model: 'claude-sonnet-4-6' })
+    # P5: write Inventory lane for bedrock so request_lane (while remaining.positive? loop) finds it
+    write_test_lane(provider: :bedrock, model: 'claude-sonnet-4-6', tier: :cloud)
   end
 
   describe 'when pipeline_enabled is false' do
@@ -88,22 +93,17 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       expect(result.message[:content]).to eq(good_content)
     end
 
-    it 'retries on quality failure and returns good response on second attempt' do
-      call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
-        call_count += 1
-        if call_count == 1
-          native_dispatch_result(content: short_content)
-        else
-          native_dispatch_result(content: good_content)
-        end
-      end
+    it 'returns response on first successful dispatch (quality-based retry removed in P5 stateless loop)' do
+      # P5: the while remaining.positive? loop retries on raised exceptions only.
+      # Quality-score-based retry was part of the old chain machinery and is not part of
+      # the new stateless loop. A low-quality response is returned as-is (no exception raised).
+      allow(Legion::LLM::Call::Dispatch).to receive(:call)
+        .and_return(native_dispatch_result(content: short_content))
 
       executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
       expect(result).to be_a(Legion::LLM::Inference::Response)
-      expect(result.message[:content]).to eq(good_content)
-      expect(call_count).to eq(2)
+      expect(Legion::LLM::Call::Dispatch).to have_received(:call).once
     end
 
     it 'retries on provider error and returns good response on second attempt' do
@@ -157,7 +157,7 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       end
 
       executor = Legion::LLM::Inference::Executor.new(request)
-      expect { executor.call }.to raise_error(Legion::LLM::EscalationExhausted)
+      expect { executor.call }.to raise_error(Legion::LLM::Errors::EscalationExhausted)
     end
 
     it 'respects max_attempts setting' do
@@ -170,62 +170,49 @@ RSpec.describe 'Pipeline escalation via step_provider_call' do
       end
 
       executor = Legion::LLM::Inference::Executor.new(request)
-      expect { executor.call }.to raise_error(Legion::LLM::EscalationExhausted)
+      expect { executor.call }.to raise_error(Legion::LLM::Errors::EscalationExhausted)
       expect(call_count).to be <= 2
     end
 
-    it 'records timeline events for each escalation attempt' do
-      call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
-        call_count += 1
-        if call_count == 1
-          native_dispatch_result(content: short_content)
-        else
-          native_dispatch_result(content: good_content)
-        end
-      end
+    it 'records timeline events for successful dispatch' do
+      # P5: stateless loop records one escalation:attempt event per dispatch.
+      allow(Legion::LLM::Call::Dispatch).to receive(:call)
+        .and_return(native_dispatch_result(content: good_content))
 
       executor = Legion::LLM::Inference::Executor.new(request)
       result = executor.call
 
       escalation_events = result.timeline.select { |e| e[:key] == 'escalation:attempt' }
-      expect(escalation_events.size).to be >= 2
+      expect(escalation_events.size).to be >= 1
     end
 
-    it 'logs quality failures without affecting circuit breaker during escalation' do
-      call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
-        call_count += 1
-        call_count == 1 ? native_dispatch_result(content: short_content) : native_dispatch_result(content: good_content)
-      end
+    it 'does not trip circuit breaker on plain dispatch (only on account_specific errors)' do
+      # P5: circuit breaker is only tripped by account_specific errors, never by plain responses.
+      allow(Legion::LLM::Call::Dispatch).to receive(:call)
+        .and_return(native_dispatch_result(content: short_content))
 
       executor = Legion::LLM::Inference::Executor.new(request)
-      allow(executor).to receive(:log).and_return(Legion::Logging.log)
       executor.call
 
-      expect(call_count).to be >= 1
+      expect(Legion::LLM::Call::Dispatch).to have_received(:call).once
     end
 
-    it 'uses custom quality_check from request extra when present' do
+    it 'quality_check extra is available on the request but does not drive retry in P5 stateless loop' do
+      # P5: quality_check drove retry in the old chain machinery; the new loop is exception-driven.
+      # The extra value is still accessible but has no effect on dispatch retry logic.
       request_with_check = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
         extra:    { quality_check: ->(r) { r.text.include?('SELECT') } }
       )
 
-      call_count = 0
-      allow(Legion::LLM::Call::Dispatch).to receive(:call) do
-        call_count += 1
-        if call_count == 1
-          native_dispatch_result(content: 'this response is long enough but lacks the keyword padding here')
-        else
-          native_dispatch_result(content: 'SELECT * FROM users WHERE active = true and this is long enough')
-        end
-      end
+      allow(Legion::LLM::Call::Dispatch).to receive(:call)
+        .and_return(native_dispatch_result(content: 'no SELECT here'))
 
       executor = Legion::LLM::Inference::Executor.new(request_with_check)
       result = executor.call
-      expect(result.message[:content]).to include('SELECT')
+      expect(result).to be_a(Legion::LLM::Inference::Response)
+      expect(Legion::LLM::Call::Dispatch).to have_received(:call).once
     end
 
     it 'does not escalate when escalation settings are absent' do

@@ -2,6 +2,7 @@
 
 require 'legion/logging/helper'
 require 'legion/llm/api/shared_helpers'
+require 'legion/llm/api/error_translator'
 
 module Legion
   module LLM
@@ -9,6 +10,7 @@ module Legion
       module Namespaces
         module Helpers
           include Legion::LLM::API::SharedHelpers
+          include Legion::LLM::API::ErrorTranslator
 
           def openai_error(message, type: 'server_error', code: nil, status_code: 500)
             content_type :json

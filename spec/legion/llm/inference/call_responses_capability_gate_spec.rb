@@ -119,6 +119,9 @@ RSpec.describe 'Executor#call_responses capability gate' do
       )
       chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 1)
 
+      # P5: write openai/env/gpt-5.4-mini lane so select_next_lane finds it in the new loop
+      write_test_lane(provider: :openai, instance: :env, model: 'gpt-5.4-mini', tier: :frontier)
+
       allow(executor).to receive(:execute_pre_provider_steps) do
         executor.instance_variable_set(:@resolved_provider, :openai)
         executor.instance_variable_set(:@resolved_instance, :env)

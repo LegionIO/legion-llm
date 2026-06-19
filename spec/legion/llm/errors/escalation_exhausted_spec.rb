@@ -3,8 +3,6 @@
 require 'spec_helper'
 
 RSpec.describe 'Legion::LLM::Errors::EscalationExhausted (P5)' do
-  before { skip 'P5: EscalationExhausted error class' }
-
   let(:described_class) { Legion::LLM::Errors::EscalationExhausted }
 
   it 'inherits from LLMError' do
