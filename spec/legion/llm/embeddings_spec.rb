@@ -334,14 +334,14 @@ RSpec.describe 'Legion::LLM::Embeddings' do
   describe '.generate calls Dispatch.call(capability: :embed)' do
     before do
       Legion::LLM.instance_variable_set(:@started, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :openai, instance: :default, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
     end
 
     it 'dispatches through Dispatch.call with capability: :embed' do
       expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
         provider:   :openai,
-        instance:   nil,
+        instance:   :default,
         capability: :embed,
         model:      'text-embedding-3-small',
         text:       'test',
@@ -355,6 +355,8 @@ RSpec.describe 'Legion::LLM::Embeddings' do
     end
 
     it 'passes custom model, provider, and instance' do
+      write_test_lane(provider: :bedrock, instance: :us_west, model: 'custom-model', tier: :cloud, type: :embedding)
+
       expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
         provider:   :bedrock,
         instance:   :us_west,
@@ -365,16 +367,15 @@ RSpec.describe 'Legion::LLM::Embeddings' do
       ).and_return(native_embed_response)
 
       result = Legion::LLM::Embeddings.generate(
-        text: 'text', model: 'custom-model', provider: :bedrock,
-        instance: :us_west, dimensions: 512
+        text: 'text', model: 'custom-model', dimensions: 512
       )
       expect(result[:model]).to eq('custom-model')
       expect(result[:provider]).to eq(:bedrock)
     end
 
     it 'chunks oversized Ollama embedding input before provider dispatch' do
-      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+      Legion::Settings[:llm][:embedding][:model] = 'mxbai-embed-large'
+      write_test_lane(provider: :ollama, model: 'mxbai-embed-large', tier: :local, type: :embedding)
       Legion::Settings[:llm][:embedding][:ollama_context_chars]['mxbai-embed-large'] = 10
 
       expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
@@ -406,8 +407,8 @@ RSpec.describe 'Legion::LLM::Embeddings' do
     before do
       allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response)
       Legion::LLM.instance_variable_set(:@started, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
     end
 
     it 'returns exactly 1024 dimensions' do
@@ -452,24 +453,21 @@ RSpec.describe 'Legion::LLM::Embeddings' do
   describe '.generate when no provider configured' do
     before do
       Legion::LLM.instance_variable_set(:@started, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, nil)
-      Legion::LLM.instance_variable_set(:@embedding_model, nil)
+      Legion::Settings[:llm][:embedding][:model] = nil
     end
 
-    it 'returns error without dispatching' do
+    it 'raises LLMError without dispatching' do
       expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
 
-      result = Legion::LLM::Embeddings.generate(text: 'test')
-      expect(result[:error]).to eq('No embedding provider configured')
-      expect(result[:vector]).to be_nil
+      expect { Legion::LLM::Embeddings.generate(text: 'test') }.to raise_error(Legion::LLM::LLMError)
     end
   end
 
   describe '.generate error handling' do
     before do
       Legion::LLM.instance_variable_set(:@started, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
     end
 
     it 'returns error hash on dispatch failure' do
@@ -485,8 +483,8 @@ RSpec.describe 'Legion::LLM::Embeddings' do
   describe '.generate prefix injection' do
     before do
       Legion::LLM.instance_variable_set(:@started, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'nomic-embed-text')
+      Legion::Settings[:llm][:embedding][:model] = 'nomic-embed-text'
+      write_test_lane(provider: :ollama, model: 'nomic-embed-text', tier: :local, type: :embedding)
     end
 
     it 'prepends search_document prefix for nomic model' do
@@ -506,7 +504,8 @@ RSpec.describe 'Legion::LLM::Embeddings' do
     end
 
     it 'prepends prefix for mxbai model with query task' do
-      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+      Legion::Settings[:llm][:embedding][:model] = 'mxbai-embed-large'
+      write_test_lane(provider: :ollama, model: 'mxbai-embed-large', tier: :local, type: :embedding)
 
       expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
         hash_including(text: 'Represent this sentence for searching relevant passages: hello')
@@ -516,8 +515,8 @@ RSpec.describe 'Legion::LLM::Embeddings' do
     end
 
     it 'does not prefix for unknown models' do
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
-      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
 
       expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
         hash_including(text: 'hello')
@@ -530,8 +529,8 @@ RSpec.describe 'Legion::LLM::Embeddings' do
   describe '.generate text coercion' do
     before do
       Legion::LLM.instance_variable_set(:@started, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
     end
 
     it 'passes strings through unchanged' do
@@ -562,8 +561,8 @@ RSpec.describe 'Legion::LLM::Embeddings' do
   describe '.generate token extraction' do
     before do
       Legion::LLM.instance_variable_set(:@started, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
     end
 
     it 'extracts tokens from Usage object' do
@@ -596,9 +595,9 @@ RSpec.describe Legion::LLM::Embeddings do
   before do
     allow(Legion::Settings).to receive(:dig).and_return(nil)
     Legion::LLM.instance_variable_set(:@can_embed, nil)
-    Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-    Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
     Legion::LLM.instance_variable_set(:@started, true)
+    Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+    write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
   end
 
   after do
@@ -634,26 +633,20 @@ RSpec.describe Legion::LLM::Embeddings do
 
     it 'does not resolve provider from chat default_provider when not specified' do
       Legion::Settings[:llm][:default_provider] = :bedrock
-      Legion::LLM.instance_variable_set(:@embedding_provider, nil)
-      Legion::LLM.instance_variable_set(:@embedding_model, nil)
+      Legion::Settings[:llm][:embedding][:model] = nil
 
       expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
 
-      result = described_class.generate(text: 'test')
-      expect(result[:provider]).to be_nil
-      expect(result[:error]).to eq('No embedding provider configured')
+      expect { described_class.generate(text: 'test') }.to raise_error(Legion::LLM::LLMError)
     end
 
     it 'does not route embeddings to vllm when vllm is the chat default provider' do
       Legion::Settings[:llm][:default_provider] = :vllm
-      Legion::LLM.instance_variable_set(:@embedding_provider, nil)
-      Legion::LLM.instance_variable_set(:@embedding_model, nil)
+      Legion::Settings[:llm][:embedding][:model] = nil
 
       expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
 
-      result = described_class.generate(text: 'test')
-      expect(result[:provider]).to be_nil
-      expect(result[:error]).to eq('No embedding provider configured')
+      expect { described_class.generate(text: 'test') }.to raise_error(Legion::LLM::LLMError)
     end
   end
 
@@ -670,8 +663,8 @@ RSpec.describe Legion::LLM::Embeddings do
     end
 
     it 'chunks oversized batch entries without sending oversized array inputs to the provider' do
-      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
+      Legion::Settings[:llm][:embedding][:model] = 'mxbai-embed-large'
+      write_test_lane(provider: :ollama, model: 'mxbai-embed-large', tier: :local, type: :embedding)
       Legion::Settings[:llm][:embedding][:ollama_context_chars]['mxbai-embed-large'] = 10
 
       dispatched_texts = []
@@ -718,31 +711,14 @@ RSpec.describe Legion::LLM::Embeddings do
       expect(described_class.default_model).to eq('text-embedding-3-small')
     end
 
-    it 'falls back to Settings value when no cached model' do
-      Legion::LLM.instance_variable_set(:@embedding_model, nil)
-      Legion::Settings[:llm][:embedding][:default_model] = 'amazon.titan-embed-text-v2:0'
+    it 'returns the configured model from settings (P5: reads embedding.model key)' do
+      Legion::Settings[:llm][:embedding][:model] = 'amazon.titan-embed-text-v2:0'
       expect(described_class.default_model).to eq('amazon.titan-embed-text-v2:0')
     end
 
-    context 'plural embeddings key back-compat (#124)' do
-      before do
-        Legion::LLM.instance_variable_set(:@embedding_model, nil)
-        Legion::LLM.instance_variable_set(:@embedding_provider, nil)
-        Legion::Settings[:llm].delete(:embedding)
-        Legion::Settings[:llm][:embeddings] = { default_model: 'nomic-embed-text', provider: 'ollama' }
-      end
-
-      it 'reads default_model from plural embeddings key with deprecation warning' do
-        expect(described_class).to receive(:log).at_least(:once).and_return(
-          double('log', warn: nil, debug: nil, info: nil)
-        )
-        expect(described_class.default_model).to eq('nomic-embed-text')
-      end
-
-      it 'reads provider from plural embeddings key' do
-        allow(described_class).to receive(:log).and_return(double('log', warn: nil, debug: nil, info: nil))
-        expect(described_class.send(:resolve_provider)).to eq(:ollama)
-      end
+    it 'returns nil when embedding.model is not configured' do
+      Legion::Settings[:llm][:embedding][:model] = nil
+      expect(described_class.default_model).to be_nil
     end
   end
 end

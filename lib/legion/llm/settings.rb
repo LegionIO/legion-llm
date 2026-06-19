@@ -334,6 +334,9 @@ module Legion
 
       def self.embedding_defaults
         {
+          # G15: pinned embedding model for strict-model-pin routing through Router.request_lane.
+          # nil = no embedding configured; NoLaneAvailable raised on generate attempt.
+          model:                        nil,
           dimension:                    1024,
           enforce_dimension:            true,
           provider_fallback:            %w[ollama bedrock openai],

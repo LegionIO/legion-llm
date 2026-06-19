@@ -16,65 +16,95 @@ module Legion
         }.freeze
 
         class << self
-          def generate(text:, model: nil, provider: nil, instance: nil,
-                       dimensions: nil, task: :document)
-            return not_started_result(model, provider) unless LLM.started?
+          # G15: Embedding callers go through Router.request_lane(type: :embedding, models: [pinned]).
+          # Strict model pin — no cross-model failover (vector-comparability preserved).
+          # A down pinned lane → NoLaneAvailable (400, not silent dimension-switch).
+          def generate(text:, model: nil, **opts)
+            return not_started_result(model, nil) unless LLM.started?
 
-            provider ||= resolve_provider
-            return unavailable_result(model, provider) unless provider
+            pinned_model = model || Legion::Settings[:llm][:embedding][:model]
+            if pinned_model.nil? || pinned_model.to_s.empty?
+              raise Legion::LLM::LLMError,
+                    'no embedding model configured — set :llm, :embedding, :model in settings'
+            end
 
-            model ||= resolve_model
-            instance ||= resolve_instance
+            lane = Legion::LLM::Router.request_lane(type: :embedding, models: [pinned_model.to_s])
+            if lane.nil?
+              raise Legion::LLM::Errors::NoLaneAvailable.new(
+                filters: { type: :embedding, models: [pinned_model] }
+              )
+            end
+
+            provider = lane[:provider_family]
+            instance = lane[:instance_id]
+            lane_model = lane[:model]
+
             text = coerce_text(text)
-            text_length = text.length
-            prepared_texts = prepare_embedding_texts(text, provider: provider, model: model, task: task)
-            dispatch_text = prepared_texts.one? ? prepared_texts.first : prepared_texts
+            dimensions = opts[:dimensions]
+            task       = opts[:task] || :document
+            prepared_texts = prepare_embedding_texts(text, provider: provider, model: lane_model, task: task)
+            dispatch_text  = prepared_texts.one? ? prepared_texts.first : prepared_texts
 
             log.info("[llm][embed] action=generate provider=#{provider} instance=#{instance || 'default'} " \
-                     "model=#{model} task=#{task} text_chars=#{text_length} chunks=#{prepared_texts.size}")
+                     "model=#{lane_model} task=#{task} text_chars=#{text.length} chunks=#{prepared_texts.size}")
 
             started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
             response = Dispatch.call(
               provider:   provider,
               instance:   instance,
               capability: :embed,
-              model:      model,
+              model:      lane_model,
               text:       dispatch_text,
               dimensions: dimensions
             )
             elapsed = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - started_at) * 1000).round(1)
 
             vector = if prepared_texts.size > 1
-                       aggregate_vectors(response[:result], weights: prepared_texts.map(&:length), model: model, provider: provider)
+                       aggregate_vectors(response[:result],
+                                         weights:  prepared_texts.map(&:length),
+                                         model:    lane_model,
+                                         provider: provider)
                      else
                        normalize_vector(response[:result])
                      end
             vector = enforce_dimensions(vector) if enforce_dimension?
             tokens = extract_tokens(response)
 
-            log.info("[llm][embed] action=generate.complete provider=#{provider} instance=#{instance || 'default'} " \
-                     "model=#{model} dimensions=#{vector&.size || 0} tokens=#{tokens} chunks=#{prepared_texts.size} duration_ms=#{elapsed}")
+            log.info("[llm][embed] action=generate.complete provider=#{provider} " \
+                     "instance=#{instance || 'default'} model=#{lane_model} " \
+                     "dimensions=#{vector&.size || 0} tokens=#{tokens} chunks=#{prepared_texts.size} duration_ms=#{elapsed}")
 
             {
               vector:     vector,
-              model:      model,
+              model:      lane_model,
               provider:   provider,
               dimensions: vector&.size || 0,
               tokens:     tokens,
               chunks:     prepared_texts.size
             }
+          rescue Legion::LLM::Errors::NoLaneAvailable, Legion::LLM::LLMError
+            raise
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.embeddings.generate')
-            { vector: nil, model: model, provider: provider, error: e.message }
+            { vector: nil, model: pinned_model, provider: nil, error: e.message }
           end
 
-          def generate_batch(texts:, model: nil, provider: nil, instance: nil,
-                             dimensions: nil, task: :document)
+          def generate_batch(texts:, model: nil, dimensions: nil, task: :document, **)
             return texts.map { { vector: nil, error: 'LLM not started' } } unless LLM.started?
 
-            provider ||= resolve_provider
-            model ||= resolve_model
-            instance ||= resolve_instance
+            pinned_model = model || Legion::Settings[:llm][:embedding][:model]
+            return texts.map { { vector: nil, error: 'no embedding model configured' } } if pinned_model.nil? || pinned_model.to_s.empty?
+
+            lane = Legion::LLM::Router.request_lane(type: :embedding, models: [pinned_model.to_s])
+            if lane.nil?
+              raise Legion::LLM::Errors::NoLaneAvailable.new(
+                filters: { type: :embedding, models: [pinned_model] }
+              )
+            end
+
+            provider = lane[:provider_family]
+            instance = lane[:instance_id]
+            model    = lane[:model]
 
             log.info("[llm][embed] action=generate_batch provider=#{provider} instance=#{instance || 'default'} " \
                      "model=#{model} count=#{texts.size} task=#{task}")
@@ -116,40 +146,12 @@ module Legion
             texts.map { { vector: nil, model: model, provider: provider, error: e.message } }
           end
 
+          # G15: returns the configured embedding model (pinned). nil if not configured.
           def default_model
-            resolve_model
+            Legion::Settings[:llm][:embedding][:model]
           end
 
           private
-
-          def resolve_provider
-            LLM.embedding_provider ||
-              embedding_config_value(:provider)&.to_sym
-          end
-
-          def resolve_model
-            LLM.embedding_model ||
-              embedding_config_value(:default_model)
-          end
-
-          # Resolve the embedding instance the same way provider/model are resolved.
-          # Prefer the discovered/configured embedding instance (Discovery honors the
-          # configured embedding.instance pin), then the raw embedding.instance setting.
-          # Without this the dispatch passes instance=nil and falls back to the provider's
-          # default (e.g. an empty local Ollama) even when a managed instance is configured.
-          def resolve_instance
-            LLM.embedding_instance ||
-              embedding_config_value(:instance)
-          end
-
-          def embedding_config_value(key)
-            embedding = Legion::Settings[:llm][:embedding]
-            return embedding[key] if embedding && (embedding.key?(key) || embedding.key?(key.to_s))
-
-            plural = Legion::Settings[:llm][:embeddings]&.[](key) || Legion::Settings[:llm][:embeddings]&.[](key.to_s)
-            log.warn "[llm][embeddings] settings key \"embeddings.#{key}\" (plural) is deprecated — rename to \"embedding.#{key}\"" unless plural.nil?
-            plural
-          end
 
           def coerce_text(value)
             case value
