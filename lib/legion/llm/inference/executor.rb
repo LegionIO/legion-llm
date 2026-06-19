@@ -256,7 +256,6 @@ module Legion
           Thread.current[:legion_log_conv_id] = nil
           Thread.current[:legion_log_exchange_id] = nil
           Thread.current[:legion_log_chain_id] = nil
-          Thread.current[:p0_exchange_id] = nil
         end
 
         def registry_tool_limit
@@ -1187,17 +1186,7 @@ module Legion
           0
         end
 
-        def emit_p0_capture
-          return unless @exchange_id
-
-          summary = Legion::LLM::Inventory.capture_summary(exchange_id: @exchange_id)
-          log.info "[llm][routing][p0_capture] offerings_calls=#{summary[:calls]} " \
-                   "offerings_total_ms=#{format('%.2f', summary[:total_ms])} " \
-                   "exchange_id=#{@exchange_id}"
-        end
-
         def build_response
-          emit_p0_capture
           @extracted_tokens ||= extract_tokens
 
           content = canonical_response_text(@raw_response) || @raw_response.to_s

@@ -115,40 +115,38 @@ module Legion
 
         # ── end P1 live store write API ───────────────────────────────────────────
 
-        # Correlation-keyed call/time accounting for P0 baseline capture.
-        # exchange_id: is threaded explicitly by callers that have it; falls back to
-        # Thread.current[:p0_exchange_id] (set by the executor before its routing step)
-        # so indirect router calls (Inventory.routing_candidates, availability checks)
-        # are captured without signature churn on every intermediate method.
-        def offerings(filters = {})
-          eid = Thread.current[:p0_exchange_id]
-          if eid
-            @capture_counters ||= Concurrent::Map.new
-            counters = @capture_counters.compute_if_absent(eid) { { calls: 0, total_ms: 0.0 } }
-            counters[:calls] += 1
-            started = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-            result = compose_offerings(filters: filters)
-            counters[:total_ms] += (::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - started) * 1000.0
-            result
-          else
-            compose_offerings(filters: filters)
+        # Filtered read of the catalog. Reads from the live Concurrent::Map store first;
+        # falls back to the legacy recompute path (compose_offerings) when the live store
+        # is empty (e.g. actors haven't ticked yet, test env without pre-populated store).
+        # The recompute fallback is removed in P3 once all callers have migrated.
+        #
+        # Accepts a Hash of filters (legacy positional) or keyword args pattern.
+        # Returns Array<lane/offering> (dups so callers cannot mutate the live store).
+        def offerings(filters = {}, **)
+          normalized = normalize_filter_hash(filters.merge(**))
+          live = lanes
+          if live.any?
+            list = live
+            list = list.select { it[:provider_family].to_s == normalized[:provider].to_s } if normalized[:provider]
+            list = list.select { [it[:instance_id].to_s, it[:provider_instance].to_s].include?(normalized[:instance].to_s) } if normalized[:instance]
+            list = list.select { it[:type].to_s == normalize_type(normalized[:type]).to_s } if normalized[:type]
+            list = list.select { it[:model].to_s == normalized[:model].to_s || it[:offering_id].to_s == normalized[:offering_id].to_s } if normalized[:model] || normalized[:offering_id]
+            list = list.select { it[:enabled] } unless normalized[:include_disabled]
+            return list.map(&:dup)
           end
-        end
 
-        def capture_summary(exchange_id:, **)
-          @capture_counters&.delete(exchange_id) || { calls: 0, total_ms: 0.0 }
+          # Fallback: live store empty — recompute from settings+registry+discovery.
+          compose_offerings(filters: normalized)
         end
 
         def providers
-          compose_offerings(filters: {}).group_by { |offering| offering[:provider_family] }
+          lanes.group_by { |l| l[:provider_family].to_s }
         end
 
         # Filtered read of live lanes. Returns Array<lane> from the Concurrent::Map store.
         # Filters are AND-combined; nil = match-all. TTL-aware (expired lanes excluded).
-        # Also consults offerings() as fallback for lanes not yet written via write_lane
-        # (transition period during P1; commit 8 removes offerings() fallback entirely).
         def lanes_for(provider: nil, instance: nil, type: nil, model: nil, **)
-          live = lanes.select do |l|
+          lanes.select do |l|
             next false if provider && l[:provider_family].to_sym != provider.to_sym
             next false if instance && l[:instance_id].to_sym != instance.to_sym
             next false if type     && l[:type].to_sym != type.to_sym
@@ -156,30 +154,6 @@ module Legion
 
             true
           end
-          return live unless live.empty?
-
-          # Fallback: read from recompute path during P1 transition (removed in commit 8).
-          filters = {}
-          filters[:provider] = provider if provider
-          filters[:instance] = instance if instance
-          filters[:type]     = type     if type
-          filters[:model]    = model    if model
-          offerings(filters)
-        end
-
-        # Bounded routing-candidate set: ONE representative offering per enabled
-        # provider-instance for the given operation, drawn from the SAME merged
-        # catalog the API serves (settings + native adapter static catalogs +
-        # discovery). This is the set the Router scores — it never enumerates a
-        # provider's full catalog (e.g. OpenAI's 100+ models). The representative
-        # is the provider's declared default_model when that model is offered,
-        # else the settings-default offering, else the first offering.
-        def routing_candidates(operation: :generation, **filters)
-          type = normalize_type(operation)
-          catalog = offerings(filters.merge(type: type))
-          catalog
-            .group_by { |offering| [offering[:provider_family].to_s, offering_instance_key(offering)] }
-            .filter_map { |(provider_family, instance_key), group| representative_offering(provider_family, instance_key, group) }
         end
 
         private
@@ -291,6 +265,8 @@ module Legion
 
         # ── end P1 live store private helpers ────────────────────────────────────
 
+        # Legacy recompute path — still used as fallback when live store is empty.
+        # Removed in P3 once lex-llm-* gems populate the store reliably.
         def compose_offerings(filters:, **)
           log.debug "[llm][inventory] action=offerings.enter filters=#{filters.keys}"
           normalized_filters = normalize_filter_hash(filters)
