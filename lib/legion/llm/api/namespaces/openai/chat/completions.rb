@@ -22,6 +22,7 @@ module Legion
 
                 app.post '/v1/chat/completions' do
                   require_llm!
+                  validate_legion_routing_headers!(env)
                   request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
                   body = parse_request_body
 

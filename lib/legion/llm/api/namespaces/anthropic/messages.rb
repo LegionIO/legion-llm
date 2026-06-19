@@ -20,6 +20,7 @@ module Legion
 
             post '' do
               require_llm!
+              validate_legion_routing_headers!(env)
               request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
               body = parse_request_body
               validate_anthropic_required!(body)

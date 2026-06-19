@@ -105,9 +105,10 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
     before do
       # P5: reset Inventory so ONLY anthropic lanes exist — prevents vllm/bedrock (from shared before)
       # from being dispatched first (their registered adapters lack chat methods).
+      # Use 'qwen3:32b' (colon) to match the request's routing model exactly.
       Legion::LLM::Inventory.reset_live_store!
-      write_test_lane(provider: :anthropic, instance: :primary,   model: 'qwen3-32b', tier: :frontier)
-      write_test_lane(provider: :anthropic, instance: :secondary, model: 'qwen3-32b', tier: :frontier)
+      write_test_lane(provider: :anthropic, instance: :primary,   model: 'qwen3:32b', tier: :frontier)
+      write_test_lane(provider: :anthropic, instance: :secondary, model: 'qwen3:32b', tier: :frontier)
     end
 
     it 'tries a sibling instance after an account-scoped (credit) error' do
