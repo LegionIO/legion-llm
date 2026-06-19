@@ -586,7 +586,6 @@ module Legion
         opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
         opts.delete(:temperature) if opts[:temperature].nil?
 
-        Call::Providers.inject_anthropic_cache_control!(opts, provider)
         opts[:tools] = tools if tools
 
         log.debug "[llm][inference] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
