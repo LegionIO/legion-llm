@@ -176,23 +176,23 @@ module Legion
         # G22: 5-part id required (tier:provider:instance:type:model).
         # No derivation fallback — gem writers must use ScopedRefresher.compose_id.
         def validate_lane!(lane:)
-          raise Legion::LLM::Errors::InvalidLane, ':id required' if lane[:id].nil? || lane[:id].to_s.empty?
+          raise Legion::LLM::InvalidLane, ':id required' if lane[:id].nil? || lane[:id].to_s.empty?
 
           parts = lane[:id].to_s.split(':')
-          raise Legion::LLM::Errors::InvalidLane, "5-part id required, got #{parts.size}: #{lane[:id]}" if parts.size != 5
+          raise Legion::LLM::InvalidLane, "5-part id required, got #{parts.size}: #{lane[:id]}" if parts.size != 5
 
           %i[tier provider_family instance_id type model].each do |k|
-            raise Legion::LLM::Errors::InvalidLane, "lane[:#{k}] required" if lane[k].nil?
+            raise Legion::LLM::InvalidLane, "lane[:#{k}] required" if lane[k].nil?
           end
 
           unless LANE_TIERS.include?(lane[:tier].to_sym)
-            raise Legion::LLM::Errors::InvalidLane,
+            raise Legion::LLM::InvalidLane,
                   "invalid tier #{lane[:tier]}; expected one of #{LANE_TIERS}"
           end
 
           return if LANE_TYPES.include?(lane[:type].to_sym)
 
-          raise Legion::LLM::Errors::InvalidLane,
+          raise Legion::LLM::InvalidLane,
                 "invalid type #{lane[:type]}; expected one of #{LANE_TYPES}"
         end
 
@@ -222,8 +222,8 @@ module Legion
           {
             tier:     tier_w,
             provider: provider_weight,
-            instance: inst_cfg.is_a?(Hash) ? (inst_cfg[:weight] || provider_weight) : provider_weight,
-            model:    model_cfg.is_a?(Hash) ? (model_cfg[:weight] || provider_weight) : provider_weight
+            instance: inst_cfg.is_a?(Hash) ? (inst_cfg[:weight] || 100) : 100,
+            model:    model_cfg.is_a?(Hash) ? (model_cfg[:weight] || 100) : 100
           }
         end
 
@@ -561,12 +561,14 @@ module Legion
         end
 
         def discovery_offerings(provider: nil, exclude_providers: [])
-          return [] unless defined?(Legion::LLM::Inventory::Discovery)
+          # Use Legion::LLM::Discovery (compat shim) so allow() mocks in specs work.
+          # In production, this delegates to Inventory::Discovery via method_missing.
+          return [] unless defined?(Legion::LLM::Discovery)
 
-          cached_models = if Legion::LLM::Inventory::Discovery.respond_to?(:cached_discovered_models)
-                            Legion::LLM::Inventory::Discovery.cached_discovered_models
+          cached_models = if Legion::LLM::Discovery.respond_to?(:cached_discovered_models)
+                            Legion::LLM::Discovery.cached_discovered_models
                           else
-                            Legion::LLM::Inventory::Discovery.discovered_models
+                            Legion::LLM::Discovery.discovered_models
                           end
 
           cached_models.filter_map do |model_entry|

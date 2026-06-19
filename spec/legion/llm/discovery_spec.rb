@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Legion::LLM::Discovery do
+RSpec.describe Legion::LLM::Inventory::Discovery do
   before do
     described_class.reset!
     Legion::LLM::Call::Registry.reset!

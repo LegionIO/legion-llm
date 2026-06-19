@@ -3,7 +3,7 @@
 require 'spec_helper'
 require 'legion/llm/discovery/system'
 
-RSpec.describe Legion::LLM::Discovery::System do
+RSpec.describe Legion::LLM::Inventory::Discovery::System do
   before { described_class.reset! }
 
   describe '.platform' do

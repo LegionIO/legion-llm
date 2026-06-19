@@ -25,7 +25,7 @@ RSpec.describe 'Router discovery integration' do
 
   before do
     Legion::LLM::Router.reset!
-    Legion::LLM::Discovery.reset!
+    Legion::LLM::Inventory::Discovery.reset!
     Legion::LLM::Discovery::System.reset!
     allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
   end
@@ -45,7 +45,7 @@ RSpec.describe 'Router discovery integration' do
   describe 'when model is not available' do
     before do
       configure_routing(rules: rules_with_local)
-      allow(Legion::LLM::Discovery).to receive(:model_available?).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(false)
+      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(false)
       allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(32_000)
     end
 
@@ -60,8 +60,8 @@ RSpec.describe 'Router discovery integration' do
   describe 'when model is available and fits in memory' do
     before do
       configure_routing(rules: rules_with_local)
-      allow(Legion::LLM::Discovery).to receive(:model_available?).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(true)
-      allow(Legion::LLM::Discovery).to receive(:model_size).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(4_700_000_000)
+      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(true)
+      allow(Legion::LLM::Inventory::Discovery).to receive(:model_size).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(4_700_000_000)
       allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(32_000)
     end
 
@@ -76,8 +76,8 @@ RSpec.describe 'Router discovery integration' do
   describe 'when model is available but does not fit in memory' do
     before do
       configure_routing(rules: rules_with_local)
-      allow(Legion::LLM::Discovery).to receive(:model_available?).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(true)
-      allow(Legion::LLM::Discovery).to receive(:model_size).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(4_700_000_000)
+      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(true)
+      allow(Legion::LLM::Inventory::Discovery).to receive(:model_size).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(4_700_000_000)
       # 5000 MB available - 2048 MB floor = 2952 MB usable, model needs ~4482 MB
       allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(5_000)
     end
@@ -112,8 +112,8 @@ RSpec.describe 'Router discovery integration' do
   describe 'when system memory is nil (unknown platform)' do
     before do
       configure_routing(rules: rules_with_local)
-      allow(Legion::LLM::Discovery).to receive(:model_available?).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(true)
-      allow(Legion::LLM::Discovery).to receive(:model_size).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(4_700_000_000)
+      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(true)
+      allow(Legion::LLM::Inventory::Discovery).to receive(:model_size).with('llama3.1:8b', provider: :ollama, instance: nil).and_return(4_700_000_000)
       allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(nil)
     end
 
@@ -140,7 +140,7 @@ RSpec.describe 'Router discovery integration' do
     before { configure_routing(rules: cloud_only_rules) }
 
     it 'does not check discovery for cloud rules' do
-      expect(Legion::LLM::Discovery).not_to receive(:model_available?)
+      expect(Legion::LLM::Inventory::Discovery).not_to receive(:model_available?)
       Legion::LLM::Router.resolve(intent: { effort: :reasoning })
     end
   end

@@ -84,7 +84,7 @@ end
 def seed_discovered_models(models)
   map = Concurrent::Map.new
   Array(models).group_by { |m| m[:provider] }.each { |provider, list| map[provider] = list }
-  Legion::LLM::Discovery.instance_variable_set(:@discovered_models, map)
+  Legion::LLM::Inventory::Discovery.instance_variable_set(:@discovered_models, map)
 end
 
 RSpec.configure do |config|
@@ -95,6 +95,7 @@ RSpec.configure do |config|
       defined?(Legion::Transport::Settings)
     Legion::Settings[:logging][:level] = :fatal
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
+    Legion::LLM::Inventory::Discovery.reset! if defined?(Legion::LLM::Inventory::Discovery)
     # Re-register standard providers after reset so router resolution works
     if defined?(Legion::LLM::Call::Registry)
       %i[anthropic test bedrock openai ollama vllm azure_foundry gemini xai].each do |provider|

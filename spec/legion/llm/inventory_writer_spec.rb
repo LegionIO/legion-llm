@@ -15,12 +15,14 @@ RSpec.describe Legion::LLM::Inventory, '#write_lane / #delete_lane (P1)' do
   end
 
   it 'rejects denied models fail-closed' do
+    Legion::Settings.loader.settings[:extensions][:llm][:bedrock] ||= {}
     Legion::Settings.loader.settings[:extensions][:llm][:bedrock][:model_blacklist] = ['claude-old']
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :bedrock, model: 'claude-old'))
     expect(Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-old')).to be_nil
   end
 
   it 'computes lane_weight from settings on write' do
+    Legion::Settings.loader.settings[:extensions][:llm][:vllm] ||= {}
     Legion::Settings.loader.settings[:extensions][:llm][:vllm][:weight] = 200
     Legion::Settings.loader.settings[:llm][:routing][:tier_weights] = { direct: 100 }
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :vllm, tier: :direct, model: 'gemma-12b'))
