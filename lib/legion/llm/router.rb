@@ -88,7 +88,7 @@ module Legion
         def inventory_default_model(provider, instance = nil)
           return nil unless provider && defined?(Inventory)
 
-          candidates = Inventory.routing_candidates(provider: provider.to_sym)
+          candidates = Inventory.lanes_for(provider: provider.to_sym, type: :inference)
           return nil if candidates.nil? || candidates.empty?
 
           inst = (instance || :default).to_s

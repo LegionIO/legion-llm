@@ -441,6 +441,11 @@ RSpec.describe 'Router determinism and regression coverage' do
       allow(Legion::LLM::Inventory).to receive(:routing_candidates).with(provider: :anthropic).and_return(
         [{ model: 'claude-haiku-4-5-20251001', provider_family: 'anthropic', instance_id: 'primary' }]
       )
+      # inventory_default_model now calls lanes_for instead of routing_candidates (P1 commit 1)
+      allow(Legion::LLM::Inventory).to receive(:lanes_for).and_call_original
+      allow(Legion::LLM::Inventory).to receive(:lanes_for).with(provider: :anthropic, type: :inference).and_return(
+        [{ model: 'claude-haiku-4-5-20251001', provider_family: 'anthropic', instance_id: 'primary' }]
+      )
     end
 
     after { Legion::LLM::Call::Registry.deregister_provider(:anthropic) }

@@ -74,6 +74,19 @@ module Legion
           compose_offerings(filters: {}).group_by { |offering| offering[:provider_family] }
         end
 
+        # Filtered read of the live catalog. Returns Array<offering>. No grouping, no defaults,
+        # no special cases — that's the caller's job. Filters are AND-combined; nil = match-all.
+        # After P1/commit 5 this is backed by the Concurrent::Map live store; until then it
+        # delegates to offerings() so every intermediate commit stays green.
+        def lanes_for(provider: nil, instance: nil, type: nil, model: nil, **)
+          filters = {}
+          filters[:provider] = provider if provider
+          filters[:instance] = instance if instance
+          filters[:type]     = type     if type
+          filters[:model]    = model    if model
+          offerings(filters)
+        end
+
         # Bounded routing-candidate set: ONE representative offering per enabled
         # provider-instance for the given operation, drawn from the SAME merged
         # catalog the API serves (settings + native adapter static catalogs +
