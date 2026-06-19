@@ -1,5 +1,9 @@
 # frozen_string_literal: true
 
+# TODO(refactor: SSOT P4 commit 3): the Legion::LLM.start populate_auto_rules call is deleted in
+# P4. This spec gets migrated to assert the new boot wiring (SettingsObserver.attach! + Sweeper).
+# See docs/work/planning/p4-router-request-lane.md for the migrated form.
+
 require 'spec_helper'
 require 'legion/llm/discovery/system'
 
