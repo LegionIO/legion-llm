@@ -16,16 +16,8 @@ module Legion
         @embedding_model = nil
         @embedding_instance = nil
         @embedding_fallback_chain = nil
-        # Discovered models keyed by provider. A Concurrent::Map so each provider's
-        # DiscoveryRefresh ::Every actor writes ITS OWN key atomically — no
-        # read-modify-write across providers, no lock. Reads flatten all values
-        # lock-free. Refresh is actor/startup-owned; the request path only READS.
-        @discovered_models = Concurrent::Map.new
-        @discovered_models_at = nil
         # Per-(provider,instance) discovery status — lock-free reads, atomic writes.
         @discovery_status = Concurrent::Map.new
-
-        DISCOVERED_MODELS_SCHEMA_VERSION = 3
         EMBEDDING_TIER_ORDER = %w[local direct fleet cloud frontier].freeze
         # Version/tag delimiters that separate a model family base from its concrete
         # discovered id (Ollama "model:tag", Bedrock "family-YYYYMMDD-v1:0" / "family-6").
@@ -52,11 +44,6 @@ module Legion
           def run
             log.debug '[llm][discovery] run.enter'
             Legion::LLM::Inventory::Discovery::System.refresh! if discovery_enabled?
-
-            refresh_discovered_models!
-            models = discovered_models
-            log.info "[llm][discovery] model_count=#{models.size} " \
-                     "models=#{models.map { |m| m[:model] }.join(', ')}"
             log.info "[llm][discovery] system total_mb=#{Legion::LLM::Inventory::Discovery::System.total_memory_mb} " \
                      "available_mb=#{Legion::LLM::Inventory::Discovery::System.available_memory_mb}"
           rescue StandardError => e
@@ -90,127 +77,24 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.discovery.detect_embedding_capability')
           end
 
-          # Returns discovered instances grouped by provider for RuleGenerator compatibility.
-          # Each provider maps to a hash of instance_id => { models: [...], capabilities: [...] }.
-          # Instance-level capabilities come from the Call::Registry metadata that the
-          # provider extension's `discover_instances` populates (e.g. lex-llm-vllm declares
-          # `capabilities: %i[completion streaming vision tools]` on its DEFAULT_INSTANCE_TIER).
-          # Threading them through here means RuleGenerator's chat rules carry `:tools` even
-          # when the per-model offerings hash only surfaces `:completion` — without it, the
-          # router logs `resolve.no_rules_matched required_capabilities=[:tools]` on every
-          # tool request and falls through to the default-provider fallback.
-          def discovered_instances
-            models = discovered_models
-            result = {}
-            models.each do |m|
-              provider = m[:provider]
-              instance = m[:instance] || :default
-              result[provider] ||= {}
-              result[provider][instance] ||= { models: [], capabilities: [] }
-              result[provider][instance][:models] << normalize_model_for_rules(m)
-            end
-            merge_registry_instance_capabilities!(result)
-            result
-          end
-
-          def merge_registry_instance_capabilities!(grouped)
-            return grouped unless defined?(Call::Registry)
-
-            Call::Registry.all_instances.each do |entry|
-              provider = entry[:provider]
-              instance = entry[:instance]
-              metadata = entry[:metadata] || {}
-              capabilities = Array(metadata[:capabilities] || metadata['capabilities'])
-              next if capabilities.empty?
-
-              grouped[provider] ||= {}
-              grouped[provider][instance] ||= { models: [], capabilities: [] }
-              existing = Array(grouped[provider][instance][:capabilities])
-              grouped[provider][instance][:capabilities] = (existing + capabilities).uniq
-            end
-            grouped
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.discovery.merge_registry_capabilities')
-            grouped
-          end
-
-          # Flat list of all discovered models across every provider.
-          # Read-only and lock-free. NEVER refreshes on the request path — a live
-          # network refresh here is what blocked routing for ~the socket timeout
-          # (a serial per-instance fetch where one unreachable instance stalls the
-          # whole request). Refresh is owned by the provider DiscoveryRefresh
-          # ::Every actors (background) and the startup `run` warm.
-          def discovered_models
-            cached_discovered_models
-          end
-
-          def cached_discovered_models
-            return [] if discovered_models_cache_schema_stale?
-
-            @discovered_models.values.flatten(1)
-          end
-
           # Check whether a specific model is available from any registered provider.
+          # Reads the live Inventory lane store — no discovery cache.
           def model_available?(model, provider: nil, instance: nil)
+            return false unless defined?(Legion::LLM::Inventory)
+
             psym = provider&.to_sym
             isym = instance&.to_sym
-            discovered_models.any? do |m|
-              name_matches?(m[:model], model) &&
-                (psym.nil? || m[:provider] == psym) &&
-                (isym.nil? || m[:instance] == isym)
+            Legion::LLM::Inventory.lanes.any? do |l|
+              name_matches?(l[:model].to_s, model.to_s) &&
+                (psym.nil? || l[:provider_family].to_sym == psym) &&
+                (isym.nil? || l[:instance_id].to_sym == isym)
             end
           end
 
           # Return the size in bytes for a discovered model, or nil if unknown.
-          def model_size(model, provider: nil, instance: nil)
-            psym = provider&.to_sym
-            isym = instance&.to_sym
-            entry = discovered_models.find do |m|
-              name_matches?(m[:model], model) &&
-                (psym.nil? || m[:provider] == psym) &&
-                (isym.nil? || m[:instance] == isym)
-            end
-            entry&.dig(:size_bytes)
-          end
-
-          def refresh_discovered_models!(provider: nil)
-            log.debug "[llm][discovery] action=refresh_discovered_models provider=#{provider || :all}"
-            return unless defined?(Call::Registry)
-
-            if provider
-              refresh_provider_models(provider)
-            else
-              refresh_all_provider_models
-            end
-          end
-
-          # Refresh models for a single provider, preserving other providers' cached models.
-          def refresh_provider_models(provider)
-            return unless defined?(Call::Registry)
-
-            fresh_models = Call::Registry.all_instances
-                                         .select { |e| (e[:provider] || '').to_sym == provider }
-                                         .flat_map { |entry| fetch_offering_models(entry) }
-
-            # Atomic per-provider write — Concurrent::Map single-key set. No
-            # read-modify-write across providers, so concurrent DiscoveryRefresh
-            # actors can't clobber each other; no lock needed.
-            @discovered_models[provider.to_sym] = fresh_models
-            @discovered_models_at = Time.now
-            log.debug "[llm][discovery] action=refresh_provider_models provider=#{provider} count=#{fresh_models.size}"
-          end
-
-          def refresh_all_provider_models
-            return unless defined?(Call::Registry)
-
-            # Group by provider and set each provider's key atomically.
-            Call::Registry.all_instances
-                          .group_by { |e| (e[:provider] || '').to_sym }
-                          .each do |provider, instances|
-              @discovered_models[provider] = instances.flat_map { |entry| fetch_offering_models(entry) }
-            end
-            @discovered_models_at = Time.now
-            log.debug "[llm][discovery] action=refresh_discovered_models count=#{@discovered_models.values.flatten(1).size}"
+          # After P3, size_bytes is not stored on lanes; always nil.
+          def model_size(_model, provider: nil, instance: nil) # rubocop:disable Lint/UnusedMethodArgument
+            nil
           end
 
           def fetch_offering_models(entry)
@@ -222,7 +106,6 @@ module Legion
                 data = normalize_offering(offering)
                 report_discovery_health(entry, data)
                 {
-                  schema_version:     DISCOVERED_MODELS_SCHEMA_VERSION,
                   model:              (data[:id] || data[:name] || data[:model]).to_s,
                   provider:           entry[:provider],
                   instance:           normalize_instance_id(data[:instance_id] || data[:provider_instance] || entry[:instance]),
@@ -257,8 +140,6 @@ module Legion
             @embedding_model = nil
             @embedding_instance = nil
             @embedding_fallback_chain = nil
-            @discovered_models = Concurrent::Map.new
-            @discovered_models_at = nil
             @discovery_status = Concurrent::Map.new
           end
 
@@ -415,12 +296,6 @@ module Legion
             value.respond_to?(:to_sym) ? value.to_sym : value
           end
 
-          def discovered_models_cache_schema_stale?
-            @discovered_models.values.flatten(1).any? do |entry|
-              entry[:schema_version] != DISCOVERED_MODELS_SCHEMA_VERSION
-            end
-          end
-
           # Match model names allowing prefix matching for tagged variants (e.g. "llama3" matches "llama3:8b")
           def name_matches?(discovered_name, query_name)
             return false if discovered_name.nil? || query_name.nil?
@@ -428,18 +303,6 @@ module Legion
             dn = discovered_name.to_s
             qn = query_name.to_s
             dn == qn || dn.start_with?("#{qn}:")
-          end
-
-          # Normalize a discovered model entry into a hash compatible with RuleGenerator
-          def normalize_model_for_rules(model_entry)
-            h = { 'name' => model_entry[:model] }
-            h['tier'] = model_entry[:tier] if model_entry[:tier]
-            h['capabilities'] = model_entry[:capabilities] if model_entry[:capabilities]&.any?
-            h['capability_sources'] = model_entry[:capability_sources] if model_entry[:capability_sources].is_a?(Hash) && model_entry[:capability_sources].any?
-            h['context_length'] = model_entry[:context_length] if model_entry[:context_length]
-            h['parameter_count'] = model_entry[:parameter_count] if model_entry[:parameter_count]
-            h['size'] = model_entry[:size_bytes] if model_entry[:size_bytes]
-            h
           end
 
           def detect_embedding_from_registry
@@ -557,10 +420,11 @@ module Legion
           end
 
           def first_embedding_model_for(provider, instance)
+            return nil unless defined?(Legion::LLM::Inventory)
+
             embedding_caps = %w[embedding embeddings embed].freeze
-            cached_discovered_models.find do |m|
-              m[:provider].to_s == provider.to_s && m[:instance].to_s == instance.to_s &&
-                Array(m[:capabilities]).any? { |c| embedding_caps.include?(c.to_s) }
+            Legion::LLM::Inventory.lanes_for(provider: provider.to_sym, instance: instance.to_sym).find do |l|
+              Array(l[:capabilities]).any? { |c| embedding_caps.include?(c.to_s) }
             end&.dig(:model)
           end
 

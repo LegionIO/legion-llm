@@ -479,16 +479,10 @@ RSpec.describe Legion::LLM::Router do
       expect(described_class.infer_provider_for_model('some-custom-model')).to be_nil
     end
 
-    it 'prefers discovered provider data before static colon-pattern inference' do
-      discovered_models = [
-        {
-          model:    'qwen3.6:27b',
-          provider: :vllm
-        }
-      ]
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered_models)
-
-      expect(described_class.infer_provider_for_model('qwen3.6:27b')).to eq(:vllm)
+    it 'infers ollama for colon-pattern model names (ollama tag format)' do
+      # After P3, discover_provider_for_model is deleted. colon-separated names
+      # (the Ollama "model:tag" format) are inferred as :ollama via OLLAMA_MODEL_PATTERN.
+      expect(described_class.infer_provider_for_model('qwen3.6:27b')).to eq(:ollama)
     end
 
     it 'falls back to static inference when discovery cache is unavailable' do

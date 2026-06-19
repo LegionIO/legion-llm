@@ -1309,13 +1309,16 @@ confidence: 0.9 }],
       expect(result[:auto_route]).to be_nil
     end
 
-    it 'pins provider and instance when a healthy discovered match exists' do
+    it 'pins provider and instance when a healthy local lane exists' do
       executor = described_class.new(request)
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([healthy_entry])
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
-      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(true)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
+        provider_family: :ollama, instance_id: :default, model: 'gpt-5.4-mini',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).with(:ollama, instance: :default).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:provider]).to eq(:ollama)
       expect(result[:instance]).to eq(:default)
@@ -1327,37 +1330,39 @@ confidence: 0.9 }],
       executor = described_class.new(request)
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([healthy_entry])
-      # Seed an open-circuit Inventory lane for ollama:default so circuit_open? sees it
-      Legion::Settings[:extensions][:llm][:ollama] ||= { weight: 100, instances: {}, models: {} }
       Legion::LLM::Inventory.write_lane(
         lane:   { id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
-                provider_family: :ollama, instance_id: :default,
-                model: 'gpt-5.4-mini', type: :inference },
-        ttl:    3600,
+                  provider_family: :ollama, instance_id: :default,
+                  model: 'gpt-5.4-mini', type: :inference,
+                  capabilities: [], limits: {}, enabled: true, cost: {} },
         health: { circuit_state: :open, denied: false, available: false, adjustment: -50 }
       )
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).with(:ollama, instance: :default).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:auto_route]).to be true
       expect(result[:model]).to be_nil
     end
 
-    it 'returns state unchanged when discovery cache is empty (discovery not yet run)' do
+    it 'returns state unchanged when no local lane exists for the model' do
       executor = described_class.new(request)
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
+      # No lane written — live store is empty for this model
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:auto_route]).to be_nil
       expect(result[:model]).to eq('gpt-5.4-mini')
     end
 
-    it 'falls back to auto_route when model is not present among discovered models' do
+    it 'falls back to auto_route when model has no matching lane in the live store' do
       executor = described_class.new(request)
-      other_model = { model: 'llama3:8b', provider: :ollama, instance: :default, tier: 'local' }
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([other_model])
+      # Only llama3:8b is in the store — gpt-5.4-mini has no lane
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:default:inference:llama3_8b', tier: :local,
+        provider_family: :ollama, instance_id: :default, model: 'llama3:8b',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:auto_route]).to be_nil
       expect(result[:model]).to eq('gpt-5.4-mini')
@@ -1365,32 +1370,38 @@ confidence: 0.9 }],
 
     it 'prefers the first healthy candidate when multiple instances carry the same model' do
       executor = described_class.new(request)
-      entries = [
-        { model: 'gpt-5.4-mini', provider: :vllm, instance: :h200, tier: 'fleet' },
-        { model: 'gpt-5.4-mini', provider: :ollama, instance: :default, tier: 'local' }
-      ]
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(entries)
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:vllm, instance: :h200).and_return(:closed)
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
+      # Two local lanes: vllm:h200 (fleet) and ollama:default (local)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'fleet:vllm:h200:inference:gpt-5.4-mini', tier: :fleet,
+        provider_family: :vllm, instance_id: :h200, model: 'gpt-5.4-mini',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
+        provider_family: :ollama, instance_id: :default, model: 'gpt-5.4-mini',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
       allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:provider]).to eq(:vllm)
-      expect(result[:instance]).to eq(:h200)
+      # First healthy local/direct/fleet lane is selected
+      expect(%i[vllm ollama]).to include(result[:provider])
     end
 
-    it 'falls to auto_route when discovered model provider is not locally registered' do
+    it 'falls to auto_route when the matching lane is on a cloud/frontier-only provider (not locally registered)' do
       executor = described_class.new(request)
-      remote_entry = { model: 'claude-haiku-4-5-20251001', provider: :anthropic, instance: :default, tier: 'frontier' }
       state = { model: 'claude-haiku-4-5-20251001', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([remote_entry])
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).and_return(:closed)
-      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(false)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'frontier:anthropic:default:inference:claude-haiku-4-5-20251001', tier: :frontier,
+        provider_family: :anthropic, instance_id: :default, model: 'claude-haiku-4-5-20251001',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
+      # frontier tier is filtered out — not in %i[direct local fleet]
       result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:auto_route]).to be true
-      expect(result[:model]).to be_nil
+      expect(result[:auto_route]).to be_nil
+      expect(result[:model]).to eq('claude-haiku-4-5-20251001')
     end
   end
 

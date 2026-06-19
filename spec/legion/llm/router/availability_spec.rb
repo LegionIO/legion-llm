@@ -221,12 +221,17 @@ RSpec.describe Legion::LLM::Router::Availability do
 
     it 'returns :instance_unresolved when instance is nil and provider has multiple discovered instances' do
       Legion::LLM::Discovery.record_discovery_status(provider: :ollama, instance: nil, status: :ok)
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
-        [
-          { provider: :ollama, instance: :local, model: 'llama3', capabilities: %i[completion] },
-          { provider: :ollama, instance: :remote, model: 'llama3', capabilities: %i[completion] }
-        ]
-      )
+      # Two distinct instances in the live Inventory — triggers instance_resolution_required?
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:local:inference:llama3', tier: :local,
+        provider_family: :ollama, instance_id: :local, model: 'llama3',
+        type: :inference, capabilities: %i[completion], limits: {}, enabled: true, cost: {}
+                                        })
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:remote:inference:llama3', tier: :local,
+        provider_family: :ollama, instance_id: :remote, model: 'llama3',
+        type: :inference, capabilities: %i[completion], limits: {}, enabled: true, cost: {}
+                                        })
 
       nil_instance_resolution = Legion::LLM::Router::Resolution.new(
         tier: :local, provider: :ollama, instance: nil,

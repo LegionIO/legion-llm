@@ -165,15 +165,14 @@ module Legion
         end
 
         # Instance resolution is only required for discoverable local/fleet providers
-        # when discovery has confirmed the provider has multiple instances.
-        # During cold boot or for providers with a single instance, nil instance is fine.
+        # when the live catalog shows multiple instances for that provider.
         def instance_resolution_required?(resolution, discovery_state)
           return false unless %i[ok].include?(discovery_state)
           return false unless Discovery::RuleGenerator::DISCOVERABLE_PROVIDERS.include?(resolution.provider&.to_sym)
+          return false unless defined?(Legion::LLM::Inventory)
 
-          # Only require instance if the provider actually has multiple discovered instances
-          models = Array(Discovery.cached_discovered_models).select { |m| m[:provider] == resolution.provider }
-          instances = models.map { |m| m[:instance] }.compact.uniq
+          instances = Legion::LLM::Inventory.lanes_for(provider: resolution.provider.to_sym, type: :inference)
+                                            .map { |l| l[:instance_id] }.compact.uniq
           instances.size > 1
         end
 

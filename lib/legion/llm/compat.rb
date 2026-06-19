@@ -120,8 +120,7 @@ module Legion
         Legion::LLM::Discovery.const_set(cname, Legion::LLM::Inventory::Discovery.const_get(cname)) unless Legion::LLM::Discovery.const_defined?(cname, false)
       end
       # Mirror module-level constants used in specs
-      %i[DISCOVERED_MODELS_SCHEMA_VERSION EMBEDDING_TIER_ORDER
-         MODEL_FAMILY_DELIMITERS MODEL_DIVERGENCE_SAMPLE_SIZE].each do |cname|
+      %i[EMBEDDING_TIER_ORDER MODEL_FAMILY_DELIMITERS MODEL_DIVERGENCE_SAMPLE_SIZE].each do |cname|
         Legion::LLM::Discovery.const_set(cname, Legion::LLM::Inventory::Discovery.const_get(cname)) unless Legion::LLM::Discovery.const_defined?(cname, false)
       end
       # Forward all method calls (incl private, for .send) to Inventory::Discovery

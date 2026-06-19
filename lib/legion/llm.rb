@@ -87,7 +87,7 @@ module Legion
         log.debug '[llm] start.enter'
         Call::Providers.setup
         Discovery.run
-        Router.populate_auto_rules(Discovery.discovered_instances) if Router.respond_to?(:populate_auto_rules)
+        Router.populate_auto_rules({}) if Router.respond_to?(:populate_auto_rules)
         Discovery.detect_embedding_capability
         Legion::LLM::Inventory::SettingsObserver.attach!
         Config.set_defaults

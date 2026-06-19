@@ -312,44 +312,35 @@ module Legion
           # On a miss: clear the model name and set auto_route so the pipeline picks the best
           # available provider rather than blindly forwarding a frontier model name.
           #
-          # Deliberate Discovery read (NOT Inventory.offerings): this pin must match
-          # only models that are actually running/pulled locally. Inventory.offerings
-          # also includes static provider catalogs (e.g. the full Anthropic model
-          # list), so routing through it here would pin frontier model names to
-          # providers that merely advertise them — the opposite of "local copy."
+          # Pin a model to a local/direct provider when the Inventory live store has a
+          # matching lane from a locally-registered instance (vLLM, Ollama, MLX).
+          # Only local/direct/fleet tiers are eligible — cloud/frontier tiers merely
+          # advertise models in their static catalog; routing through them here would
+          # pin frontier model names to providers that do not hold a local copy.
           def resolve_model_to_local_provider(state)
             return state if state[:provider_explicit] || state[:tier_explicit] || state[:instance_explicit]
             return state if state[:provider] || state[:tier] || state[:instance]
-            return state unless state[:model] && defined?(Discovery) && defined?(Router)
+            return state unless state[:model] && defined?(Legion::LLM::Inventory) && defined?(Router)
 
             model = state[:model].to_s
-            all_discovered = Array(Discovery.cached_discovered_models)
-            return state if all_discovered.empty?
+            local_tiers = %i[direct local fleet]
 
-            candidates = all_discovered.select do |m|
-              dn = m[:model].to_s
-              dn == model || dn.start_with?("#{model}:")
+            candidates = Legion::LLM::Inventory.lanes_for(model: model, type: :inference).select do |l|
+              local_tiers.include?(l[:tier].to_sym) &&
+                Call::Registry.registered?(l[:provider_family], instance: l[:instance_id])
             end
+
             return state if candidates.empty?
 
-            healthy = candidates.find do |m|
-              provider = m[:provider]
-              instance = m[:instance]
-              # Must be both locally registered and circuit-closed.
-              # A discovered model on a remote-only provider (e.g. Anthropic on a
-              # vLLM-only node) should not pin — fall through to auto_route.
-              next false unless Call::Registry.registered?(provider, instance: instance)
-
-              # Read circuit state from Inventory lane health (P2: lane is the SSOT for health).
-              # No lanes means cold-boot / pre-ScopedRefresher — treat as circuit closed (permit).
-              lanes = Legion::LLM::Inventory.lanes_for(provider: provider, instance: instance)
-              lanes.empty? || lanes.none? { |l| l[:health][:circuit_state] == :open }
+            healthy = candidates.find do |l|
+              l[:health][:circuit_state] != :open
             end
 
             if healthy
-              log.info "[llm][executor] action=model_discovery_pin model=#{model} provider=#{healthy[:provider]} instance=#{healthy[:instance]}"
-              state[:provider] = healthy[:provider]
-              state[:instance] = healthy[:instance]
+              log.info "[llm][executor] action=model_discovery_pin model=#{model} " \
+                       "provider=#{healthy[:provider_family]} instance=#{healthy[:instance_id]}"
+              state[:provider] = healthy[:provider_family]
+              state[:instance] = healthy[:instance_id]
             else
               log.info "[llm][executor] action=model_discovery_miss model=#{model} falling_back=auto_route"
               state[:model] = nil

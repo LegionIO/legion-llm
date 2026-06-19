@@ -69,10 +69,11 @@ RSpec.describe '.detect_embedding_capability' do
         instance: :gpu_box,
         metadata: { capabilities: [:embedding], tier: 'local', default_model: 'mxbai-embed-large' }
       )
-      seed_discovered_models(
-        [{ schema_version: Legion::LLM::Inventory::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :ollama, instance: :gpu_box, model: 'mxbai-embed-large', capabilities: [:embedding] }]
-      )
-      Legion::LLM::Inventory::Discovery.instance_variable_set(:@discovered_models_at, Time.now)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:gpu_box:embed:mxbai-embed-large', tier: :local,
+        provider_family: :ollama, instance_id: :gpu_box, model: 'mxbai-embed-large',
+        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
+                                        })
     end
 
     it 'selects the registry instance as primary embedding provider' do
@@ -122,14 +123,21 @@ RSpec.describe '.detect_embedding_capability' do
         instance: :fleet_gpu,
         metadata: { capabilities: [:embedding], tier: 'fleet', default_model: 'bge-large' }
       )
-      seed_discovered_models(
-        [
-          { schema_version: Legion::LLM::Inventory::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :ollama, instance: :local_box, model: 'mxbai-embed-large', capabilities: [:embedding] },
-          { schema_version: Legion::LLM::Inventory::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :vllm, instance: :fleet_gpu, model: 'bge-large', capabilities: [:embedding] },
-          { schema_version: Legion::LLM::Inventory::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :bedrock, instance: :default, model: 'amazon.titan-embed-text-v2:0', capabilities: [:embedding] }
-        ]
-      )
-      Legion::LLM::Inventory::Discovery.instance_variable_set(:@discovered_models_at, Time.now)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:local_box:embed:mxbai-embed-large', tier: :local,
+        provider_family: :ollama, instance_id: :local_box, model: 'mxbai-embed-large',
+        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
+                                        })
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'fleet:vllm:fleet_gpu:embed:bge-large', tier: :fleet,
+        provider_family: :vllm, instance_id: :fleet_gpu, model: 'bge-large',
+        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
+                                        })
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'cloud:bedrock:default:embed:amazon.titan-embed-text-v2_0', tier: :cloud,
+        provider_family: :bedrock, instance_id: :default, model: 'amazon.titan-embed-text-v2:0',
+        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
+                                        })
     end
 
     it 'picks the best tier (local) over cloud and fleet' do
@@ -158,29 +166,28 @@ RSpec.describe '.detect_embedding_capability' do
 
     it 'falls back to Settings embedding default_model' do
       Legion::Settings[:llm][:embedding][:default_model] = 'text-embedding-3-small'
-      seed_discovered_models(
-        [{ schema_version: Legion::LLM::Inventory::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :openai, instance: :default, model: 'text-embedding-3-small',
-capabilities: [:embedding] }]
-      )
-      Legion::LLM::Inventory::Discovery.instance_variable_set(:@discovered_models_at, Time.now)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'frontier:openai:default:embed:text-embedding-3-small', tier: :frontier,
+        provider_family: :openai, instance_id: :default, model: 'text-embedding-3-small',
+        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
+                                        })
       Legion::LLM::Inventory::Discovery.detect_embedding_capability
       expect(Legion::LLM::Inventory::Discovery.embedding_model).to eq('text-embedding-3-small')
     end
 
     it 'falls back to discovered model catalog when Settings has no default_model (#121)' do
-      seed_discovered_models(
-        [{ schema_version: Legion::LLM::Inventory::Discovery::DISCOVERED_MODELS_SCHEMA_VERSION, provider: :openai, instance: :default, model: 'text-embedding-ada-002',
-capabilities: [:embedding] }]
-      )
-      Legion::LLM::Inventory::Discovery.instance_variable_set(:@discovered_models_at, Time.now)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'frontier:openai:default:embed:text-embedding-ada-002', tier: :frontier,
+        provider_family: :openai, instance_id: :default, model: 'text-embedding-ada-002',
+        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
+                                        })
       Legion::LLM::Inventory::Discovery.detect_embedding_capability
       expect(Legion::LLM::Inventory::Discovery.can_embed?).to be true
       expect(Legion::LLM::Inventory::Discovery.embedding_model).to eq('text-embedding-ada-002')
     end
 
     it 'returns false and does not set can_embed when no model is resolvable (#121)' do
-      seed_discovered_models([])
-      Legion::LLM::Inventory::Discovery.instance_variable_set(:@discovered_models_at, Time.now)
+      # No lanes written — model_available? returns false → can_embed? = false
       Legion::LLM::Inventory::Discovery.detect_embedding_capability
       # No model in metadata, settings, or catalog → falls through to legacy probe
       expect(Legion::LLM::Inventory::Discovery.can_embed?).to be false

@@ -52,9 +52,6 @@ module Legion
         def infer_provider_for_model(model)
           return nil if model.nil? || model.to_s.empty?
 
-          discovered = discover_provider_for_model(model)
-          return discovered if discovered
-
           model_s = model.to_s
           return :bedrock if model_s.start_with?('us.')
           return :bedrock if model_s.match?(/\A(anthropic|meta|mistral|cohere|amazon|ai21)\./i)
@@ -64,17 +61,6 @@ module Legion
           return :ollama if model_s.match?(OLLAMA_MODEL_PATTERN)
 
           nil
-        end
-
-        def discover_provider_for_model(model)
-          return nil unless defined?(Discovery) && Discovery.respond_to?(:cached_discovered_models)
-
-          model_s = model.to_s
-          entry = Array(Discovery.cached_discovered_models).find do |m|
-            dn = m[:model].to_s
-            dn == model_s || dn.start_with?("#{model_s}:")
-          end
-          entry&.dig(:provider)
         end
 
         # The provider's own default model from Inventory — the single source of
