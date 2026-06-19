@@ -12,6 +12,31 @@ Legion/RescueLogging/NoCapture:
 Legion/ConstantSafety/InheritParam:
   Enabled: false
 
+# rubocop-legion 0.1.9 cops — enabled as of P0 but deferred enforcement:
+# these four cops flag broad pre-existing patterns in the codebase that
+# predate the SSOT refactor. They gate NEW code from P1 onward; existing
+# violations are cleaned up within each phase as the code they govern is
+# rewritten. Do not add new violations; do not suppress them with inline
+# rubocop:disable without a tracking comment.
+#
+# TODO(P1): enable Legion/Llm/TaxonomyEnum repo-wide after lane taxonomy
+#           is established and all :type/:tier/:circuit_state literals updated.
+# TODO(P1): enable Legion/Llm/RescueLogLevel repo-wide after back-compat
+#           :debug rescue handlers are audited and leveled up.
+# TODO(P1): enable Legion/Llm/NoLoopDo repo-wide after cache/drain loops
+#           are converted to bounded iteration.
+Legion/Llm/TaxonomyEnum:
+  Enabled: false
+Legion/Llm/RescueLogLevel:
+  Enabled: false
+Legion/Llm/NoLoopDo:
+  Enabled: false
+# SettingsAccessPath is enabled for lib/ only — specs legitimately write
+# settings via the loader path to set up test fixtures.
+Legion/Llm/SettingsAccessPath:
+  Exclude:
+    - 'spec/**/*'
+
 AllCops:
   TargetRubyVersion: 3.4
   NewCops: enable

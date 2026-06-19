@@ -327,5 +327,4 @@ RSpec.describe Legion::LLM::Inventory do
       expect(embed.all? { |model| model.include?('embed') }).to be(true)
     end
   end
-
 end

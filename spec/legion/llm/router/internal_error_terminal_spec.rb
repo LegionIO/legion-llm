@@ -9,12 +9,12 @@ RSpec.describe 'Internal error is terminal — no retry (P5)' do
   def seed_inventory_with(fixture)
     case fixture
     when :two_lanes
-      [[:a, :vllm], [:b, :vllm]].each do |inst, provider|
+      [%i[a vllm], %i[b vllm]].each do |inst, provider|
         Legion::LLM::Inventory.write_lane(lane: {
-          id: "direct:#{provider}:#{inst}:inference:gemma-12b",
+                                            id: "direct:#{provider}:#{inst}:inference:gemma-12b",
           tier: :direct, provider_family: provider, instance_id: inst,
           model: 'gemma-12b', type: :inference
-        })
+                                          })
       end
     end
   end

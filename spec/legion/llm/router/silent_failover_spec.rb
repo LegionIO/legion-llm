@@ -16,7 +16,7 @@ RSpec.describe 'Mid-stream failover is silent (P5)' do
 
   it 'mid-stream failover emits debug trailers, not a wire-level SSE event' do
     events = capture_sse_events_during_failover
-    expect(events.map { _1[:type] }).not_to include(:'provider-switch')
+    expect(events.map { it[:type] }).not_to include(:'provider-switch')
     expect(response_trailers).to include('x-legion-failover-from', 'x-legion-failover-to')
   end
 end

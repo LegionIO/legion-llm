@@ -26,6 +26,6 @@ RSpec.describe 'Compliance by absence (P3)' do
     Legion::Settings.loader.settings[:extensions][:llm][:bedrock][:model_whitelist] = ['claude-sonnet-4-6']
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :bedrock, model: 'claude-sonnet-4-6'))
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :bedrock, model: 'claude-old'))
-    expect(Legion::LLM::Inventory.lanes_for(provider: :bedrock).map { _1[:model] }).to eq(['claude-sonnet-4-6'])
+    expect(Legion::LLM::Inventory.lanes_for(provider: :bedrock).map { it[:model] }).to eq(['claude-sonnet-4-6'])
   end
 end

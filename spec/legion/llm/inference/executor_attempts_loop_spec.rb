@@ -12,18 +12,18 @@ RSpec.describe Legion::LLM::Inference::Executor, 'attempts loop (P5)' do
     when :three_lanes_all_failing
       3.times do |i|
         Legion::LLM::Inventory.write_lane(lane: {
-          id: "direct:vllm:instance#{i}:inference:gemma-12b",
+                                            id: "direct:vllm:instance#{i}:inference:gemma-12b",
           tier: :direct, provider_family: :vllm, instance_id: :"instance#{i}",
           model: 'gemma-12b', type: :inference
-        })
+                                          })
       end
     when :five_lanes_all_failing
       5.times do |i|
         Legion::LLM::Inventory.write_lane(lane: {
-          id: "direct:vllm:instance#{i}:inference:gemma-12b",
+                                            id: "direct:vllm:instance#{i}:inference:gemma-12b",
           tier: :direct, provider_family: :vllm, instance_id: :"instance#{i}",
           model: 'gemma-12b', type: :inference
-        })
+                                          })
       end
     end
   end

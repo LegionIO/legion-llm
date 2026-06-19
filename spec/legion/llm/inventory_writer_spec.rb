@@ -52,6 +52,6 @@ RSpec.describe Legion::LLM::Inventory, '#write_lane / #delete_lane (P1)' do
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :vllm, instance: :apollo, model: 'gemma-31b'))
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :vllm, instance: :zeus,   model: 'gemma-12b'))
     matches = Legion::LLM::Inventory.lanes_for(provider: :vllm, instance: :apollo)
-    expect(matches.map { _1[:model] }).to contain_exactly('gemma-12b', 'gemma-31b')
+    expect(matches.map { it[:model] }).to contain_exactly('gemma-12b', 'gemma-31b')
   end
 end
