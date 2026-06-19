@@ -573,43 +573,7 @@ confidence: 0.9 }],
     end
 
     it 'keeps failed fleet attempt metadata when escalation succeeds on a direct provider' do
-      skip 'fleet dispatch mock interacts with availability filtering in full-suite context'
-      fleet_resolution = Legion::LLM::Router::Resolution.new(tier: :fleet, provider: :vllm, model: 'qwen3.6-27b')
-      direct_resolution = Legion::LLM::Router::Resolution.new(tier: :cloud, provider: :anthropic, model: 'claude-opus-4-6')
-      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [fleet_resolution, direct_resolution], max_attempts: 2)
-      escalation_request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        extra:    { intent: { operation: :chat } }
-      )
-
-      Legion::LLM::Router.health_tracker.reset_all
-      Legion::Settings[:llm][:routing][:escalation][:enabled] = true
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = true
-      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
-      allow(Legion::LLM::Router).to receive(:build_escalation_chain).and_return(chain)
-      allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
-        success:        false,
-        error:          'fleet_timeout',
-        correlation_id: 'corr-timeout'
-      )
-      register_native_chat(:anthropic) do
-        {
-          content: 'direct escalation answer with enough text to pass quality',
-          usage:   { input_tokens: 8, output_tokens: 9 }
-        }
-      end
-
-      executor = described_class.new(escalation_request)
-      executor.instance_variable_set(:@escalation_chain, chain)
-      response = executor.call
-      attempts = response.routing[:route_attempts]
-
-      expect(attempts.map { |attempt| attempt[:dispatch_path] }).to eq(%i[fleet direct])
-      expect(attempts.first).to include(status: :failure, failure_reason: 'fleet_timeout')
-      expect(attempts.last).to include(status: :success, escalation: hash_including(attempt: 2))
-      expect(response.message[:content]).to include('direct escalation answer')
+      skip 'removed in P5 refactor — EscalationChain deleted'
     end
   end
 
@@ -841,7 +805,6 @@ confidence: 0.9 }],
 
       expect(executor.send(:pipeline_escalation_enabled?)).to be(true)
       expect(executor.send(:pipeline_escalation_max_attempts)).to eq(7)
-      expect(executor.send(:pipeline_escalation_quality_threshold)).to eq(85)
     end
 
     it 'honors native provider layer settings' do
@@ -1058,9 +1021,7 @@ confidence: 0.9 }],
       Legion::Settings[:llm][:default_provider] = 'anthropic'
       Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
       allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(
-        Legion::LLM::Router::EscalationChain.new(resolutions: [])
-      )
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(double('chain', empty?: true, primary: nil))
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { model: 'legionio' }

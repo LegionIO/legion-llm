@@ -4,8 +4,6 @@ require 'legion/llm/inventory/capabilities'
 require_relative 'router/resolution'
 require_relative 'router/health_tracker'
 require_relative 'router/availability'
-require_relative 'router/registry_lookup'
-require_relative 'router/escalation/chain'
 require 'legion/llm/inventory/discovery/system'
 require 'legion/llm/inventory/discovery/memory_gate'
 
@@ -14,7 +12,6 @@ module Legion
   module LLM
     module Router
       extend Legion::Logging::Helper
-      extend RegistryLookup
 
       PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
                         gemini: :cloud, azure: :cloud, ollama: :local, vllm: :fleet }.freeze
@@ -191,139 +188,6 @@ module Legion
           true
         end
 
-        def explicit_resolution(tier, provider, model, instance = nil)
-          # Track whether the caller explicitly specified a provider (before validation may clear it)
-          provider_explicit = !provider.nil?
-
-          # Validate provider hint against registry — if the hinted provider isn't registered,
-          # fall through to tier-based or default resolution rather than committing to a dead end.
-          if provider && !Call::Registry.registered?(provider.to_sym)
-            log.debug "[llm][router] action=explicit_resolution.provider_not_registered provider=#{provider} falling_back"
-            provider = nil
-          end
-
-          registry_entry = if provider
-                             registry_entry_for_provider(provider.to_sym, instance: instance&.to_sym)
-                           elsif tier
-                             registry_entry_for_tier(tier)
-                           end
-          resolved_provider = if provider
-                                provider.to_sym
-                              else
-                                registry_entry&.[](:provider) ||
-                                  (tier && default_provider_for_tier(tier)) ||
-                                  Legion::Settings[:llm][:default_provider]&.to_sym ||
-                                  :anthropic
-                              end
-
-          # If the resolved provider differs from the model's natural provider, swap to the
-          # provider's default model — sending "claude-sonnet-4-6" to vllm would fail.
-          # Only swap when the provider was explicitly specified AND we can positively identify
-          # the model's natural provider. If the provider was auto-resolved from tier/defaults,
-          # trust the caller's model choice. Unknown model patterns (nil) are allowed through
-          # since they may be custom/registry models.
-          model_natural_provider = model && infer_provider_for_model(model)
-          if provider_explicit && model && resolved_provider && model_natural_provider && model_natural_provider != resolved_provider
-            log.debug "[llm][router] action=explicit_resolution.model_provider_mismatch model=#{model} " \
-                      "natural_provider=#{model_natural_provider} resolved_provider=#{resolved_provider}"
-            model = nil
-          end
-
-          resolved_instance = registry_entry&.[](:instance) || instance
-          resolved_model    = model ||
-                              inventory_default_model(resolved_provider, resolved_instance) ||
-                              registry_default_model(registry_entry) ||
-                              (tier && default_model_for_tier(tier))
-          resolved_tier     = tier || PROVIDER_TIER.fetch(resolved_provider, :frontier)
-
-          Resolution.new(
-            tier:     resolved_tier,
-            provider: resolved_provider,
-            model:    resolved_model,
-            instance: resolved_instance,
-            rule:     'explicit',
-            metadata: registry_resolution_metadata(registry_entry)
-          )
-        end
-
-        def build_escalation_chain(provider:, model:, tier:, instance: nil, max_attempts: nil,
-                                   estimated_tokens: nil, required_capabilities: [])
-          primary = explicit_resolution(tier, provider, model, instance)
-          fallbacks = build_fallback_resolutions(
-            exclude_provider: provider,
-            exclude_instance: instance,
-            primary_tier:     tier
-          )
-          resolutions = ([primary] + fallbacks).compact.uniq { |r| [r.provider, r.instance, r.model] }
-          resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                              required_capabilities: required_capabilities)
-          max = max_attempts || escalation_max_attempts
-          EscalationChain.new(resolutions: resolutions, max_attempts: max)
-        end
-
-        def build_fallback_resolutions(exclude_provider: nil, exclude_instance: nil, primary_tier: nil)
-          ranks = tier_rank
-          primary_rank = primary_tier ? (ranks[primary_tier.to_sym] || 99) : 99
-
-          candidates = Call::Registry.all_instances.filter_map do |entry|
-            next if entry[:provider] == exclude_provider&.to_sym &&
-                    (exclude_instance.nil? || entry[:instance] == (exclude_instance&.to_sym || :default))
-
-            # Source from Inventory (SSOT) when the instance has no configured
-            # registry default — e.g. a whitelist-restricted instance whose
-            # policy-aware default resolved to nil. Without this, such a sibling
-            # instance (a second account offering the same model) is dropped from
-            # the escalation chain entirely.
-            model = registry_default_model(entry) || inventory_default_model(entry[:provider], entry[:instance])
-            next unless model
-            # SSOT: the instance list comes from the registry, but the
-            # (provider, model) fact must come from Inventory. Never manufacture a
-            # fallback the live catalog doesn't offer — otherwise a configured-but-
-            # unoffered default (e.g. bedrock + a model it doesn't serve) becomes a
-            # dead candidate that availability rejects on every single request.
-            next unless fallback_model_offered?(entry[:provider], model)
-
-            entry_tier = PROVIDER_TIER.fetch(entry[:provider], :frontier)
-            Resolution.new(
-              tier:     entry_tier,
-              provider: entry[:provider],
-              instance: entry[:instance],
-              model:    model,
-              rule:     'escalation_fallback'
-            )
-          end
-
-          candidates.sort_by do |r|
-            r_rank = ranks[r.tier] || 99
-            rank_diff = r_rank - primary_rank
-            bucket = if rank_diff.zero?
-                       0
-                     elsif rank_diff.positive?
-                       1
-                     else
-                       2
-                     end
-            [bucket, r_rank]
-          end
-        end
-
-        # Whether the live catalog (Inventory SSOT) actually offers (provider, model).
-        # Permissive on a nil/empty catalog (cold boot or lookup miss) so we never
-        # over-prune before discovery populates — matching availability's cold-boot
-        # stance. A NON-empty catalog that lacks the model is authoritative: drop it.
-        def fallback_model_offered?(provider, model)
-          offerings = Inventory.offerings(provider: provider)
-          return true if offerings.nil? || offerings.empty?
-
-          offerings.any? do |offering|
-            offered = (offering[:model] || offering[:canonical_model_alias]).to_s
-            offered == model.to_s || offered.start_with?("#{model}:")
-          end
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'router.fallback_model_offered')
-          true
-        end
-
         private
 
         def lane_passes_hard_filters?(lane:, type:, tiers:, providers:, instances:, models:,
@@ -366,27 +230,6 @@ module Legion
           end.uniq
         end
 
-        def filter_chain_resolutions(resolutions, estimated_tokens:, required_capabilities:)
-          filtered = Availability.filter_resolutions(
-            resolutions,
-            estimated_tokens:      estimated_tokens,
-            required_capabilities: required_capabilities
-          )
-          return filtered unless filtered.empty? && resolutions.any?
-
-          reasons = resolutions.filter_map do |resolution|
-            Availability.rejection_reason(
-              resolution,
-              estimated_tokens:      estimated_tokens,
-              required_capabilities: required_capabilities
-            )
-          end
-          return filtered unless reasons.any? && reasons.all? { |reason| reason == :provider_instance_has_no_models }
-
-          log.warn "[llm][router] action=availability.empty_catalog_preserve_chain candidates=#{resolutions.size}"
-          resolutions
-        end
-
         def privacy_mode?
           if Legion::Settings.respond_to?(:enterprise_privacy?)
             Legion::Settings.enterprise_privacy?
@@ -408,62 +251,6 @@ module Legion
             failure_threshold: cb.fetch(:failure_threshold, 3),
             cooldown_seconds:  cb.fetch(:cooldown_seconds, 60)
           )
-        end
-
-        def default_provider_for_tier(tier)
-          sym = tier.to_sym
-
-          # Check registry for the first registered provider in this tier
-          registry_provider = registry_provider_for_tier(sym)
-          return registry_provider if registry_provider
-
-          # Fallback to static defaults when registry has no match
-          case sym
-          when :local, :direct, :fleet
-            :ollama
-          when :cloud
-            default = Legion::Settings[:llm][:default_provider]
-            default ? default.to_sym : :bedrock
-          when :frontier
-            :anthropic
-          else
-            :bedrock
-          end
-        end
-
-        def default_model_for_tier(tier)
-          sym = tier.to_sym
-
-          # Try registry first: find a registered provider in this tier and ask for its model
-          registry_model = registry_model_for_tier(sym)
-          return registry_model if registry_model
-
-          # Fallback to static defaults
-          case sym
-          when :local, :direct, :fleet
-            default_settings_model_for_tier(sym) || 'llama3'
-          when :cloud
-            default_settings_model_for_tier(sym) || 'us.anthropic.claude-sonnet-4-6'
-          when :frontier
-            default_settings_model_for_tier(sym) || 'claude-sonnet-4-6'
-          end
-        end
-
-        def escalation_max_attempts
-          Legion::Settings.dig(:llm, :routing, :escalation, :max_attempts) || 3
-        end
-
-        def default_settings_model_for_tier(tier)
-          model = Legion::Settings[:llm][:default_model]
-          return nil if model.nil? || model.to_s.empty?
-
-          provider = Legion::Settings[:llm][:default_provider]&.to_sym
-          return nil unless provider
-
-          provider_tier = registry_tier_for_default_provider(provider)
-          return model if provider_tier == tier
-
-          nil
         end
       end
     end

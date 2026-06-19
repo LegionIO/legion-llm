@@ -32,8 +32,7 @@ module Legion
         include Steps::RagContext
 
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
-                    :audit, :warnings, :discovered_tools, :confidence_score,
-                    :escalation_chain
+                    :audit, :warnings, :discovered_tools, :confidence_score
         attr_accessor :tool_event_handler
 
         def context_accounting
@@ -123,7 +122,6 @@ module Legion
           @resolved_offering_id = nil
           @resolved_offering_metadata = {}
           @confidence_score = nil
-          @escalation_chain = nil
           @escalation_history = []
           @route_attempts = []
           @current_escalation_context = nil
