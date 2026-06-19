@@ -215,6 +215,11 @@ module Legion
         {
           enabled:              true,
           tier_priority:        %w[local direct fleet cloud frontier],
+          # Multiplicative tier weights for lane_weight computation (P1 SSOT RANKING v2).
+          # Default 100 for all tiers. Operators can override per-tier to bias routing.
+          # Used by Inventory.write_lane to compute lane_weight = tier_w * provider_w * instance_w * model_w * health_mult.
+          tier_weights:         { direct: 100, local: 100, fleet: 100, cloud: 100, frontier: 100 },
+          max_attempts:         3,
           default_intent:       { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
           # Last-resort fallback model when both `default_model` and the
           # discovered provider chain are empty. Owned by routing because

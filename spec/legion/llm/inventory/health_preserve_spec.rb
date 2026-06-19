@@ -4,8 +4,6 @@ require 'spec_helper'
 
 # G21 / opus C1 — pending P1 commit 5
 RSpec.describe Legion::LLM::Inventory, 'health preservation on refresher write (P1)' do
-  before { skip 'P1: Inventory live store' }
-
   def build_lane(provider: :bedrock, tier: :cloud, model: 'claude-sonnet-4-6')
     {
       id:              "#{tier}:#{provider}:default:inference:#{model}",
@@ -17,16 +15,13 @@ RSpec.describe Legion::LLM::Inventory, 'health preservation on refresher write (
     }
   end
 
-  it 'preserves existing-lane health when refresher writes without explicit health: kwarg' do
+  it 'preserves existing-lane health when refresher writes without explicit health: kwarg',
+     pending: 'P2: HealthTracker must write to Inventory for this test (wired in P2)' do
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :bedrock), ttl: 60)
-    # Trip the circuit to :open
     until Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-sonnet-4-6')&.dig(:health, :circuit_state) == :open
       Legion::LLM::Router.health_tracker.report(provider: :bedrock, instance: :default, signal: :error)
     end
-
-    # Refresher tick rewrites the same lane with no :health kwarg
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :bedrock), ttl: 60)
-
     lane = Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-sonnet-4-6')
     expect(lane[:health][:circuit_state]).to eq(:open)
   end

@@ -4,8 +4,6 @@ require 'spec_helper'
 
 # G22 / opus C2 — pending P1 commit 5
 RSpec.describe Legion::LLM::Inventory, 'lane id format validation (P1)' do
-  before { skip 'P1: Inventory live store' }
-
   def build_lane(**overrides)
     {
       id:              'direct:vllm:default:inference:gemma-12b',

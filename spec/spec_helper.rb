@@ -111,5 +111,7 @@ RSpec.configure do |config|
     # Disable system_baseline by default so existing pipeline mocks are unaffected.
     # Specs that test baseline behavior set it explicitly.
     Legion::Settings[:llm][:system_baseline] = nil
+    # Reset P1 live inventory store so write_lane tests start clean.
+    Legion::LLM::Inventory.reset_live_store! if Legion::LLM::Inventory.respond_to?(:reset_live_store!)
   end
 end

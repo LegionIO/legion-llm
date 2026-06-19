@@ -3,8 +3,6 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inventory, '#write_lane / #delete_lane (P1)' do
-  before { skip 'P1: Inventory live store' }
-
   def build_lane(provider: :vllm, instance: :default, tier: :direct, model: 'gemma-12b', type: :inference)
     {
       id:              "#{tier}:#{provider}:#{instance}:#{type}:#{model}",
