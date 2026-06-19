@@ -16,7 +16,6 @@ module Legion
         def dispatch(message,
                      intent: nil,
                      tier: nil,
-                     exclude: {},
                      provider: nil,
                      model: nil,
                      schema: nil,
@@ -44,10 +43,10 @@ module Legion
             resolved_provider = Router.infer_provider_for_model(resolved_model)
           end
 
-          if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && Router.routing_enabled? && (intent || tier)
-            resolution = Router.resolve(intent: intent, tier: tier, exclude: exclude)
-            resolved_provider = resolution&.provider
-            resolved_model = resolution&.model
+          if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && tier
+            lane = Router.request_lane(type: :inference, tiers: [tier.to_sym])
+            resolved_provider = lane&.dig(:provider_family)
+            resolved_model    = lane&.dig(:model)
           end
 
           resolved_provider ||= Legion::Settings[:llm][:default_provider] unless auto_route

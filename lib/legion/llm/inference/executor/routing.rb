@@ -365,23 +365,30 @@ module Legion
           end
 
           def routing_resolution_for(state)
-            if state[:auto_route] == true || (state[:intent_explicit] && state[:intent] && pipeline_escalation_enabled?)
-              @escalation_chain = Router.resolve_chain(
-                intent:                 state[:intent],
-                tier:                   state[:tier],
-                model:                  state[:model],
-                provider:               state[:provider],
-                instance:               state[:instance],
-                max_escalations:        pipeline_escalation_max_attempts,
-                allow_default_fallback: state[:auto_route] != true,
-                estimated_tokens:       state[:estimated_tokens]
-              )
-              @escalation_chain.primary
-            else
-              Router.resolve(intent: state[:intent], tier: state[:tier], model: state[:model],
-                             provider: state[:provider], instance: state[:instance],
-                             estimated_tokens: state[:estimated_tokens])
-            end
+            tiers      = state[:tier]     ? [state[:tier].to_sym]     : []
+            providers  = state[:provider] ? [state[:provider].to_sym] : []
+            instances  = state[:instance] ? [state[:instance].to_sym] : []
+            models     = state[:model]    ? [state[:model].to_s]      : []
+
+            lane = Legion::LLM::Router.request_lane(
+              type:              :inference,
+              tiers:             tiers,
+              providers:         providers,
+              instances:         instances,
+              models:            models,
+              estimated_context: state[:estimated_tokens],
+              tried_lanes:       Array(state[:tried_lanes])
+            )
+
+            return nil if lane.nil?
+
+            Legion::LLM::Router::Resolution.new(
+              tier:     lane[:tier],
+              provider: lane[:provider_family],
+              model:    lane[:model],
+              instance: lane[:instance_id],
+              rule:     'request_lane'
+            )
           end
 
           def apply_routing_resolution(state, resolution)

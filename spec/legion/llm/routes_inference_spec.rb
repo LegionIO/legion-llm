@@ -118,7 +118,14 @@ RSpec.describe 'Inference endpoint pipeline routing' do
     end
 
     context 'when pipeline is disabled' do
-      before { Legion::Settings[:llm][:pipeline_enabled] = false }
+      before do
+        Legion::Settings[:llm][:pipeline_enabled] = false
+        Legion::LLM::Inventory.write_lane(lane: {
+                                            id: 'cloud:test:default:inference:test-model',
+                                            tier: :cloud, provider_family: :test, instance_id: :default,
+                                            model: 'test-model', type: :inference
+                                          })
+      end
 
       it 'does not return a Inference::Response' do
         allow(mock_session).to receive(:with_instructions)

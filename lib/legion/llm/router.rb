@@ -402,7 +402,9 @@ module Legion
           return false unless (requested - available).empty?
 
           return false if thinking == :require && !available.include?(:thinking)
-          return false if estimated_context && lane.dig(:limits, :context_window).to_i < estimated_context
+
+          context_window = lane.dig(:limits, :context_window)
+          return false if estimated_context && context_window && context_window.to_i < estimated_context
           return false if privacy == :strict && %i[cloud frontier].include?(lane[:tier])
 
           true

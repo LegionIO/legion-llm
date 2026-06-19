@@ -997,8 +997,11 @@ confidence: 0.9 }],
 
     it 'applies explicit provider registry defaults even when rule routing is disabled' do
       Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-      Legion::LLM::Call::Registry.register(:vllm, Module.new, metadata: { default_model: 'qwen3.6-27b' })
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'direct:vllm:default:inference:qwen3.6-27b',
+                                          tier: :direct, provider_family: :vllm, instance_id: :default,
+                                          model: 'qwen3.6-27b', type: :inference
+                                        })
       provider_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :vllm }
@@ -1015,12 +1018,11 @@ confidence: 0.9 }],
       Legion::Settings[:llm][:default_provider] = 'vllm'
       Legion::Settings[:llm][:default_instance] = 'apollo'
       Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
-      resolution = Legion::LLM::Router::Resolution.new(
-        tier: :fleet, provider: :vllm, instance: :apollo, model: 'qwen3.6-27b', rule: 'preference:test'
-      )
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-      allow(Legion::LLM::Router).to receive(:resolve).and_return(resolution)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'fleet:vllm:apollo:inference:qwen3.6-27b',
+                                          tier: :fleet, provider_family: :vllm, instance_id: :apollo,
+                                          model: 'qwen3.6-27b', type: :inference
+                                        })
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: 'vllm', instance: 'apollo', model: 'legionio' }
@@ -1029,21 +1031,17 @@ confidence: 0.9 }],
 
       executor.send(:step_routing)
 
-      expect(Legion::LLM::Router).to have_received(:resolve).with(
-        hash_including(provider: 'vllm', instance: 'apollo', model: nil)
-      )
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:vllm)
       expect(executor.instance_variable_get(:@resolved_instance)).to eq(:apollo)
       expect(executor.instance_variable_get(:@resolved_model)).to eq('qwen3.6-27b')
     end
 
-    it 'still uses the router chain for the LegionIO placeholder when rule routing is unavailable' do
-      resolution = Legion::LLM::Router::Resolution.new(
-        tier: :frontier, provider: :openai, model: 'gpt-5.4', rule: 'auto_chain'
-      )
-      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 3)
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+    it 'selects from inventory for the LegionIO placeholder when rule routing is unavailable' do
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'frontier:openai:default:inference:gpt-5.4',
+                                          tier: :frontier, provider_family: :openai, instance_id: :default,
+                                          model: 'gpt-5.4', type: :inference
+                                        })
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { model: 'legionio' }
@@ -1052,7 +1050,6 @@ confidence: 0.9 }],
 
       executor.send(:step_routing)
 
-      expect(Legion::LLM::Router).to have_received(:resolve_chain)
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:openai)
       expect(executor.instance_variable_get(:@resolved_model)).to eq('gpt-5.4')
     end

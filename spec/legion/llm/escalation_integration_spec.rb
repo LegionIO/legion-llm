@@ -27,9 +27,18 @@ RSpec.describe 'Legion::LLM.chat escalation' do
     # Register multiple providers so the chain has real fallbacks to iterate over
     %i[bedrock anthropic].each do |prov|
       model = prov == :bedrock ? 'claude-sonnet-4-6' : 'claude-opus-4-7'
+      tier = :cloud
       Legion::LLM::Call::Registry.register(prov, Module.new do
         define_singleton_method(:offerings) { [{ model: model }] }
       end, metadata: { default_model: model })
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id:              "#{tier}:#{prov}:default:inference:#{model}",
+                                          tier:            tier,
+                                          provider_family: prov,
+                                          instance_id:     :default,
+                                          model:           model,
+                                          type:            :inference
+                                        })
     end
   end
 

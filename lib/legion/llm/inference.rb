@@ -229,7 +229,7 @@ module Legion
         )
         result = if escalate && message
                    chat_with_escalation(
-                     model: model, provider: provider, intent: intent, tier: tier,
+                     model: model, provider: provider, tier: tier,
                      max_escalations: max_escalations, quality_check: quality_check,
                      message: message, temperature: temperature, **kwargs
                    )
@@ -559,24 +559,24 @@ module Legion
         }
       end
 
-      def chat_single(model:, provider:, intent:, tier:, message: nil, **kwargs, &)
+      def chat_single(model:, provider:, tier:, message: nil, **kwargs, &)
         explicit_tools = kwargs.delete(:tools)
         tools = explicit_tools
         tools = nil if tools.respond_to?(:empty?) && tools.empty?
 
-        if (intent || tier) && Router.routing_enabled?
-          resolution = Router.resolve(intent: intent, tier: tier, model: model, provider: provider)
-          if resolution
-            model = resolution.model
-            provider = resolution.provider
-            assert_external_allowed! if resolution.external?
+        if tier && external_tier?(tier.to_sym)
+          lane = Router.request_lane(type: :inference, tiers: [tier.to_sym],
+                                     providers: provider ? [provider.to_sym] : [],
+                                     models: model ? [model.to_s] : [])
+          if lane
+            model    = lane[:model]
+            provider = lane[:provider_family]
+            assert_external_allowed!
           end
-        elsif tier
-          assert_external_allowed! if external_tier?(tier.to_sym)
         end
 
         model ||= Legion::Settings[:llm][:default_model]
-        instance = resolution&.instance || kwargs[:instance] || kwargs[:instance_id] || kwargs[:provider_instance]
+        instance = kwargs[:instance] || kwargs[:instance_id] || kwargs[:provider_instance]
         provider ||= (model && Router.infer_provider_for_model(model)) ||
                      Legion::Settings[:llm][:default_provider]
 
@@ -639,11 +639,10 @@ module Legion
         end
       end
 
-      def chat_with_escalation(model:, provider:, intent:, tier:, max_escalations:, quality_check:, message:, **kwargs)
+      def chat_with_escalation(model:, provider:, tier:, max_escalations:, quality_check:, message:, **kwargs)
         log.debug "[llm][inference] chat_with_escalation.enter model=#{model} provider=#{provider} max_escalations=#{max_escalations}"
-        chain = Router.resolve_chain(
-          intent: intent, tier: tier, model: model, provider: provider,
-          max_escalations: max_escalations
+        chain = build_escalation_chain_from_inventory(
+          model: model, provider: provider, tier: tier, max_escalations: max_escalations
         )
 
         threshold = escalation_quality_threshold
@@ -694,6 +693,31 @@ module Legion
         duration_ms = ((Time.now - start_time) * 1000).round
         record_escalation_error(e, resolution, duration_ms, history)
         [nil, e]
+      end
+
+      def build_escalation_chain_from_inventory(model:, provider:, tier:, max_escalations: nil)
+        tiers     = tier     ? [tier.to_sym]     : []
+        providers = provider ? [provider.to_sym] : []
+        models    = model    ? [model.to_s]      : []
+        tried     = []
+        max       = (max_escalations || Legion::Settings.dig(:llm, :routing, :escalation, :max_attempts) || 3).to_i
+        resolutions = []
+
+        max.times do
+          lane = Router.request_lane(type: :inference, tiers: tiers, providers: providers, models: models, tried_lanes: tried)
+          break unless lane
+
+          tried << lane[:id]
+          resolutions << Router::Resolution.new(
+            tier:     lane[:tier],
+            provider: lane[:provider_family],
+            model:    lane[:model],
+            instance: lane[:instance_id],
+            rule:     'inventory_chain'
+          )
+        end
+
+        resolutions
       end
 
       def escalation_attempt_response(resolution, message, kwargs)

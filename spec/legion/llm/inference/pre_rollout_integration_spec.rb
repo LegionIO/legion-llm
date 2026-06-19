@@ -179,7 +179,14 @@ RSpec.describe 'Pipeline pre-rollout integration' do
   end
 
   describe 'pipeline disabled falls back cleanly' do
-    before { Legion::Settings[:llm][:pipeline_enabled] = false }
+    before do
+      Legion::Settings[:llm][:pipeline_enabled] = false
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'cloud:test:default:inference:test-model',
+                                          tier: :cloud, provider_family: :test, instance_id: :default,
+                                          model: 'test-model', type: :inference
+                                        })
+    end
 
     it 'rejects session-style calls without a message' do
       expect { Legion::LLM.chat(model: 'test-model', provider: :test) }.to raise_error(Legion::LLM::ProviderError)
