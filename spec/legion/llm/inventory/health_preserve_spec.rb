@@ -4,6 +4,14 @@ require 'spec_helper'
 
 # G21 / opus C1 — pending P1 commit 5
 RSpec.describe Legion::LLM::Inventory, 'health preservation on refresher write (P1)' do
+  before do
+    Legion::Settings[:extensions][:llm][:bedrock] ||= {}
+    Legion::Settings[:extensions][:llm][:bedrock][:weight]    ||= 100
+    Legion::Settings[:extensions][:llm][:bedrock][:instances] ||= {}
+    Legion::Settings[:extensions][:llm][:bedrock][:models]    ||= {}
+    Legion::LLM::Router.reset! if Legion::LLM::Router.respond_to?(:reset!)
+  end
+
   def build_lane(provider: :bedrock, tier: :cloud, model: 'claude-sonnet-4-6')
     {
       id:              "#{tier}:#{provider}:default:inference:#{model}",
@@ -15,12 +23,11 @@ RSpec.describe Legion::LLM::Inventory, 'health preservation on refresher write (
     }
   end
 
-  it 'preserves existing-lane health when refresher writes without explicit health: kwarg',
-     pending: 'P2: HealthTracker must write to Inventory for this test (wired in P2)' do
+  it 'preserves existing-lane health when refresher writes without explicit health: kwarg (G21 / P2 wired)' do
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :bedrock), ttl: 60)
-    until Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-sonnet-4-6')&.dig(:health, :circuit_state) == :open
-      Legion::LLM::Router.health_tracker.report(provider: :bedrock, instance: :default, signal: :error)
-    end
+    # Trip the circuit via HealthTracker (P2: HealthTracker now writes to Inventory)
+    3.times { Legion::LLM::Router.health_tracker.report(provider: :bedrock, instance: :default, signal: :error, value: 1) }
+    # Refresher tick: write lane without health: kwarg — must preserve the tripped state
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :bedrock), ttl: 60)
     lane = Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-sonnet-4-6')
     expect(lane[:health][:circuit_state]).to eq(:open)

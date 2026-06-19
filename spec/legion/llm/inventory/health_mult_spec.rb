@@ -15,8 +15,7 @@ RSpec.describe Legion::LLM::Inventory, 'denied lane_weight magnitude preserved (
     }
   end
 
-  it 'denied lane has lane_weight <= 0 with full magnitude preserved (not zero)',
-     pending: 'P2: HealthTracker.deny_model must write denied health to Inventory (wired in P2)' do
+  it 'denied lane has lane_weight <= 0 with full magnitude preserved (not zero) after HealthTracker.deny_model' do
     Legion::LLM::Inventory.write_lane(lane: build_lane(provider: :bedrock), ttl: 60)
     Legion::LLM::Router.health_tracker.deny_model(
       provider: :bedrock, instance: :default,

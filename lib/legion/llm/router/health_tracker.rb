@@ -116,9 +116,8 @@ module Legion
           key = instance ? instance_key(provider, instance) : provider.to_s
           @mutex.synchronize do
             ensure_circuit(key)
-            @circuits[key][:failures]  = @failure_threshold.to_f
-            @circuits[key][:state]     = :open
-            @circuits[key][:opened_at] = Time.now
+            @circuits[key][:failures] = @failure_threshold.to_f
+            do_transition_circuit!(key: key, to_state: :open)
           end
           log.warn("[llm][health_tracker] action=circuit_tripped provider=#{key} reason=#{reason}")
         end
@@ -132,6 +131,7 @@ module Legion
             @denied_models[key][model.to_s] = { reason: reason, at: Time.now }
           end
           log.warn("[llm][health_tracker] action=model_denied provider=#{key} model=#{model} reason=#{reason}")
+          write_deny_to_lane(key: key, model: model)
         end
 
         # Check if a model is denied for a provider+instance.
@@ -228,7 +228,7 @@ module Legion
               @mutex.synchronize do
                 entry = @circuits[key]
                 if entry && entry[:state] == :open
-                  entry[:state] = :half_open
+                  do_transition_circuit!(key: key, to_state: :half_open)
                   log.info("[llm][health_tracker] action=circuit_state_change from=open to=half_open provider=#{key} cooldown_elapsed_s=#{elapsed.round}")
                 end
               end
@@ -257,8 +257,7 @@ module Legion
             increment = [payload[:value].to_f, 1.0].max
 
             if circuit_state_for_key(key) == :half_open
-              circuit[:state]     = :open
-              circuit[:opened_at] = Time.now
+              do_transition_circuit!(key: key, to_state: :open)
               log.warn("[llm][health_tracker] action=circuit_state_change from=half_open to=open provider=#{key} reason=error_during_probe")
             elsif circuit[:state] == :open
               circuit[:failures] += increment
@@ -267,8 +266,7 @@ module Legion
               circuit[:failures] += increment
               log.debug "[llm][health_tracker] action=error_recorded provider=#{key} failures=#{circuit[:failures]} threshold=#{@failure_threshold}"
               if circuit[:failures] >= @failure_threshold
-                circuit[:state]     = :open
-                circuit[:opened_at] = Time.now
+                do_transition_circuit!(key: key, to_state: :open)
                 log.warn("[llm][health_tracker] action=circuit_state_change from=closed to=open provider=#{key} failures=#{circuit[:failures]} threshold=#{@failure_threshold}")
               end
             end
@@ -277,11 +275,8 @@ module Legion
           register_handler(:success) do |payload|
             key = payload[:provider]
             ensure_circuit(key)
-            prev_state          = circuit_state_for_key(key)
-            circuit             = @circuits[key]
-            circuit[:failures]  = 0
-            circuit[:state]     = :closed
-            circuit[:opened_at] = nil
+            prev_state = circuit_state_for_key(key)
+            do_transition_circuit!(key: key, to_state: :closed)
             log.info("[llm][health_tracker] action=circuit_state_change from=#{prev_state} to=closed provider=#{key}") if prev_state != :closed
           end
 
@@ -300,6 +295,99 @@ module Legion
 
         def ensure_circuit(key)
           @circuits[key] ||= { state: :closed, failures: 0.0, opened_at: nil }
+        end
+
+        # Mutates circuit state for key and propagates to all matching Inventory lanes.
+        # Always called inside @mutex.synchronize.
+        def do_transition_circuit!(key:, to_state:)
+          ensure_circuit(key)
+          @circuits[key][:state] = to_state
+          case to_state
+          when :open
+            @circuits[key][:opened_at] = Time.now
+          when :closed
+            @circuits[key][:opened_at] = nil
+            @circuits[key][:failures]  = 0
+            # :half_open preserves opened_at (original open timestamp) and failures for diagnostics
+          end
+          write_health_to_lanes(key: key, state: to_state)
+        end
+
+        # Maps a circuit state symbol to the health adjustment integer for lane storage.
+        # opus L5: was an orphan call in earlier draft — private helper, used by write_health_to_lanes.
+        def circuit_adjustment_for(state:, **)
+          case state
+          when :half_open then OPEN_PENALTY / 2
+          when :open      then OPEN_PENALTY
+          else                 0
+          end
+        end
+
+        # G7 / sonnet G7: clamp negative TTLs at zero.
+        def lane_ttl(lane:, **)
+          return nil unless lane[:expires_at]
+
+          [lane[:expires_at] - Time.now.to_f, 0.0].max
+        end
+
+        # Parses "provider/instance" key into [provider_sym, instance_sym].
+        # Returns [key_as_sym, nil] for provider-only keys.
+        def parse_key(key)
+          s = key.to_s
+          idx = s.index('/')
+          return [s.to_sym, nil] unless idx
+
+          [s[0, idx].to_sym, s[(idx + 1)..].to_sym]
+        end
+
+        # Writes the derived health block onto every Inventory lane matching (provider, instance).
+        # Called on every circuit state transition (G17 / M6: settings read once per write_lane call).
+        def write_health_to_lanes(key:, state:, **)
+          provider, instance = parse_key(key)
+          new_health = {
+            circuit_state: state,
+            denied:        false,
+            available:     state != :open,
+            adjustment:    circuit_adjustment_for(state: state)
+          }.freeze
+
+          Legion::LLM::Inventory.lanes_for(provider: provider, instance: instance).each do |lane|
+            Legion::LLM::Inventory.write_lane(
+              lane:   lane,
+              ttl:    lane_ttl(lane: lane),
+              health: new_health # explicit health: kwarg — overwrites existing (G21)
+            )
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true,
+                              operation: 'health_tracker.write_health_to_lanes',
+                              key: key, state: state)
+        end
+
+        # Writes denied health onto the single matching (provider, instance, model) lane only.
+        # G23: denied lanes get health_mult=-1.0 AND health[:denied]=true.
+        def write_deny_to_lane(key:, model:, **)
+          provider, instance = parse_key(key)
+          # Find just the lanes matching this specific model.
+          lanes = Legion::LLM::Inventory.lanes_for(provider: provider, instance: instance,
+                                                   model: model.to_s)
+          lanes.each do |lane|
+            existing_health = lane[:health] || {}
+            new_health = existing_health.merge(
+              denied:        true,
+              available:     false,
+              circuit_state: existing_health.fetch(:circuit_state, :closed)
+            ).freeze
+            Legion::LLM::Inventory.write_lane(
+              lane:   lane,
+              ttl:    lane_ttl(lane: lane),
+              health: new_health
+            )
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true,
+                              operation: 'health_tracker.write_deny_to_lane',
+                              key: key, model: model)
         end
 
         def circuit_adjustment(key)
