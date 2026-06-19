@@ -20,6 +20,7 @@ require_relative 'api/translators/anthropic_request'
 require_relative 'api/translators/anthropic_response'
 require_relative 'api/anthropic/messages'
 require_relative 'api/namespaces/registration'
+require 'legion/llm/api/inventory_admin'
 
 require 'legion/logging/helper'
 
@@ -29,6 +30,7 @@ module Legion
       extend Legion::Logging::Helper
 
       def self.registered(app)
+        InventoryAdmin.registered(app)
         if Legion::Settings.dig(:llm, :api, :use_namespaces) == false
           log.warn(
             '[llm][api] routing=legacy DEPRECATED — the flat api/{anthropic,openai,native}/ tree ' \

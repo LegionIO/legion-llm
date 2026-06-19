@@ -41,6 +41,7 @@ require_relative 'llm/inference/embed_pipeline'
 require_relative 'llm/fleet'
 require_relative 'llm/inventory'
 require 'legion/llm/inventory/sweeper'
+require 'legion/llm/inventory/settings_observer'
 require_relative 'llm/metering'
 require_relative 'llm/audit'
 require_relative 'llm/scheduling'
@@ -88,6 +89,7 @@ module Legion
         Discovery.run
         Router.populate_auto_rules(Discovery.discovered_instances) if Router.respond_to?(:populate_auto_rules)
         Discovery.detect_embedding_capability
+        Legion::LLM::Inventory::SettingsObserver.attach!
         Config.set_defaults
         Hooks.install_defaults
         Tools::Interceptor.load_defaults
