@@ -291,7 +291,7 @@ module Legion
                      "instance=#{entry[:instance] || :default} configured=#{configured} " \
                      "discovered_count=#{discovered.size} discovered=#{discovered_detail} — backend may be stale or misconfigured"
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.discovery.model_divergence')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.discovery.model_divergence')
           end
 
           # A configured default is "present" when a discovered id equals it or extends
@@ -357,7 +357,7 @@ module Legion
             Router.health_tracker.report(provider: provider, instance: instance, signal: :latency,
                                          value: latency_ms.to_i, metadata: { source: :discovery })
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'discovery.report_health')
+            handle_exception(e, level: :warn, handled: true, operation: 'discovery.report_health')
           end
 
           def report_discovery_failure(entry, error)

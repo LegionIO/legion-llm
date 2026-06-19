@@ -110,7 +110,7 @@ module Legion
             ::Legion::MCP.server
           rescue LoadError => e
             @warnings << "MCP unavailable: #{e.message}"
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.mcp_discovery.mcp_server.require')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.mcp_discovery.mcp_server.require')
             nil
           rescue StandardError => e
             @warnings << "MCP server load error: #{e.message}"

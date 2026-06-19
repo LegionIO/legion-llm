@@ -127,7 +127,7 @@ module Legion
 
               Legion::Settings[:llm][:discovery]
             rescue StandardError => e
-              handle_exception(e, level: :debug)
+              handle_exception(e, level: :warn)
               {}
             end
           end

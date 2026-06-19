@@ -62,13 +62,13 @@ boot_logger = Object.new.extend(Legion::Logging::Helper)
 begin
   require_relative 'llm/skills'
 rescue LoadError => e
-  boot_logger.handle_exception(e, level: :debug, handled: true, operation: 'llm.boot.require_skills')
+  boot_logger.handle_exception(e, level: :warn, handled: true, operation: 'llm.boot.require_skills')
 end
 
 begin
   require_relative 'llm/api'
 rescue LoadError => e
-  boot_logger.handle_exception(e, level: :debug, handled: true, operation: 'llm.boot.require_api')
+  boot_logger.handle_exception(e, level: :warn, handled: true, operation: 'llm.boot.require_api')
 end
 
 require_relative 'llm/compat'

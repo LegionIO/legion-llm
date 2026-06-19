@@ -32,7 +32,7 @@ module Legion
           def available_memory_mb
             Discovery::System.available_memory_mb
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'memory_gate.available')
+            handle_exception(e, level: :warn, handled: true, operation: 'memory_gate.available')
             4096
           end
 

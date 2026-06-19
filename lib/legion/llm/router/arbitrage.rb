@@ -118,7 +118,7 @@ module Legion
               table[model.to_s] = { input: 0.0, output: 0.0 }
             end
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.router.arbitrage.zero_cost_inventory_models')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.router.arbitrage.zero_cost_inventory_models')
             {}
           end
 

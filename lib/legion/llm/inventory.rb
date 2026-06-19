@@ -328,7 +328,7 @@ module Legion
           end
           nil
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.inventory.registry_default_model')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.registry_default_model')
           nil
         end
 

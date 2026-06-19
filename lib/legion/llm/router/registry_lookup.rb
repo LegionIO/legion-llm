@@ -69,7 +69,7 @@ module Legion
           instances = begin
             Call::Registry.all_instances
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'router.registry_entry_for_tier')
+            handle_exception(e, level: :warn, handled: true, operation: 'router.registry_entry_for_tier')
             []
           end
 
@@ -99,7 +99,7 @@ module Legion
             models = begin
               adapter.offerings
             rescue StandardError => e
-              handle_exception(e, level: :debug, handled: true, operation: 'router.registry_default_model')
+              handle_exception(e, level: :warn, handled: true, operation: 'router.registry_default_model')
               []
             end
             first = models.first

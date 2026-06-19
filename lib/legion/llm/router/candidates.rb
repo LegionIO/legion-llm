@@ -180,7 +180,7 @@ module Legion
           instance = rule.target[:instance] || rule.target['instance']
           !Legion::LLM::Inventory::Discovery::MemoryGate.allow?(provider: provider, instance: instance, model: model)
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'router.excluded_by_memory')
+          handle_exception(e, level: :warn, handled: true, operation: 'router.excluded_by_memory')
           false
         end
 

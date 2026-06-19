@@ -96,7 +96,7 @@ module Legion
           model = offering[:model] || offering[:canonical_model_alias]
           model&.to_s
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'router.inventory_default_model')
+          handle_exception(e, level: :warn, handled: true, operation: 'router.inventory_default_model')
           nil
         end
 
@@ -355,7 +355,7 @@ module Legion
             offered == model.to_s || offered.start_with?("#{model}:")
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'router.fallback_model_offered')
+          handle_exception(e, level: :warn, handled: true, operation: 'router.fallback_model_offered')
           true
         end
 
@@ -612,7 +612,7 @@ module Legion
           instances = begin
             Call::Registry.all_instances
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'router.enabled_provider_chain')
+            handle_exception(e, level: :warn, handled: true, operation: 'router.enabled_provider_chain')
             []
           end
           return [] if instances.empty?
@@ -687,7 +687,7 @@ module Legion
                         .filter_map { |entry| entry[:instance] }
                         .uniq
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'router.registered_instances_for')
+          handle_exception(e, level: :warn, handled: true, operation: 'router.registered_instances_for')
           []
         end
 

@@ -108,7 +108,7 @@ module Legion
           # A model being offered by ANY instance of the provider confirms availability.
           Inventory.offerings(provider: resolution.provider)
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'router.availability.inventory_lookup')
+          handle_exception(e, level: :warn, handled: true, operation: 'router.availability.inventory_lookup')
           nil
         end
 

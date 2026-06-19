@@ -31,7 +31,7 @@ module Legion
 
           runner.record_exchange(agent_id: identity, action: :communication, direction: :given)
         rescue StandardError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :warn)
         end
 
         def social_runner
@@ -39,7 +39,7 @@ module Legion
 
           Legion::Extensions::Agentic::Social::Social::Client.new
         rescue StandardError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :warn)
           nil
         end
       end

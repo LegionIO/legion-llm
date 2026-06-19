@@ -68,7 +68,7 @@ module Legion
           meta = ::YAML.safe_load(parts[1], permitted_classes: [], symbolize_names: true) || {}
           [meta, parts[2].lstrip]
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.skills.disk_loader.parse_frontmatter')
+          handle_exception(e, level: :warn, operation: 'llm.skills.disk_loader.parse_frontmatter')
           [{}, text]
         end
 

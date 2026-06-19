@@ -318,7 +318,7 @@ module Legion
 
           {}
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'rule_generator.extension_providers')
+          handle_exception(e, level: :warn, handled: true, operation: 'rule_generator.extension_providers')
           {}
         end
       end

@@ -246,7 +246,7 @@ module Legion
         def curation_settings
           Legion::Settings[:llm][:context_curation]
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.context_curator.curation_settings')
+          handle_exception(e, level: :warn, operation: 'llm.context_curator.curation_settings')
           {}
         end
 
@@ -625,7 +625,7 @@ module Legion
           end
           nil
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.context_curator.detect_small_model')
+          handle_exception(e, level: :warn, operation: 'llm.context_curator.detect_small_model')
           nil
         end
       end

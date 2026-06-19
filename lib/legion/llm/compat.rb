@@ -17,7 +17,7 @@ module Legion
         msg += " (called from #{location})" if location
         log.warn(msg)
       rescue StandardError => e
-        handle_exception(e, level: :debug, handled: true, operation: 'llm.compat.warn_once')
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.compat.warn_once')
         warn msg
       end
     end
