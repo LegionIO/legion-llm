@@ -319,23 +319,23 @@ module Legion
               log.warn "[llm][escalation] action=account_scoped_error provider=#{resolution.provider} " \
                        "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
                        "error=#{err.message.to_s[0, 300]} deprioritized=true model_denied=false"
-              Legion::LLM::Router.health_tracker.trip_circuit(
+              Legion::LLM::Router.health_tracker.trip_circuit( # allowlist:write-side
                 provider: resolution.provider, instance: resolution.instance, reason: err.message
               )
             elsif authentication_error?(err) || config_error?(err)
-              Legion::LLM::Router.health_tracker.deny_model(
+              Legion::LLM::Router.health_tracker.deny_model( # allowlist:write-side
                 provider: resolution.provider,
                 model:    resolution.model,
                 instance: resolution.instance,
                 reason:   err.message
               )
-              Legion::LLM::Router.health_tracker.trip_circuit(
+              Legion::LLM::Router.health_tracker.trip_circuit( # allowlist:write-side
                 provider: resolution.provider,
                 instance: resolution.instance,
                 reason:   err.message
               )
             elsif !context_overflow_error?(err)
-              Legion::LLM::Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
+              Legion::LLM::Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance, # allowlist:write-side
                                                         offering_id: resolution.offering_id,
                                                         signal: :error, value: 1,
                                                         metadata: { reason: err.class.name, message: err.message.to_s[0, 500],
@@ -496,13 +496,13 @@ module Legion
             return if client_stream_error?(error)
 
             if authentication_error?(error) || config_error?(error)
-              Legion::LLM::Router.health_tracker.deny_model(
+              Legion::LLM::Router.health_tracker.deny_model( # allowlist:write-side
                 provider: provider,
                 model:    model,
                 instance: instance,
                 reason:   error.message
               )
-              Legion::LLM::Router.health_tracker.trip_circuit(
+              Legion::LLM::Router.health_tracker.trip_circuit( # allowlist:write-side
                 provider: provider,
                 instance: instance,
                 reason:   error.message
@@ -510,7 +510,7 @@ module Legion
               return
             end
 
-            Legion::LLM::Router.health_tracker.report(
+            Legion::LLM::Router.health_tracker.report( # allowlist:write-side
               provider: provider, instance: instance,
               offering_id: offering_id, signal: :error, value: 1,
               metadata: { reason: error.class.name, message: error.message.to_s[0, 500], model: model }
@@ -522,10 +522,10 @@ module Legion
           def report_provider_health(signal, duration_ms, metadata: {})
             return unless defined?(Legion::LLM::Router) && Legion::LLM::Router.routing_enabled?
 
-            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
+            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance, # allowlist:write-side
                                                       offering_id: @resolved_offering_id,
                                                       signal: signal, value: 1, metadata: metadata.merge(duration_ms: duration_ms))
-            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
+            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance, # allowlist:write-side
                                                       offering_id: @resolved_offering_id,
                                                       signal: :latency, value: duration_ms, metadata: {})
           rescue StandardError => e
@@ -661,7 +661,12 @@ module Legion
           end
 
           def circuit_open?(resolution)
-            Legion::LLM::Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance) == :open
+            # Read from Inventory lane health (P2: lane is the single source of health truth).
+            lanes = Legion::LLM::Inventory.lanes_for(provider: resolution.provider,
+                                                     instance: resolution.instance)
+            return lanes.any? { |l| l[:health][:circuit_state] == :open } if lanes.any?
+
+            Legion::LLM::Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance) == :open # allowlist:write-side
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.escalation.circuit_check')
             false

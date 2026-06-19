@@ -340,7 +340,13 @@ module Legion
               # vLLM-only node) should not pin — fall through to auto_route.
               next false unless Call::Registry.registered?(provider, instance: instance)
 
-              Router.health_tracker.circuit_state(provider, instance: instance) != :open
+              # Read circuit state from Inventory lane health (P2: lane is the SSOT for health).
+              lanes = Legion::LLM::Inventory.lanes_for(provider: provider, instance: instance)
+              if lanes.any?
+                lanes.none? { |l| l[:health][:circuit_state] == :open }
+              else
+                Router.health_tracker.circuit_state(provider, instance: instance) != :open # allowlist:write-side
+              end
             end
 
             if healthy

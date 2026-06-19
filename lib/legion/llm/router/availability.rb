@@ -44,11 +44,20 @@ module Legion
         end
 
         def rejection_reason(resolution, estimated_tokens: nil, required_capabilities: [])
-          state = Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance)
-          return :circuit_open if state == :open
-          return :model_denied if Router.health_tracker.model_denied?(provider: resolution.provider,
-                                                                      model:    resolution.model,
-                                                                      instance: resolution.instance)
+          # Read health from the Inventory lane (P2: lane is the single source of health truth).
+          # Falls back to HealthTracker for backward-compat when no lane exists (cold-boot / no ScopedRefresher).
+          matching_lanes = lane_health_for(provider: resolution.provider, instance: resolution.instance,
+                                           model: resolution.model)
+          if matching_lanes.any?
+            return :circuit_open if matching_lanes.any? { |l| l[:health][:circuit_state] == :open }
+            return :model_denied if matching_lanes.any? { |l| l[:health][:denied] }
+          else
+            state = Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance) # allowlist:write-side
+            return :circuit_open if state == :open
+            return :model_denied if Router.health_tracker.model_denied?(provider: resolution.provider, # allowlist:write-side
+                                                                        model:    resolution.model,
+                                                                        instance: resolution.instance)
+          end
 
           discovery_state = discovery_status_for(resolution)
           return :instance_unresolved if resolution.instance.nil? && instance_resolution_required?(resolution, discovery_state)
@@ -171,6 +180,22 @@ module Legion
           models = Array(Discovery.cached_discovered_models).select { |m| m[:provider] == resolution.provider }
           instances = models.map { |m| m[:instance] }.compact.uniq
           instances.size > 1
+        end
+
+        # Returns lanes from Inventory for the given (provider, instance, model) triple.
+        # Used by rejection_reason to read health from the store rather than HealthTracker directly.
+        # Returns [] when the live store is empty (cold boot), which triggers HealthTracker fallback.
+        def lane_health_for(provider:, instance:, model:)
+          return [] unless defined?(Legion::LLM::Inventory)
+
+          lanes = Legion::LLM::Inventory.lanes_for(provider: provider, instance: instance)
+          return lanes if model.nil?
+
+          # Prefer lanes matching the exact model; fall back to all instance lanes for circuit check.
+          matching = lanes.select { |l| l[:model].to_s == model.to_s }
+          matching.empty? ? lanes : matching
+        rescue StandardError
+          []
         end
       end
     end

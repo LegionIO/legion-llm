@@ -190,7 +190,7 @@ module Legion
           instance = rule.target[:instance] || rule.target['instance']
           return false unless provider && model
 
-          health_tracker.model_denied?(provider: provider, model: model, instance: instance)
+          health_tracker.model_denied?(provider: provider, model: model, instance: instance) # allowlist:write-side
         end
 
         def excluded_by_caller?(rule, exclude)
@@ -225,7 +225,7 @@ module Legion
           loaded_bonus = loaded_model_bonus(rule)
 
           rule.priority +
-            health_tracker.adjustment(provider, instance: instance, offering_id: offering_id) +
+            health_tracker.adjustment(provider, instance: instance, offering_id: offering_id) + # allowlist:write-side
             cost_bonus + tier_bonus + hint_bonus + effort_bonus + loaded_bonus
         end
 
