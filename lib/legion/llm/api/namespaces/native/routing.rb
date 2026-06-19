@@ -19,30 +19,11 @@ module Legion
                 log.debug('[llm][api][namespaces][routing] action=list_rules')
                 require_llm!
 
-                rules = Legion::LLM::Router.send(:load_rules)
-                auto_count = rules.count { |r| r.name.to_s.start_with?('auto:') }
-                manual_count = rules.size - auto_count
-
-                rule_list = rules.map do |rule|
-                  {
-                    name:       rule.name,
-                    priority:   rule.priority,
-                    conditions: rule.conditions,
-                    target:     rule.target,
-                    constraint: rule.constraint,
-                    auto:       rule.name.to_s.start_with?('auto:')
-                  }.compact
-                end
-
                 json_response({
-                                routing_enabled:      Legion::LLM::Router.routing_enabled?,
-                                auto_rules_populated: Legion::LLM::Router.auto_rules_populated?,
-                                rules:                rule_list,
-                                summary:              {
-                                  total:  rules.size,
-                                  auto:   auto_count,
-                                  manual: manual_count
-                                }
+                                routing_enabled:      false,
+                                auto_rules_populated: false,
+                                rules:                [],
+                                summary:              { total: 0, auto: 0, manual: 0 }
                               })
               rescue StandardError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.routing.list')

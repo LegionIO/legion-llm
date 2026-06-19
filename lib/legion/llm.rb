@@ -86,9 +86,8 @@ module Legion
       def start
         log.debug '[llm] start.enter'
         Call::Providers.setup
-        Discovery.run
-        Router.populate_auto_rules({}) if Router.respond_to?(:populate_auto_rules)
-        Discovery.detect_embedding_capability
+        Inventory::Discovery.run
+        Inventory::Discovery.detect_embedding_capability
         Legion::LLM::Inventory::SettingsObserver.attach!
         Config.set_defaults
         Hooks.install_defaults
@@ -114,7 +113,7 @@ module Legion
         log.debug '[llm] shutdown.enter'
         Legion::Settings[:llm][:connected] = false
         @started = false
-        Discovery.reset!
+        Inventory::Discovery.reset!
         Call::Registry.reset!
         # Clear LLM-level embedding ivars that may have been set via instance_variable_set for testing
         @can_embed = nil
@@ -187,23 +186,23 @@ module Legion
       # These methods check Discovery first, then fall back to instance ivars set directly on LLM
       # (ivar fallback preserves backwards compat for specs that do Legion::LLM.instance_variable_set)
       def can_embed?
-        Discovery.can_embed? || @can_embed == true
+        Inventory::Discovery.can_embed? || @can_embed == true
       end
 
       def embedding_provider
-        Discovery.embedding_provider || @embedding_provider
+        Inventory::Discovery.embedding_provider || @embedding_provider
       end
 
       def embedding_model
-        Discovery.embedding_model || @embedding_model
+        Inventory::Discovery.embedding_model || @embedding_model
       end
 
       def embedding_instance
-        Discovery.embedding_instance || @embedding_instance
+        Inventory::Discovery.embedding_instance || @embedding_instance
       end
 
       def embedding_fallback_chain
-        Discovery.embedding_fallback_chain || @embedding_fallback_chain
+        Inventory::Discovery.embedding_fallback_chain || @embedding_fallback_chain
       end
 
       def agent(agent_class, **) = agent_class.new(**)

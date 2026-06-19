@@ -86,8 +86,7 @@ module Legion
         CompatWarning.warn_once('Legion::LLM::ShadowEval', 'Legion::LLM::Quality::ShadowEval')
         Quality::ShadowEval
       when :Arbitrage
-        CompatWarning.warn_once('Legion::LLM::Arbitrage', 'Legion::LLM::Router::Arbitrage')
-        Router::Arbitrage
+        raise NameError, 'Legion::LLM::Arbitrage removed in v0.14.0 — cost-aware routing lands in Phase 2 as a lane_weight factor'
       when :Batch
         CompatWarning.warn_once('Legion::LLM::Batch', 'Legion::LLM::Scheduling::Batch')
         Scheduling::Batch

@@ -1,49 +1,41 @@
 # frozen_string_literal: true
 
-# TODO(refactor: SSOT P4 commit 3): the Legion::LLM.start populate_auto_rules call is deleted in
-# P4. This spec gets migrated to assert the new boot wiring (SettingsObserver.attach! + Sweeper).
-# See docs/work/planning/p4-router-request-lane.md for the migrated form.
-
 require 'spec_helper'
 require 'legion/llm/discovery/system'
 
 RSpec.describe 'LLM startup discovery' do
   before do
-    Legion::LLM::Discovery.reset!
-    Legion::LLM::Discovery::System.reset!
-    # Prevent actual embedding verification from making real network calls
-    allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
+    Legion::LLM::Inventory::Discovery.reset!
+    Legion::LLM::Inventory::Discovery::System.reset!
+    allow(Legion::LLM::Inventory::Discovery).to receive(:verify_embedding).and_return(false)
   end
 
   context 'when providers are registered in the Registry' do
     before do
-      allow(Legion::LLM::Discovery::System).to receive(:platform).and_return(:macos)
-      allow(Legion::LLM::Discovery::System).to receive(:`).with('sysctl -n hw.memsize').and_return("68719476736\n")
-      allow(Legion::LLM::Discovery::System).to receive(:`).with('vm_stat').and_return(
+      allow(Legion::LLM::Inventory::Discovery::System).to receive(:platform).and_return(:macos)
+      allow(Legion::LLM::Inventory::Discovery::System).to receive(:`).with('sysctl -n hw.memsize').and_return("68719476736\n")
+      allow(Legion::LLM::Inventory::Discovery::System).to receive(:`).with('vm_stat').and_return(
         "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:     500000.\nPages inactive:  300000.\n"
       )
     end
 
     it 'refreshes discovery caches during start' do
-      expect(Legion::LLM::Discovery).to receive(:run).at_least(:once).and_call_original
-      expect(Legion::LLM::Discovery::System).to receive(:refresh!).at_least(:once).and_call_original
+      expect(Legion::LLM::Inventory::Discovery).to receive(:run).at_least(:once).and_call_original
+      expect(Legion::LLM::Inventory::Discovery::System).to receive(:refresh!).at_least(:once).and_call_original
       Legion::LLM.start
     end
   end
 
-  describe 'boot wiring: Router.populate_auto_rules' do
-    before do
-      Legion::LLM::Router.reset!
-    end
-
-    it 'populates auto_rules during start so routing is ready' do
-      expect(Legion::LLM::Router.auto_rules_populated?).to be false
+  describe 'boot wiring: Inventory observers' do
+    it 'attaches the SettingsObserver' do
+      expect(Legion::LLM::Inventory::SettingsObserver).to receive(:attach!).and_call_original
       Legion::LLM.start
-      expect(Legion::LLM::Router.auto_rules_populated?).to be true
     end
 
-    it 'calls Router.populate_auto_rules with Discovery.discovered_instances' do
-      expect(Legion::LLM::Router).to receive(:populate_auto_rules).with(kind_of(Hash)).and_call_original
+    it 'does NOT call Router.populate_auto_rules from Legion::LLM.start' do
+      # G8 / cyber-Medium: internal caller deleted in P4; external lex-llm-* callers still
+      # go through the no-op stub via their own respond_to? guards.
+      expect(Legion::LLM::Router).not_to receive(:populate_auto_rules)
       Legion::LLM.start
     end
   end

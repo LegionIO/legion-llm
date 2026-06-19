@@ -39,39 +39,30 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Routing' do
 
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
-    allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-    allow(Legion::LLM::Router).to receive(:auto_rules_populated?).and_return(true)
-    allow(Legion::LLM::Router).to receive(:send).with(:load_rules).and_return([mock_rule])
   end
 
   describe 'GET /api/llm/routing' do
-    it 'returns 200 with routing summary' do
+    it 'returns 200 with routing summary (rule engine removed in P4)' do
       get '/api/llm/routing'
       expect(last_response.status).to eq(200)
       result = Legion::JSON.load(last_response.body)
-      expect(result[:data][:routing_enabled]).to eq(true)
-      expect(result[:data][:auto_rules_populated]).to eq(true)
-      expect(result[:data][:rules]).to be_an(Array)
-      expect(result[:data][:summary][:total]).to eq(1)
+      expect(result[:data][:routing_enabled]).to eq(false)
+      expect(result[:data][:auto_rules_populated]).to eq(false)
+      expect(result[:data][:rules]).to eq([])
+      expect(result[:data][:summary][:total]).to eq(0)
     end
 
-    it 'distinguishes auto vs manual rules' do
-      auto_rule = double('Rule', name: 'auto:ollama/local/llama3.2', priority: 5,
-                                 conditions: {}, target: {}, constraint: nil)
-      allow(Legion::LLM::Router).to receive(:send).with(:load_rules).and_return([mock_rule, auto_rule])
+    it 'returns empty rules list' do
       get '/api/llm/routing'
       result = Legion::JSON.load(last_response.body)
-      expect(result[:data][:summary][:auto]).to eq(1)
-      expect(result[:data][:summary][:manual]).to eq(1)
+      expect(result[:data][:rules]).to eq([])
     end
 
-    it 'marks auto rules in rule list' do
-      auto_rule = double('Rule', name: 'auto:ollama/local/llama3.2', priority: 5,
-                                 conditions: {}, target: {}, constraint: nil)
-      allow(Legion::LLM::Router).to receive(:send).with(:load_rules).and_return([auto_rule])
+    it 'returns zero summary counts' do
       get '/api/llm/routing'
       result = Legion::JSON.load(last_response.body)
-      expect(result[:data][:rules].first[:auto]).to eq(true)
+      expect(result[:data][:summary][:auto]).to eq(0)
+      expect(result[:data][:summary][:manual]).to eq(0)
     end
 
     it 'returns 503 when LLM not started' do

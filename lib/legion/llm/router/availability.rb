@@ -60,7 +60,7 @@ module Legion
           # Discovery :unreachable/:error only blocks discoverable local/fleet providers.
           # Cloud/frontier providers don't rely on discovery for availability.
           if %i[unreachable error].include?(discovery_state) &&
-             Discovery::RuleGenerator::DISCOVERABLE_PROVIDERS.include?(resolution.provider&.to_sym)
+             Legion::LLM::Inventory::Discovery::DISCOVERABLE_PROVIDERS.include?(resolution.provider&.to_sym)
             return :discovery_unavailable
           end
 
@@ -77,7 +77,7 @@ module Legion
           # authoritative ONLY for discoverable local/fleet providers with discovery on
           # (an empty live catalog means the instance genuinely serves nothing) —
           # otherwise an empty catalog is a not-yet-populated signal, not absence.
-          discoverable = Discovery::RuleGenerator::DISCOVERABLE_PROVIDERS.include?(resolution.provider&.to_sym)
+          discoverable = Legion::LLM::Inventory::Discovery::DISCOVERABLE_PROVIDERS.include?(resolution.provider&.to_sym)
           offerings = inventory_offerings_for(resolution)
           unless offerings.nil?
             if offerings.empty?
@@ -123,11 +123,11 @@ module Legion
         end
 
         def discovery_status_for(resolution)
-          return :unknown unless defined?(Discovery)
+          return :unknown unless defined?(Legion::LLM::Inventory::Discovery)
 
           return :unknown unless discovery_enabled?
 
-          Discovery.discovery_status(provider: resolution.provider, instance: resolution.instance)
+          Legion::LLM::Inventory::Discovery.discovery_status(provider: resolution.provider, instance: resolution.instance)
         end
 
         def discovery_enabled?
@@ -168,7 +168,7 @@ module Legion
         # when the live catalog shows multiple instances for that provider.
         def instance_resolution_required?(resolution, discovery_state)
           return false unless %i[ok].include?(discovery_state)
-          return false unless Discovery::RuleGenerator::DISCOVERABLE_PROVIDERS.include?(resolution.provider&.to_sym)
+          return false unless Legion::LLM::Inventory::Discovery::DISCOVERABLE_PROVIDERS.include?(resolution.provider&.to_sym)
           return false unless defined?(Legion::LLM::Inventory)
 
           instances = Legion::LLM::Inventory.lanes_for(provider: resolution.provider.to_sym, type: :inference)

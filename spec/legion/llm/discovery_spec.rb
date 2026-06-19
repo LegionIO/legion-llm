@@ -222,37 +222,6 @@ RSpec.describe Legion::LLM::Inventory::Discovery do
     end
   end
 
-  describe 'loaded_model_bonus reachability' do
-    before do
-      Legion::LLM::Router.reset!
-      allow(Legion::LLM::Router).to receive(:tier_available?).and_return(true)
-      allow(described_class).to receive(:model_available?).and_return(true)
-      allow(described_class).to receive(:model_size).and_return(nil)
-      allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
-    end
-
-    it 'gives loaded models a scoring bonus in generated rules' do
-      discovered = {
-        ollama: {
-          local: {
-            models:       [
-              { name: 'qwen3:7b', capabilities: %i[completion streaming tools], loaded: true },
-              { name: 'llama3:8b', capabilities: %i[completion streaming tools], loaded: false }
-            ],
-            capabilities: %i[completion streaming tools]
-          }
-        }
-      }
-
-      rules = Legion::LLM::Discovery::RuleGenerator.generate(discovered)
-      qwen_rule = rules.find { |r| r[:name].include?('qwen3:7b') && r[:when][:operation] == :chat }
-      llama_rule = rules.find { |r| r[:name].include?('llama3:8b') && r[:when][:operation] == :chat }
-
-      expect(qwen_rule[:then][:loaded]).to be(true)
-      expect(llama_rule[:then][:loaded]).to be(false)
-    end
-  end
-
   describe 'capability_sources preservation' do
     it 'preserves capability_sources from offerings in fetch_offering_models' do
       adapter = instance_double('Adapter')

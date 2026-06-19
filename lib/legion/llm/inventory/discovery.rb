@@ -3,13 +3,16 @@
 require 'concurrent'
 require 'legion/logging/helper'
 require 'legion/llm/inventory/discovery/system'
-require 'legion/llm/discovery/rule_generator'
-
 module Legion
   module LLM
     module Inventory
       module Discovery
         extend Legion::Logging::Helper
+
+        # Providers that populate lanes via live discovery (::Every actor polling local endpoints).
+        # These are distinguished from static-catalog providers (bedrock, anthropic, openai) which
+        # write lanes on boot and don't need runtime probing.
+        DISCOVERABLE_PROVIDERS = %i[ollama mlx vllm].freeze
 
         @can_embed = nil
         @embedding_provider = nil

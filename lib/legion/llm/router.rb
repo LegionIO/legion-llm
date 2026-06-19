@@ -5,10 +5,8 @@ require_relative 'router/resolution'
 require_relative 'router/rule'
 require_relative 'router/health_tracker'
 require_relative 'router/availability'
-require_relative 'router/candidates'
 require_relative 'router/registry_lookup'
 require_relative 'router/escalation/chain'
-require_relative 'discovery/rule_generator'
 require 'legion/llm/inventory/discovery/system'
 require 'legion/llm/inventory/discovery/memory_gate'
 
@@ -17,7 +15,6 @@ module Legion
   module LLM
     module Router
       extend Legion::Logging::Helper
-      extend Candidates
       extend RegistryLookup
 
       PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
@@ -126,87 +123,23 @@ module Legion
           nil
         end
 
-        # Resolve an LLM routing intent to a tier/provider/model decision.
-        #
-        # Model, provider, and tier are treated as preference hints — they bias scoring
-        # toward matching candidates but do not bypass rule evaluation. This allows the
-        # router to apply policy (cost, privacy, health) and fall back to a better local
-        # match when the hinted provider is unavailable.
-        #
-        # @param intent   [Hash, nil] routing intent (capability, privacy, etc.)
-        # @param tier     [Symbol, nil] tier preference hint
-        # @param model    [String, nil] model preference hint
-        # @param provider [Symbol, nil] provider preference hint
-        # @param estimated_tokens [Integer, nil] estimated total token count for context window filtering
-        # @return [Resolution, nil]
-        def resolve(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, exclude: {}, estimated_tokens: nil)
-          log.debug "[llm][router] action=resolve.enter intent=#{intent} tier=#{tier} model=#{model} provider=#{provider} instance=#{instance} estimated_tokens=#{estimated_tokens}"
-
-          merged = merge_defaults(intent)
-          rules = load_rules
-          candidates = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
-          best = pick_best(candidates, intent: merged, hints: { tier: tier, provider: provider, model: model })
-          resolution = best&.to_resolution
-
-          # When a provider hint is explicitly passed but the best rule targets a DIFFERENT provider,
-          # the hint has no matching rule to boost. If the hinted provider is registered (can actually
-          # serve requests), fall through to explicit_resolution which honors the hint directly.
-          # Without this, auto-rules for discoverable providers (vllm/ollama) always win over
-          # non-discoverable providers (bedrock/anthropic) that have no auto-generated rules.
-          if resolution && provider && resolution.provider.to_sym != provider.to_sym &&
-             Call::Registry.registered?(provider.to_sym)
-            log.info "[llm][router] action=resolve.hint_mismatch hinted_provider=#{provider} " \
-                     "matched_provider=#{resolution.provider} falling_through_to_explicit"
-            resolution = nil
-          end
-
-          if resolution
-            log.info "[llm][router] action=resolve.matched tier=#{resolution.tier} provider=#{resolution.provider} " \
-                     "model=#{resolution.model} rule=#{resolution.rule}"
-          end
-
-          # If no rules matched (or hint mismatch), fall back to explicit resolution from hints, then arbitrage.
-          unless resolution
-            trace_info = (@last_candidate_trace || {}).reject { |_, v| v.zero? }
-            log.warn "[llm][router] action=resolve.no_rules_matched intent=#{merged} candidates_evaluated=#{rules.size} " \
-                     "rejections=#{trace_info}"
-            resolution = explicit_resolution(tier, provider, model, instance)
-          end
-
-          resolution || arbitrage_fallback(intent)
-        end
-
-        def resolve_chain(intent: nil, tier: nil, model: nil, provider: nil, instance: nil, max_escalations: nil,
-                          exclude: {}, allow_default_fallback: true, estimated_tokens: nil)
-          log.debug "[llm][router] action=resolve_chain.enter intent=#{intent} tier=#{tier} max_escalations=#{max_escalations} estimated_tokens=#{estimated_tokens}"
-          max = max_escalations || escalation_max_attempts
-
-          if routing_enabled? && intent
-            chain_from_intent(intent, max, hints: { tier: tier, provider: provider, model: model, instance: instance },
-                              exclude: exclude, allow_default_fallback: allow_default_fallback,
-                              estimated_tokens: estimated_tokens)
-          else
-            chain_from_defaults(model, provider, max, hints: { tier: tier, instance: instance }, allow_default_fallback: allow_default_fallback)
-          end
-        end
-
         def health_tracker
           @health_tracker ||= build_health_tracker
         end
 
         def routing_enabled?
-          Legion::Settings.dig(:llm, :routing, :enabled) == true && auto_rules_populated?
+          false
         end
 
         def auto_rules_populated?
           @auto_rules_populated == true
         end
 
-        def populate_auto_rules(discovered_instances)
-          raw = Discovery::RuleGenerator.generate(discovered_instances)
-          @auto_rules = raw.map { |h| Rule.from_hash(h.transform_keys(&:to_sym)) }
-          @auto_rules_populated = true
-          log.info("[llm][router] auto_rules_populated count=#{@auto_rules.size}")
+        def populate_auto_rules(_discovered_instances = nil)
+          # Deprecated: RuleGenerator deleted in P4; full no-op stub lands in P5 per G8.
+          # External lex-llm-* callers still reach this via respond_to? guards and must
+          # not crash. @auto_rules_populated is intentionally left false so routing_enabled?
+          # returns false, keeping the old rule-based path permanently inactive.
         end
 
         def reset!
@@ -414,75 +347,6 @@ module Legion
           @default_rng ||= Random.new
         end
 
-        def arbitrage_fallback(intent)
-          return nil unless defined?(Arbitrage) && Arbitrage.enabled?
-
-          effort = intent&.dig(:effort) || DEFAULT_EFFORT
-          model = Arbitrage.cheapest_for(capability: effort)
-          return nil unless model
-
-          provider = infer_provider_for_model(model)
-          return nil unless provider
-
-          tier = PROVIDER_TIER.fetch(provider, :cloud)
-          log.warn "[llm][router] action=arbitrage_fallback model=#{model} provider=#{provider} tier=#{tier}"
-          Resolution.new(tier: tier, provider: provider, model: model, rule: 'arbitrage_fallback')
-        end
-
-        def normalize_intent(intent)
-          normalized = symbolize_intent_keys(intent)
-
-          normalized[:operation] = normalize_operation_value!(normalized[:operation] || DEFAULT_OPERATION)
-          normalized[:effort] = normalize_effort_value!(normalized[:effort] || DEFAULT_EFFORT)
-          required = normalize_capabilities(normalized.delete(:requires) || normalized[:required_capabilities])
-          normalized[:required_capabilities] = required if required.any?
-          normalized
-        end
-
-        def symbolize_intent_keys(intent)
-          return {} unless intent.is_a?(Hash)
-
-          intent.each_with_object({}) do |(key, value), memo|
-            memo[key.respond_to?(:to_sym) ? key.to_sym : key] = value
-          end
-        end
-
-        def normalize_enum_value(value)
-          return nil unless value.respond_to?(:to_s)
-
-          value.to_s.downcase.strip.to_sym
-        end
-
-        def normalize_effort(value)
-          sym = normalize_enum_value(value)
-          return nil unless sym
-
-          canonical = EFFORT_ALIASES.fetch(sym, sym)
-          CANONICAL_EFFORT_LEVELS.include?(canonical) ? canonical : nil
-        end
-
-        def normalize_operation(value)
-          sym = normalize_enum_value(value)
-          return nil unless sym
-
-          canonical = OPERATION_ALIASES.fetch(sym, sym)
-          OPERATIONS.include?(canonical) ? canonical : nil
-        end
-
-        def normalize_effort_value!(value)
-          normalized = normalize_effort(value)
-          return normalized if normalized
-
-          raise ArgumentError, "unknown effort #{value.inspect}; expected #{CANONICAL_EFFORT_LEVELS.join(', ')}"
-        end
-
-        def normalize_operation_value!(value)
-          normalized = normalize_operation(value)
-          return normalized if normalized
-
-          raise ArgumentError, "unknown operation #{value.inspect}; expected #{OPERATIONS.join(', ')}"
-        end
-
         def filter_chain_resolutions(resolutions, estimated_tokens:, required_capabilities:)
           filtered = Availability.filter_resolutions(
             resolutions,
@@ -502,51 +366,6 @@ module Legion
 
           log.warn "[llm][router] action=availability.empty_catalog_preserve_chain candidates=#{resolutions.size}"
           resolutions
-        end
-
-        def merge_defaults(intent)
-          defaults = (Legion::Settings.dig(:llm, :routing, :default_intent) || {})
-                     .transform_keys(&:to_sym)
-                     .each_with_object({}) do |(k, v), memo|
-                       memo[k] = v.respond_to?(:to_sym) ? v.to_sym : v
-                     end
-
-          raw_intent = intent&.transform_keys(&:to_sym) || {}
-          merged = defaults.merge(raw_intent)
-          normalize_intent(merged)
-        end
-
-        def load_rules
-          manual = (Legion::Settings.dig(:llm, :routing, :rules) || []).map do |h|
-            h = h.transform_keys(&:to_sym)
-            h[:priority] = (h[:priority] || 0) + 1000
-            Rule.from_hash(h)
-          end
-          (manual + (@auto_rules || [])).sort_by { |r| -r.priority }
-        end
-
-        def required_capabilities(intent)
-          return [] unless intent.is_a?(Hash)
-
-          normalized = intent.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-          normalize_capabilities(normalized[:required_capabilities] || normalized[:requires])
-        end
-
-        def normalize_capabilities(capabilities)
-          Array(capabilities).compact.each_with_object([]) do |capability, normalized|
-            next unless capability.respond_to?(:to_s)
-
-            capability_sym = capability.to_s.downcase.strip.to_sym
-            next if capability_sym.to_s.empty?
-
-            normalized << capability_sym
-            alias_sym = CAPABILITY_ALIASES[capability_sym]
-            normalized << alias_sym if alias_sym
-          end.uniq
-        end
-
-        def discovery_enabled?
-          Legion::Settings[:llm][:discovery][:enabled] != false
         end
 
         def privacy_mode?
@@ -609,195 +428,6 @@ module Legion
           when :frontier
             default_settings_model_for_tier(sym) || 'claude-sonnet-4-6'
           end
-        end
-
-        def chain_from_defaults(model, provider, max, hints: {}, allow_default_fallback: true, # rubocop:disable Lint/UnusedMethodArgument
-                                estimated_tokens: nil, required_capabilities: [])
-          if provider || model || (allow_default_fallback && (Legion::Settings[:llm][:default_provider] || Legion::Settings[:llm][:default_model]))
-            p = (provider || Legion::Settings[:llm][:default_provider])&.to_sym
-
-            resolved_model = model
-            if resolved_model
-              model_natural = infer_provider_for_model(resolved_model)
-              if model_natural && p && model_natural != p
-                log.debug "[llm][router] action=chain_from_defaults.model_provider_mismatch model=#{resolved_model} " \
-                          "natural_provider=#{model_natural} resolved_provider=#{p} swapping"
-                resolved_model = nil
-              end
-            end
-            registry_entry = registry_entry_for_provider(p)
-            resolved_model ||= registry_default_model(registry_entry) ||
-                               Legion::Settings[:llm][:default_model] || 'claude-sonnet-4-6'
-            resolved_instance = registry_entry&.[](:instance)
-
-            primary = Resolution.new(tier:     PROVIDER_TIER.fetch(p || :anthropic, :frontier),
-                                     provider: p || :anthropic,
-                                     model:    resolved_model,
-                                     instance: resolved_instance)
-            fallbacks = enabled_provider_chain.reject do |r|
-              r.provider == primary.provider && r.instance == primary.instance
-            end
-            resolutions = ([primary] + fallbacks).uniq { |r| [r.provider, r.instance, r.model] }
-            resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: required_capabilities)
-            return EscalationChain.new(resolutions: resolutions, max_attempts: max)
-          end
-
-          resolutions = enabled_provider_chain
-          if resolutions.any?
-            resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: required_capabilities)
-          end
-          if resolutions.empty? && allow_default_fallback
-            p = Legion::Settings[:llm][:default_provider]&.to_sym ||
-                Legion::Settings[:llm][:routing][:last_resort_provider]
-            last_resort = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
-                                          provider: p,
-                                          model:    Legion::Settings[:llm][:default_model] ||
-                                                    Legion::Settings[:llm][:routing][:last_resort_model])]
-            resolutions = filter_chain_resolutions(last_resort, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: required_capabilities)
-          end
-          EscalationChain.new(resolutions: resolutions, max_attempts: max)
-        end
-
-        def enabled_provider_chain
-          instances = begin
-            Call::Registry.all_instances
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'router.enabled_provider_chain')
-            []
-          end
-          return [] if instances.empty?
-
-          provider_index = PROVIDER_ORDER.each_with_index.to_h
-          sorted_entries = instances.sort_by do |entry|
-            tier = registry_tier(entry[:provider], entry[:metadata])
-            [tier_rank.fetch(tier, 99), provider_index.fetch(entry[:provider], PROVIDER_ORDER.size)]
-          end
-
-          sorted_entries.filter_map do |entry|
-            pname = entry[:provider]
-            tier = registry_tier(pname, entry[:metadata])
-            next unless tier_available?(tier)
-
-            model = registry_default_model(entry) || inventory_default_model(pname, entry[:instance])
-            next if model.nil? || model.to_s.empty?
-
-            Resolution.new(
-              tier: tier, provider: pname, model: model,
-              instance: entry[:instance], rule: 'auto_chain'
-            )
-          end
-        end
-
-        # Honor an explicit provider hint as the chain PRIMARY even when no rule
-        # targets that provider — mirroring Router.resolve's hint-mismatch
-        # fallthrough so resolve and resolve_chain reach the same primary
-        # (NxN G14 / redesign #95). The hinted provider must be registered (able
-        # to serve); otherwise the normal scored chain stands.
-        #
-        # When the caller did not pin a specific instance, prepend EVERY registered
-        # instance of the hinted provider, in registry order. This makes failover
-        # exhaust the provider's own instances (e.g. a second Anthropic account)
-        # before the chain ever crosses to a different provider — a creditless
-        # instance fails over to a sibling instance, not silently to vLLM.
-        def prepend_hinted_provider(resolutions, hints)
-          provider = hints && hints[:provider]
-          return resolutions unless provider
-
-          provider_sym = provider.to_sym
-          return resolutions unless Call::Registry.registered?(provider_sym)
-
-          primaries = hinted_provider_resolutions(provider_sym, hints)
-          return resolutions if primaries.empty?
-
-          keys = primaries.map { |r| [r.provider, r.instance, r.model] }
-          primaries + resolutions.reject { |r| keys.include?([r.provider, r.instance, r.model]) }
-        end
-
-        # Resolutions for the hinted provider: a pinned instance yields just that
-        # one; otherwise one resolution per registered instance (multi-instance
-        # failover within the provider).
-        def hinted_provider_resolutions(provider_sym, hints)
-          if hints[:instance]
-            res = explicit_resolution(hints[:tier], provider_sym, hints[:model], hints[:instance])
-            return res && res.provider == provider_sym ? [res] : []
-          end
-
-          instances = registered_instances_for(provider_sym)
-          list = if instances.empty?
-                   [explicit_resolution(hints[:tier], provider_sym, hints[:model], nil)]
-                 else
-                   instances.map { |inst| explicit_resolution(hints[:tier], provider_sym, hints[:model], inst) }
-                 end
-          list.compact.select { |r| r.provider == provider_sym }.uniq { |r| [r.provider, r.instance, r.model] }
-        end
-
-        def registered_instances_for(provider_sym)
-          Call::Registry.all_instances
-                        .select { |entry| entry[:provider] == provider_sym }
-                        .filter_map { |entry| entry[:instance] }
-                        .uniq
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'router.registered_instances_for')
-          []
-        end
-
-        def chain_from_intent(intent, max, hints: {}, exclude: {}, allow_default_fallback: true, estimated_tokens: nil)
-          merged     = intent ? merge_defaults(intent) : {}
-          req_caps   = required_capabilities(merged)
-          rules      = load_rules
-          candidates = select_candidates(rules, merged, exclude: exclude, estimated_tokens: estimated_tokens)
-          sorted = candidates.sort_by { |r| -effective_priority(r, intent: merged, hints: hints) }
-          resolutions = sorted.map(&:to_resolution)
-          resolutions = build_fallback_chain(sorted.first, sorted, resolutions) if sorted.first&.fallback
-          resolutions = resolutions.uniq { |r| [r.provider, r.instance, r.model] }
-          resolutions = prepend_hinted_provider(resolutions, hints)
-          resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                              required_capabilities: req_caps)
-          resolutions = enabled_provider_chain if resolutions.empty?
-          if resolutions.any?
-            resolutions = filter_chain_resolutions(resolutions, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: req_caps)
-          end
-          if resolutions.empty? && allow_default_fallback
-            p = Legion::Settings[:llm][:default_provider]&.to_sym ||
-                Legion::Settings[:llm][:routing][:last_resort_provider]
-            last_resort = [Resolution.new(tier:     PROVIDER_TIER.fetch(p, :frontier),
-                                          provider: p,
-                                          model:    Legion::Settings[:llm][:default_model] ||
-                                                    Legion::Settings[:llm][:routing][:last_resort_model])]
-            resolutions = filter_chain_resolutions(last_resort, estimated_tokens:      estimated_tokens,
-                                                                required_capabilities: req_caps)
-          end
-          EscalationChain.new(resolutions: resolutions, max_attempts: max)
-        end
-
-        def build_fallback_chain(primary_rule, candidates, default_chain)
-          chain = [primary_rule.to_resolution]
-          current = primary_rule
-
-          while current.fallback
-            fallback_target = current.fallback
-            if fallback_target.is_a?(Hash)
-              fb = fallback_target.transform_keys(&:to_sym)
-              fb_tier     = fb[:tier]&.to_sym || :frontier
-              fb_provider = fb[:provider]&.to_sym || default_provider_for_tier(fb_tier)
-              fb_model    = fb[:model] || default_model_for_tier(fb_tier)
-              chain << Resolution.new(tier: fb_tier, provider: fb_provider, model: fb_model)
-              break
-            else
-              next_rule = candidates.find { |r| r.name == fallback_target.to_s }
-              break unless next_rule
-
-              chain << next_rule.to_resolution
-              current = next_rule
-            end
-          end
-
-          remaining = default_chain.reject { |r| chain.any? { |c| c.provider == r.provider && c.model == r.model } }
-          chain + remaining
         end
 
         def escalation_max_attempts
