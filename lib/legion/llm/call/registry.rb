@@ -109,8 +109,8 @@ module Legion
           end
         end
 
-        def all_provider_families
-          @mutex.synchronize { @registry.keys.dup }
+        def providers
+          @mutex.synchronize { @registry.dup.freeze }
         end
 
         def reset!
