@@ -329,9 +329,12 @@ module Legion
           return false if !models.empty?    && !models.map(&:to_s).include?(lane[:model].to_s)
 
           # H-C / opus H3 / PR #152 I1: normalize capabilities on BOTH sides so :tools and
-          # :function_calling are treated as aliases (gemini/openai/anthropic vocabularies).
-          requested = Legion::LLM::Inventory::Capabilities.normalize(capabilities)
-          available = Legion::LLM::Inventory::Capabilities.normalize(Array(lane[:capabilities]))
+          # :function_calling/:tool_use are treated as aliases. Collapse to canonical-only
+          # (aliases → canonical, drop the alias symbol) so the set-difference only compares
+          # canonical forms: normalize([:function_calling]) = [:tools],
+          # normalize([:tool_use]) = [:tools]. Bidirectional aliasing.
+          requested = canonicalize_capabilities(capabilities)
+          available = canonicalize_capabilities(Array(lane[:capabilities]))
           return false unless (requested - available).empty?
 
           return false if thinking == :require && !available.include?(:thinking)
@@ -345,6 +348,16 @@ module Legion
 
         def default_rng
           @default_rng ||= Random.new
+        end
+
+        def canonicalize_capabilities(caps)
+          aliases = Legion::LLM::Inventory::Capabilities::ALIASES
+          Array(caps).compact.filter_map do |c|
+            next unless c.respond_to?(:to_s)
+
+            sym = c.to_s.downcase.strip.tr('-', '_').to_sym
+            aliases.fetch(sym, sym)
+          end.uniq
         end
 
         def filter_chain_resolutions(resolutions, estimated_tokens:, required_capabilities:)
