@@ -65,17 +65,19 @@ RSpec.describe 'Router determinism and regression coverage' do
       Legion::Settings[:llm][:default_provider] = :vllm
       Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
 
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
-        [
-          {
-            provider:       :vllm,
-            instance:       :default,
-            model:          'legion-code-27b-v1',
-            capabilities:   %i[completion streaming tools thinking],
-            context_length: 262_144
-          }
-        ]
-      )
+      # Only legion-code-27b-v1 is in the live catalog — qwen3.6-27b is not offered.
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id:              'direct:vllm:default:inference:legion-code-27b-v1',
+                                          tier:            :direct,
+                                          provider_family: :vllm,
+                                          instance_id:     :default,
+                                          model:           'legion-code-27b-v1',
+                                          type:            :inference,
+                                          capabilities:    %i[completion streaming tools thinking],
+                                          limits:          { context_window: 262_144 },
+                                          enabled:         true,
+                                          cost:            {}
+                                        })
       Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: nil, status: :ok)
     end
 

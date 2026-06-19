@@ -80,12 +80,19 @@ RSpec.describe 'Router multi-instance provider routing' do
       Legion::LLM::Call::Registry.register(:vllm, Module.new, instance: :default,
                                                               metadata: { default_model: 'gemma-4-12b-it', tier: :direct })
 
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(
-        [
-          { schema_version: 2, provider: :vllm, instance: :apollo, model: 'legion-code-27b-v1',
-            capabilities: %i[completion streaming tools thinking], context_length: 262_144 }
-        ]
-      )
+      # Only :apollo has legion-code-27b-v1; :default's model (gemma-4-12b-it) is absent.
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id:              'direct:vllm:apollo:inference:legion-code-27b-v1',
+                                          tier:            :direct,
+                                          provider_family: :vllm,
+                                          instance_id:     :apollo,
+                                          model:           'legion-code-27b-v1',
+                                          type:            :inference,
+                                          capabilities:    %i[completion streaming tools thinking],
+                                          limits:          { context_window: 262_144 },
+                                          enabled:         true,
+                                          cost:            {}
+                                        })
       Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :apollo, status: :ok)
       Legion::LLM::Discovery.record_discovery_status(provider: :vllm, instance: :default, status: :ok)
     end

@@ -62,9 +62,12 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'lists normalized model offerings with type filters' do
-      Legion::Settings[:extensions][:llm][:bedrock] = {
-        enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6', region: 'us-east-2'
-      }
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'cloud:bedrock:default:embed:amazon.titan-embed-text-v2:0', tier: :cloud,
+        provider_family: :bedrock, instance_id: :default,
+        model: 'amazon.titan-embed-text-v2:0', type: :embed,
+        capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
 
       response = get_json('/api/llm/models?type=embed')
       body = Legion::JSON.load(response.body)
@@ -76,17 +79,12 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'returns all provider offerings under the provider scoped route' do
-      Legion::Settings[:extensions][:llm][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
-      discovered_models = [
-        {
-          model:          'qwen3.6-27b',
-          provider:       :vllm,
-          instance:       :default,
-          context_length: 32_768
-        }
-      ]
-      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered_models)
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered_models)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'direct:vllm:default:inference:qwen3.6-27b', tier: :direct,
+        provider_family: :vllm, instance_id: :default,
+        model: 'qwen3.6-27b', type: :inference,
+        capabilities: [], limits: { context_window: 32_768 }, enabled: true, cost: {}
+                                        })
 
       response = get_json('/api/llm/providers/vllm/models')
       body = Legion::JSON.load(response.body)
@@ -97,14 +95,19 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'returns a model detail document' do
-      Legion::Settings[:extensions][:llm][:anthropic] = { enabled: true, default_model: 'claude-sonnet-4-6' }
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'frontier:anthropic:default:inference:claude-sonnet-4-6', tier: :frontier,
+        provider_family: :anthropic, instance_id: :default,
+        model: 'claude-sonnet-4-6', type: :inference,
+        capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
 
       response = get_json('/api/llm/models/claude-sonnet-4-6')
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
       expect(body[:data][:model][:id]).to eq('claude-sonnet-4-6')
-      expect(body[:data][:offerings].first[:provider_family]).to eq('anthropic')
+      expect(body[:data][:offerings].first[:provider_family].to_s).to eq('anthropic')
     end
 
     it 'returns 404 for unknown models' do
@@ -116,17 +119,12 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'backs OpenAI-compatible model listing with the same inference inventory' do
-      Legion::Settings[:extensions][:llm][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
-      discovered_models = [
-        {
-          model:          'qwen3.6-27b',
-          provider:       :vllm,
-          instance:       :default,
-          context_length: 32_768
-        }
-      ]
-      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered_models)
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered_models)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'direct:vllm:default:inference:qwen3.6-27b', tier: :direct,
+        provider_family: :vllm, instance_id: :default,
+        model: 'qwen3.6-27b', type: :inference,
+        capabilities: [], limits: { context_window: 32_768 }, enabled: true, cost: {}
+                                        })
 
       response = get_json('/v1/models')
       body = Legion::JSON.load(response.body)
