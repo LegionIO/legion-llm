@@ -12,6 +12,19 @@ module Legion
 
         module_function
 
+        # Lane-based rejection reason for request_lane consumers (P4+).
+        # Reads lane[:health] directly — no Resolution object, no Inventory call.
+        # This is the post-P5 API; the old resolution-based rejection_reason is kept
+        # for the executor's EscalationChain loop until P5 rewrites it.
+        def lane_rejection_reason(lane:, **)
+          return :policy_denied if lane[:health][:denied]
+          return :circuit_open  if lane[:health][:circuit_state] == :open
+          return :unavailable   if lane[:health][:available] == false
+
+          nil
+        end
+
+        # Resolution-based filter (kept for executor's old EscalationChain loop; deleted in P5).
         def filter_resolutions(resolutions, estimated_tokens: nil, required_capabilities: [])
           req_caps = Array(required_capabilities)
           @last_rejection_reasons = []

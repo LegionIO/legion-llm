@@ -2,7 +2,6 @@
 
 require 'legion/llm/inventory/capabilities'
 require_relative 'router/resolution'
-require_relative 'router/rule'
 require_relative 'router/health_tracker'
 require_relative 'router/availability'
 require_relative 'router/registry_lookup'
