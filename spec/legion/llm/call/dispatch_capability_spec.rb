@@ -233,6 +233,48 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
       expect(described_class.log).to have_received(:warn).with(/DEPRECATED.*dispatch_chat/).once
     end
 
+    # P3 C4: Defense-in-depth — library callers that bypass the Router (Legion::LLM.embed,
+    # GAIA) cannot route to a policy-denied model by passing a hardcoded model name.
+    # Inventory.write_lane already blocks denied models from entering the catalog.
+    # Call::Dispatch.enforce_model_policy! is the second line of defense for direct callers.
+    describe 'enforce_model_policy! defense-in-depth (P3 C4)' do
+      # An extension module that exposes model_allowed? as lex-llm Provider does,
+      # simulating a real provider extension with blacklist policy enforced.
+      let(:policy_ext) do
+        Module.new do
+          module_function
+
+          def embed(model:, text:, **) # rubocop:disable Lint/UnusedMethodArgument
+            { content: [0.1], usage: { input_tokens: 1, output_tokens: 0 } }
+          end
+
+          def model_allowed?(model_name)
+            !['claude-old'].include?(model_name.to_s)
+          end
+        end
+      end
+
+      before do
+        Legion::LLM::Call::Registry.register(:bedrock, policy_ext)
+      end
+
+      it 'raises ModelNotAllowed when caller passes a blacklisted model directly' do
+        expect do
+          described_class.call(
+            provider: :bedrock, capability: :embed, model: 'claude-old', text: 'hello'
+          )
+        end.to raise_error(Legion::LLM::ModelNotAllowed)
+      end
+
+      it 'does not raise for a model not on the blacklist' do
+        expect do
+          described_class.call(
+            provider: :bedrock, capability: :embed, model: 'allowed-model', text: 'hello'
+          )
+        end.not_to raise_error
+      end
+    end
+
     it 'dispatch_embed emits deprecation warning once' do
       allow(described_class.log).to receive(:warn)
       described_class.dispatch_embed(provider: :ollama, model: 'nomic', text: 'hi')
