@@ -1328,7 +1328,15 @@ confidence: 0.9 }],
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
       allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([healthy_entry])
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:open)
+      # Seed an open-circuit Inventory lane for ollama:default so circuit_open? sees it
+      Legion::Settings[:extensions][:llm][:ollama] ||= { weight: 100, instances: {}, models: {} }
+      Legion::LLM::Inventory.write_lane(
+        lane:   { id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
+                provider_family: :ollama, instance_id: :default,
+                model: 'gpt-5.4-mini', type: :inference },
+        ttl:    3600,
+        health: { circuit_state: :open, denied: false, available: false, adjustment: -50 }
+      )
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:auto_route]).to be true
       expect(result[:model]).to be_nil

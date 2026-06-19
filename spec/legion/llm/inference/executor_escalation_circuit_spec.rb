@@ -25,7 +25,35 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
   before do
     allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
     allow(Legion::LLM::Audit).to receive(:emit_prompt)
-    Legion::LLM::Router.health_tracker.reset_all
+    Legion::LLM::Router.reset!
+    # Seed provider settings and Inventory lanes so HealthTracker circuit writes are visible
+    # to circuit_open? (which now reads lane health, not HealthTracker directly — P2).
+    Legion::Settings[:extensions][:llm][:vllm] ||= { weight: 100, instances: {}, models: {} }
+    Legion::Settings[:extensions][:llm][:bedrock] ||= { weight: 100, instances: {}, models: {} }
+    Legion::Settings[:extensions][:llm][:anthropic] ||= { weight: 100, instances: {}, models: {} }
+    Legion::LLM::Inventory.write_lane(
+      lane: { id: 'fleet:vllm:h200:inference:qwen3-32b', tier: :fleet, provider_family: :vllm,
+              instance_id: :h200, model: 'qwen3-32b', type: :inference },
+      ttl:  3600
+    )
+    Legion::LLM::Inventory.write_lane(
+      lane: { id: 'cloud:bedrock:primary:inference:anthropic.claude-sonnet-4', tier: :cloud,
+              provider_family: :bedrock, instance_id: :primary,
+              model: 'anthropic.claude-sonnet-4', type: :inference },
+      ttl:  3600
+    )
+    Legion::LLM::Inventory.write_lane(
+      lane: { id: 'cloud:anthropic:primary:inference:claude-haiku-4-5', tier: :cloud,
+              provider_family: :anthropic, instance_id: :primary,
+              model: 'claude-haiku-4-5', type: :inference },
+      ttl:  3600
+    )
+    Legion::LLM::Inventory.write_lane(
+      lane: { id: 'cloud:anthropic:secondary:inference:claude-haiku-4-5', tier: :cloud,
+              provider_family: :anthropic, instance_id: :secondary,
+              model: 'claude-haiku-4-5', type: :inference },
+      ttl:  3600
+    )
   end
 
   def trip_circuit(provider:, instance:)
@@ -59,10 +87,18 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
     it 'allows half_open as a recovery probe' do
       tracker = Legion::LLM::Router.health_tracker
       trip_circuit(provider: :vllm, instance: :h200)
-      # Simulate cooldown expiry by forcing half_open state
+      # Simulate cooldown expiry by forcing half_open state in both breaker and Inventory lane
+      # (P2: Inventory lane is the SSOT for health — circuit_open? reads from there)
       tracker.instance_variable_get(:@mutex).synchronize do
         key = tracker.send(:instance_key, :vllm, :h200)
         tracker.instance_variable_get(:@circuits)[key][:state] = :half_open
+      end
+      vllm_lane = Legion::LLM::Inventory.lane(id: 'fleet:vllm:h200:inference:qwen3-32b')
+      if vllm_lane
+        Legion::LLM::Inventory.write_lane(
+          lane: vllm_lane, ttl: 3600,
+          health: vllm_lane[:health].merge(circuit_state: :half_open, available: true)
+        )
       end
 
       vllm_adapter = Module.new do
@@ -149,8 +185,9 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
 
       # Creditless account's circuit is open (skipped on future requests); the healthy
       # sibling is untouched; the model is NOT denied (it works on the sibling).
-      expect(tracker.circuit_state(:anthropic, instance: :primary)).to eq(:open)
-      expect(tracker.circuit_state(:anthropic, instance: :secondary)).to eq(:closed)
+      circuits = tracker.instance_variable_get(:@circuits)
+      expect(circuits.dig('anthropic/primary', :state)).to eq(:open)
+      expect(circuits.dig('anthropic/secondary', :state) || :closed).to eq(:closed)
       expect(tracker.model_denied?(provider: :anthropic, model: 'claude-haiku-4-5', instance: :primary)).to be(false)
     end
   end

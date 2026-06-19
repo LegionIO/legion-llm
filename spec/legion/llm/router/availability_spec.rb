@@ -4,14 +4,29 @@ require 'spec_helper'
 
 RSpec.describe Legion::LLM::Router::Availability do
   before do
-    Legion::LLM::Router.health_tracker.reset_all
+    Legion::LLM::Router.reset!
     Legion::LLM::Discovery.reset!
+    # Seed provider settings so write_lane can compute lane_weight
+    Legion::Settings[:extensions][:llm][:vllm] ||= { weight: 100, instances: {}, models: {} }
+    Legion::Settings[:extensions][:llm][:bedrock] ||= { weight: 100, instances: {}, models: {} }
+    # Seed Inventory lanes so HealthTracker writes are visible to rejection_reason
+    Legion::LLM::Inventory.write_lane(
+      lane: { id: 'fleet:vllm:h200:inference:qwen3-32b', tier: :fleet, provider_family: :vllm,
+              instance_id: :h200, model: 'qwen3-32b', type: :inference },
+      ttl:  3600
+    )
+    Legion::LLM::Inventory.write_lane(
+      lane: { id: 'cloud:bedrock:primary:inference:anthropic.claude-sonnet-4', tier: :cloud,
+              provider_family: :bedrock, instance_id: :primary,
+              model: 'anthropic.claude-sonnet-4', type: :inference },
+      ttl:  3600
+    )
   end
 
   let(:vllm_resolution) do
     Legion::LLM::Router::Resolution.new(
       tier: :fleet, provider: :vllm, instance: :h200,
-      model: 'qwen3:32b', offering_id: 'vllm-h200-qwen',
+      model: 'qwen3-32b', offering_id: 'vllm-h200-qwen',
       metadata: { capabilities: %i[completion streaming tools] }
     )
   end
@@ -36,7 +51,7 @@ RSpec.describe Legion::LLM::Router::Availability do
 
   let(:vllm_offering) do
     {
-      model:           'qwen3:32b',
+      model:           'qwen3-32b',
       provider_family: 'vllm',
       instance_id:     'h200',
       capabilities:    %w[chat completion streaming tools],
@@ -63,17 +78,20 @@ RSpec.describe Legion::LLM::Router::Availability do
     it 'keeps half-open circuits as recovery probes' do
       tracker = Legion::LLM::Router.health_tracker
       tracker.trip_circuit(provider: :vllm, instance: :h200, reason: 'test')
-      tracker.instance_variable_get(:@mutex).synchronize do
-        key = tracker.send(:instance_key, :vllm, :h200)
-        tracker.instance_variable_get(:@circuits)[key][:state] = :half_open
-      end
+      # Simulate half_open by directly updating the lane health (P2: health lives in the lane)
+      vllm_lane = Legion::LLM::Inventory.lane(id: 'fleet:vllm:h200:inference:qwen3-32b')
+      Legion::LLM::Inventory.write_lane(
+        lane:   vllm_lane,
+        ttl:    3600,
+        health: vllm_lane[:health].merge(circuit_state: :half_open, available: true)
+      )
 
       result = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
       expect(result.map(&:provider)).to include(:vllm)
     end
 
     it 'drops resolutions with denied models' do
-      Legion::LLM::Router.health_tracker.deny_model(provider: :vllm, instance: :h200, model: 'qwen3:32b', reason: 'test')
+      Legion::LLM::Router.health_tracker.deny_model(provider: :vllm, instance: :h200, model: 'qwen3-32b', reason: 'test')
 
       result = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
       expect(result.map(&:provider)).to eq([:bedrock])
@@ -117,7 +135,7 @@ RSpec.describe Legion::LLM::Router::Availability do
     end
 
     it 'returns :model_denied for denied models' do
-      Legion::LLM::Router.health_tracker.deny_model(provider: :vllm, instance: :h200, model: 'qwen3:32b', reason: 'test')
+      Legion::LLM::Router.health_tracker.deny_model(provider: :vllm, instance: :h200, model: 'qwen3-32b', reason: 'test')
       expect(described_class.rejection_reason(vllm_resolution, estimated_tokens: nil, required_capabilities: [])).to eq(:model_denied)
     end
 

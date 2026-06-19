@@ -341,12 +341,9 @@ module Legion
               next false unless Call::Registry.registered?(provider, instance: instance)
 
               # Read circuit state from Inventory lane health (P2: lane is the SSOT for health).
+              # No lanes means cold-boot / pre-ScopedRefresher — treat as circuit closed (permit).
               lanes = Legion::LLM::Inventory.lanes_for(provider: provider, instance: instance)
-              if lanes.any?
-                lanes.none? { |l| l[:health][:circuit_state] == :open }
-              else
-                Router.health_tracker.circuit_state(provider, instance: instance) != :open # allowlist:write-side
-              end
+              lanes.empty? || lanes.none? { |l| l[:health][:circuit_state] == :open }
             end
 
             if healthy

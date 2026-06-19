@@ -662,11 +662,12 @@ module Legion
 
           def circuit_open?(resolution)
             # Read from Inventory lane health (P2: lane is the single source of health truth).
+            # No lanes means cold-boot / pre-ScopedRefresher — treat as circuit closed (permit).
             lanes = Legion::LLM::Inventory.lanes_for(provider: resolution.provider,
                                                      instance: resolution.instance)
-            return lanes.any? { |l| l[:health][:circuit_state] == :open } if lanes.any?
+            return false unless lanes.any?
 
-            Legion::LLM::Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance) == :open # allowlist:write-side
+            lanes.any? { |l| l[:health][:circuit_state] == :open }
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.escalation.circuit_check')
             false

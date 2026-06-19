@@ -78,28 +78,30 @@ module Legion
           end
 
           def self.instance_to_hash(entry)
-            health = begin
-              Legion::LLM::Router.health_tracker
-            rescue StandardError => e
-              handle_exception(e, level: :warn, handled: true, operation: 'api.providers.health_tracker')
-              nil
-            end
             provider_key = entry[:provider].to_sym
             instance_key = entry[:instance].to_sym
+
+            # Read health from Inventory lanes (P2: lane is the SSOT for health).
+            # Falls back to empty hash if no lanes are populated yet (cold-boot).
+            health_hash = begin
+              lanes = Legion::LLM::Inventory.lanes_for(provider: provider_key, instance: instance_key)
+              if lanes.any?
+                h = lanes.first[:health]
+                { circuit_state: h[:circuit_state].to_s, adjustment: h[:adjustment].to_i }
+              else
+                {}
+              end
+            rescue StandardError => e
+              handle_exception(e, level: :warn, handled: true, operation: 'api.providers.health_lookup')
+              {}
+            end
 
             result = {
               provider:     entry[:provider].to_s,
               instance:     entry[:instance].to_s,
               tier:         entry.dig(:metadata, :tier)&.to_s,
               capabilities: Array(entry.dig(:metadata, :capabilities)).map(&:to_s),
-              health:       if health
-                              {
-                                circuit_state: health.circuit_state(provider_key, instance: instance_key).to_s,
-                                adjustment:    health.adjustment(provider_key, instance: instance_key)
-                              }
-                            else
-                              {}
-                            end,
+              health:       health_hash,
               native:       true
             }
             result[:source] = entry.dig(:metadata, :source) if entry.dig(:metadata, :source)

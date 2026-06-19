@@ -92,24 +92,6 @@ module Legion
           (adjustments.sum.to_f / adjustments.size).round
         end
 
-        # Returns :closed, :open, or :half_open.
-        # When +instance:+ is given, returns that specific instance's state.
-        # When nil, returns the worst state across all known instances.
-        def circuit_state(provider, instance: nil, offering_id: nil)
-          return circuit_state_for_key(instance_key(provider, instance)) if instance
-
-          # Check for known instances — return worst state if any exist
-          instances = known_instances(provider)
-          if instances.empty?
-            # Backward compat: use provider-level or offering-level key
-            key = health_key(provider, offering_id)
-            key = provider if offering_id && !tracked?(key) && tracked?(provider)
-            return circuit_state_for_key(key)
-          end
-
-          worst_circuit_state(instances)
-        end
-
         # Open a circuit immediately, bypassing the failure threshold.
         # Used when a single observation is conclusive (e.g., discovery unreachable).
         def trip_circuit(provider:, instance: nil, reason: nil)
@@ -237,16 +219,6 @@ module Legion
           end
 
           circuit[:state]
-        end
-
-        # Returns the worst circuit state across multiple keys
-        # Priority: :open > :half_open > :closed
-        def worst_circuit_state(keys)
-          states = keys.map { |k| circuit_state_for_key(k) }
-          return :open if states.include?(:open)
-          return :half_open if states.include?(:half_open)
-
-          :closed
         end
 
         def register_default_handlers

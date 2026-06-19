@@ -307,7 +307,7 @@ RSpec.describe Legion::LLM::Router do
     it 'deprioritizes a provider whose circuit is open' do
       tracker = described_class.health_tracker
       3.times { tracker.report(provider: :bedrock, signal: :error, value: nil) }
-      expect(tracker.circuit_state(:bedrock)).to eq(:open)
+      expect(tracker.instance_variable_get(:@circuits)[:bedrock]&.dig(:state)).to eq(:open)
 
       result = described_class.resolve(intent: { effort: :reasoning })
       # reasoning-cloud still matches but gets penalized heavily

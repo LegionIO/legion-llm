@@ -514,18 +514,27 @@ module Legion
           nil
         end
 
-        def provider_health(provider_family, offering_id = nil, model: nil)
-          unless defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:routing_enabled?) &&
-                 Legion::LLM::Router.routing_enabled?
-            return { circuit_state: 'unknown' }
-          end
+        def provider_health(provider_family, _offering_id = nil, model: nil)
+          # Read health from Inventory lanes (P2: lane is the SSOT for health).
+          # Falls back to unknown when no lanes exist (cold-boot).
+          provider = provider_family.to_sym
+          lanes = lanes_for(provider: provider)
+          model_lanes = model ? lanes.select { |l| l[:model].to_s == model.to_s } : lanes
+          target = model_lanes.first || lanes.first
 
-          tracker = Legion::LLM::Router.health_tracker
-          circuit = tracker.circuit_state(provider_family, offering_id: offering_id).to_s
-          denied = model ? tracker.model_denied?(provider: provider_family, model: model) : false
+          if target
+            h = target[:health]
+            circuit = h[:circuit_state].to_s
+            denied  = h[:denied]
+          else
+            circuit = 'unknown'
+            denied  = false
+          end
+          adjustment = target ? target[:health][:adjustment].to_i : 0
+
           {
             circuit_state: circuit,
-            adjustment:    tracker.adjustment(provider_family, offering_id: offering_id),
+            adjustment:    adjustment,
             denied:        denied,
             available:     !denied && %w[closed half_open unknown].include?(circuit)
           }

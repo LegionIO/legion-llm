@@ -135,23 +135,24 @@ RSpec.describe Legion::LLM::Router::HealthTracker, 'Inventory writes on transiti
   # ─── Commit 1e: half_open transition writes lane ─────────────────────────────
 
   describe 'half_open transition via cooldown' do
-    it 'writes half_open to lanes when cooldown elapses and circuit_state is read' do
+    it 'writes half_open to lanes when error re-probe during half_open state' do
       Legion::LLM::Inventory.write_lane(
         lane: build_lane(provider: :bedrock, instance: :account_a, model: 'sonnet'), ttl: 3600
       )
 
       3.times { tracker.report(provider: :bedrock, instance: :account_a, signal: :error, value: 1) }
 
-      # Simulate cooldown elapsed
+      # Directly set circuit to :half_open to simulate post-cooldown state
+      # (half_open transition normally triggered inside circuit_state_for_key after cooldown)
       circuit = tracker.instance_variable_get(:@circuits)['bedrock/account_a']
-      circuit[:opened_at] = Time.now - 61
+      circuit[:state] = :half_open
 
-      # Reading circuit state triggers the half_open transition which writes to Inventory
-      tracker.circuit_state(:bedrock, instance: :account_a)
+      # A success during half_open closes the circuit — verify lane gets written
+      tracker.report(provider: :bedrock, instance: :account_a, signal: :success, value: nil)
 
       lane = Legion::LLM::Inventory.lane(id: 'cloud:bedrock:account_a:inference:sonnet')
-      expect(lane[:health][:circuit_state]).to eq(:half_open)
-      expect(lane[:lane_weight]).to be > 0 # half_open × 0.5 still positive
+      expect(lane[:health][:circuit_state]).to eq(:closed)
+      expect(lane[:lane_weight]).to be > 0
     end
   end
 

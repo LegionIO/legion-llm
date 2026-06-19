@@ -51,13 +51,8 @@ module Legion
           if matching_lanes.any?
             return :circuit_open if matching_lanes.any? { |l| l[:health][:circuit_state] == :open }
             return :model_denied if matching_lanes.any? { |l| l[:health][:denied] }
-          else
-            state = Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance) # allowlist:write-side
-            return :circuit_open if state == :open
-            return :model_denied if Router.health_tracker.model_denied?(provider: resolution.provider, # allowlist:write-side
-                                                                        model:    resolution.model,
-                                                                        instance: resolution.instance)
           end
+          # No lanes in Inventory means cold-boot or pre-ScopedRefresher; permit by default.
 
           discovery_state = discovery_status_for(resolution)
           return :instance_unresolved if resolution.instance.nil? && instance_resolution_required?(resolution, discovery_state)
