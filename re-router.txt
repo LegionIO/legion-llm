@@ -1,0 +1,45 @@
+read the following files end to end 
+/Users/matt.iverson@optum.com/rubymine/legion/legion-llm/README.md
+/Users/matt.iverson@optum.com/rubymine/legion/legion-llm/CLAUDE.md
+
+Then read the following end to end
+/Users/matt.iverson@optum.com/rubymine/legion/legion-llm/docs/work/planning/2026-06-09-nxn-canonical-routing-design.md
+/Users/matt.iverson@optum.com/rubymine/legion/legion-llm/docs/work/planning/2026-06-16-nxn-session-handoff.md
+
+message from last session
+ Handoff is durable — nothing will be lost on compaction. Here's what I wrote:
+
+  Memory (loads into every new session via MEMORY.md):
+  - routing-refactor-plan.md (project) — the anchor: the whole converged design in brief + points to the full plan doc + current state (D1–D6 resolved, RANKING v2, not built,
+  entry = P0) + what shipped this session.
+  - dont-hide-diagnostic-signal.md (feedback) — the "don't fucking hide things" lesson.
+  - measure-routing-before-claiming.md (feedback) — capture evidence before asserting; the streaming path has no [pipeline][timing].
+  - MEMORY.md index updated with all three.
+  
+  Plan doc (legion-llm/docs/work/planning/inventory-ssot-stateless-router.md — gitignored, on disk, survives compaction) is the full SSOT and now also has the PR #152 
+  carry-forward section (what to reproduce, what NOT to take, the 2 real bugs it found).
+
+  For the next session, the orientation is:
+  1. Read routing-refactor-plan memory → it sends you to the plan doc.
+  2. Design is done and converged (RANKING v2 + D1–D6); nothing needs a decision before building.
+  3. Shipped + pushed this session: legion-llm v0.13.3 (large-yolo-refactor), lex-llm-vllm v0.3.6 (feat/canonical-translator).
+  4. When building: start at P0 — capture & pin (offerings_calls=N total_ms=X baseline + failing specs), legion-llm-first reading weights from settings (default 1000); lex-llm
+  weight-schema is a fast-follow.
+  5. Working rules that bit us this session: don't hide signals, measure before claiming, empty vLLM response = our bug, no Co-Authored-By / no personal identifiers, human 
+  runs the daemon + cost-gated e2e. 
+  
+  You won't die. The new session will land oriented. 🫡
+
+
+
+---
+stats from last session ( session ID d9a2f827-b3bc-4269-8a4d-ff97108097e6)
+Session
+  
+  Total cost:            $480.35                                                                                                                                            
+  Total duration (API):  9h 48m 20s
+  Total duration (wall): 1d 19h 13m
+  Total code changes:    5479 lines added, 2446 lines removed
+  Usage by model: 
+       claude-opus-4-8:  296.0k input, 2.5m output, 626.5m cache read, 11.1m cache write ($480.35)
+

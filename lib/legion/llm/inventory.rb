@@ -398,12 +398,12 @@ module Legion
         end
 
         def discovery_offerings(provider: nil, exclude_providers: [])
-          return [] unless defined?(Legion::LLM::Discovery)
+          return [] unless defined?(Legion::LLM::Inventory::Discovery)
 
-          cached_models = if Legion::LLM::Discovery.respond_to?(:cached_discovered_models)
-                            Legion::LLM::Discovery.cached_discovered_models
+          cached_models = if Legion::LLM::Inventory::Discovery.respond_to?(:cached_discovered_models)
+                            Legion::LLM::Inventory::Discovery.cached_discovered_models
                           else
-                            Legion::LLM::Discovery.discovered_models
+                            Legion::LLM::Inventory::Discovery.discovered_models
                           end
 
           cached_models.filter_map do |model_entry|

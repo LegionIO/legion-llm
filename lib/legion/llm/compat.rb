@@ -24,6 +24,10 @@ module Legion
 
     def self.const_missing(name)
       case name
+      when :Discovery
+        # Moved to Legion::LLM::Inventory::Discovery in v0.14.0
+        CompatWarning.warn_once('Legion::LLM::Discovery', 'Legion::LLM::Inventory::Discovery')
+        Inventory::Discovery
       when :Pipeline
         CompatWarning.warn_once('Legion::LLM::Pipeline', 'Legion::LLM::Inference')
         Inference
