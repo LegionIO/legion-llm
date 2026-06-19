@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
-require_relative '../capabilities'
+require 'legion/llm/inventory/capabilities'
 require_relative '../inventory'
 
 module Legion
@@ -25,7 +25,7 @@ module Legion
               @last_rejection_reasons << reason
               detail = if reason == :missing_capability
                          caps = available_capabilities(resolution)
-                         missing = Capabilities.normalize(req_caps) - Capabilities.normalize(caps)
+                         missing = Legion::LLM::Inventory::Capabilities.normalize(req_caps) - Legion::LLM::Inventory::Capabilities.normalize(caps)
                          " required=#{req_caps} available=#{caps} missing=#{missing}"
                        else
                          ''
@@ -91,7 +91,7 @@ module Legion
 
           if required_capabilities.any?
             caps = available_capabilities(resolution)
-            return :missing_capability if caps.any? && !Capabilities.include_all?(caps, required_capabilities)
+            return :missing_capability if caps.any? && !Legion::LLM::Inventory::Capabilities.include_all?(caps, required_capabilities)
           end
 
           nil
@@ -140,14 +140,14 @@ module Legion
           if offerings&.any?
             offering = offerings.find { |o| model_matches_offering?(resolution.model, o) }
             if offering
-              return Capabilities.merge(
+              return Legion::LLM::Inventory::Capabilities.merge(
                 offering[:capabilities],
                 offering['capabilities']
               )
             end
           end
 
-          Capabilities.merge(
+          Legion::LLM::Inventory::Capabilities.merge(
             resolution.metadata[:model_capabilities],
             resolution.metadata['model_capabilities'],
             resolution.metadata[:capabilities],
