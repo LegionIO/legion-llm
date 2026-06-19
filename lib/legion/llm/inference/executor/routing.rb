@@ -443,6 +443,7 @@ module Legion
           def step_request_normalization
             @exchange_id = Tracing.exchange_id
             Thread.current[:legion_log_exchange_id] = @exchange_id
+            Thread.current[:p0_exchange_id] = @exchange_id
           end
 
           def use_native_dispatch?(provider)

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'concurrent'
 require 'legion/logging/helper'
 
 module Legion
@@ -45,12 +46,52 @@ module Legion
       }.freeze
 
       class << self
-        def invalidate_offerings_cache!
-          log.debug '[llm][inventory] action=invalidate_offerings_cache'
-          @offerings_cache = nil
+        # Correlation-keyed call/time accounting for P0 baseline capture.
+        # exchange_id: is threaded explicitly by callers that have it; falls back to
+        # Thread.current[:p0_exchange_id] (set by the executor before its routing step)
+        # so indirect router calls (Inventory.routing_candidates, availability checks)
+        # are captured without signature churn on every intermediate method.
+        def offerings(filters = {})
+          eid = Thread.current[:p0_exchange_id]
+          if eid
+            @capture_counters ||= Concurrent::Map.new
+            counters = @capture_counters.compute_if_absent(eid) { { calls: 0, total_ms: 0.0 } }
+            counters[:calls] += 1
+            started = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+            result = compose_offerings(filters: filters)
+            counters[:total_ms] += (::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - started) * 1000.0
+            result
+          else
+            compose_offerings(filters: filters)
+          end
         end
 
-        def offerings(filters = {})
+        def capture_summary(exchange_id:, **)
+          @capture_counters&.delete(exchange_id) || { calls: 0, total_ms: 0.0 }
+        end
+
+        def providers
+          compose_offerings(filters: {}).group_by { |offering| offering[:provider_family] }
+        end
+
+        # Bounded routing-candidate set: ONE representative offering per enabled
+        # provider-instance for the given operation, drawn from the SAME merged
+        # catalog the API serves (settings + native adapter static catalogs +
+        # discovery). This is the set the Router scores — it never enumerates a
+        # provider's full catalog (e.g. OpenAI's 100+ models). The representative
+        # is the provider's declared default_model when that model is offered,
+        # else the settings-default offering, else the first offering.
+        def routing_candidates(operation: :generation, **filters)
+          type = normalize_type(operation)
+          catalog = offerings(filters.merge(type: type))
+          catalog
+            .group_by { |offering| [offering[:provider_family].to_s, offering_instance_key(offering)] }
+            .filter_map { |(provider_family, instance_key), group| representative_offering(provider_family, instance_key, group) }
+        end
+
+        private
+
+        def compose_offerings(filters:, **)
           log.debug "[llm][inventory] action=offerings.enter filters=#{filters.keys}"
           normalized_filters = normalize_filter_hash(filters)
           provider_scope = normalized_filters[:provider]&.to_sym
@@ -77,27 +118,6 @@ module Legion
           handle_exception(e, level: :warn, handled: true, operation: 'llm.inventory.offerings')
           []
         end
-
-        def providers
-          offerings.group_by { |offering| offering[:provider_family] }
-        end
-
-        # Bounded routing-candidate set: ONE representative offering per enabled
-        # provider-instance for the given operation, drawn from the SAME merged
-        # catalog the API serves (settings + native adapter static catalogs +
-        # discovery). This is the set the Router scores — it never enumerates a
-        # provider's full catalog (e.g. OpenAI's 100+ models). The representative
-        # is the provider's declared default_model when that model is offered,
-        # else the settings-default offering, else the first offering.
-        def routing_candidates(operation: :generation, **filters)
-          type = normalize_type(operation)
-          catalog = offerings(filters.merge(type: type))
-          catalog
-            .group_by { |offering| [offering[:provider_family].to_s, offering_instance_key(offering)] }
-            .filter_map { |(provider_family, instance_key), group| representative_offering(provider_family, instance_key, group) }
-        end
-
-        private
 
         # --- routing-candidate selection (one representative offering / instance) ---
 
