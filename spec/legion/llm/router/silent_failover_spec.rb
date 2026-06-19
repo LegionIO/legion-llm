@@ -1,22 +1,117 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'legion/llm/api/stream_assembler'
 
-# G30 / N×N invariant 5 — pending P5 commit 3
+# G30 / N×N invariant 5 — P5 commit 3 implementation
 RSpec.describe 'Mid-stream failover is silent (P5)' do
-  before { skip 'P5: executor stateless loop' }
+  let(:emitter) do
+    Class.new do
+      attr_reader :events, :trailers
 
-  def capture_sse_events_during_failover
-    raise NotImplementedError, 'implement SSE capture fixture in P5'
+      def initialize
+        @events   = []
+        @trailers = {}
+      end
+
+      def on_start(**) = @events << ({ type: :start })
+      def on_text_open(**) = @events << ({ type: :text_open })
+      def on_text_delta(**) = @events << ({ type: :text_delta })
+      def on_text_close(**) = @events << ({ type: :text_close })
+      def on_thinking_open(**) = @events << ({ type: :thinking_open })
+      def on_thinking_delta(**) = @events << ({ type: :thinking_delta })
+      def on_thinking_close(**) = @events << ({ type: :thinking_close })
+      def on_tool_call_open(**) = @events << ({ type: :tool_call_open })
+      def on_tool_call_delta(**) = @events << ({ type: :tool_call_delta })
+      def on_tool_call_close(**) = @events << ({ type: :tool_call_close })
+      def on_server_tool_result(**) = @events << ({ type: :server_tool_result })
+      def on_keep_alive = @events << ({ type: :keep_alive })
+      def on_message_delta(**) = @events << ({ type: :message_delta })
+      def on_done(**) = @events << ({ type: :done })
+      def on_error(**) = @events << ({ type: :error })
+
+      def on_trailers(trailers:)
+        @trailers.merge!(trailers)
+        @events << { type: :trailers, trailers: trailers }
+      end
+    end.new
   end
 
-  def response_trailers
-    raise NotImplementedError, 'implement response_trailers accessor in P5'
+  let(:lane_a) { { id: 'cloud:bedrock:primary:inference:claude-sonnet-4-6', provider_family: :bedrock } }
+  let(:lane_b) { { id: 'frontier:anthropic:default:inference:claude-sonnet-4-6', provider_family: :anthropic } }
+
+  describe 'StreamAssembler construction' do
+    it 'requires non-nil initial_lane — raises ArgumentError when nil' do
+      expect do
+        Legion::LLM::API::StreamAssembler.new(emitter: emitter, request_id: 'r1', model: 'test', initial_lane: nil)
+      end.to raise_error(ArgumentError, /initial_lane/)
+    end
+
+    it 'accepts a valid lane Hash' do
+      expect do
+        Legion::LLM::API::StreamAssembler.new(emitter: emitter, request_id: 'r1', model: 'test', initial_lane: lane_a)
+      end.not_to raise_error
+    end
   end
 
-  it 'mid-stream failover emits debug trailers, not a wire-level SSE event' do
-    events = capture_sse_events_during_failover
-    expect(events.map { it[:type] }).not_to include(:'provider-switch')
-    expect(response_trailers).to include('x-legion-failover-from', 'x-legion-failover-to')
+  describe 'provider_failover_pending!' do
+    let(:assembler) do
+      Legion::LLM::API::StreamAssembler.new(emitter: emitter, request_id: 'r1', model: 'test', initial_lane: lane_a)
+    end
+
+    it 'does not emit a custom SSE event for provider switch (silent per N×N invariant 5)' do
+      assembler.provider_failover_pending!(from: lane_a)
+      event_types = emitter.events.map { |e| e[:type] }
+      expect(event_types).not_to include(:'provider-switch')
+      expect(event_types).not_to include(:failover)
+      expect(event_types).not_to include(:provider_switch)
+    end
+  end
+
+  describe 'finalize with failover' do
+    it 'emits debug trailers when failover happened' do
+      assembler = Legion::LLM::API::StreamAssembler.new(
+        emitter: emitter, request_id: 'r1', model: 'test', initial_lane: lane_a
+      )
+      assembler.provider_failover_pending!(from: lane_a)
+      assembler.begin_dispatch_on(lane: lane_b)
+
+      final_response = double('response',
+                              respond_to?: false,
+                              text:        nil,
+                              tool_calls:  nil,
+                              usage:       nil,
+                              thinking:    nil,
+                              metadata:    {})
+      allow(final_response).to receive(:respond_to?).and_return(false)
+
+      assembler.finalize(final_response)
+
+      expect(emitter.trailers).to include(
+        'x-legion-failover-from',
+        'x-legion-failover-to',
+        'x-legion-failover-count'
+      )
+      expect(emitter.trailers['x-legion-failover-from']).to eq(lane_a[:id])
+      expect(emitter.trailers['x-legion-failover-to']).to eq(lane_b[:id])
+      expect(emitter.trailers['x-legion-failover-count']).to eq('1')
+    end
+
+    it 'does NOT emit trailers when no failover occurred' do
+      assembler = Legion::LLM::API::StreamAssembler.new(
+        emitter: emitter, request_id: 'r1', model: 'test', initial_lane: lane_a
+      )
+      final_response = double('response',
+                              respond_to?: false,
+                              text:        nil,
+                              tool_calls:  nil,
+                              usage:       nil,
+                              thinking:    nil,
+                              metadata:    {})
+      allow(final_response).to receive(:respond_to?).and_return(false)
+
+      assembler.finalize(final_response)
+      expect(emitter.trailers).to be_empty
+    end
   end
 end

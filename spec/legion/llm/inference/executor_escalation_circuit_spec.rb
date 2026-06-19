@@ -103,10 +103,18 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
 
   describe 'failing over across instances of the same provider' do
     before do
-      # P5: reset Inventory so ONLY anthropic lanes exist — prevents vllm/bedrock (from shared before)
-      # from being dispatched first (their registered adapters lack chat methods).
+      # P5: reset Inventory AND Router so ONLY anthropic lanes exist — prevents vllm/bedrock
+      # from being dispatched first, and clears any circuit state from previous tests.
       # Use 'qwen3:32b' (colon) to match the request's routing model exactly.
+      Legion::LLM::Router.reset!
       Legion::LLM::Inventory.reset_live_store!
+      # Give primary a higher weight so it's ALWAYS dispatched first.
+      # This ensures the credit-failure triggers on primary, not secondary.
+      Legion::Settings[:extensions][:llm][:anthropic] ||= {}
+      Legion::Settings[:extensions][:llm][:anthropic][:instances] = {
+        primary:   { weight: 200 },
+        secondary: { weight: 100 }
+      }
       write_test_lane(provider: :anthropic, instance: :primary,   model: 'qwen3:32b', tier: :frontier)
       write_test_lane(provider: :anthropic, instance: :secondary, model: 'qwen3:32b', tier: :frontier)
     end

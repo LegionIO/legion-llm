@@ -66,13 +66,23 @@ module Legion
           finished
         ].freeze
 
+        # H-I / sonnet G6 / D-K: initial_lane required so the assembler always has a lane on hand.
+        # Passing initial_lane: nil raises ArgumentError.
         def initialize(emitter:, request_id:, model:, input_tokens: 0,
                        emit_thinking_blocks: nil, tool_call_buffering: nil,
-                       keep_alive_interval_ms: nil)
+                       keep_alive_interval_ms: nil, initial_lane: nil, **)
+          raise ArgumentError, 'initial_lane: must be a non-nil lane Hash' if initial_lane.nil?
+
           @emitter = emitter
           @request_id = request_id
           @model = model.to_s
           @input_tokens = input_tokens.to_i
+
+          # G30 / D-F: failover tracking for debug trailers. @current_lane tracks the
+          # active dispatch lane; @failover_chain records lane IDs for the x-legion-failover-*
+          # debug trailers emitted at finalize time. NO custom SSE event (N×N invariant 5).
+          @current_lane = initial_lane
+          @failover_chain = [initial_lane.is_a?(Hash) ? initial_lane[:id] : initial_lane.to_s]
 
           settings = Legion::Settings[:llm][:streaming] || {}
           @emit_thinking_blocks = if emit_thinking_blocks.nil?
@@ -170,6 +180,7 @@ module Legion
           usage = final_response_usage(final_response)
           guard { @emitter.on_message_delta(stop_reason: stop_reason, output_tokens: usage[:output_tokens]) }
           guard { @emitter.on_done(stop_reason: stop_reason, usage: usage, model: resolved_model(final_response)) }
+          emit_failover_trailers!
           @phase = :finished
         rescue IOError, Errno::EPIPE => e
           mark_closed!(e)
@@ -222,6 +233,41 @@ module Legion
           @phase = :before_first_byte if @phase == :mid_tool_call
         end
 
+        # G30 / D-F / N×N invariant 5: mid-stream failover is silent at the SSE wire.
+        # Clears the partial canonical buffer so the next provider renders a clean start.
+        # Appends a failover marker to @failover_chain for debug trailers at finalize.
+        # NO custom SSE event is emitted — that would violate N×N "always translate".
+        def provider_failover_pending!(from:, **)
+          return if @closed
+
+          from_id = from.is_a?(Hash) ? from[:id] : from.to_s
+          log.warn('[llm][stream_assembler] action=provider_failover_pending ' \
+                   "from=#{from_id} request_id=#{@request_id}")
+          # Clear the partial canonical buffer — partial responses can't cross providers
+          # (thinking strip, context invalidation). The next provider starts fresh.
+          close_thinking_block if @thinking_block_open
+          close_text_block     if @text_block_open
+          abort_open_tool_calls(reason: 'provider_failover')
+          @full_text.clear
+          @full_thinking.clear
+          @full_thinking_signature = nil
+          @phase = :before_first_byte
+          @failover_chain << :failover_marker
+        rescue IOError, Errno::EPIPE => e
+          mark_closed!(e)
+        end
+
+        # Called by the executor after selecting the next lane. Updates @current_lane
+        # and appends the new lane ID to the failover chain for debug trailers.
+        def begin_dispatch_on(lane:, **)
+          return if @closed
+
+          @current_lane = lane
+          @failover_chain << (lane.is_a?(Hash) ? lane[:id] : lane.to_s)
+          log.info("[llm][stream_assembler] action=begin_dispatch lane=#{lane.is_a?(Hash) ? lane[:id] : lane} " \
+                   "request_id=#{@request_id}")
+        end
+
         def safe_replay_snapshot
           {
             emitted_text:               @full_text.dup,
@@ -246,6 +292,26 @@ module Legion
         end
 
         private
+
+        # G30 / D-F: emit x-legion-failover-* debug trailers after on_done.
+        # Only fires when failover actually happened (@failover_chain has markers).
+        # Trailers are response metadata, not SSE events — no wire-level event emitted.
+        def emit_failover_trailers!
+          failover_count = @failover_chain.count(:failover_marker)
+          return if failover_count.zero?
+          return unless @emitter.respond_to?(:on_trailers)
+
+          real_ids = @failover_chain.reject { |e| e == :failover_marker }
+          return unless real_ids.size >= 2
+
+          @emitter.on_trailers(trailers: {
+                                 'x-legion-failover-from'  => real_ids.first.to_s,
+                                 'x-legion-failover-to'    => real_ids.last.to_s,
+                                 'x-legion-failover-count' => failover_count.to_s
+                               })
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.api.stream_assembler.emit_failover_trailers')
+        end
 
         def abort_open_tool_calls(reason:)
           @open_tool_calls.each_value do |state|

@@ -25,7 +25,8 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
       out, request_id: 'msg_test', model: 'gemma-4-31b-it'
     )
     assembler = described_class.new(
-      emitter: emitter, request_id: 'msg_test', model: 'gemma-4-31b-it', emit_thinking_blocks: true
+      emitter: emitter, request_id: 'msg_test', model: 'gemma-4-31b-it', emit_thinking_blocks: true,
+      initial_lane: { id: 'test:pending' }
     )
 
     legacy_thinking = Legion::Extensions::Llm::Thinking.new(text: 'the model reasoning', signature: nil)
@@ -51,7 +52,8 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
     emitter = Legion::LLM::API::ClientTranslators::OpenAIResponses.new.events_emitter(
       out, request_id: 'resp_test', model: 'gemma-4-31b-it'
     )
-    assembler = described_class.new(emitter: emitter, request_id: 'resp_test', model: 'gemma-4-31b-it')
+    assembler = described_class.new(emitter: emitter, request_id: 'resp_test', model: 'gemma-4-31b-it',
+                                    initial_lane: { id: 'test:pending' })
 
     block = Legion::Extensions::Llm::Canonical::ContentBlock.text('4215 files in LegionIO')
     chunk = Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: [block], request_id: 'resp_test')
@@ -70,9 +72,10 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
       model:      'gemma-4-31b-it'
     )
     assembler = described_class.new(
-      emitter:    emitter,
-      request_id: 'resp_test',
-      model:      'gemma-4-31b-it'
+      emitter:      emitter,
+      request_id:   'resp_test',
+      model:        'gemma-4-31b-it',
+      initial_lane: { id: 'test:pending' }
     )
     response = ::Struct.new(:message, :tools, :stop, :tokens, :routing, keyword_init: true).new(
       message: {

@@ -68,9 +68,10 @@ module Legion
                     Legion::LLM::API::DebugFormats.emit_echo_request_sse(out, canonical_request) if echo_request
 
                     assembler = Legion::LLM::API::StreamAssembler.new(
-                      emitter:    emitter,
-                      request_id: request_id,
-                      model:      model
+                      emitter:      emitter,
+                      request_id:   request_id,
+                      model:        model,
+                      initial_lane: { id: 'unknown:pending' }
                     )
                     pipeline_response = if executor.respond_to?(:call_responses)
                                           executor.call_responses(body: body, stream: true) { |c| assembler.push(c) }

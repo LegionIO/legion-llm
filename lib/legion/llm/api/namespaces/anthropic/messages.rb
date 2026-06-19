@@ -64,7 +64,8 @@ module Legion
                     emitter:      emitter,
                     request_id:   request_id,
                     model:        model,
-                    input_tokens: estimate_input_tokens(inference_request.messages)
+                    input_tokens: estimate_input_tokens(inference_request.messages),
+                    initial_lane: { id: 'unknown:pending' }
                   )
                   pipeline_response = executor.call_stream do |chunk|
                     assembler.push(chunk)
