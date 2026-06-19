@@ -43,6 +43,7 @@ module Legion
 
       @auto_rules = []
       @auto_rules_populated = false
+      @populate_auto_rules_warned = false
 
       class << self
         # Stateless lane selection — pure function of (Inventory snapshot, routing payload).
@@ -134,17 +135,23 @@ module Legion
           @auto_rules_populated == true
         end
 
-        def populate_auto_rules(_discovered_instances = nil)
-          # Deprecated: RuleGenerator deleted in P4; full no-op stub lands in P5 per G8.
-          # External lex-llm-* callers still reach this via respond_to? guards and must
-          # not crash. @auto_rules_populated is intentionally left false so routing_enabled?
-          # returns false, keeping the old rule-based path permanently inactive.
+        # DEPRECATED in v0.14.0; delete in v0.15.0.
+        # See GitHub issues:
+        #   #155 — remove this stub in v0.15.0 (blocked-by #154)
+        #   #154 — drop call sites from 9 lex-llm-* gems
+        def populate_auto_rules(_discovered_instances = nil, **)
+          return if @populate_auto_rules_warned
+
+          @populate_auto_rules_warned = true
+          log.warn '[llm][router] populate_auto_rules is deprecated and is a no-op as of v0.14.0; ' \
+                   'lex-llm-* gems should drop this call (RANKING v2 replaces auto-rules with lane weights)'
         end
 
         def reset!
           @health_tracker = nil
           @auto_rules = []
           @auto_rules_populated = false
+          @populate_auto_rules_warned = false
         end
 
         def tier_priority
