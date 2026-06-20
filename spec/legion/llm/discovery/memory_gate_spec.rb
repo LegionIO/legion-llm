@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/discovery/memory_gate'
-require 'legion/llm/discovery/system'
+require 'legion/llm/inventory/discovery/memory_gate'
+require 'legion/llm/inventory/discovery/system'
 
 RSpec.describe Legion::LLM::Inventory::Discovery::MemoryGate do
   before do

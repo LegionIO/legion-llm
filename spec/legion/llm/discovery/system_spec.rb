@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/discovery/system'
+require 'legion/llm/inventory/discovery/system'
 
 RSpec.describe Legion::LLM::Inventory::Discovery::System do
   before { described_class.reset! }

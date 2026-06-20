@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 require 'legion/llm/router'
-require 'legion/llm/discovery/system'
+require 'legion/llm/inventory/discovery/system'
 
 RSpec.describe 'Legion::LLM.chat router integration' do
   let(:sample_rules) do

@@ -54,7 +54,7 @@ require_relative 'llm/tools/interceptor'
 require_relative 'llm/inference/prompt'
 require_relative 'llm/helper'
 require_relative 'llm/config'
-require_relative 'llm/discovery'
+require_relative 'llm/inventory/discovery'
 require_relative 'llm/transport'
 
 boot_logger = Object.new.extend(Legion::Logging::Helper)
