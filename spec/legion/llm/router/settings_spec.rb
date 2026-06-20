@@ -125,6 +125,11 @@ RSpec.describe Legion::LLM::Settings do
       expect(routing[:tier_priority]).to eq(%w[local direct fleet cloud frontier])
     end
 
+    it 'defines overridable auto routing model aliases under llm.routing' do
+      routing = described_class.routing_defaults
+      expect(routing[:auto_routing_model_aliases]).to eq(%w[legionio auto])
+    end
+
     describe 'health' do
       subject(:health) { described_class.routing_defaults[:health] }
 

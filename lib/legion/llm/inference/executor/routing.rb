@@ -167,7 +167,7 @@ module Legion
             {
               provider:          @request.routing[:provider],
               instance:          instance,
-              model:             @request.routing[:model] || @request.metadata&.dig(:client_model)&.to_s,
+              model:             routing_model_preference,
               offering_id:       @request.routing[:offering_id] || @request.routing[:id],
               offering_metadata: normalize_offering_metadata(@request.routing[:offering_metadata] ||
                                                              @request.routing[:offering]),
@@ -180,6 +180,22 @@ module Legion
               tier_explicit:     routing_field_explicit?(routing_explicit, :tier, tier),
               estimated_tokens:  estimate_request_tokens
             }
+          end
+
+          def routing_model_preference
+            explicit_model = @request.routing[:model]
+            return explicit_model unless explicit_model.nil? || explicit_model.to_s.empty?
+
+            client_model = @request.metadata&.dig(:client_model)&.to_s
+            return nil if client_model.nil? || client_model.empty?
+            return nil if Legion::LLM::Inference::Request.auto_routing_model?(client_model)
+            return nil unless body_routing_hints_enabled?
+
+            client_model
+          end
+
+          def body_routing_hints_enabled?
+            Legion::Settings.dig(:llm, :routing, :allow_body_routing_hints) == true
           end
 
           def estimate_request_tokens
@@ -261,8 +277,7 @@ module Legion
           def native_tools_requested_for_routing?
             Array(@request.tools).any? ||
               requested_deferred_tool_names.any? ||
-              @triggered_tools.any? ||
-              Tools::Special.pinned_definitions.any?
+              @triggered_tools.any?
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.routing_tools_required')
             false

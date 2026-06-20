@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.14.2] - 2026-06-20
+
+### Fixed
+
+- Move auto-routing model aliases into `llm.routing.auto_routing_model_aliases`, so `legionio` and `auto` stay configurable rather than hard-coded.
+- Ignore request-body `model` values as routing hints unless `llm.routing.allow_body_routing_hints` is explicitly enabled; auto-routing aliases still mean "you pick".
+- Stop treating injected special tools as an implicit native-tools routing requirement when the client did not actually request tools.
+
 ## [0.14.1] - 2026-06-20
 
 ### Fixed

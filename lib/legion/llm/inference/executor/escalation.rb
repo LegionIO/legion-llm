@@ -456,6 +456,9 @@ module Legion
           rescue Legion::LLM::ModelNotAllowed, ::NoMethodError, ::ArgumentError
             raise
           rescue StandardError => e
+            raise if request_payload_error?(e)
+            raise if context_overflow_error?(e)
+
             handle_exception(e, level: :warn, operation: 'llm.pipeline.classify_and_accumulate_exclusions',
                                 lane: lane[:id])
             payload[:tried_lanes] << lane[:id]

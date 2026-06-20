@@ -213,23 +213,24 @@ module Legion
 
       def self.routing_defaults
         {
-          enabled:                  true,
-          tier_priority:            %w[local direct fleet cloud frontier],
+          enabled:                    true,
+          tier_priority:              %w[local direct fleet cloud frontier],
           # Multiplicative tier weights for lane_weight computation (P1 SSOT RANKING v2).
           # Default 100 for all tiers. Operators can override per-tier to bias routing.
           # Used by Inventory.write_lane to compute lane_weight = tier_w * provider_w * instance_w * model_w * health_mult.
-          tier_weights:             { direct: 100, local: 100, fleet: 100, cloud: 100, frontier: 100 },
-          max_attempts:             3,
-          # H-H / sonnet G4: body-level tier/provider/instance hints gated by this flag.
-          # Body model is always honored (OpenAI/Anthropic API contract). Header hints always honored.
-          allow_body_routing_hints: false,
-          default_intent:           { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
+          tier_weights:               { direct: 100, local: 100, fleet: 100, cloud: 100, frontier: 100 },
+          max_attempts:               3,
+          # Body-level routing hints are gated by this flag. Auto-routing aliases
+          # like legionio/auto are still accepted as "you pick" intent.
+          allow_body_routing_hints:   false,
+          auto_routing_model_aliases: %w[legionio auto],
+          default_intent:             { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
           # Last-resort fallback model when both `default_model` and the
           # discovered provider chain are empty. Owned by routing because
           # the chain builder is the only consumer.
-          last_resort_model:        'claude-sonnet-4-6',
-          last_resort_provider:     :anthropic,
-          tiers:                    {
+          last_resort_model:          'claude-sonnet-4-6',
+          last_resort_provider:       :anthropic,
+          tiers:                      {
             local:    { provider: 'ollama' },
             fleet:    {
               queue:           'llm.fleet',
@@ -240,21 +241,21 @@ module Legion
             cloud:    { providers: %w[bedrock azure gemini] },
             frontier: { providers: %w[anthropic openai] }
           },
-          health:                   {
+          health:                     {
             window_seconds:               300,
             circuit_breaker:              { failure_threshold: 3, cooldown_seconds: 60 },
             latency_penalty_threshold_ms: 5000,
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },
-          escalation:               {
+          escalation:                 {
             enabled:            true,
             pipeline_enabled:   true,
             max_attempts:       3,
             quality_threshold:  0,
             skip_open_circuits: true
           },
-          rules:                    [],
-          tier_mappings:            []
+          rules:                      [],
+          tier_mappings:              []
         }
       end
 

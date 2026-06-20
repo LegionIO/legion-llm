@@ -80,4 +80,15 @@ RSpec.describe 'Internal error is terminal — no retry (P5)' do
     executor.send(:classify_and_accumulate_exclusions, error: error, lane: lane, payload: payload)
     expect(payload[:tried_lanes]).to include(lane[:id])
   end
+
+  it 'classify_and_accumulate_exclusions re-raises payload_error immediately' do
+    executor = executor_class.allocate
+    lane = build_lane
+    payload = { tried_lanes: [] }
+    error = RuntimeError.new('ValidationException: output_config: Input does not match the expected shape.')
+
+    expect { executor.send(:classify_and_accumulate_exclusions, error: error, lane: lane, payload: payload) }
+      .to raise_error(RuntimeError, /output_config/)
+    expect(payload[:tried_lanes]).to be_empty
+  end
 end
