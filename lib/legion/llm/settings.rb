@@ -334,8 +334,15 @@ module Legion
 
       def self.embedding_defaults
         {
-          # G15: pinned embedding model for strict-model-pin routing through Router.request_lane.
-          # nil = no embedding configured; NoLaneAvailable raised on generate attempt.
+          # G15: pinned embedding lane for strict-model-pin routing through Router.request_lane.
+          # All three keys nil = no embedding configured; ConfigError raised on generate attempt.
+          # `provider` and `instance` (when set) are passed as hard filters into request_lane —
+          # vector-comparability requires the *same* lane every call, not just the same model.
+          provider:                     nil,
+          instance:                     nil,
+          default_model:                nil,
+          # Deprecated alias for :default_model — read as a fallback so older configs keep working.
+          # New configs MUST use :default_model.
           model:                        nil,
           dimension:                    1024,
           enforce_dimension:            true,

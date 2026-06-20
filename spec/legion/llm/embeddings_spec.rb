@@ -722,3 +722,76 @@ RSpec.describe Legion::LLM::Embeddings do
     end
   end
 end
+
+# Hash-shaped settings (deployed config: provider/instance/default_model).
+# Documents the post-Inventory-SSOT contract — see G15 in inventory-ssot-stateless-router.md.
+RSpec.describe 'Legion::LLM::Embeddings hash-shaped settings (G15)' do
+  before do
+    Legion::LLM.instance_variable_set(:@started, true)
+    Legion::Settings[:llm][:embedding][:model] = nil
+    Legion::Settings[:llm][:embedding][:provider] = nil
+    Legion::Settings[:llm][:embedding][:instance] = nil
+    Legion::Settings[:llm][:embedding][:default_model] = nil
+  end
+
+  describe '.generate with :default_model configured' do
+    before do
+      Legion::Settings[:llm][:embedding][:default_model] = 'mxbai-embed-large:latest'
+      write_test_lane(provider: :ollama, instance: :apollo_embed,
+                      model: 'mxbai-embed-large:latest', tier: :direct, type: :embedding)
+    end
+
+    it 'resolves a lane and dispatches when only :default_model is set' do
+      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response)
+      result = Legion::LLM::Embeddings.generate(text: 'hello')
+      expect(result[:vector]).to be_a(Array)
+      expect(result[:model]).to eq('mxbai-embed-large:latest')
+    end
+  end
+
+  describe '.generate when :default_model is empty' do
+    it 'raises ConfigError with the documented key path' do
+      expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
+      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.to raise_error(
+        Legion::LLM::Errors::ConfigError,
+        /:llm, :embedding, :default_model/
+      )
+    end
+  end
+
+  describe '.generate with :provider and :instance pinned' do
+    before do
+      Legion::Settings[:llm][:embedding][:default_model] = 'mxbai-embed-large:latest'
+      Legion::Settings[:llm][:embedding][:provider] = :ollama
+      Legion::Settings[:llm][:embedding][:instance] = :apollo_embed
+      # The matching lane:
+      write_test_lane(provider: :ollama, instance: :apollo_embed,
+                      model: 'mxbai-embed-large:latest', tier: :direct, type: :embedding)
+      # A non-matching lane (different instance) — must NOT be selected.
+      write_test_lane(provider: :ollama, instance: :other_box,
+                      model: 'mxbai-embed-large:latest', tier: :direct, type: :embedding)
+    end
+
+    it 'passes provider/instance as hard filters into Router.request_lane' do
+      expect(Legion::LLM::Router).to receive(:request_lane).with(
+        hash_including(
+          type:      :embedding,
+          models:    ['mxbai-embed-large:latest'],
+          providers: [:ollama],
+          instances: [:apollo_embed]
+        )
+      ).and_call_original
+      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response)
+
+      result = Legion::LLM::Embeddings.generate(text: 'hello')
+      expect(result[:provider]).to eq(:ollama)
+    end
+
+    it 'raises NoLaneAvailable when the pinned (provider, instance, model) lane is absent' do
+      Legion::Settings[:llm][:embedding][:instance] = :nonexistent_box
+      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.to raise_error(
+        Legion::LLM::Errors::NoLaneAvailable
+      )
+    end
+  end
+end

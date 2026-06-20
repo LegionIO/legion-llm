@@ -117,6 +117,14 @@ module Legion
         def retryable? = false
       end
 
+      # Operator misconfiguration — required settings key missing or empty.
+      # HTTP 400 semantics (caller-side fix: edit settings JSON). Raised before dispatch,
+      # so no lane/circuit state is touched. Used by embedding pipeline when
+      # `:llm, :embedding, :default_model` is absent.
+      class ConfigError < LLMError
+        def retryable? = false
+      end
+
       # An x-legion-* header carried an unrecognized value (e.g. invalid tier name).
       # Raised by PayloadBuilder at ingress per G31. HTTP 400.
       class InvalidHeader < LLMError

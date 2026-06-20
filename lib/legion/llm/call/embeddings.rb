@@ -16,22 +16,32 @@ module Legion
         }.freeze
 
         class << self
-          # G15: Embedding callers go through Router.request_lane(type: :embedding, models: [pinned]).
-          # Strict model pin — no cross-model failover (vector-comparability preserved).
-          # A down pinned lane → NoLaneAvailable (400, not silent dimension-switch).
+          # G15: Embedding callers go through Router.request_lane(type: :embedding, ...).
+          # Strict pin on (provider, instance, model) when configured — no cross-model failover
+          # (vector-comparability preserved). A down pinned lane → NoLaneAvailable (400, not
+          # silent dimension-switch).
           def generate(text:, model: nil, **opts)
             return not_started_result(model, nil) unless LLM.started?
 
-            pinned_model = model || Legion::Settings[:llm][:embedding][:model]
+            pinned_model    = model || configured_default_model
+            pinned_provider = configured_provider
+            pinned_instance = configured_instance
             if pinned_model.nil? || pinned_model.to_s.empty?
-              raise Legion::LLM::LLMError,
-                    'no embedding model configured — set :llm, :embedding, :model in settings'
+              raise Legion::LLM::Errors::ConfigError,
+                    'no embedding model configured — set :llm, :embedding, :default_model in settings'
             end
 
-            lane = Legion::LLM::Router.request_lane(type: :embedding, models: [pinned_model.to_s])
+            lane = Legion::LLM::Router.request_lane(
+              type:      :embedding,
+              models:    [pinned_model.to_s],
+              providers: pinned_provider ? [pinned_provider.to_sym] : [],
+              instances: pinned_instance ? [pinned_instance.to_sym] : []
+            )
             if lane.nil?
               raise Legion::LLM::Errors::NoLaneAvailable.new(
-                filters: { type: :embedding, models: [pinned_model] }
+                filters: { type: :embedding, models: [pinned_model],
+                           providers: pinned_provider ? [pinned_provider] : [],
+                           instances: pinned_instance ? [pinned_instance] : [] }
               )
             end
 
@@ -82,7 +92,7 @@ module Legion
               tokens:     tokens,
               chunks:     prepared_texts.size
             }
-          rescue Legion::LLM::Errors::NoLaneAvailable, Legion::LLM::LLMError
+          rescue Legion::LLM::Errors::NoLaneAvailable, Legion::LLM::Errors::ConfigError, Legion::LLM::LLMError
             raise
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.embeddings.generate')
@@ -92,13 +102,22 @@ module Legion
           def generate_batch(texts:, model: nil, dimensions: nil, task: :document, **)
             return texts.map { { vector: nil, error: 'LLM not started' } } unless LLM.started?
 
-            pinned_model = model || Legion::Settings[:llm][:embedding][:model]
+            pinned_model    = model || configured_default_model
+            pinned_provider = configured_provider
+            pinned_instance = configured_instance
             return texts.map { { vector: nil, error: 'no embedding model configured' } } if pinned_model.nil? || pinned_model.to_s.empty?
 
-            lane = Legion::LLM::Router.request_lane(type: :embedding, models: [pinned_model.to_s])
+            lane = Legion::LLM::Router.request_lane(
+              type:      :embedding,
+              models:    [pinned_model.to_s],
+              providers: pinned_provider ? [pinned_provider.to_sym] : [],
+              instances: pinned_instance ? [pinned_instance.to_sym] : []
+            )
             if lane.nil?
               raise Legion::LLM::Errors::NoLaneAvailable.new(
-                filters: { type: :embedding, models: [pinned_model] }
+                filters: { type: :embedding, models: [pinned_model],
+                           providers: pinned_provider ? [pinned_provider] : [],
+                           instances: pinned_instance ? [pinned_instance] : [] }
               )
             end
 
@@ -147,11 +166,25 @@ module Legion
           end
 
           # G15: returns the configured embedding model (pinned). nil if not configured.
+          # Reads :default_model first, falls back to the deprecated :model alias.
           def default_model
-            Legion::Settings[:llm][:embedding][:model]
+            configured_default_model
           end
 
           private
+
+          def configured_default_model
+            embedding = Legion::Settings[:llm][:embedding]
+            embedding[:default_model] || embedding[:model]
+          end
+
+          def configured_provider
+            Legion::Settings[:llm][:embedding][:provider]
+          end
+
+          def configured_instance
+            Legion::Settings[:llm][:embedding][:instance]
+          end
 
           def coerce_text(value)
             case value
