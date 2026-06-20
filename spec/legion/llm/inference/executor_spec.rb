@@ -571,10 +571,6 @@ confidence: 0.9 }],
         legion_lookup: hash_including(name: 'legion_lookup', description: 'Lookup data')
       )
     end
-
-    it 'keeps failed fleet attempt metadata when escalation succeeds on a direct provider' do
-      skip 'removed in P5 refactor — EscalationChain deleted'
-    end
   end
 
   describe 'MCP integration' do
