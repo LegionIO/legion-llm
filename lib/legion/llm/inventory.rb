@@ -39,7 +39,7 @@ module Legion
           ).freeze
 
           live_map.put(lane[:id], enriched)
-          log.unknown("[llm][inventory] action=write_lane.written provider=#{lane[:provider_family]} model=#{lane[:model]} instance=#{lane[:instance_id]} tier=#{lane[:tier]}")
+          log.debug("[llm][inventory] action=write_lane.written provider=#{lane[:provider_family]} model=#{lane[:model]} instance=#{lane[:instance_id]} tier=#{lane[:tier]}")
           enriched
         end
 
