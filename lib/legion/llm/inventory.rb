@@ -239,7 +239,7 @@ module Legion
               wl_count = sets[:whitelist] ? sets[:whitelist].size : 0
               bl_count = sets[:blacklist]&.size || 0
               wl_sample = sets[:whitelist] ? sets[:whitelist].first(3).to_a.join(',') : 'nil'
-              log.unknown("[llm][inventory] action=policy_sets_for provider=#{provider} wl=#{wl_count} bl=#{bl_count} sample=[#{wl_sample}]")
+              log.debug("[llm][inventory] action=policy_sets_for provider=#{provider} wl=#{wl_count} bl=#{bl_count} sample=[#{wl_sample}]")
             end
           end
         end
