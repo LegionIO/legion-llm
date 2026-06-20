@@ -145,6 +145,15 @@ module Legion
           provider.discover_offerings(live: live, **filters)
         end
 
+        # SSOT writer contract: every lex-llm-* actor's `lanes_from_instance` checks
+        # `adapter.respond_to?(:discover_offerings)` and calls it on the adapter. Forward
+        # to the per-instance Provider's catalog method (same body as #offerings). Without
+        # this, every gem actor's compute_lanes_for_scope silently returns [] → Inventory
+        # stays empty → all routing returns NoLaneAvailable.
+        def discover_offerings(live: false, **filters)
+          offerings(live: live, **filters)
+        end
+
         ToolShim = Struct.new(:name, :description, :params_schema, keyword_init: true)
 
         private
