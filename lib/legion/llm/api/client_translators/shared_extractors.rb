@@ -143,6 +143,55 @@ module Legion
           rescue StandardError
             {}
           end
+
+          def apply_canonical_params_to_inference(request_kwargs, canonical_params)
+            params = normalize_canonical_params(canonical_params)
+            return request_kwargs unless params
+
+            max_tokens = params[:max_tokens]
+            request_kwargs[:tokens] = { max: max_tokens } if max_tokens
+
+            generation = params.slice(
+              :temperature,
+              :top_p,
+              :top_k,
+              :frequency_penalty,
+              :presence_penalty,
+              :seed
+            ).compact
+            request_kwargs[:generation] = generation unless generation.empty?
+
+            stop_sequences = normalize_stop_sequences(params[:stop_sequences] || params[:stop])
+            request_kwargs[:stop] = { sequences: stop_sequences } unless stop_sequences.empty?
+
+            response_format = normalize_response_format(params[:response_format])
+            request_kwargs[:response_format] = response_format if response_format
+
+            request_kwargs
+          end
+
+          def normalize_canonical_params(value)
+            hash = value.respond_to?(:to_h) ? value.to_h : value
+            return nil unless hash.is_a?(Hash)
+
+            hash.each_with_object({}) do |(key, param_value), normalized|
+              normalized[key.respond_to?(:to_sym) ? key.to_sym : key] = param_value
+            end
+          end
+
+          def normalize_stop_sequences(value)
+            return [] if value.nil?
+            return [value.to_s] if value.is_a?(String) || value.is_a?(Symbol)
+
+            Array(value).compact.map(&:to_s).reject(&:empty?)
+          end
+
+          def normalize_response_format(value)
+            return nil if value.nil?
+            return { type: value.to_sym } if value.is_a?(String) || value.is_a?(Symbol)
+
+            value
+          end
         end
       end
     end

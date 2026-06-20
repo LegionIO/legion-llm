@@ -196,7 +196,7 @@ module Legion
           return false if !tiers.empty?     && !tiers.map(&:to_sym).include?(lane[:tier])
           return false if !providers.empty? && !providers.map(&:to_sym).include?(lane[:provider_family])
           return false if !instances.empty? && !instances.map(&:to_sym).include?(lane[:instance_id])
-          return false if !models.empty?    && !models.map(&:to_s).include?(lane[:model].to_s)
+          return false if !models.empty?    && !model_filter_match?(lane, models)
 
           # H-C / opus H3 / PR #152 I1: normalize capabilities on BOTH sides so :tools and
           # :function_calling/:tool_use are treated as aliases. Collapse to canonical-only
@@ -214,6 +214,19 @@ module Legion
           return false if privacy == :strict && %i[cloud frontier].include?(lane[:tier])
 
           true
+        end
+
+        def model_filter_match?(lane, requested_models)
+          lane_models = [lane[:model], lane[:canonical_model_alias]].compact.map { |value| normalize_model_filter_value(value) }.uniq
+          requested = Array(requested_models).map { |value| normalize_model_filter_value(value) }.uniq
+
+          !!lane_models.intersect?(requested)
+        end
+
+        def normalize_model_filter_value(value)
+          model = value.to_s
+          model = model.sub(/\A(?:us|eu|ap)\./, '') if model.match?(/\A(?:us|eu|ap)\./)
+          model
         end
 
         def default_rng

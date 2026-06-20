@@ -86,7 +86,7 @@ module Legion
             resolved_model = state[:model]
             if resolved_model && @resolved_provider
               model_natural = Router.infer_provider_for_model(resolved_model)
-              if model_natural && model_natural != @resolved_provider
+              if model_natural && !model_natural.to_s.eql?(@resolved_provider.to_s)
                 log.debug "[llm][executor] action=model_provider_mismatch model=#{resolved_model} " \
                           "natural_provider=#{model_natural} resolved_provider=#{@resolved_provider} swapping"
                 resolved_model = nil
@@ -167,7 +167,7 @@ module Legion
             {
               provider:          @request.routing[:provider],
               instance:          instance,
-              model:             @request.routing[:model],
+              model:             @request.routing[:model] || @request.metadata&.dig(:client_model)&.to_s,
               offering_id:       @request.routing[:offering_id] || @request.routing[:id],
               offering_metadata: normalize_offering_metadata(@request.routing[:offering_metadata] ||
                                                              @request.routing[:offering]),

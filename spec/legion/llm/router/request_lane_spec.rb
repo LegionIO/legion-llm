@@ -80,6 +80,22 @@ RSpec.describe Legion::LLM::Router, '#request_lane' do
       expect(lane[:model]).to eq('llama3-8b')
     end
 
+    it 'filters Bedrock region-prefixed model ids against unprefixed inventory lanes' do
+      write_lane(provider: :bedrock, model: 'anthropic.claude-sonnet-4-6',
+                 tier: :cloud, capabilities: %i[tools streaming])
+
+      lane = Legion::LLM::Router.request_lane(
+        type:         :inference,
+        models:       ['us.anthropic.claude-sonnet-4-6'],
+        capabilities: [:tools],
+        rng:          rng
+      )
+
+      expect(lane).not_to be_nil
+      expect(lane[:provider_family]).to eq(:bedrock)
+      expect(lane[:model]).to eq('anthropic.claude-sonnet-4-6')
+    end
+
     it 'empty filter lists are permissive (all-pass)' do
       write_lane(provider: :vllm, model: 'gemma-12b')
       lane = Legion::LLM::Router.request_lane(type: :inference, tiers: [], providers: [], instances: [], models: [], rng: rng)

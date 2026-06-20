@@ -93,8 +93,7 @@ module Legion
             extra[:routing_explicit] = routing_explicit if routing_explicit
 
             messages = inference_messages(canonical_request.messages)
-
-            Legion::LLM::Inference::Request.build(
+            request_kwargs = {
               id:              request_id,
               messages:        messages,
               system:          canonical_request.system,
@@ -109,7 +108,11 @@ module Legion
               cache:           { strategy: :default, cacheable: true },
               extra:           extra,
               metadata:        canonical_request.metadata.except(:upstream_body)
-            )
+            }
+
+            apply_canonical_params_to_inference(request_kwargs, canonical_request.params)
+
+            Legion::LLM::Inference::Request.build(**request_kwargs)
           end
 
           # OpenAI Responses tool_choice shapes:

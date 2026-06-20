@@ -39,6 +39,7 @@ module Legion
           ).freeze
 
           live_map.put(lane[:id], enriched)
+          log.unknown("[llm][inventory] action=write_lane.written provider=#{lane[:provider_family]} model=#{lane[:model]} instance=#{lane[:instance_id]} tier=#{lane[:tier]}")
           enriched
         end
 
@@ -82,7 +83,15 @@ module Legion
         # Returns Array<lane> (dups so callers cannot mutate the live store).
         def offerings(filters = {}, **)
           normalized = normalize_filter_hash(filters.merge(**))
+          total_in_map = live_map.size
           list = lanes
+          provider_matches = normalized[:provider] ? list.count { |l| l[:provider_family]&.to_s == normalized[:provider]&.to_s } : 0
+          all_providers = list.group_by { |l| l[:provider_family]&.to_s }.transform_values(&:count)
+          log.unknown(
+            "[llm][inventory] action=offerings provider=#{normalized[:provider] || 'all'} " \
+            "total_in_map=#{total_in_map} after_ttl=#{list.size} " \
+            "provider_matches=#{provider_matches} all_providers=#{all_providers}"
+          )
           list = list.select { it[:provider_family].to_s == normalized[:provider].to_s } if normalized[:provider]
           list = list.select { [it[:instance_id].to_s, it[:provider_instance].to_s].include?(normalized[:instance].to_s) } if normalized[:instance]
           list = list.select { it[:type].to_s == normalize_type(normalized[:type]).to_s } if normalized[:type]
@@ -127,7 +136,11 @@ module Legion
         end
 
         def policy_skip(lane:)
-          log.warn("[llm][inventory] action=write_lane.skipped reason=policy_denied id=#{lane[:id]}")
+          log.unknown(
+            "[llm][inventory] action=write_lane.skipped reason=policy_denied id=#{lane[:id]} " \
+            "provider=#{lane[:provider_family]} model=#{lane[:model]} " \
+            "tier=#{lane[:tier]} instance=#{lane[:instance_id]}"
+          )
           nil
         end
 
@@ -168,7 +181,7 @@ module Legion
         end
 
         def lane_weights_from_settings(lane:)
-          tier_weights    = Legion::Settings[:llm][:routing][:tier_weights]
+          tier_weights    = Legion::Settings.dig(:llm, :routing, :tier_weights) || {}
           provider_sym    = lane[:provider_family].to_sym
           provider_settings = Legion::Settings.dig(:extensions, :llm, provider_sym) || {}
           provider_weight = provider_settings.is_a?(Hash) ? (provider_settings[:weight] || 100) : 100
@@ -188,28 +201,58 @@ module Legion
         # Memoized policy sets per provider; invalidated by SettingsObserver (G28).
         def policy_denied?(lane:)
           provider = lane[:provider_family].to_sym
-          model    = lane[:model].to_s
+          model    = lane[:model].to_s.downcase
           sets     = policy_sets_for(provider: provider)
 
-          # Whitelist takes precedence over blacklist (M2).
-          return !sets[:whitelist].include?(model) if sets[:whitelist]
+          # Whitelist takes precedence over blacklist (M2).  Substring match —
+          # a model is denied if NO whitelist pattern is contained in its name.
+          if sets[:whitelist]
+            return true if sets[:whitelist].none? { |p| model.include?(p) }
 
-          sets[:blacklist].include?(model)
+            return false
+          end
+
+          sets[:blacklist]&.any? { |p| model.include?(p) } || false
         end
 
+        # Specificity cascade — same precedence as lex-llm Provider#model_whitelist:
+        # 1. Provider-level  extensions.llm.<provider>.model_whitelist
+        # 2. Global          extensions.llm.model_whitelist
+        # If no whitelist is found anywhere, whitelist is nil (allow all).
         def policy_sets_for(provider:)
           @policy_sets ||= Concurrent::Map.new
           @policy_sets.compute_if_absent(provider) do
             provider_settings = Legion::Settings.dig(:extensions, :llm, provider)
-            next { whitelist: nil, blacklist: Set.new } unless provider_settings.is_a?(Hash)
+            provider_settings ||= {} unless provider_settings.is_a?(Hash)
 
-            whitelist = provider_settings[:model_whitelist] || provider_settings['model_whitelist']
-            blacklist = provider_settings[:model_blacklist] || provider_settings['model_blacklist'] || []
+            global_settings = Legion::Settings.dig(:extensions, :llm)
+            global_settings ||= {} unless global_settings.is_a?(Hash)
+
+            # Resolve whitelist/blacklist with cascade: provider → global
+            whitelist = resolve_policy_array(provider_settings, global_settings, :model_whitelist)
+            blacklist = resolve_policy_array(provider_settings, global_settings, :model_blacklist)
+
             {
-              whitelist: whitelist ? Set.new(Array(whitelist).map(&:to_s)) : nil,
-              blacklist: Set.new(Array(blacklist).map(&:to_s))
-            }.freeze
+              whitelist: whitelist ? Set.new(Array(whitelist).map { |p| p.to_s.downcase }) : nil,
+              blacklist: Set.new(Array(blacklist).map { |p| p.to_s.downcase })
+            }.freeze.tap do |sets|
+              wl_count = sets[:whitelist] ? sets[:whitelist].size : 0
+              bl_count = sets[:blacklist]&.size || 0
+              wl_sample = sets[:whitelist] ? sets[:whitelist].first(3).to_a.join(',') : 'nil'
+              log.unknown("[llm][inventory] action=policy_sets_for provider=#{provider} wl=#{wl_count} bl=#{bl_count} sample=[#{wl_sample}]")
+            end
           end
+        end
+
+        # Pick the first non-empty array value: provider-level, then global, then nil.
+        def resolve_policy_array(provider_settings, global_settings, key)
+          val = provider_settings[key] || provider_settings[key.to_s]
+          return val if val && (val.is_a?(Array) ? val.any? : !val.to_s.empty?)
+
+          val = global_settings[key] || global_settings[key.to_s]
+          return val if val && (val.is_a?(Array) ? val.any? : !val.to_s.empty?)
+
+          nil
         end
 
         def invalidate_policy_sets!(provider: nil, **)

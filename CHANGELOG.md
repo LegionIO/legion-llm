@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.14.1] - 2026-06-20
+
+### Fixed
+
+- Treat Bedrock region-prefixed model ids such as `us.anthropic.claude-sonnet-4-6` as equivalent to
+  the inventory's canonical `anthropic.claude-sonnet-4-6` lane during hard model filtering, so
+  routing no longer raises `NoLaneAvailable` for valid Bedrock requests.
+
 ## [0.14.0] - 2026-06-19
 
 ### Changed (BREAKING — internal API)
