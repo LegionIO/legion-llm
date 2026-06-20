@@ -472,8 +472,10 @@ module Legion
           # First-attempt seeding: if step_routing already resolved a provider/model, we look up the
           # corresponding Inventory lane for that (provider, instance, model) to use as the first lane.
           # This preserves step_routing's resolution while keeping the loop-based retry mechanism.
-          def run_provider_call_with_attempts(routing_payload:, assembler: nil, stream_block: nil,
-                                              responses_body: nil, responses_stream: false, **)
+          # N×N: single canonical escalation loop — no provider-specific branches.
+          # The API namespace translator converts all client formats to canonical form;
+          # this loop dispatches only through execute_provider_request / execute_provider_request_stream.
+          def run_provider_call_with_attempts(routing_payload:, assembler: nil, stream_block: nil)
             remaining      = routing_payload[:max_attempts] || Legion::Settings[:llm][:routing][:max_attempts]
             total_attempts = remaining
             attempt_idx    = 0
@@ -525,10 +527,11 @@ module Legion
 
               start_time = Time.now
               begin
-                if responses_body
-                  execute_provider_request_responses(body: responses_body, stream: responses_stream,
-                                                     &stream_block)
-                elsif stream_block
+                # N×N: single canonical dispatch path — no provider-specific branches.
+                # The API namespace translator converts all client formats (OpenAI Chat,
+                # OpenAI Responses, Anthropic Messages) to canonical before the executor
+                # receives the request. The lex-llm-* provider adapter handles wire format.
+                if stream_block
                   execute_provider_request_stream(&stream_block)
                 else
                   execute_provider_request
@@ -664,24 +667,9 @@ module Legion
             @raw_response = result
           end
 
-          def execute_provider_request_responses(body:, stream:, &)
-            @timestamps[:provider_start] = Time.now
-            @timeline.record(
-              category: :provider, key: 'provider:request_sent',
-              exchange_id: @exchange_id, direction: :outbound,
-              detail: "responses from #{@resolved_provider}",
-              from: 'pipeline', to: "provider:#{@resolved_provider}"
-            )
-
-            raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless use_native_dispatch?(@resolved_provider)
-
-            result = execute_native_responses_tool_loop(body: body, stream: stream, &)
-            merge_response_offering_metadata(result.metadata) if result.respond_to?(:metadata)
-            @raw_response = result
-
-            @timestamps[:provider_end] = Time.now
-            record_provider_response
-          end
+          # REMOVED: execute_provider_request_responses
+          # N×N LAW: only one canonical execution path via execute_provider_request_native.
+          # Responses API format is handled by the API namespace translator → canonical conversion.
         end
       end
     end

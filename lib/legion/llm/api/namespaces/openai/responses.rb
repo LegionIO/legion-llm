@@ -17,7 +17,7 @@ module Legion
           module Responses
             extend Legion::Logging::Helper
 
-            def self.registered(app) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
+            def self.registered(app) # rubocop:disable Metrics/AbcSize
               log.debug('[llm][api][namespaces][openai][responses] registering routes')
 
               app.post '/v1/responses' do
@@ -73,11 +73,9 @@ module Legion
                       model:        model,
                       initial_lane: { id: 'unknown:pending' }
                     )
-                    pipeline_response = if executor.respond_to?(:call_responses)
-                                          executor.call_responses(body: body, stream: true) { |c| assembler.push(c) }
-                                        else
-                                          executor.call_stream { |c| assembler.push(c) }
-                                        end
+                    # N×N: Canonical streaming path — responses body is already
+                    # translated to canonical form by the translator above.
+                    pipeline_response = executor.call_stream { |c| assembler.push(c) }
                     assembler.finalize(pipeline_response)
                     log_api_completion_summary(
                       namespace:         'namespaces][openai][responses',
@@ -96,11 +94,9 @@ module Legion
                     out << "event: error\ndata: #{Legion::JSON.dump({ type: 'server_error', message: e.message })}\n\n"
                   end
                 else
-                  pipeline_response = if executor.respond_to?(:call_responses)
-                                        executor.call_responses(body: body, stream: false)
-                                      else
-                                        executor.call
-                                      end
+                  # N×N: Canonical path — responses body is already translated
+                  # to canonical form; executor is format-agnostic.
+                  pipeline_response = executor.call
                   log_api_completion_summary(
                     namespace:         'namespaces][openai][responses',
                     request_id:        request_id,

@@ -125,6 +125,21 @@ module Legion
         def retryable? = false
       end
 
+      # A provider does not implement the requested capability (e.g. vLLM has no
+      # :responses surface). Programming-class contract mismatch — terminal: do NOT
+      # trip circuits, do NOT push to tried_lanes, do NOT escalate. Maps to HTTP 400.
+      class CapabilityUnsupported < LLMError
+        attr_reader :provider, :capability
+
+        def initialize(provider:, capability:, message: nil, **)
+          @provider   = provider
+          @capability = capability
+          super(message || "unsupported capability #{capability.inspect} for provider #{provider.inspect}")
+        end
+
+        def retryable? = false
+      end
+
       # An x-legion-* header carried an unrecognized value (e.g. invalid tier name).
       # Raised by PayloadBuilder at ingress per G31. HTTP 400.
       class InvalidHeader < LLMError
