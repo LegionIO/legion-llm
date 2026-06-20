@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.13.0-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.14.0-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -642,23 +642,42 @@ session = llm_session(tier: :local)
 | `capability` | `:basic`, `:moderate`, `:reasoning` | `:moderate` | Higher prefers larger/cloud models |
 | `cost` | `:minimize`, `:normal` | `:normal` | `:minimize` prefers local/fleet |
 
-#### Routing Resolution
+#### Routing Resolution — RANKING v2
 
+`Router.request_lane(**routing_payload)` returns one lane hash from the live `Inventory` catalog
+or `nil`. The catalog is a `Concurrent::Map` of 5-part lane ids
+(`tier:provider:instance:type:model`) populated by `lex-llm-*` discovery actors. No recomputation
+on read.
+
+**Selection algorithm:**
 ```
-1. Caller passes intent: { privacy: :strict, capability: :basic }
-2. Router merges with default_intent (fills missing dimensions)
-3. Load rules from settings, filter by:
-   a. Intent match (all `when` conditions must match)
-   b. Schedule window (valid_from/valid_until, hours, days)
-   c. Constraints (e.g., never_cloud strips cloud-tier rules)
-   d. Discovery (Ollama model pulled? Model fits in available RAM?)
-   e. Tier availability (is Ollama running? is Transport loaded?)
-4. Score remaining candidates:
-   effective_priority = rule.priority
-                      + health_tracker.adjustment(provider)
-                      + (1.0 - cost_multiplier) * 10
-5. Return Resolution for highest-scoring candidate
+1. Hard filters applied (provider/instance/model/tier constraints from routing_payload).
+2. Soft filter: lanes with lane_weight ≤ 0 excluded (open circuit or policy-denied).
+3. Max-weight bucket selected (all lanes with the highest lane_weight value).
+4. One lane sampled uniformly within the bucket (seeded RNG for reproducibility).
+5. Returns the lane, or nil if no lanes survive filters.
 ```
+
+**RANKING v2 lane_weight formula:**
+```
+lane_weight = tier_weight × provider_weight × instance_weight × model_weight × health_multiplier
+```
+
+All weights default to 100. The health multiplier is:
+- `1.0` — closed circuit (full weight)
+- `0.5` — half-open (reduced weight; cautious retry)
+- `-100_000_000` — open circuit (effectively disabled; excluded by soft filter)
+
+Weights are operator-tunable via settings and take effect immediately (no restart required).
+Surfaced in `/api/llm/providers/<provider>/models` as `lane_weight`.
+
+**Escalation:** "try again with the failed lane excluded." The executor calls `request_lane` in a
+`while remaining.positive?` loop, appending each tried lane to `tried_lanes`. This replaces the
+old pre-built escalation chain.
+
+**Errors:**
+- `Errors::NoLaneAvailable` (HTTP 400) — all filters excluded everything before the first attempt.
+- `Errors::EscalationExhausted` (HTTP 503 + `Retry-After`) — attempts exhausted mid-flight.
 
 #### Settings
 

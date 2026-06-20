@@ -1,5 +1,91 @@
 # Legion LLM Changelog
 
+## [0.14.0] - 2026-06-19
+
+### Changed (BREAKING — internal API)
+
+- **Inventory is now a single live `Concurrent::Map`** keyed by 5-part lane id
+  `tier:provider:instance:type:model`. The catalog is composed on write (by `lex-llm-*` discovery
+  actors via the `Inventory::ScopedRefresher` mixin), not recomposed on read. Per-request
+  `offerings_calls` collapses from ~4N to ≤1.
+- **`Router.request_lane(**routing_payload)` is the single selection method.** `Router.resolve`,
+  `Router.resolve_chain`, `Router::Candidates`, `Router::EscalationChain`, `Arbitrage`, and the
+  full chain-building machinery are deleted.
+- **`HealthTracker` writes lane health one-directionally.** The old request-time read API
+  (`circuit_state(provider:, instance:)`, `adjustment(...)`, `model_denied?(...)`) is deleted.
+  Health is now read from `lane[:health]`.
+- **Dual error classes replace the old `EscalationExhausted`.** `Errors::NoLaneAvailable` (HTTP 400;
+  filters excluded all candidates from the start) and `Errors::EscalationExhausted` (HTTP 503 +
+  `Retry-After`; max attempts reached mid-flight) are the new error contract. Both inherit from
+  `LLMError`.
+- **Embedding selection uses `Router.request_lane(type: :embedding, models: [pinned])`.** Strict
+  model pin — no cross-model failover. The bespoke embedding-selection machine is deleted.
+- **`while remaining.positive?` loop replaces `loop do`.** The executor's request lifecycle is
+  bounded by construction; `loop do`, `retry`, `redo` are forbidden by the `NoLoopDo` rubocop cop.
+
+### Added
+
+- `Inventory.write_lane(lane:, ttl:, **)` / `.delete_lane(id:, **)` / `.lane(id:, **)` /
+  `.lanes_for(provider:, instance:, type:, model:, **)` / `.lanes(**)` — kwargs-only public API.
+- `Inventory::Sweeper` `::Every` actor — TTL safety net for dead-actor lane orphans.
+- **RANKING v2:** `lane_weight = tier_w × provider_w × instance_w × model_w × health_mult`,
+  precomputed at write time, surfaced in `/api/llm/providers/<p>/models`. Operator-tunable via
+  settings; all weights default to 100.
+- `Legion::Cache::Local` cooldown circuit for auth failures
+  (`llm_auth_failed:<credential_hash>` key). Short-circuits dispatch during the cooldown window
+  without tripping the instance circuit.
+- `PayloadBuilder` single ingress site at `inference/executor/payload_builder.rb`. Validates
+  `x-legion-tiers`, `x-legion-providers`, `x-legion-instances`, `x-legion-models` headers against
+  frozen taxonomies. Unknown values → 400 with `error.type: invalid_header`.
+- `StreamAssembler` mid-stream failover contract: `provider_failover_pending!(from:)` clears the
+  canonical buffer; `finalize` emits debug trailers (`x-legion-failover-from`, `-to`, `-count`)
+  only when failover occurred. No custom SSE event (N×N invariant 5).
+- Admin endpoint `POST /api/llm/inventory/refresh` — operator-triggered catalog refresh.
+- `:fleet` is a first-class tier in the `Taxonomies::TIERS` enum.
+
+### Deprecated
+
+- `Router.populate_auto_rules(_)` — no-op stub. Removed in v0.15.0 after call sites in `lex-llm-*`
+  gems are cleaned up. Tracking issue: [#154](https://github.com/legion-io/legion-llm/issues/154).
+  Remove-stub issue: [#155](https://github.com/legion-io/legion-llm/issues/155).
+
+### Fixed
+
+- `/v1/moderations` 500 error (missing `Call::Registry.providers` method).
+- Compliance leak via discovery path: denied models could enter `/api/llm/offerings` because the
+  discovery feeder bypassed `lex-llm-*` whitelist/blacklist filtering. `Inventory.write_lane` is
+  now the single fail-closed choke point.
+- Mid-stream provider failover now correctly clears the canonical buffer — no thinking tokens from
+  provider A leak into provider B's response context.
+
+### Removed
+
+- `Legion::LLM::EscalationTracker` (dead code, zero callers).
+- `Inventory#native_provider_offerings`, `discovery_offerings`, `dedupe_offerings`, `build_offering`,
+  `add_fleet_lane`, `compose_offerings` — replaced by `lex-llm-*` gem writers via the
+  `Inventory::ScopedRefresher` mixin.
+- `Call::Registry.all_provider_families` (duplicate of `.available`).
+- Hardcoded last-resort tier model literals.
+- `Providers.inject_anthropic_cache_control!` — moved to `lex-llm-anthropic` translator (CLAUDE.md
+  invariant #3).
+- `lib/legion/llm/discovery.rb`, `lib/legion/llm/capabilities.rb`, `lib/legion/llm/discovery/`
+  compat shim forwarders (module paths moved to `inventory/` tree in v0.13.x; shims deleted in
+  v0.14.0).
+- `Router::Candidates`, `Router::Arbitrage`, `Router::EscalationChain` (all deleted; use
+  `Router.request_lane`).
+
+### Breaking change notes
+
+- **Embedding single-instance HA:** single-instance Ollama (or any single embedding provider) will
+  produce 400 `NoLaneAvailable` during the ~5–10s restart window rather than silently retrying.
+  Use two instances for HA.
+- **Rollback requires yanking the entire train.** `lex-llm 0.6.0`'s `ScopedRefresher` calls
+  `Inventory.write_lane` which does not exist on `legion-llm 0.13.x`. Yanking `legion-llm 0.14.0`
+  alone is insufficient — `lex-llm 0.6.0` and all 9 `lex-llm-*` paired versions must be yanked
+  together. See `docs/migration/0.14.0.md` for the 3am rollback procedure.
+
+---
+
 ## [0.13.3] - 2026-06-18
 
 ### Fixed
