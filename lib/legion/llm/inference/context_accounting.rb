@@ -78,19 +78,39 @@ module Legion
           estimate_text_tokens(Legion::JSON.dump(value || {}))
         end
 
+        # Extract plain text from a message for token estimation.
+        #
+        # IMPORTANT: Canonical::Message is a Data.define struct; #to_s returns the
+        # struct's #inspect dump (timestamps, nested ContentBlocks, tool_calls,
+        # etc.) — counting that as "text" inflates a hello-world payload to
+        # ~3.4MB → ~854K char-div-4 "tokens" and breaks Router.request_lane's
+        # context-window filter. Use the canonical #text accessor.
         def message_text(message)
-          return message.to_s unless message.is_a?(Hash)
+          return message if message.is_a?(String)
+          return content_text(message[:content]) if message.is_a?(Hash)
+          return message.text.to_s if message.respond_to?(:text)
 
-          content = message[:content]
-          content_text(content)
+          ''
         end
 
         def content_text(content)
-          return content.to_s unless content.is_a?(Array)
+          case content
+          when nil    then ''
+          when String then content
+          when Array  then content.map { |part| part_text(part) }.join("\n")
+          else             part_text(content)
+          end
+        end
 
-          content.map do |part|
-            part.is_a?(Hash) ? (part[:text] || part[:content]).to_s : part.to_s
-          end.join("\n")
+        def part_text(part)
+          return part if part.is_a?(String)
+          return (part[:text] || content_text(part[:content])).to_s if part.is_a?(Hash)
+          # Canonical::ContentBlock — only text/thinking blocks carry textual content;
+          # tool_use / tool_result / image have nil or non-text payloads.
+          return part.text.to_s if part.respond_to?(:text?) && part.text?
+          return part.text.to_s if part.respond_to?(:text) && !part.respond_to?(:text?)
+
+          ''
         end
 
         def event(event_type:, component:, before_tokens:, after_tokens:, before_count: 0, after_count: 0, metadata: {})
