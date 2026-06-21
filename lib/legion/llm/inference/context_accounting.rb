@@ -80,7 +80,7 @@ module Legion
 
         # Extract plain text from a message for token estimation.
         #
-        # IMPORTANT: Canonical::Message is a Data.define struct; #to_s returns the
+        # IMPORTANT: Canonical::Message is a Ruby data struct; #to_s returns the
         # struct's #inspect dump (timestamps, nested ContentBlocks, tool_calls,
         # etc.) — counting that as "text" inflates a hello-world payload to
         # ~3.4MB → ~854K char-div-4 "tokens" and breaks Router.request_lane's
