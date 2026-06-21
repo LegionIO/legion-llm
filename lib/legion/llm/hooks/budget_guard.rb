@@ -28,7 +28,7 @@ module Legion
             response: budget_exceeded_response(model, spent, limit)
           }
         rescue StandardError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :warn)
           nil
         end
 

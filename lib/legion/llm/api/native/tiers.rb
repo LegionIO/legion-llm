@@ -230,12 +230,12 @@ module Legion
           end
 
           def self.offering_instance_health(provider_name, instance_name)
-            return 'unknown' unless defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:health_tracker)
+            # Read from Inventory lane health (P2: lane is the SSOT for health).
+            lanes = Legion::LLM::Inventory.lanes_for(provider: provider_name.to_sym,
+                                                     instance: instance_name.to_sym)
+            return lanes.first[:health][:circuit_state].to_s if lanes.any?
 
-            tracker = Legion::LLM::Router.health_tracker
-            return 'unknown' unless tracker
-
-            tracker.circuit_state(provider_name.to_sym, instance: instance_name.to_sym).to_s
+            'unknown'
           rescue StandardError => e
             log.debug "[llm][tiers] action=offering_instance_health provider=#{provider_name} instance=#{instance_name} error=#{e.class} — #{e.message}"
             'unknown'

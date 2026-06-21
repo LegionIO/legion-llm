@@ -69,6 +69,29 @@ RSpec.describe Legion::LLM::Inference::Request do
       expect(req.extra[:auto_route]).to be_nil
       expect(req.extra[:requested_model_alias]).to eq('legionio')
     end
+
+    it 'treats auto as an automatic routing alias' do
+      req = described_class.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'auto' }
+      )
+
+      expect(req.routing).to eq({ model: nil })
+      expect(req.extra[:auto_route]).to be(true)
+      expect(req.extra[:requested_model_alias]).to eq('legionio')
+    end
+
+    it 'honors overridden routing auto model aliases from settings' do
+      Legion::Settings[:llm][:routing][:auto_routing_model_aliases] = %w[legionio autobot]
+      req = described_class.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { model: 'autobot' }
+      )
+
+      expect(req.routing).to eq({ model: nil })
+      expect(req.extra[:auto_route]).to be(true)
+      expect(req.extra[:requested_model_alias]).to eq('legionio')
+    end
   end
 
   describe '.from_chat_args' do

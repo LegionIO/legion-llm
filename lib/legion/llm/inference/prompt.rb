@@ -13,10 +13,9 @@ module Legion
         # Auto-routed: Router picks the best provider+model based on intent.
         # Primary entry point for most LLM calls.
         # When provider/model are passed explicitly, they take precedence over routing.
-        def dispatch(message, # rubocop:disable Metrics/ParameterLists
+        def dispatch(message,
                      intent: nil,
                      tier: nil,
-                     exclude: {},
                      provider: nil,
                      model: nil,
                      schema: nil,
@@ -44,10 +43,10 @@ module Legion
             resolved_provider = Router.infer_provider_for_model(resolved_model)
           end
 
-          if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && Router.routing_enabled? && (intent || tier)
-            resolution = Router.resolve(intent: intent, tier: tier, exclude: exclude)
-            resolved_provider = resolution&.provider
-            resolved_model = resolution&.model
+          if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && tier
+            lane = Router.request_lane(type: :inference, tiers: [tier.to_sym])
+            resolved_provider = lane&.dig(:provider_family)
+            resolved_model    = lane&.dig(:model)
           end
 
           resolved_provider ||= Legion::Settings[:llm][:default_provider] unless auto_route
@@ -75,7 +74,7 @@ module Legion
         end
 
         # Pinned: caller specifies exact provider+model. Full pipeline runs in-process.
-        def request(message, # rubocop:disable Metrics/ParameterLists
+        def request(message,
                     provider:,
                     model:,
                     intent: nil,
@@ -132,7 +131,7 @@ module Legion
 
         # --- Private helpers ---
 
-        def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:, # rubocop:disable Metrics/ParameterLists
+        def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:,
                                    escalate:, max_escalations:, thinking:, temperature:,
                                    max_tokens:, tracing:, agent:, caller:, cache:,
                                    quality_check:, **rest)

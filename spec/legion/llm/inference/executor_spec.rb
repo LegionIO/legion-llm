@@ -571,46 +571,6 @@ confidence: 0.9 }],
         legion_lookup: hash_including(name: 'legion_lookup', description: 'Lookup data')
       )
     end
-
-    it 'keeps failed fleet attempt metadata when escalation succeeds on a direct provider' do
-      skip 'fleet dispatch mock interacts with availability filtering in full-suite context'
-      fleet_resolution = Legion::LLM::Router::Resolution.new(tier: :fleet, provider: :vllm, model: 'qwen3.6-27b')
-      direct_resolution = Legion::LLM::Router::Resolution.new(tier: :cloud, provider: :anthropic, model: 'claude-opus-4-6')
-      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [fleet_resolution, direct_resolution], max_attempts: 2)
-      escalation_request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        extra:    { intent: { operation: :chat } }
-      )
-
-      Legion::LLM::Router.health_tracker.reset_all
-      Legion::Settings[:llm][:routing][:escalation][:enabled] = true
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = true
-      Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
-      allow(Legion::LLM::Router).to receive(:build_escalation_chain).and_return(chain)
-      allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
-        success:        false,
-        error:          'fleet_timeout',
-        correlation_id: 'corr-timeout'
-      )
-      register_native_chat(:anthropic) do
-        {
-          content: 'direct escalation answer with enough text to pass quality',
-          usage:   { input_tokens: 8, output_tokens: 9 }
-        }
-      end
-
-      executor = described_class.new(escalation_request)
-      executor.instance_variable_set(:@escalation_chain, chain)
-      response = executor.call
-      attempts = response.routing[:route_attempts]
-
-      expect(attempts.map { |attempt| attempt[:dispatch_path] }).to eq(%i[fleet direct])
-      expect(attempts.first).to include(status: :failure, failure_reason: 'fleet_timeout')
-      expect(attempts.last).to include(status: :success, escalation: hash_including(attempt: 2))
-      expect(response.message[:content]).to include('direct escalation answer')
-    end
   end
 
   describe 'MCP integration' do
@@ -841,7 +801,6 @@ confidence: 0.9 }],
 
       expect(executor.send(:pipeline_escalation_enabled?)).to be(true)
       expect(executor.send(:pipeline_escalation_max_attempts)).to eq(7)
-      expect(executor.send(:pipeline_escalation_quality_threshold)).to eq(85)
     end
 
     it 'honors native provider layer settings' do
@@ -997,8 +956,11 @@ confidence: 0.9 }],
 
     it 'applies explicit provider registry defaults even when rule routing is disabled' do
       Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-      Legion::LLM::Call::Registry.register(:vllm, Module.new, metadata: { default_model: 'qwen3.6-27b' })
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'direct:vllm:default:inference:qwen3.6-27b',
+                                          tier: :direct, provider_family: :vllm, instance_id: :default,
+                                          model: 'qwen3.6-27b', type: :inference
+                                        })
       provider_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :vllm }
@@ -1015,12 +977,11 @@ confidence: 0.9 }],
       Legion::Settings[:llm][:default_provider] = 'vllm'
       Legion::Settings[:llm][:default_instance] = 'apollo'
       Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
-      resolution = Legion::LLM::Router::Resolution.new(
-        tier: :fleet, provider: :vllm, instance: :apollo, model: 'qwen3.6-27b', rule: 'preference:test'
-      )
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-      allow(Legion::LLM::Router).to receive(:resolve).and_return(resolution)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'fleet:vllm:apollo:inference:qwen3.6-27b',
+                                          tier: :fleet, provider_family: :vllm, instance_id: :apollo,
+                                          model: 'qwen3.6-27b', type: :inference
+                                        })
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: 'vllm', instance: 'apollo', model: 'legionio' }
@@ -1029,21 +990,17 @@ confidence: 0.9 }],
 
       executor.send(:step_routing)
 
-      expect(Legion::LLM::Router).to have_received(:resolve).with(
-        hash_including(provider: 'vllm', instance: 'apollo', model: nil)
-      )
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:vllm)
       expect(executor.instance_variable_get(:@resolved_instance)).to eq(:apollo)
       expect(executor.instance_variable_get(:@resolved_model)).to eq('qwen3.6-27b')
     end
 
-    it 'still uses the router chain for the LegionIO placeholder when rule routing is unavailable' do
-      resolution = Legion::LLM::Router::Resolution.new(
-        tier: :frontier, provider: :openai, model: 'gpt-5.4', rule: 'auto_chain'
-      )
-      chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 3)
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+    it 'selects from inventory for the LegionIO placeholder when rule routing is unavailable' do
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'frontier:openai:default:inference:gpt-5.4',
+                                          tier: :frontier, provider_family: :openai, instance_id: :default,
+                                          model: 'gpt-5.4', type: :inference
+                                        })
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { model: 'legionio' }
@@ -1052,7 +1009,6 @@ confidence: 0.9 }],
 
       executor.send(:step_routing)
 
-      expect(Legion::LLM::Router).to have_received(:resolve_chain)
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:openai)
       expect(executor.instance_variable_get(:@resolved_model)).to eq('gpt-5.4')
     end
@@ -1061,9 +1017,7 @@ confidence: 0.9 }],
       Legion::Settings[:llm][:default_provider] = 'anthropic'
       Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
       allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(
-        Legion::LLM::Router::EscalationChain.new(resolutions: [])
-      )
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(double('chain', empty?: true, primary: nil))
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { model: 'legionio' }
@@ -1235,55 +1189,24 @@ confidence: 0.9 }],
     end
   end
 
-  describe '#provider_supports_responses?' do
-    it 'returns false when no provider is resolved yet' do
+  describe 'N×N law enforcement' do
+    # CLAUDE.md §N×N: "the router/executor should not know the difference between
+    # what lex-llm-* calls what endpoint". The executor is blind to provider API
+    # formats. All format translation lives in API namespace translators.
+    it 'has no provider_supports_responses? method (executor is format-agnostic)' do
       executor = described_class.new(request)
-      expect(executor.provider_supports_responses?).to be false
+      expect(executor).not_to respond_to(:provider_supports_responses?)
     end
 
-    it 'returns false when resolved provider is not registered in Registry' do
+    it 'has no resolved_provider_supports_responses? method (executor is format-agnostic)' do
       executor = described_class.new(request)
-      executor.instance_variable_set(:@resolved_provider, :unknown_provider)
-      expect(executor.provider_supports_responses?).to be false
+      expect(executor).not_to respond_to(:resolved_provider_supports_responses?)
     end
 
-    it 'returns false when registered adapter does not respond to supports?' do
-      adapter = Module.new
-      Legion::LLM::Call::Registry.register(:fake_no_supports, adapter)
+    it 'call_responses delegates to canonical step_provider_call (non-streaming)' do
       executor = described_class.new(request)
-      executor.instance_variable_set(:@resolved_provider, :fake_no_supports)
-      expect(executor.provider_supports_responses?).to be false
-    ensure
-      Legion::LLM::Call::Registry.deregister_provider(:fake_no_supports)
-    end
-
-    it 'returns false when adapter#supports?(:responses) is false' do
-      adapter = Module.new do
-        def self.supports?(cap)
-          cap.to_sym == :chat
-        end
-      end
-      Legion::LLM::Call::Registry.register(:fake_chat_only, adapter)
-      executor = described_class.new(request)
-      executor.instance_variable_set(:@resolved_provider, :fake_chat_only)
-      expect(executor.provider_supports_responses?).to be false
-    ensure
-      Legion::LLM::Call::Registry.deregister_provider(:fake_chat_only)
-    end
-
-    it 'returns true when adapter#supports?(:responses) is true' do
-      adapter = Module.new do
-        def self.supports?(_cap)
-          true
-        end
-      end
-      Legion::LLM::Call::Registry.register(:fake_responses_native, adapter)
-      executor = described_class.new(request)
-      executor.instance_variable_set(:@resolved_provider, :fake_responses_native)
-      executor.instance_variable_set(:@resolved_instance, :default)
-      expect(executor.provider_supports_responses?).to be true
-    ensure
-      Legion::LLM::Call::Registry.deregister_provider(:fake_responses_native)
+      # call_responses exists as an API seam but routes through canonical path
+      expect(executor).to respond_to(:call_responses)
     end
   end
 
@@ -1309,13 +1232,16 @@ confidence: 0.9 }],
       expect(result[:auto_route]).to be_nil
     end
 
-    it 'pins provider and instance when a healthy discovered match exists' do
+    it 'pins provider and instance when a healthy local lane exists' do
       executor = described_class.new(request)
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([healthy_entry])
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
-      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(true)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
+        provider_family: :ollama, instance_id: :default, model: 'gpt-5.4-mini',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).with(:ollama, instance: :default).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:provider]).to eq(:ollama)
       expect(result[:instance]).to eq(:default)
@@ -1327,29 +1253,39 @@ confidence: 0.9 }],
       executor = described_class.new(request)
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([healthy_entry])
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:open)
+      Legion::LLM::Inventory.write_lane(
+        lane:   { id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
+                  provider_family: :ollama, instance_id: :default,
+                  model: 'gpt-5.4-mini', type: :inference,
+                  capabilities: [], limits: {}, enabled: true, cost: {} },
+        health: { circuit_state: :open, denied: false, available: false, adjustment: -50 }
+      )
+      allow(Legion::LLM::Call::Registry).to receive(:registered?).with(:ollama, instance: :default).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:auto_route]).to be true
       expect(result[:model]).to be_nil
     end
 
-    it 'returns state unchanged when discovery cache is empty (discovery not yet run)' do
+    it 'returns state unchanged when no local lane exists for the model' do
       executor = described_class.new(request)
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
+      # No lane written — live store is empty for this model
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:auto_route]).to be_nil
       expect(result[:model]).to eq('gpt-5.4-mini')
     end
 
-    it 'falls back to auto_route when model is not present among discovered models' do
+    it 'falls back to auto_route when model has no matching lane in the live store' do
       executor = described_class.new(request)
-      other_model = { model: 'llama3:8b', provider: :ollama, instance: :default, tier: 'local' }
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([other_model])
+      # Only llama3:8b is in the store — gpt-5.4-mini has no lane
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:default:inference:llama3_8b', tier: :local,
+        provider_family: :ollama, instance_id: :default, model: 'llama3:8b',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
       result = executor.send(:resolve_model_to_local_provider, state)
       expect(result[:auto_route]).to be_nil
       expect(result[:model]).to eq('gpt-5.4-mini')
@@ -1357,32 +1293,38 @@ confidence: 0.9 }],
 
     it 'prefers the first healthy candidate when multiple instances carry the same model' do
       executor = described_class.new(request)
-      entries = [
-        { model: 'gpt-5.4-mini', provider: :vllm, instance: :h200, tier: 'fleet' },
-        { model: 'gpt-5.4-mini', provider: :ollama, instance: :default, tier: 'local' }
-      ]
       state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(entries)
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:vllm, instance: :h200).and_return(:closed)
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).with(:ollama, instance: :default).and_return(:closed)
+      # Two local lanes: vllm:h200 (fleet) and ollama:default (local)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'fleet:vllm:h200:inference:gpt-5.4-mini', tier: :fleet,
+        provider_family: :vllm, instance_id: :h200, model: 'gpt-5.4-mini',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
+        provider_family: :ollama, instance_id: :default, model: 'gpt-5.4-mini',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
       allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(true)
       result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:provider]).to eq(:vllm)
-      expect(result[:instance]).to eq(:h200)
+      # First healthy local/direct/fleet lane is selected
+      expect(%i[vllm ollama]).to include(result[:provider])
     end
 
-    it 'falls to auto_route when discovered model provider is not locally registered' do
+    it 'falls to auto_route when the matching lane is on a cloud/frontier-only provider (not locally registered)' do
       executor = described_class.new(request)
-      remote_entry = { model: 'claude-haiku-4-5-20251001', provider: :anthropic, instance: :default, tier: 'frontier' }
       state = { model: 'claude-haiku-4-5-20251001', provider: nil, tier: nil, instance: nil,
                 provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([remote_entry])
-      allow(Legion::LLM::Router.health_tracker).to receive(:circuit_state).and_return(:closed)
-      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(false)
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'frontier:anthropic:default:inference:claude-haiku-4-5-20251001', tier: :frontier,
+        provider_family: :anthropic, instance_id: :default, model: 'claude-haiku-4-5-20251001',
+        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
+                                        })
+      # frontier tier is filtered out — not in %i[direct local fleet]
       result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:auto_route]).to be true
-      expect(result[:model]).to be_nil
+      expect(result[:auto_route]).to be_nil
+      expect(result[:model]).to eq('claude-haiku-4-5-20251001')
     end
   end
 

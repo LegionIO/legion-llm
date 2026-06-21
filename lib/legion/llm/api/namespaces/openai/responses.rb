@@ -22,6 +22,7 @@ module Legion
 
               app.post '/v1/responses' do
                 require_llm!
+                validate_legion_routing_headers!(env)
                 request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
                 body = parse_request_body
 
@@ -67,15 +68,14 @@ module Legion
                     Legion::LLM::API::DebugFormats.emit_echo_request_sse(out, canonical_request) if echo_request
 
                     assembler = Legion::LLM::API::StreamAssembler.new(
-                      emitter:    emitter,
-                      request_id: request_id,
-                      model:      model
+                      emitter:      emitter,
+                      request_id:   request_id,
+                      model:        model,
+                      initial_lane: { id: 'unknown:pending' }
                     )
-                    pipeline_response = if executor.respond_to?(:call_responses)
-                                          executor.call_responses(body: body, stream: true) { |c| assembler.push(c) }
-                                        else
-                                          executor.call_stream { |c| assembler.push(c) }
-                                        end
+                    # N×N: Canonical streaming path — responses body is already
+                    # translated to canonical form by the translator above.
+                    pipeline_response = executor.call_stream { |c| assembler.push(c) }
                     assembler.finalize(pipeline_response)
                     log_api_completion_summary(
                       namespace:         'namespaces][openai][responses',
@@ -94,11 +94,9 @@ module Legion
                     out << "event: error\ndata: #{Legion::JSON.dump({ type: 'server_error', message: e.message })}\n\n"
                   end
                 else
-                  pipeline_response = if executor.respond_to?(:call_responses)
-                                        executor.call_responses(body: body, stream: false)
-                                      else
-                                        executor.call
-                                      end
+                  # N×N: Canonical path — responses body is already translated
+                  # to canonical form; executor is format-agnostic.
+                  pipeline_response = executor.call
                   log_api_completion_summary(
                     namespace:         'namespaces][openai][responses',
                     request_id:        request_id,
@@ -122,6 +120,12 @@ module Legion
                     Legion::JSON.dump(formatted)
                   end
                 end
+              rescue Legion::LLM::Errors::NoLaneAvailable => e
+                translate_no_lane_available(e, operation: 'llm.api.namespaces.openai.responses.no_lane')
+              rescue Legion::LLM::Errors::EscalationExhausted => e
+                translate_escalation_exhausted(e, operation: 'llm.api.namespaces.openai.responses.exhausted')
+              rescue Legion::LLM::Errors::InvalidHeader => e
+                translate_invalid_header(e, operation: 'llm.api.namespaces.openai.responses.invalid_header')
               rescue Legion::LLM::AuthError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.namespaces.openai.responses.auth')
                 openai_error(e.message, type: 'authentication_error', status_code: 401)

@@ -17,11 +17,12 @@ module Legion
             module Completions
               extend Legion::Logging::Helper
 
-              def self.registered(app)
+              def self.registered(app) # rubocop:disable Metrics/AbcSize
                 log.debug('[llm][api][namespaces][openai][chat] registering routes')
 
                 app.post '/v1/chat/completions' do
                   require_llm!
+                  validate_legion_routing_headers!(env)
                   request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
                   body = parse_request_body
 
@@ -72,9 +73,10 @@ module Legion
                       Legion::LLM::API::DebugFormats.emit_echo_request_sse(out, canonical_request) if echo_request
 
                       assembler = Legion::LLM::API::StreamAssembler.new(
-                        emitter:    emitter,
-                        request_id: request_id,
-                        model:      model
+                        emitter:      emitter,
+                        request_id:   request_id,
+                        model:        model,
+                        initial_lane: { id: 'unknown:pending' }
                       )
                       pipeline_response = executor.call_stream { |c| assembler.push(c) }
                       assembler.finalize(pipeline_response)
@@ -122,6 +124,12 @@ module Legion
                       Legion::JSON.dump(response_body)
                     end
                   end
+                rescue Legion::LLM::Errors::NoLaneAvailable => e
+                  translate_no_lane_available(e, operation: 'llm.api.namespaces.openai.chat.no_lane')
+                rescue Legion::LLM::Errors::EscalationExhausted => e
+                  translate_escalation_exhausted(e, operation: 'llm.api.namespaces.openai.chat.exhausted')
+                rescue Legion::LLM::Errors::InvalidHeader => e
+                  translate_invalid_header(e, operation: 'llm.api.namespaces.openai.chat.invalid_header')
                 rescue Legion::LLM::AuthError => e
                   handle_exception(e, level: :error, handled: true, operation: 'llm.api.namespaces.openai.chat.auth')
                   openai_error(e.message, type: 'authentication_error', status_code: 401)

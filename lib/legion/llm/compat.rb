@@ -17,13 +17,21 @@ module Legion
         msg += " (called from #{location})" if location
         log.warn(msg)
       rescue StandardError => e
-        handle_exception(e, level: :debug, handled: true, operation: 'llm.compat.warn_once')
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.compat.warn_once')
         warn msg
       end
     end
 
     def self.const_missing(name)
       case name
+      when :Discovery
+        # Moved to Legion::LLM::Inventory::Discovery in v0.14.0
+        CompatWarning.warn_once('Legion::LLM::Discovery', 'Legion::LLM::Inventory::Discovery')
+        Inventory::Discovery
+      when :Capabilities
+        # Moved to Legion::LLM::Inventory::Capabilities in v0.14.0
+        CompatWarning.warn_once('Legion::LLM::Capabilities', 'Legion::LLM::Inventory::Capabilities')
+        Inventory::Capabilities
       when :Pipeline
         CompatWarning.warn_once('Legion::LLM::Pipeline', 'Legion::LLM::Inference')
         Inference
@@ -78,8 +86,7 @@ module Legion
         CompatWarning.warn_once('Legion::LLM::ShadowEval', 'Legion::LLM::Quality::ShadowEval')
         Quality::ShadowEval
       when :Arbitrage
-        CompatWarning.warn_once('Legion::LLM::Arbitrage', 'Legion::LLM::Router::Arbitrage')
-        Router::Arbitrage
+        raise NameError, 'Legion::LLM::Arbitrage removed in v0.14.0 — cost-aware routing lands in Phase 2 as a lane_weight factor'
       when :Batch
         CompatWarning.warn_once('Legion::LLM::Batch', 'Legion::LLM::Scheduling::Batch')
         Scheduling::Batch
@@ -100,6 +107,36 @@ module Legion
         const_get(name)
       else
         super
+      end
+    end
+
+    # Discovery moved to Legion::LLM::Inventory::Discovery in v0.14.0.
+    # rule_generator.rb defines Legion::LLM::Discovery as a real module (not via const_missing).
+    # Add System/MemoryGate const aliases and method_missing delegation so callers keep working.
+    if defined?(Legion::LLM::Discovery) && defined?(Legion::LLM::Inventory::Discovery)
+      # Mirror nested constants used by callers
+      %i[System MemoryGate].each do |cname|
+        Legion::LLM::Discovery.const_set(cname, Legion::LLM::Inventory::Discovery.const_get(cname)) unless Legion::LLM::Discovery.const_defined?(cname, false)
+      end
+      # Mirror module-level constants used in specs
+      %i[EMBEDDING_TIER_ORDER MODEL_FAMILY_DELIMITERS MODEL_DIVERGENCE_SAMPLE_SIZE].each do |cname|
+        Legion::LLM::Discovery.const_set(cname, Legion::LLM::Inventory::Discovery.const_get(cname)) unless Legion::LLM::Discovery.const_defined?(cname, false)
+      end
+      # Forward all method calls (incl private, for .send) to Inventory::Discovery
+      Legion::LLM::Discovery.singleton_class.define_method(:method_missing) do |name, *args, **kwargs, &block|
+        target = Legion::LLM::Inventory::Discovery
+        target.respond_to?(name, true) ? target.send(name, *args, **kwargs, &block) : super(name, *args, **kwargs, &block)
+      end
+      Legion::LLM::Discovery.singleton_class.define_method(:respond_to_missing?) do |name, include_private = false|
+        Legion::LLM::Inventory::Discovery.respond_to?(name, include_private) || super(name, include_private)
+      end
+      # Forward instance_variable_set/get to Inventory::Discovery so test setup that
+      # sets @discovered_models etc. on Discovery actually affects the real module.
+      Legion::LLM::Discovery.singleton_class.define_method(:instance_variable_set) do |name, value|
+        Legion::LLM::Inventory::Discovery.instance_variable_set(name, value)
+      end
+      Legion::LLM::Discovery.singleton_class.define_method(:instance_variable_get) do |name|
+        Legion::LLM::Inventory::Discovery.instance_variable_get(name)
       end
     end
   end

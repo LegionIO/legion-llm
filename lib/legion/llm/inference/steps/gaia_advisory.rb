@@ -102,7 +102,7 @@ module Legion
               interaction_pattern: extract_interaction_pattern(results)
             }
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :warn)
             nil
           end
 
@@ -136,13 +136,13 @@ module Legion
             advisory[:partner_context] = partner_ctx if partner_ctx
             log_step_debug(:gaia_advisory, :partner_context_added, present: !partner_ctx.nil?)
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :warn)
           end
 
           def apollo_local_available?
             defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.gaia_advisory.apollo_local_available')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.gaia_advisory.apollo_local_available')
             false
           end
 
@@ -224,7 +224,7 @@ module Legion
             log_step_debug(:gaia_advisory, :calibration_loaded)
             raw[:weights]
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.gaia_advisory.fetch_partner_weights')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.gaia_advisory.fetch_partner_weights')
             nil
           end
 
@@ -247,7 +247,7 @@ module Legion
             )
             log_step_debug(:gaia_advisory, :record_meta, advisory_id: advisory_id, advisory_type_count: advisory_types.size)
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.steps.gaia_advisory.record_meta')
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.gaia_advisory.record_meta')
             nil
           end
 

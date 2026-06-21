@@ -92,4 +92,44 @@ RSpec.describe Legion::LLM::Inference::ContextAccounting do
       expect(described_class.message_text('raw string')).to eq('raw string')
     end
   end
+
+  # Regression: Canonical::Message is a Data struct — its #to_s returns
+  # #inspect (timestamps, nested ContentBlocks, tool_calls). Estimating
+  # tokens from #to_s produced ~854K "tokens" for hello_ping and broke
+  # Router.request_lane's context-window filter (every lane rejected).
+  describe '.estimate_message_tokens (Canonical regression)' do
+    it 'returns < 50 tokens for a hello-world Canonical::Message' do
+      msg = Legion::Extensions::Llm::Canonical::Message.build(
+        role: :user, content: 'Say hello in exactly 3 words.'
+      )
+      expect(described_class.estimate_message_tokens(msg)).to be < 50
+    end
+
+    it 'sums multiple text ContentBlocks correctly' do
+      msg = Legion::Extensions::Llm::Canonical::Message.build(
+        role:    :user,
+        content: [
+          Legion::Extensions::Llm::Canonical::ContentBlock.text('hi'),
+          Legion::Extensions::Llm::Canonical::ContentBlock.text('there')
+        ]
+      )
+      # "hithere" = 7 chars / 4 = 2 tokens (ceil)
+      expect(described_class.estimate_message_tokens(msg)).to be <= 5
+    end
+
+    it 'handles legacy Hash messages (back-compat path)' do
+      msg = { role: :user, content: [{ type: 'text', text: 'hello' }] }
+      expect(described_class.estimate_message_tokens(msg)).to be <= 3
+    end
+
+    it 'returns 0 for a Canonical::Message with only tool_calls (no text content)' do
+      msg = Legion::Extensions::Llm::Canonical::Message.build(
+        role: :assistant, content: nil,
+        tool_calls: [Legion::Extensions::Llm::Canonical::ToolCall.from_hash(
+          id: '1', name: 'foo', arguments: { x: 1 }
+        )]
+      )
+      expect(described_class.estimate_message_tokens(msg)).to eq(0)
+    end
+  end
 end

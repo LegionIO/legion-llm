@@ -90,8 +90,7 @@ module Legion
             metadata[:client_tool_request_count] = canonical_request.tools&.size if canonical_request.tools&.any?
 
             messages = inference_messages(canonical_request.messages)
-
-            Legion::LLM::Inference::Request.build(
+            request_kwargs = {
               id:              request_id,
               messages:        messages,
               system:          canonical_request.system,
@@ -105,7 +104,11 @@ module Legion
               modality:        modality,
               cache:           { strategy: :default, cacheable: true },
               extra:           extra.empty? ? {} : extra
-            )
+            }
+
+            apply_canonical_params_to_inference(request_kwargs, canonical_request.params)
+
+            Legion::LLM::Inference::Request.build(**request_kwargs)
           end
 
           # OpenAI chat-completions tool_choice shapes:

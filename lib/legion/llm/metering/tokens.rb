@@ -109,14 +109,14 @@ module Legion
           def session_max_tokens
             Legion::Settings.dig(:llm, :budget, :session_max_tokens)
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :warn)
             nil
           end
 
           def session_warn_tokens
             Legion::Settings.dig(:llm, :budget, :session_warn_tokens)
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :warn)
             nil
           end
         end

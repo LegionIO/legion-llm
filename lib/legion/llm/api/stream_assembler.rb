@@ -66,13 +66,23 @@ module Legion
           finished
         ].freeze
 
+        # H-I / sonnet G6 / D-K: initial_lane required so the assembler always has a lane on hand.
+        # Passing initial_lane: nil raises ArgumentError.
         def initialize(emitter:, request_id:, model:, input_tokens: 0,
                        emit_thinking_blocks: nil, tool_call_buffering: nil,
-                       keep_alive_interval_ms: nil)
+                       keep_alive_interval_ms: nil, initial_lane: nil, **)
+          raise ArgumentError, 'initial_lane: must be a non-nil lane Hash' if initial_lane.nil?
+
           @emitter = emitter
           @request_id = request_id
           @model = model.to_s
           @input_tokens = input_tokens.to_i
+
+          # G30 / D-F: failover tracking for debug trailers. @current_lane tracks the
+          # active dispatch lane; @failover_chain records lane IDs for the x-legion-failover-*
+          # debug trailers emitted at finalize time. NO custom SSE event (N×N invariant 5).
+          @current_lane = initial_lane
+          @failover_chain = [initial_lane.is_a?(Hash) ? initial_lane[:id] : initial_lane.to_s]
 
           settings = Legion::Settings[:llm][:streaming] || {}
           @emit_thinking_blocks = if emit_thinking_blocks.nil?
@@ -170,6 +180,7 @@ module Legion
           usage = final_response_usage(final_response)
           guard { @emitter.on_message_delta(stop_reason: stop_reason, output_tokens: usage[:output_tokens]) }
           guard { @emitter.on_done(stop_reason: stop_reason, usage: usage, model: resolved_model(final_response)) }
+          emit_failover_trailers!
           @phase = :finished
         rescue IOError, Errno::EPIPE => e
           mark_closed!(e)
@@ -222,6 +233,41 @@ module Legion
           @phase = :before_first_byte if @phase == :mid_tool_call
         end
 
+        # G30 / D-F / N×N invariant 5: mid-stream failover is silent at the SSE wire.
+        # Clears the partial canonical buffer so the next provider renders a clean start.
+        # Appends a failover marker to @failover_chain for debug trailers at finalize.
+        # NO custom SSE event is emitted — that would violate N×N "always translate".
+        def provider_failover_pending!(from:, **)
+          return if @closed
+
+          from_id = from.is_a?(Hash) ? from[:id] : from.to_s
+          log.warn('[llm][stream_assembler] action=provider_failover_pending ' \
+                   "from=#{from_id} request_id=#{@request_id}")
+          # Clear the partial canonical buffer — partial responses can't cross providers
+          # (thinking strip, context invalidation). The next provider starts fresh.
+          close_thinking_block if @thinking_block_open
+          close_text_block     if @text_block_open
+          abort_open_tool_calls(reason: 'provider_failover')
+          @full_text.clear
+          @full_thinking.clear
+          @full_thinking_signature = nil
+          @phase = :before_first_byte
+          @failover_chain << :failover_marker
+        rescue IOError, Errno::EPIPE => e
+          mark_closed!(e)
+        end
+
+        # Called by the executor after selecting the next lane. Updates @current_lane
+        # and appends the new lane ID to the failover chain for debug trailers.
+        def begin_dispatch_on(lane:, **)
+          return if @closed
+
+          @current_lane = lane
+          @failover_chain << (lane.is_a?(Hash) ? lane[:id] : lane.to_s)
+          log.info("[llm][stream_assembler] action=begin_dispatch lane=#{lane.is_a?(Hash) ? lane[:id] : lane} " \
+                   "request_id=#{@request_id}")
+        end
+
         def safe_replay_snapshot
           {
             emitted_text:               @full_text.dup,
@@ -246,6 +292,26 @@ module Legion
         end
 
         private
+
+        # G30 / D-F: emit x-legion-failover-* debug trailers after on_done.
+        # Only fires when failover actually happened (@failover_chain has markers).
+        # Trailers are response metadata, not SSE events — no wire-level event emitted.
+        def emit_failover_trailers!
+          failover_count = @failover_chain.count(:failover_marker)
+          return if failover_count.zero?
+          return unless @emitter.respond_to?(:on_trailers)
+
+          real_ids = @failover_chain.reject { |e| e == :failover_marker }
+          return unless real_ids.size >= 2
+
+          @emitter.on_trailers(trailers: {
+                                 'x-legion-failover-from'  => real_ids.first.to_s,
+                                 'x-legion-failover-to'    => real_ids.last.to_s,
+                                 'x-legion-failover-count' => failover_count.to_s
+                               })
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.api.stream_assembler.emit_failover_trailers')
+        end
 
         def abort_open_tool_calls(reason:)
           @open_tool_calls.each_value do |state|
@@ -587,12 +653,25 @@ module Legion
             from_legacy(chunk)
           end
 
+          # A canonical chunk delta is normally a String, but a non-incremental
+          # final message can arrive as a Canonical::ContentBlock (or array of
+          # them). Unwrap to text — never `.to_s` a value object onto the wire.
+          def delta_text(delta)
+            return '' if delta.nil?
+            return delta if delta.is_a?(String)
+            return delta.map { |part| delta_text(part) }.join if delta.is_a?(Array)
+            return delta.text.to_s if delta.respond_to?(:text) && delta.text
+            return delta.content.to_s if delta.respond_to?(:content) && delta.content
+
+            ''
+          end
+
           def from_canonical(chunk)
             case chunk.type
             when :text_delta
-              AdaptedChunk.new(text: chunk.delta.to_s)
+              AdaptedChunk.new(text: delta_text(chunk.delta))
             when :thinking_delta
-              AdaptedChunk.new(thinking_text: chunk.delta.to_s, thinking_signature: chunk.signature)
+              AdaptedChunk.new(thinking_text: delta_text(chunk.delta), thinking_signature: chunk.signature)
             when :tool_call_delta
               tc = chunk.tool_call
               return AdaptedChunk.new if tc.nil?
@@ -655,10 +734,14 @@ module Legion
             if thinking.is_a?(Hash)
               normalized = thinking.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
               [normalized[:content] || normalized[:text] || normalized[:thinking], normalized[:signature]]
-            elsif thinking.respond_to?(:content)
+            elsif thinking.respond_to?(:content) && thinking.content
               [thinking.content, thinking.respond_to?(:signature) ? thinking.signature : nil]
+            elsif thinking.respond_to?(:text)
+              # Legacy lex-llm Thinking exposes #text/#signature (no #content) —
+              # extract the text, never the Ruby `#<...Thinking:0x...>` inspect.
+              [thinking.text, thinking.respond_to?(:signature) ? thinking.signature : nil]
             else
-              [thinking.to_s, nil]
+              [thinking.is_a?(String) ? thinking : nil, nil]
             end
           end
 

@@ -14,10 +14,42 @@ module Legion
             escalation = pipeline_escalation_enabled?
             log.debug "[llm][executor] action=step_provider_call provider=#{@resolved_provider} model=#{@resolved_model} escalation=#{escalation}"
             if escalation
-              run_provider_call_with_escalation
+              run_provider_call_with_attempts(routing_payload: build_routing_payload_from_resolved)
             else
               run_provider_call_single
             end
+          end
+
+          # Build a minimal routing_payload from the already-resolved routing state.
+          # C2 (PayloadBuilder) will replace this with a proper single-ingress build from headers+body.
+          # This bridge keeps the loop working in C1 while the old chain machinery still exists.
+          #
+          # IMPORTANT: providers/instances/tiers are intentionally NOT pinned here.
+          # Pinning providers: [:bedrock] would prevent cross-provider failover — the router
+          # returns nil after bedrock lanes are exhausted, raising EscalationExhausted prematurely.
+          # The preferred provider is expressed via the model filter (models: [model]) and by the
+          # routing payload built in C2 from explicit x-legion-* headers (hard filters) vs body hints.
+          # For the while remaining.positive? loop, tried_lanes exclusion handles exhaustion naturally:
+          # after all bedrock lanes are in tried_lanes, the router selects the next-best provider.
+          def build_routing_payload_from_resolved
+            estimated = estimate_request_tokens
+            # Include the resolved model as a soft filter so request_lane picks the requested model
+            # from whichever provider has it. No provider/tier/instance pinning — that would prevent
+            # cross-provider failover and break the while remaining.positive? escalation loop.
+            models = @resolved_model ? [@resolved_model.to_s] : []
+
+            {
+              type:              :inference,
+              tiers:             [],
+              providers:         [],
+              instances:         [],
+              models:            models,
+              capabilities:      chain_required_capabilities,
+              privacy:           (@proactive_tier_assignment&.dig(:privacy) || :normal).to_sym,
+              estimated_context: estimated.positive? ? estimated : nil,
+              tried_lanes:       [],
+              max_attempts:      pipeline_escalation_max_attempts
+            }
           end
 
           def run_provider_call_single
@@ -49,253 +81,12 @@ module Legion
             raise e.is_a?(Legion::LLM::ProviderError) ? e : Legion::LLM::ProviderError.new(e.message)
           end
 
-          def run_provider_call_with_escalation(stream_block: nil, responses_body: nil, responses_stream: false)
-            @escalation_chain ||= build_default_escalation_chain
-            chain = @escalation_chain
-            threshold = pipeline_escalation_quality_threshold
-            quality_check = @request.extra[:quality_check]
-            succeeded = false
-            tried = []
-            @last_escalation_error = nil
-            log.debug "[llm][executor] action=escalation.enter chain_size=#{chain.size} threshold=#{threshold} max_attempts=#{chain.max_attempts}"
-
-            primary_tier = @escalation_chain.primary&.tier
-
-            if chain.empty?
-              err = routing_empty_chain_error
-              log.warn "[llm][escalation] action=empty_chain reason=#{err.class.name}"
-              emit_error_audit(err, status: 'no_available_provider')
-              raise err
-            end
-
-            chain.each do |resolution|
-              next if tried.any? { |t| t[:provider] == resolution.provider && t[:instance] == resolution.instance && t[:model] == resolution.model }
-
-              if skip_open_circuits? && circuit_open?(resolution)
-                log.info "[llm][escalation] action=skip_open_circuit provider=#{resolution.provider} " \
-                         "instance=#{resolution.instance} model=#{resolution.model}"
-                @escalation_history << escalation_attempt_hash(
-                  resolution,
-                  outcome:     :skipped_open_circuit,
-                  failures:    ['circuit_open'],
-                  duration_ms: 0
-                )
-                next
-              end
-
-              succeeded = run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier,
-                                                    stream_block:     stream_block,
-                                                    responses_body:   responses_body,
-                                                    responses_stream: responses_stream)
-              break if succeeded
-            end
-            return if succeeded
-            raise @last_escalation_error if chain.size <= 1 && @last_escalation_error
-
-            log.warn "[llm][escalation] action=exhausted attempts=#{@escalation_history.size} chain_size=#{chain.size}"
-            emit_error_audit(
-              EscalationExhausted.new("All #{@escalation_history.size} attempts failed"),
-              status: 'escalation_exhausted'
-            )
-            raise EscalationExhausted, "All #{@escalation_history.size} escalation attempts failed"
-          end
-
-          def run_escalation_resolution(resolution, threshold, quality_check, tried, primary_tier, stream_block: nil,
-                                        responses_body: nil, responses_stream: false)
-            move_type = escalation_move_type(resolution, tried, primary_tier)
-            prev_provider = @resolved_provider
-            prev_tier = @resolved_tier
-            log_escalation_attempt(resolution, move_type, tried.size + 1)
-            if move_type == :escalation && %i[local fleet vllm].include?(prev_tier) && %i[cloud frontier].include?(resolution.tier)
-              log.warn "[llm][escalation] action=tier_upgrade from_tier=#{prev_tier} " \
-                       "from_provider=#{prev_provider} to_tier=#{resolution.tier} " \
-                       "to_provider=#{resolution.provider} to_model=#{resolution.model}"
-            end
-
-            start_time = Time.now
-            prev_resolution = if stream_block && tried.any?
-                                Legion::LLM::Router::Resolution.new(
-                                  tier: prev_tier, provider: prev_provider,
-                                  instance: @resolved_instance, model: @resolved_model
-                                )
-                              end
-            @resolved_provider = resolution.provider
-            @resolved_instance = resolution.instance
-            @resolved_model = resolution.model
-            @resolved_tier = resolution.tier
-            @resolved_offering_id = resolution.offering_id
-            @resolved_offering_metadata = resolution.offering_metadata
-            notify_stream_provider_switched(prev_resolution, resolution) if prev_resolution
-            succeeded = attempt_escalation(resolution, threshold, quality_check, start_time,
-                                           stream_block:     stream_block,
-                                           responses_body:   responses_body,
-                                           responses_stream: responses_stream)
-            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model } unless succeeded
-            succeeded
-          rescue Legion::LLM::ModelNotAllowed => e
-            # Policy outcome, not a provider failure: terminate the chain. Do not
-            # escalate, do not record a health failure, do not trip a circuit or
-            # deny-record the model — re-raise so the caller sees the compliance error.
-            log.warn "[llm][escalation] action=model_not_allowed terminal=true provider=#{resolution.provider} " \
-                     "model=#{resolution.model} — not an escalation"
-            raise e
-          rescue Legion::LLM::AuthError, Legion::LLM::PrivacyModeError => e
-            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-            record_escalation_failure(e, resolution, start_time,
-                                      outcome:   :auth_error,
-                                      operation: 'llm.pipeline.escalation_attempt.auth',
-                                      handled:   true)
-            false
-          rescue Legion::LLM::ContextOverflow => e
-            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-            record_escalation_failure(e, resolution, start_time,
-                                      outcome:   :context_overflow,
-                                      operation: 'llm.pipeline.escalation_attempt.context_overflow',
-                                      handled:   true)
-            log.warn "[llm][escalation] context_overflow provider=#{resolution.provider} " \
-                     "model=#{resolution.model} — skipping same-tier, seeking larger context window"
-            skip_same_tier!(resolution, tried)
-            false
-          rescue Legion::LLM::RateLimitError => e
-            tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-            record_escalation_failure(e, resolution, start_time,
-                                      outcome:   :rate_limited,
-                                      operation: 'llm.pipeline.escalation_attempt.rate_limit',
-                                      handled:   true)
-            false
-          rescue StandardError => e
-            if client_stream_error?(e)
-              log.warn "[llm][escalation] action=client_stream_error error=#{e.class}: #{e.message} " \
-                       "provider=#{resolution.provider} model=#{resolution.model}"
-              raise
-            end
-
-            if context_overflow_error?(e)
-              tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-              record_escalation_failure(e, resolution, start_time,
-                                        outcome:   :context_overflow,
-                                        operation: 'llm.pipeline.escalation_attempt.context_overflow',
-                                        handled:   true)
-              log.warn "[llm][escalation] context_overflow provider=#{resolution.provider} " \
-                       "model=#{resolution.model} — skipping same-tier, seeking larger context window"
-              skip_same_tier!(resolution, tried)
-              return false
-            end
-
-            notify_stream_provider_failed(e, resolution) if stream_block
-            if account_specific_error?(e)
-              # Account/instance-scoped failure (credit balance, payment, quota): a
-              # sibling instance of the SAME provider+model — a different account/key
-              # — may still work, so skip ONLY the failing instance and let failover
-              # try the siblings before crossing to another provider.
-              tried << { provider: resolution.provider, instance: resolution.instance, model: resolution.model }
-            else
-              # Model-intrinsic failure: don't burn the attempt budget re-trying a
-              # broken model on every instance — skip all instances of this model.
-              skip_all_provider_model_instances!(resolution, tried)
-            end
-            record_escalation_failure(e, resolution, start_time,
-                                      outcome:   :error,
-                                      operation: 'llm.pipeline.escalation_attempt')
-            false
-          end
-
           # Errors scoped to a single account/instance (its credentials, billing, or
           # quota) rather than to the model itself. A sibling instance of the same
           # provider+model can still succeed, so these must not skip the whole model.
           def account_specific_error?(error)
             message = error.respond_to?(:message) ? error.message.to_s : error.to_s
             message.match?(/credit balance|insufficient (?:credit|funds|quota|balance)|payment required|billing|quota (?:exceeded|exhausted)|over quota/i)
-          end
-
-          def escalation_move_type(resolution, tried, primary_tier)
-            return :primary if tried.empty?
-            return :lateral if resolution.tier == primary_tier
-
-            :escalation
-          end
-
-          def log_escalation_attempt(resolution, move_type, attempt)
-            message = "[llm][escalation] action=attempt move=#{move_type} provider=#{resolution.provider} " \
-                      "model=#{resolution.model} tier=#{resolution.tier} attempt=#{attempt}"
-            if move_type == :primary
-              log.info message
-            else
-              log.warn "#{message} #{escalation_previous_failure_summary}"
-            end
-          end
-
-          def escalation_previous_failure_summary
-            error = @last_escalation_error
-            return "previous_error=#{error.class.name} previous_message=#{error.message.to_s[0, 200]}" if error
-
-            previous = @escalation_history.last
-            return 'previous_error=unknown' unless previous
-
-            failures = Array(previous[:failures]).join(',')
-            "previous_outcome=#{previous[:outcome]} previous_failures=#{failures}"
-          end
-
-          def attempt_escalation(resolution, threshold, quality_check, start_time, stream_block: nil,
-                                 responses_body: nil, responses_stream: false)
-            @current_escalation_context = {
-              attempt:      @escalation_history.size + 1,
-              max_attempts: @escalation_chain&.max_attempts
-            }.compact
-            if responses_body && resolved_provider_supports_responses?
-              execute_provider_request_responses(body: responses_body, stream: responses_stream, &stream_block)
-              result = Legion::LLM::Quality::Checker::QualityResult.new(passed: true, failures: [])
-            elsif stream_block
-              execute_provider_request_stream(&stream_block)
-              # NOTE: Streaming escalation attempts always pass quality check (B-05).
-              # Quality-checking a stream in-flight is not supported; the first provider
-              # in the chain wins for streaming requests. If quality gating is required
-              # for streaming, handle it at the caller level.
-              result = Legion::LLM::Quality::Checker::QualityResult.new(passed: true, failures: [])
-            else
-              execute_provider_request
-              result = Legion::LLM::Quality::Checker.check(@raw_response, quality_threshold: threshold,
-                                                                          quality_check:     quality_check)
-            end
-            duration_ms = ((Time.now - start_time) * 1000).round
-            outcome = result.passed ? :success : :quality_failure
-            log.debug "[llm][escalation] action=attempt_result provider=#{resolution.provider} model=#{resolution.model} outcome=#{outcome} duration_ms=#{duration_ms}"
-            @timeline.record(
-              category: :provider, key: 'escalation:attempt', direction: :internal,
-              detail: "attempt #{@escalation_history.size + 1}: #{resolution.provider}:#{resolution.model} => #{outcome}",
-              from: 'pipeline', to: "provider:#{resolution.provider}"
-            )
-            @escalation_history << escalation_attempt_hash(
-              resolution,
-              outcome:     outcome,
-              failures:    result.passed ? [] : result.failures,
-              duration_ms: duration_ms
-            )
-            report_escalation_quality_failure(resolution, result) unless result.passed
-            emit_escalation_attempt_metering(
-              provider:    resolution.provider,
-              model:       resolution.model,
-              duration_ms: duration_ms,
-              attempt:     @escalation_history.size
-            )
-            emit_escalation_attempt_audit(
-              provider:    resolution.provider,
-              model:       resolution.model,
-              outcome:     outcome,
-              duration_ms: duration_ms,
-              attempt:     @escalation_history.size
-            )
-            result.passed
-          ensure
-            @current_escalation_context = nil
-          end
-
-          def report_escalation_quality_failure(resolution, result)
-            log.warn "[llm][escalation] quality_failure provider=#{resolution.provider} " \
-                     "model=#{resolution.model} failures=#{Array(result.failures).join(',')}"
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.escalation_attempt.health_report',
-                                provider: resolution.provider, model: resolution.model)
           end
 
           def record_escalation_failure(err, resolution, start_time, outcome:, operation:, handled: false)
@@ -319,23 +110,23 @@ module Legion
               log.warn "[llm][escalation] action=account_scoped_error provider=#{resolution.provider} " \
                        "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
                        "error=#{err.message.to_s[0, 300]} deprioritized=true model_denied=false"
-              Legion::LLM::Router.health_tracker.trip_circuit(
+              Legion::LLM::Router.health_tracker.trip_circuit( # allowlist:write-side
                 provider: resolution.provider, instance: resolution.instance, reason: err.message
               )
             elsif authentication_error?(err) || config_error?(err)
-              Legion::LLM::Router.health_tracker.deny_model(
+              Legion::LLM::Router.health_tracker.deny_model( # allowlist:write-side
                 provider: resolution.provider,
                 model:    resolution.model,
                 instance: resolution.instance,
                 reason:   err.message
               )
-              Legion::LLM::Router.health_tracker.trip_circuit(
+              Legion::LLM::Router.health_tracker.trip_circuit( # allowlist:write-side
                 provider: resolution.provider,
                 instance: resolution.instance,
                 reason:   err.message
               )
             elsif !context_overflow_error?(err)
-              Legion::LLM::Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
+              Legion::LLM::Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance, # allowlist:write-side
                                                         offering_id: resolution.offering_id,
                                                         signal: :error, value: 1,
                                                         metadata: { reason: err.class.name, message: err.message.to_s[0, 500],
@@ -370,63 +161,6 @@ module Legion
             )
           end
 
-          def build_default_escalation_chain
-            chain = Legion::LLM::Router.build_escalation_chain(
-              provider:              @resolved_provider,
-              model:                 @resolved_model,
-              tier:                  @resolved_tier,
-              instance:              @resolved_instance,
-              max_attempts:          pipeline_escalation_max_attempts,
-              estimated_tokens:      estimate_request_tokens,
-              required_capabilities: chain_required_capabilities
-            )
-            log.debug "[llm][escalation] action=chain_built size=#{chain.size} max_attempts=#{chain.max_attempts} " \
-                      "primary=#{@resolved_provider}:#{@resolved_model} fallbacks=#{chain.size - 1}"
-            chain
-          end
-
-          # Determine the appropriate typed error when the escalation chain is empty.
-          # Uses the last rejection reasons from availability filtering to distinguish
-          # between "too early" (prerequisites not yet confirmed) and "failed dependency"
-          # (no provider can satisfy the requirements).
-          def routing_empty_chain_error
-            reasons = Legion::LLM::Router::Availability.last_rejection_reasons
-            if reasons.include?(:capability_unconfirmed)
-              RoutingTooEarly.new
-            elsif reasons.any?
-              RoutingFailedDependency.new
-            else
-              EscalationExhausted.new('No available providers after routing availability filtering')
-            end
-          end
-
-          def skip_same_tier!(failed_resolution, tried)
-            chain = @escalation_chain
-            return unless chain.respond_to?(:each)
-
-            chain.each do |r|
-              next if r.tier != failed_resolution.tier
-              next if tried.any? { |t| t[:provider] == r.provider && t[:instance] == r.instance && t[:model] == r.model }
-
-              log.debug "[llm][escalation] action=skip_same_tier provider=#{r.provider} model=#{r.model} tier=#{r.tier} reason=context_overflow"
-              tried << { provider: r.provider, instance: r.instance, model: r.model }
-            end
-          end
-
-          def skip_all_provider_model_instances!(failed_resolution, tried)
-            chain = @escalation_chain
-            return unless chain.respond_to?(:each)
-
-            chain.each do |r|
-              next if r.provider != failed_resolution.provider || r.model != failed_resolution.model
-              next if tried.any? { |t| t[:provider] == r.provider && t[:instance] == r.instance && t[:model] == r.model }
-
-              log.warn "[llm][escalation] action=skip_provider_model provider=#{r.provider} model=#{r.model} " \
-                       "instance=#{r.instance} reason=provider_error"
-              tried << { provider: r.provider, instance: r.instance, model: r.model }
-            end
-          end
-
           def escalation_attempt_hash(resolution, outcome:, failures:, duration_ms:)
             attempt = { model: resolution.model, provider: resolution.provider, tier: resolution.tier,
                         outcome: outcome, failures: failures, duration_ms: duration_ms }
@@ -443,11 +177,6 @@ module Legion
           def pipeline_escalation_max_attempts
             esc = Legion::Settings[:llm].dig(:routing, :escalation) || {}
             esc[:max_attempts] || 3
-          end
-
-          def pipeline_escalation_quality_threshold
-            esc = Legion::Settings[:llm].dig(:routing, :escalation) || {}
-            esc[:quality_threshold] || 50
           end
 
           def execute_provider_request
@@ -496,13 +225,13 @@ module Legion
             return if client_stream_error?(error)
 
             if authentication_error?(error) || config_error?(error)
-              Legion::LLM::Router.health_tracker.deny_model(
+              Legion::LLM::Router.health_tracker.deny_model( # allowlist:write-side
                 provider: provider,
                 model:    model,
                 instance: instance,
                 reason:   error.message
               )
-              Legion::LLM::Router.health_tracker.trip_circuit(
+              Legion::LLM::Router.health_tracker.trip_circuit( # allowlist:write-side
                 provider: provider,
                 instance: instance,
                 reason:   error.message
@@ -510,7 +239,7 @@ module Legion
               return
             end
 
-            Legion::LLM::Router.health_tracker.report(
+            Legion::LLM::Router.health_tracker.report( # allowlist:write-side
               provider: provider, instance: instance,
               offering_id: offering_id, signal: :error, value: 1,
               metadata: { reason: error.class.name, message: error.message.to_s[0, 500], model: model }
@@ -522,10 +251,10 @@ module Legion
           def report_provider_health(signal, duration_ms, metadata: {})
             return unless defined?(Legion::LLM::Router) && Legion::LLM::Router.routing_enabled?
 
-            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
+            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance, # allowlist:write-side
                                                       offering_id: @resolved_offering_id,
                                                       signal: signal, value: 1, metadata: metadata.merge(duration_ms: duration_ms))
-            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance,
+            Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance, # allowlist:write-side
                                                       offering_id: @resolved_offering_id,
                                                       signal: :latency, value: duration_ms, metadata: {})
           rescue StandardError => e
@@ -639,34 +368,6 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.emit_escalation_attempt_metering')
           end
 
-          def notify_stream_provider_failed(error, resolution)
-            @stream_observer&.provider_failed(error: error, resolution: resolution)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true,
-                             operation: 'llm.pipeline.stream_observer.provider_failed')
-          end
-
-          def notify_stream_provider_switched(from, to)
-            return unless from
-
-            @stream_observer&.provider_switched(from: from, to: to)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true,
-                             operation: 'llm.pipeline.stream_observer.provider_switched')
-          end
-
-          def skip_open_circuits?
-            esc = Legion::Settings[:llm].dig(:routing, :escalation) || {}
-            esc[:skip_open_circuits] != false
-          end
-
-          def circuit_open?(resolution)
-            Legion::LLM::Router.health_tracker.circuit_state(resolution.provider, instance: resolution.instance) == :open
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.escalation.circuit_check')
-            false
-          end
-
           def request_payload_error?(err)
             name = err.class.name.to_s
             msg = err.message.to_s
@@ -711,9 +412,205 @@ module Legion
               name.include?('Errno::ECONNABORTED')
           end
 
+          # G25 / B-H / PR #152 C5/C6: Internal errors (daemon NoMethodError/ArgumentError) come from
+          # shared daemon code — retrying on a different lane guarantees the same crash. Classified as
+          # terminal: raise immediately, never retry, never trip circuits, never push to tried_lanes.
+          def internal_error?(err)
+            err.is_a?(::NoMethodError) || err.is_a?(::ArgumentError)
+          end
+
+          # Classify error for the while remaining.positive? loop (G26 / D-C).
+          # internal_error MUST be checked BEFORE account_specific (G25 / B-H):
+          # a daemon NoMethodError must never be treated as a retriable account-scoped failure.
+          def classify_error(error:, **)
+            return :context_overflow  if context_overflow_error?(error)
+            return :payload_error     if request_payload_error?(error)
+            return :policy_denied     if error.is_a?(Legion::LLM::ModelNotAllowed)
+            return :internal_error    if internal_error?(error) # terminal before account_specific
+            return :account_specific  if authentication_error?(error) ||
+                                         config_error?(error) ||
+                                         account_specific_error?(error)
+
+            :transient
+          end
+
+          # Called after each failed dispatch in the while remaining.positive? loop.
+          # Updates the routing payload's tried_lanes and/or trips the health circuit.
+          # Terminal errors re-raise immediately so the caller's while loop stops.
+          def classify_and_accumulate_exclusions(error:, lane:, payload:, **)
+            case classify_error(error: error)
+            when :internal_error, :context_overflow, :payload_error, :policy_denied
+              raise error
+            when :account_specific
+              # Account/instance-scoped failure: trip the per-instance circuit.
+              # All lanes for this instance go lane_weight ≤ 0; sibling instances stay eligible.
+              log.warn("[llm][escalation] action=account_specific_error lane=#{lane[:id]} " \
+                       "provider=#{lane[:provider_family]} instance=#{lane[:instance_id]} " \
+                       "error=#{error.class}: #{error.message.to_s[0, 200]}")
+              Legion::LLM::Router.health_tracker.trip_circuit( # allowlist:write-side
+                provider: lane[:provider_family], instance: lane[:instance_id], reason: error.message
+              )
+            else
+              payload[:tried_lanes] << lane[:id]
+            end
+          rescue Legion::LLM::ModelNotAllowed, ::NoMethodError, ::ArgumentError
+            raise
+          rescue StandardError => e
+            raise if request_payload_error?(e)
+            raise if context_overflow_error?(e)
+
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.classify_and_accumulate_exclusions',
+                                lane: lane[:id])
+            payload[:tried_lanes] << lane[:id]
+          end
+
+          # G26 / D-C: The bounded while remaining.positive? loop.
+          # Replaces the @escalation_chain iteration. Bounded by construction — remaining only decreases.
+          # No loop do, no retry, no redo inside this block.
+          #
+          # G27 / D-G: Dual-error semantics tracked by attempt_idx == 0:
+          #   NoLaneAvailable   — request_lane returned nil on first try (attempt_idx == 0)
+          #   EscalationExhausted — tried at least one lane (attempt_idx >= 1) then ran out
+          #
+          # First-attempt seeding: if step_routing already resolved a provider/model, we look up the
+          # corresponding Inventory lane for that (provider, instance, model) to use as the first lane.
+          # This preserves step_routing's resolution while keeping the loop-based retry mechanism.
+          # N×N: single canonical escalation loop — no provider-specific branches.
+          # The API namespace translator converts all client formats to canonical form;
+          # this loop dispatches only through execute_provider_request / execute_provider_request_stream.
+          def run_provider_call_with_attempts(routing_payload:, assembler: nil, stream_block: nil)
+            remaining      = routing_payload[:max_attempts] || Legion::Settings[:llm][:routing][:max_attempts]
+            total_attempts = remaining
+            attempt_idx    = 0
+            last_error     = nil
+
+            log.debug('[llm][executor] action=run_provider_call_with_attempts ' \
+                      "max_attempts=#{remaining} provider=#{@resolved_provider} model=#{@resolved_model}")
+
+            while remaining.positive?
+              lane = select_next_lane(routing_payload: routing_payload, attempt_idx: attempt_idx)
+
+              if lane.nil?
+                if attempt_idx.zero?
+                  err = Legion::LLM::Errors::NoLaneAvailable.new(
+                    filters: routing_payload.slice(:tiers, :providers, :instances, :models,
+                                                   :capabilities, :thinking, :privacy, :estimated_context)
+                  )
+                  log.warn("[llm][executor] action=no_lane_available filters=#{err.filters.inspect}")
+                  emit_error_audit(err, status: 'no_lane_available')
+                else
+                  err = Legion::LLM::Errors::EscalationExhausted.new(
+                    attempts:    attempt_idx,
+                    tried_lanes: routing_payload[:tried_lanes],
+                    last_error:  last_error
+                  )
+                  log.warn("[llm][executor] action=escalation_exhausted_mid_loop attempts=#{attempt_idx} " \
+                           "tried=#{routing_payload[:tried_lanes].size}")
+                  emit_error_audit(err, status: 'escalation_exhausted')
+                end
+                raise err
+              end
+
+              remaining   -= 1
+              attempt_idx += 1
+
+              @resolved_provider         = lane[:provider_family]
+              @resolved_instance         = lane[:instance_id]
+              @resolved_model            = lane[:model]
+              @resolved_tier             = lane[:tier]
+              @resolved_offering_id      = lane[:id]
+              @resolved_offering_metadata = normalize_offering_metadata(
+                lane.slice(:canonical_model_alias, :limits, :cost, :capabilities).compact
+              )
+
+              log.info("[llm][executor] action=dispatch_attempt attempt=#{attempt_idx}/#{total_attempts} " \
+                       "lane=#{lane[:id]} provider=#{@resolved_provider} model=#{@resolved_model}")
+
+              assembler&.begin_dispatch_on(lane: lane) if assembler.respond_to?(:begin_dispatch_on)
+
+              start_time = Time.now
+              begin
+                # N×N: single canonical dispatch path — no provider-specific branches.
+                # The API namespace translator converts all client formats (OpenAI Chat,
+                # OpenAI Responses, Anthropic Messages) to canonical before the executor
+                # receives the request. The lex-llm-* provider adapter handles wire format.
+                if stream_block
+                  execute_provider_request_stream(&stream_block)
+                else
+                  execute_provider_request
+                end
+                duration_ms = ((Time.now - start_time) * 1000).round
+                report_provider_health(:success, duration_ms) if @resolved_offering_id
+                @timeline.record(
+                  category: :provider, key: 'escalation:attempt', direction: :internal,
+                  detail: "attempt #{attempt_idx}: #{@resolved_provider}:#{@resolved_model} => success",
+                  from: 'pipeline', to: "provider:#{@resolved_provider}"
+                )
+                emit_escalation_attempt_metering(provider: @resolved_provider, model: @resolved_model,
+                                                 duration_ms: duration_ms, attempt: attempt_idx)
+                emit_escalation_attempt_audit(provider: @resolved_provider, model: @resolved_model,
+                                              outcome: :success, duration_ms: duration_ms,
+                                              attempt: attempt_idx)
+                return
+              rescue StandardError => e
+                last_error  = e
+                duration_ms = ((Time.now - start_time) * 1000).round
+                record_escalation_failure(e,
+                                          Legion::LLM::Router::Resolution.new(
+                                            tier: @resolved_tier, provider: @resolved_provider,
+                                            instance: @resolved_instance, model: @resolved_model,
+                                            offering_id: @resolved_offering_id
+                                          ),
+                                          start_time,
+                                          outcome:   :error,
+                                          operation: 'llm.pipeline.attempts_loop',
+                                          handled:   true)
+                assembler&.provider_failover_pending!(from: lane) if assembler.respond_to?(:provider_failover_pending!)
+
+                classify_and_accumulate_exclusions(error: e, lane: lane, payload: routing_payload)
+              end
+            end
+
+            err = Legion::LLM::Errors::EscalationExhausted.new(
+              attempts:    total_attempts,
+              tried_lanes: routing_payload[:tried_lanes],
+              last_error:  last_error
+            )
+            log.warn("[llm][executor] action=escalation_exhausted_loop_complete attempts=#{total_attempts} " \
+                     "tried=#{routing_payload[:tried_lanes].size}")
+            emit_error_audit(err, status: 'escalation_exhausted')
+            raise err
+          end
+
+          # Select the next lane to dispatch to.
+          # On the first attempt (attempt_idx == 0): prefer the Inventory lane matching the provider/model
+          # already resolved by step_routing (preserves routing phase resolution). Falls through to
+          # request_lane if no specific lane exists.
+          # On subsequent attempts: delegate entirely to request_lane (the new SSOT, per G26/SSOT design).
+          def select_next_lane(routing_payload:, attempt_idx:, **)
+            if attempt_idx.zero? && @resolved_provider && @resolved_model
+              # First attempt: look up the Inventory lane for the routing-resolved (provider, instance, model).
+              # If found and not already tried/blocked, use it. Otherwise fall through to request_lane.
+              provider_lanes = Legion::LLM::Inventory.lanes_for(
+                provider: @resolved_provider, instance: @resolved_instance
+              )
+              preferred = provider_lanes.find do |l|
+                l[:model] == @resolved_model &&
+                  !routing_payload[:tried_lanes].include?(l[:id]) &&
+                  l[:lane_weight].to_i.positive?
+              end
+              return preferred if preferred
+            end
+            Legion::LLM::Router.request_lane(**routing_payload)
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.select_next_lane')
+            Legion::LLM::Router.request_lane(**routing_payload)
+          end
+
           def step_provider_call_stream(&block)
             if pipeline_escalation_enabled?
-              run_provider_call_with_escalation(stream_block: block)
+              run_provider_call_with_attempts(routing_payload: build_routing_payload_from_resolved,
+                                              stream_block:    block)
               return
             end
 
@@ -773,24 +670,9 @@ module Legion
             @raw_response = result
           end
 
-          def execute_provider_request_responses(body:, stream:, &)
-            @timestamps[:provider_start] = Time.now
-            @timeline.record(
-              category: :provider, key: 'provider:request_sent',
-              exchange_id: @exchange_id, direction: :outbound,
-              detail: "responses from #{@resolved_provider}",
-              from: 'pipeline', to: "provider:#{@resolved_provider}"
-            )
-
-            raise Legion::LLM::ProviderError, "Native provider not registered: #{@resolved_provider}" unless use_native_dispatch?(@resolved_provider)
-
-            result = execute_native_responses_tool_loop(body: body, stream: stream, &)
-            merge_response_offering_metadata(result.metadata) if result.respond_to?(:metadata)
-            @raw_response = result
-
-            @timestamps[:provider_end] = Time.now
-            record_provider_response
-          end
+          # REMOVED: execute_provider_request_responses
+          # N×N LAW: only one canonical execution path via execute_provider_request_native.
+          # Responses API format is handled by the API namespace translator → canonical conversion.
         end
       end
     end

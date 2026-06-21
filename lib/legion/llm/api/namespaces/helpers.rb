@@ -2,6 +2,8 @@
 
 require 'legion/logging/helper'
 require 'legion/llm/api/shared_helpers'
+require 'legion/llm/api/error_translator'
+require 'legion/llm/inference/executor/payload_builder'
 
 module Legion
   module LLM
@@ -9,6 +11,7 @@ module Legion
       module Namespaces
         module Helpers
           include Legion::LLM::API::SharedHelpers
+          include Legion::LLM::API::ErrorTranslator
 
           def openai_error(message, type: 'server_error', code: nil, status_code: 500)
             content_type :json
@@ -38,6 +41,32 @@ module Legion
                  Legion::JSON.dump({ error: { code:    'data_required',
                                               message: 'Legion::Data is required for this operation',
                                               type:    'server_error' } })
+          end
+
+          # G31 / opus M7: validate x-legion-* routing headers against Taxonomies at ingress.
+          # Raises Errors::InvalidHeader if any header contains an unknown value.
+          # Called by inference routes before building the executor request.
+          def validate_legion_routing_headers!(rack_env)
+            http_headers = rack_env.select { |k, _| k.start_with?('HTTP_') }
+            return unless defined?(Legion::LLM::Inference::Executor::PayloadBuilder)
+
+            # Build a flat header map from Rack env (HTTP_X_LEGION_TIERS → x-legion-tiers)
+            mapped = http_headers.each_with_object({}) do |(k, v), h|
+              h[k.sub(/^HTTP_/, '').downcase.tr('_', '-')] = v
+            end
+
+            # Validate each x-legion taxonomy header
+            {
+              'x-legion-tiers' => Legion::Extensions::Llm::Taxonomies::TIERS
+            }.each do |header_name, taxonomy|
+              Legion::LLM::Inference::Executor::PayloadBuilder.parse_and_validate_header(
+                headers: mapped, name: header_name, taxonomy: taxonomy
+              )
+            end
+          rescue Legion::LLM::Errors::InvalidHeader
+            raise
+          rescue StandardError
+            nil
           end
 
           def data_subsystem_available?

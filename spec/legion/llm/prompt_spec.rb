@@ -30,35 +30,22 @@ RSpec.describe Legion::LLM::Prompt do
   end
 
   describe '.dispatch' do
-    context 'when Router returns a resolution' do
-      let(:resolution) do
-        Legion::LLM::Router::Resolution.new(
-          tier: :cloud, provider: :bedrock, model: 'us.anthropic.claude-sonnet-4-6-v1', rule: 'test-rule'
-        )
-      end
-
+    context 'when Router resolves via inventory' do
       before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-        allow(Legion::LLM::Router).to receive(:resolve).and_return(resolution)
+        Legion::LLM::Inventory.write_lane(lane: {
+                                            id: 'cloud:bedrock:default:inference:us.anthropic.claude-sonnet-4-6-v1',
+                                            tier: :cloud, provider_family: :bedrock, instance_id: :default,
+                                            model: 'us.anthropic.claude-sonnet-4-6-v1', type: :inference
+                                          })
       end
 
-      it 'uses the resolved provider and model' do
-        result = described_class.dispatch('Hello')
+      it 'uses the resolved provider and model from inventory' do
+        result = described_class.dispatch('Hello', tier: :cloud)
         expect(result).to be_a(Legion::LLM::Inference::Response)
-      end
-
-      it 'passes intent to the Router' do
-        described_class.dispatch('Hello', intent: { effort: :reasoning })
-        expect(Legion::LLM::Router).to have_received(:resolve).with(hash_including(intent: { effort: :reasoning })).at_least(:once)
       end
     end
 
-    context 'when Router returns nil' do
-      before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-        allow(Legion::LLM::Router).to receive(:resolve).and_return(nil)
-      end
-
+    context 'when no inventory lane is available' do
       it 'falls back to default_provider and default_model' do
         result = described_class.dispatch('Hello')
         expect(result).to be_a(Legion::LLM::Inference::Response)
@@ -73,6 +60,8 @@ RSpec.describe Legion::LLM::Prompt do
         Legion::Settings[:llm][:default_provider] = 'vllm'
         Legion::Settings[:llm][:default_instance] = 'apollo'
         Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
+        # P5: write Inventory lane for gpt-5.4 so the while remaining.positive? loop can dispatch it
+        write_test_lane(provider: :openai, model: 'gpt-5.4', tier: :frontier)
       end
 
       it 'infers the model provider instead of combining it with the default provider' do
@@ -84,30 +73,22 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     context 'when a caller passes the LegionIO placeholder model' do
-      let(:resolution) do
-        Legion::LLM::Router::Resolution.new(
-          tier: :frontier, provider: :anthropic, model: 'claude-sonnet-4-6', rule: 'auto:test'
-        )
-      end
-
       before do
         Legion::Settings[:llm][:default_provider] = 'vllm'
         Legion::Settings[:llm][:default_instance] = 'apollo'
         Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
-        Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
-        chain = Legion::LLM::Router::EscalationChain.new(resolutions: [resolution], max_attempts: 3)
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-        allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(chain)
+        # P5: reset Inventory so ONLY the anthropic lane exists for claude-sonnet-4-6.
+        # stub_native_provider (outer before) writes claude-sonnet-4-6 for all providers.
+        # With multiple providers offering the same model, routing_resolution_for may pick
+        # a non-anthropic provider, causing model_provider_mismatch → model cleared → raise.
+        Legion::LLM::Inventory.reset_live_store!
+        write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
       end
 
-      it 'routes through the router instead of using configured defaults' do
+      it 'routes via inventory instead of configured defaults for LegionIO placeholder' do
         result = described_class.dispatch('Hello', model: 'legionio')
 
-        expect(Legion::LLM::Router).to have_received(:resolve_chain).with(
-          hash_including(intent: hash_including(operation: :chat), provider: nil, instance: nil, model: nil)
-        )
         expect(result.routing[:provider]).to eq(:anthropic)
-        expect(result.routing[:instance]).to be_nil
         expect(result.routing[:model]).to eq('claude-sonnet-4-6')
       end
     end

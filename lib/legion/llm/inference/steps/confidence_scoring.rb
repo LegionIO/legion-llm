@@ -90,7 +90,7 @@ module Legion
           def report_low_confidence_health
             return unless @resolved_provider
 
-            Router.health_tracker.report(
+            Router.health_tracker.report( # allowlist:write-side
               provider:    @resolved_provider,
               instance:    @resolved_instance,
               offering_id: @resolved_offering_id,

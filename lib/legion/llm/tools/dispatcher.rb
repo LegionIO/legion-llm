@@ -85,7 +85,7 @@ module Legion
             { type: :extension, lex: entry[:extension], runner: entry[:runner], function: entry[:function] }
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.tools.dispatcher.check_registry_override', tool_name: tool_name)
+          handle_exception(e, level: :warn, operation: 'llm.tools.dispatcher.check_registry_override', tool_name: tool_name)
           nil
         end
 

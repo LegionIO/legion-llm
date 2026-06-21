@@ -1,4 +1,4 @@
-# legion-llm (v0.13.0)
+# legion-llm (v0.14.0)
 
 Core LegionIO gem: LLM routing, provider dispatch, the inference pipeline, and the
 OpenAI/Anthropic-compatible API surface. This file is loaded into **every** session — it is
@@ -31,8 +31,8 @@ push. If a regression breaks live e2e but not the matrix, the matrix is missing 
 |------|------|
 | Facade (`start`, `chat`, `ask`, `embed`) | `lib/legion/llm.rb` |
 | **Single source of truth for the catalog** | `lib/legion/llm/inventory.rb` |
-| Router (`resolve`, `resolve_chain`, candidates) | `lib/legion/llm/router.rb`, `router/{candidates,availability,resolution,rule,health_tracker}.rb` |
-| Escalation / failover | `lib/legion/llm/router/escalation/`, `inference/executor/escalation.rb` |
+| Router (`request_lane` — single selection) | `lib/legion/llm/router.rb`, `router/{availability,resolution,health_tracker}.rb` |
+| Escalation history / failover | `lib/legion/llm/router/escalation/history.rb`, `inference/executor/escalation.rb` |
 | Pipeline executor (18 steps, streaming) | `lib/legion/llm/inference/executor.rb` (+ `executor/*.rb`) |
 | Pipeline steps | `lib/legion/llm/inference/steps/*.rb` |
 | Client API routes | `lib/legion/llm/api/openai/`, `api/anthropic/`, `api/native/` |
@@ -75,21 +75,27 @@ These have caused production incidents. They are also enforced by `rubocop-legio
    prompt; server-executed tools run server-side; client-passthrough tools surface as pending
    calls for the client. Simplest end-to-end check that the proxy contract holds in both formats.
 
-## Routing rules (current behaviour)
+## Routing rules (RANKING v2 — current behaviour)
 
-- **`Inventory.offerings` is THE catalog** (registration + liveness + health/circuit/denied).
-  `Call::Registry`, `Discovery`, `HealthTracker` are *feeders*, never read directly for model facts
-  by routing/availability/executor.
-- **Never dispatch a triple that isn't in the live catalog / isn't healthy.** There is no
-  anthropic→qwen; the availability gate rejects models a provider doesn't offer. Fail over, don't
-  hard-fail, unless the chain is genuinely empty.
-- **Multi-instance failover:** exhaust a provider's own instances before crossing providers.
-  Account-scoped errors (credit/quota/payment) **deprioritize** the failing instance via its
-  per-instance circuit (no model-deny) so the healthy sibling wins and auto-recovers on cooldown.
-  Model-intrinsic errors skip all instances. Instance selection prefers closed → half_open → open.
+- **`Inventory` live `Concurrent::Map` is THE catalog.** Keyed by 5-part lane id
+  `tier:provider:instance:type:model`. Written by `lex-llm-*` discovery actors via the
+  `Inventory::ScopedRefresher` mixin. `HealthTracker` is the only other writer (owns `health`
+  block per lane). Everyone reads the same map, lock-free.
+- **`Router.request_lane(**routing_payload)` is the single selection method.** Returns one lane
+  hash or `nil`. Hard filters → soft filter (lane_weight ≤ 0 excluded) → max-weight bucket →
+  uniform sample. No pre-built chains.
+- **Escalation = "ask again with the failed lane excluded."** Executor calls `request_lane` in a
+  `while remaining.positive?` loop, appending tried lane ids to `tried_lanes`. No `loop do`.
+- **`lane_weight = tier_w × provider_w × instance_w × model_w × health_mult`.** Precomputed on
+  write. Negative = open circuit or policy-denied (excluded by soft filter). Surfaced in
+  `/api/llm/providers/<p>/models`. Tunable via `settings[:llm][:routing][:weights]`.
+- **`:fleet` is a first-class tier** in `Taxonomies::TIERS`. Fleet lanes written by `lex-llm-*`
+  fleet workers appear alongside direct lanes.
+- **`NoLaneAvailable` (400):** hard filters excluded everything before the first attempt.
+  **`EscalationExhausted` (503 + `Retry-After`):** max attempts reached mid-flight.
 - **Model policy is compliance.** `model_whitelist`/`model_blacklist` is honored at dispatch,
-  fail-closed. A policy-denied model is **terminal** — never escalated, never trips circuits/denies.
-  Enforced at the daemon layer here (`call/dispatch.rb` `enforce_model_policy!` →
+  fail-closed. A policy-denied model is **terminal** — never escalated, never trips circuits.
+  Enforced at the daemon layer (`call/dispatch.rb` `enforce_model_policy!` →
   `Errors::ModelNotAllowed`) and in each `lex-llm-*` provider.
 
 ## Coding constraints (enforced in review + cops)

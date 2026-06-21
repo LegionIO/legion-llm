@@ -1,5 +1,167 @@
 # Legion LLM Changelog
 
+## [0.14.2] - 2026-06-20
+
+### Fixed
+
+- Move auto-routing model aliases into `llm.routing.auto_routing_model_aliases`, so `legionio` and `auto` stay configurable rather than hard-coded.
+- Ignore request-body `model` values as routing hints unless `llm.routing.allow_body_routing_hints` is explicitly enabled; auto-routing aliases still mean "you pick".
+- Stop treating injected special tools as an implicit native-tools routing requirement when the client did not actually request tools.
+
+## [0.14.1] - 2026-06-20
+
+### Fixed
+
+- Treat Bedrock region-prefixed model ids such as `us.anthropic.claude-sonnet-4-6` as equivalent to
+  the inventory's canonical `anthropic.claude-sonnet-4-6` lane during hard model filtering, so
+  routing no longer raises `NoLaneAvailable` for valid Bedrock requests.
+
+## [0.14.0] - 2026-06-19
+
+### Changed (BREAKING — internal API)
+
+- **Inventory is now a single live `Concurrent::Map`** keyed by 5-part lane id
+  `tier:provider:instance:type:model`. The catalog is composed on write (by `lex-llm-*` discovery
+  actors via the `Inventory::ScopedRefresher` mixin), not recomposed on read. Per-request
+  `offerings_calls` collapses from ~4N to ≤1.
+- **`Router.request_lane(**routing_payload)` is the single selection method.** `Router.resolve`,
+  `Router.resolve_chain`, `Router::Candidates`, `Router::EscalationChain`, `Arbitrage`, and the
+  full chain-building machinery are deleted.
+- **`HealthTracker` writes lane health one-directionally.** The old request-time read API
+  (`circuit_state(provider:, instance:)`, `adjustment(...)`, `model_denied?(...)`) is deleted.
+  Health is now read from `lane[:health]`.
+- **Dual error classes replace the old `EscalationExhausted`.** `Errors::NoLaneAvailable` (HTTP 400;
+  filters excluded all candidates from the start) and `Errors::EscalationExhausted` (HTTP 503 +
+  `Retry-After`; max attempts reached mid-flight) are the new error contract. Both inherit from
+  `LLMError`.
+- **Embedding selection uses `Router.request_lane(type: :embedding, models: [pinned])`.** Strict
+  model pin — no cross-model failover. The bespoke embedding-selection machine is deleted.
+- **`while remaining.positive?` loop replaces `loop do`.** The executor's request lifecycle is
+  bounded by construction; `loop do`, `retry`, `redo` are forbidden by the `NoLoopDo` rubocop cop.
+
+### Added
+
+- `Inventory.write_lane(lane:, ttl:, **)` / `.delete_lane(id:, **)` / `.lane(id:, **)` /
+  `.lanes_for(provider:, instance:, type:, model:, **)` / `.lanes(**)` — kwargs-only public API.
+- `Inventory::Sweeper` `::Every` actor — TTL safety net for dead-actor lane orphans.
+- **RANKING v2:** `lane_weight = tier_w × provider_w × instance_w × model_w × health_mult`,
+  precomputed at write time, surfaced in `/api/llm/providers/<p>/models`. Operator-tunable via
+  settings; all weights default to 100.
+- `Legion::Cache::Local` cooldown circuit for auth failures
+  (`llm_auth_failed:<credential_hash>` key). Short-circuits dispatch during the cooldown window
+  without tripping the instance circuit.
+- `PayloadBuilder` single ingress site at `inference/executor/payload_builder.rb`. Validates
+  `x-legion-tiers`, `x-legion-providers`, `x-legion-instances`, `x-legion-models` headers against
+  frozen taxonomies. Unknown values → 400 with `error.type: invalid_header`.
+- `StreamAssembler` mid-stream failover contract: `provider_failover_pending!(from:)` clears the
+  canonical buffer; `finalize` emits debug trailers (`x-legion-failover-from`, `-to`, `-count`)
+  only when failover occurred. No custom SSE event (N×N invariant 5).
+- Admin endpoint `POST /api/llm/inventory/refresh` — operator-triggered catalog refresh.
+- `:fleet` is a first-class tier in the `Taxonomies::TIERS` enum.
+
+### Deprecated
+
+- `Router.populate_auto_rules(_)` — no-op stub. Removed in v0.15.0 after call sites in `lex-llm-*`
+  gems are cleaned up. Tracking issue: [#154](https://github.com/legion-io/legion-llm/issues/154).
+  Remove-stub issue: [#155](https://github.com/legion-io/legion-llm/issues/155).
+
+### Fixed
+
+- `/v1/moderations` 500 error (missing `Call::Registry.providers` method).
+- Compliance leak via discovery path: denied models could enter `/api/llm/offerings` because the
+  discovery feeder bypassed `lex-llm-*` whitelist/blacklist filtering. `Inventory.write_lane` is
+  now the single fail-closed choke point.
+- Mid-stream provider failover now correctly clears the canonical buffer — no thinking tokens from
+  provider A leak into provider B's response context.
+
+### Removed
+
+- `Legion::LLM::EscalationTracker` (dead code, zero callers).
+- `Inventory#native_provider_offerings`, `discovery_offerings`, `dedupe_offerings`, `build_offering`,
+  `add_fleet_lane`, `compose_offerings` — replaced by `lex-llm-*` gem writers via the
+  `Inventory::ScopedRefresher` mixin.
+- `Call::Registry.all_provider_families` (duplicate of `.available`).
+- Hardcoded last-resort tier model literals.
+- `Providers.inject_anthropic_cache_control!` — moved to `lex-llm-anthropic` translator (CLAUDE.md
+  invariant #3).
+- `lib/legion/llm/discovery.rb`, `lib/legion/llm/capabilities.rb`, `lib/legion/llm/discovery/`
+  compat shim forwarders (module paths moved to `inventory/` tree in v0.13.x; shims deleted in
+  v0.14.0).
+- `Router::Candidates`, `Router::Arbitrage`, `Router::EscalationChain` (all deleted; use
+  `Router.request_lane`).
+
+### Breaking change notes
+
+- **Embedding single-instance HA:** single-instance Ollama (or any single embedding provider) will
+  produce 400 `NoLaneAvailable` during the ~5–10s restart window rather than silently retrying.
+  Use two instances for HA.
+- **Rollback requires yanking the entire train.** `lex-llm 0.6.0`'s `ScopedRefresher` calls
+  `Inventory.write_lane` which does not exist on `legion-llm 0.13.x`. Yanking `legion-llm 0.14.0`
+  alone is insufficient — `lex-llm 0.6.0` and all 9 `lex-llm-*` paired versions must be yanked
+  together. See `docs/migration/0.14.0.md` for the 3am rollback procedure.
+
+---
+
+## [0.13.3] - 2026-06-18
+
+### Fixed
+
+- **OpenAI Responses (`/v1/responses`) tool turns now terminate with `response.completed`.** A turn
+  carrying client-callable `function_call` items was emitting a non-standard `response.done` with
+  `status: requires_action` — Assistants-API vocabulary the Responses protocol has no concept of. Real
+  Responses clients wait for `response.completed`, so each tool turn surfaced to the client as
+  "stream disconnected before completion" and forced a reconnect/retry. The terminal event is now
+  always `response.completed` / `status: completed` with the `function_call` items in `output[]`
+  (streaming **and** non-streaming); `requires_action`/`action_required` removed. Server-executed
+  (LegionIO) tools were already `completed` and are unchanged. Specs updated to assert the protocol.
+- **Router no longer manufactures escalation fallbacks the live catalog doesn't offer.**
+  `build_fallback_resolutions` enumerated registered instances and paired each with a default model
+  without checking the catalog offered it, producing dead candidates (a provider + a model it does
+  not serve) that availability rejected on every request — wasted work plus `resolution_unavailable`
+  log noise. Fallbacks are now gated against `Inventory` (the catalog SSOT) via
+  `fallback_model_offered?`, so an unoffered triple is never proposed.
+
+### Changed
+
+- Removed the per-response `extract_thinking` INFO log spam (it fired 4–6× per request, once per
+  extraction site). The extraction is unchanged; only the diagnostic logging was dropped.
+
+## [0.13.2] - 2026-06-17
+
+### Fixed
+
+- **Discovery no longer blocks the request path on a live network refresh.** `Discovery#discovered_models`
+  used to refresh synchronously once its 60s TTL lapsed — a serial, per-instance live fetch
+  (`adapter.offerings(live: true)`) on the request thread, so one unreachable/slow instance stalled
+  routing for its socket timeout (~20s, recurring ~once a minute). It surfaced as a fast `[pipeline][timing]`
+  with the time hidden in the `routing` step (which reads candidates via `model_available?`/`model_size`).
+  The request path now only **reads** the cache; refresh is owned by the provider `DiscoveryRefresh`
+  `::Every` actors (background) + the startup `Discovery.run` warm.
+
+### Changed
+
+- **Discovered-models cache is a `Concurrent::Map` keyed by provider.** Each provider's refresh actor
+  writes its own key atomically (no read-modify-write across providers, no lock); reads flatten all
+  values lock-free. `@discovery_status` is likewise a `Concurrent::Map` (the `@discovery_mutex` is
+  removed). Dead read-path TTL machinery (`discovered_models_stale?`, `discovery_refresh_seconds`)
+  deleted; the `llm.discovery.refresh_seconds` setting is now inert (actors use their own interval).
+
+## [0.13.1] - 2026-06-17
+
+### Fixed
+
+- **Streamed responses no longer leak Ruby object inspect strings to the client.** The
+  `StreamAssembler::ChunkAdapter` — the single chunk→wire normalizer — rendered provider value
+  objects with `.to_s` when they weren't plain strings, so the client SSE could carry
+  `#<Legion::Extensions::Llm::Thinking:0x…>` (Claude Code `/v1/messages`, via the legacy-chunk
+  `legacy_thinking` path that only checked `#content` while the legacy `Thinking` exposes `#text`)
+  or `[#<data …Canonical::ContentBlock…>]` (Codex `/v1/responses`, via a `text_delta` whose delta
+  arrived as a `ContentBlock` array). Both paths now unwrap to text and never `.to_s` a value
+  object onto the wire. The metering/audit ledger was already clean — only the streaming wire was
+  affected; the in-process matrix did not catch it because the `FakeProvider` emits canonical
+  chunks only (the documented provider-shape blind spot), so the regression is locked by direct
+  `StreamAssembler` specs.
+
 ## [0.13.0] - 2026-06-17
 
 Consolidated release. This single version bundles every change from `0.12.14` through `0.12.35`

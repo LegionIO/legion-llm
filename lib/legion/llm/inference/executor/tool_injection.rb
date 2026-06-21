@@ -242,7 +242,7 @@ module Legion
               function: function
             }
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.pipeline.native_tool_source.resolve', tool_name: tool_name)
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.native_tool_source.resolve', tool_name: tool_name)
             nil
           end
 

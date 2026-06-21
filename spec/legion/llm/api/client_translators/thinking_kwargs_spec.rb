@@ -28,6 +28,26 @@ RSpec.describe 'Client translator thinking/reasoning kwargs' do
       expect(req.thinking).to be_a(canonical::ThinkingConfig)
       expect(req.thinking.budget).to eq(1024)
     end
+
+    it 'forwards max_tokens and stop sequences into the inference request' do
+      body = {
+        model:          'claude-haiku-4-5-20251001',
+        messages:       [{ role: 'user', content: 'hi' }],
+        max_tokens:     77,
+        stop_sequences: ['done'],
+        temperature:    0.2
+      }
+      canonical_request = translator.parse_request(body, {})
+      inference_request = translator.build_inference_request(
+        canonical_request,
+        request_id:    'req_anthropic',
+        server_caller: { source: 'spec' }
+      )
+
+      expect(inference_request.tokens).to eq(max: 77)
+      expect(inference_request.stop).to eq(sequences: ['done'])
+      expect(inference_request.generation).to include(temperature: 0.2)
+    end
   end
 
   describe Legion::LLM::API::ClientTranslators::OpenAIResponses do
@@ -52,6 +72,26 @@ RSpec.describe 'Client translator thinking/reasoning kwargs' do
       req = translator.parse_request({ model: 'gpt-5.4', input: 'hi' }, {})
       expect(req.thinking).to be_nil
     end
+
+    it 'forwards max_output_tokens and reasoning into the inference request' do
+      body = {
+        model:             'gpt-5.4',
+        input:             'hi',
+        max_output_tokens: 50,
+        temperature:       0.1,
+        reasoning:         { effort: 'high' }
+      }
+      canonical_request = translator.parse_request(body, {})
+      inference_request = translator.build_inference_request(
+        canonical_request,
+        request_id:    'req_responses',
+        server_caller: { source: 'spec' }
+      )
+
+      expect(inference_request.tokens).to eq(max: 50)
+      expect(inference_request.generation).to include(temperature: 0.1)
+      expect(inference_request.thinking).to include(type: 'enabled', effort: 'high', budget_tokens: 1024)
+    end
   end
 
   describe Legion::LLM::API::ClientTranslators::OpenAIChat do
@@ -60,6 +100,28 @@ RSpec.describe 'Client translator thinking/reasoning kwargs' do
     it 'parses without raising even when no thinking config is provided' do
       body = { model: 'qwen3.6-27b', messages: [{ role: 'user', content: 'hi' }] }
       expect { translator.parse_request(body, {}) }.not_to raise_error
+    end
+
+    it 'forwards max_tokens, response_format, and stop sequences into the inference request' do
+      body = {
+        model:           'qwen3.6-27b',
+        messages:        [{ role: 'user', content: 'hi' }],
+        max_tokens:      64,
+        response_format: { type: 'json_object' },
+        stop:            ['END'],
+        temperature:     0.3
+      }
+      canonical_request = translator.parse_request(body, {})
+      inference_request = translator.build_inference_request(
+        canonical_request,
+        request_id:    'req_chat',
+        server_caller: { source: 'spec' }
+      )
+
+      expect(inference_request.tokens).to eq(max: 64)
+      expect(inference_request.response_format).to eq(type: 'json_object')
+      expect(inference_request.stop).to eq(sequences: ['END'])
+      expect(inference_request.generation).to include(temperature: 0.3)
     end
   end
 end

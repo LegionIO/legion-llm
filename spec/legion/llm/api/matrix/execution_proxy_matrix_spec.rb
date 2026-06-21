@@ -137,7 +137,10 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
         expect(server_result).not_to be_nil
         expect(server_result[:output]).to include('deterministic fake LegionIO tool failure')
         expect(client_call).not_to be_nil
-        expect(body[:status]).to eq('requires_action')
+        # Responses protocol: the pending client call rides in output[] as a
+        # function_call item; the response status is `completed` (the client
+        # executes it and continues via function_call_output). No requires_action.
+        expect(body[:status]).to eq('completed')
       when :openai_chat
         choice = body[:choices].first
         message = choice[:message]

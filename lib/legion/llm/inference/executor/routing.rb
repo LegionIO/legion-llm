@@ -86,7 +86,7 @@ module Legion
             resolved_model = state[:model]
             if resolved_model && @resolved_provider
               model_natural = Router.infer_provider_for_model(resolved_model)
-              if model_natural && model_natural != @resolved_provider
+              if model_natural && !model_natural.to_s.eql?(@resolved_provider.to_s)
                 log.debug "[llm][executor] action=model_provider_mismatch model=#{resolved_model} " \
                           "natural_provider=#{model_natural} resolved_provider=#{@resolved_provider} swapping"
                 resolved_model = nil
@@ -167,7 +167,7 @@ module Legion
             {
               provider:          @request.routing[:provider],
               instance:          instance,
-              model:             @request.routing[:model],
+              model:             routing_model_preference,
               offering_id:       @request.routing[:offering_id] || @request.routing[:id],
               offering_metadata: normalize_offering_metadata(@request.routing[:offering_metadata] ||
                                                              @request.routing[:offering]),
@@ -180,6 +180,22 @@ module Legion
               tier_explicit:     routing_field_explicit?(routing_explicit, :tier, tier),
               estimated_tokens:  estimate_request_tokens
             }
+          end
+
+          def routing_model_preference
+            explicit_model = @request.routing[:model]
+            return explicit_model unless explicit_model.nil? || explicit_model.to_s.empty?
+
+            client_model = @request.metadata&.dig(:client_model)&.to_s
+            return nil if client_model.nil? || client_model.empty?
+            return nil if Legion::LLM::Inference::Request.auto_routing_model?(client_model)
+            return nil unless body_routing_hints_enabled?
+
+            client_model
+          end
+
+          def body_routing_hints_enabled?
+            Legion::Settings.dig(:llm, :routing, :allow_body_routing_hints) == true
           end
 
           def estimate_request_tokens
@@ -261,8 +277,7 @@ module Legion
           def native_tools_requested_for_routing?
             Array(@request.tools).any? ||
               requested_deferred_tool_names.any? ||
-              @triggered_tools.any? ||
-              Tools::Special.pinned_definitions.any?
+              @triggered_tools.any?
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.routing_tools_required')
             false
@@ -312,41 +327,35 @@ module Legion
           # On a miss: clear the model name and set auto_route so the pipeline picks the best
           # available provider rather than blindly forwarding a frontier model name.
           #
-          # Deliberate Discovery read (NOT Inventory.offerings): this pin must match
-          # only models that are actually running/pulled locally. Inventory.offerings
-          # also includes static provider catalogs (e.g. the full Anthropic model
-          # list), so routing through it here would pin frontier model names to
-          # providers that merely advertise them — the opposite of "local copy."
+          # Pin a model to a local/direct provider when the Inventory live store has a
+          # matching lane from a locally-registered instance (vLLM, Ollama, MLX).
+          # Only local/direct/fleet tiers are eligible — cloud/frontier tiers merely
+          # advertise models in their static catalog; routing through them here would
+          # pin frontier model names to providers that do not hold a local copy.
           def resolve_model_to_local_provider(state)
             return state if state[:provider_explicit] || state[:tier_explicit] || state[:instance_explicit]
             return state if state[:provider] || state[:tier] || state[:instance]
-            return state unless state[:model] && defined?(Discovery) && defined?(Router)
+            return state unless state[:model] && defined?(Legion::LLM::Inventory) && defined?(Router)
 
             model = state[:model].to_s
-            all_discovered = Array(Discovery.cached_discovered_models)
-            return state if all_discovered.empty?
+            local_tiers = %i[direct local fleet]
 
-            candidates = all_discovered.select do |m|
-              dn = m[:model].to_s
-              dn == model || dn.start_with?("#{model}:")
+            candidates = Legion::LLM::Inventory.lanes_for(model: model, type: :inference).select do |l|
+              local_tiers.include?(l[:tier].to_sym) &&
+                Call::Registry.registered?(l[:provider_family], instance: l[:instance_id])
             end
+
             return state if candidates.empty?
 
-            healthy = candidates.find do |m|
-              provider = m[:provider]
-              instance = m[:instance]
-              # Must be both locally registered and circuit-closed.
-              # A discovered model on a remote-only provider (e.g. Anthropic on a
-              # vLLM-only node) should not pin — fall through to auto_route.
-              next false unless Call::Registry.registered?(provider, instance: instance)
-
-              Router.health_tracker.circuit_state(provider, instance: instance) != :open
+            healthy = candidates.find do |l|
+              l[:health][:circuit_state] != :open
             end
 
             if healthy
-              log.info "[llm][executor] action=model_discovery_pin model=#{model} provider=#{healthy[:provider]} instance=#{healthy[:instance]}"
-              state[:provider] = healthy[:provider]
-              state[:instance] = healthy[:instance]
+              log.info "[llm][executor] action=model_discovery_pin model=#{model} " \
+                       "provider=#{healthy[:provider_family]} instance=#{healthy[:instance_id]}"
+              state[:provider] = healthy[:provider_family]
+              state[:instance] = healthy[:instance_id]
             else
               log.info "[llm][executor] action=model_discovery_miss model=#{model} falling_back=auto_route"
               state[:model] = nil
@@ -371,23 +380,30 @@ module Legion
           end
 
           def routing_resolution_for(state)
-            if state[:auto_route] == true || (state[:intent_explicit] && state[:intent] && pipeline_escalation_enabled?)
-              @escalation_chain = Router.resolve_chain(
-                intent:                 state[:intent],
-                tier:                   state[:tier],
-                model:                  state[:model],
-                provider:               state[:provider],
-                instance:               state[:instance],
-                max_escalations:        pipeline_escalation_max_attempts,
-                allow_default_fallback: state[:auto_route] != true,
-                estimated_tokens:       state[:estimated_tokens]
-              )
-              @escalation_chain.primary
-            else
-              Router.resolve(intent: state[:intent], tier: state[:tier], model: state[:model],
-                             provider: state[:provider], instance: state[:instance],
-                             estimated_tokens: state[:estimated_tokens])
-            end
+            tiers      = state[:tier]     ? [state[:tier].to_sym]     : []
+            providers  = state[:provider] ? [state[:provider].to_sym] : []
+            instances  = state[:instance] ? [state[:instance].to_sym] : []
+            models     = state[:model]    ? [state[:model].to_s]      : []
+
+            lane = Legion::LLM::Router.request_lane(
+              type:              :inference,
+              tiers:             tiers,
+              providers:         providers,
+              instances:         instances,
+              models:            models,
+              estimated_context: state[:estimated_tokens],
+              tried_lanes:       Array(state[:tried_lanes])
+            )
+
+            return nil if lane.nil?
+
+            Legion::LLM::Router::Resolution.new(
+              tier:     lane[:tier],
+              provider: lane[:provider_family],
+              model:    lane[:model],
+              instance: lane[:instance_id],
+              rule:     'request_lane'
+            )
           end
 
           def apply_routing_resolution(state, resolution)

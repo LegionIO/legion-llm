@@ -36,6 +36,11 @@ module Legion
     # provider failure: it is non-retryable (inherited) and must not be escalated,
     # must not trip a circuit breaker, and must not deny-record the model — the
     # escalation loop re-raises it immediately rather than trying the next model.
+    # Raised when a write_lane call fails validation: missing :id, malformed :id, or
+    # field values outside the Taxonomies enums (tier/type). Non-retryable — the lane
+    # writer has a programming error that must be fixed.
+    class InvalidLane < LLMError; end
+
     class ModelNotAllowed < LLMError
       attr_reader :provider, :model
 
@@ -78,6 +83,76 @@ module Legion
     class RoutingFailedDependency < RoutingUnavailable
       def initialize(message = 'No provider instance satisfies routing prerequisites')
         super(message, status_code: 424, code: 'routing_failed_dependency')
+      end
+    end
+
+    module Errors
+      # request_lane returned nil on the very first try — filters/health/policy excluded
+      # everything; no dispatch was attempted. HTTP 400 semantics (caller can fix by
+      # adjusting filters). Distinct from EscalationExhausted: "nothing to call" vs "tried, failed".
+      class NoLaneAvailable < LLMError
+        attr_reader :filters
+
+        def initialize(filters: {}, message: nil, **)
+          @filters = filters
+          super(message || "no lane satisfies request filters: #{filters.inspect}")
+        end
+
+        def retryable? = false
+      end
+
+      # All dispatch attempts failed, or eligible lanes ran out after at least one attempt.
+      # HTTP 503 + Retry-After semantics (transient upstream degradation). Distinct from
+      # NoLaneAvailable: "tried lanes, ran out" vs "nothing was ever eligible".
+      class EscalationExhausted < LLMError
+        attr_reader :attempts, :tried_lanes, :last_error
+
+        def initialize(attempts:, tried_lanes:, last_error: nil, message: nil, **)
+          @attempts    = attempts
+          @tried_lanes = tried_lanes
+          @last_error  = last_error
+          super(message || "exhausted after #{attempts} attempts (tried #{tried_lanes.size} lanes); last_error=#{last_error&.class}")
+        end
+
+        def retryable? = false
+      end
+
+      # Operator misconfiguration — required settings key missing or empty.
+      # HTTP 400 semantics (caller-side fix: edit settings JSON). Raised before dispatch,
+      # so no lane/circuit state is touched. Used by embedding pipeline when
+      # `:llm, :embedding, :default_model` is absent.
+      class ConfigError < LLMError
+        def retryable? = false
+      end
+
+      # A provider does not implement the requested capability (e.g. vLLM has no
+      # :responses surface). Programming-class contract mismatch — terminal: do NOT
+      # trip circuits, do NOT push to tried_lanes, do NOT escalate. Maps to HTTP 400.
+      class CapabilityUnsupported < LLMError
+        attr_reader :provider, :capability
+
+        def initialize(provider:, capability:, message: nil, **)
+          @provider   = provider
+          @capability = capability
+          super(message || "unsupported capability #{capability.inspect} for provider #{provider.inspect}")
+        end
+
+        def retryable? = false
+      end
+
+      # An x-legion-* header carried an unrecognized value (e.g. invalid tier name).
+      # Raised by PayloadBuilder at ingress per G31. HTTP 400.
+      class InvalidHeader < LLMError
+        attr_reader :header, :got, :valid
+
+        def initialize(header:, got:, valid: [], message: nil, **)
+          @header = header
+          @got    = got
+          @valid  = valid
+          super(message || "invalid value #{got.inspect} for header #{header.inspect}; valid: #{valid.inspect}")
+        end
+
+        def retryable? = false
       end
     end
   end

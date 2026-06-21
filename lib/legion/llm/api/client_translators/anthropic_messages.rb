@@ -96,8 +96,7 @@ module Legion
             extra[:routing_explicit] = routing_explicit if routing_explicit
 
             messages = inference_messages(canonical_request.messages)
-
-            Legion::LLM::Inference::Request.build(
+            request_kwargs = {
               id:              request_id,
               messages:        messages,
               system:          canonical_request.system,
@@ -112,7 +111,11 @@ module Legion
               cache:           { strategy: :default, cacheable: true },
               extra:           extra,
               metadata:        canonical_request.metadata
-            )
+            }
+
+            apply_canonical_params_to_inference(request_kwargs, canonical_request.params)
+
+            Legion::LLM::Inference::Request.build(**request_kwargs)
           end
 
           # Anthropic tool_choice shapes:

@@ -276,10 +276,12 @@ RSpec.describe 'Codex CLI conformance', type: :conformance do
       )
     end
 
+    # N×N: /v1/responses goes through the canonical call path, not a separate
+    # provider-specific call_responses path. The translator converts Responses
+    # API format to canonical before the executor receives it.
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
-      allow(fake_executor).to receive(:call_responses).and_return(fake_pipeline_response)
-      allow(fake_executor).to receive(:provider_supports_responses?).and_return(true)
+      allow(fake_executor).to receive(:call).and_return(fake_pipeline_response)
 
       post '/v1/responses',
            Legion::JSON.dump(sync_request),

@@ -203,7 +203,7 @@ module Legion
             response = Legion::LLM.chat_direct(**payload)
             response.respond_to?(:content) ? response.content : nil
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.compressor.llm_summarize')
+            handle_exception(e, level: :warn, operation: 'llm.compressor.llm_summarize')
             log.debug("[llm][compressor] summarize_failed error=#{e.message}")
             nil
           end

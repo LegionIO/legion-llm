@@ -225,107 +225,12 @@ module Legion
           @native_tool_loop_round = nil
         end
 
-        def execute_native_responses_tool_loop(body:, stream:, &block)
-          messages = native_dispatch_messages.dup
-          max_rounds = Legion::Settings[:llm][:max_tool_rounds].to_i
-          max_rounds = 200 unless max_rounds.positive?
-          round = 0
-          executed_calls = {}
-          consecutive_failures = 0
-          responses_body = responses_tool_loop_body(body)
-
-          log.debug "[llm][executor] action=native_responses_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
-
-          loop do
-            @native_tool_loop_round = round
-            result = dispatch_responses_request(
-              body:         responses_body,
-              messages:     messages,
-              stream:       stream,
-              stream_block: block
-            )
-            tool_calls = extract_tool_calls(result)
-            if tool_calls.empty?
-              log.debug "[llm][executor] action=native_responses_tool_loop.complete rounds=#{round} reason=no_tool_calls"
-              @last_tool_loop_messages = messages
-              return result
-            end
-
-            legion_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
-            if client_calls.any?
-              passthrough_names = client_calls.map { |tc| tc[:name] }.join(',')
-              log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} " \
-                       "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map { |tc| tc[:name] }.join(',')}"
-            end
-
-            unless legion_calls.empty?
-              round += 1
-              tool_names = legion_calls.map { |tc| tc[:name] }.join(',')
-              log.debug "[llm][native_tool_loop] action=native_responses_tool_loop.round round=#{round} " \
-                        "tool_count=#{legion_calls.size} tools=#{tool_names}"
-              if round > max_rounds
-                log.warn "[llm][native_tool_loop] action=max_rounds_exceeded max_rounds=#{max_rounds} last_tools=#{tool_names}"
-                raise Legion::LLM::PipelineError, "tool loop exceeded #{max_rounds} rounds"
-              end
-
-              repeated = detect_repeated_tool_calls(legion_calls, executed_calls)
-              if repeated.any?
-                log.warn "[llm][native_tool_loop] action=repeated_tool_calls detected round=#{round} " \
-                         "repeated=#{repeated.map { |tc| tc[:name] }.join(',')} total_calls=#{executed_calls.size}"
-                return client_passthrough_tool_loop_result(result, client_calls, round)
-              end
-
-              messages << native_assistant_tool_message(result, legion_calls)
-              execute, deferred = split_tool_calls_by_cap(legion_calls, round)
-              round_results = []
-
-              execute.each do |tool_call|
-                call_result = dispatch_native_tool_call(tool_call, round)
-                round_results << { tool_call: tool_call, result: call_result }
-                messages << native_tool_result_message(tool_call, call_result)
-              end
-              deferred.each do |tool_call|
-                deferred_result = deferred_tool_call_result(tool_call)
-                round_results << { tool_call: tool_call, result: deferred_result }
-                messages << native_tool_result_message(tool_call, deferred_result)
-              end
-
-              round_results.each do |entry|
-                tc = entry[:tool_call]
-                call_key = tool_call_key(tc[:name], tc[:arguments] || tc['arguments'])
-                executed_calls[call_key] = (executed_calls[call_key] || 0) + 1
-              end
-
-              all_failed = round_results.all? { |entry| entry[:result][:status] == :error }
-              if all_failed
-                consecutive_failures += 1
-                failed_names = round_results.map { |e| e[:tool_call][:name] }.join(',')
-                log.warn "[llm][native_tool_loop] action=all_legion_executed_tools_failed round=#{round} " \
-                         "consecutive_failures=#{consecutive_failures} tools=#{failed_names}"
-                if consecutive_failures >= 2
-                  log.warn '[llm][native_tool_loop] action=legion_tool_failure_loop_broken ' \
-                           "consecutive_failures=#{consecutive_failures}"
-                  return client_passthrough_tool_loop_result(result, client_calls, round)
-                end
-              else
-                consecutive_failures = 0
-              end
-            end
-
-            return client_passthrough_tool_loop_result(result, client_calls, round) if client_calls.any?
-          end
-        ensure
-          @native_tool_loop_round = nil
-        end
-
-        def responses_tool_loop_body(body)
-          normalized = if body.respond_to?(:transform_keys)
-                         body.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-                       else
-                         {}
-                       end
-          normalized.except(:input)
-        end
+        # REMOVED: execute_native_responses_tool_loop and responses_tool_loop_body
+        # N×N LAW: only one canonical tool loop (execute_native_tool_loop and
+        # execute_native_streaming_tool_loop) that dispatches via
+        # dispatch_provider_request(capability: :chat/:stream).
+        # The API namespace translator converts Responses API format to canonical;
+        # the provider adapter handles the wire format internally.
 
         def split_tool_calls_by_cap(tool_calls, round)
           max_per_turn = Legion::Settings[:llm][:max_tool_calls_per_turn].to_i

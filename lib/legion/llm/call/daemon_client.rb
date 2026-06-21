@@ -200,7 +200,7 @@ module Legion
 
           Legion::JSON.parse(body)
         rescue Legion::JSON::ParseError => e
-          handle_exception(e, level: :debug)
+          handle_exception(e, level: :warn)
           {}
         end
 

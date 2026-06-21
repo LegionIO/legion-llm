@@ -92,7 +92,7 @@ module Legion
 
             { model: route_value(route, :model), provider: route_value(route, :provider) }.compact
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.structured_output.alternate_retry_route')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.structured_output.alternate_retry_route')
             {}
           end
 

@@ -54,7 +54,7 @@ module Legion
             )
             result.dig(:summary, :avg_score) || 0.0
           rescue StandardError => e
-            handle_exception(e, level: :debug)
+            handle_exception(e, level: :warn)
             0.0
           end
 

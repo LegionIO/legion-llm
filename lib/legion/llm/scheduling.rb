@@ -87,7 +87,7 @@ module Legion
           end_h   = Integer(parts[1], 10)
           (start_h..end_h)
         rescue ArgumentError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.scheduling.peak_range')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.scheduling.peak_range')
           DEFAULT_PEAK_RANGE
         end
 

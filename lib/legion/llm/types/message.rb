@@ -74,7 +74,7 @@ module Legion
             content.to_s
           end
         rescue StandardError => e
-          self.class.handle_exception(e, level: :debug, handled: true, operation: 'llm.types.message.full_content')
+          self.class.handle_exception(e, level: :warn, handled: true, operation: 'llm.types.message.full_content')
           content.inspect
         end
 

@@ -28,16 +28,13 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
       allow(ex).to receive(:call_stream).and_return(
         double('Response', routing: { model: 'legionio' }, tokens: { input_tokens: 5, output_tokens: 10 }, tools: [])
       )
-      allow(ex).to receive(:call_responses).and_return(
-        double('Response', routing: { model: 'legionio' }, tokens: { input_tokens: 5, output_tokens: 10 },
-                           message: { content: 'Hello' }, tools: [])
-      )
+      # N×N: call_responses delegates to canonical paths (call / call_stream).
+      # The API namespace translator converts Responses API format to canonical
+      # before the executor receives it.
       allow(ex).to receive(:call).and_return(
         double('Response', routing: { model: 'legionio' }, tokens: { input_tokens: 5, output_tokens: 10 },
                            message: { content: 'Hello' }, tools: [])
       )
-      # Default: provider does not natively support the Responses API (covers vllm, ollama, etc.)
-      allow(ex).to receive(:provider_supports_responses?).and_return(false)
     end
   end
 
@@ -56,9 +53,8 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
       expect(body[:error][:type]).to eq('invalid_request_error')
     end
 
-    context 'when provider does not natively support the Responses API (vllm, ollama, etc.)' do
-      it 'returns sync response object via call when stream is false' do
-        # executor.call is already stubbed in executor_double with message: { content: 'Hello' }
+    context 'non-streaming' do
+      it 'returns sync response object via canonical call path' do
         post '/v1/responses',
              Legion::JSON.dump({ input: 'Hello', model: 'legionio', stream: false }),
              'CONTENT_TYPE' => 'application/json'
@@ -69,9 +65,9 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
         expect(body[:output]).to be_an(Array)
       end
 
-      it 'returns requires_action status when client tool calls are present' do
+      it 'returns completed status with a function_call item when client tool calls are present' do
         tool_call = double('ToolCall', name: 'get_weather', id: 'tc_1', arguments: { location: 'NYC' })
-        allow(executor_double).to receive(:call_responses).and_return(
+        allow(executor_double).to receive(:call).and_return(
           double('Response',
                  routing: { model: 'legionio' },
                  tokens:  { input_tokens: 5, output_tokens: 10 },
@@ -83,16 +79,33 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
              'CONTENT_TYPE' => 'application/json'
         expect(last_response.status).to eq(200)
         body = Legion::JSON.load(last_response.body)
-        expect(body[:status]).to eq('requires_action')
-        expect(body[:action_required][:type]).to eq('function_calls')
+        # Responses protocol: client-callable calls ride in a completed response as
+        # function_call items; the client executes them and continues via
+        # function_call_output. No requires_action/action_required (Assistants API).
+        expect(body[:status]).to eq('completed')
+        expect(body[:output].any? { |i| i[:type] == 'function_call' && i[:name] == 'get_weather' }).to be(true)
+        expect(body[:action_required]).to be_nil
       end
 
-      it 'streams typed SSE events via call_responses fallback when stream is true' do
+      # N×N: all providers are treated the same — no provider-specific branches.
+      context 'with any provider (openai, vllm, ollama, etc.)' do
+        it 'uses the canonical call path regardless of provider type' do
+          post '/v1/responses',
+               Legion::JSON.dump({ input: 'Hello', model: 'legionio', stream: false }),
+               'CONTENT_TYPE' => 'application/json'
+          expect(last_response.status).to eq(200)
+          expect(executor_double).to have_received(:call)
+        end
+      end
+    end
+
+    context 'streaming' do
+      it 'streams typed SSE events via canonical call_stream path' do
         pipeline_response = double('Response',
                                    routing: { model: 'legionio' },
                                    tokens:  { input_tokens: 5, output_tokens: 10 },
                                    tools:   [])
-        allow(executor_double).to receive(:call_responses) do |body:, stream:, &block| # rubocop:disable Lint/UnusedBlockArgument
+        allow(executor_double).to receive(:call_stream) do |&block|
           block.call(double('Chunk', content: 'Hello '))
           block.call(double('Chunk', content: 'world'))
           pipeline_response
@@ -105,45 +118,23 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
         expect(last_response.body).to include('event: response.output_text.delta')
         expect(last_response.body).to include('event: response.completed')
         expect(last_response.body).not_to include('data: [DONE]')
-        expect(executor_double).to have_received(:call_responses)
-      end
-    end
-
-    context 'when provider natively supports the Responses API (openai)' do
-      before do
-        allow(executor_double).to receive(:provider_supports_responses?).and_return(true)
+        expect(executor_double).to have_received(:call_stream)
       end
 
-      it 'routes non-streaming through call_responses' do
-        native_response = double('Response',
-                                 routing: { model: 'legionio' },
-                                 tokens:  { input_tokens: 5, output_tokens: 10 },
-                                 message: { content: 'Hello native!' },
-                                 tools:   [])
-        allow(executor_double).to receive(:call_responses).and_return(native_response)
-        post '/v1/responses',
-             Legion::JSON.dump({ input: 'Hello', model: 'legionio', stream: false }),
-             'CONTENT_TYPE' => 'application/json'
-        expect(last_response.status).to eq(200)
-        expect(executor_double).to have_received(:call_responses).with(body: anything, stream: false)
-      end
-
-      it 'routes streaming through call_responses' do
-        pipeline_response = double('Response',
-                                   routing: { model: 'legionio' },
-                                   tokens:  { input_tokens: 5, output_tokens: 10 },
-                                   tools:   [])
-        allow(executor_double).to receive(:call_responses) do |**, &block|
-          block.call(double('Chunk', content: 'Hello '))
-          block.call(double('Chunk', content: 'world'))
-          pipeline_response
+      # N×N: all providers are treated the same — no provider-specific streaming.
+      context 'with any provider (openai, vllm, ollama, etc.)' do
+        it 'uses call_stream regardless of provider type' do
+          pipeline_response = double('Response',
+                                     routing: { model: 'legionio' },
+                                     tokens:  { input_tokens: 5, output_tokens: 10 },
+                                     tools:   [])
+          allow(executor_double).to receive(:call_stream).and_return(pipeline_response)
+          post '/v1/responses',
+               Legion::JSON.dump({ input: 'Hi', model: 'legionio', stream: true }),
+               'CONTENT_TYPE' => 'application/json'
+          expect(last_response.content_type).to include('text/event-stream')
+          expect(executor_double).to have_received(:call_stream)
         end
-        post '/v1/responses',
-             Legion::JSON.dump({ input: 'Hi', model: 'legionio', stream: true }),
-             'CONTENT_TYPE' => 'application/json'
-        expect(last_response.content_type).to include('text/event-stream')
-        expect(last_response.body).to include('event: response.output_text.delta')
-        expect(executor_double).not_to have_received(:call_stream)
       end
     end
   end

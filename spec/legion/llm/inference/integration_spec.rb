@@ -57,6 +57,11 @@ RSpec.describe 'Pipeline integration with Legion::LLM.chat' do
 
   it 'falls back to legacy path when pipeline is disabled' do
     Legion::Settings[:llm][:pipeline_enabled] = false
+    Legion::LLM::Inventory.write_lane(lane: {
+                                        id: 'cloud:test:default:inference:test-model',
+                                        tier: :cloud, provider_family: :test, instance_id: :default,
+                                        model: 'test-model', type: :inference
+                                      })
     mock_session = double('NativeChat')
     mock_response = double('ProviderMessage',
                            content: 'hello from legacy', role: 'assistant',

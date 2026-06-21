@@ -75,7 +75,47 @@ def stub_native_provider(content: 'test response', input_tokens: 10, output_toke
       end)
     end
   end
+  # P5: write Inventory lanes so Router.request_lane (the while remaining.positive? loop) can
+  # find providers. Tier is :direct for local-style providers, :frontier/:cloud for remote.
+  if defined?(Legion::LLM::Inventory)
+    default_model = Legion::Settings[:llm][:default_model] || 'gemma-12b' # rubocop:disable Legion/Framework/NoInlineSettingDefaults
+    { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
+      ollama: :local, vllm: :direct, test: :direct }.each do |prov, tier|
+      write_test_lane(provider: prov, model: default_model, tier: tier)
+    end
+  end
   result
+end
+
+# Write a minimal Inventory lane for (provider, instance, model, tier).
+# Used by test helpers to satisfy Router.request_lane — which reads from Inventory — in specs
+# that stub Call::Dispatch directly. P5 introduced the while remaining.positive? loop that
+# calls request_lane, so specs must have at least one lane or they get NoLaneAvailable.
+def write_test_lane(provider: :vllm, instance: :default, model: 'gemma-12b', tier: :direct,
+                    type: :inference, capabilities: %i[tools streaming vision thinking],
+                    lane_weight: nil) # rubocop:disable Lint/UnusedMethodArgument
+  id = "#{tier}:#{provider}:#{instance}:#{type}:#{model}"
+  Legion::LLM::Inventory.write_lane(lane: {
+                                      id:              id,
+                                      tier:            tier,
+                                      provider_family: provider,
+                                      instance_id:     instance,
+                                      model:           model.to_s,
+                                      type:            type,
+                                      capabilities:    capabilities,
+                                      limits:          { context_window: 200_000 },
+                                      cost:            { input: 0.0, output: 0.0 },
+                                      enabled:         true
+                                    }, ttl: nil)
+end
+
+# Seed Discovery's per-provider model cache (a Concurrent::Map keyed by provider)
+# the way the provider DiscoveryRefresh ::Every actors do. Accepts a flat list of
+# discovered-model hashes (each carrying :provider).
+def seed_discovered_models(models)
+  map = Concurrent::Map.new
+  Array(models).group_by { |m| m[:provider] }.each { |provider, list| map[provider] = list }
+  Legion::LLM::Inventory::Discovery.instance_variable_set(:@discovered_models, map)
 end
 
 RSpec.configure do |config|
@@ -86,6 +126,7 @@ RSpec.configure do |config|
       defined?(Legion::Transport::Settings)
     Legion::Settings[:logging][:level] = :fatal
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
+    Legion::LLM::Inventory::Discovery.reset! if defined?(Legion::LLM::Inventory::Discovery)
     # Re-register standard providers after reset so router resolution works
     if defined?(Legion::LLM::Call::Registry)
       %i[anthropic test bedrock openai ollama vllm azure_foundry gemini xai].each do |provider|
@@ -102,5 +143,7 @@ RSpec.configure do |config|
     # Disable system_baseline by default so existing pipeline mocks are unaffected.
     # Specs that test baseline behavior set it explicitly.
     Legion::Settings[:llm][:system_baseline] = nil
+    # Reset P1 live inventory store so write_lane tests start clean.
+    Legion::LLM::Inventory.reset_live_store! if Legion::LLM::Inventory.respond_to?(:reset_live_store!)
   end
 end

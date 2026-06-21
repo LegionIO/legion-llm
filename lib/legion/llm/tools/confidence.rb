@@ -89,7 +89,7 @@ module Legion
             end
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.hydrate_from_l2')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.confidence.hydrate_from_l2')
         end
 
         def hydrate_from_apollo
@@ -122,7 +122,7 @@ module Legion
             end
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.hydrate_from_apollo')
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.confidence.hydrate_from_apollo')
         end
 
         def reset!
@@ -142,7 +142,7 @@ module Legion
 
             l1_cache_set("override:#{tool}", Legion::JSON.dump(entry), ttl: 3600)
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.sync_l1', tool: tool)
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.confidence.sync_l1', tool: tool)
             nil
           end
 
@@ -154,7 +154,7 @@ module Legion
 
             Legion::JSON.load(raw)
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.lookup_l1', tool: tool)
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.confidence.lookup_l1', tool: tool)
             nil
           end
 
@@ -194,7 +194,7 @@ module Legion
             rows = Legion::Data::Local.query('SELECT * FROM override_confidence WHERE tool = ?', tool)
             rows&.first
           rescue StandardError => e
-            handle_exception(e, level: :debug, handled: true, operation: 'llm.tools.confidence.lookup_l2')
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.confidence.lookup_l2')
             nil
           end
         end

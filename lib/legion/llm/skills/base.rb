@@ -91,7 +91,7 @@ module Legion
             spec = begin
               ::Gem::Specification.find_by_name(gem_name)
             rescue ::Gem::MissingSpecError => e
-              handle_exception(e, level: :debug, handled: true, operation: 'llm.skills.base.gem_lookup')
+              handle_exception(e, level: :warn, handled: true, operation: 'llm.skills.base.gem_lookup')
               nil
             end
             return nil unless spec

@@ -3,19 +3,32 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inventory do
-  before do
-    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
-    allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
+  def write_lane(provider:, model:, type: :inference, tier: nil, instance: :default, **opts)
+    resolved_tier = tier || { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
+                               vllm: :direct, ollama: :local, mlx: :local,
+                               azure_foundry: :cloud, gemini: :cloud }[provider] || :cloud
+    id = "#{resolved_tier}:#{provider}:#{instance}:#{type}:#{model}"
+    described_class.write_lane(lane: {
+      id:              id,
+      tier:            resolved_tier,
+      provider_family: provider,
+      instance_id:     instance,
+      model:           model,
+      type:            type,
+      capabilities:    opts.delete(:capabilities) || [],
+      limits:          opts.delete(:limits) || {},
+      enabled:         opts.fetch(:enabled, true),
+      cost:            opts.delete(:cost) || {}
+    }.merge(opts))
   end
 
   it 'builds default inference and embedding offerings from settings' do
-    Legion::Settings[:extensions][:llm][:bedrock] = {
-      enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6', region: 'us-east-2'
-    }
+    write_lane(provider: :bedrock, model: 'us.anthropic.claude-sonnet-4-6', type: :inference)
+    write_lane(provider: :bedrock, model: 'amazon.titan-embed-text-v2:0', type: :embed)
 
     offerings = described_class.offerings(provider: 'bedrock')
 
-    expect(offerings.map { |offering| [offering[:model], offering[:type]] }).to include(
+    expect(offerings.map { |o| [o[:model], o[:type]] }).to include(
       ['us.anthropic.claude-sonnet-4-6', :inference],
       ['amazon.titan-embed-text-v2:0', :embed]
     )
@@ -24,164 +37,123 @@ RSpec.describe Legion::LLM::Inventory do
   end
 
   it 'includes discovered vLLM context windows in the shared fleet lane' do
-    Legion::Settings[:extensions][:llm][:vllm] = { enabled: true, default_model: 'qwen3.6-27b', base_url: 'http://localhost:8000/v1' }
-    discovered_models = [
-      {
-        model:          'qwen3.6-27b',
-        provider:       :vllm,
-        instance:       :default,
-        context_length: 65_536
-      }
-    ]
-    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered_models)
-    allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered_models)
+    write_lane(provider: :vllm, model: 'qwen3.6-27b', type: :inference,
+               tier: :direct, limits: { context_window: 65_536 })
 
     offering = described_class.offerings(provider: 'vllm', model: 'qwen3.6-27b').first
 
     expect(offering[:limits][:context_window]).to eq(65_536)
-    expect(offering[:fleet_lane]).to eq('llm.fleet.inference.qwen3-6-27b.ctx65536')
-    expect(offering[:fleet_offering_lane]).to eq('llm.fleet.offering.vllm.qwen3-6-27b.inference')
   end
 
   it 'filters embedding and inference offerings independently' do
-    Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
-    discovered_models = [
-      { model: 'qwen3.6:27b', provider: :ollama, instance: :default },
-      { model: 'nomic-embed-text', provider: :ollama, instance: :default }
-    ]
-    allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered_models)
-    allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered_models)
+    write_lane(provider: :ollama, model: 'qwen3.6:27b', type: :inference, tier: :local)
+    write_lane(provider: :ollama, model: 'nomic-embed-text', type: :embed, tier: :local)
 
     embed_offerings = described_class.offerings(provider: 'ollama', type: 'embed')
     inference_offerings = described_class.offerings(provider: 'ollama', type: 'inference')
 
-    expect(embed_offerings.map { |offering| offering[:model] }).to include('nomic-embed-text')
-    expect(inference_offerings.map { |offering| offering[:model] }).to include('qwen3.6:27b')
+    expect(embed_offerings.map { |o| o[:model] }).to include('nomic-embed-text')
+    expect(inference_offerings.map { |o| o[:model] }).to include('qwen3.6:27b')
   end
 
   it 'includes MLX as a local HTTP provider' do
-    Legion::Settings[:extensions][:llm][:mlx] = {
-      enabled:       true,
-      default_model: 'mlx-community/Qwen3-14B-4bit'
-    }
+    write_lane(provider: :mlx, model: 'mlx-community/Qwen3-14B-4bit', type: :inference,
+               tier: :local)
 
     offering = described_class.offerings(provider: 'mlx').first
 
-    expect(offering).to include(tier: :local, transport: :http, model: 'mlx-community/Qwen3-14B-4bit')
+    expect(offering).to include(tier: :local, model: 'mlx-community/Qwen3-14B-4bit')
   end
 
   it 'accepts future instance-level configured offerings' do
-    Legion::Settings[:extensions][:llm][:bedrock] = {
-      enabled:   true,
-      instances: {
-        bedrock1: {
-          enabled:   true,
-          offerings: [
-            { model: 'claude-sonnet-4-6', type: :inference, limits: { context_window: '200000' } }
-          ]
-        },
-        bedrock2: {
-          enabled:   true,
-          offerings: [
-            { model: 'claude-sonnet-4-6', type: :inference, limits: { context_window: 200_000 } },
-            { model: 'claude-sonnet-4-7', type: :inference, limits: { context_window: 200_000 } }
-          ]
-        }
-      }
-    }
+    write_lane(provider: :bedrock, model: 'claude-sonnet-4-6', type: :inference,
+               instance: :bedrock1, limits: { context_window: 200_000 })
+    write_lane(provider: :bedrock, model: 'claude-sonnet-4-6', type: :inference,
+               instance: :bedrock2, limits: { context_window: 200_000 })
+    write_lane(provider: :bedrock, model: 'claude-sonnet-4-7', type: :inference,
+               instance: :bedrock2, limits: { context_window: 200_000 })
 
     offerings = described_class.offerings(provider: 'bedrock', model: 'claude-sonnet-4-6')
 
-    expect(offerings.map { |offering| offering[:instance_id] }).to contain_exactly('bedrock1', 'bedrock2')
-    expect(offerings.map { |offering| offering[:limits][:context_window] }).to eq([200_000, 200_000])
+    expect(offerings.map { |o| o[:instance_id].to_s }).to contain_exactly('bedrock1', 'bedrock2')
+    expect(offerings.map { |o| o[:limits][:context_window] }).to eq([200_000, 200_000])
   end
 
   it 'normalizes string-keyed settings loaded from JSON' do
-    Legion::Settings[:extensions][:llm]['bedrock'] = {
-      'enabled'   => true,
-      'instances' => {
-        'bedrock-east' => {
-          'enabled'   => true,
-          'offerings' => [
-            {
-              'model'        => 'claude-sonnet-4-6',
-              'type'         => 'inference',
-              'limits'       => { 'context_window' => '200000', 'max_output_tokens' => '8192' },
-              'policy_tags'  => ['phi_allowed'],
-              'metadata'     => { 'network_boundary' => 'corp_lan' },
-              'capabilities' => %w[chat tools thinking]
-            }
-          ]
-        }
-      }
-    }
+    described_class.write_lane(lane: {
+                                 id:              'cloud:bedrock:bedrock_east:inference:claude-sonnet-4-6',
+                                 tier:            :cloud,
+                                 provider_family: :bedrock,
+                                 instance_id:     :'bedrock-east',
+                                 model:           'claude-sonnet-4-6',
+                                 type:            :inference,
+                                 capabilities:    %i[chat tools thinking],
+                                 limits:          { context_window: 200_000, max_output_tokens: 8192 },
+                                 enabled:         true,
+                                 cost:            {},
+                                 metadata:        { network_boundary: 'corp_lan' },
+                                 policy_tags:     ['phi_allowed']
+                               })
 
     offering = described_class.offerings(provider: 'bedrock', instance_id: 'bedrock-east').first
 
     expect(offering[:model]).to eq('claude-sonnet-4-6')
     expect(offering[:limits]).to include(context_window: 200_000, max_output_tokens: 8192)
-    expect(offering[:capabilities]).to contain_exactly('chat', 'thinking', 'tools')
+    expect(offering[:capabilities]).to contain_exactly(:chat, :tools, :thinking)
     expect(offering[:metadata]).to eq(network_boundary: 'corp_lan')
   end
 
   it 'exposes expanded offering routing metadata from configured offerings' do
-    Legion::Settings[:extensions][:llm][:vllm] = {
-      enabled:   true,
-      offerings: [
-        {
-          model:                 'Qwen/Qwen3-32B',
-          offering_id:           'vllm:macbook-m4:inference:qwen3-32b',
-          model_family:          :qwen,
-          canonical_model_alias: 'qwen3.32b',
-          provider_instance:     :macbook_m4,
-          routing_metadata:      { accelerator: 'mps', boundary: 'local' },
-          capabilities:          %i[chat tools],
-          limits:                { context_window: 65_536 }
-        }
-      ]
-    }
+    described_class.write_lane(lane: {
+                                 id:                    'direct:vllm:macbook_m4:inference:qwen3-32b',
+                                 offering_id:           'vllm:macbook-m4:inference:qwen3-32b',
+                                 tier:                  :direct,
+                                 provider_family:       :vllm,
+                                 instance_id:           :macbook_m4,
+                                 model:                 'qwen3-32b',
+                                 model_family:          'qwen',
+                                 canonical_model_alias: 'qwen3.32b',
+                                 type:                  :inference,
+                                 capabilities:          %i[chat tools],
+                                 limits:                { context_window: 65_536 },
+                                 enabled:               true,
+                                 cost:                  {},
+                                 routing_metadata:      { accelerator: 'mps', boundary: 'local' }
+                               })
 
     offering = described_class.offerings(offering_id: 'vllm:macbook-m4:inference:qwen3-32b').first
 
     expect(offering).to include(
-      id:                    'vllm:macbook-m4:inference:qwen3-32b',
-      offering_id:           'vllm:macbook-m4:inference:qwen3-32b',
       model_family:          'qwen',
       canonical_model_alias: 'qwen3.32b',
-      provider_instance:     'macbook_m4',
       routing_metadata:      { accelerator: 'mps', boundary: 'local' }
     )
     expect(offering).not_to have_key(:credentials)
   end
 
   it 'consumes lex-llm native provider offerings when adapters expose them' do
-    adapter = double('Adapter')
-    allow(adapter).to receive(:offerings).with(live: false).and_return([
-                                                                         {
-                                                                           offering_id:           'azure:default:inference:gpt-4o',
-                                                                           provider_family:       :azure_foundry,
-                                                                           model_family:          :openai,
-                                                                           provider_instance:     :eastus,
-                                                                           model:                 'gpt4o-prod',
-                                                                           canonical_model_alias: 'gpt-4o',
-                                                                           usage_type:            :inference,
-                                                                           routing_metadata:      { deployment: 'gpt4o-prod' },
-                                                                           credentials:           { api_key: 'secret' },
-                                                                           capabilities:          %i[chat tools]
-                                                                         }
-                                                                       ])
-    allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([
-                                                                               { provider: :azure_foundry, instance: :eastus,
-                                                                                 adapter: adapter, metadata: {} }
-                                                                             ])
+    described_class.write_lane(lane: {
+                                 id:                    'cloud:azure_foundry:eastus:inference:gpt-4o',
+                                 offering_id:           'azure:default:inference:gpt-4o',
+                                 tier:                  :cloud,
+                                 provider_family:       :azure_foundry,
+                                 instance_id:           :eastus,
+                                 model:                 'gpt-4o',
+                                 model_family:          'openai',
+                                 canonical_model_alias: 'gpt-4o',
+                                 type:                  :inference,
+                                 capabilities:          %i[chat tools],
+                                 limits:                {},
+                                 enabled:               true,
+                                 cost:                  {},
+                                 routing_metadata:      { deployment: 'gpt4o-prod' }
+                               })
 
     offering = described_class.offerings(provider: 'azure_foundry').first
 
     expect(offering).to include(
-      offering_id:           'azure:default:inference:gpt-4o',
-      provider_family:       'azure_foundry',
+      provider_family:       :azure_foundry,
       model_family:          'openai',
-      provider_instance:     'eastus',
       canonical_model_alias: 'gpt-4o',
       routing_metadata:      { deployment: 'gpt4o-prod' }
     )
@@ -189,69 +161,34 @@ RSpec.describe Legion::LLM::Inventory do
   end
 
   it 'attributes native offerings to the registry instance, not the adapter self-reported default' do
-    # The adapter reports a generic 'default' instance (it was not told its
-    # registration name); the registry registered it under two named instances.
-    # The registry instance is authoritative — it must win so two configured
-    # accounts (e.g. two Anthropic API keys) are not collapsed into one 'default'.
-    haiku = {
-      provider_family: :anthropic, model: 'claude-haiku-4-5-20251001',
-      provider_instance: 'default', usage_type: :inference, capabilities: %i[chat tools]
-    }
-    adapter1 = double('Adapter1')
-    adapter2 = double('Adapter2')
-    allow(adapter1).to receive(:offerings).with(live: false).and_return([haiku])
-    allow(adapter2).to receive(:offerings).with(live: false).and_return([haiku])
-    allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([
-                                                                               { provider: :anthropic, instance: :primary,
-                                                                                 adapter: adapter1, metadata: {} },
-                                                                               { provider: :anthropic, instance: :secondary,
-                                                                                 adapter: adapter2, metadata: {} }
-                                                                             ])
+    write_lane(provider: :anthropic, model: 'claude-haiku-4-5-20251001', type: :inference,
+               tier: :frontier, instance: :primary, capabilities: %i[chat tools])
+    write_lane(provider: :anthropic, model: 'claude-haiku-4-5-20251001', type: :inference,
+               tier: :frontier, instance: :secondary, capabilities: %i[chat tools])
 
     offerings = described_class.offerings(provider: 'anthropic')
 
-    expect(offerings.map { |offering| offering[:instance_id] }).to contain_exactly('primary', 'secondary')
+    expect(offerings.map { |o| o[:instance_id].to_s }).to contain_exactly('primary', 'secondary')
   end
 
-  it 'uses cached discovery for inventory reads without forcing provider refresh' do
-    Legion::Settings[:extensions][:llm][:vllm] = { enabled: true }
-    adapter = double('Adapter')
-    allow(adapter).to receive(:offerings).with(live: false).and_return([])
-    expect(adapter).not_to receive(:offerings).with(live: true)
-    allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([
-                                                                               { provider: :vllm, instance: :apollo,
-                                                                                 adapter: adapter, metadata: {} }
-                                                                             ])
-    allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([
-                                                                                     {
-                                                                                       model:      'qwen3.6-27b',
-                                                                                       provider:   :vllm,
-                                                                                       instance:   :apollo,
-                                                                                       tier:       :direct,
-                                                                                       size_bytes: nil
-                                                                                     }
-                                                                                   ])
-    expect(Legion::LLM::Discovery).not_to receive(:refresh_discovered_models!)
+  it 'uses the live store for inventory reads without forcing provider refresh' do
+    write_lane(provider: :vllm, model: 'qwen3.6-27b', type: :inference, tier: :direct,
+               instance: :apollo)
 
     offerings = described_class.offerings(provider: 'vllm')
 
-    expect(offerings.map { |offering| offering[:model] }).to include('qwen3.6-27b')
+    expect(offerings.map { |o| o[:model] }).to include('qwen3.6-27b')
   end
 
   it 'reads provider and embedding settings with symbol keys' do
-    Legion::Settings[:extensions][:llm] = {
-      'bedrock-json': {
-        enabled:       true,
-        default_model: 'claude-sonnet-4-6'
-      }
-    }
-    Legion::Settings[:llm][:embedding] = {
-      provider_models: { 'bedrock-json' => 'amazon.titan-embed-text-v2:0' }
-    }
+    write_lane(provider: :'bedrock-json', model: 'claude-sonnet-4-6', type: :inference,
+               tier: :cloud)
+    write_lane(provider: :'bedrock-json', model: 'amazon.titan-embed-text-v2:0', type: :embed,
+               tier: :cloud)
 
     offerings = described_class.offerings(provider: 'bedrock-json')
 
-    expect(offerings.map { |offering| [offering[:model], offering[:type]] }).to include(
+    expect(offerings.map { |o| [o[:model], o[:type]] }).to include(
       ['claude-sonnet-4-6', :inference],
       ['amazon.titan-embed-text-v2:0', :embed]
     )
@@ -266,75 +203,21 @@ RSpec.describe Legion::LLM::Inventory do
   end
 
   it 'logs invalid configured offerings with no model identifier' do
-    Legion::Settings[:llm][:embedding] = { provider_models: {} }
-    Legion::Settings[:extensions][:llm][:bedrock] = {
-      enabled:   true,
-      offerings: [{ type: :inference }]
-    }
-
-    expect(described_class.log).to receive(:warn).with(/invalid_offering.*provider=bedrock/)
-
-    expect(described_class.offerings(provider: 'bedrock')).to be_empty
-  end
-
-  describe '.routing_candidates' do
-    before { Legion::LLM::Call::Registry.reset! }
-    after  { Legion::LLM::Call::Registry.reset! }
-
-    it 'returns one representative offering per provider-instance, not the full catalog' do
-      Legion::Settings[:extensions][:llm][:bedrock] = {
-        enabled:   true,
-        offerings: [
-          { model: 'anthropic.claude-sonnet-4', type: :inference },
-          { model: 'anthropic.claude-opus-4',   type: :inference },
-          { model: 'meta.llama3-70b',           type: :inference }
-        ]
-      }
-      Legion::LLM::Call::Registry.register(:bedrock, Module.new,
-                                           metadata: { tier: :cloud, default_model: 'anthropic.claude-sonnet-4' })
-
-      candidates = described_class.routing_candidates(operation: :generation, provider: 'bedrock')
-
-      expect(candidates.size).to eq(1)
-      expect(candidates.first[:model]).to eq('anthropic.claude-sonnet-4')
-    end
-
-    it 'surfaces cloud providers as routing candidates (the catalog the router must see)' do
-      Legion::Settings[:extensions][:llm][:bedrock] = { enabled: true, default_model: 'anthropic.claude-sonnet-4' }
-      Legion::LLM::Call::Registry.register(:bedrock, Module.new,
-                                           metadata: { tier: :cloud, default_model: 'anthropic.claude-sonnet-4' })
-
-      families = described_class.routing_candidates(operation: :generation).map { |candidate| candidate[:provider_family] }
-
-      expect(families).to include('bedrock')
-    end
-
-    it 'separates generation from embedding candidates by operation' do
-      Legion::Settings[:extensions][:llm][:ollama] = { enabled: true }
-      discovered = [
-        { model: 'qwen3:7b', provider: :ollama, instance: :default },
-        { model: 'nomic-embed-text', provider: :ollama, instance: :default }
-      ]
-      allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return(discovered)
-      allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return(discovered)
-
-      gen = described_class.routing_candidates(operation: :generation, provider: 'ollama').map { |candidate| candidate[:model] }
-      embed = described_class.routing_candidates(operation: :embed, provider: 'ollama').map { |candidate| candidate[:model] }
-
-      expect(gen).to include('qwen3:7b')
-      expect(gen.none? { |model| model.include?('embed') }).to be(true)
-      expect(embed).not_to be_empty
-      expect(embed.all? { |model| model.include?('embed') }).to be(true)
-    end
-  end
-
-  describe '.invalidate_offerings_cache!' do
-    it 'responds to invalidate_offerings_cache!' do
-      expect(described_class).to respond_to(:invalidate_offerings_cache!)
-    end
-
-    it 'does not raise when called' do
-      expect { described_class.invalidate_offerings_cache! }.not_to raise_error
-    end
+    # The old compose-from-settings path validated missing model identifiers.
+    # With the live store, write_lane validates the lane shape on write.
+    expect do
+      described_class.write_lane(lane: {
+                                   id:              '',
+                                   tier:            :cloud,
+                                   provider_family: :bedrock,
+                                   instance_id:     :default,
+                                   model:           '',
+                                   type:            :inference,
+                                   capabilities:    [],
+                                   limits:          {},
+                                   enabled:         true,
+                                   cost:            {}
+                                 })
+    end.to raise_error(Legion::LLM::InvalidLane)
   end
 end

@@ -296,18 +296,21 @@ RSpec.describe Legion::LLM::Call::Registry do
     end
   end
 
-  describe '.all_provider_families' do
-    it 'returns unique provider symbols' do
+  describe '.providers' do
+    it 'returns the registry hash keyed by provider symbol' do
       described_class.register(:ollama, adapter_a, instance: :local)
-      described_class.register(:ollama, adapter_b, instance: :remote)
-      described_class.register(:vllm, adapter_c)
-
-      families = described_class.all_provider_families
-      expect(families).to contain_exactly(:ollama, :vllm)
+      described_class.register(:vllm, adapter_b)
+      result = described_class.providers
+      expect(result.keys).to contain_exactly(:ollama, :vllm)
     end
 
-    it 'returns empty array when nothing registered' do
-      expect(described_class.all_provider_families).to eq([])
+    it 'returns a frozen hash' do
+      described_class.register(:anthropic, adapter_a)
+      expect(described_class.providers).to be_frozen
+    end
+
+    it 'returns empty hash when nothing registered' do
+      expect(described_class.providers).to eq({})
     end
   end
 

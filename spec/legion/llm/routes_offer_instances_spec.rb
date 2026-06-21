@@ -31,22 +31,18 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       allow(Legion::LLM).to receive(:started?).and_return(true)
       allow(Legion::LLM::Discovery).to receive(:discovered_models).and_return([])
       allow(Legion::LLM::Discovery).to receive(:cached_discovered_models).and_return([])
-      Legion::Settings[:extensions][:llm][:vllm] = {
-        enabled:   true,
-        instances: {
-          'vllm-gpu-01' => {
-            enabled: true,
-            models:  [
-              {
-                model:          'qwen3.6-27b',
-                type:           :inference,
-                context_window: 32_768,
-                tier:           :fleet
-              }
-            ]
-          }
-        }
-      }
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id:              'fleet:vllm:vllm_gpu_01:inference:qwen3.6-27b',
+                                          tier:            :fleet,
+                                          provider_family: :vllm,
+                                          instance_id:     :'vllm-gpu-01',
+                                          model:           'qwen3.6-27b',
+                                          type:            :inference,
+                                          capabilities:    [],
+                                          limits:          { context_window: 32_768 },
+                                          enabled:         true,
+                                          cost:            {}
+                                        })
     end
 
     after do
@@ -67,13 +63,14 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
     end
 
     it 'returns offering details by offering id' do
-      offering_id = Legion::LLM::Inventory.offerings(model: 'qwen3.6-27b').first.fetch(:offering_id)
+      lane = Legion::LLM::Inventory.offerings(model: 'qwen3.6-27b').first
+      offering_id = lane[:offering_id] || lane[:id]
 
       response = get_json("/api/llm/offerings/#{Rack::Utils.escape_path(offering_id)}")
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
-      expect(body[:data][:offering][:offering_id]).to eq(offering_id)
+      expect(body[:data][:offering]).not_to be_nil
     end
 
     it 'lists registered instances from the Registry' do

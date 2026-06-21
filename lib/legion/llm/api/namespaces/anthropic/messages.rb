@@ -20,6 +20,7 @@ module Legion
 
             post '' do
               require_llm!
+              validate_legion_routing_headers!(env)
               request_started_at = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
               body = parse_request_body
               validate_anthropic_required!(body)
@@ -63,7 +64,8 @@ module Legion
                     emitter:      emitter,
                     request_id:   request_id,
                     model:        model,
-                    input_tokens: estimate_input_tokens(inference_request.messages)
+                    input_tokens: estimate_input_tokens(inference_request.messages),
+                    initial_lane: { id: 'unknown:pending' }
                   )
                   pipeline_response = executor.call_stream do |chunk|
                     assembler.push(chunk)
@@ -112,6 +114,12 @@ module Legion
                   Legion::JSON.dump(formatted)
                 end
               end
+            rescue Legion::LLM::Errors::NoLaneAvailable => e
+              translate_no_lane_available(e, operation: 'llm.ns.anthropic.messages.no_lane', client: :anthropic)
+            rescue Legion::LLM::Errors::EscalationExhausted => e
+              translate_escalation_exhausted(e, operation: 'llm.ns.anthropic.messages.exhausted', client: :anthropic)
+            rescue Legion::LLM::Errors::InvalidHeader => e
+              translate_invalid_header(e, operation: 'llm.ns.anthropic.messages.invalid_header', client: :anthropic)
             rescue Legion::LLM::AuthError => e
               handle_exception(e, level: :error, handled: true, operation: 'llm.ns.anthropic.messages.auth')
               anthropic_error('authentication_error', e.message, status_code: 401)

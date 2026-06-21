@@ -20,24 +20,6 @@ module Legion
           raise
         end
 
-        def inject_anthropic_cache_control!(opts, provider)
-          resolved_provider = (provider || Legion::Settings[:llm][:default_provider])&.to_sym
-          return unless resolved_provider == :anthropic
-
-          caching_settings = Legion::Settings.dig(:llm, :prompt_caching) || {}
-          return unless caching_settings[:enabled] != false
-
-          min_tokens = caching_settings[:min_tokens] || 1024
-          instructions = opts[:instructions]
-          return unless instructions.is_a?(String) && instructions.length > min_tokens
-
-          log.debug "[llm][providers] inject_anthropic_cache_control provider=#{resolved_provider} length=#{instructions.length}"
-          opts[:instructions] = {
-            content:       instructions,
-            cache_control: { type: 'ephemeral' }
-          }
-        end
-
         # -- private helpers --------------------------------------------------
 
         def rediscover_all_providers

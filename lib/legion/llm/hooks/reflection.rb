@@ -40,7 +40,7 @@ module Legion
           Inference::Executor::ASYNC_THREAD_POOL.post do
             extract(response, messages, model)
           rescue StandardError => e
-            handle_exception(e, level: :debug, operation: 'llm.hooks.reflection.extract_async', model: model)
+            handle_exception(e, level: :warn, operation: 'llm.hooks.reflection.extract_async', model: model)
             log.debug("[llm][reflection] extract_async_failed model=#{model} error=#{e.message}")
           end
         end
@@ -187,7 +187,7 @@ module Legion
             log.info("[llm][reflection] published via=direct model=#{model} type=#{entry[:type]}")
           end
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'llm.hooks.reflection.publish_entry', model: model)
+          handle_exception(e, level: :warn, operation: 'llm.hooks.reflection.publish_entry', model: model)
           log.error("[llm][reflection] publish_failed model=#{model} type=#{entry[:type]} error=#{e.message}")
         end
 

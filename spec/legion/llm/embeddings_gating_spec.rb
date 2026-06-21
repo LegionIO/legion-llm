@@ -15,8 +15,7 @@ end
 RSpec.describe 'Legion::LLM::Embeddings provider gating' do
   before do
     Legion::LLM.instance_variable_set(:@started, true)
-    Legion::LLM.instance_variable_set(:@embedding_provider, nil)
-    Legion::LLM.instance_variable_set(:@embedding_model, nil)
+    Legion::Settings[:llm][:embedding][:model] = nil
   end
 
   after do
@@ -24,33 +23,29 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
   end
 
   describe 'Legion::LLM::Embeddings.generate with no provider configured' do
-    it 'returns an error when no provider is set' do
-      result = Legion::LLM::Embeddings.generate(text: 'hello')
-      expect(result[:vector]).to be_nil
-      expect(result[:error]).to eq('No embedding provider configured')
+    it 'raises LLMError when no model is configured' do
+      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.to raise_error(Legion::LLM::LLMError)
     end
   end
 
   describe 'Legion::LLM::Embeddings.generate when Dispatch raises' do
     before do
-      Legion::LLM.instance_variable_set(:@embedding_provider, :azure)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :azure, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
     end
 
-    it 'returns an error hash when dispatch fails' do
+    it 'propagates ProviderError (LLMError subclass) to callers' do
       allow(Legion::LLM::Call::Dispatch).to receive(:call)
         .and_raise(Legion::LLM::ProviderError.new('Native provider not registered: azure'))
 
-      result = Legion::LLM::Embeddings.generate(text: 'hello', provider: :azure)
-      expect(result[:vector]).to be_nil
-      expect(result[:error]).to include('azure')
+      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.to raise_error(Legion::LLM::ProviderError, /azure/)
     end
 
     it 'does not raise to callers' do
       allow(Legion::LLM::Call::Dispatch).to receive(:call)
         .and_raise(StandardError.new('connection refused'))
 
-      expect { Legion::LLM::Embeddings.generate(text: 'hello', provider: :azure) }.not_to raise_error
+      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.not_to raise_error
     end
   end
 
@@ -60,8 +55,8 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
     end
 
     before do
-      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
       allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response(mock_response))
     end
 
@@ -78,8 +73,8 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
     end
 
     before do
-      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
       allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response(mock_response))
     end
 
@@ -92,8 +87,8 @@ RSpec.describe 'Legion::LLM::Embeddings provider gating' do
 
   describe 'Legion::LLM::Embeddings.generate_batch when Dispatch raises' do
     before do
-      Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
+      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
     end
 
     it 'returns error hashes for all texts' do

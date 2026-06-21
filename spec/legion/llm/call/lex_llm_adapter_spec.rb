@@ -568,6 +568,21 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
                                                 ])
   end
 
+  # Regression: lex-llm-* actors call adapter.discover_offerings (not adapter.offerings).
+  # Without this method on the adapter, every actor's lanes_from_instance silently returns
+  # [] → Inventory stays empty → all routing returns NoLaneAvailable.
+  it 'forwards discover_offerings to the provider (lex-llm-* actor contract)' do
+    provider_class.define_method(:discover_offerings) do |live: false, **|
+      [{ offering_id: 'fake:default:inference:model-a', model: 'model-a', live: live }]
+    end
+
+    expect(adapter).to respond_to(:discover_offerings)
+    expect(adapter.discover_offerings(live: true)).to eq([
+                                                           { offering_id: 'fake:default:inference:model-a',
+                                                             model: 'model-a', live: true }
+                                                         ])
+  end
+
   context 'Anthropic-style structured content blocks in messages (#123)' do
     it 'flattens symbol-keyed text blocks to a plain string' do
       messages_seen = nil

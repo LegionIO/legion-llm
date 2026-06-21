@@ -15,14 +15,14 @@ end
 RSpec.describe Legion::LLM::Embeddings do
   before do
     Legion::LLM.instance_variable_set(:@started, true)
-    Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-    Legion::LLM.instance_variable_set(:@embedding_model, 'text-embedding-3-small')
+    # Write embedding lanes for all models exercised in this spec so Router.request_lane resolves them.
+    %w[nomic-embed-text nomic-embed-text:latest mxbai-embed-large text-embedding-3-small unknown-model].each do |m|
+      write_test_lane(provider: :openai, model: m, tier: :frontier, type: :embedding)
+    end
   end
 
   after do
     Legion::LLM.instance_variable_set(:@started, nil)
-    Legion::LLM.instance_variable_set(:@embedding_provider, nil)
-    Legion::LLM.instance_variable_set(:@embedding_model, nil)
   end
 
   let(:mock_response) do
@@ -49,11 +49,6 @@ RSpec.describe Legion::LLM::Embeddings do
 
   describe '.generate with prefix injection' do
     context 'with nomic-embed-text model' do
-      before do
-        Legion::LLM.instance_variable_set(:@embedding_provider, :openai)
-        Legion::LLM.instance_variable_set(:@embedding_model, 'nomic-embed-text')
-      end
-
       it 'prepends document prefix by default' do
         expect(Legion::LLM::Call::Dispatch).to receive(:call)
           .with(hash_including(text: 'search_document: hello')).and_return(native_embed_response(mock_response))

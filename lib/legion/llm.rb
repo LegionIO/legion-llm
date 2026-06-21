@@ -40,6 +40,8 @@ require_relative 'llm/inference'
 require_relative 'llm/inference/embed_pipeline'
 require_relative 'llm/fleet'
 require_relative 'llm/inventory'
+require 'legion/llm/inventory/sweeper'
+require 'legion/llm/inventory/settings_observer'
 require_relative 'llm/metering'
 require_relative 'llm/audit'
 require_relative 'llm/scheduling'
@@ -52,7 +54,7 @@ require_relative 'llm/tools/interceptor'
 require_relative 'llm/inference/prompt'
 require_relative 'llm/helper'
 require_relative 'llm/config'
-require_relative 'llm/discovery'
+require_relative 'llm/inventory/discovery'
 require_relative 'llm/transport'
 
 boot_logger = Object.new.extend(Legion::Logging::Helper)
@@ -60,13 +62,13 @@ boot_logger = Object.new.extend(Legion::Logging::Helper)
 begin
   require_relative 'llm/skills'
 rescue LoadError => e
-  boot_logger.handle_exception(e, level: :debug, handled: true, operation: 'llm.boot.require_skills')
+  boot_logger.handle_exception(e, level: :warn, handled: true, operation: 'llm.boot.require_skills')
 end
 
 begin
   require_relative 'llm/api'
 rescue LoadError => e
-  boot_logger.handle_exception(e, level: :debug, handled: true, operation: 'llm.boot.require_api')
+  boot_logger.handle_exception(e, level: :warn, handled: true, operation: 'llm.boot.require_api')
 end
 
 require_relative 'llm/compat'
@@ -75,6 +77,9 @@ module Legion
   module LLM
     extend Legion::Logging::Helper
 
+    # Top-level legacy class — kept for backwards compat with old raise/rescue sites.
+    # New code should use Legion::LLM::Errors::EscalationExhausted (HTTP 503 semantics,
+    # requires attempts: and tried_lanes: kwargs). This class is deleted in C6.
     class EscalationExhausted < StandardError; end
     class DaemonDeniedError < StandardError; end
     class DaemonRateLimitedError < StandardError; end
@@ -84,9 +89,9 @@ module Legion
       def start
         log.debug '[llm] start.enter'
         Call::Providers.setup
-        Discovery.run
-        Router.populate_auto_rules(Discovery.discovered_instances) if Router.respond_to?(:populate_auto_rules)
-        Discovery.detect_embedding_capability
+        Inventory::Discovery.run
+        Inventory::Discovery.detect_embedding_capability
+        Legion::LLM::Inventory::SettingsObserver.attach!
         Config.set_defaults
         Hooks.install_defaults
         Tools::Interceptor.load_defaults
@@ -111,7 +116,7 @@ module Legion
         log.debug '[llm] shutdown.enter'
         Legion::Settings[:llm][:connected] = false
         @started = false
-        Discovery.reset!
+        Inventory::Discovery.reset!
         Call::Registry.reset!
         # Clear LLM-level embedding ivars that may have been set via instance_variable_set for testing
         @can_embed = nil
@@ -184,23 +189,23 @@ module Legion
       # These methods check Discovery first, then fall back to instance ivars set directly on LLM
       # (ivar fallback preserves backwards compat for specs that do Legion::LLM.instance_variable_set)
       def can_embed?
-        Discovery.can_embed? || @can_embed == true
+        Inventory::Discovery.can_embed? || @can_embed == true
       end
 
       def embedding_provider
-        Discovery.embedding_provider || @embedding_provider
+        Inventory::Discovery.embedding_provider || @embedding_provider
       end
 
       def embedding_model
-        Discovery.embedding_model || @embedding_model
+        Inventory::Discovery.embedding_model || @embedding_model
       end
 
       def embedding_instance
-        Discovery.embedding_instance || @embedding_instance
+        Inventory::Discovery.embedding_instance || @embedding_instance
       end
 
       def embedding_fallback_chain
-        Discovery.embedding_fallback_chain || @embedding_fallback_chain
+        Inventory::Discovery.embedding_fallback_chain || @embedding_fallback_chain
       end
 
       def agent(agent_class, **) = agent_class.new(**)

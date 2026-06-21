@@ -13,7 +13,6 @@ module Legion
           AUTO_ROUTING_MODEL_DISPLAY = 'LegionIO'
           AUTO_ROUTING_OFFERING_ID = 'legionio:auto:inference:legionio'
           AUTO_ROUTING_CAPABILITIES = %w[auto_routing chat completion json_schema tools].freeze
-          AUTO_ROUTING_MODEL_ALIASES = %w[auto].freeze
 
           def self.registered(app)
             log.debug('[llm][api][models] registering model inventory routes')
@@ -196,7 +195,11 @@ module Legion
 
           def self.auto_routing_model?(model)
             m = model.to_s.strip.downcase
-            m == AUTO_ROUTING_MODEL_ID || AUTO_ROUTING_MODEL_ALIASES.include?(m)
+            routing_settings = Legion::Settings.dig(:llm, :routing) || {}
+            configured = routing_settings[:auto_routing_model_aliases]
+            aliases = Array(configured).map { |entry| entry.to_s.strip.downcase }.reject(&:empty?)
+            aliases = [AUTO_ROUTING_MODEL_ID] if aliases.empty?
+            aliases.include?(m)
           end
         end
       end

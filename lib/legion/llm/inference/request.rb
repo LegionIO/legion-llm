@@ -4,7 +4,6 @@ module Legion
   module LLM
     module Inference
       AUTO_ROUTING_MODEL_KEY = 'legionio'
-      AUTO_ROUTING_MODEL_ALIASES = [AUTO_ROUTING_MODEL_KEY].freeze
 
       Request = ::Data.define(
         :id, :conversation_id, :idempotency_key, :schema_version,
@@ -120,7 +119,11 @@ module Legion
         end
 
         def self.auto_routing_model?(model)
-          Legion::LLM::Inference::AUTO_ROUTING_MODEL_ALIASES.include?(model.to_s.strip.downcase)
+          routing_settings = Legion::Settings.dig(:llm, :routing) || {}
+          configured = routing_settings[:auto_routing_model_aliases]
+          aliases = Array(configured).map { |entry| entry.to_s.strip.downcase }.reject(&:empty?)
+          aliases = [AUTO_ROUTING_MODEL_KEY] if aliases.empty?
+          aliases.include?(model.to_s.strip.downcase)
         end
 
         def self.default_auto_routing_intent

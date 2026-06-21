@@ -32,8 +32,7 @@ module Legion
         include Steps::RagContext
 
         attr_reader :request, :profile, :timeline, :tracing, :enrichments,
-                    :audit, :warnings, :discovered_tools, :confidence_score,
-                    :escalation_chain
+                    :audit, :warnings, :discovered_tools, :confidence_score
         attr_accessor :tool_event_handler
 
         def context_accounting
@@ -123,7 +122,6 @@ module Legion
           @resolved_offering_id = nil
           @resolved_offering_metadata = {}
           @confidence_score = nil
-          @escalation_chain = nil
           @escalation_history = []
           @route_attempts = []
           @current_escalation_context = nil
@@ -167,81 +165,28 @@ module Legion
           clear_log_context
         end
 
-        def call_responses(body:, stream: false, stream_observer: nil, &block)
+        # N×N: Delegates to the canonical execution path.
+        # The API namespace translator has already parsed the Responses API format
+        # into canonical form. The provider adapter decides how to wire canonical
+        # requests internally — the executor is format-agnostic.
+        def call_responses(body:, stream: false, stream_observer: nil, &block) # rubocop:disable Lint/UnusedMethodArgument
           @stream_observer = stream_observer
           set_log_context
           Thread.current[:legion_llm_in_pipeline] = true
-          log.debug "[llm][executor] action=call_responses request_id=#{@request.id} profile=#{@profile} stream=#{stream}"
+          log.debug "[llm][executor] action=call_responses->canonical request_id=#{@request.id} profile=#{@profile} stream=#{stream}"
 
           execute_pre_provider_steps
-          if pipeline_escalation_enabled?
-            run_provider_call_with_escalation(responses_body: body, responses_stream: stream,
-                                              stream_block: (stream ? block : nil))
-            execute_post_provider_steps
-            return build_response
+          if stream && block
+            step_provider_call_stream(&block)
+          else
+            step_provider_call
           end
-
-          # Post-routing gate (the real one): routing may have resolved to a
-          # different provider than the request hint suggested (failover,
-          # escalation, health-tracker rerouting). Re-check capability now
-          # that @resolved_provider reflects the actual dispatch target —
-          # otherwise dispatch_responses_request raises ProviderError
-          # "unsupported capability :responses for provider X".
-          unless resolved_provider_supports_responses?
-            log.debug '[llm][executor] action=call_responses_fallback reason=resolved_unsupported ' \
-                      "request_id=#{@request.id} resolved_provider=#{@resolved_provider}"
-            stream ? step_provider_call_stream(&block) : step_provider_call
-            execute_post_provider_steps
-            return build_response
-          end
-
-          execute_provider_request_responses(body: body, stream: stream, &block)
           execute_post_provider_steps
           build_response
         ensure
           Thread.current[:legion_llm_in_pipeline] = nil
+          @stream_observer = nil
           clear_log_context
-        end
-
-        # Post-routing capability check — same shape as
-        # provider_supports_responses? but anchored to the resolved provider
-        # only (no fallback to the request hint).
-        def resolved_provider_supports_responses?
-          provider = @resolved_provider
-          instance = @resolved_instance
-          return false unless provider && use_native_dispatch?(provider)
-
-          ext = Call::Registry.for(provider, instance: instance)
-          return false unless ext
-
-          ext.respond_to?(:supports?) ? ext.supports?(:responses) : false
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true,
-                              operation: 'llm.executor.resolved_provider_supports_responses',
-                              provider: provider)
-          false
-        end
-
-        # Returns true when the resolved provider's adapter natively supports the Responses API.
-        # Internal decision — the API layer should call call_responses directly and let the
-        # executor handle fallback.
-        def provider_supports_responses?
-          provider = @resolved_provider
-          instance = @resolved_instance
-
-          unless provider && instance && Call::Registry.registered?(provider, instance: instance)
-            provider = @request.routing&.dig(:provider)
-            instance = @request.routing&.dig(:instance)
-          end
-
-          return false unless provider && use_native_dispatch?(provider)
-
-          ext = Call::Registry.for(provider, instance: instance)
-          ext.respond_to?(:supports?) ? ext.supports?(:responses) : false
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.executor.provider_supports_responses',
-                              provider: provider)
-          false
         end
 
         private
@@ -1324,15 +1269,11 @@ module Legion
         def extract_thinking
           return nil unless @raw_response
 
-          raw_thinking = @raw_response.respond_to?(:thinking) ? @raw_response.thinking : nil
-          log.info "[llm][executor] extract_thinking raw_thinking_present=#{!raw_thinking.nil?} class=#{raw_thinking.class} len=#{raw_thinking.to_s.length}"
-
           thinking = if @raw_response.respond_to?(:thinking) && @raw_response.thinking
                        @raw_response.thinking
                      elsif @raw_response.respond_to?(:metadata) && @raw_response.metadata.is_a?(Hash)
                        @raw_response.metadata[:thinking] || @raw_response.metadata['thinking']
                      end
-          log.info "[llm][executor] extract_thinking thinking_present=#{!thinking.nil?} class=#{thinking.class}"
           return nil unless thinking
 
           payload = normalize_thinking_payload(thinking)
