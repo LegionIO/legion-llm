@@ -8,6 +8,15 @@
 - Context overflow errors are no longer unconditionally terminal during escalation. When a lane with a larger context window exists, the executor retries on that lane instead of raising immediately.
 - `X-Legion-Format: canonical` debug surface enabled by default (was gated to dev/lite mode only). The canonical format is a first-class output format, not a debug feature.
 - Completion log now includes `context_tokens_saved=N` showing total tokens saved by curation, archival, thinking-strip, and context window compaction per request.
+- Embedding dispatch now sends chunks individually instead of as an array, fixing intermittent `ContextOverflow` on RAG embedding queries with ollama.
+- Truncated tool results now instruct the model to make smaller targeted requests instead of silently chopping content.
+- `context_window_threshold` moved from hardcoded 0.90 to `context_curation_defaults` setting.
+
+### Changed
+
+- `tool_result_max_dispatch_chars` raised from 2k to 5k (dispatch-time truncation of oversized tool results before provider call).
+- `context_curation.tool_result_max_chars` lowered from 10k to 2k (curator distills tool results earlier, reducing context growth).
+- Default `tier_weights` rebalanced: direct=105, local=110, fleet=110, cloud=120, frontier=150 (prefer higher-capability tiers when lane_weight tie-breaks).
 
 ## [0.14.2] - 2026-06-20
 
