@@ -26,7 +26,7 @@ module Legion
             @context_accounting[:component_status][:context_window] = :observed
             return messages unless context_window&.positive?
 
-            threshold = (context_window * 0.90).to_i
+            threshold = (context_window * Legion::Settings[:llm][:context_curation][:context_window_threshold]).to_i
             tool_budget = estimate_tool_token_budget
             available_for_messages = threshold - tool_budget
             estimated = estimate_message_tokens(messages)

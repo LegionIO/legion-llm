@@ -399,19 +399,20 @@ module Legion
 
       def self.context_curation_defaults
         {
-          enabled:                 true,
-          mode:                    'heuristic',
-          llm_assisted:            false,
-          llm_model:               nil,
-          tool_result_max_chars:   10_000,
-          thinking_eviction:       true,
-          exchange_folding:        true,
-          superseded_eviction:     true,
-          dedup_enabled:           true,
-          dedup_threshold:         0.85,
-          target_context_tokens:   60_000,
-          archive_dropped_turns:   true,
-          archive_preserve_recent: 10
+          enabled:                  true,
+          mode:                     'heuristic',
+          llm_assisted:             false,
+          llm_model:                nil,
+          tool_result_max_chars:    10_000,
+          thinking_eviction:        true,
+          exchange_folding:         true,
+          superseded_eviction:      true,
+          dedup_enabled:            true,
+          dedup_threshold:          0.85,
+          target_context_tokens:    60_000,
+          context_window_threshold: 0.90,
+          archive_dropped_turns:    true,
+          archive_preserve_recent:  10
         }
       end
 
