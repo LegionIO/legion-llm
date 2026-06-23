@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.14.3] - 2026-06-22
+
+### Fixed
+
+- Context window enforcement now accounts for tool definition tokens when deciding whether to compact messages. Previously, 235 injected tools (~50k tokens) were invisible to the threshold check, causing context overflow on dispatch.
+- Context overflow errors are no longer unconditionally terminal during escalation. When a lane with a larger context window exists, the executor retries on that lane instead of raising immediately.
+- `X-Legion-Format: canonical` debug surface enabled by default (was gated to dev/lite mode only). The canonical format is a first-class output format, not a debug feature.
+- Completion log now includes `context_tokens_saved=N` showing total tokens saved by curation, archival, thinking-strip, and context window compaction per request.
+
 ## [0.14.2] - 2026-06-20
 
 ### Fixed

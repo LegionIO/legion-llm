@@ -179,6 +179,8 @@ module Legion
           provider_latency_ms = api_provider_latency_ms(pipeline_response, routing)
           conversation_id = pipeline_response.respond_to?(:conversation_id) ? pipeline_response.conversation_id : nil
 
+          context_stats = api_context_stats(pipeline_response)
+
           parts = {
             request_id:          request_id || 'unknown',
             conversation_id:     conversation_id || 'none',
@@ -199,6 +201,7 @@ module Legion
             tool_executions:     api_tool_execution_count(pipeline_response),
             stop_reason:         resolved_stop_reason
           }
+          parts.merge!(context_stats) if context_stats
 
           log.info("[llm][api][#{namespace}] action=completed " \
                    "#{parts.map { |key, value| "#{key}=#{value}" }.join(' ')}")
@@ -224,6 +227,25 @@ module Legion
           return nil unless provider_start && provider_end
 
           ((provider_end - provider_start) * 1000).round
+        rescue StandardError
+          nil
+        end
+
+        def api_context_stats(pipeline_response)
+          return nil unless pipeline_response.respond_to?(:audit)
+
+          accounting = pipeline_response.audit&.dig(:context_accounting)
+          return nil unless accounting.is_a?(Hash)
+
+          tokens = accounting[:tokens] || {}
+          curated = tokens[:curation_saved_estimated_tokens].to_i
+          archived = tokens[:archive_saved_estimated_tokens].to_i
+          stripped = tokens[:stripped_thinking_estimated_tokens].to_i
+          compacted = tokens[:context_window_saved_estimated_tokens].to_i
+          total_saved = curated + archived + stripped + compacted
+          return nil unless total_saved.positive?
+
+          { context_tokens_saved: total_saved }
         rescue StandardError
           nil
         end

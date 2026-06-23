@@ -482,10 +482,7 @@ module Legion
       end
 
       def self.debug_formats_default_enabled
-        return true if defined?(Legion::Mode) && Legion::Mode.respond_to?(:lite?) && Legion::Mode.lite?
-
-        env = (ENV.fetch('LEGION_ENV', nil) || ENV.fetch('RACK_ENV', nil)).to_s.downcase
-        %w[development dev test].include?(env)
+        true
       end
 
       def self.streaming_defaults

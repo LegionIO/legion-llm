@@ -419,6 +419,22 @@ module Legion
             err.is_a?(::NoMethodError) || err.is_a?(::ArgumentError)
           end
 
+          def larger_context_lane_available?(lane:, payload:, **)
+            current_context = lane.dig(:limits, :context_window).to_i
+            return false unless current_context.positive?
+
+            Legion::LLM::Inventory.lanes.any? do |candidate|
+              next false if payload[:tried_lanes].include?(candidate[:id])
+              next false if candidate[:lane_weight].to_i <= 0
+
+              candidate_context = candidate.dig(:limits, :context_window).to_i
+              candidate_context > current_context
+            end
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.pipeline.larger_context_lane_available')
+            false
+          end
+
           # Classify error for the while remaining.positive? loop (G26 / D-C).
           # internal_error MUST be checked BEFORE account_specific (G25 / B-H):
           # a daemon NoMethodError must never be treated as a retriable account-scoped failure.
@@ -439,7 +455,12 @@ module Legion
           # Terminal errors re-raise immediately so the caller's while loop stops.
           def classify_and_accumulate_exclusions(error:, lane:, payload:, **)
             case classify_error(error: error)
-            when :internal_error, :context_overflow, :payload_error, :policy_denied
+            when :context_overflow
+              raise error unless larger_context_lane_available?(lane: lane, payload: payload)
+
+              payload[:tried_lanes] << lane[:id]
+
+            when :internal_error, :payload_error, :policy_denied
               raise error
             when :account_specific
               # Account/instance-scoped failure: trip the per-instance circuit.
