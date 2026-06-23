@@ -172,7 +172,9 @@ module Legion
               next msg unless content.is_a?(String) && content.length > max_chars
 
               trimmed_count += 1
-              msg.merge(content: "#{content[0, max_chars]}\n[truncated — #{content.length} chars total]")
+              msg.merge(content: "#{content[0, max_chars]}\n\n[TRUNCATED: showing first #{max_chars} of #{content.length} chars. " \
+                                 'If you need more content, make multiple smaller targeted requests ' \
+                                 '(e.g. read specific line ranges, grep for specific patterns, or request smaller sections).]')
             end
 
             if trimmed_count.positive?
