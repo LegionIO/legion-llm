@@ -26,18 +26,21 @@ module Legion
             @context_accounting[:component_status][:context_window] = :observed
             return messages unless context_window&.positive?
 
-            threshold = (context_window * 0.90).to_i
+            threshold = (context_window * Legion::Settings[:llm][:context_curation][:context_window_threshold]).to_i
+            tool_budget = estimate_tool_token_budget
+            available_for_messages = threshold - tool_budget
             estimated = estimate_message_tokens(messages)
-            return messages if estimated <= threshold
+            return messages if estimated <= available_for_messages
 
             log.warn "[llm][executor] action=context_compaction request_id=#{@request.id} " \
-                     "estimated_tokens=#{estimated} context_window=#{context_window} threshold=#{threshold}"
+                     "estimated_tokens=#{estimated} context_window=#{context_window} " \
+                     "threshold=#{threshold} tool_budget=#{tool_budget} available=#{available_for_messages}"
 
             preserve_after = last_user_message_index(messages)
             recent = messages[preserve_after..]
             older = messages[0...preserve_after]
 
-            target_tokens = threshold - estimate_message_tokens(recent)
+            target_tokens = available_for_messages - estimate_message_tokens(recent)
             compacted = compact_to_fit(older, target_tokens)
 
             result = compacted + recent
@@ -92,6 +95,17 @@ module Legion
 
           def estimate_message_tokens(messages)
             messages.sum { |m| ((m[:content] || m['content']).to_s.length / 4.0).ceil }
+          end
+
+          def estimate_tool_token_budget
+            tools = @request.tools
+            return 0 if tools.nil? || tools.empty?
+
+            tool_list = tools.is_a?(Hash) ? tools.values : Array(tools)
+            tool_list.sum do |tool|
+              json_repr = tool.respond_to?(:to_h) ? Legion::JSON.dump(tool.to_h) : tool.to_s
+              (json_repr.length / 3.5).ceil
+            end
           end
 
           def strip_thinking_from_history(messages)
@@ -158,7 +172,9 @@ module Legion
               next msg unless content.is_a?(String) && content.length > max_chars
 
               trimmed_count += 1
-              msg.merge(content: "#{content[0, max_chars]}\n[truncated — #{content.length} chars total]")
+              msg.merge(content: "#{content[0, max_chars]}\n\n[TRUNCATED: showing first #{max_chars} of #{content.length} chars. " \
+                                 'If you need more content, make multiple smaller targeted requests ' \
+                                 '(e.g. read specific line ranges, grep for specific patterns, or request smaller sections).]')
             end
 
             if trimmed_count.positive?

@@ -30,7 +30,7 @@ module Legion
           max_tool_rounds:                200,
           max_tool_calls_per_turn:        100,
           tool_error_log_chars:           500,
-          tool_result_max_dispatch_chars: 10_000,
+          tool_result_max_dispatch_chars: 5_000,
           default_model:                  model_override,
           default_temperature:            0.9,
           default_provider:               nil,
@@ -218,7 +218,7 @@ module Legion
           # Multiplicative tier weights for lane_weight computation (P1 SSOT RANKING v2).
           # Default 100 for all tiers. Operators can override per-tier to bias routing.
           # Used by Inventory.write_lane to compute lane_weight = tier_w * provider_w * instance_w * model_w * health_mult.
-          tier_weights:               { direct: 100, local: 100, fleet: 100, cloud: 100, frontier: 100 },
+          tier_weights:               { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
           max_attempts:               3,
           # Body-level routing hints are gated by this flag. Auto-routing aliases
           # like legionio/auto are still accepted as "you pick" intent.
@@ -399,19 +399,20 @@ module Legion
 
       def self.context_curation_defaults
         {
-          enabled:                 true,
-          mode:                    'heuristic',
-          llm_assisted:            false,
-          llm_model:               nil,
-          tool_result_max_chars:   10_000,
-          thinking_eviction:       true,
-          exchange_folding:        true,
-          superseded_eviction:     true,
-          dedup_enabled:           true,
-          dedup_threshold:         0.85,
-          target_context_tokens:   60_000,
-          archive_dropped_turns:   true,
-          archive_preserve_recent: 10
+          enabled:                  true,
+          mode:                     'heuristic',
+          llm_assisted:             false,
+          llm_model:                nil,
+          tool_result_max_chars:    2_000,
+          thinking_eviction:        true,
+          exchange_folding:         true,
+          superseded_eviction:      true,
+          dedup_enabled:            true,
+          dedup_threshold:          0.85,
+          target_context_tokens:    60_000,
+          context_window_threshold: 0.90,
+          archive_dropped_turns:    true,
+          archive_preserve_recent:  10
         }
       end
 
@@ -482,10 +483,7 @@ module Legion
       end
 
       def self.debug_formats_default_enabled
-        return true if defined?(Legion::Mode) && Legion::Mode.respond_to?(:lite?) && Legion::Mode.lite?
-
-        env = (ENV.fetch('LEGION_ENV', nil) || ENV.fetch('RACK_ENV', nil)).to_s.downcase
-        %w[development dev test].include?(env)
+        true
       end
 
       def self.streaming_defaults
