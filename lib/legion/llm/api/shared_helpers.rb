@@ -246,7 +246,8 @@ module Legion
           return nil unless total_saved.positive?
 
           { context_tokens_saved: total_saved }
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.api.context_stats')
           nil
         end
 
