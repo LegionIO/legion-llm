@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.14.4] - 2026-06-23
+
+### Fixed
+
+- Added route rewrite for `/api/llm/inference/v1/*` → `/v1/*` so Kai (and other clients using the prefixed path) can reach OpenAI-compat endpoints like `/v1/chat/completions`.
+
 ## [0.14.3] - 2026-06-22
 
 ### Fixed
