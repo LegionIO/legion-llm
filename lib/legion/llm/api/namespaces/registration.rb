@@ -89,6 +89,12 @@ module Legion
               register Namespaces::Native::Inference
             end
 
+            # Kai sends requests to /api/llm/inference/v1/chat/completions —
+            # rewrite to the canonical /v1/chat/completions route.
+            app.before '/api/llm/inference/v1/*' do
+              env['PATH_INFO'] = "/v1/#{params['splat'].first}"
+            end
+
             log.debug('[llm][api][namespaces] native routes registered')
           end
 
