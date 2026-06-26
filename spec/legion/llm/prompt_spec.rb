@@ -105,7 +105,7 @@ RSpec.describe Legion::LLM::Prompt do
       it 'falls back to configured default_provider and default_model' do
         result = described_class.dispatch('Hello')
         expect(result).to be_a(Legion::LLM::Inference::Response)
-        expect(result.routing[:provider]).to eq('anthropic')
+        expect(result.routing[:provider]).to eq(:anthropic)
         expect(result.routing[:model]).to eq('claude-sonnet-4-6')
       end
     end
