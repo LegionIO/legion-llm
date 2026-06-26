@@ -30,10 +30,10 @@ RSpec.describe 'Pipeline pre-rollout integration' do
     stub_native_provider(content: 'pipeline response')
     Legion::LLM::Inventory.reset_live_store!
     Legion::LLM::Inventory.write_lane(lane: {
-      id: 'direct:test:default:inference:test-model',
+                                        id: 'direct:test:default:inference:test-model',
       tier: :direct, provider_family: :test, instance_id: :default,
       model: 'test-model', type: :inference
-    })
+                                      })
   end
 
   describe 'caller identity propagation' do
