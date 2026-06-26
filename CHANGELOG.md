@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.14.10] - 2026-06-26
+
+### Fixed
+
+- `routing_resolution_for` now passes `chain_required_capabilities` to `request_lane` — requests with tools filter out lanes without `:tools` capability. Prevents tool-bearing requests from routing to models that can't handle function calling (e.g. v100 with `enable_tools: false`).
+- `Prompt.dispatch` no longer pre-bakes `default_provider`/`default_model` from settings when Inventory has lanes. Passes nil so the Executor's `step_routing` routes via `request_lane` using weight, context_window, and capabilities. Fixes GAIA/lex-agentic requests >16K getting locked to v100 by model filter instead of routing to h200.
+
 ## [0.14.9] - 2026-06-25
 
 ### Fixed

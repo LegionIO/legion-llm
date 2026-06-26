@@ -388,6 +388,7 @@ module Legion
               providers:         providers,
               instances:         instances,
               models:            models,
+              capabilities:      chain_required_capabilities,
               estimated_context: state[:estimated_tokens],
               tried_lanes:       Array(state[:tried_lanes])
             )
