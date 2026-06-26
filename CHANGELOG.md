@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.14.8] - 2026-06-25
+
+### Fixed
+
+- Responses translator (`format_response`) no longer emits a message item with empty `output_text` when the response is pure tool_use (function_call items present). The empty text triggered Codex's `[Your previous response had no visible output]` injection on every tool turn.
+
 ## [0.14.7] - 2026-06-25
 
 ### Fixed
