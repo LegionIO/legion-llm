@@ -1,5 +1,18 @@
 # Legion LLM Changelog
 
+## [0.14.9] - 2026-06-25
+
+### Fixed
+
+- Routing token estimate (`estimate_request_tokens`) now includes system prompt, tool definitions, and thinking config — matching what `enforce_final_context_budget!` checks at dispatch time. Previously only counted messages, causing large-context requests (e.g. Copilot Chat with 81 tools + system prompt) to route to small-context models and fail with ContextOverflow at dispatch.
+- `resolve_routing_state` always consults `request_lane` when Inventory has lanes, removing the gate that required explicit routing flags. Enables weight-based lane selection for all callers including `Legion::LLM.chat`.
+
+### Added
+
+- `:subcall` profile in `Inference::Profile` — skips all pipeline steps except routing, provider_call, and metering. Used for in-pipeline LLM sub-calls (debate, lex-knowledge, lex-apollo) to avoid recursive full-pipeline execution.
+- `Executor.new(request, skip_pipeline: true)` kwarg forces `:subcall` profile without requiring caller identity manipulation.
+- `dispatch_chat` unified path — builds a `Request` via `from_chat_args` and runs the Executor directly, detecting in-pipeline context via `Thread.current[:legion_llm_in_pipeline]`.
+
 ## [0.14.8] - 2026-06-25
 
 ### Fixed
