@@ -154,6 +154,57 @@ RSpec.describe '[matrix] /v1/responses (OpenAI Responses) × FakeProvider', type
     end
   end
 
+  describe 'scenario: output_text in history (Codex multi-turn with content blocks)' do
+    # Reproduction for ContentBlock#inspect leak: when Codex sends previous
+    # assistant output_text blocks in the conversation history, the daemon must
+    # normalize them to :text so Message#text extracts correctly. Without the
+    # fix, ContentBlock(type: :output_text) leaks #inspect into the response.
+    it 'handles output_text content blocks in assistant history without leaking #inspect' do
+      FakeProvider.with_scenario(:text) do
+        resp = post_responses(
+          model: 'fake-default',
+          input: [
+            { role: 'user', content: 'What templates exist?' },
+            { role: 'assistant', content: [{ type: 'output_text', text: "The seat templates don't apply here." }] },
+            { role: 'user', content: 'OK thanks' }
+          ]
+        )
+        expect(resp.status).to eq(200)
+        body = Legion::JSON.load(resp.body)
+        message_items = body[:output].select { |i| i[:type] == 'message' }
+        text_blocks = message_items.first[:content].select { |c| c[:type] == 'output_text' }
+        expect(text_blocks.first[:text]).to eq('Hello there.')
+        expect(text_blocks.first[:text]).not_to include('#<data')
+      end
+    end
+  end
+
+  describe 'scenario: corrupted ContentBlock#inspect strings in content history' do
+    # Reproduction for conv_id 147191: content arrays contain stringified
+    # ContentBlock inspect output from a prior serialization bug. The daemon
+    # must handle these gracefully — not crash with transform_keys NoMethodError.
+    it 'handles String elements in content arrays without crashing' do
+      FakeProvider.with_scenario(:text) do
+        corrupted_user = '#<data Legion::Extensions::Llm::Canonical::ContentBlock type=:input_text, ' \
+                         'text="What is 2+2?", data=nil, source_type=nil, media_type=nil, ' \
+                         'detail=nil, name=nil, file_id=nil, id=nil, input=nil, tool_use_id=nil, ' \
+                         'is_error=nil, source=nil, start_index=nil, end_index=nil, code=nil, message=nil, cache_control=nil>'
+
+        resp = post_responses(
+          model: 'fake-default',
+          input: [
+            { role: 'user', content: [corrupted_user] },
+            { role: 'user', content: [{ type: 'input_text', text: 'Say hello.' }] }
+          ]
+        )
+        expect(resp.status).to eq(200)
+        body = Legion::JSON.load(resp.body)
+        expect(body[:object]).to eq('response')
+        expect(body[:status]).to eq('completed')
+      end
+    end
+  end
+
   describe 'scenario: streaming text' do
     it 'emits response.created → in_progress → output_text.delta → response.completed' do
       FakeProvider.with_scenario(:stream_text) do

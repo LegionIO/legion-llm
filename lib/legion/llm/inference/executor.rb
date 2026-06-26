@@ -947,7 +947,7 @@ module Legion
 
             attrs = {
               role:            typed_msg.role,
-              content:         typed_msg.content,
+              content:         typed_msg.text,
               conversation_id: conv_id,
               task_id:         typed_msg.task_id
             }

@@ -685,4 +685,37 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result.last.name).to eq('ruby')
     expect(result.last.arguments).to eq(code: 'puts 1')
   end
+
+  # Reproduction for ContentBlock#inspect leak (2026-06-25):
+  # When ContentBlock objects with type :output_text flow through
+  # normalize_message_content (e.g. replayed history from canonical messages),
+  # the Data struct branch must extract .text, not return nil and fall through
+  # to Array#to_s which dumps the raw #inspect.
+  it 'extracts text from ContentBlock objects with output_text type in message content' do
+    canonical_ns = ::Legion::Extensions::Llm::Canonical
+    content_blocks = [
+      canonical_ns::ContentBlock.from_hash(type: 'output_text', text: "The seat templates don't apply here.")
+    ]
+
+    provider_class.define_method(:complete) do |messages, model:, **|
+      # Verify the content passed to the provider is a clean string, not inspect output
+      assistant_msg = messages.find { |m| m.role == :assistant }
+      content_text = assistant_msg&.content
+      llm_namespace::Message.new(role: :assistant, content: "got: #{content_text}", model_id: model.id,
+                                 input_tokens: 10, output_tokens: 5)
+    end
+
+    messages = [
+      { role: 'user', content: 'What templates exist?' },
+      { role: 'assistant', content: content_blocks },
+      { role: 'user', content: 'OK thanks' }
+    ]
+
+    result = adapter.chat(model: 'model-a', messages: messages)
+
+    expect(result[:result]).not_to include('#<data')
+    expect(result[:result]).not_to include('ContentBlock')
+    expect(result[:result]).not_to include('source_type=nil')
+    expect(result[:result]).to include("The seat templates don't apply here.")
+  end
 end
