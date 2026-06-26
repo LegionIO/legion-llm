@@ -1,6 +1,6 @@
 # Legion LLM Changelog
 
-## [0.14.6] - 2026-06-25
+## [0.14.7] - 2026-06-25
 
 ### Fixed
 
@@ -8,6 +8,8 @@
 - `Types::Message#text_from_block` recognizes `output_text`/`input_text` content block types so token estimation and text extraction work for Responses API content.
 - `lex_llm_adapter.rb` `text_part_content` Data struct branch handles `output_text`/`input_text` types (previously only matched `type == 'text'`).
 - `context_window.rb` `compact_to_fit` loops halving until messages fit the target token budget instead of a single halve that leaves payloads 2x over threshold for very large conversations.
+- `emit_non_pipeline_metering` reads tokens from `response.usage.input_tokens` (correct) instead of `response.input_tokens` (non-existent on Canonical::Response), fixing zero-token metering for internal extension LLM calls (lex-apollo, legion-gaia, lex-knowledge, etc.).
+- `emit_non_pipeline_metering` reads `response.metadata` instead of `response.meta`, passes `messages` and `response_content` to metering events.
 
 ## [0.14.5] - 2026-06-24
 
