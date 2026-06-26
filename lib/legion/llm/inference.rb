@@ -896,7 +896,7 @@ module Legion
         usage = response.respond_to?(:usage) ? response.usage : nil
         input    = usage.respond_to?(:input_tokens)    ? usage.input_tokens.to_i    : 0
         output   = usage.respond_to?(:output_tokens)   ? usage.output_tokens.to_i   : 0
-        thinking = usage.respond_to?(:thinking_tokens)  ? usage.thinking_tokens.to_i  : 0
+        thinking = usage.respond_to?(:thinking_tokens) ? usage.thinking_tokens.to_i : 0
 
         finish = nil
         if response.respond_to?(:stop_reason)
