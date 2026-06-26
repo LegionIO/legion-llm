@@ -113,6 +113,7 @@ RSpec.describe Legion::LLM::Prompt do
     context 'when Router is not enabled and no defaults exist' do
       before do
         allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+        Legion::LLM::Inventory.reset_live_store!
         Legion::Settings[:llm][:default_provider] = nil
         Legion::Settings[:llm][:default_model] = nil
       end
@@ -176,6 +177,8 @@ RSpec.describe Legion::LLM::Prompt do
           ]
         }
         Legion::LLM::Router.reset!
+        Legion::LLM::Inventory.reset_live_store!
+        write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :cloud)
       end
 
       after { Legion::LLM::Router.reset! }
@@ -217,6 +220,8 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     context 'with nil provider' do
+      before { Legion::LLM::Inventory.reset_live_store! }
+
       it 'raises LLMError' do
         expect { described_class.request('Hello', provider: nil, model: 'claude-sonnet-4-6') }.to raise_error(
           Legion::LLM::LLMError, /provider.*must be set/i
@@ -225,6 +230,8 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     context 'with nil model' do
+      before { Legion::LLM::Inventory.reset_live_store! }
+
       it 'raises LLMError' do
         expect { described_class.request('Hello', provider: :anthropic, model: nil) }.to raise_error(
           Legion::LLM::LLMError, /model.*must be set/i
