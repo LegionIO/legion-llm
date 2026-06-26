@@ -93,7 +93,7 @@ module Legion
           return nil unless block.is_a?(Hash)
 
           type = block[:type] || block['type']
-          return nil unless type.nil? || type.to_s == 'text'
+          return nil unless type.nil? || %w[text output_text input_text].include?(type.to_s)
 
           block[:text] || block['text'] || block[:content] || block['content']
         end

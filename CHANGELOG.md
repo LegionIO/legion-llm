@@ -1,5 +1,30 @@
 # Legion LLM Changelog
 
+## [0.14.8] - 2026-06-25
+
+### Fixed
+
+- Responses translator (`format_response`) no longer emits a message item with empty `output_text` when the response is pure tool_use (function_call items present). The empty text triggered Codex's `[Your previous response had no visible output]` injection on every tool turn.
+
+## [0.14.7] - 2026-06-25
+
+### Fixed
+
+- `step_context_store` stores `typed_msg.text` (extracted string) instead of `typed_msg.content` (raw Array), preventing ContentBlock objects from being serialized as `#inspect` strings in conversation history.
+- `Types::Message#text_from_block` recognizes `output_text`/`input_text` content block types so token estimation and text extraction work for Responses API content.
+- `lex_llm_adapter.rb` `text_part_content` Data struct branch handles `output_text`/`input_text` types (previously only matched `type == 'text'`).
+- `context_window.rb` `compact_to_fit` loops halving until messages fit the target token budget instead of a single halve that leaves payloads 2x over threshold for very large conversations.
+- `emit_non_pipeline_metering` reads tokens from `response.usage.input_tokens` (correct) instead of `response.input_tokens` (non-existent on Canonical::Response), fixing zero-token metering for internal extension LLM calls (lex-apollo, legion-gaia, lex-knowledge, etc.).
+- `emit_non_pipeline_metering` reads `response.metadata` instead of `response.meta`, passes `messages` and `response_content` to metering events.
+
+## [0.14.5] - 2026-06-24
+
+### Fixed
+
+- Non-pipeline metering (`emit_non_pipeline_metering`) now correctly reads token counts from `response.usage` instead of the non-existent top-level `input_tokens`/`output_tokens` on `Canonical::Response`. Previously all internal LLM calls (via `Legion::LLM.structured`, `chat_single_native`) emitted zero-token metering events.
+- Non-pipeline metering now includes `messages` and `response_content` fields, fixing null request/response JSON columns in the ledger for internal extension calls (lex-apollo, lex-agentic-self, legion-gaia, etc.).
+- Non-pipeline metering reads `response.metadata` (correct field) instead of `response.meta` (does not exist on `Canonical::Response`) for latency/timing extraction.
+
 ## [0.14.4] - 2026-06-23
 
 ### Fixed

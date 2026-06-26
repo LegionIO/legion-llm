@@ -151,18 +151,16 @@ module Legion
             server_tool_items = build_output_server_tool_items(pipeline_response)
             reasoning = build_output_reasoning(pipeline_response)
 
-            output = [
-              *reasoning,
-              *server_tool_items,
-              *actionable_tool_calls,
-              {
+            output = [*reasoning, *server_tool_items, *actionable_tool_calls]
+            unless content.to_s.strip.empty? && (actionable_tool_calls.any? || server_tool_items.any?)
+              output << {
                 type:    'message',
                 id:      "msg_#{SecureRandom.hex(12)}",
                 role:    'assistant',
                 content: [{ type: 'output_text', text: content }],
                 status:  'completed'
               }
-            ]
+            end
 
             # Responses protocol: a turn is always status `completed`. Both
             # client-callable calls (actionable_tool_calls) and LegionIO-run
