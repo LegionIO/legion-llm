@@ -49,11 +49,9 @@ module Legion
             resolved_model    = lane&.dig(:model)
           end
 
-          unless auto_route
-            if resolved_provider.nil? && resolved_model.nil? && !Legion::LLM::Inventory.lanes.any?
-              resolved_provider = Legion::Settings[:llm][:default_provider]
-              resolved_model = Legion::Settings[:llm][:default_model]
-            end
+          if !auto_route && resolved_provider.nil? && resolved_model.nil? && Legion::LLM::Inventory.lanes.none?
+            resolved_provider = Legion::Settings[:llm][:default_provider]
+            resolved_model = Legion::Settings[:llm][:default_model]
           end
 
           request(message,
@@ -97,7 +95,7 @@ module Legion
                     quality_check: nil,
                     **)
           auto_route = Inference::Request.auto_routing_model?(model)
-          if !auto_route && (provider.nil? || model.nil?) && !Legion::LLM::Inventory.lanes.any?
+          if !auto_route && (provider.nil? || model.nil?) && Legion::LLM::Inventory.lanes.none?
             raise LLMError, "Prompt.request: provider and model must be set (got provider=#{provider.inspect}, model=#{model.inspect}). " \
                             'Configure Legion::Settings[:llm][:default_provider] and [:default_model], or pass them explicitly.'
           end

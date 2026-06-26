@@ -46,6 +46,11 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     context 'when no inventory lane is available' do
+      before do
+        Legion::LLM::Inventory.reset_live_store!
+        write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
+      end
+
       it 'falls back to default_provider and default_model' do
         result = described_class.dispatch('Hello')
         expect(result).to be_a(Legion::LLM::Inference::Response)
@@ -96,6 +101,8 @@ RSpec.describe Legion::LLM::Prompt do
     context 'when defaults are configured' do
       before do
         allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+        Legion::LLM::Inventory.reset_live_store!
+        write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
         Legion::Settings.set_prop(:llm, {
                                     default_provider: 'anthropic',
                                     default_model:    'claude-sonnet-4-6'
