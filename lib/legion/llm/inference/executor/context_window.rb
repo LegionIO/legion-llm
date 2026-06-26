@@ -83,8 +83,8 @@ module Legion
 
             return messages if estimate_message_tokens(messages) <= target_tokens
 
-            half = messages.size / 2
-            messages.last(half)
+            messages = messages.last(messages.size / 2) while messages.size > 2 && estimate_message_tokens(messages) > target_tokens
+            messages
           end
 
           def resolved_context_window

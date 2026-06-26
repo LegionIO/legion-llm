@@ -605,7 +605,7 @@ module Legion
                    Call::Dispatch.call(provider: provider, instance: instance, capability: :chat, model: model,
                                        messages: messages, **)
                  end
-        emit_non_pipeline_metering(result, model: model, provider: provider, caller: caller)
+        emit_non_pipeline_metering(result, model: model, provider: provider, caller: caller, messages: messages)
         result
       end
 
@@ -890,14 +890,13 @@ module Legion
         esc[:quality_threshold] || 50
       end
 
-      def emit_non_pipeline_metering(response, model:, provider:, caller: nil)
+      def emit_non_pipeline_metering(response, model:, provider:, caller: nil, messages: nil)
         return unless response
 
-        input  = response.respond_to?(:input_tokens)  ? response.input_tokens.to_i  : 0
-        output = response.respond_to?(:output_tokens) ? response.output_tokens.to_i : 0
-        usage = response.respond_to?(:usage) ? response.usage : {}
-        usage_hash = usage.is_a?(Hash) ? usage : {}
-        thinking = (usage_hash[:thinking_tokens] || usage_hash[:thinking] || 0).to_i
+        usage = response.respond_to?(:usage) ? response.usage : nil
+        input    = usage.respond_to?(:input_tokens)    ? usage.input_tokens.to_i    : 0
+        output   = usage.respond_to?(:output_tokens)   ? usage.output_tokens.to_i   : 0
+        thinking = usage.respond_to?(:thinking_tokens)  ? usage.thinking_tokens.to_i  : 0
 
         finish = nil
         if response.respond_to?(:stop_reason)
@@ -906,10 +905,16 @@ module Legion
           finish = response.stop[:reason]&.to_s
         end
 
-        meta = response.respond_to?(:meta) ? response.meta : {}
+        meta = response.respond_to?(:metadata) ? response.metadata : {}
         meta_hash = meta.is_a?(Hash) ? meta : {}
         latency = (meta_hash[:latency_ms] || meta_hash.dig(:timing, :latency_ms) || 0).to_i
         wall_clock = (meta_hash[:wall_clock_ms] || meta_hash.dig(:timing, :wall_clock_ms) || 0).to_i
+
+        response_content = if response.respond_to?(:text)
+                             response.text
+                           elsif response.respond_to?(:content)
+                             response.content
+                           end
 
         Legion::LLM::Metering.emit(
           provider:          provider,
@@ -926,7 +931,9 @@ module Legion
           wall_clock_ms:     wall_clock,
           caller:            caller,
           event_type:        'llm_completion',
-          status:            'success'
+          status:            'success',
+          messages:          messages,
+          response_content:  response_content
         )
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'llm.inference.non_pipeline_metering')

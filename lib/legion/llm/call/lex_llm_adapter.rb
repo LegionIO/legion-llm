@@ -753,7 +753,7 @@ module Legion
           if part.respond_to?(:type) || part.respond_to?(:text)
             type = (part.respond_to?(:type) ? part.type.to_s : '')
             text = part.respond_to?(:text) ? part.text : nil
-            return text.to_s if type == 'text' || (type.empty? && !text.nil?)
+            return text.to_s if %w[text output_text input_text].include?(type) || (type.empty? && !text.nil?)
 
             return nil
           end
