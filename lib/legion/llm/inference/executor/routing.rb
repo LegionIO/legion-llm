@@ -199,14 +199,15 @@ module Legion
           end
 
           def estimate_request_tokens
-            # Estimate total tokens from current request messages + conversation history.
-            # This is used by the router to exclude models whose context window can't fit.
             all_messages = []
             all_messages.concat(@enrichments['context:conversation_history'] || [])
             all_messages.concat(@request.messages || [])
-            return 0 if all_messages.empty?
 
-            estimate_message_tokens(all_messages)
+            estimated = all_messages.empty? ? 0 : estimate_message_tokens(all_messages)
+            estimated += ((@request.system || '').length / 4.0).ceil
+            estimated += estimate_tool_token_budget if @request.tools&.any?
+            estimated += (Legion::JSON.dump(@request.thinking).length / 3.5).ceil if @request.thinking.is_a?(Hash) && @request.thinking.any?
+            estimated
           end
 
           def chain_required_capabilities
@@ -367,11 +368,7 @@ module Legion
 
           def resolve_routing_state(state)
             return state unless defined?(Router)
-
-            explicit_route = state[:provider_explicit] || state[:instance_explicit] || state[:tier_explicit]
-            auto_route = state[:auto_route] == true
-            intent_route = state[:intent_explicit] && state[:intent] && Router.routing_enabled?
-            return state unless explicit_route || auto_route || intent_route
+            return state unless Legion::LLM::Inventory.lanes.any?
 
             resolution = routing_resolution_for(state)
             return state unless resolution
