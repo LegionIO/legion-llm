@@ -275,7 +275,11 @@ module Legion
         end
 
         def handle_text_delta(text)
-          close_thinking_block
+          # NOTE: deliberately NOT closing an open thinking block here — would
+          # silently drop interleaved think→text→think reasoning (DeepSeek-R1
+          # multi-phase). The out-of-order content_block_stop concern only
+          # manifests with emit_thinking_blocks: true (non-default); deferred to
+          # a follow-up that opens a NEW thinking block instead.
           unless @text_block_open
             @text_block_index = @next_block_index
             @next_block_index += 1

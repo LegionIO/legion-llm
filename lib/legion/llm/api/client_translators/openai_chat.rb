@@ -300,7 +300,7 @@ module Legion
             def on_tool_call_delta(block_index:, partial_arguments_json:)
               return if partial_arguments_json.to_s.empty?
 
-              idx = @tool_ordinals[block_index]
+              idx = @tool_ordinals[block_index] ||= (@tool_ordinal += 1)
               emit_chunk(delta_envelope({
                                           tool_calls: [{
                                             index:    idx,

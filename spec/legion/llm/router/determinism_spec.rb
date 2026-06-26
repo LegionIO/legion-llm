@@ -45,17 +45,21 @@ RSpec.describe 'Router determinism and regression coverage' do
       expect(Legion::LLM::Router.log).to receive(:warn).with(/deprecated :capability key/).at_least(:once)
       expect(Legion::LLM::Router.log).to receive(:warn).with(any_args).at_least(:once)
 
+      result = nil
       expect do
-        Legion::LLM::Router.resolve(intent: { effort: :moderate })
+        result = Legion::LLM::Router.resolve(intent: { effort: :moderate })
       end.not_to raise_error
+      expect(result).not_to be_nil
     end
 
     it 'warns and strips :capability from default_intent in Router.resolve_chain without raising' do
       expect(Legion::LLM::Router.log).to receive(:warn).with(/deprecated :capability key/).at_least(:once)
 
+      chain = nil
       expect do
-        Legion::LLM::Router.resolve_chain(intent: { effort: :moderate })
+        chain = Legion::LLM::Router.resolve_chain(intent: { effort: :moderate })
       end.not_to raise_error
+      expect(chain).not_to be_nil
     end
 
     it 'still raises ArgumentError when :capability is supplied in the explicit caller intent' do

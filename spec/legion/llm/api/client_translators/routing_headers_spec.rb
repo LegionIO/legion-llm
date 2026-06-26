@@ -15,7 +15,7 @@ RSpec.describe 'client translator Legion routing headers' do
     }
   end
 
-  shared_examples 'a translator that ignores the protocol model for routing' do |body|
+  shared_examples 'a translator that prefers X-Legion-Model header over body model for routing' do |body|
     it 'routes only from X-Legion-* headers and preserves the client body model as metadata' do
       canonical_request = translator.parse_request(body, env)
       inference_request = translator.build_inference_request(
@@ -52,26 +52,37 @@ RSpec.describe 'client translator Legion routing headers' do
         provider: true, instance: true, tier: true
       )
     end
+
+    it 'leaves routing[:model] nil when the body model is the legionio sentinel and X-Legion-Model is absent' do
+      canonical_request = translator.parse_request(body.merge(model: 'legionio'), env.except('HTTP_X_LEGION_MODEL'))
+      inference_request = translator.build_inference_request(
+        canonical_request,
+        request_id:    'req_test',
+        server_caller: { source: 'spec' }
+      )
+
+      expect(inference_request.routing[:model]).to be_nil
+    end
   end
 
   describe Legion::LLM::API::ClientTranslators::OpenAIResponses do
     let(:translator) { described_class.new }
 
-    include_examples 'a translator that ignores the protocol model for routing',
+    include_examples 'a translator that prefers X-Legion-Model header over body model for routing',
                      { model: 'client-body-model', input: 'hello' }
   end
 
   describe Legion::LLM::API::ClientTranslators::OpenAIChat do
     let(:translator) { described_class.new }
 
-    include_examples 'a translator that ignores the protocol model for routing',
+    include_examples 'a translator that prefers X-Legion-Model header over body model for routing',
                      { model: 'client-body-model', messages: [{ role: 'user', content: 'hello' }] }
   end
 
   describe Legion::LLM::API::ClientTranslators::AnthropicMessages do
     let(:translator) { described_class.new }
 
-    include_examples 'a translator that ignores the protocol model for routing',
+    include_examples 'a translator that prefers X-Legion-Model header over body model for routing',
                      { model: 'client-body-model', max_tokens: 1024, messages: [{ role: 'user', content: 'hello' }] }
   end
 end

@@ -2,6 +2,7 @@
 
 require 'legion/logging/helper'
 require_relative '../capabilities'
+require_relative '../deprecation'
 require_relative '../inventory'
 
 module Legion
@@ -43,6 +44,10 @@ module Legion
 
         # DEPRECATED: use the second return value of filter_resolutions
         def last_rejection_reasons
+          Legion::LLM::Deprecation.warn_once(
+            'Router::Availability.last_rejection_reasons',
+            replacement: 'the second return value of filter_resolutions'
+          )
           []
         end
 

@@ -118,6 +118,25 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
 
       expect { executor.call }.to raise_error(Legion::LLM::RoutingFailedDependency)
     end
+
+    it 'raises RoutingTooEarly (retryable, 425) on an empty chain whose rejection reasons indicate cold-boot discovery' do
+      empty_chain = build_chain
+      allow(empty_chain).to receive(:rejection_reasons).and_return(
+        [{ provider: :vllm, instance: :default, model: 'x', reason: :discovery_unavailable }]
+      )
+      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(empty_chain)
+      allow(Legion::LLM::Router).to receive(:resolve).and_return(nil)
+      allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([])
+
+      executor = described_class.new(request)
+      executor.instance_variable_set(:@escalation_chain, empty_chain)
+
+      expect { executor.call }.to raise_error(Legion::LLM::RoutingTooEarly) do |error|
+        expect(error.retryable?).to be(true)
+        expect(error.status_code).to eq(425)
+      end
+    end
   end
 
   describe 'failing over across instances of the same provider' do

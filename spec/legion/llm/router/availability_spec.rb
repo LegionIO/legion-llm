@@ -69,8 +69,9 @@ RSpec.describe Legion::LLM::Router::Availability do
         tracker.instance_variable_get(:@circuits)[key][:state] = :half_open
       end
 
-      filtered, _reasons = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
+      filtered, reasons = described_class.filter_resolutions([vllm_resolution, bedrock_resolution])
       expect(filtered.map(&:provider)).to include(:vllm)
+      expect(reasons).to be_empty
     end
 
     it 'drops resolutions with denied models' do

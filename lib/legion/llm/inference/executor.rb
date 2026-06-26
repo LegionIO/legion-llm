@@ -86,6 +86,7 @@ module Legion
         ].freeze
 
         REQUEST_PAYLOAD_ERROR_PATTERNS = [
+          /ValidationException/,
           /input_schema/i,
           /tools\.\d+/,
           /messages\.\d+/,

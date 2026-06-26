@@ -305,13 +305,29 @@ module Legion
             duration_ms = ((Time.now - start_time) * 1000).round
             handle_exception(err, level: :warn, handled: handled, operation: operation,
                                  provider: resolution.provider, model: resolution.model, duration_ms: duration_ms)
-            if request_payload_error?(err)
+            if bedrock_availability_error?(err)
+              # Bedrock ValidationException whose message indicates the model is not
+              # available in this account/region. Checked BEFORE request_payload_error?
+              # because ValidationException otherwise matches the generic payload-error
+              # pattern and would be misclassified as a daemon-side payload bug.
+              Legion::LLM::Router.health_tracker.deny_model(
+                provider: resolution.provider,
+                model:    resolution.model,
+                instance: resolution.instance,
+                reason:   err.message
+              )
+              Legion::LLM::Router.health_tracker.trip_circuit(
+                provider: resolution.provider,
+                instance: resolution.instance,
+                reason:   err.message
+              )
+            elsif request_payload_error?(err)
               log.error "[llm][escalation] action=request_payload_error provider=#{resolution.provider} " \
                         "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
                         "error=#{err.message.to_s[0, 500]} daemon_side_payload_bug=true provider_health=false"
             elsif internal_error?(err)
-              # Daemon-internal bug (NoMethodError/NameError/ArgumentError/TypeError/KeyError) —
-              # do NOT report provider health; the provider is not at fault.
+              # Daemon-internal bug (NoMethodError/NameError) — do NOT report
+              # provider health; the provider is not at fault.
               log.error "[llm][escalation] action=daemon_internal_error provider=#{resolution.provider} " \
                         "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
                         "error=#{err.class}: #{err.message.to_s[0, 500]} daemon_internal_bug=true provider_health=false"
@@ -330,7 +346,11 @@ module Legion
               Legion::LLM::Router.health_tracker.trip_circuit(
                 provider: resolution.provider, instance: resolution.instance, reason: err.message
               )
-            elsif authentication_error?(err) || config_error?(err) || bedrock_availability_error?(err)
+            elsif authentication_error?(err) || config_error?(err) # rubocop:disable Lint/DuplicateBranch
+              # Same action as the bedrock_availability_error? branch, but ORDER
+              # is load-bearing: bedrock must precede request_payload_error?
+              # (ValidationException would otherwise be misclassified there);
+              # auth/config must follow it.
               Legion::LLM::Router.health_tracker.deny_model(
                 provider: resolution.provider,
                 model:    resolution.model,
@@ -393,9 +413,10 @@ module Legion
             chain
           end
 
-          COLD_BOOT_REJECTIONS = %i[discovery_unavailable provider_instance_has_no_models].freeze
+          COLD_BOOT_REJECTIONS = %i[discovery_unavailable provider_instance_has_no_models
+                                    availability_check_error].freeze
           FAILED_DEPENDENCY_REJECTIONS = %i[circuit_open model_denied model_not_offered context_too_small
-                                            missing_capability availability_check_error].freeze
+                                            missing_capability instance_unresolved].freeze
 
           # Determine the appropriate typed error when the escalation chain is empty.
           # Uses the rejection reasons threaded through from availability filtering to
@@ -503,11 +524,32 @@ module Legion
                                       model: @resolved_model, offering_id: @resolved_offering_id,
                                       status: 'provider_error')
             emit_error_audit(error, status: status, provider: provider, model: model)
+            if bedrock_availability_error?(error)
+              Legion::LLM::Router.health_tracker.deny_model(
+                provider: provider,
+                model:    model,
+                instance: instance,
+                reason:   error.message
+              )
+              Legion::LLM::Router.health_tracker.trip_circuit(
+                provider: provider,
+                instance: instance,
+                reason:   error.message
+              )
+              return
+            end
             return if request_payload_error?(error)
+
+            if internal_error?(error)
+              log.error "[llm][escalation] action=daemon_internal_error provider=#{provider} " \
+                        "instance=#{instance || 'default'} model=#{model} " \
+                        "error=#{error.class}: #{error.message.to_s[0, 500]} daemon_internal_bug=true provider_health=false"
+              return
+            end
             return if context_overflow_error?(error)
             return if client_stream_error?(error)
 
-            if authentication_error?(error) || config_error?(error) || bedrock_availability_error?(error)
+            if authentication_error?(error) || config_error?(error)
               Legion::LLM::Router.health_tracker.deny_model(
                 provider: provider,
                 model:    model,
@@ -689,9 +731,11 @@ module Legion
           # itself, not in the provider. These must never be reported as
           # provider :error health signals (which would trip a circuit and
           # blame an innocent backend for our own NoMethodError).
+          # ArgumentError/TypeError/KeyError can originate in provider SDK decode
+          # paths and should accumulate :error signals; only NoMethodError/NameError
+          # reliably indicate daemon code bugs.
           def internal_error?(err)
-            err.is_a?(NoMethodError) || err.is_a?(NameError) || err.is_a?(ArgumentError) ||
-              err.is_a?(TypeError) || err.is_a?(KeyError)
+            err.is_a?(NoMethodError) || err.is_a?(NameError)
           end
 
           # Bedrock ValidationException messages that indicate the model is not
@@ -700,7 +744,7 @@ module Legion
           # (treat like config_error?) so the model is excluded rather than
           # silently logged.
           def bedrock_availability_error?(err)
-            err.message.to_s.match?(/model identifier is invalid|not enabled in this region|on-demand throughput|model.*does not support/i)
+            err.message.to_s.match?(/model identifier is invalid|not enabled in this region|on-demand throughput|inference profile/i)
           end
 
           def config_error?(err)

@@ -39,14 +39,24 @@ module Legion
           def step_tier_assignment
             gaia_hint = @enrichments['gaia:routing_hint']
             classification = @enrichments['classification:scan']
-            assignment = Steps::TierAssigner.assign(
-              caller:          @request.caller,
-              classification:  classification,
-              priority:        @request.priority,
-              gaia_hint:       gaia_hint,
-              existing_tier:   @request.extra[:tier],
-              existing_intent: @request.extra[:intent]
-            )
+            begin
+              assignment = Steps::TierAssigner.assign(
+                caller:          @request.caller,
+                classification:  classification,
+                priority:        @request.priority,
+                gaia_hint:       gaia_hint,
+                existing_tier:   @request.extra[:tier],
+                existing_intent: @request.extra[:intent]
+              )
+            rescue StandardError => e
+              # Fail-closed: forced tier assignments carry privacy/security
+              # constraints (see apply_proactive_tier_assignment). Whether this
+              # assignment would have been forced is not determinable when the
+              # assigner itself raised, so re-raise rather than silently continue
+              # with a request that may violate a privacy tier constraint.
+              handle_exception(e, level: :error, operation: 'llm.pipeline.step_tier_assignment')
+              raise
+            end
             return unless assignment
 
             @proactive_tier_assignment = assignment
@@ -63,14 +73,6 @@ module Legion
               detail: "tier=#{assignment[:tier]} assigned by #{assignment[:source]}",
               from: 'tier_assigner', to: 'pipeline'
             )
-          rescue StandardError => e
-            # Fail-closed: forced tier assignments carry privacy/security
-            # constraints (see apply_proactive_tier_assignment). Whether this
-            # assignment would have been forced is not determinable when the
-            # assigner itself raised, so re-raise rather than silently continue
-            # with a request that may violate a privacy tier constraint.
-            handle_exception(e, level: :error, operation: 'llm.pipeline.step_tier_assignment')
-            raise
           end
 
           def step_routing
