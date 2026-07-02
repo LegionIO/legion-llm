@@ -7,8 +7,12 @@ Gem::Specification.new do |spec|
   spec.version       = Legion::LLM::VERSION
   spec.authors       = ['Esity']
   spec.email         = ['matthewdiverson@gmail.com']
-  spec.summary       = 'LLM routing and provider orchestration for the LegionIO framework'
-  spec.description   = 'Routes LLM chat, embeddings, tool use, fleet dispatch, auditing, and provider metadata for LegionIO extensions'
+  spec.summary       = 'LLM gateway: tiered routing, mid-stream failover, and context curation in one proxy'
+  spec.description   = 'A proxy between AI clients and model backends. Requests translate once to a canonical form, ' \
+                       'route to the cheapest capable tier (local, direct, fleet, cloud, frontier), and escalate on ' \
+                       'failure with circuit breakers and mid-stream failover. A post-turn Curator bounds long agent ' \
+                       'sessions (97.7% context reduction vs naive resend at 50+ turns, production-measured). Provider ' \
+                       'adapters are separate lex-llm-* gems.'
   spec.homepage      = 'https://github.com/LegionIO/legion-llm'
   spec.license       = 'Apache-2.0'
   spec.require_paths = ['lib']
