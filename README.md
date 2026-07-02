@@ -97,10 +97,9 @@ Curation runs **after** each turn (async), never inside the tool loop, so it nev
 
 `drop_and_archive` is the strategy that makes curation more than a bigger trash can: instead of discarding overflow context, it sends it to the Apollo knowledge store, where it stays retrievable on future turns. Client-side compaction is lossy truncation — once it's gone, it's gone. This is archival: a fact from turn 3 can resurface at turn 300.
 
-Apollo is two tiers, not one:
+Apollo is two stores. The local per-node store ([legion-apollo](https://github.com/LegionIO/legion-apollo)) starts knowledge at confidence 0.5, corroborates at +0.15, decays at 0.005 per pass, and archives below 0.1 ([confidence.rb](https://github.com/LegionIO/legion-apollo/blob/main/lib/legion/apollo/helpers/confidence.rb)). The shared cross-node store ([lex-apollo](https://github.com/LegionIO/lex-apollo)) corroborates at +0.3 — only when a ≥0.9-cosine match arrives from a *different* provider — and begins time decay after 168 hours. The pipeline steps here use the local store (`Legion::Apollo::Local`).
 
-- **Local store** ([legion-apollo](https://github.com/LegionIO/legion-apollo), `lib/legion/apollo/helpers/confidence.rb`) — a node-local SQLite + FTS5 store. Knowledge starts at `INITIAL_CONFIDENCE` 0.5, corroboration adds `CORROBORATION_BOOST` +0.15, confidence decays at `DECAY_RATE` 0.005, and entries fall out of the store entirely below `ARCHIVE_THRESHOLD` 0.1. Lifecycle status moves through `pending` → `confirmed` / `disputed` → `deprecated` / `archived`.
-- **Shared store** ([lex-apollo](https://github.com/LegionIO/lex-apollo), `lib/legion/extensions/apollo.rb`) — the cross-node store backed by PostgreSQL+pgvector. Corroboration from a different provider with cosine similarity ≥ 0.9 (`corroboration_similarity`) adds +0.3×weight (`corroboration_boost`), and unused knowledge decays after `decay_min_age_hours` 168.
+Lifecycle status in the local store moves through `pending` → `confirmed` / `disputed` → `deprecated` / `archived`. The shared store is backed by PostgreSQL+pgvector (`lib/legion/extensions/apollo.rb`).
 
 The loop closes back up in the Inference pipeline, across three steps:
 
