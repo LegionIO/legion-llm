@@ -93,6 +93,20 @@ Both produced correct, specific technical answers and passed a multi-question re
 
 Curation runs **after** each turn (async), never inside the tool loop, so it never adds latency to an in-flight request. With a 60K-token target the validated payloads stay comfortably in the 40–56K range.
 
+### The knowledge loop
+
+`drop_and_archive` is the strategy that makes curation more than a bigger trash can: instead of discarding overflow context, it sends it to the [Apollo](https://github.com/LegionIO/legion-apollo) knowledge store, where it stays retrievable on future turns. Client-side compaction is lossy truncation — once it's gone, it's gone. This is archival: a fact from turn 3 can resurface at turn 300.
+
+The loop closes back up in the Inference pipeline, across three steps:
+
+- `knowledge_capture` (`lib/legion/llm/inference/steps/knowledge_capture.rb`) evaluates the response after each turn and writes new knowledge back to Apollo.
+- `rag_context` (`lib/legion/llm/inference/steps/rag_context.rb`) queries Apollo and injects relevant knowledge into the request before it goes out.
+- `gaia_advisory` (`lib/legion/llm/inference/steps/gaia_advisory.rb`) queries Apollo for advisory context — tone, partner history, routing hints. GAIA advises; it doesn't inject prompts. The pipeline is what pulls context in.
+
+Apollo tracks confidence over the lifecycle of a piece of knowledge: it starts at 0.5 as a candidate, corroboration from a different provider with cosine similarity ≥ 0.9 adds +0.3×weight, each retrieval adds +0.02, and unused knowledge decays on a power-law curve after 168 hours — falling out of the store entirely once it drops below 0.05.
+
+The receipts for this loop aren't a separate claim: RAG-injected tokens are a recorded column in the lex-llm-ledger aggregates already published in [docs/curation-production-metrics.md](docs/curation-production-metrics.md).
+
 ### And everything else you'd expect from a production gateway
 
 Dynamic weighted routing across five tiers, automatic escalation and mid-stream provider failover, per-instance circuit breakers, capability-aware model selection, prompt compression, structured output, embeddings, fleet dispatch over AMQP, unified metering/audit on every request exit, and config-driven model-policy compliance (`model_whitelist`/`model_blacklist`, fail-closed). All of it is documented below.
