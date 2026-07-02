@@ -93,6 +93,22 @@ Both produced correct, specific technical answers and passed a multi-question re
 
 Curation runs **after** each turn (async), never inside the tool loop, so it never adds latency to an in-flight request. With a 60K-token target the validated payloads stay comfortably in the 40–56K range.
 
+### The knowledge loop
+
+`drop_and_archive` is the strategy that makes curation more than a bigger trash can: instead of discarding overflow context, it sends it to the Apollo knowledge store, where it stays retrievable on future turns. Client-side compaction is lossy truncation — once it's gone, it's gone. This is archival: a fact from turn 3 can resurface at turn 300.
+
+Apollo is two stores. The local per-node store ([legion-apollo](https://github.com/LegionIO/legion-apollo)) starts knowledge at confidence 0.5, corroborates at +0.15, decays at 0.005 per pass, and archives below 0.1 ([confidence.rb](https://github.com/LegionIO/legion-apollo/blob/main/lib/legion/apollo/helpers/confidence.rb)). The shared cross-node store ([lex-apollo](https://github.com/LegionIO/lex-apollo)) corroborates at +0.3 — only when a ≥0.9-cosine match arrives from a *different* provider — and begins time decay after 168 hours. The pipeline steps here use the local store (`Legion::Apollo::Local`).
+
+Lifecycle status in the local store moves through `pending` → `confirmed` / `disputed` → `deprecated` / `archived`. The shared store is backed by PostgreSQL+pgvector (`lib/legion/extensions/apollo.rb`).
+
+The loop closes back up in the Inference pipeline, across three steps:
+
+- `knowledge_capture` (`lib/legion/llm/inference/steps/knowledge_capture.rb`) evaluates the response after each turn and writes new knowledge back to Apollo.
+- `rag_context` (`lib/legion/llm/inference/steps/rag_context.rb`) queries Apollo — via the shared-store runner when available, falling back to `Legion::Apollo.retrieve(scope: :all)`, which merges local and shared results — and injects relevant knowledge into the request before it goes out.
+- `gaia_advisory` (`lib/legion/llm/inference/steps/gaia_advisory.rb`) queries `Legion::Apollo::Local` — the local store only — for advisory context: tone, partner history, routing hints. GAIA advises; it doesn't inject prompts. The pipeline is what pulls context in.
+
+The receipts for this loop aren't a separate claim: RAG-injected tokens are a recorded column in the lex-llm-ledger aggregates already published in [docs/curation-production-metrics.md](docs/curation-production-metrics.md).
+
 ### And everything else you'd expect from a production gateway
 
 Dynamic weighted routing across five tiers, automatic escalation and mid-stream provider failover, per-instance circuit breakers, capability-aware model selection, prompt compression, structured output, embeddings, fleet dispatch over AMQP, unified metering/audit on every request exit, and config-driven model-policy compliance (`model_whitelist`/`model_blacklist`, fail-closed). All of it is documented below.
