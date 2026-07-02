@@ -95,15 +95,18 @@ Curation runs **after** each turn (async), never inside the tool loop, so it nev
 
 ### The knowledge loop
 
-`drop_and_archive` is the strategy that makes curation more than a bigger trash can: instead of discarding overflow context, it sends it to the [Apollo](https://github.com/LegionIO/legion-apollo) knowledge store, where it stays retrievable on future turns. Client-side compaction is lossy truncation — once it's gone, it's gone. This is archival: a fact from turn 3 can resurface at turn 300.
+`drop_and_archive` is the strategy that makes curation more than a bigger trash can: instead of discarding overflow context, it sends it to the Apollo knowledge store, where it stays retrievable on future turns. Client-side compaction is lossy truncation — once it's gone, it's gone. This is archival: a fact from turn 3 can resurface at turn 300.
+
+Apollo is two tiers, not one:
+
+- **Local store** ([legion-apollo](https://github.com/LegionIO/legion-apollo), `lib/legion/apollo/helpers/confidence.rb`) — a node-local SQLite + FTS5 store. Knowledge starts at `INITIAL_CONFIDENCE` 0.5, corroboration adds `CORROBORATION_BOOST` +0.15, confidence decays at `DECAY_RATE` 0.005, and entries fall out of the store entirely below `ARCHIVE_THRESHOLD` 0.1. Lifecycle status moves through `pending` → `confirmed` / `disputed` → `deprecated` / `archived`.
+- **Shared store** ([lex-apollo](https://github.com/LegionIO/lex-apollo), `lib/legion/extensions/apollo.rb`) — the cross-node store backed by PostgreSQL+pgvector. Corroboration from a different provider with cosine similarity ≥ 0.9 (`corroboration_similarity`) adds +0.3×weight (`corroboration_boost`), and unused knowledge decays after `decay_min_age_hours` 168.
 
 The loop closes back up in the Inference pipeline, across three steps:
 
 - `knowledge_capture` (`lib/legion/llm/inference/steps/knowledge_capture.rb`) evaluates the response after each turn and writes new knowledge back to Apollo.
-- `rag_context` (`lib/legion/llm/inference/steps/rag_context.rb`) queries Apollo and injects relevant knowledge into the request before it goes out.
-- `gaia_advisory` (`lib/legion/llm/inference/steps/gaia_advisory.rb`) queries Apollo for advisory context — tone, partner history, routing hints. GAIA advises; it doesn't inject prompts. The pipeline is what pulls context in.
-
-Apollo tracks confidence over the lifecycle of a piece of knowledge: it starts at 0.5 as a candidate, corroboration from a different provider with cosine similarity ≥ 0.9 adds +0.3×weight, each retrieval adds +0.02, and unused knowledge decays on a power-law curve after 168 hours — falling out of the store entirely once it drops below 0.05.
+- `rag_context` (`lib/legion/llm/inference/steps/rag_context.rb`) queries Apollo — via the shared-store runner when available, falling back to `Legion::Apollo.retrieve(scope: :all)`, which merges local and shared results — and injects relevant knowledge into the request before it goes out.
+- `gaia_advisory` (`lib/legion/llm/inference/steps/gaia_advisory.rb`) queries `Legion::Apollo::Local` — the local store only — for advisory context: tone, partner history, routing hints. GAIA advises; it doesn't inject prompts. The pipeline is what pulls context in.
 
 The receipts for this loop aren't a separate claim: RAG-injected tokens are a recorded column in the lex-llm-ledger aggregates already published in [docs/curation-production-metrics.md](docs/curation-production-metrics.md).
 
