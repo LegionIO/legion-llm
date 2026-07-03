@@ -108,11 +108,23 @@ module Legion
             end
           end
 
-          def strip_thinking_from_history(messages)
-            before_tokens = ContextAccounting.estimate_message_tokens(messages)
+          # Lane-INDEPENDENT reduction applied before dispatch: empty-assistant
+          # prune + leading-thinking strip + oversized-tool-result trim. PURE — no
+          # @context_accounting writes, no logging — so the routing estimate can
+          # call it to measure exactly what native_dispatch_messages will send
+          # (minus the lane-dependent enforce_context_window compaction, which is
+          # correctly excluded from routing since it depends on the chosen lane).
+          def reduce_messages_for_dispatch(messages)
+            msgs = Array(messages).reject { |m| empty_assistant_message?(m) }
+            msgs = strip_thinking_pure(msgs)
+            trim_oversized_tool_results_pure(msgs)
+          end
+
+          # Pure leading-thinking strip. Shared by strip_thinking_from_history
+          # (which adds accounting) and reduce_messages_for_dispatch.
+          def strip_thinking_pure(messages)
             preserve_after = last_user_message_index(messages)
-            stripped_count = 0
-            result = messages.each_with_index.map do |msg, idx|
+            messages.each_with_index.map do |msg, idx|
               next msg if idx >= preserve_after
               next msg unless (msg[:role] || msg['role']).to_s == 'assistant'
 
@@ -122,9 +134,14 @@ module Legion
               cleaned = strip_leading_thinking_block(content)
               next msg if cleaned == content
 
-              stripped_count += 1
               msg.merge(content: cleaned)
             end
+          end
+
+          def strip_thinking_from_history(messages)
+            before_tokens = ContextAccounting.estimate_message_tokens(messages)
+            result = strip_thinking_pure(messages)
+            stripped_count = messages.zip(result).count { |before, after| before != after }
 
             after_tokens = ContextAccounting.estimate_message_tokens(result)
             saved = [before_tokens - after_tokens, 0].max
@@ -158,28 +175,32 @@ module Legion
             text
           end
 
-          def trim_oversized_tool_results(messages)
+          # Pure oversized-tool-result trim. Shared by trim_oversized_tool_results
+          # (which adds logging) and reduce_messages_for_dispatch.
+          def trim_oversized_tool_results_pure(messages)
             max_chars = Legion::Settings[:llm][:tool_result_max_dispatch_chars].to_i
             return messages unless max_chars.positive?
 
             preserve_after = last_user_message_index(messages)
-            trimmed_count = 0
-            result = messages.each_with_index.map do |msg, idx|
+            messages.each_with_index.map do |msg, idx|
               next msg if idx >= preserve_after
               next msg unless tool_result_message?(msg)
 
               content = msg[:content] || msg['content']
               next msg unless content.is_a?(String) && content.length > max_chars
 
-              trimmed_count += 1
               msg.merge(content: "#{content[0, max_chars]}\n\n[TRUNCATED: showing first #{max_chars} of #{content.length} chars. " \
                                  'If you need more content, make multiple smaller targeted requests ' \
                                  '(e.g. read specific line ranges, grep for specific patterns, or request smaller sections).]')
             end
+          end
 
+          def trim_oversized_tool_results(messages)
+            result = trim_oversized_tool_results_pure(messages)
+            trimmed_count = messages.zip(result).count { |before, after| before != after }
             if trimmed_count.positive?
               log.info "[llm][executor] action=trim_tool_results request_id=#{@request.id} trimmed=#{trimmed_count} " \
-                       "max_chars=#{max_chars} preserved_after=#{preserve_after}"
+                       "max_chars=#{Legion::Settings[:llm][:tool_result_max_dispatch_chars].to_i}"
             end
             result
           end

@@ -220,6 +220,14 @@ module Legion
           # Used by Inventory.write_lane to compute lane_weight = tier_w * provider_w * instance_w * model_w * health_mult.
           tier_weights:               { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
           max_attempts:               3,
+          # Fraction of a lane's context_window the router treats as usable when
+          # applying the estimated_context hard filter. A lane is excluded when
+          # estimated_context >= context_window * context_headroom. Mirrors the
+          # dispatch-time headroom (context_curation.context_window_threshold and
+          # RouteAttempts#enforce_final_context_budget!'s 0.90) so routing and
+          # dispatch agree on what "fits" — a lane the router picks must still
+          # clear the pre-dispatch budget guard. 1.0 disables headroom.
+          context_headroom:           0.90,
           # Body-level routing hints are gated by this flag. Auto-routing aliases
           # like legionio/auto are still accepted as "you pick" intent.
           allow_body_routing_hints:   false,

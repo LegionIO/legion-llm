@@ -350,12 +350,36 @@ module Legion
             @context_accounting[:component_status][:archive] = :observed
           end
 
+          # Kill the history double-send: a client-managed client (e.g. Claude
+          # Code) resends the full conversation in @request.messages every turn,
+          # and those go on the wire as structured messages. Injecting the same
+          # turns AGAIN as "Prior conversation history" system text (via
+          # EnrichmentInjector) would send them twice — real tokens, real cost,
+          # real context pressure. Only inject the prior turns the client did NOT
+          # resend: empty for a fully client-managed turn, the whole stored prefix
+          # for a server-managed client.
+          history = reject_client_resent_history(history)
           @enrichments['context:conversation_history'] = history
           @timeline.record(
             category: :internal, key: 'context:loaded',
             direction: :internal, detail: "loaded #{history.size} prior messages",
             from: 'conversation_store', to: 'pipeline'
           )
+        end
+
+        # Drop stored-history messages the client already re-sent in
+        # @request.messages, matched by (role, content-text) fingerprint. Prevents
+        # the same turns reaching the provider twice (structured messages +
+        # injected system text). See step_context_load.
+        def reject_client_resent_history(history)
+          resent = Array(@request.messages).to_set { |m| history_dedup_key(m) }
+          Array(history).reject { |m| resent.include?(history_dedup_key(m)) }
+        end
+
+        def history_dedup_key(msg)
+          role = (msg[:role] || msg['role']).to_s
+          content = msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg
+          [role, ContextAccounting.content_text(content).to_s.strip]
         end
 
         def maybe_compact_history(conv_id, history)

@@ -209,8 +209,15 @@ module Legion
 
           return false if thinking == :require && !available.include?(:thinking)
 
+          # Apply the same headroom the dispatch budget guard uses: a lane is only
+          # eligible when estimated_context fits within context_window * headroom.
+          # Keeps routing and RouteAttempts#enforce_final_context_budget! in
+          # agreement so the router never picks a lane the pre-dispatch guard rejects.
           context_window = lane.dig(:limits, :context_window)
-          return false if estimated_context && context_window && context_window.to_i < estimated_context
+          if estimated_context && context_window
+            usable = (context_window.to_i * context_headroom).to_i
+            return false if usable < estimated_context
+          end
           return false if privacy == :strict && %i[cloud frontier].include?(lane[:tier])
 
           true
@@ -227,6 +234,18 @@ module Legion
           model = value.to_s
           model = model.sub(/\A(?:us|eu|ap)\./, '') if model.match?(/\A(?:us|eu|ap)\./)
           model
+        end
+
+        # Fraction of a lane's context_window the router treats as usable when
+        # applying the estimated_context filter. Mirrors the dispatch-time budget
+        # guard so routing and dispatch agree on what fits. Clamped to (0, 1].
+        def context_headroom
+          value = Legion::Settings.dig(:llm, :routing, :context_headroom)
+          value = value.to_f
+          value.positive? && value <= 1.0 ? value : 1.0
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'router.context_headroom')
+          1.0
         end
 
         def default_rng

@@ -198,16 +198,50 @@ module Legion
             Legion::Settings.dig(:llm, :routing, :allow_body_routing_hints) == true
           end
 
+          # One oracle: routing must estimate the SAME payload the dispatch guard
+          # (RouteAttempts#final_dispatch_token_estimate) measures, or a too-small
+          # lane passes the router's context-window filter then overflows at
+          # dispatch. Use ContextAccounting (walks canonical structs / content
+          # blocks) for messages, estimate the INJECTED system (baseline + RAG +
+          # skills + prior-history text), and count client tools. Messages are the
+          # lane-independent-reduced set — what actually goes on the wire.
           def estimate_request_tokens
-            all_messages = []
-            all_messages.concat(@enrichments['context:conversation_history'] || [])
-            all_messages.concat(@request.messages || [])
+            # Mirror the dispatch shape EXACTLY: native_dispatch_messages sends
+            # @request.messages (lane-independent-reduced); the conversation
+            # history lives in the injected SYSTEM (via EnrichmentInjector), not
+            # in the messages array — counting it in both would double-count.
+            reduced = reduce_messages_for_dispatch(Array(@request.messages))
 
-            estimated = all_messages.empty? ? 0 : estimate_message_tokens(all_messages)
-            estimated += ((@request.system || '').length / 4.0).ceil
-            estimated += estimate_tool_token_budget if @request.tools&.any?
-            estimated += (Legion::JSON.dump(@request.thinking).length / 3.5).ceil if @request.thinking.is_a?(Hash) && @request.thinking.any?
+            estimated  = ContextAccounting.estimate_message_tokens(reduced)
+            estimated += ContextAccounting.estimate_text_tokens(routing_estimate_injected_system)
+            estimated += ContextAccounting.estimate_json_tokens(routing_estimate_tool_defs)
+            estimated += ContextAccounting.estimate_json_tokens(@request.tool_choice) if @request.tool_choice
+            estimated += ContextAccounting.estimate_json_tokens(@request.thinking) if @request.thinking.is_a?(Hash) && @request.thinking.any?
             estimated
+          end
+
+          # The system prompt as it will be dispatched — baseline + GAIA + prior
+          # history + RAG + skills injected. EnrichmentInjector.inject is pure, so
+          # calling it here and again at dispatch has no side effects.
+          def routing_estimate_injected_system
+            EnrichmentInjector.inject(system: @request.system, enrichments: @enrichments || {})
+          end
+
+          # The tool catalog dispatch will send (special + client + registry), NOT
+          # just @request.tools — the dispatch guard counts native_dispatch_tools,
+          # so routing must too or a heavy-tool request under-counts and picks a
+          # too-small lane. Built read-only here (never memoized) because
+          # native_tool_definitions caches and applies the local-provider cap
+          # against @resolved_provider, which is not set at routing time; an
+          # uncapped over-estimate is the safe direction for a "will it fit" filter.
+          def routing_estimate_tool_defs
+            defs = Tools::Special.pinned_definitions.map(&:to_h)
+            Array(@request.tools).each { |t| defs << (t.respond_to?(:to_h) ? t.to_h : t) }
+            Legion::Settings::Extensions.filter_tools(deferred: false).each { |e| defs << e } if registry_tool_injection_requested?
+            defs
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.routing_estimate_tool_defs')
+            Array(@request.tools).map { |t| t.respond_to?(:to_h) ? t.to_h : t }
           end
 
           def chain_required_capabilities

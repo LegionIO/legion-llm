@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.14.11] - 2026-07-03
+
+### Fixed
+
+- **Routing token estimate now measures the payload dispatch actually sends (one oracle).** `estimate_request_tokens` walks canonical structs/content blocks via `ContextAccounting` instead of a naive `m[:content].to_s` shadow estimator (which read structured content — the shape Claude Code sends — as near-zero), and now counts the *injected* system prompt (baseline + RAG + skills + prior history) and the *full dispatch tool catalog* (special + client + registry), not just `@request.tools`. Fixes small-context local lanes passing the router's context-window filter then overflowing with `ContextOverflow` at dispatch.
+- **Routing estimates the lane-independent-reduced message set.** Extracted a pure `reduce_messages_for_dispatch` (empty-assistant prune + leading-thinking strip + oversized-tool-result trim) so routing measures exactly what `native_dispatch_messages` puts on the wire, minus the lane-dependent `enforce_context_window` compaction (correctly excluded — the lane isn't chosen yet).
+- **History double-send eliminated.** For a client-managed conversation (e.g. Claude Code) the client resends the full history in `@request.messages` every turn; `step_context_load` also injected the server-stored copy as "Prior conversation history" system text — sending the same turns to the provider twice (real tokens, real cost, real context pressure). `reject_client_resent_history` now drops stored turns the client already re-sent, matched by `(role, content-text)` fingerprint, while still injecting the prior turns a server-managed client omitted.
+- **Router/dispatch context-window agreement.** New `llm.routing.context_headroom` (default `0.90`) applies the same headroom the dispatch budget guard uses, so a lane the router picks must still clear `RouteAttempts#enforce_final_context_budget!`.
+- `token_budget` step now shares the same `ContextAccounting` estimator as the router filter and dispatch guard.
+
 ## [0.14.10] - 2026-06-26
 
 ### Fixed
