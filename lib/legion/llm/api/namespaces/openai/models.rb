@@ -44,6 +44,26 @@ module Legion
                 openai_error(e.message, type: 'server_error', status_code: 500)
               end
 
+              Models.passthrough_model_ids.each do |passthrough_id|
+                app.get "/v1/models/#{passthrough_id}" do
+                  require_llm!
+                  log.debug("[llm][api][namespaces][openai][models] action=passthrough_model id=#{passthrough_id}")
+                  found = Models.synthetic_model_for_auto_route(passthrough_id)
+
+                  unless found
+                    return openai_error("Model '#{passthrough_id}' not found",
+                                        type: 'invalid_request_error', code: 'model_not_found', status_code: 404)
+                  end
+
+                  content_type :json
+                  Legion::JSON.dump(found)
+                rescue StandardError => e
+                  handle_exception(e, level: :error, handled: true,
+                                      operation: 'llm.api.namespaces.openai.models.passthrough')
+                  openai_error(e.message, type: 'server_error', status_code: 500)
+                end
+              end
+
               app.get '/v1/models/:id' do
                 require_llm!
                 model_id = params[:id]
@@ -97,6 +117,23 @@ module Legion
             rescue StandardError => e
               log.warn("[llm][api][namespaces][openai][models] inventory_error=#{e.message}")
               []
+            end
+
+            def self.passthrough_model_ids
+              Legion::Settings[:llm][:routing][:model_passthrough_ids]
+            end
+
+            def self.synthetic_model_for_auto_route(model_id)
+              return nil unless Legion::LLM::Inventory.lanes.any?
+
+              best_lane = Legion::LLM::Inventory.lanes.max_by { |l| l[:lane_weight].to_i }
+              return nil unless best_lane
+
+              Legion::LLM::API::Translators::OpenAIResponse.format_model_object(
+                model_id,
+                owned_by: 'legionio',
+                limits:   best_lane[:limits]
+              )
             end
 
             def self.to_anthropic_model_list(openai_list)

@@ -231,6 +231,7 @@ module Legion
           # Body-level routing hints are gated by this flag. Auto-routing aliases
           # like legionio/auto are still accepted as "you pick" intent.
           allow_body_routing_hints:   false,
+          model_passthrough_ids:      %w[copilot-utility-small],
           auto_routing_model_aliases: %w[legionio auto],
           default_intent:             { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
           # Last-resort fallback model when both `default_model` and the

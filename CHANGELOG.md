@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.14.12] - 2026-07-09
+
+### Fixed
+
+- **BYOK model discovery returns 200 for passthrough models.** Clients like GitHub Copilot validate model availability via `GET /v1/models/:id` before sending inference requests. Previously returned 404 for models not in Inventory (e.g. `copilot-utility-small`), even though the daemon auto-routes them successfully. Now returns a synthetic model object for models listed in `llm.routing.model_passthrough_ids`.
+
+### Added
+
+- `llm.routing.model_passthrough_ids` setting (default: `["copilot-utility-small"]`). Models in this list get dedicated `/v1/models/<id>` routes that return a synthetic model object backed by the best available lane's limits. Configurable for additional BYOK client model names.
+
 ## [0.14.11] - 2026-07-03
 
 ### Fixed
