@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.14.13] - 2026-07-09
+
+### Fixed
+
+- **Leaked chat-template tool-call tokens are synthesized into real tool calls (native_tool_loop pattern 4).** Some models (observed live with gemma served via vLLM; ledger rows 337049/337111/337145/337174) emit tool-call intent as a raw literal token in the response content instead of the structured `tool_calls` field: `<|tool_call>call:NAME{key:<|"|>value<|"|>,...}<tool_call|>` (where `<|"|>` is the string delimiter). Without synthesis the token reached the client verbatim — a "tool call" printed as text with nothing executed. `maybe_synthesize_tool_call_from_content` now recognizes this as a fourth format (after forced-choice JSON, Qwen tag markup, and Qwen single-tag): it parses the token via a scan-based parser (values terminated only by `<|"|>`, so embedded regular quotes and newlines in e.g. browser `code:` args survive — a gsub-to-quotes + JSON.parse approach breaks on those), validates the tool name against `native_dispatch_tools`, supports multiple tokens in one blob, and lets the executor run the tool server-side. Covered by unit specs (captured-verbatim ledger strings) and an in-process matrix scenario asserting all three client formats never surface the raw markers.
+
 ## [0.14.12] - 2026-07-09
 
 ### Fixed
