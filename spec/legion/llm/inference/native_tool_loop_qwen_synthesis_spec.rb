@@ -208,7 +208,7 @@ RSpec.describe 'NativeToolLoop qwen markup tool synthesis' do
     it 'handles values with embedded quotes and newlines (browser code, ledger row 337145)' do
       host.native_dispatch_tools_value = { browser: browser_tool_hash }
       # The `code` value contains regular double-quotes and \n — this is where a
-      # gsub-then-JSON.parse approach breaks; the scan-based parser must not.
+      # gsub-then-parse-as-object approach breaks; the scan-based parser must not.
       result = canonical_response_with(
         %(<|tool_call>call:browser{action:<|"|>run<|"|>,code:<|"|>await tab.goto('https://x.com');\nconst c = "y";\nreturn c;<|"|>,name:<|"|>paseo_repo<|"|>}<tool_call|>)
       )

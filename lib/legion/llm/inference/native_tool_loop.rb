@@ -30,7 +30,7 @@ module Legion
         # walks the body as key:<|"|>value<|"|> pairs. The value capture is
         # non-greedy and terminated only by the <|"|> delimiter, so embedded
         # regular quotes and newlines (common in browser `code:` args) survive —
-        # a gsub-to-quotes + JSON.parse approach would break on those.
+        # a gsub-to-quotes + parse-as-object approach would break on those.
         LEAKED_TOKEN_RE     = /<\|tool_call>call:(?<name>[^{]+?)(?<body>\{.*?\})<tool_call\|>/m
         LEAKED_TOKEN_ARG_RE = /(?<key>\w+):<\|"\|>(?<value>.*?)<\|"\|>/m
 
