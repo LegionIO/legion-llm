@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.14.15] - 2026-07-09
+
+### Fixed
+
+- **OpenAI Responses translator now produces a canonical request equivalent to the Anthropic translator (SSOT / one-oracle).** The same logical request must parse to an identical `Canonical::Request` regardless of client dialect; three divergences were breaking that (caught by the canonical-equivalence checks):
+  - **`upstream_body` no longer leaks into `Canonical::Request.metadata`.** It was written at parse, stripped again before dispatch, and never read (the native `call_responses` path is fed the raw body directly), so it was dead weight that made the two dialects' canonical requests differ. Removed.
+  - **System prompt goes to the canonical `system:` field, not a `role: system` message.** Responses `instructions` (and inline `developer`/`system` input items) now populate `system:` like the Anthropic translator, instead of being injected as a system message.
+  - **Text-then-tool-call is one assistant turn.** A Responses assistant text item immediately followed by `function_call`(s) now merges into a single assistant message (`content` + `tool_calls`), matching the Anthropic single-message shape, instead of splitting into a text message plus an empty-content tool_calls message.
+
 ## [0.14.14] - 2026-07-09
 
 ### Fixed
