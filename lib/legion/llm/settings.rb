@@ -418,6 +418,23 @@ module Legion
           superseded_eviction:      true,
           dedup_enabled:            true,
           dedup_threshold:          0.85,
+          # Strip client-harness noise that accumulates unbounded in the
+          # mid-conversation system role (Claude Code task nags, linter file
+          # dumps, etc.). See GH#168. Two mechanisms, both system-role only:
+          #   1. exact-dedup: a verbatim-duplicate system message is dropped
+          #      (the first occurrence is kept).
+          #   2. pattern strip: a system message whose content matches any
+          #      substring in harness_noise_patterns is dropped entirely.
+          # Fail-safe: an unrecognized, non-duplicate system message is never
+          # touched. The pattern list is designed to grow over time as new
+          # harness injections are identified.
+          harness_noise_strip:      true,
+          harness_noise_patterns:   [
+            # Claude Code "task tools haven't been used recently" nag.
+            "task tools haven't been used recently",
+            # Claude Code linter/formatter file-dump note.
+            'was modified, either by the user or by a linter'
+          ],
           target_context_tokens:    60_000,
           context_window_threshold: 0.90,
           archive_dropped_turns:    true,

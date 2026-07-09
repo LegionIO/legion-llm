@@ -194,6 +194,43 @@ module Legion
           result
         end
 
+        # Strip client-harness noise from the mid-conversation system role
+        # (GH#168). Claude Code and similar harnesses inject unbounded
+        # system-role messages — task nags (identical text, repeated), linter
+        # file dumps — that the rest of the curator never touched, letting them
+        # consume ~25% of a dispatch window.
+        #
+        # System-role only, and fail-safe: a system message is dropped ONLY when
+        # it (a) matches a known harness pattern, or (b) is a verbatim duplicate
+        # of an earlier system message. Unrecognized, non-duplicate system
+        # messages and every non-system message pass through untouched.
+        def strip_harness_noise(messages)
+          return messages unless setting(:harness_noise_strip, true)
+
+          patterns = Array(setting(:harness_noise_patterns, []))
+          seen_system = {}
+          result = messages.reject do |msg|
+            next false unless (msg[:role] || msg['role']).to_s == 'system'
+
+            content = (msg[:content] || msg['content']).to_s
+            next true if patterns.any? { |p| content.include?(p.to_s) }
+
+            if seen_system.key?(content)
+              true
+            else
+              seen_system[content] = true
+              false
+            end
+          end
+
+          stripped = messages.size - result.size
+          if stripped.positive?
+            log.info "[llm][curator] action=strip_harness_noise conversation_id=#{@conversation_id} " \
+                     "stripped=#{stripped} messages_before=#{messages.size} messages_after=#{result.size}"
+          end
+          result
+        end
+
         # Heuristic: deduplicate near-identical messages using Jaccard similarity.
         def dedup_similar(messages, threshold: nil)
           return messages unless setting(:dedup_enabled, true)
@@ -352,6 +389,7 @@ module Legion
             result = messages.map { |msg| strip_thinking(msg) }
           end
 
+          result = strip_harness_noise(result)
           result = fold_resolved_exchanges(result)
           result = evict_superseded(result)
           dedup_similar(result)
@@ -368,7 +406,8 @@ module Legion
         end
 
         def apply_structural_curation_pipeline(messages)
-          result = fold_resolved_exchanges(messages)
+          result = strip_harness_noise(messages)
+          result = fold_resolved_exchanges(result)
           result = evict_superseded(result)
           dedup_similar(result)
         rescue StandardError => e
@@ -575,8 +614,12 @@ module Legion
           clarification_signals = ['clarif', 'what do you mean', 'i see', 'understood', 'got it', 'correct', 'exactly', 'yes', 'right', 'agree']
           conclusion_signals    = ['in summary', 'to summarize', 'in conclusion', 'therefore', 'so to answer', 'the answer is']
 
+          # rubocop:disable Style/ArrayIntersect -- these are substring checks
+          # (signal `include?` against a String), NOT array intersection. The
+          # cop's `intersect?` suggestion raises TypeError on a String arg.
           has_clarification = contents.any? { |c| clarification_signals.any? { |s| c.include?(s) } }
           has_conclusion    = contents.last.length < 500 || conclusion_signals.any? { |s| contents.last.include?(s) }
+          # rubocop:enable Style/ArrayIntersect
 
           has_clarification && has_conclusion
         end

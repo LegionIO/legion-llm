@@ -1,5 +1,19 @@
 # Legion LLM Changelog
 
+## [0.14.14] - 2026-07-09
+
+### Fixed
+
+- **Curator now strips client-harness noise from the mid-conversation system role (GH#168).** The context curator curated `tool` and `assistant` roles but blindly passed every `system`-role message through — so Claude Code's harness injections (task-tool nags repeated 18×, linter file-dumps) accumulated unbounded, consuming up to ~25% of a 60–80K dispatch window and confusing non-Claude models (e.g. ornith/gemma) into hallucinating or dropping tool calls mid-turn. A new `strip_harness_noise` stage (first in both the heuristic and structural curation pipelines) drops a system message only when it (1) matches a known harness pattern or (2) is a verbatim duplicate of an earlier system message. Fail-safe: unrecognized, non-duplicate system messages and all non-system roles pass through untouched.
+
+### Added
+
+- `llm.context_curation.harness_noise_strip` (default `true`) and `llm.context_curation.harness_noise_patterns` (default: Claude Code task-nag and linter file-dump markers). The pattern list is a plain substring array designed to grow as new harness injections are identified.
+
+### Internal
+
+- Guarded four `String#include?` substring checks (`structured_output`, `classification`, `inventory`, `curator`) with `# rubocop:disable Style/ArrayIntersect`. The cop's autocorrect rewrites `array.any? { |x| str.include?(x) }` to `array.intersect?(str)`, which raises `TypeError` on a String argument — a latent trap for `rubocop -A`.
+
 ## [0.14.13] - 2026-07-09
 
 ### Fixed
