@@ -37,6 +37,7 @@ module FakeProvider
     server_tool_legion
     server_tool_failure_with_client_passthrough
     tool_degraded_args
+    tool_leaked_token
     error
   ].freeze
 
@@ -204,6 +205,7 @@ module FakeProvider
       when :server_tool_failure_with_client_passthrough
         server_tool_failure_with_client_passthrough_response(model)
       when :tool_degraded_args then tool_degraded_args_response(model)
+      when :tool_leaked_token  then tool_leaked_token_response(model)
       else text_response(model)
       end
     end
@@ -279,6 +281,38 @@ module FakeProvider
         model:       model.to_s,
         metadata:    { fake: true, scenario: :tool_degraded_args }
       )
+    end
+
+    # Leaked chat-template token scenario: the model emits tool-call intent as a
+    # raw <|tool_call>call:NAME{...}<tool_call|> token in CONTENT with EMPTY
+    # tool_calls (the exact shape captured live from gemma/vLLM, ledger 2026-07).
+    # The executor's native_tool_loop must synthesize this into a structured
+    # call (pattern 4) and never surface the raw token to the client. Names the
+    # registered fake_legion_echo tool so the synthesized call executes
+    # server-side, proving the full round-trip.
+    def tool_leaked_token_response(model)
+      Thread.current[:fake_leaked_token_round] ||= 0
+      Thread.current[:fake_leaked_token_round] += 1
+
+      if Thread.current[:fake_leaked_token_round] == 1
+        Canonical::Response.build(
+          text:        '<|tool_call>call:fake_legion_echo{value:<|"|>ping<|"|>}<tool_call|>',
+          tool_calls:  [],
+          usage:       usage(input: 5, output: 4),
+          stop_reason: :end_turn,
+          model:       model.to_s,
+          metadata:    { fake: true, scenario: :tool_leaked_token, round: 1 }
+        )
+      else
+        Thread.current[:fake_leaked_token_round] = 0
+        Canonical::Response.build(
+          text:        'tool result observed: echo:ping',
+          usage:       usage(input: 8, output: 5),
+          stop_reason: :end_turn,
+          model:       model.to_s,
+          metadata:    { fake: true, scenario: :tool_leaked_token, round: 2 }
+        )
+      end
     end
 
     def tool_parallel_response(model)

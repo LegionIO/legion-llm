@@ -339,6 +339,93 @@ RSpec.describe Legion::LLM::Context::Curator do
     end
   end
 
+  # --- harness-noise stripping (GH#168) ---
+
+  describe '#strip_harness_noise' do
+    let(:task_nag) do
+      "The task tools haven't been used recently. If you're working on tasks that would " \
+        'benefit from tracking progress, consider using TaskCreate to add new tasks. ' \
+        'This is just a gentle reminder - ignore if not applicable.'
+    end
+    let(:linter_note) do
+      'Note: /path/to/file.rb was modified, either by the user or by a linter. ' \
+        'Here are the relevant changes: ...(full file dump)...'
+    end
+
+    context 'harness_noise_strip disabled' do
+      before { Legion::Settings[:llm][:context_curation][:harness_noise_strip] = false }
+
+      it 'returns messages unchanged' do
+        msgs = [
+          { role: :system, content: task_nag },
+          { role: :user, content: 'do the thing' }
+        ]
+        expect(curator.strip_harness_noise(msgs)).to eq(msgs)
+      end
+    end
+
+    context 'known harness patterns' do
+      before do
+        Legion::Settings[:llm][:context_curation][:harness_noise_patterns] = [
+          "task tools haven't been used recently",
+          'was modified, either by the user or by a linter'
+        ]
+      end
+
+      it 'strips the task-nag system message' do
+        msgs = [
+          { role: :user, content: 'first' },
+          { role: :system, content: task_nag },
+          { role: :assistant, content: 'ok' }
+        ]
+        result = curator.strip_harness_noise(msgs)
+        expect(result.map { |m| m[:role] }).to eq(%i[user assistant])
+      end
+
+      it 'strips the linter file-dump note' do
+        msgs = [
+          { role: :system, content: linter_note },
+          { role: :user, content: 'keep me' }
+        ]
+        result = curator.strip_harness_noise(msgs)
+        expect(result.map { |m| m[:content] }).to eq(['keep me'])
+      end
+
+      it 'strips every repeated occurrence of a known pattern' do
+        msgs = Array.new(18) { { role: :system, content: task_nag } } +
+               [{ role: :user, content: 'work' }]
+        result = curator.strip_harness_noise(msgs)
+        expect(result).to eq([{ role: :user, content: 'work' }])
+      end
+    end
+
+    context 'exact-duplicate system messages' do
+      it 'keeps the first and drops verbatim duplicates' do
+        dup = { role: :system, content: 'Some injected note that repeats verbatim.' }
+        msgs = [dup.dup, { role: :assistant, content: 'a' }, dup.dup, dup.dup]
+        result = curator.strip_harness_noise(msgs)
+        systems = result.select { |m| m[:role] == :system }
+        expect(systems.size).to eq(1)
+      end
+    end
+
+    context 'fail-safe: unrecognized content' do
+      it 'never strips an unrecognized, non-duplicate system message' do
+        msgs = [
+          { role: :system, content: 'You are a specialized agent with these rules: ...' },
+          { role: :user, content: 'hi' }
+        ]
+        expect(curator.strip_harness_noise(msgs)).to eq(msgs)
+      end
+
+      it 'never touches non-system roles even if content matches a pattern' do
+        # A user/assistant message that happens to quote the nag text must survive.
+        msgs = [{ role: :user, content: "why does it say the task tools haven't been used recently?" }]
+        expect(curator.strip_harness_noise(msgs)).to eq(msgs)
+      end
+    end
+  end
+
   # --- LLM-assisted distillation ---
 
   describe '#llm_distill_tool_result' do

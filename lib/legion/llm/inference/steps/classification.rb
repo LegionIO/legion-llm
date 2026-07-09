@@ -110,7 +110,11 @@ module Legion
               patterns << name if text.match?(regex)
             end
 
+            # rubocop:disable Style/ArrayIntersect -- substring check (each keyword
+            # `include?`d in the text), NOT array intersection. `intersect?` raises
+            # TypeError on the String arg.
             phi_found = PHI_KEYWORDS.any? { |kw| text.downcase.include?(kw) }
+            # rubocop:enable Style/ArrayIntersect
             patterns << :phi_keyword if phi_found
             if text.match?(EMAIL_PATTERN) && (standalone_email_pii? || phi_found || patterns.any?)
               patterns.delete(:email)

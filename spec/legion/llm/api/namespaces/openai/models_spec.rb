@@ -61,12 +61,37 @@ RSpec.describe 'Namespaces::OpenAI::Models' do
       expect(body[:object]).to eq('model')
     end
 
-    it 'returns 404 for unknown model' do
+    it 'returns 404 for unknown model when no lanes available' do
       get '/v1/models/no-such-model'
       expect(last_response.status).to eq(404)
       body = Legion::JSON.load(last_response.body)
       expect(body[:error][:type]).to eq('invalid_request_error')
       expect(body[:error][:code]).to eq('model_not_found')
+    end
+
+    it 'returns synthetic model for passthrough model when lanes available' do
+      allow(Legion::LLM::Inventory).to receive(:lanes).and_return([
+                                                                    { tier: :local, provider_family: :vllm, instance_id: :default,
+                                                                      model: 'gemma-4-31b-it', lane_weight: 100, type: :inference,
+                                                                      limits: { context_window: 262_144 } }
+                                                                  ])
+      allow(Legion::Settings).to receive(:[]).with(:llm).and_return(
+        { routing: { model_passthrough_ids: %w[copilot-utility-small] } }
+      )
+      get '/v1/models/copilot-utility-small'
+      expect(last_response.status).to eq(200)
+      body = Legion::JSON.load(last_response.body)
+      expect(body[:id]).to eq('copilot-utility-small')
+      expect(body[:object]).to eq('model')
+      expect(body[:owned_by]).to eq('legionio')
+    end
+
+    it 'returns 404 for passthrough model when no lanes available' do
+      allow(Legion::Settings).to receive(:[]).with(:llm).and_return(
+        { routing: { model_passthrough_ids: %w[copilot-utility-small] } }
+      )
+      get '/v1/models/copilot-utility-small'
+      expect(last_response.status).to eq(404)
     end
   end
 

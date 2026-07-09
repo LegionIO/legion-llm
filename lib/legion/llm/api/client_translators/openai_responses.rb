@@ -39,15 +39,15 @@ module Legion
             log.debug('[llm][client_translator][openai_responses] action=parse_request')
             body = symbolize(body)
 
-            messages = build_messages(body[:input], body[:instructions])
+            system, messages = build_system_and_messages(body[:input], body[:instructions])
             tools = build_tools(body[:tools])
             params = build_params(body)
             thinking = build_thinking(body[:reasoning])
             tool_choice = build_tool_choice(body[:tool_choice])
-            upstream_body = ensure_reasoning_summary(body)
 
             Canonical::Request.build(
               id:              env['HTTP_X_CLIENT_REQUEST_ID'] || "resp_#{SecureRandom.hex(16)}",
+              system:          system,
               messages:        messages,
               tools:           tools,
               tool_choice:     tool_choice,
@@ -60,8 +60,7 @@ module Legion
                 client_model:     body[:model],
                 tier:             env['HTTP_X_LEGION_TIER'],
                 routing_explicit: legion_routing_explicit_from_env(env),
-                external_refs:    external_refs(body, env),
-                upstream_body:    upstream_body # preserved for native call_responses path until executor is canonical
+                external_refs:    external_refs(body, env)
               }.compact
             )
           end
@@ -107,7 +106,7 @@ module Legion
               thinking:        thinking_to_inference(canonical_request.thinking),
               cache:           { strategy: :default, cacheable: true },
               extra:           extra,
-              metadata:        canonical_request.metadata.except(:upstream_body)
+              metadata:        canonical_request.metadata
             }
 
             apply_canonical_params_to_inference(request_kwargs, canonical_request.params)
@@ -533,18 +532,30 @@ module Legion
             body
           end
 
-          def build_messages(input, instructions)
-            messages = case input
-                       when Array
-                         normalize_input_array(input)
-                       when String
-                         [{ role: 'user', content: input }]
-                       else
-                         []
-                       end
-            messages = [{ role: 'system', content: instructions.to_s }] + messages if instructions
+          # SSOT: system content belongs in the canonical `system:` field (as the
+          # Anthropic translator does), NOT as a role:system message. Extract it
+          # from top-level `instructions` and from any inline system/developer
+          # input items, and return [system_string_or_nil, non_system_messages].
+          def build_system_and_messages(input, instructions)
+            raw = case input
+                  when Array  then normalize_input_array(input)
+                  when String then [{ role: 'user', content: input }]
+                  else             []
+                  end
 
-            messages.map do |m|
+            system_parts = []
+            system_parts << instructions.to_s if instructions
+            messages = []
+            raw.each do |m|
+              role = (m[:role] || m['role']).to_s
+              if role == 'system'
+                system_parts << (m[:content] || m['content']).to_s
+              else
+                messages << m
+              end
+            end
+
+            normalized = messages.map do |m|
               {
                 role:         m[:role] || m['role'],
                 content:      m[:content] || m['content'],
@@ -552,6 +563,9 @@ module Legion
                 tool_call_id: m[:tool_call_id] || m['tool_call_id']
               }.compact
             end
+
+            system = system_parts.reject(&:empty?).join("\n\n")
+            [system.empty? ? nil : system, normalized]
           end
 
           def normalize_input_array(input)
@@ -596,15 +610,22 @@ module Legion
           def flush_pending_tool_calls(messages, pending)
             return if pending.empty?
 
-            messages << {
-              role:       'assistant',
-              content:    '',
-              tool_calls: pending.map do |tc|
-                args = tc[:arguments]
-                args = safe_parse_json(args) if args.is_a?(String)
-                { id: tc[:id], name: tc[:name].to_s, arguments: args || {} }
-              end
-            }
+            tool_calls = pending.map do |tc|
+              args = tc[:arguments]
+              args = safe_parse_json(args) if args.is_a?(String)
+              { id: tc[:id], name: tc[:name].to_s, arguments: args || {} }
+            end
+
+            # SSOT: an assistant text item immediately followed by function_call(s)
+            # is ONE assistant turn (text + tool_calls), matching the Anthropic
+            # translator's single-message shape. Merge into the trailing assistant
+            # text message rather than emitting a separate empty-content message.
+            last = messages.last
+            if last && last[:role] == 'assistant' && !last.key?(:tool_calls)
+              last[:tool_calls] = tool_calls
+            else
+              messages << { role: 'assistant', content: '', tool_calls: tool_calls }
+            end
             pending.clear
           end
 

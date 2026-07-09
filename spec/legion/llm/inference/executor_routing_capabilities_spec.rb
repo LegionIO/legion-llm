@@ -8,7 +8,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
       allow(Legion::LLM::Tools::Special).to receive(:pinned_definitions).and_return([
                                                                                       instance_double(
                                                                                         Legion::LLM::Types::ToolDefinition,
-                                                                                        name: :ruby
+                                                                                        name: :ruby,
+                                                                                        to_h: { name: 'ruby' }
                                                                                       )
                                                                                     ])
     end

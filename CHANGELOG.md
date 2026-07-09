@@ -1,5 +1,54 @@
 # Legion LLM Changelog
 
+## [0.14.15] - 2026-07-09
+
+### Fixed
+
+- **OpenAI Responses translator now produces a canonical request equivalent to the Anthropic translator (SSOT / one-oracle).** The same logical request must parse to an identical `Canonical::Request` regardless of client dialect; three divergences were breaking that (caught by the canonical-equivalence checks):
+  - **`upstream_body` no longer leaks into `Canonical::Request.metadata`.** It was written at parse, stripped again before dispatch, and never read (the native `call_responses` path is fed the raw body directly), so it was dead weight that made the two dialects' canonical requests differ. Removed.
+  - **System prompt goes to the canonical `system:` field, not a `role: system` message.** Responses `instructions` (and inline `developer`/`system` input items) now populate `system:` like the Anthropic translator, instead of being injected as a system message.
+  - **Text-then-tool-call is one assistant turn.** A Responses assistant text item immediately followed by `function_call`(s) now merges into a single assistant message (`content` + `tool_calls`), matching the Anthropic single-message shape, instead of splitting into a text message plus an empty-content tool_calls message.
+
+## [0.14.14] - 2026-07-09
+
+### Fixed
+
+- **Curator now strips client-harness noise from the mid-conversation system role (GH#168).** The context curator curated `tool` and `assistant` roles but blindly passed every `system`-role message through — so Claude Code's harness injections (task-tool nags repeated 18×, linter file-dumps) accumulated unbounded, consuming up to ~25% of a 60–80K dispatch window and confusing non-Claude models (e.g. ornith/gemma) into hallucinating or dropping tool calls mid-turn. A new `strip_harness_noise` stage (first in both the heuristic and structural curation pipelines) drops a system message only when it (1) matches a known harness pattern or (2) is a verbatim duplicate of an earlier system message. Fail-safe: unrecognized, non-duplicate system messages and all non-system roles pass through untouched.
+
+### Added
+
+- `llm.context_curation.harness_noise_strip` (default `true`) and `llm.context_curation.harness_noise_patterns` (default: Claude Code task-nag and linter file-dump markers). The pattern list is a plain substring array designed to grow as new harness injections are identified.
+
+### Internal
+
+- Guarded four `String#include?` substring checks (`structured_output`, `classification`, `inventory`, `curator`) with `# rubocop:disable Style/ArrayIntersect`. The cop's autocorrect rewrites `array.any? { |x| str.include?(x) }` to `array.intersect?(str)`, which raises `TypeError` on a String argument — a latent trap for `rubocop -A`.
+
+## [0.14.13] - 2026-07-09
+
+### Fixed
+
+- **Leaked chat-template tool-call tokens are synthesized into real tool calls (native_tool_loop pattern 4).** Some models (observed live with gemma served via vLLM; ledger rows 337049/337111/337145/337174) emit tool-call intent as a raw literal token in the response content instead of the structured `tool_calls` field: `<|tool_call>call:NAME{key:<|"|>value<|"|>,...}<tool_call|>` (where `<|"|>` is the string delimiter). Without synthesis the token reached the client verbatim — a "tool call" printed as text with nothing executed. `maybe_synthesize_tool_call_from_content` now recognizes this as a fourth format (after forced-choice JSON, Qwen tag markup, and Qwen single-tag): it parses the token via a scan-based parser (values terminated only by `<|"|>`, so embedded regular quotes and newlines in e.g. browser `code:` args survive — a gsub-to-quotes + JSON.parse approach breaks on those), validates the tool name against `native_dispatch_tools`, supports multiple tokens in one blob, and lets the executor run the tool server-side. Covered by unit specs (captured-verbatim ledger strings) and an in-process matrix scenario asserting all three client formats never surface the raw markers.
+
+## [0.14.12] - 2026-07-09
+
+### Fixed
+
+- **BYOK model discovery returns 200 for passthrough models.** Clients like GitHub Copilot validate model availability via `GET /v1/models/:id` before sending inference requests. Previously returned 404 for models not in Inventory (e.g. `copilot-utility-small`), even though the daemon auto-routes them successfully. Now returns a synthetic model object for models listed in `llm.routing.model_passthrough_ids`.
+
+### Added
+
+- `llm.routing.model_passthrough_ids` setting (default: `["copilot-utility-small"]`). Models in this list get dedicated `/v1/models/<id>` routes that return a synthetic model object backed by the best available lane's limits. Configurable for additional BYOK client model names.
+
+## [0.14.11] - 2026-07-03
+
+### Fixed
+
+- **Routing token estimate now measures the payload dispatch actually sends (one oracle).** `estimate_request_tokens` walks canonical structs/content blocks via `ContextAccounting` instead of a naive `m[:content].to_s` shadow estimator (which read structured content — the shape Claude Code sends — as near-zero), and now counts the *injected* system prompt (baseline + RAG + skills + prior history) and the *full dispatch tool catalog* (special + client + registry), not just `@request.tools`. Fixes small-context local lanes passing the router's context-window filter then overflowing with `ContextOverflow` at dispatch.
+- **Routing estimates the lane-independent-reduced message set.** Extracted a pure `reduce_messages_for_dispatch` (empty-assistant prune + leading-thinking strip + oversized-tool-result trim) so routing measures exactly what `native_dispatch_messages` puts on the wire, minus the lane-dependent `enforce_context_window` compaction (correctly excluded — the lane isn't chosen yet).
+- **History double-send eliminated.** For a client-managed conversation (e.g. Claude Code) the client resends the full history in `@request.messages` every turn; `step_context_load` also injected the server-stored copy as "Prior conversation history" system text — sending the same turns to the provider twice (real tokens, real cost, real context pressure). `reject_client_resent_history` now drops stored turns the client already re-sent, matched by `(role, content-text)` fingerprint, while still injecting the prior turns a server-managed client omitted.
+- **Router/dispatch context-window agreement.** New `llm.routing.context_headroom` (default `0.90`) applies the same headroom the dispatch budget guard uses, so a lane the router picks must still clear `RouteAttempts#enforce_final_context_budget!`.
+- `token_budget` step now shares the same `ContextAccounting` estimator as the router filter and dispatch guard.
+
 ## [0.14.10] - 2026-06-26
 
 ### Fixed

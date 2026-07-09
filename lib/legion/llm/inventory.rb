@@ -206,6 +206,9 @@ module Legion
 
           # Whitelist takes precedence over blacklist (M2).  Substring match —
           # a model is denied if NO whitelist pattern is contained in its name.
+          # rubocop:disable Style/ArrayIntersect -- substring checks (patterns
+          # `include?`d in the model name), NOT array intersection; `intersect?`
+          # raises TypeError on the String arg.
           if sets[:whitelist]
             return true if sets[:whitelist].none? { |p| model.include?(p) }
 
@@ -213,6 +216,7 @@ module Legion
           end
 
           sets[:blacklist]&.any? { |p| model.include?(p) } || false
+          # rubocop:enable Style/ArrayIntersect
         end
 
         # Specificity cascade — same precedence as lex-llm Provider#model_whitelist:

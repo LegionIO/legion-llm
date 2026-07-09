@@ -220,9 +220,18 @@ module Legion
           # Used by Inventory.write_lane to compute lane_weight = tier_w * provider_w * instance_w * model_w * health_mult.
           tier_weights:               { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
           max_attempts:               3,
+          # Fraction of a lane's context_window the router treats as usable when
+          # applying the estimated_context hard filter. A lane is excluded when
+          # estimated_context >= context_window * context_headroom. Mirrors the
+          # dispatch-time headroom (context_curation.context_window_threshold and
+          # RouteAttempts#enforce_final_context_budget!'s 0.90) so routing and
+          # dispatch agree on what "fits" — a lane the router picks must still
+          # clear the pre-dispatch budget guard. 1.0 disables headroom.
+          context_headroom:           0.90,
           # Body-level routing hints are gated by this flag. Auto-routing aliases
           # like legionio/auto are still accepted as "you pick" intent.
           allow_body_routing_hints:   false,
+          model_passthrough_ids:      %w[copilot-utility-small],
           auto_routing_model_aliases: %w[legionio auto],
           default_intent:             { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
           # Last-resort fallback model when both `default_model` and the
@@ -409,6 +418,23 @@ module Legion
           superseded_eviction:      true,
           dedup_enabled:            true,
           dedup_threshold:          0.85,
+          # Strip client-harness noise that accumulates unbounded in the
+          # mid-conversation system role (Claude Code task nags, linter file
+          # dumps, etc.). See GH#168. Two mechanisms, both system-role only:
+          #   1. exact-dedup: a verbatim-duplicate system message is dropped
+          #      (the first occurrence is kept).
+          #   2. pattern strip: a system message whose content matches any
+          #      substring in harness_noise_patterns is dropped entirely.
+          # Fail-safe: an unrecognized, non-duplicate system message is never
+          # touched. The pattern list is designed to grow over time as new
+          # harness injections are identified.
+          harness_noise_strip:      true,
+          harness_noise_patterns:   [
+            # Claude Code "task tools haven't been used recently" nag.
+            "task tools haven't been used recently",
+            # Claude Code linter/formatter file-dump note.
+            'was modified, either by the user or by a linter'
+          ],
           target_context_tokens:    60_000,
           context_window_threshold: 0.90,
           archive_dropped_turns:    true,

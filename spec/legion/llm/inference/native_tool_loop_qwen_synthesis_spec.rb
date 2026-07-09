@@ -156,4 +156,83 @@ RSpec.describe 'NativeToolLoop qwen markup tool synthesis' do
       expect(synthesized.first[:arguments]).to eq('command' => 'ls -la')
     end
   end
+
+  # Pattern 4: leaked chat-template tool-call token. Some model chat templates
+  # (observed live with gemma served via vLLM; ledger rows 337049/337111/337145/
+  # 337174, 2026-07) emit tool-call intent as a RAW LITERAL TOKEN in content
+  # instead of the structured tool_calls field:
+  #
+  #   <|tool_call>call:NAME{key:<|"|>value<|"|>,key2:<|"|>value2<|"|>}<tool_call|>
+  #
+  # <|"|> is the string delimiter. Without synthesis this token reaches the
+  # client verbatim (a "tool call" printed as text, nothing executed). The
+  # strings below are captured verbatim from the ledger.
+  describe 'leaked chat-template token synthesis (captured live from gemma/vLLM)' do
+    let(:browser_tool_hash) do
+      {
+        name:        'browser',
+        description: 'Drive a headless browser',
+        parameters:  {
+          type:       'object',
+          properties: { action: { type: 'string' }, code: { type: 'string' }, name: { type: 'string' } },
+          required:   ['action']
+        }
+      }
+    end
+
+    it 'synthesizes a single-arg leaked bash token (ledger row 337111)' do
+      result = canonical_response_with('<|tool_call>call:bash{command:<|"|>rtk lsof -i :6767<|"|>}<tool_call|>')
+
+      synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
+
+      expect(synthesized.size).to eq(1)
+      expect(synthesized.first[:name]).to eq('bash')
+      expect(synthesized.first[:arguments]).to eq('command' => 'rtk lsof -i :6767')
+      expect(synthesized.first[:id]).to start_with('call_')
+    end
+
+    it 'synthesizes a multi-arg leaked bash token (ledger row 337174)' do
+      result = canonical_response_with(
+        '<|tool_call>call:bash{command:<|"|>./update_repos.sh<|"|>,description:<|"|>Run the automation script<|"|>}<tool_call|>'
+      )
+
+      synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
+
+      expect(synthesized.size).to eq(1)
+      expect(synthesized.first[:name]).to eq('bash')
+      expect(synthesized.first[:arguments]).to eq(
+        'command' => './update_repos.sh', 'description' => 'Run the automation script'
+      )
+    end
+
+    it 'handles values with embedded quotes and newlines (browser code, ledger row 337145)' do
+      host.native_dispatch_tools_value = { browser: browser_tool_hash }
+      # The `code` value contains regular double-quotes and \n — this is where a
+      # gsub-then-parse-as-object approach breaks; the scan-based parser must not.
+      result = canonical_response_with(
+        %(<|tool_call>call:browser{action:<|"|>run<|"|>,code:<|"|>await tab.goto('https://x.com');\nconst c = "y";\nreturn c;<|"|>,name:<|"|>paseo_repo<|"|>}<tool_call|>)
+      )
+
+      synthesized = host.maybe_synthesize_tool_call_from_content(result, 0)
+
+      expect(synthesized.size).to eq(1)
+      expect(synthesized.first[:name]).to eq('browser')
+      expect(synthesized.first[:arguments]['action']).to eq('run')
+      expect(synthesized.first[:arguments]['name']).to eq('paseo_repo')
+      expect(synthesized.first[:arguments]['code']).to include(%(const c = "y";))
+      expect(synthesized.first[:arguments]['code']).to include("\n")
+    end
+
+    it 'returns [] when the leaked tool name is not in native_dispatch_tools' do
+      result = canonical_response_with('<|tool_call>call:unknown_tool{command:<|"|>ls<|"|>}<tool_call|>')
+
+      expect(host.maybe_synthesize_tool_call_from_content(result, 0)).to eq([])
+    end
+
+    it 'does not fire on plain narrative text that merely mentions a tool' do
+      result = canonical_response_with('I will run bash to list files.')
+
+      expect(host.maybe_synthesize_tool_call_from_content(result, 0)).to eq([])
+    end
+  end
 end

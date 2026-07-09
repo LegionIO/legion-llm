@@ -22,6 +22,18 @@ module Legion
           \s*<tool_use_value>(?<value>[^<]*)</tool_use_value>
         }mx
 
+        # Leaked chat-template tool-call token some models (e.g. gemma via vLLM)
+        # emit as literal text instead of the structured tool_calls field. One
+        # block per tool call; captured live from the ledger (2026-07):
+        #   <|tool_call>call:NAME{key:<|"|>value<|"|>,key2:<|"|>value2<|"|>}<tool_call|>
+        # LEAKED_TOKEN_RE captures NAME + the raw {..} body; LEAKED_TOKEN_ARG_RE
+        # walks the body as key:<|"|>value<|"|> pairs. The value capture is
+        # non-greedy and terminated only by the <|"|> delimiter, so embedded
+        # regular quotes and newlines (common in browser `code:` args) survive —
+        # a gsub-to-quotes + parse-as-object approach would break on those.
+        LEAKED_TOKEN_RE     = /<\|tool_call>call:(?<name>[^{]+?)(?<body>\{.*?\})<tool_call\|>/m
+        LEAKED_TOKEN_ARG_RE = /(?<key>\w+):<\|"\|>(?<value>.*?)<\|"\|>/m
+
         private
 
         def execute_native_tool_loop
@@ -337,7 +349,7 @@ module Legion
         # When the provider's response carries tool-call intent in plain text
         # rather than the structured tool_calls field, synthesize a structured
         # tool call so downstream translators emit the correct client-native
-        # shape. Three formats are recognized (in order):
+        # shape. Four formats are recognized (in order):
         #   1. forced-choice JSON args (vLLM with tool_choice forcing a tool):
         #      result text starts with `{"` and parses to a Hash.
         #   2. Qwen tag markup (no forced choice required):
@@ -346,6 +358,9 @@ module Legion
         #   3. Qwen single-tag form (live capture from qwen3.6-27b 2026-06):
         #      <TOOL>arg-string</TOOL> — only synthesizable when the named
         #      tool's schema declares a single required string param.
+        #   4. Leaked chat-template token (gemma via vLLM, live capture 2026-07):
+        #      <|tool_call>call:NAME{key:<|"|>value<|"|>,...}<tool_call|>
+        #      The named tool must be in native_dispatch_tools.
         #
         # NONDETERMINISM NOTE: qwen3.6-27b also frequently emits plain
         # narrative text (e.g. "Running `ls -la`...") with NO recoverable
@@ -364,7 +379,33 @@ module Legion
           markup = synthesize_qwen_markup_tool_call(text, round)
           return markup if markup.any?
 
-          synthesize_qwen_single_tag_tool_call(text, round)
+          single_tag = synthesize_qwen_single_tag_tool_call(text, round)
+          return single_tag if single_tag.any?
+
+          synthesize_leaked_token_tool_call(text, round)
+        end
+
+        # Pattern 4. Parse leaked chat-template tokens
+        # (<|tool_call>call:NAME{key:<|"|>value<|"|>,...}<tool_call|>) into
+        # structured tool calls. Supports multiple tokens in one blob. Only
+        # synthesizes calls whose NAME is a known native tool; unknown names are
+        # skipped (the response surfaces as text). Arguments are always strings —
+        # that is all the token encodes.
+        def synthesize_leaked_token_tool_call(text, round)
+          synthesized = text.scan(LEAKED_TOKEN_RE).filter_map do |name, body|
+            name = name.to_s.strip
+            next if name.empty? || lookup_native_tool_definition(name).nil?
+
+            arguments = body.to_s.scan(LEAKED_TOKEN_ARG_RE).each_with_object({}) do |(key, value), acc|
+              acc[key.to_s.strip] = value.to_s
+            end
+            { id: "call_#{SecureRandom.hex(10)}", name: name, arguments: arguments }
+          end
+          return [] if synthesized.empty?
+
+          log.info "[llm][native_tool_loop] action=synthesized_tool_call source=leaked_token round=#{round} " \
+                   "count=#{synthesized.size} tools=#{synthesized.map { |s| s[:name] }.join(',')}"
+          synthesized
         end
 
         def synthesize_forced_choice_tool_call(text, round)
