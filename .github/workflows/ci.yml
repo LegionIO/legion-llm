@@ -9,6 +9,8 @@ on:
 jobs:
   ci:
     uses: LegionIO/.github/.github/workflows/ci.yml@main
+    with:
+      ruby-versions: '["3.4", "4.0.5"]'
 
   lint:
     uses: LegionIO/.github/.github/workflows/lint-patterns.yml@main
