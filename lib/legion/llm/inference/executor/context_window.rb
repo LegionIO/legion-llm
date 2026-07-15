@@ -17,6 +17,11 @@ module Legion
               messages = messages.reject { |m| empty_assistant_message?(m) }
             end
             messages = strip_thinking_from_history(messages)
+            post_thinking_rejected = messages.count { |m| empty_assistant_message?(m) }
+            if post_thinking_rejected.positive?
+              log.warn "[llm][executor] action=strip_empty_assistants_post_thinking request_id=#{@request.id} removed=#{post_thinking_rejected}"
+              messages = messages.reject { |m| empty_assistant_message?(m) }
+            end
             messages = trim_oversized_tool_results(messages)
             enforce_context_window(messages)
           end
