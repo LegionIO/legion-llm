@@ -401,11 +401,18 @@ module Legion
 
             def on_server_tool_result(block_index:, tool_call_id:, result_text:)
               _ = block_index
-              _ = tool_call_id
-              _ = result_text
-              # /v1/responses doesn't expose server tool results inline today —
-              # the function_call output item carries id/args; result is part
-              # of the assistant message that follows on the next turn.
+              idx = @output_items.length
+              item = { id: "fco_#{tool_call_id}", type: 'function_call_output',
+                       call_id: tool_call_id, output: result_text.to_s, status: 'completed' }
+              @output_items << item
+              emit('response.output_item.added', {
+                     type: 'response.output_item.added', sequence_number: next_seq,
+                     output_index: idx, item: item
+                   })
+              emit('response.output_item.done', {
+                     type: 'response.output_item.done', sequence_number: next_seq,
+                     output_index: idx, item: item
+                   })
             end
 
             def on_keep_alive

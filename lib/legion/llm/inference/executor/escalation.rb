@@ -170,12 +170,12 @@ module Legion
           end
 
           def pipeline_escalation_enabled?
-            esc = Legion::Settings[:llm].dig(:routing, :escalation) || {}
+            esc = Legion::Settings[:llm][:routing][:escalation]
             esc[:enabled] == true && esc[:pipeline_enabled] == true
           end
 
           def pipeline_escalation_max_attempts
-            esc = Legion::Settings[:llm].dig(:routing, :escalation) || {}
+            esc = Legion::Settings[:llm][:routing][:escalation]
             esc[:max_attempts] || 3
           end
 

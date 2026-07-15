@@ -31,10 +31,9 @@ RSpec.describe 'Legion::LLM.chat router integration' do
     allow(Legion::LLM::Discovery).to receive(:model_size).and_return(nil)
     allow(Legion::LLM::Discovery::System).to receive(:available_memory_mb).and_return(65_536)
 
-    Legion::Settings[:llm][:routing] = {
-      enabled: true,
-      rules:   sample_rules
-    }
+    Legion::Settings[:llm][:routing][:enabled] = true
+    Legion::Settings[:llm][:routing][:rules] = sample_rules
+    Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
     Legion::Settings[:llm][:default_provider] = :ollama
     Legion::Settings[:llm][:default_model] = 'qwen3:7b'
   end
@@ -69,7 +68,8 @@ RSpec.describe 'Legion::LLM.chat router integration' do
 
   describe 'routing disabled' do
     before do
-      Legion::Settings[:llm][:routing] = { enabled: false, rules: sample_rules }
+      Legion::Settings[:llm][:routing][:enabled] = false
+      Legion::Settings[:llm][:routing][:rules] = sample_rules
     end
 
     it 'ignores intent and falls through to defaults without routing the call' do

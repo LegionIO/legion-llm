@@ -1,5 +1,15 @@
 # Legion LLM Changelog
 
+## [0.14.16] - 2026-07-14
+
+### Fixed
+
+- **Server tool results are now visible to Claude and Codex streaming clients.** When the daemon executes a LegionIO tool server-side during the streaming tool loop, the result must reach the client in a format its SDK can parse. Two bugs prevented this:
+  - **Anthropic Messages (`/v1/messages`):** The `server_tool_result` SSE emitted `content: []` in `content_block_start` and put the actual result in a `content_block_delta` with `delta.type = "content_block_delta"` — a type the Anthropic TypeScript/Python SDK does not process. The client saw an empty result block. Fixed: result content is now placed directly in the `content_block_start` event; no unrecognized delta needed.
+  - **OpenAI Responses (`/v1/responses`):** The `on_server_tool_result` emitter was a no-op — tool results were silently discarded. Codex saw `function_call` items with no matching `function_call_output`. Fixed: emits a proper `response.output_item.added` + `response.output_item.done` pair with `type: "function_call_output"`, `call_id`, and the result text.
+
+- **Empty assistant messages left after thinking extraction are now stripped.** `strip_thinking_from_history` can leave behind assistant messages with no content and no tool_calls (the thinking was their only payload). These empty messages confused some providers. A second `empty_assistant_message?` pass now runs after thinking stripping.
+
 ## [0.14.15] - 2026-07-09
 
 ### Fixed

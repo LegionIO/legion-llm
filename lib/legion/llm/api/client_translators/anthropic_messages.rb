@@ -292,12 +292,8 @@ module Legion
               emit('content_block_start', {
                      type:          'content_block_start',
                      index:         block_index,
-                     content_block: { type: 'server_tool_result', id: tool_call_id, content: [] }
-                   })
-              emit('content_block_delta', {
-                     type:  'content_block_delta',
-                     index: block_index,
-                     delta: { type: 'content_block_delta', content: [{ type: 'text', text: result_text }] }
+                     content_block: { type: 'server_tool_result', id: tool_call_id,
+                                      content: [{ type: 'text', text: result_text }] }
                    })
               emit('content_block_stop', { type: 'content_block_stop', index: block_index })
             end
