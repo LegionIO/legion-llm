@@ -103,10 +103,8 @@ RSpec.describe Legion::LLM::Prompt do
         allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
         Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
-        Legion::Settings.set_prop(:llm, {
-                                    default_provider: 'anthropic',
-                                    default_model:    'claude-sonnet-4-6'
-                                  })
+        Legion::Settings[:llm][:default_provider] = 'anthropic'
+        Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
       end
 
       it 'falls back to configured default_provider and default_model' do
@@ -171,18 +169,16 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'with real Router.resolve (no stub) — validates call-site keyword compatibility' do
       before do
-        Legion::Settings[:llm][:routing] = {
-          enabled:        true,
-          default_intent: { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
-          rules:          [
-            {
-              name:     'test-cloud-rule',
-              when:     { effort: 'moderate' },
-              then:     { tier: 'cloud', provider: 'anthropic', model: 'claude-sonnet-4-6' },
-              priority: 10
-            }
-          ]
-        }
+        Legion::Settings[:llm][:routing][:enabled] = true
+        Legion::Settings[:llm][:routing][:default_intent] = { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' }
+        Legion::Settings[:llm][:routing][:rules] = [
+          {
+            name:     'test-cloud-rule',
+            when:     { effort: 'moderate' },
+            then:     { tier: 'cloud', provider: 'anthropic', model: 'claude-sonnet-4-6' },
+            priority: 10
+          }
+        ]
         Legion::LLM::Router.reset!
         Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :cloud)
