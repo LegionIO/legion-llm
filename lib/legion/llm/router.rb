@@ -76,7 +76,9 @@ module Legion
 
           return nil if eligible.empty?
 
-          eligible
+          pool = range_sieve(eligible: eligible, estimated_context: estimated_context)
+
+          pool
             .group_by { |lane| lane[:lane_weight] }
             .max_by { |weight, _| weight }
             .last
@@ -189,6 +191,30 @@ module Legion
         end
 
         private
+
+        def range_sieve(eligible:, estimated_context:)
+          return eligible if estimated_context.nil?
+
+          specific, generalist = eligible.partition { |lane| lane_has_range?(lane) }
+          matched = specific.select { |lane| lane_in_range?(lane: lane, estimated_context: estimated_context) }
+
+          return matched unless matched.empty?
+          return generalist unless generalist.empty?
+
+          eligible
+        end
+
+        def lane_has_range?(lane)
+          !lane[:preferred_min_context_tokens].nil? || !lane[:preferred_max_context_tokens].nil?
+        end
+
+        def lane_in_range?(lane:, estimated_context:)
+          lower = (lane[:preferred_min_context_tokens] || 0).to_i
+          upper = lane[:preferred_max_context_tokens]
+          upper = upper ? upper.to_i : Float::INFINITY
+
+          estimated_context >= lower && estimated_context < upper
+        end
 
         def lane_passes_hard_filters?(lane:, type:, tiers:, providers:, instances:, models:,
                                       capabilities:, thinking:, privacy:, estimated_context:, **)

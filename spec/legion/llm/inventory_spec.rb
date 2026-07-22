@@ -220,4 +220,79 @@ RSpec.describe Legion::LLM::Inventory do
                                  })
     end.to raise_error(Legion::LLM::InvalidLane)
   end
+
+  describe 'lane range enrichment via instance settings' do
+    let(:base_extensions_llm) { Legion::Settings.dig(:extensions, :llm) || {} }
+
+    after do
+      Legion::Settings.set_prop(:extensions, Legion::Settings[:extensions].merge(llm: base_extensions_llm))
+    end
+
+    def set_vllm_instance_settings(instance_id, cfg)
+      existing = Legion::Settings.dig(:extensions, :llm) || {}
+      vllm_cfg = (existing[:vllm] || {}).dup
+      instances = (vllm_cfg[:instances] || {}).dup
+      instances[instance_id] = cfg
+      vllm_cfg[:instances] = instances
+      Legion::Settings.set_prop(:extensions, Legion::Settings[:extensions].merge(
+                                               llm: existing.merge(vllm: vllm_cfg)
+                                             ))
+    end
+
+    it 'enriches a lane with preferred_min/max_context_tokens from instance settings' do
+      set_vllm_instance_settings(:helios_a,
+                                 weight:                       100,
+                                 preferred_min_context_tokens: 32_000,
+                                 preferred_max_context_tokens: 262_000)
+
+      lane = write_lane(provider: :vllm, model: 'qwen', type: :inference,
+                        tier: :direct, instance: :helios_a, limits: { context_window: 262_000 })
+
+      expect(lane[:preferred_min_context_tokens]).to eq(32_000)
+      expect(lane[:preferred_max_context_tokens]).to eq(262_000)
+    end
+
+    it 'leaves the lane untouched when no range keys are in instance settings' do
+      set_vllm_instance_settings(:apollo, weight: 100)
+
+      lane = write_lane(provider: :vllm, model: 'qwen', type: :inference,
+                        tier: :direct, instance: :apollo, limits: { context_window: 16_000 })
+
+      expect(lane).not_to have_key(:preferred_min_context_tokens)
+      expect(lane).not_to have_key(:preferred_max_context_tokens)
+    end
+
+    it 'leaves the lane untouched when the provider has no instances key' do
+      existing = Legion::Settings.dig(:extensions, :llm) || {}
+      Legion::Settings.set_prop(:extensions, Legion::Settings[:extensions].merge(
+                                               llm: existing.merge(vllm: { weight: 100 })
+                                             ))
+
+      lane = write_lane(provider: :vllm, model: 'qwen', type: :inference,
+                        tier: :direct, instance: :default, limits: { context_window: 16_000 })
+
+      expect(lane).not_to have_key(:preferred_min_context_tokens)
+      expect(lane).not_to have_key(:preferred_max_context_tokens)
+    end
+
+    it 'leaves the lane untouched when the provider has no settings at all' do
+      lane = write_lane(provider: :vllm, model: 'qwen', type: :inference,
+                        tier: :direct, instance: :unknown, limits: { context_window: 16_000 })
+
+      expect(lane).not_to have_key(:preferred_min_context_tokens)
+      expect(lane).not_to have_key(:preferred_max_context_tokens)
+    end
+
+    it 'enriches only min when only min is configured' do
+      set_vllm_instance_settings(:bigbox,
+                                 weight:                       100,
+                                 preferred_min_context_tokens: 50_000)
+
+      lane = write_lane(provider: :vllm, model: 'qwen', type: :inference,
+                        tier: :direct, instance: :bigbox, limits: { context_window: 262_000 })
+
+      expect(lane[:preferred_min_context_tokens]).to eq(50_000)
+      expect(lane).not_to have_key(:preferred_max_context_tokens)
+    end
+  end
 end

@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.14.17] - 2026-07-22
+
+### Added
+- Physical Binning (SSoT v2): Router Range Sieve steers requests to hardware based on workload size
+  - 3-tier priority: specific range match → generalist → full eligible fallback
+  - Boundaries are lower-inclusive, upper-exclusive (`[min, max)`)
+  - Escalation drains each tier naturally via `tried_lanes`
+- Inventory lane enrichment: `preferred_min_context_tokens` / `preferred_max_context_tokens` injected from instance settings
+  - Works for ALL providers automatically (same settings path as instance weights)
+  - Settings path: `settings[:extensions][:llm][provider][:instances][id][:preferred_min/max_context_tokens]`
+
 ## [0.14.16] - 2026-07-14
 
 ### Fixed
