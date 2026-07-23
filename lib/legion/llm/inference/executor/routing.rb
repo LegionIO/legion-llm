@@ -311,8 +311,7 @@ module Legion
 
           def native_tools_requested_for_routing?
             Array(@request.tools).any? ||
-              requested_deferred_tool_names.any? ||
-              @triggered_tools.any?
+              requested_deferred_tool_names.any?
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.routing_tools_required')
             false
