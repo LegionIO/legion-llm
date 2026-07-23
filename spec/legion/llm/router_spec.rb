@@ -192,4 +192,196 @@ RSpec.describe Legion::LLM::Router do
       expect(described_class::TIER_EXTERNAL).to eq(Set[:cloud, :frontier])
     end
   end
+
+  describe '.request_lane range sieve' do
+    let(:rng) { Random.new(42) }
+
+    let(:v100_lane) do
+      { id: 'direct:vllm:v100:inference:qwen', tier: :direct, provider_family: :vllm,
+        instance_id: :v100, model: 'qwen', type: :inference, lane_weight: 100,
+        capabilities: [:completion], limits: { context_window: 16_000 },
+        preferred_min_context_tokens: 0, preferred_max_context_tokens: 250 }
+    end
+
+    let(:h200_lane) do
+      { id: 'direct:vllm:h200:inference:qwen', tier: :direct, provider_family: :vllm,
+        instance_id: :h200, model: 'qwen', type: :inference, lane_weight: 100,
+        capabilities: [:completion], limits: { context_window: 262_000 },
+        preferred_min_context_tokens: 250, preferred_max_context_tokens: 32_000 }
+    end
+
+    let(:mi355x_lane) do
+      { id: 'direct:vllm:mi355x:inference:qwen', tier: :direct, provider_family: :vllm,
+        instance_id: :mi355x, model: 'qwen', type: :inference, lane_weight: 100,
+        capabilities: [:completion], limits: { context_window: 262_000 },
+        preferred_min_context_tokens: 32_000, preferred_max_context_tokens: 262_000 }
+    end
+
+    let(:generalist_lane) do
+      { id: 'direct:vllm:generalist:inference:qwen', tier: :direct, provider_family: :vllm,
+        instance_id: :generalist, model: 'qwen', type: :inference, lane_weight: 100,
+        capabilities: [:completion], limits: { context_window: 262_000 } }
+    end
+
+    before do
+      allow(Legion::LLM::Inventory).to receive(:lanes).and_return(
+        [v100_lane, h200_lane, mi355x_lane, generalist_lane]
+      )
+    end
+
+    context 'specific range matching' do
+      it 'routes small context to V100 sweet spot' do
+        result = described_class.request_lane(type: :inference, estimated_context: 200, rng: rng)
+        expect(result[:instance_id]).to eq(:v100)
+      end
+
+      it 'routes medium context to H200 sweet spot' do
+        result = described_class.request_lane(type: :inference, estimated_context: 10_000, rng: rng)
+        expect(result[:instance_id]).to eq(:h200)
+      end
+
+      it 'routes large context to MI355X sweet spot' do
+        result = described_class.request_lane(type: :inference, estimated_context: 100_000, rng: rng)
+        expect(result[:instance_id]).to eq(:mi355x)
+      end
+
+      it 'uses lower-inclusive upper-exclusive boundaries' do
+        result = described_class.request_lane(type: :inference, estimated_context: 250, rng: rng)
+        expect(result[:instance_id]).to eq(:h200)
+      end
+
+      it 'prefers higher-weight lane within the specific match pool' do
+        heavy_h200 = h200_lane.merge(lane_weight: 200)
+        allow(Legion::LLM::Inventory).to receive(:lanes).and_return([v100_lane, heavy_h200, mi355x_lane])
+        result = described_class.request_lane(type: :inference, estimated_context: 10_000, rng: rng)
+        expect(result[:instance_id]).to eq(:h200)
+      end
+    end
+
+    context 'generalist fallback' do
+      it 'uses generalist when no specific range matches' do
+        lanes_with_gap = [
+          v100_lane.merge(preferred_min_context_tokens: 0, preferred_max_context_tokens: 100),
+          h200_lane.merge(preferred_min_context_tokens: 500, preferred_max_context_tokens: 1000),
+          generalist_lane
+        ]
+        allow(Legion::LLM::Inventory).to receive(:lanes).and_return(lanes_with_gap)
+        result = described_class.request_lane(type: :inference, estimated_context: 200, rng: rng)
+        expect(result[:instance_id]).to eq(:generalist)
+      end
+
+      it 'does NOT include generalist in specific pool when specific matches exist' do
+        allow(Legion::LLM::Inventory).to receive(:lanes).and_return(
+          [v100_lane, generalist_lane.merge(lane_weight: 999)]
+        )
+        result = described_class.request_lane(type: :inference, estimated_context: 100, rng: rng)
+        expect(result[:instance_id]).to eq(:v100)
+      end
+    end
+
+    context 'full eligible fallback' do
+      it 'falls back to full eligible set when no specific match and no generalists' do
+        lanes_all_specific = [
+          v100_lane.merge(preferred_min_context_tokens: 0, preferred_max_context_tokens: 50),
+          h200_lane.merge(preferred_min_context_tokens: 500, preferred_max_context_tokens: 1000)
+        ]
+        allow(Legion::LLM::Inventory).to receive(:lanes).and_return(lanes_all_specific)
+        result = described_class.request_lane(type: :inference, estimated_context: 200, rng: rng)
+        expect(result).not_to be_nil
+      end
+    end
+
+    context 'escalation via tried_lanes' do
+      it 'drains specific pool then spills to generalist' do
+        allow(Legion::LLM::Inventory).to receive(:lanes).and_return([v100_lane, generalist_lane])
+        first = described_class.request_lane(type: :inference, estimated_context: 100, rng: rng)
+        expect(first[:instance_id]).to eq(:v100)
+
+        second = described_class.request_lane(
+          type: :inference, estimated_context: 100, tried_lanes: [v100_lane[:id]], rng: rng
+        )
+        expect(second[:instance_id]).to eq(:generalist)
+      end
+
+      it 'drains generalist then spills to full eligible' do
+        specific_only = v100_lane.merge(
+          id: 'direct:vllm:other:inference:qwen', instance_id: :other,
+          preferred_min_context_tokens: 500, preferred_max_context_tokens: 1000
+        )
+        allow(Legion::LLM::Inventory).to receive(:lanes).and_return([specific_only, generalist_lane])
+        first = described_class.request_lane(type: :inference, estimated_context: 200, rng: rng)
+        expect(first[:instance_id]).to eq(:generalist)
+
+        second = described_class.request_lane(
+          type: :inference, estimated_context: 200, tried_lanes: [generalist_lane[:id]], rng: rng
+        )
+        expect(second[:instance_id]).to eq(:other)
+      end
+    end
+
+    context 'nil estimated_context' do
+      it 'skips range sieve entirely' do
+        result = described_class.request_lane(type: :inference, estimated_context: nil, rng: rng)
+        expect(result).not_to be_nil
+      end
+    end
+
+    context 'integration with full fleet' do
+      let(:fleet_lanes) do
+        [
+          { id: 'direct:vllm:apollo:inference:qwen', tier: :direct, provider_family: :vllm,
+            instance_id: :apollo, model: 'qwen', type: :inference, lane_weight: 100,
+            capabilities: [:completion], limits: { context_window: 16_000 },
+            preferred_min_context_tokens: 0, preferred_max_context_tokens: 250 },
+          { id: 'direct:vllm:h200:inference:qwen', tier: :direct, provider_family: :vllm,
+            instance_id: :h200, model: 'qwen', type: :inference, lane_weight: 100,
+            capabilities: [:completion], limits: { context_window: 262_000 },
+            preferred_min_context_tokens: 250, preferred_max_context_tokens: 32_000 },
+          { id: 'direct:vllm:helios_a:inference:qwen', tier: :direct, provider_family: :vllm,
+            instance_id: :helios_a, model: 'qwen', type: :inference, lane_weight: 100,
+            capabilities: [:completion], limits: { context_window: 262_000 },
+            preferred_min_context_tokens: 32_000, preferred_max_context_tokens: 262_000 },
+          { id: 'cloud:anthropic:default:inference:claude', tier: :cloud, provider_family: :anthropic,
+            instance_id: :default, model: 'claude', type: :inference, lane_weight: 80,
+            capabilities: %i[completion thinking], limits: { context_window: 200_000 } }
+        ]
+      end
+
+      before do
+        allow(Legion::LLM::Inventory).to receive(:lanes).and_return(fleet_lanes)
+      end
+
+      it 'routes GAIA tick to apollo' do
+        result = described_class.request_lane(type: :inference, estimated_context: 100, rng: rng)
+        expect(result[:instance_id]).to eq(:apollo)
+      end
+
+      it 'routes standard user prompt to H200' do
+        result = described_class.request_lane(type: :inference, estimated_context: 5_000, rng: rng)
+        expect(result[:instance_id]).to eq(:h200)
+      end
+
+      it 'routes heavy context to helios MI355X' do
+        result = described_class.request_lane(type: :inference, estimated_context: 80_000, rng: rng)
+        expect(result[:instance_id]).to eq(:helios_a)
+      end
+
+      it 'anthropic generalist used when all vllm lanes tried' do
+        tried = fleet_lanes.select { |l| l[:provider_family] == :vllm }.map { |l| l[:id] }
+        result = described_class.request_lane(
+          type: :inference, estimated_context: 5_000, tried_lanes: tried, rng: rng
+        )
+        expect(result[:instance_id]).to eq(:default)
+        expect(result[:provider_family]).to eq(:anthropic)
+      end
+
+      it 'returns nil when all lanes exhausted' do
+        tried = fleet_lanes.map { |l| l[:id] }
+        result = described_class.request_lane(
+          type: :inference, estimated_context: 5_000, tried_lanes: tried, rng: rng
+        )
+        expect(result).to be_nil
+      end
+    end
+  end
 end

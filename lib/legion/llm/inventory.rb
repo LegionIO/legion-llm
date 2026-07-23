@@ -25,6 +25,8 @@ module Legion
           validate_lane!(lane: lane)
           return policy_skip(lane: lane) if policy_denied?(lane: lane)
 
+          lane = enrich_lane_range(lane: lane)
+
           existing = live_map[lane[:id]]
           resolved_health = if health == :preserve
                               existing&.dig(:health) || default_health
@@ -178,6 +180,26 @@ module Legion
                         end
           health_mult = -1.0 if health[:denied] && health_mult.positive?
           (base * health_mult).to_i
+        end
+
+        def enrich_lane_range(lane:)
+          provider_settings = Legion::Settings.dig(:extensions, :llm, lane[:provider_family].to_sym)
+          return lane unless provider_settings.is_a?(Hash)
+
+          instances = provider_settings[:instances]
+          return lane unless instances.is_a?(Hash)
+
+          inst_cfg = instances[lane[:instance_id]] || instances[lane[:instance_id]&.to_sym]
+          return lane unless inst_cfg.is_a?(Hash)
+
+          min_val = inst_cfg[:preferred_min_context_tokens]
+          max_val = inst_cfg[:preferred_max_context_tokens]
+          return lane if min_val.nil? && max_val.nil?
+
+          enriched = lane.dup
+          enriched[:preferred_min_context_tokens] = min_val if min_val
+          enriched[:preferred_max_context_tokens] = max_val if max_val
+          enriched
         end
 
         def lane_weights_from_settings(lane:)

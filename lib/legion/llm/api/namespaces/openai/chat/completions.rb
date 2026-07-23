@@ -106,6 +106,7 @@ module Legion
                       stream:            false,
                       started_at:        request_started_at
                     )
+                    set_routing_response_headers(pipeline_response: pipeline_response)
 
                     if canonical_format
                       status_code, response_headers, body_string = Legion::LLM::API::DebugFormats.render_canonical_response(

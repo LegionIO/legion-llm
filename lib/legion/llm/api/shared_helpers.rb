@@ -211,6 +211,17 @@ module Legion
                           request_id: request_id)
         end
 
+        def set_routing_response_headers(pipeline_response:)
+          routing = pipeline_response.respond_to?(:routing) ? pipeline_response.routing || {} : {}
+          provider_val = api_hash_value(routing, :provider)
+          instance_val = api_hash_value(routing, :instance)
+          model_val = api_hash_value(routing, :model)
+
+          headers 'X-Legion-Provider' => provider_val.to_s if provider_val
+          headers 'X-Legion-Instance' => instance_val.to_s if instance_val
+          headers 'X-Legion-Model' => model_val.to_s if model_val
+        end
+
         def api_duration_ms(started_at)
           return 0 unless started_at
 
