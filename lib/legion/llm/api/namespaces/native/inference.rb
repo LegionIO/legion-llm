@@ -221,6 +221,7 @@ module Legion
                     tool_calls:        tool_calls,
                     stop_reason:       stop_reason
                   )
+                  set_routing_response_headers(pipeline_response: pipeline_response)
 
                   payload = {
                     request_id:           request_id,
