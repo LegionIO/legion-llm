@@ -123,6 +123,7 @@ module Legion
         # Heuristic: remove extended thinking blocks, keep conclusions.
         def strip_thinking(msg)
           return msg unless setting(:thinking_eviction, true)
+          return msg if msg[:role] == :tool
 
           content = msg[:content].to_s
           stripped = strip_thinking_tags(content)
@@ -136,6 +137,10 @@ module Legion
           chars_removed = content.length - stripped.length
           log.info "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
                    "chars_removed=#{chars_removed} original_chars=#{content.length} stripped_chars=#{stripped.length}"
+          if content.length < 50
+            log.unknown "[llm][curator] action=strip_thinking_debug conversation_id=#{@conversation_id} " \
+                        "original=#{content.inspect} stripped=#{stripped.inspect} role=#{msg[:role]}"
+          end
           msg.merge(content: stripped, curated: true, original_content: content)
         end
 
