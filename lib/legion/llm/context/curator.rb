@@ -298,7 +298,7 @@ module Legion
         end
 
         def strip_thinking_tags(text)
-          result = text.lstrip
+          result = text
           loop do
             stripped = false
             THINKING_TAG_PAIRS.each do |open_tag, close_tag|
