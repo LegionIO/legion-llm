@@ -664,8 +664,8 @@ RSpec.describe Legion::LLM::Context::Curator do
       expect(Legion::Settings.dig(:llm, :context_curation, :dedup_threshold)).to eq(0.85)
     end
 
-    it 'target_context_tokens defaults to 60000' do
-      expect(Legion::Settings.dig(:llm, :context_curation, :target_context_tokens)).to eq(60_000)
+    it 'target_context_tokens defaults to 120000' do
+      expect(Legion::Settings.dig(:llm, :context_curation, :target_context_tokens)).to eq(120_000)
     end
   end
 end

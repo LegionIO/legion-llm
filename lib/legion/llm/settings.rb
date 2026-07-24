@@ -437,7 +437,7 @@ module Legion
             # Claude Code linter/formatter file-dump note.
             'was modified, either by the user or by a linter'
           ],
-          target_context_tokens:    60_000,
+          target_context_tokens:    120_000,
           context_window_threshold: 0.90,
           archive_dropped_turns:    true,
           archive_preserve_recent:  10
@@ -446,8 +446,8 @@ module Legion
 
       def self.conversation_defaults
         {
-          summarize_threshold: 90_000,
-          target_tokens:       60_000,
+          summarize_threshold: 120_000,
+          target_tokens:       90_000,
           preserve_recent:     10,
           auto_compact:        true
         }
