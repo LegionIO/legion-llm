@@ -352,23 +352,25 @@ module Legion
         end
 
         def handle_thinking_delta(text, signature)
-          # Thinking always comes before text per the canonical ordering.
-          # When emit_thinking_blocks is off we still accumulate the internal
-          # buffer (so finalize can attach it to the final message audit) but
-          # never emit blocks to the client.
           @full_thinking << text.to_s unless text.to_s.empty?
           @full_thinking_signature ||= signature.to_s unless signature.to_s.empty?
 
           return unless @emit_thinking_blocks
 
-          unless @thinking_block_open || @thinking_block_closed
+          # If thinking arrives after text has started, open a new thinking block
+          if @thinking_block_closed
+            close_text_block
+            @thinking_block_closed = false
+            @thinking_block_index = @next_block_index
+            @next_block_index += 1
+            guard { @emitter.on_thinking_open(block_index: @thinking_block_index) }
+            @thinking_block_open = true
+          elsif !@thinking_block_open
             @thinking_block_index = @next_block_index
             @next_block_index += 1
             guard { @emitter.on_thinking_open(block_index: @thinking_block_index) }
             @thinking_block_open = true
           end
-
-          return if @thinking_block_closed
 
           @phase = :mid_thinking
           guard { @emitter.on_thinking_delta(block_index: @thinking_block_index, text: text.to_s, signature: signature.to_s) }

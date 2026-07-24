@@ -138,7 +138,7 @@ module Legion
           log.info "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
                    "chars_removed=#{chars_removed} original_chars=#{content.length} stripped_chars=#{stripped.length}"
           if content.length < 50
-            log.unknown "[llm][curator] action=strip_thinking_debug conversation_id=#{@conversation_id} " \
+            log.debug "[llm][curator] action=strip_thinking_debug conversation_id=#{@conversation_id} " \
                         "original=#{content.inspect} stripped=#{stripped.inspect} role=#{msg[:role]}"
           end
           msg.merge(content: stripped, curated: true, original_content: content)
