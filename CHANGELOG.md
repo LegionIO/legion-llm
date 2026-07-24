@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.14.20] - 2026-07-24
+
+### Fixed
+- **Curator `strip_thinking` no longer runs on tool messages.** Tool results (`role: :tool`) contain raw command output, not thinking content. The method was incorrectly applying `lstrip` and thinking-tag detection to tool results, stripping leading whitespace from Bash output on every curation pass.
+- **Curator `strip_thinking_tags` no longer lstrips content unconditionally.** Leading whitespace is only removed between consecutive tag removals, not from the original input.
+- **StreamAssembler allows interleaved thinking blocks.** Models that produce think→content→think→content sequences no longer have subsequent thinking phases silently dropped. Each thinking phase opens a new block instead of being discarded.
+- **Trigger match strips all tagged blocks and harness messages.** Tool injection no longer triggers on words from `<system-reminder>`, CLAUDE.md content, or harness prompts (SUGGESTION MODE, title generation). Only actual user conversational text is scanned for trigger words.
+
+### Changed
+- **Context curation token targets raised.** `target_context_tokens` 60K→120K, `summarize_threshold` 90K→120K, `target_tokens` 60K→90K.
+
 ## [0.14.19] - 2026-07-24
 
 ### Fixed

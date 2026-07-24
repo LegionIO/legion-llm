@@ -75,35 +75,53 @@ module Legion
           def extract_recent_text
             depth = trigger_scan_depth
             messages = @request.messages.last(depth)
+
             text = messages.filter_map do |msg|
               next unless msg.is_a?(Hash)
               next unless (msg[:role] || msg['role']).to_s == 'user'
 
               content = msg[:content] || msg['content']
-              if content.is_a?(Array)
-                content.filter_map do |c|
-                  if c.is_a?(String)
-                    c
-                  else
-                    (c.is_a?(Hash) ? (c[:text] || c['text']) : nil)
-                  end
-                end.join(' ')
-              else
-                content.to_s
-              end
+              raw = if content.is_a?(Array)
+                      content.filter_map do |c|
+                        if c.is_a?(String)
+                          c
+                        else
+                          (c.is_a?(Hash) ? (c[:text] || c['text']) : nil)
+                        end
+                      end.join(' ')
+                    else
+                      content.to_s
+                    end
+              next if harness_message?(raw)
+
+              raw
             end.join(' ')
 
             sanitize_trigger_text(text)
           end
 
           def sanitize_trigger_text(text)
-            stripped = strip_system_reminders(text)
-            session_text = extract_session_text(stripped)
-            session_text || stripped
+            session_text = extract_session_text(text)
+            return session_text if session_text
+
+            strip_tagged_blocks(text)
           end
 
-          def strip_system_reminders(text)
-            text.to_s.gsub(%r{<system-reminder\b[^>]*>.*?</system-reminder>}mi, ' ')
+          def strip_tagged_blocks(text)
+            text.to_s.gsub(%r{<[a-z][\w-]*\b[^>]*>.*?</[a-z][\w-]*>}mi, ' ')
+          end
+
+          HARNESS_PREFIXES = [
+            '[SUGGESTION MODE',
+            '[REQUEST INTERRUPTED',
+            'Write the title in the predominant language'
+          ].freeze
+
+          def harness_message?(text)
+            return false if text.nil? || text.empty?
+
+            trimmed = text.lstrip
+            HARNESS_PREFIXES.any? { |prefix| trimmed.start_with?(prefix) }
           end
 
           def extract_session_text(text)
