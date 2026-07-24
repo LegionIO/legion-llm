@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.14.19] - 2026-07-24
+
+### Fixed
+- **Curator `strip_thinking` no longer runs on tool messages.** Tool results (`role: :tool`) contain raw command output, not thinking content. The method was incorrectly applying `lstrip` and thinking-tag detection to tool results, stripping leading whitespace from Bash output on every curation pass.
+
 ## [0.14.18] - 2026-07-24
 
 ### Changed
