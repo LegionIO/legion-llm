@@ -36,7 +36,7 @@ module Legion
 
         private
 
-        def execute_native_tool_loop
+        def execute_native_tool_loop # rubocop:disable Metrics/AbcSize
           messages = native_dispatch_messages.dup
           max_rounds = Legion::Settings[:llm][:max_tool_rounds].to_i
           max_rounds = 200 unless max_rounds.positive?
@@ -66,11 +66,11 @@ module Legion
                                   t.respond_to?(:content) ? t.content : t.to_s
                                 end
               log.debug "[llm][native_tool_loop] action=exit_no_tool_calls round=#{round} " \
-                          "result_text_length=#{result_text.to_s.length} " \
-                          "result_text=#{result_text.to_s.inspect} " \
-                          "thinking_length=#{result_thinking.to_s.length} " \
-                          "thinking_first_200=#{result_thinking.to_s[0, 200].inspect} " \
-                          "stop_reason=#{result.respond_to?(:stop_reason) ? result.stop_reason : 'n/a'}"
+                        "result_text_length=#{result_text.to_s.length} " \
+                        "result_text=#{result_text.to_s.inspect} " \
+                        "thinking_length=#{result_thinking.to_s.length} " \
+                        "thinking_first_200=#{result_thinking.to_s[0, 200].inspect} " \
+                        "stop_reason=#{result.respond_to?(:stop_reason) ? result.stop_reason : 'n/a'}"
               log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=no_tool_calls"
               @last_tool_loop_messages = messages
               return result
@@ -154,7 +154,7 @@ module Legion
           @native_tool_loop_round = nil
         end
 
-        def execute_native_streaming_tool_loop(&block)
+        def execute_native_streaming_tool_loop(&block) # rubocop:disable Metrics/AbcSize
           messages = native_dispatch_messages.dup
           max_rounds = Legion::Settings[:llm][:max_tool_rounds].to_i
           max_rounds = 200 unless max_rounds.positive?
@@ -184,11 +184,11 @@ module Legion
                                   t.respond_to?(:content) ? t.content : t.to_s
                                 end
               log.debug "[llm][native_tool_loop] action=stream_exit_no_tool_calls round=#{round} " \
-                          "result_text_length=#{result_text.to_s.length} " \
-                          "result_text=#{result_text.to_s.inspect} " \
-                          "thinking_length=#{result_thinking.to_s.length} " \
-                          "thinking_first_200=#{result_thinking.to_s[0, 200].inspect} " \
-                          "stop_reason=#{result.respond_to?(:stop_reason) ? result.stop_reason : 'n/a'}"
+                        "result_text_length=#{result_text.to_s.length} " \
+                        "result_text=#{result_text.to_s.inspect} " \
+                        "thinking_length=#{result_thinking.to_s.length} " \
+                        "thinking_first_200=#{result_thinking.to_s[0, 200].inspect} " \
+                        "stop_reason=#{result.respond_to?(:stop_reason) ? result.stop_reason : 'n/a'}"
               log.debug "[llm][executor] action=native_streaming_tool_loop.complete rounds=#{round} reason=no_tool_calls"
               @last_tool_loop_messages = messages
               return result

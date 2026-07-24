@@ -70,7 +70,11 @@ module Legion
             record_trigger_match_timeline(0, start_time)
           end
 
-          private
+          HARNESS_PREFIXES = [
+            '[SUGGESTION MODE',
+            '[REQUEST INTERRUPTED',
+            'Write the title in the predominant language'
+          ].freeze
 
           def extract_recent_text
             depth = trigger_scan_depth
@@ -110,12 +114,6 @@ module Legion
           def strip_tagged_blocks(text)
             text.to_s.gsub(%r{<[a-z][\w-]*\b[^>]*>.*?</[a-z][\w-]*>}mi, ' ')
           end
-
-          HARNESS_PREFIXES = [
-            '[SUGGESTION MODE',
-            '[REQUEST INTERRUPTED',
-            'Write the title in the predominant language'
-          ].freeze
 
           def harness_message?(text)
             return false if text.nil? || text.empty?
