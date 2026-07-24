@@ -182,9 +182,9 @@ RSpec.describe Legion::LLM::Inference::Steps::GaiaAdvisory do
     it 'seeds @applied_signals[:advisory_id] from advisory response' do
       step = klass.new(request)
       step.instance_variable_set(:@applied_signals, {
-        advisory_id: nil, behavioral_synapse_ids: [], trace_ids: [],
+                                   advisory_id: nil, behavioral_synapse_ids: [], trace_ids: [],
         advisory_types: [], envelope_keys: [], prediction_id: nil, response_stats: {}
-      })
+                                 })
       step.step_gaia_advisory
       expect(step.instance_variable_get(:@applied_signals)[:advisory_types]).to be_a(Array)
     end

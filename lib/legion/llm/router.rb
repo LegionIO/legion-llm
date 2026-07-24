@@ -57,6 +57,35 @@ module Legion
           rng: default_rng,
           **
         )
+          # 0. GAIA Preferred Provider/Model (OP2)
+          if type == :inference && (tiers.include?(:gaia) || tiers.include?('gaia'))
+            pref_provider = Legion::Settings.dig(:llm, :gaia, :preferred_provider)
+            pref_model    = Legion::Settings.dig(:llm, :gaia, :preferred_model)
+
+            if pref_provider || pref_model
+              # If either is set, we try to force a lane matching both (if both set) or either.
+              # We prioritize this over general weights for the :gaia tier.
+              candidates = Legion::LLM::Inventory.lanes_for(
+                provider: pref_provider,
+                model:    pref_model,
+                type:     type
+              )
+
+              if candidates&.any?
+                # Filter candidates by hard constraints (privacy, context, etc)
+                passing = candidates.select do |lane|
+                  lane_passes_hard_filters?(
+                    lane: lane, type: type, tiers: tiers, providers: providers, instances: instances,
+                    models: models, capabilities: capabilities, thinking: thinking, privacy: privacy,
+                    estimated_context: estimated_context
+                  )
+                end
+                # Use the first one that passes hard filters as the preferred selection
+                return passing.first if passing.any?
+              end
+            end
+          end
+
           candidates = if providers.size == 1 && instances.size <= 1
                          Legion::LLM::Inventory.lanes_for(
                            provider: providers.first, instance: instances.first, type: type
