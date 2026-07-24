@@ -20,7 +20,14 @@ module Legion
 
           # GAIA system prompt (highest priority enrichment)
           if (gaia = enrichments.dig('gaia:system_prompt', :content))
-            parts << gaia
+            prompt = gaia
+            if (partner = enrichments.dig('gaia:partner_model', :data))
+              # Render partner_model slots (e.g. {{partner_name}}, {{partner_standing}})
+              partner.each do |slot, value|
+                prompt = prompt.gsub("{{#{slot}}}", value.to_s)
+              end
+            end
+            parts << prompt
           end
 
           # Prior conversation history loaded by the context step.

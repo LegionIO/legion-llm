@@ -35,6 +35,46 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
     end
 
     context 'when GAIA routing hint is present' do
+      it 'reads :tier key from gaia hint data' do
+        hint = { data: { tier: :frontier } }
+        result = assigner.assign(
+          caller:          nil,
+          classification:  nil,
+          priority:        :normal,
+          gaia_hint:       hint,
+          existing_tier:   nil,
+          existing_intent: nil
+        )
+        expect(result).to eq({ tier: :frontier, source: :gaia })
+      end
+
+      it 'falls back to :recommended_tier with deprecation log' do
+        hint = { data: { recommended_tier: :local } }
+        expect(assigner.log).to receive(:warn).with(/deprecated/)
+        result = assigner.assign(
+          caller:          nil,
+          classification:  nil,
+          priority:        :normal,
+          gaia_hint:       hint,
+          existing_tier:   nil,
+          existing_intent: nil
+        )
+        expect(result[:tier]).to eq(:local)
+      end
+
+      it 'prefers :tier over :recommended_tier when both present' do
+        hint = { data: { tier: :frontier, recommended_tier: :local } }
+        result = assigner.assign(
+          caller:          nil,
+          classification:  nil,
+          priority:        :normal,
+          gaia_hint:       hint,
+          existing_tier:   nil,
+          existing_intent: nil
+        )
+        expect(result[:tier]).to eq(:frontier)
+      end
+
       it 'assigns tier from GAIA recommended_tier' do
         gaia_hint = { data: { recommended_tier: 'local' }, timestamp: Time.now }
         result = assigner.assign(

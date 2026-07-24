@@ -90,6 +90,7 @@ module Legion
               "original_chars=#{original_chars} synthetic_chars=#{debate_result[:synthetic_response].content.to_s.length} " \
               "rounds=#{debate_result[:rounds]}"
             )
+            @applied_signals[:envelope_keys] << 'debate:applied' if @applied_signals.is_a?(Hash)
             @enrichments['debate:result'] = {
               content:   "debate completed: #{debate_result[:rounds]} rounds, judge synthesis produced",
               data:      debate_result[:metadata],

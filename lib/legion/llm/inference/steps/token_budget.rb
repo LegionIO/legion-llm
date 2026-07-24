@@ -16,9 +16,11 @@ module Legion
             session_limit = Legion::LLM::Metering::Tokens.summary[:session_max_tokens]
             log_step_debug(:token_budget, :checking, max_input_tokens: max_input || 'none',
                                                      session_total: session_total, session_limit: session_limit || 'none')
+
             check_input_cap(max_input) if max_input&.positive?
             check_session_budget
             log_step_debug(:token_budget, :passed, max_input_tokens: max_input || 'none')
+            @applied_signals[:envelope_keys] << 'token_budget:passed' if @applied_signals.is_a?(Hash)
           rescue Legion::LLM::TokenBudgetExceeded
             log_step_info(:token_budget, :blocked)
             raise
