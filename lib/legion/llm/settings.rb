@@ -330,7 +330,9 @@ module Legion
 
       def self.gaia_defaults
         {
-          advisory_enabled: true
+          advisory_enabled: true,
+          preferred_provider: nil,
+          preferred_model:    nil
         }
       end
 

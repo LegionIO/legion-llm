@@ -52,6 +52,7 @@ module Legion
         include Steps::StickyRunners
         include Steps::ToolHistory
         include Steps::StickyPersist
+        include Steps::GutCheck
 
         PRE_PROVIDER_STEPS = %i[
           tracing_init idempotency conversation_uuid context_load
@@ -61,14 +62,14 @@ module Legion
         ].freeze
 
         POST_PROVIDER_STEPS = %i[
-          response_normalization post_response metering debate confidence_scoring
+          response_normalization post_response gut_check metering debate confidence_scoring
           tool_calls sticky_persist
           context_store knowledge_capture response_return
         ].freeze
 
         STEPS = (PRE_PROVIDER_STEPS + %i[provider_call] + POST_PROVIDER_STEPS).freeze
 
-        ASYNC_SAFE_STEPS = %i[post_response knowledge_capture response_return].freeze
+        ASYNC_SAFE_STEPS = %i[post_response knowledge_capture].freeze
 
         THINKING_TAG_PAIRS = [
           ['<thinking>', '</thinking>'],
@@ -134,6 +135,15 @@ module Legion
           @injected_tool_map = {}
           @native_tool_source_map = {}
           @freshly_triggered_keys = []
+          @applied_signals = {
+            advisory_id:            nil,
+            behavioral_synapse_ids: [],
+            trace_ids:              [],
+            advisory_types:         [],
+            envelope_keys:          [],
+            prediction_id:          nil,
+            response_stats:         {}
+          }
           @context_accounting = ContextAccounting.empty
         end
 
@@ -1073,7 +1083,58 @@ module Legion
           handle_exception(e, level: :warn, operation: 'llm.pipeline.trigger_async_curation', conversation_id: conv_id)
         end
 
-        def step_response_return; end
+        def step_response_return
+          populate_response_stats
+          fire_pipeline_observation
+          record_applied_to_gaia
+        end
+
+        def populate_response_stats
+          @applied_signals[:response_stats] = {
+            output_tokens:   @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens.to_i : 0,
+            provider:        @resolved_provider,
+            model:           @resolved_model,
+            tier:            @resolved_tier,
+            latency_ms:      if @timestamps&.dig(:provider_start) && @timestamps[:provider_end]
+                               ((@timestamps[:provider_end] - @timestamps[:provider_start]) * 1000).round
+                             else
+                               0
+                             end,
+            exchange_id:     @exchange_id,
+            conversation_id: @request.conversation_id
+          }
+        end
+
+        def fire_pipeline_observation
+          return unless defined?(::Legion::Gaia) && ::Legion::Gaia.respond_to?(:observe_from_pipeline)
+
+          identity = @request.caller&.dig(:requested_by, :identity)
+          caller_type = @request.caller&.dig(:requested_by, :type)
+          return unless identity && caller_type&.to_sym == :human
+
+          exchange_id = @exchange_id || @request.id
+          ::Legion::Gaia.observe_from_pipeline(
+            identity:    identity,
+            caller:      @request.caller,
+            exchange_id: exchange_id
+          )
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.response_return.observe_pipeline')
+        end
+
+        def record_applied_to_gaia
+          return unless defined?(::Legion::Gaia) && ::Legion::Gaia.respond_to?(:record_response_applied)
+          return if @applied_signals[:advisory_id].nil? && @applied_signals[:behavioral_synapse_ids].empty?
+
+          identity = @request.caller&.dig(:requested_by, :identity)
+          ::Legion::Gaia.record_response_applied(
+            advisory_id: @applied_signals[:advisory_id],
+            identity:    identity,
+            applied:     @applied_signals.dup
+          )
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.response_return.record_applied')
+        end
 
         def finalize_context_accounting
           tokens = @context_accounting[:tokens]
@@ -1178,6 +1239,10 @@ module Legion
 
           log.debug("[pipeline][build_response] action=build request_id=#{@request.id} provider=#{@resolved_provider} model=#{@resolved_model}")
 
+          # Synchronous delivery attribution hook (H2-llm)
+          # Records what signals (GAIA hints, role mappings, etc) were actually applied to the final route.
+          emit_final_delivery_attribution
+
           Response.build(
             request_id:      @request.id,
             conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
@@ -1204,6 +1269,17 @@ module Legion
             quality:         @confidence_score&.to_h,
             features:        build_response_features
           )
+        end
+
+        def emit_final_delivery_attribution
+          keys = @applied_signals.is_a?(Hash) ? @applied_signals[:envelope_keys] : []
+          return if keys.nil? || keys.empty?
+
+          log.info("[pipeline][attribution] action=emit_final_delivery signals=#{keys.join(',')}")
+          @audit[:'delivery:attribution'] = {
+            applied_signals: @applied_signals,
+            timestamp:       Time.now
+          }
         end
 
         def requested_deferred_tool_names

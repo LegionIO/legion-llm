@@ -10,26 +10,30 @@ module Legion
 
         extend Legion::Logging::Helper
 
-        def chat(message:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil, caller: nil, **kwargs)
+        def chat(message:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil,
+                 caller: nil, caller_class: nil, caller_client: nil, **kwargs)
           log.info("[llm][gaia] chat phase=#{phase} model=#{kwargs[:model] || 'default'}")
+
           request = Request.build(
             messages: [{ role: :user, content: message }],
             system:   kwargs[:system],
             routing:  { provider: kwargs[:provider], model: kwargs[:model] }.compact,
-            caller:   caller || gaia_caller(phase),
+            caller:   caller || gaia_caller(phase, caller_class: caller_class, caller_client: caller_client),
             tracing:  gaia_tracing(phase, tick_trace_id, tick_span_id)
           )
           Executor.new(request).call
         end
 
-        def structured(message:, schema:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil, caller: nil, **kwargs)
+        def structured(message:, schema:, phase: 'unknown', tick_trace_id: nil, tick_span_id: nil,
+                       caller: nil, caller_class: nil, caller_client: nil, **kwargs)
           log.info("[llm][gaia] structured phase=#{phase} model=#{kwargs[:model] || 'default'}")
+
           request = Request.build(
             messages:        [{ role: :user, content: message }],
             system:          kwargs[:system],
             routing:         { provider: kwargs[:provider], model: kwargs[:model] }.compact,
             response_format: { type: :json_schema, schema: schema },
-            caller:          caller || gaia_caller(phase),
+            caller:          caller || gaia_caller(phase, caller_class: caller_class, caller_client: caller_client),
             tracing:         gaia_tracing(phase, tick_trace_id, tick_span_id)
           )
           Executor.new(request).call
@@ -40,8 +44,8 @@ module Legion
           LLM.embed(text, **)
         end
 
-        def gaia_caller(phase)
-          {
+        def gaia_caller(phase, caller_class: nil, caller_client: nil)
+          hash = {
             requested_by: {
               identity:   "gaia:tick:#{phase}",
               type:       :system,
@@ -49,6 +53,9 @@ module Legion
               name:       "GAIA #{phase.to_s.tr('_', ' ').capitalize}"
             }
           }
+          hash[:class]  = caller_class  if caller_class
+          hash[:client] = caller_client if caller_client
+          hash
         end
 
         def gaia_tracing(phase, trace_id, span_id)

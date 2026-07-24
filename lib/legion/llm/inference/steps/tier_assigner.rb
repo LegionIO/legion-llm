@@ -33,7 +33,12 @@ module Legion
             end
 
             # 1. GAIA routing hint
-            recommended = nested_value(gaia_hint, :data, :recommended_tier)
+            recommended = nested_value(gaia_hint, :data, :tier)
+            if recommended.nil? && nested_value(gaia_hint, :data, :recommended_tier)
+              log.warn('[llm][routing] gaia_hint uses deprecated :recommended_tier; GAIA advisory should emit :tier')
+              recommended = nested_value(gaia_hint, :data, :recommended_tier)
+            end
+
             if recommended
               log.info("[llm][routing] tier_assigned source=gaia tier=#{recommended}")
               return { tier: recommended.to_sym, source: :gaia }
@@ -78,9 +83,20 @@ module Legion
 
               tier = value(mapping, :tier)
               log.info("[llm][routing] tier_mapping identity=#{identity} tier=#{tier}")
-              return { tier: tier&.to_sym, intent: value(mapping, :intent), source: :role_mapping }
+              result = { tier: tier&.to_sym, intent: value(mapping, :intent), source: :role_mapping }
+              result.merge!(gaia_preferred_lane) if identity.start_with?('gaia:')
+              return result
             end
             nil
+          end
+
+          def gaia_preferred_lane
+            provider = Legion::Settings.dig(:llm, :gaia, :preferred_provider)
+            model    = Legion::Settings.dig(:llm, :gaia, :preferred_model)
+            extras   = {}
+            extras[:provider] = provider.to_sym if provider
+            extras[:model]    = model.to_s      if model
+            extras
           end
 
           def tier_mappings

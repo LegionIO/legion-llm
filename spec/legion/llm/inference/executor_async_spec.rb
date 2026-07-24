@@ -18,8 +18,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
       expect(async_safe).to include(:knowledge_capture)
     end
 
-    it 'includes response_return' do
-      expect(async_safe).to include(:response_return)
+    it 'does not include response_return (attribution must be synchronous)' do
+      expect(async_safe).not_to include(:response_return)
     end
 
     it 'does not include response_normalization' do

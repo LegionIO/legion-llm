@@ -50,6 +50,8 @@ module Legion
             return unless assignment
 
             @proactive_tier_assignment = assignment
+            @applied_signals[:envelope_keys] << "tier_assigned:#{assignment[:source]}" if @applied_signals.is_a?(Hash)
+
             @audit[:'routing:tier_assignment'] = {
               outcome:     :success,
               detail:      "proactive tier=#{assignment[:tier]} source=#{assignment[:source]}",

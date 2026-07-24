@@ -38,6 +38,7 @@ module Legion
             result = apollo_retrieve(query: query, strategy: strategy)
             record_rag_enrichment(result, strategy)
             record_rag_timeline(result, strategy, start_time)
+            @applied_signals[:envelope_keys] << "rag_context:#{strategy}" if @applied_signals.is_a?(Hash)
           rescue StandardError => e
             @warnings << "RAG context error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_context')

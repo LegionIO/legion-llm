@@ -44,16 +44,12 @@ module Legion
               timestamp: Time.now
             }
 
-            if advisory[:system_prompt]
-              log_step_info(:gaia_advisory, :system_prompt_injected, chars: advisory[:system_prompt].to_s.length)
-              @enrichments['gaia:system_prompt'] = {
-                content:   advisory[:system_prompt],
-                timestamp: Time.now
-              }
-            end
+            # system_prompt is injected via gaia:system_prompt enrichment key below
 
             if advisory[:routing_hint]
-              log_step_info(:gaia_advisory, :routing_hint_injected, tier: advisory[:routing_hint][:recommended_tier] || 'none')
+              hint = advisory[:routing_hint]
+              tier_value = hint[:tier] || hint[:recommended_tier] || 'none'
+              log_step_info(:gaia_advisory, :routing_hint_injected, tier: tier_value)
               @enrichments['gaia:routing_hint'] = {
                 data:      advisory[:routing_hint],
                 timestamp: Time.now
@@ -66,7 +62,12 @@ module Legion
               from: 'gaia', to: 'pipeline'
             )
 
-            record_advisory_meta_to_gaia(advisory)
+            advisory_id = advisory[:advisory_id] || advisory['advisory_id']
+            if advisory_id
+              @applied_signals[:advisory_id]    = advisory_id
+              @applied_signals[:advisory_types] = classify_advisory_types(advisory)
+            end
+
             log_step_info(
               :gaia_advisory,
               :complete,
@@ -225,29 +226,6 @@ module Legion
             raw[:weights]
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.gaia_advisory.fetch_partner_weights')
-            nil
-          end
-
-          def record_advisory_meta_to_gaia(advisory)
-            unless defined?(::Legion::Gaia) && ::Legion::Gaia.respond_to?(:record_advisory_meta)
-              log_step_debug(:gaia_advisory, :record_meta_skipped, reason: :gaia_unavailable)
-              return
-            end
-            unless advisory[:partner_context]
-              log_step_debug(:gaia_advisory, :record_meta_skipped, reason: :no_partner_context)
-              return
-            end
-
-            advisory_id = SecureRandom.uuid
-            advisory_types = classify_advisory_types(advisory)
-
-            ::Legion::Gaia.record_advisory_meta(
-              advisory_id:    advisory_id,
-              advisory_types: advisory_types
-            )
-            log_step_debug(:gaia_advisory, :record_meta, advisory_id: advisory_id, advisory_type_count: advisory_types.size)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.gaia_advisory.record_meta')
             nil
           end
 
