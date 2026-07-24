@@ -1,5 +1,23 @@
 # Legion LLM Changelog
 
+## [0.14.18] - 2026-07-24
+
+### Changed
+- `@applied_signals` rewritten from flat Array to structured Hash with named keys (`advisory_id`, `behavioral_synapse_ids`, `trace_ids`, `advisory_types`, `envelope_keys`, `prediction_id`, `response_stats`)
+- `step_response_return` implemented with `populate_response_stats`, `fire_pipeline_observation`, `record_applied_to_gaia`
+- `:response_return` removed from `ASYNC_SAFE_STEPS` (attribution must complete synchronously)
+- `gut_check` moved before `metering` in `POST_PROVIDER_STEPS`
+- GaiaCaller: `caller_class:`/`caller_client:` as explicit kwargs; `:class`/`:client` at top level of caller hash
+
+### Added
+- `fire_pipeline_observation` — calls `Gaia.observe_from_pipeline` for `:human` callers (forms bonds from API clients)
+- `gaia_preferred_lane` in TierAssigner — injects preferred provider/model for `gaia:*` callers from settings
+- `require_relative 'steps/gut_check'` in steps.rb (fixes boot crash)
+- `preferred_provider`/`preferred_model` in `gaia_defaults` settings
+
+### Removed
+- `record_advisory_meta_to_gaia` method and its call in `gaia_advisory` step (superseded by `@applied_signals` seeding)
+
 ## [0.14.17] - 2026-07-22
 
 ### Added
