@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.15.0] - 2026-07-24
+
+### Changed
+- **System prompt rewritten from scratch.** Transplant of Matt's odd brain and thinking patterns into the baseline system prompt. Replaces "prefer execution over prompt ceremony" with "understand the problem end to end before acting." Encodes evidence-first reasoning, cumulative state awareness, exact-scope discipline, and the principle that providing context is not permission to act. The model now traces before it claims, validates before it asserts, and matches response depth to what was actually asked. 19 seconds well spent.
+
 ## [0.14.20] - 2026-07-24
 
 ### Fixed
