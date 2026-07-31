@@ -272,7 +272,7 @@ module Legion
           },
           health:                     {
             window_seconds:               300,
-            circuit_breaker:              { failure_threshold: 3, cooldown_seconds: 60 },
+            circuit_breaker:              { failure_threshold: 3, cooldown_seconds: 60, sweep_interval_seconds: 5 },
             latency_penalty_threshold_ms: 5000,
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },

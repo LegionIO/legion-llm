@@ -57,6 +57,10 @@ module Legion
           rng: default_rng,
           **
         )
+          # Advance open circuits past cooldown to half_open before selection
+          # so their lanes carry a positive weight and pass the soft filter.
+          health_tracker.sweep_circuits!
+
           # 0. GAIA Preferred Provider/Model (OP2)
           if type == :inference && (tiers.include?(:gaia) || tiers.include?('gaia'))
             pref_provider = Legion::Settings.dig(:llm, :gaia, :preferred_provider)
@@ -334,9 +338,10 @@ module Legion
           cb = health[:circuit_breaker] || {}
 
           HealthTracker.new(
-            window_seconds:    health.fetch(:window_seconds, 300),
-            failure_threshold: cb.fetch(:failure_threshold, 3),
-            cooldown_seconds:  cb.fetch(:cooldown_seconds, 60)
+            window_seconds:         health.fetch(:window_seconds, 300),
+            failure_threshold:      cb.fetch(:failure_threshold, 3),
+            cooldown_seconds:       cb.fetch(:cooldown_seconds, 60),
+            sweep_interval_seconds: cb.fetch(:sweep_interval_seconds, 5)
           )
         end
       end
