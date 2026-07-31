@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.15.2] - 2026-07-31
+
+### Fixed
+- **`rag_enabled?` shadow-default made setting un-disableable.** The `rag_setting(key, default)` helper used `Legion::Settings.dig(:llm, :rag, key) || default`, which evaluates `false || true` → `true` for any boolean setting. Setting `llm.rag.enabled = false` was silently ignored. Deleted `rag_setting`, `rag_settings`, `settings_value`, and `trivial_patterns` wrapper methods entirely. All call sites now use direct bracket access (`Legion::Settings[:llm][:rag][:key]`) per legionio-standards.md section 3. Defaults live exclusively in `rag_defaults` in `settings.rb`.
+
 ## [0.15.0] - 2026-07-24
 
 ### Changed
