@@ -205,6 +205,30 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       expect(step.enrichments).not_to have_key('rag:context_retrieval')
     end
 
+    it 'honors rag.enabled = true after being set to false (bidirectional)' do
+      Legion::Settings[:llm][:rag][:enabled] = false
+
+      request = Legion::LLM::Inference::Request.build(
+        messages:         [{ role: :user, content: 'what is pgvector?' }],
+        context_strategy: :rag
+      )
+      step = klass.new(request)
+      step.step_rag_context
+      expect(step.enrichments).not_to have_key('rag:context_retrieval')
+
+      Legion::Settings[:llm][:rag][:enabled] = true
+
+      apollo_runner = double('Knowledge')
+      allow(apollo_runner).to receive(:retrieve_relevant).and_return({
+                                                                       success: true, entries: [], count: 0
+                                                                     })
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+
+      step2 = klass.new(request)
+      step2.step_rag_context
+      expect(step2.warnings).not_to include(match(/disabled/))
+    end
+
     it 'skips when rag is disabled in string-keyed settings' do
       allow(Legion::LLM).to receive(:settings).and_return({ 'rag' => { 'enabled' => false } })
 

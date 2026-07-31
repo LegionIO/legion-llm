@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.15.1] - 2026-07-31
+
+### Fixed
+- **`rag_enabled?` shadow-default made setting un-disableable.** The `rag_setting(key, default)` helper used `Legion::Settings.dig(:llm, :rag, key) || default`, which evaluates `false || true` → `true` for any boolean setting. Setting `llm.rag.enabled = false` was silently ignored. Removed the `|| default` pattern entirely — all defaults come from the registered `rag_defaults` in `settings.rb`, which is the single source of truth. The same fix applied to all `rag_setting` call sites (`utilization_skip_threshold`, `utilization_compact_threshold`, `trivial_max_chars`, `trivial_patterns`, `full_limit`, `compact_limit`, `min_confidence`, `conversation_history_enabled`, `exclude_source_agents`).
+
 ## [0.15.0] - 2026-07-24
 
 ### Changed
