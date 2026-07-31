@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.15.1] - 2026-07-31
+
+### Fixed
+- **Shutdown now disconnects all provider connections before clearing the registry.** `Call::Registry.disconnect_all!` iterates every registered adapter and calls `provider.disconnect` (which closes the underlying Faraday connection). Previously `reset!` just cleared the HashMap, abandoning open HTTP connections that accumulated as CLOSE_WAIT sockets until the process was killed
+
 ## [0.15.0] - 2026-07-24
 
 ### Changed
