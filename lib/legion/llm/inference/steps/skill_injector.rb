@@ -50,7 +50,7 @@ module Legion
             defined?(Legion::LLM::Skills::Registry) &&
               defined?(Legion::LLM) &&
               Legion::LLM.respond_to?(:settings) &&
-              settings_value(:skills, :enabled) != false
+              Legion::Settings[:llm][:skills][:enabled] != false
           end
 
           def resume_active_skill(conv_id, state)
@@ -131,7 +131,7 @@ module Legion
               log_step_debug(:skill_injector, :auto_skills_skipped, reason: :max_active_skills)
               return
             end
-            if settings_value(:skills, :auto_inject) == false
+            if Legion::Settings[:llm][:skills][:auto_inject] == false
               log_step_debug(:skill_injector, :auto_skills_skipped, reason: :disabled)
               return
             end
@@ -196,14 +196,14 @@ module Legion
           end
 
           def at_max_active_skills?(conv_id)
-            max    = settings_value(:skills, :max_active_skills) || 1
+            max    = Legion::Settings[:llm][:skills][:max_active_skills]
             active = Inference::Conversation.skill_state(conv_id) ? 1 : 0
             active >= max
           end
 
           def skill_disabled?(key)
-            disabled = Array(settings_value(:skills, :disabled_skills) || [])
-            enabled  = Array(settings_value(:skills, :enabled_skills) || [])
+            disabled = Array(Legion::Settings[:llm][:skills][:disabled_skills])
+            enabled  = Array(Legion::Settings[:llm][:skills][:enabled_skills])
             return true if disabled.include?(key)
             return false if enabled.empty?
 
@@ -223,10 +223,6 @@ module Legion
               metadata:        @request.metadata,
               intent:          @request.extra&.dig(:intent)
             }
-          end
-
-          def settings_value(*keys, default: nil)
-            Legion::Settings.dig(:llm, *keys) || default
           end
         end
       end

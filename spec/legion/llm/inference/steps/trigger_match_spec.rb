@@ -266,8 +266,8 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
   end
 
   describe '#trigger_scan_depth' do
-    it 'returns default 10 when settings missing' do
-      Legion::Settings[:llm][:tool_trigger] = {}
+    it 'returns registered default 10 from settings' do
+      Legion::Settings[:llm][:tool_trigger][:scan_depth] = 10
       expect(step.send(:trigger_scan_depth)).to eq(10)
     end
 
@@ -288,8 +288,8 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
   end
 
   describe '#trigger_tool_limit' do
-    it 'returns default 25 when settings missing' do
-      Legion::Settings[:llm][:tool_trigger] = {}
+    it 'returns registered default 25 from settings' do
+      Legion::Settings[:llm][:tool_trigger][:tool_limit] = 25
       expect(step.send(:trigger_tool_limit)).to eq(25)
     end
 

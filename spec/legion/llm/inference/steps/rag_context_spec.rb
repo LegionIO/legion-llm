@@ -132,7 +132,7 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'foo' }])
       step = klass.new(request)
       expect(step.send(:trivial_query?, 'foo')).to be true
-      expect(step.send(:trivial_query?, 'hello')).to be false
+      expect(step.send(:trivial_query?, 'multi word query longer than max')).to be false
     end
 
     it 'uses trivial pattern settings via set_prop' do
@@ -146,7 +146,7 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'foo' }])
       step = klass.new(request)
       expect(step.send(:trivial_query?, 'foo')).to be true
-      expect(step.send(:trivial_query?, 'hello')).to be false
+      expect(step.send(:trivial_query?, 'multi word query longer than max')).to be false
     end
   end
 

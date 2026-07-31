@@ -46,16 +46,8 @@ module Legion
 
           private
 
-          def rag_settings
-            @rag_settings ||= Legion::Settings.dig(:llm, :rag) || {}
-          end
-
-          def rag_setting(key)
-            Legion::Settings.dig(:llm, :rag, key)
-          end
-
           def rag_enabled?
-            rag_setting(:enabled) == true
+            Legion::Settings[:llm][:rag][:enabled] == true
           end
 
           def substantive_query?
@@ -138,8 +130,8 @@ module Legion
               return explicit
             end
 
-            skip_threshold    = rag_setting(:utilization_skip_threshold)
-            compact_threshold = rag_setting(:utilization_compact_threshold)
+            skip_threshold    = Legion::Settings[:llm][:rag][:utilization_skip_threshold]
+            compact_threshold = Legion::Settings[:llm][:rag][:utilization_compact_threshold]
 
             strategy = if utilization >= skip_threshold
                          :none
@@ -162,19 +154,14 @@ module Legion
 
           def trivial_query?(query)
             query = content_text(query)
-            max_chars = rag_setting(:trivial_max_chars)
-            configured_patterns = rag_setting(:trivial_patterns)
+            max_chars = Legion::Settings[:llm][:rag][:trivial_max_chars]
+            patterns = Legion::Settings[:llm][:rag][:trivial_patterns]
 
             normalized = query.strip.downcase.gsub(/[^a-z0-9\s]/, '')
-            patterns = configured_patterns || trivial_patterns
             return true if patterns.any? { |p| normalized == p }
-            return true if configured_patterns.nil? && query.length <= max_chars && normalized.split.length <= 1
+            return true if query.length <= max_chars && normalized.split.length <= 1
 
             false
-          end
-
-          def trivial_patterns
-            rag_setting(:trivial_patterns)
           end
 
           def apollo_available?
@@ -187,9 +174,9 @@ module Legion
           end
 
           def apollo_retrieve(query:, strategy:)
-            full_limit    = rag_setting(:full_limit)
-            compact_limit = rag_setting(:compact_limit)
-            confidence    = rag_setting(:min_confidence)
+            full_limit    = Legion::Settings[:llm][:rag][:full_limit]
+            compact_limit = Legion::Settings[:llm][:rag][:compact_limit]
+            confidence    = Legion::Settings[:llm][:rag][:min_confidence]
             limit = apply_gaia_context_limit(strategy == :rag_compact ? compact_limit : full_limit,
                                              strategy: strategy)
             log_step_debug(:rag_context, :apollo_query, strategy: strategy, limit: limit, min_confidence: confidence)
@@ -201,7 +188,7 @@ module Legion
           end
 
           def filter_excluded_source_agents(result)
-            excluded = Array(rag_setting(:exclude_source_agents))
+            excluded = Array(Legion::Settings[:llm][:rag][:exclude_source_agents])
             return result if excluded.empty?
 
             entries = Array(result[:entries])
@@ -271,7 +258,7 @@ module Legion
           end
 
           def conversation_history_retrieval_enabled?
-            rag_setting(:conversation_history_enabled) == true
+            Legion::Settings[:llm][:rag][:conversation_history_enabled] == true
           end
 
           def merge_apollo_results(*results)
