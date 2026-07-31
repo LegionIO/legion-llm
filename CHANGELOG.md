@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.15.1] - 2026-07-31
+
+### Fixed
+- **Circuit-breaker half-open probe starvation.** An open circuit could never recover without a process restart because the `open→half_open` transition only fired inside `circuit_state_for_key`, which required inbound traffic — but the router excluded open lanes (`lane_weight <= 0`), preventing any traffic from reaching them. Added `HealthTracker#sweep_circuits!` which advances eligible open circuits to `half_open` independently of inbound reports. Called from `Router.request_lane` (throttled by `sweep_interval_seconds`) so lanes carry their positive half-open weight before the soft filter runs. Half-open lanes pass the `> 0` filter at deprioritized weight (`0.5×` multiplier), allowing a probe request to close the circuit on success. Fully-open (in-cooldown) and denied lanes remain excluded.
+
+### Added
+- `routing.health.circuit_breaker.sweep_interval_seconds` setting (default: 5) — controls how often the sweep checks for open circuits past cooldown. Prevents per-request overhead under high load.
+
 ## [0.15.0] - 2026-07-24
 
 ### Changed
