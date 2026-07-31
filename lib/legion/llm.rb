@@ -117,6 +117,7 @@ module Legion
         Legion::Settings[:llm][:connected] = false
         @started = false
         Inventory::Discovery.reset!
+        Call::Registry.disconnect_all!
         Call::Registry.reset!
         # Clear LLM-level embedding ivars that may have been set via instance_variable_set for testing
         @can_embed = nil

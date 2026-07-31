@@ -113,6 +113,24 @@ module Legion
           @mutex.synchronize { @registry.dup.freeze }
         end
 
+        def disconnect_all!
+          @mutex.synchronize do
+            count = 0
+            @registry.each_value do |entries|
+              entries.each_value do |entry|
+                adapter = entry[:adapter]
+                next unless adapter.respond_to?(:provider) && adapter.provider.respond_to?(:disconnect)
+
+                adapter.provider.disconnect
+                count += 1
+              rescue StandardError => e
+                log.warn("[llm][registry] disconnect failed: #{e.message}")
+              end
+            end
+            log.info("[llm][registry] disconnect_all count=#{count}")
+          end
+        end
+
         def reset!
           @mutex.synchronize do
             count = @registry.values.sum(&:size)
