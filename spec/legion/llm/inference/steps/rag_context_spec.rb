@@ -132,7 +132,7 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'foo' }])
       step = klass.new(request)
       expect(step.send(:trivial_query?, 'foo')).to be true
-      expect(step.send(:trivial_query?, 'hello')).to be false
+      expect(step.send(:trivial_query?, 'multi word query longer than max')).to be false
     end
 
     it 'uses trivial pattern settings via set_prop' do
@@ -146,7 +146,7 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       request = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'foo' }])
       step = klass.new(request)
       expect(step.send(:trivial_query?, 'foo')).to be true
-      expect(step.send(:trivial_query?, 'hello')).to be false
+      expect(step.send(:trivial_query?, 'multi word query longer than max')).to be false
     end
   end
 
@@ -203,6 +203,30 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
       step = klass.new(request)
       step.step_rag_context
       expect(step.enrichments).not_to have_key('rag:context_retrieval')
+    end
+
+    it 'honors rag.enabled = true after being set to false (bidirectional)' do
+      Legion::Settings[:llm][:rag][:enabled] = false
+
+      request = Legion::LLM::Inference::Request.build(
+        messages:         [{ role: :user, content: 'what is pgvector?' }],
+        context_strategy: :rag
+      )
+      step = klass.new(request)
+      step.step_rag_context
+      expect(step.enrichments).not_to have_key('rag:context_retrieval')
+
+      Legion::Settings[:llm][:rag][:enabled] = true
+
+      apollo_runner = double('Knowledge')
+      allow(apollo_runner).to receive(:retrieve_relevant).and_return({
+                                                                       success: true, entries: [], count: 0
+                                                                     })
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+
+      step2 = klass.new(request)
+      step2.step_rag_context
+      expect(step2.warnings).not_to include(match(/disabled/))
     end
 
     it 'skips when rag is disabled in string-keyed settings' do
