@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.15.1] - 2026-08-01
+
+### Fixed
+- **Client-side SSE write failures no longer trip the upstream provider's circuit breaker.** A dead client socket (`Puma::ConnectionError: Socket timeout writing data`, `Errno::EPIPE`/`ECONNRESET`, `StreamClosed`) mid- or end-stream was being counted as an upstream provider failure: it reported provider `:error`, tripped the vLLM lane's circuit, and escalated to `EscalationExhausted` — failing over because the *client* went away. Once both `gemma-4-31b` lanes tripped, every 31b request hit `NoLaneAvailable` until process restart, despite the upstream being healthy for weeks. Root cause: `Puma::ConnectionError` is a `RuntimeError`, not an `IOError`, so the `StreamAssembler`'s `rescue IOError, Errno::EPIPE` guards let it escape raw into the executor's escalation loop, whose failure path never consulted the existing `client_stream_error?` helper. The circuit breaker now answers only "is the upstream provider broken?": client-write/disconnect, SSE/canonical-parse/translation, and daemon/programming errors (`NoMethodError`/`ArgumentError`/`NotImplementedError`) never report provider health, trip a circuit, or escalate; a client disconnect converts to a clean cancellation that still emits its ledger event. Genuine provider errors (5xx, connection-refused-to-provider, provider 401) still trip and escalate exactly as before. Fix is provider-agnostic (no provider-name conditionals).
+
 ## [0.15.0] - 2026-07-24
 
 ### Changed
