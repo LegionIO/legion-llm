@@ -11,16 +11,18 @@ module Legion
         LATENCY_THRESHOLD_MS = 5000
         LATENCY_PENALTY_STEP = -10
 
-        def initialize(window_seconds: 300, failure_threshold: 3, cooldown_seconds: 60)
-          @window_seconds    = window_seconds
-          @failure_threshold = failure_threshold
-          @cooldown_seconds  = cooldown_seconds
+        def initialize(window_seconds: 300, failure_threshold: 3, cooldown_seconds: 60, sweep_interval_seconds: 5)
+          @window_seconds         = window_seconds
+          @failure_threshold      = failure_threshold
+          @cooldown_seconds       = cooldown_seconds
+          @sweep_interval_seconds = sweep_interval_seconds
 
-          @circuits       = {}
-          @latency_window = {}
-          @handlers       = {}
-          @denied_models  = {}
-          @mutex          = Monitor.new
+          @circuits        = {}
+          @latency_window  = {}
+          @handlers        = {}
+          @denied_models   = {}
+          @last_sweep_at   = Time.now
+          @mutex           = Monitor.new
 
           register_default_handlers
         end
@@ -157,6 +159,35 @@ module Legion
             @latency_window.clear
             @denied_models.clear
           end
+        end
+
+        # Advance any :open circuits past their cooldown to :half_open and write
+        # the updated health to Inventory lanes. This decouples the open→half_open
+        # transition from inbound traffic — without it, an excluded lane never
+        # receives reports so circuit_state_for_key never fires, and the circuit
+        # stays permanently :open (half-open probe starvation).
+        #
+        # Called by Router.request_lane on every selection so eligible circuits
+        # are already advanced before the soft filter runs. Throttled by
+        # sweep_interval_seconds to avoid per-request overhead under high load.
+        def sweep_circuits!
+          now = Time.now
+          return if (now - @last_sweep_at) < @sweep_interval_seconds
+
+          @last_sweep_at = now
+          @mutex.synchronize do
+            @circuits.each do |key, circuit|
+              next unless circuit[:state] == :open
+              next unless circuit[:opened_at]
+              next unless (now - circuit[:opened_at]) >= @cooldown_seconds
+
+              do_transition_circuit!(key: key, to_state: :half_open)
+              log.info("[llm][health_tracker] action=sweep_half_open provider=#{key} cooldown_elapsed_s=#{(now - circuit[:opened_at]).round}")
+            end
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true,
+                              operation: 'health_tracker.sweep_circuits!')
         end
 
         private
