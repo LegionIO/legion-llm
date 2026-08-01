@@ -149,7 +149,9 @@ module Legion
           handle_text_delta(adapted.text) if adapted.text && !adapted.text.empty?
         rescue StreamClosed
           raise
-        rescue IOError, Errno::EPIPE => e
+        rescue StandardError => e
+          raise unless client_write_error?(e)
+
           mark_closed!(e)
           raise StreamClosed, e.message
         end
@@ -182,7 +184,9 @@ module Legion
           guard { @emitter.on_done(stop_reason: stop_reason, usage: usage, model: resolved_model(final_response)) }
           emit_failover_trailers!
           @phase = :finished
-        rescue IOError, Errno::EPIPE => e
+        rescue StandardError => e
+          raise unless client_write_error?(e)
+
           mark_closed!(e)
         end
 
@@ -195,7 +199,9 @@ module Legion
           start! unless @started
           guard { @emitter.on_error(message: error.message, type: type, status_code: status) }
           @phase = :finished
-        rescue IOError, Errno::EPIPE => e
+        rescue StandardError => e
+          raise unless client_write_error?(e)
+
           mark_closed!(e)
         end
 
@@ -253,7 +259,9 @@ module Legion
           @full_thinking_signature = nil
           @phase = :before_first_byte
           @failover_chain << :failover_marker
-        rescue IOError, Errno::EPIPE => e
+        rescue StandardError => e
+          raise unless client_write_error?(e)
+
           mark_closed!(e)
         end
 
@@ -287,7 +295,9 @@ module Legion
           return if @closed
 
           guard { @emitter.on_keep_alive }
-        rescue IOError, Errno::EPIPE => e
+        rescue StandardError => e
+          raise unless client_write_error?(e)
+
           mark_closed!(e)
         end
 
@@ -325,9 +335,27 @@ module Legion
         def guard
           yield
           true
-        rescue IOError, Errno::EPIPE => e
+        rescue StandardError => e
+          raise unless client_write_error?(e)
+
           mark_closed!(e)
           false
+        end
+
+        # A failure writing the SSE response back to the HTTP client — the client socket
+        # died (disconnect / VPN bounce / timeout). NOT a provider failure. Puma::ConnectionError
+        # ("Socket timeout writing data") is a RuntimeError, NOT an IOError, so the historical
+        # `rescue IOError, Errno::EPIPE` guards let it escape into the executor, where it was
+        # misattributed to the upstream provider and tripped a healthy lane's circuit. Matched
+        # by class name so the assembler need not require puma. Everything else re-raises.
+        def client_write_error?(error)
+          name = error.class.name.to_s
+          name.include?('Puma::ConnectionError') ||
+            error.is_a?(Errno::EPIPE) ||
+            error.is_a?(Errno::ECONNRESET) ||
+            error.is_a?(Errno::ECONNABORTED) ||
+            error.is_a?(EOFError) ||
+            error.is_a?(IOError)
         end
 
         def mark_closed!(error)
