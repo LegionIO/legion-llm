@@ -98,6 +98,17 @@ module Legion
               log.error "[llm][escalation] action=request_payload_error provider=#{resolution.provider} " \
                         "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
                         "error=#{err.message.to_s[0, 500]} daemon_side_payload_bug=true provider_health=false"
+            elsif non_provider_failure?(err)
+              # The circuit breaker answers ONE question: "is the upstream LLM provider
+              # itself broken/down?" Client-side write/disconnect (the client socket died),
+              # SSE/canonical parse/translation (LegionIO's own bugs), and daemon/programming
+              # errors are NOT provider failures. Never report provider health or trip a
+              # circuit for them — doing so misattributes a dead client socket (or our own
+              # bug) to a healthy upstream and trips its lane. This is the dominant field
+              # failure this method previously caused.
+              log.warn "[llm][escalation] action=non_provider_error provider=#{resolution.provider} " \
+                       "instance=#{resolution.instance || 'default'} model=#{resolution.model} " \
+                       "error=#{err.class}: #{err.message.to_s[0, 300]} provider_health=untouched"
             elsif account_specific_error?(err)
               # Account-scoped failure (credit balance, payment, quota). It is
               # deterministic — it will fail every call until the operator tops up —
@@ -222,7 +233,11 @@ module Legion
             emit_error_audit(error, status: status, provider: provider, model: model)
             return if request_payload_error?(error)
             return if context_overflow_error?(error)
-            return if client_stream_error?(error)
+            # Non-provider failures (client-write/disconnect, SSE/parse/translation, daemon
+            # programming errors) never reflect on provider health. The upstream is healthy;
+            # counting these as provider :error trips a live lane's circuit for a dead client
+            # socket or a LegionIO bug — the misattribution behind the field restart-cascade.
+            return if non_provider_failure?(error)
 
             if authentication_error?(error) || config_error?(error)
               Legion::LLM::Router.health_tracker.deny_model( # allowlist:write-side
@@ -400,10 +415,15 @@ module Legion
 
           # Detect client-side stream errors (disconnects, broken pipes, socket timeouts)
           # that originate from writing back to the HTTP client, not from the provider itself.
+          # Puma::ConnectionError is a RuntimeError (NOT an IOError), so it slips past the
+          # StreamAssembler's rescue IOError/EPIPE guards and reaches the executor raw — the
+          # exact class the production logs show tripping the vLLM circuit. StreamClosed is the
+          # assembler's own wrapper raised once the client socket is confirmed dead.
           def client_stream_error?(err)
             name = err.class.name.to_s
             msg  = err.message.to_s
             name.include?('Puma::ConnectionError') ||
+              name.include?('StreamAssembler::StreamClosed') ||
               name.include?('Errno::EPIPE') ||
               (name.include?('IOError') && msg.include?('closed')) ||
               (name.include?('IOError') && msg.include?('already closed')) ||
@@ -416,7 +436,37 @@ module Legion
           # shared daemon code — retrying on a different lane guarantees the same crash. Classified as
           # terminal: raise immediately, never retry, never trip circuits, never push to tried_lanes.
           def internal_error?(err)
-            err.is_a?(::NoMethodError) || err.is_a?(::ArgumentError)
+            err.is_a?(::NoMethodError) || err.is_a?(::ArgumentError) || err.is_a?(::NotImplementedError)
+          end
+
+          # SSE assembly / canonical parse / translation errors originate inside LegionIO's
+          # own stream-assembly and translation layer, not from the upstream provider. Like
+          # daemon/programming errors, they must never trip a provider circuit or escalate to
+          # another lane — the upstream is healthy; the bug is ours. Matched by class name so
+          # this stays provider-agnostic (N×N invariant) and does not couple to lex-llm gems.
+          def sse_translation_error?(err)
+            name = err.class.name.to_s
+            name.include?('JSON::ParseError') ||
+              name.include?('JSON::ParserError')
+          end
+
+          # The circuit breaker answers exactly one question: is the upstream LLM PROVIDER
+          # itself broken/down? These three families are NOT provider failures and must never
+          # trip a circuit, report provider health, or escalate to another lane:
+          #   (1) client-side write/disconnect (client socket died) — client_stream_error?
+          #   (2) SSE assembly / canonical parse / translation (LegionIO's own bugs)
+          #   (3) daemon/programming errors (NoMethodError/ArgumentError) — internal_error?
+          # Provider-agnostic: matches on exception family, never on provider name.
+          def non_provider_failure?(err)
+            client_stream_error?(err) || sse_translation_error?(err) || internal_error?(err)
+          end
+
+          # A client-side write/disconnect is a clean cancellation, not a provider failure.
+          # Distinguished from the broader non_provider_failure? set so the streaming loop can
+          # route it to a clean disconnect exit that STILL emits the ledger/metering event
+          # (invariant #6) while leaving provider health untouched.
+          def client_disconnect_error?(err)
+            client_stream_error?(err)
           end
 
           def larger_context_lane_available?(lane:, payload:, **)
@@ -442,7 +492,13 @@ module Legion
             return :context_overflow  if context_overflow_error?(error)
             return :payload_error     if request_payload_error?(error)
             return :policy_denied     if error.is_a?(Legion::LLM::ModelNotAllowed)
-            return :internal_error    if internal_error?(error) # terminal before account_specific
+            return :internal_error    if internal_error?(error) # daemon bug; terminal before account_specific (G25)
+            # non_provider (client-write/disconnect, SSE/parse/translation) is terminal and
+            # must be classified BEFORE account_specific/transient: a dead client socket or a
+            # LegionIO parse bug must never trip a provider circuit or escalate to another lane
+            # (senseless — the upstream is healthy). Checked after :internal_error so daemon
+            # programming errors keep their pre-existing, more-specific label (both are terminal).
+            return :non_provider      if non_provider_failure?(error)
             return :account_specific  if authentication_error?(error) ||
                                          config_error?(error) ||
                                          account_specific_error?(error)
@@ -460,7 +516,7 @@ module Legion
 
               payload[:tried_lanes] << lane[:id]
 
-            when :internal_error, :payload_error, :policy_denied
+            when :internal_error, :payload_error, :policy_denied, :non_provider
               raise error
             when :account_specific
               # Account/instance-scoped failure: trip the per-instance circuit.
@@ -479,6 +535,7 @@ module Legion
           rescue StandardError => e
             raise if request_payload_error?(e)
             raise if context_overflow_error?(e)
+            raise if non_provider_failure?(e) # client-write/disconnect + SSE/parse: terminal, never accumulate
 
             handle_exception(e, level: :warn, operation: 'llm.pipeline.classify_and_accumulate_exclusions',
                                 lane: lane[:id])
