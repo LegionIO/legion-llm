@@ -492,12 +492,13 @@ module Legion
             return :context_overflow  if context_overflow_error?(error)
             return :payload_error     if request_payload_error?(error)
             return :policy_denied     if error.is_a?(Legion::LLM::ModelNotAllowed)
+            return :internal_error    if internal_error?(error) # daemon bug; terminal before account_specific (G25)
             # non_provider (client-write/disconnect, SSE/parse/translation) is terminal and
-            # must be classified BEFORE internal_error/account_specific/transient: a dead
-            # client socket or a LegionIO parse bug must never trip a provider circuit or
-            # escalate to another lane (senseless — the upstream is healthy).
+            # must be classified BEFORE account_specific/transient: a dead client socket or a
+            # LegionIO parse bug must never trip a provider circuit or escalate to another lane
+            # (senseless — the upstream is healthy). Checked after :internal_error so daemon
+            # programming errors keep their pre-existing, more-specific label (both are terminal).
             return :non_provider      if non_provider_failure?(error)
-            return :internal_error    if internal_error?(error) # terminal before account_specific
             return :account_specific  if authentication_error?(error) ||
                                          config_error?(error) ||
                                          account_specific_error?(error)
