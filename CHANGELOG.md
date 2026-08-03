@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.15.1] - 2026-08-01
+
+### Fixed
+- **`rag_enabled?` shadow-default made setting un-disableable.** The `rag_setting(key, default)` helper used `Legion::Settings.dig(:llm, :rag, key) || default`, which evaluates `false || true` → `true` for any boolean setting. Setting `llm.rag.enabled = false` was silently ignored. Deleted `rag_setting`, `rag_settings`, `settings_value`, and `trivial_patterns` wrapper methods entirely. All call sites now use direct bracket access (`Legion::Settings[:llm][:rag][:key]`) per legionio-standards.md §3. Defaults live exclusively in `rag_defaults` in `settings.rb`.
+- **Circuit-breaker half-open starvation recovery.** When all providers tripped simultaneously, the half-open probe slot was never offered because the sweep only ran when a request arrived — but requests were already being rejected. Added a background sweep thread (`routing.health.circuit_breaker.sweep_interval_seconds`, default 30) that promotes one tripped provider to half-open regardless of inbound traffic.
+- **Provider connections not closed on shutdown (CLOSE_WAIT accumulation).** `Legion::LLM.shutdown` now iterates all registered provider connections and calls `disconnect`/`close`, preventing socket leak under container orchestration restarts.
+- **Client-side SSE write failures no longer trip the upstream provider's circuit breaker.** A dead client socket (`Puma::ConnectionError: Socket timeout writing data`, `Errno::EPIPE`/`ECONNRESET`, `StreamClosed`) mid- or end-stream was being counted as an upstream provider failure: it reported provider `:error`, tripped the vLLM lane's circuit, and escalated to `EscalationExhausted` — failing over because the *client* went away. Once both `gemma-4-31b` lanes tripped, every 31b request hit `NoLaneAvailable` until process restart, despite the upstream being healthy for weeks. Root cause: `Puma::ConnectionError` is a `RuntimeError`, not an `IOError`, so the `StreamAssembler`'s `rescue IOError, Errno::EPIPE` guards let it escape raw into the executor's escalation loop, whose failure path never consulted the existing `client_stream_error?` helper. The circuit breaker now answers only "is the upstream provider broken?": client-write/disconnect, SSE/canonical-parse/translation, and daemon/programming errors (`NoMethodError`/`ArgumentError`/`NotImplementedError`) never report provider health, trip a circuit, or escalate; a client disconnect converts to a clean cancellation that still emits its ledger event. Genuine provider errors (5xx, connection-refused-to-provider, provider 401) still trip and escalate exactly as before. Fix is provider-agnostic (no provider-name conditionals).
+
 ## [0.15.0] - 2026-07-24
 
 ### Changed

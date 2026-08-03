@@ -205,19 +205,11 @@ module Legion
           end
 
           def trigger_scan_depth
-            tool_trigger_setting(:scan_depth, 10)
+            Legion::Settings[:llm][:tool_trigger][:scan_depth]
           end
 
           def trigger_tool_limit
-            tool_trigger_setting(:tool_limit, 25)
-          end
-
-          def tool_trigger_setting(key, default = nil)
-            Legion::Settings.dig(:llm, :tool_trigger, key) || default
-          end
-
-          def settings_value(*keys, default: nil)
-            Legion::Settings.dig(:llm, *keys) || default
+            Legion::Settings[:llm][:tool_trigger][:tool_limit]
           end
 
           def log_trigger_match(action, **fields)

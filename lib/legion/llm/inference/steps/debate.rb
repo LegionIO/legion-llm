@@ -124,7 +124,7 @@ module Legion
             gaia_trigger = gaia_debate_trigger?(@enrichments)
             return true if gaia_trigger
 
-            settings_value(:debate, :enabled) == true
+            Legion::Settings[:llm][:debate][:enabled] == true
           end
 
           def gaia_debate_trigger?(enrichments)
@@ -193,22 +193,14 @@ module Legion
 
           private
 
-          def debate_settings
-            @debate_settings ||= settings_value(:debate) || {}
-          end
-
-          def debate_setting(key, default = nil)
-            Legion::Settings[:llm][:debate][key] || default
-          end
-
-          def settings_value(*keys, default: nil)
-            Legion::Settings.dig(:llm, *keys) || default
+          def debate_setting(key)
+            Legion::Settings[:llm][:debate][key]
           end
 
           def resolve_debate_rounds(request)
             requested = request.extra.is_a?(Hash) ? request.extra[:debate_rounds] : nil
-            default   = debate_setting(:default_rounds, 1)
-            max       = debate_setting(:max_rounds, 3)
+            default   = debate_setting(:default_rounds)
+            max       = debate_setting(:max_rounds)
 
             rounds = requested ? requested.to_i : default.to_i
             rounds = 1 if rounds < 1
@@ -238,8 +230,8 @@ module Legion
             explicit_challenger = debate_setting(:challenger_model)
             explicit_judge      = debate_setting(:judge_model)
 
-            request_model    = @resolved_model || (request.routing.is_a?(Hash) ? request.routing[:model] : nil) || settings_value(:default_model)
-            request_provider = @resolved_provider || (request.routing.is_a?(Hash) ? request.routing[:provider] : nil) || settings_value(:default_provider)
+            request_model    = @resolved_model || (request.routing.is_a?(Hash) ? request.routing[:model] : nil) || Legion::Settings[:llm][:default_model]
+            request_provider = @resolved_provider || (request.routing.is_a?(Hash) ? request.routing[:provider] : nil) || Legion::Settings[:llm][:default_provider]
 
             advocate_model = explicit_advocate || "#{request_provider}:#{request_model}"
 

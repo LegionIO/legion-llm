@@ -331,6 +331,49 @@ RSpec.describe Legion::LLM::Call::Registry do
     end
   end
 
+  describe '.disconnect_all!' do
+    it 'calls disconnect on adapters that support it' do
+      provider = instance_double('Provider')
+      allow(provider).to receive(:disconnect)
+      adapter_with_provider = Module.new do
+        define_singleton_method(:name) { 'adapter_with_provider' }
+      end
+      allow(adapter_with_provider).to receive(:provider).and_return(provider)
+
+      described_class.register(:vllm, adapter_with_provider)
+      described_class.disconnect_all!
+
+      expect(provider).to have_received(:disconnect)
+    end
+
+    it 'skips adapters without a provider method' do
+      described_class.register(:ollama, adapter_a)
+      expect { described_class.disconnect_all! }.not_to raise_error
+    end
+
+    it 'continues when one adapter raises during disconnect' do
+      failing_provider = instance_double('Provider')
+      allow(failing_provider).to receive(:disconnect).and_raise(RuntimeError, 'connection refused')
+      failing_adapter = Module.new do
+        define_singleton_method(:name) { 'failing_adapter' }
+      end
+      allow(failing_adapter).to receive(:provider).and_return(failing_provider)
+
+      ok_provider = instance_double('Provider')
+      allow(ok_provider).to receive(:disconnect)
+      ok_adapter = Module.new do
+        define_singleton_method(:name) { 'ok_adapter' }
+      end
+      allow(ok_adapter).to receive(:provider).and_return(ok_provider)
+
+      described_class.register(:failing, failing_adapter)
+      described_class.register(:ok, ok_adapter)
+      described_class.disconnect_all!
+
+      expect(ok_provider).to have_received(:disconnect)
+    end
+  end
+
   describe 'backward compatibility' do
     it 'works with the old 2-arg register and 1-arg for pattern' do
       described_class.register(:anthropic, adapter_a)
