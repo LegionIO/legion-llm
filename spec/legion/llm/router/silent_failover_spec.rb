@@ -14,21 +14,21 @@ RSpec.describe 'Mid-stream failover is silent (P5)' do
         @trailers = {}
       end
 
-      def on_start(**) = @events << ({ type: :start })
-      def on_text_open(**) = @events << ({ type: :text_open })
-      def on_text_delta(**) = @events << ({ type: :text_delta })
-      def on_text_close(**) = @events << ({ type: :text_close })
-      def on_thinking_open(**) = @events << ({ type: :thinking_open })
-      def on_thinking_delta(**) = @events << ({ type: :thinking_delta })
-      def on_thinking_close(**) = @events << ({ type: :thinking_close })
-      def on_tool_call_open(**) = @events << ({ type: :tool_call_open })
-      def on_tool_call_delta(**) = @events << ({ type: :tool_call_delta })
-      def on_tool_call_close(**) = @events << ({ type: :tool_call_close })
-      def on_server_tool_result(**) = @events << ({ type: :server_tool_result })
-      def on_keep_alive = @events << ({ type: :keep_alive })
-      def on_message_delta(**) = @events << ({ type: :message_delta })
-      def on_done(**) = @events << ({ type: :done })
-      def on_error(**) = @events << ({ type: :error })
+      def on_start(**) = @events << { type: :start }
+      def on_text_open(**) = @events << { type: :text_open }
+      def on_text_delta(**) = @events << { type: :text_delta }
+      def on_text_close(**) = @events << { type: :text_close }
+      def on_thinking_open(**) = @events << { type: :thinking_open }
+      def on_thinking_delta(**) = @events << { type: :thinking_delta }
+      def on_thinking_close(**) = @events << { type: :thinking_close }
+      def on_tool_call_open(**) = @events << { type: :tool_call_open }
+      def on_tool_call_delta(**) = @events << { type: :tool_call_delta }
+      def on_tool_call_close(**) = @events << { type: :tool_call_close }
+      def on_server_tool_result(**) = @events << { type: :server_tool_result }
+      def on_keep_alive = @events << { type: :keep_alive }
+      def on_message_delta(**) = @events << { type: :message_delta }
+      def on_done(**) = @events << { type: :done }
+      def on_error(**) = @events << { type: :error }
 
       def on_trailers(trailers:)
         @trailers.merge!(trailers)

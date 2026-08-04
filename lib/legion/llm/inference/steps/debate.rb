@@ -209,7 +209,7 @@ module Legion
 
           def extract_question(request)
             request.messages.select { |m| m[:role].to_s == 'user' }
-                            .last&.dig(:content) || ''
+                   .last&.dig(:content) || ''
           end
 
           def extract_content(response)

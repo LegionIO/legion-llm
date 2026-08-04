@@ -619,13 +619,11 @@ module Legion
           clarification_signals = ['clarif', 'what do you mean', 'i see', 'understood', 'got it', 'correct', 'exactly', 'yes', 'right', 'agree']
           conclusion_signals    = ['in summary', 'to summarize', 'in conclusion', 'therefore', 'so to answer', 'the answer is']
 
-          # rubocop:disable Style/ArrayIntersect -- these are substring checks
+          # -- these are substring checks
           # (signal `include?` against a String), NOT array intersection. The
           # cop's `intersect?` suggestion raises TypeError on a String arg.
           has_clarification = contents.any? { |c| clarification_signals.any? { |s| c.include?(s) } }
           has_conclusion    = contents.last.length < 500 || conclusion_signals.any? { |s| contents.last.include?(s) }
-          # rubocop:enable Style/ArrayIntersect
-
           has_clarification && has_conclusion
         end
 

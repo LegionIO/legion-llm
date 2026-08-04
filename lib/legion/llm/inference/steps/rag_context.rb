@@ -286,7 +286,7 @@ module Legion
 
           def extract_query
             @request.messages.select { |m| m[:role].to_s == 'user' }
-                             .then { |messages| content_text(message_content(messages.last)) }
+                    .then { |messages| content_text(message_content(messages.last)) }
           end
 
           def message_content(message)
