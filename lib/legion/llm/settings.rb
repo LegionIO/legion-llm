@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/settings/tools'
 require 'legion/settings'
 
 module Legion
@@ -8,65 +9,51 @@ module Legion
     module Settings
       extend Legion::Logging::Helper
 
-      CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT = [
-        'sudo', 'visudo', 'su', 'legion', 'legionio', 'legionio do', 'legionio/legion',
-        'computer_use_session', 'computer_use_control', 'computer_use_session_info',
-        'computer_use_session_message', 'plugin__aithena__recall', 'plugin__aithena__remember',
-        'plugin__aithena__skill_search', 'plugin__aithena__skill_feedback', 'plugin__aithena__memory_stats',
-        'plugin__cron__create', 'plugin__cron__list', 'plugin__cron__get', 'plugin__cron__update',
-        'plugin__cron__delete', 'plugin__cron__get_history', 'plugin__cron__run_now', 'plugin__cron__stop'
-      ].freeze
-      CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT = [].freeze
-
       def self.default
         model_override = ENV.fetch('ANTHROPIC_MODEL', nil)
         {
-          enabled:                        true,
-          connected:                      false,
-          pipeline_enabled:               true,
-          pipeline_async_post_steps:      true,
-          context_window:                 250_000,
-          max_output_tokens:              16_384,
-          max_tool_rounds:                200,
-          max_tool_calls_per_turn:        100,
-          tool_error_log_chars:           500,
-          tool_result_max_dispatch_chars: 5_000,
-          default_model:                  model_override,
-          default_temperature:            0.9,
-          default_provider:               nil,
-          providers:                      {},
-          tier_order:                     nil,
-          system_baseline:                system_baseline_default,
-          fleet:                          fleet_defaults,
-          routing:                        routing_defaults,
-          budget:                         budget_defaults,
-          confidence:                     confidence_defaults,
-          discovery:                      discovery_defaults,
-          daemon:                         daemon_defaults,
-          prompt_caching:                 prompt_caching_defaults,
-          arbitrage:                      arbitrage_defaults,
-          batch:                          batch_defaults,
-          scheduling:                     scheduling_defaults,
-          rag:                            rag_defaults,
-          rag_guard:                      rag_guard_defaults,
-          gaia:                           gaia_defaults,
-          knowledge_capture:              knowledge_capture_defaults,
-          embedding:                      embedding_defaults,
-          conversation:                   conversation_defaults,
-          telemetry:                      telemetry_defaults,
-          pricing:                        {},
-          metering:                       metering_defaults,
-          context_curation:               context_curation_defaults,
-          debate:                         debate_defaults,
-          provider_layer:                 provider_layer_defaults,
-          tool_trigger:                   tool_trigger_defaults,
-          api:                            api_defaults,
-          streaming:                      streaming_defaults,
-          compliance:                     compliance_defaults,
-          skills:                         skills_defaults,
-          claude_cli:                     claude_cli_defaults,
-          fallback:                       fallback_defaults,
-          structured_output:              structured_output_defaults
+          enabled:                   true,
+          connected:                 false,
+          pipeline_enabled:          true,
+          pipeline_async_post_steps: true,
+          context_window:            250_000,
+          max_output_tokens:         16_384,
+          default_model:             model_override,
+          default_temperature:       0.9,
+          default_provider:          nil,
+          providers:                 {},
+          tier_order:                nil,
+          system_baseline:           system_baseline_default,
+          fleet:                     fleet_defaults,
+          routing:                   routing_defaults,
+          budget:                    budget_defaults,
+          confidence:                confidence_defaults,
+          discovery:                 discovery_defaults,
+          daemon:                    daemon_defaults,
+          prompt_caching:            prompt_caching_defaults,
+          arbitrage:                 arbitrage_defaults,
+          batch:                     batch_defaults,
+          scheduling:                scheduling_defaults,
+          rag:                       rag_defaults,
+          rag_guard:                 rag_guard_defaults,
+          gaia:                      gaia_defaults,
+          knowledge_capture:         knowledge_capture_defaults,
+          embedding:                 embedding_defaults,
+          conversation:              conversation_defaults,
+          telemetry:                 telemetry_defaults,
+          pricing:                   {},
+          metering:                  metering_defaults,
+          context_curation:          context_curation_defaults,
+          debate:                    debate_defaults,
+          provider_layer:            provider_layer_defaults,
+          tools:                     Legion::LLM::Settings::Tools.defaults,
+          api:                       api_defaults,
+          streaming:                 streaming_defaults,
+          compliance:                compliance_defaults,
+          skills:                    skills_defaults,
+          claude_cli:                claude_cli_defaults,
+          fallback:                  fallback_defaults,
+          structured_output:         structured_output_defaults
         }
       end
 
@@ -480,17 +467,6 @@ module Legion
             ollama vllm anthropic openai gemini mlx
             bedrock azure_foundry vertex
           ]
-        }
-      end
-
-      def self.tool_trigger_defaults
-        {
-          scan_depth:                        10,
-          tool_limit:                        25,
-          local_tool_limit:                  50,
-          client_tool_passthrough:           true,
-          client_tool_passthrough_whitelist: CLIENT_TOOL_PASSTHROUGH_WHITELIST_DEFAULT.dup,
-          client_tool_passthrough_blacklist: CLIENT_TOOL_PASSTHROUGH_BLACKLIST_DEFAULT.dup
         }
       end
 

@@ -110,7 +110,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
     it 'applies the local tool limit only to registry-added tools' do
       stub_const('Legion::Settings::Extensions', extensions_mod)
-      Legion::Settings[:llm][:tool_trigger][:local_tool_limit] = 1
+      Legion::Settings[:llm][:tools][:trigger][:local_tool_limit] = 1
       client_tools = [
         Legion::LLM::Types::ToolDefinition.build(name: 'client_one', description: 'Client one'),
         Legion::LLM::Types::ToolDefinition.build(name: 'client_two', description: 'Client two')

@@ -205,11 +205,11 @@ module Legion
           end
 
           def trigger_scan_depth
-            Legion::Settings[:llm][:tool_trigger][:scan_depth]
+            Legion::Settings[:llm][:tools][:trigger][:scan_depth]
           end
 
           def trigger_tool_limit
-            Legion::Settings[:llm][:tool_trigger][:tool_limit]
+            Legion::Settings[:llm][:tools][:trigger][:tool_limit]
           end
 
           def log_trigger_match(action, **fields)
@@ -225,7 +225,7 @@ module Legion
           def format_trigger_log_value(value)
             case value
             when Array
-              value.map(&:to_s).first(20).join(',')
+              value.map(&:to_s).first(Legion::Settings[:llm][:tools][:trigger][:log_name_limit]).join(',')
             else
               value
             end

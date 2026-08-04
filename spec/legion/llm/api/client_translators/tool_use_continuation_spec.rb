@@ -80,4 +80,58 @@ RSpec.describe 'Client translator multi-turn tool_use continuation' do
       expect(assistant[:tool_calls].first[:name].to_s).to eq('legion_list_all_tools')
     end
   end
+
+  # Dead-stop root cause (2026-08-04, captured live): Codex/Responses orders an
+  # assistant turn's items as function_call(s) → assistant `message` (text) →
+  # function_call_output(s). The translator flushed the tool_calls on the text
+  # item then emitted the text as a SEPARATE assistant message, producing:
+  #   assistant(tool_calls) → assistant(text) → tool → tool
+  # i.e. TWO consecutive assistant messages with the narration wedged between a
+  # tool_call and its result. Thinking-enabled open-weight models fed this
+  # malformed history narrate their next step instead of calling the tool and
+  # end the turn cleanly (finish_reason=stop, no tool call) — the "dead stop".
+  # These specs pin the ONE-assistant-turn shape from the captured input verbatim.
+  describe Legion::LLM::API::ClientTranslators::OpenAIResponses do
+    let(:translator) { described_class.new }
+
+    # Verbatim item ordering from the captured dead-stop request
+    # (log_examples/codex_019fcb3e…): two parallel calls, then the assistant's
+    # narration text, then the two outputs.
+    let(:body) do
+      {
+        model: 'gemma-4-31b-it',
+        input: [
+          { role: 'user', content: 'analyze the log' },
+          { type: 'function_call', call_id: 'call_A', name: 'exec_command', arguments: '{"command":"head -1 f"}' },
+          { type: 'function_call', call_id: 'call_B', name: 'exec_command', arguments: '{"command":"tail -1 f"}' },
+          { role: 'assistant', content: "\n\nLet me examine the log structure first:" },
+          { type: 'function_call_output', call_id: 'call_A', output: 'line one' },
+          { type: 'function_call_output', call_id: 'call_B', output: 'line last' }
+        ]
+      }
+    end
+
+    it 'merges the assistant text-after-calls into ONE assistant turn (no split)' do
+      req = translator.parse_request(body, {})
+      roles = req.messages.map(&:role)
+      # exactly one assistant message; never two in a row
+      consecutive_assistant = roles.each_cons(2).count { |a, b| a == :assistant && b == :assistant }
+      expect(consecutive_assistant).to eq(0)
+      expect(roles.count(:assistant)).to eq(1)
+    end
+
+    it 'keeps tool results adjacent to their tool_calls message' do
+      req = translator.parse_request(body, {})
+      roles = req.messages.map(&:role)
+      # user → assistant(text+2 tool_calls) → tool → tool
+      expect(roles).to eq(%i[user assistant tool tool])
+    end
+
+    it 'carries both the narration text AND both tool_calls on the single assistant turn' do
+      req = translator.parse_request(body, {})
+      assistant = req.messages.find { |m| m.role == :assistant }
+      expect(assistant.tool_calls.map(&:id)).to eq(%w[call_A call_B])
+      expect(assistant.content.to_s).to include('Let me examine the log structure first')
+    end
+  end
 end

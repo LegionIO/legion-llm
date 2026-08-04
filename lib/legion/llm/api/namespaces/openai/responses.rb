@@ -214,8 +214,23 @@ module Legion
                   flush_pending(messages, pending)
                   messages << { role: 'tool', tool_call_id: item[:call_id], content: item[:output].to_s }
                 else
-                  flush_pending(messages, pending)
                   role = item[:role]&.to_s
+
+                  # SSOT: an assistant `message` arriving while calls are pending is
+                  # the SAME turn as those calls (Codex order: function_call(s) →
+                  # assistant message → function_call_output(s)). Merge its text onto
+                  # the flushed assistant tool_calls message so the turn stays ONE
+                  # message and the tool results that follow stay adjacent to their
+                  # calls. Splitting it out wedges narration between a tool_call and
+                  # its result — the malformed history behind the dead stop.
+                  if role == 'assistant' && !pending.empty?
+                    content = item[:content]
+                    content = content.to_s if content && !content.is_a?(Array)
+                    flush_pending(messages, pending, assistant_content: content)
+                    next
+                  end
+
+                  flush_pending(messages, pending)
                   next unless role
 
                   role = 'system' if role == 'developer'
@@ -229,12 +244,15 @@ module Legion
               messages
             end
 
-            def self.flush_pending(messages, pending)
-              return if pending.empty?
+            def self.flush_pending(messages, pending, assistant_content: nil)
+              if pending.empty?
+                messages << { role: 'assistant', content: assistant_content } if assistant_content
+                return
+              end
 
               messages << {
                 role:       'assistant',
-                content:    '',
+                content:    assistant_content.to_s,
                 tool_calls: pending.map do |tc|
                   { id: tc[:id], type: 'function', function: { name: tc[:name], arguments: tc[:arguments] } }
                 end

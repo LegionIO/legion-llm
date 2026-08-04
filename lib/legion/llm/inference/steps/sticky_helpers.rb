@@ -12,37 +12,31 @@ module Legion
           private
 
           def sticky_enabled?
-            sticky_setting(:enabled, true) != false
+            sticky_setting(:enabled) != false
           end
 
           def trigger_sticky_turns
-            sticky_setting(:trigger_turns, 2)
+            sticky_setting(:trigger_turns)
           end
 
           def execution_sticky_tool_calls
-            sticky_setting(:execution_tool_calls, 5)
+            sticky_setting(:execution_tool_calls)
           end
 
           def max_history_entries
-            sticky_setting(:max_history_entries, 50)
+            sticky_setting(:max_history_entries)
           end
 
           def max_result_length
-            sticky_setting(:max_result_length, 2000)
+            sticky_setting(:max_result_length)
           end
 
           def max_args_length
-            sticky_setting(:max_args_length, 500)
+            sticky_setting(:max_args_length)
           end
 
-          def sticky_setting(key, default = nil)
-            value = Legion::Settings.dig(:llm, :tool_sticky, key)
-            value.nil? ? default : value
-          end
-
-          def settings_value(*keys, default: nil)
-            value = Legion::Settings.dig(:llm, *keys)
-            value.nil? ? default : value
+          def sticky_setting(key)
+            Legion::Settings[:llm][:tools][:sticky][key]
           end
         end
       end

@@ -119,7 +119,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
 
       it 'includes non-executable client tools when the setting is enabled' do
-        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough] = true
+        Legion::Settings[:llm][:tools][:trigger][:client_tool_passthrough] = true
         client_tool = Legion::LLM::Types::ToolDefinition.build(
           name:        'client_shell',
           description: 'Client shell',
@@ -325,8 +325,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
 
       it 'filters passthrough client tools with an explicit whitelist' do
-        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough_whitelist] = %w[git grep]
-        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough_blacklist] = []
+        Legion::Settings[:llm][:tools][:trigger][:client_tool_passthrough_whitelist] = %w[git grep]
+        Legion::Settings[:llm][:tools][:trigger][:client_tool_passthrough_blacklist] = []
         tools = %w[git ls grep].map do |name|
           Legion::LLM::Types::ToolDefinition.build(
             name:        name,
@@ -349,8 +349,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
 
       it 'lets the blacklist win over the whitelist for passthrough client tools' do
-        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough_whitelist] = %w[git sudo]
-        Legion::Settings[:llm][:tool_trigger][:client_tool_passthrough_blacklist] = %w[sudo]
+        Legion::Settings[:llm][:tools][:trigger][:client_tool_passthrough_whitelist] = %w[git sudo]
+        Legion::Settings[:llm][:tools][:trigger][:client_tool_passthrough_blacklist] = %w[sudo]
         tools = %w[git sudo].map do |name|
           Legion::LLM::Types::ToolDefinition.build(
             name:        name,

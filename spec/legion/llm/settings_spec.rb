@@ -10,9 +10,9 @@ RSpec.describe Legion::LLM::Settings do
     end
 
     it 'defaults client tool passthrough on with an empty whitelist and shell escalation blacklist' do
-      expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough)).to be true
-      expect(described_class.default.dig(:tool_trigger, :client_tool_passthrough_whitelist)).to eq([])
-      blacklist = described_class.default.dig(:tool_trigger, :client_tool_passthrough_blacklist)
+      expect(described_class.default.dig(:tools, :trigger, :client_tool_passthrough)).to be true
+      expect(described_class.default.dig(:tools, :trigger, :client_tool_passthrough_whitelist)).to eq([])
+      blacklist = described_class.default.dig(:tools, :trigger, :client_tool_passthrough_blacklist)
       expect(blacklist).to include(
         'sudo', 'visudo', 'su', 'legion', 'legionio', 'legionio do', 'legionio/legion',
         'computer_use_session', 'computer_use_control', 'computer_use_session_info',
@@ -24,7 +24,41 @@ RSpec.describe Legion::LLM::Settings do
     end
 
     it 'defaults tool error log summaries to 500 characters' do
-      expect(described_class.default[:tool_error_log_chars]).to eq(500)
+      expect(described_class.default.dig(:tools, :error_log_chars)).to eq(500)
+    end
+
+    it 'keeps all tool policy under the tools settings group' do
+      expect(described_class.default[:tools]).to include(
+        max_rounds:                200,
+        max_calls_per_turn:        100,
+        consecutive_failure_limit: 2,
+        result_max_dispatch_chars: 5_000,
+        python_venv_dir:           '~/.legionio/python'
+      )
+      expect(described_class.default.dig(:tools, :timeouts)).to eq(
+        default:         1_000,
+        max:             10_000,
+        terminate_grace: 1_000
+      )
+      expect(described_class.default.dig(:tools, :confidence)).to include(
+        override_threshold:           0.8,
+        shadow_threshold:             0.5,
+        success_delta:                0.05,
+        failure_delta:                -0.1,
+        apollo_limit:                 100,
+        apollo_confidence_multiplier: 0.8,
+        cache_ttl_seconds:            3_600
+      )
+    end
+
+    it 'does not retain tool policy at the llm root' do
+      expect(described_class.default).not_to include(
+        :max_tool_rounds,
+        :max_tool_calls_per_turn,
+        :tool_error_log_chars,
+        :tool_result_max_dispatch_chars,
+        :tool_trigger
+      )
     end
   end
 

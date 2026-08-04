@@ -9,11 +9,6 @@ module Legion
         extend Legion::Logging::Helper
         extend ::Legion::Cache::Helper
 
-        OVERRIDE_THRESHOLD = 0.8
-        SHADOW_THRESHOLD = 0.5
-        SUCCESS_DELTA = 0.05
-        FAILURE_DELTA = -0.1
-
         @overrides_l0 = {}
         @mutex = Mutex.new
 
@@ -36,7 +31,7 @@ module Legion
             entry = @overrides_l0[tool]
             return unless entry
 
-            entry[:confidence] = (entry[:confidence] + SUCCESS_DELTA).clamp(0.0, 1.0)
+            entry[:confidence] = (entry[:confidence] + confidence_settings[:success_delta]).clamp(0.0, 1.0)
             entry[:hit_count] += 1
             entry[:updated_at] = Time.now
           end
@@ -48,7 +43,7 @@ module Legion
             entry = @overrides_l0[tool]
             return unless entry
 
-            entry[:confidence] = (entry[:confidence] + FAILURE_DELTA).clamp(0.0, 1.0)
+            entry[:confidence] = (entry[:confidence] + confidence_settings[:failure_delta]).clamp(0.0, 1.0)
             entry[:miss_count] += 1
             entry[:updated_at] = Time.now
           end
@@ -63,12 +58,13 @@ module Legion
 
         def should_override?(tool)
           entry = lookup(tool)
-          entry.is_a?(Hash) && entry[:confidence] >= OVERRIDE_THRESHOLD
+          entry.is_a?(Hash) && entry[:confidence] >= confidence_settings[:override_threshold]
         end
 
         def should_shadow?(tool)
           entry = lookup(tool)
-          entry.is_a?(Hash) && entry[:confidence] >= SHADOW_THRESHOLD && entry[:confidence] < OVERRIDE_THRESHOLD
+          entry.is_a?(Hash) && entry[:confidence] >= confidence_settings[:shadow_threshold] &&
+            entry[:confidence] < confidence_settings[:override_threshold]
         end
 
         def all_overrides
@@ -98,7 +94,7 @@ module Legion
           results = Legion::Extensions::Apollo::Runners::Knowledge.handle_retrieve(
             tags:             %w[override mesh_confirmed],
             knowledge_domain: 'system',
-            limit:            100
+            limit:            confidence_settings[:apollo_limit]
           )
           return unless results.is_a?(Array)
 
@@ -115,7 +111,8 @@ module Legion
               @overrides_l0[tool] = {
                 tool: tool,
                 lex: ctx[:lex] || ctx['lex'],
-                confidence: ((ctx[:confidence] || ctx['confidence']).to_f * 0.8).clamp(0.0, 1.0),
+                confidence: ((ctx[:confidence] || ctx['confidence']).to_f *
+                  confidence_settings[:apollo_confidence_multiplier]).clamp(0.0, 1.0),
                 hit_count: 0, miss_count: 0,
                 created_at: Time.now, updated_at: Time.now
               }
@@ -140,7 +137,7 @@ module Legion
             entry = @mutex.synchronize { @overrides_l0[tool] }
             return unless entry
 
-            l1_cache_set("override:#{tool}", Legion::JSON.dump(entry), ttl: 3600)
+            l1_cache_set("override:#{tool}", Legion::JSON.dump(entry), ttl: confidence_settings[:cache_ttl_seconds])
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.confidence.sync_l1', tool: tool)
             nil
@@ -196,6 +193,10 @@ module Legion
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'llm.tools.confidence.lookup_l2')
             nil
+          end
+
+          def confidence_settings
+            Legion::Settings[:llm][:tools][:confidence]
           end
         end
       end

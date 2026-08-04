@@ -217,10 +217,7 @@ module Legion
         end
 
         def tool_error_log_chars
-          configured = Legion::Settings[:llm][:tool_error_log_chars].to_i
-          configured.positive? ? configured : 500
-        rescue StandardError
-          500
+          Legion::Settings[:llm][:tools][:error_log_chars]
         end
       end
     end

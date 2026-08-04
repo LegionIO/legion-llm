@@ -17,8 +17,6 @@ module Legion
 
         LIST_SPECIAL_TOOLS_NAME = 'legion_list_special_tools'
         LIST_ALL_TOOLS_NAME = 'legion_list_all_tools'
-        DEFAULT_TIMEOUT_MS = 120_000
-        MAX_TIMEOUT_MS = 600_000
         TOOL_ALIASES = {
           'python' => %w[python python3],
           'pip'    => %w[pip pip3]
@@ -138,7 +136,8 @@ module Legion
         end
 
         def python_venv_dir
-          ENV['LEGION_PYTHON_VENV'] || File.expand_path('~/.legionio/python')
+          configured = Legion::Settings[:llm][:tools][:python_venv_dir]
+          ENV['LEGION_PYTHON_VENV'] || File.expand_path(configured)
         end
 
         def special_tools_definition
@@ -326,9 +325,49 @@ module Legion
         end
 
         def run_process(executable, argv, **args)
-          Timeout.timeout(timeout_ms(args) / 1000.0) do
-            Open3.capture2e(executable, *argv, chdir: process_cwd(args), stdin_data: process_stdin(args))
+          Open3.popen2e(executable, *argv, chdir: process_cwd(args), pgroup: true) do |stdin, output, wait_thread|
+            output_reader = Thread.new { output.read }
+            output_reader.report_on_exception = false
+            stdin_writer = Thread.new do
+              stdin.write(process_stdin(args))
+            rescue Errno::EPIPE, IOError
+              nil
+            ensure
+              stdin.close unless stdin.closed?
+            end
+            stdin_writer.report_on_exception = false
+
+            unless wait_thread.join(timeout_ms(args) / 1000.0)
+              terminate_process_group(wait_thread)
+              stdin_writer.join
+              output_reader.join
+              raise Timeout::Error
+            end
+
+            stdin_writer.join
+            [output_reader.value, wait_thread.value]
           end
+        end
+
+        def terminate_process_group(wait_thread)
+          process_group_id = wait_thread.pid
+          signal_process_group('TERM', process_group_id)
+          wait_thread.join(terminate_grace_ms / 1000.0)
+          signal_process_group('KILL', process_group_id) if process_group_alive?(process_group_id)
+          wait_thread.join
+        end
+
+        def signal_process_group(signal, process_group_id)
+          ::Process.kill(signal, -process_group_id)
+        rescue Errno::ESRCH
+          nil
+        end
+
+        def process_group_alive?(process_group_id)
+          ::Process.kill(0, -process_group_id)
+          true
+        rescue Errno::ESRCH
+          false
         end
 
         def process_cwd(args)
@@ -342,10 +381,15 @@ module Legion
         end
 
         def timeout_ms(args)
-          requested = (args[:timeout] || args['timeout'] || DEFAULT_TIMEOUT_MS).to_i
-          return DEFAULT_TIMEOUT_MS unless requested.positive?
+          timeouts = Legion::Settings[:llm][:tools][:timeouts]
+          requested = (args[:timeout] || args['timeout'] || timeouts[:default]).to_i
+          return timeouts[:default] unless requested.positive?
 
-          [requested, MAX_TIMEOUT_MS].min
+          [requested, timeouts[:max]].min
+        end
+
+        def terminate_grace_ms
+          Legion::Settings[:llm][:tools][:timeouts][:terminate_grace]
         end
 
         def pip_candidates_for(bin_dir)
@@ -410,10 +454,7 @@ module Legion
         end
 
         def tool_error_log_chars
-          configured = Legion::Settings[:llm][:tool_error_log_chars].to_i
-          configured.positive? ? configured : 500
-        rescue StandardError
-          500
+          Legion::Settings[:llm][:tools][:error_log_chars]
         end
       end
     end

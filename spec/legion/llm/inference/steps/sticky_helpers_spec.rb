@@ -13,13 +13,15 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyHelpers do
 
   it 'honors tool sticky settings' do
     Legion::Settings.set_prop(:llm, {
-                                tool_sticky: {
-                                  enabled:              false,
-                                  trigger_turns:        4,
-                                  execution_tool_calls: 9,
-                                  max_history_entries:  33,
-                                  max_result_length:    1234,
-                                  max_args_length:      321
+                                tools: {
+                                  sticky: {
+                                    enabled:              false,
+                                    trigger_turns:        4,
+                                    execution_tool_calls: 9,
+                                    max_history_entries:  33,
+                                    max_result_length:    1234,
+                                    max_args_length:      321
+                                  }
                                 }
                               })
 

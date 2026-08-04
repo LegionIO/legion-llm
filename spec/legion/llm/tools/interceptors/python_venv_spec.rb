@@ -5,7 +5,15 @@ require 'legion/llm/tools/interceptor'
 require 'legion/llm/tools/interceptors/python_venv'
 
 RSpec.describe Legion::LLM::Tools::Interceptors::PythonVenv do
-  let(:venv_dir) { described_class::VENV_DIR }
+  let(:venv_dir) { File.expand_path(Legion::Settings[:llm][:tools][:python_venv_dir]) }
+
+  describe '.venv_dir' do
+    it 'uses the configured Python environment directory' do
+      Legion::Settings[:llm][:tools][:python_venv_dir] = '/tmp/legion-python'
+
+      expect(described_class.venv_dir).to eq('/tmp/legion-python')
+    end
+  end
 
   describe '.match?' do
     it 'matches python tool names' do

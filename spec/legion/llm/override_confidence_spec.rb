@@ -53,6 +53,18 @@ RSpec.describe Legion::LLM::Tools::Confidence do
       expect { described_class.record_success('unknown') }.not_to raise_error
       expect { described_class.record_failure('unknown') }.not_to raise_error
     end
+
+    it 'uses the configured success and failure deltas' do
+      Legion::Settings[:llm][:tools][:confidence][:success_delta] = 0.2
+      Legion::Settings[:llm][:tools][:confidence][:failure_delta] = -0.3
+      described_class.record(tool: 'x', lex: 'lex-x:Y:z', confidence: 0.5)
+
+      described_class.record_success('x')
+      expect(described_class.lookup('x')[:confidence]).to eq(0.7)
+
+      described_class.record_failure('x')
+      expect(described_class.lookup('x')[:confidence]).to be_within(0.0001).of(0.4)
+    end
   end
 
   describe '.should_override?' do
@@ -68,6 +80,13 @@ RSpec.describe Legion::LLM::Tools::Confidence do
 
     it 'returns false for unknown tools' do
       expect(described_class.should_override?('unknown')).to eq(false)
+    end
+
+    it 'uses the configured override threshold' do
+      Legion::Settings[:llm][:tools][:confidence][:override_threshold] = 0.9
+      described_class.record(tool: 'close_pr', lex: 'lex-github:PullRequest:close', confidence: 0.85)
+
+      expect(described_class.should_override?('close_pr')).to eq(false)
     end
   end
 

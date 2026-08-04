@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.15.2] - 2026-08-04
+
+### Fixed
+- **Runtime tool deadlines now terminate the process tree.** Replaced `Timeout.timeout` around `Open3.capture2e`, which raised a timeout but then blocked while Open3 joined the still-running child. Runtime tools now launch in a dedicated process group, send `TERM` at the deadline, wait the configured grace period, send `KILL` when needed, and reap the process before returning the timeout result.
+- **Codex Responses tool continuations preserve one assistant turn.** Codex orders a turn as function calls, assistant narration, then function-call outputs. The Responses normalizers previously split that into consecutive assistant messages and wedged narration between each call and its result, causing thinking-enabled providers to narrate and stop instead of issuing the next tool call. Assistant text and pending calls now stay on one canonical assistant message with adjacent tool results.
+
+### Changed
+- **Tool policy now has one settings subtree.** Added `Legion::LLM::Settings::Tools.defaults` at `llm.tools`, with runtime timeouts defaulting to 1 second, capped at 10 seconds, and a 1 second termination grace. Consolidated the existing tool loop, dispatch, trigger, sticky, confidence, logging, history, compaction, and Python environment policy under the same subtree, removing inline shadow defaults and operational constants from tool paths.
+
 ## [0.15.1] - 2026-08-01
 
 ### Fixed

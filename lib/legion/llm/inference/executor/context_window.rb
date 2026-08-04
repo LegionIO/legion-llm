@@ -76,14 +76,16 @@ module Legion
 
             filtered = messages.reject do |msg|
               role = (msg[:role] || msg['role']).to_s
-              role == 'tool' && (msg[:content] || msg['content']).to_s.length > 500
+              role == 'tool' && (msg[:content] || msg['content']).to_s.length >
+                Legion::Settings[:llm][:tools][:context_compaction][:threshold_chars]
             end
             messages = filtered.map do |msg|
               role = (msg[:role] || msg['role']).to_s
               next msg unless role == 'tool'
 
               content = (msg[:content] || msg['content']).to_s
-              content.length > 200 ? msg.merge(content: "#{content[0, 200]}\n[compacted]") : msg
+              result_chars = Legion::Settings[:llm][:tools][:context_compaction][:result_chars]
+              content.length > result_chars ? msg.merge(content: "#{content[0, result_chars]}\n[compacted]") : msg
             end
 
             return messages if estimate_message_tokens(messages) <= target_tokens
@@ -183,7 +185,7 @@ module Legion
           # Pure oversized-tool-result trim. Shared by trim_oversized_tool_results
           # (which adds logging) and reduce_messages_for_dispatch.
           def trim_oversized_tool_results_pure(messages)
-            max_chars = Legion::Settings[:llm][:tool_result_max_dispatch_chars].to_i
+            max_chars = Legion::Settings[:llm][:tools][:result_max_dispatch_chars]
             return messages unless max_chars.positive?
 
             preserve_after = last_user_message_index(messages)
@@ -205,7 +207,7 @@ module Legion
             trimmed_count = messages.zip(result).count { |before, after| before != after }
             if trimmed_count.positive?
               log.info "[llm][executor] action=trim_tool_results request_id=#{@request.id} trimmed=#{trimmed_count} " \
-                       "max_chars=#{Legion::Settings[:llm][:tool_result_max_dispatch_chars].to_i}"
+                       "max_chars=#{Legion::Settings[:llm][:tools][:result_max_dispatch_chars]}"
             end
             result
           end

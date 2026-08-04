@@ -592,8 +592,27 @@ module Legion
                 flush_pending_tool_calls(messages, pending_tool_calls)
                 messages << { role: 'tool', tool_call_id: item[:call_id], content: item[:output].to_s }
               else
-                flush_pending_tool_calls(messages, pending_tool_calls)
                 role = item[:role]&.to_s
+
+                # SSOT: an assistant `message` item that arrives while tool calls
+                # are still pending is the SAME assistant turn as those calls
+                # (Codex/Responses orders: function_call(s) → assistant message →
+                # function_call_output(s)). Merge the text as the assistant
+                # message's content and flush ONE combined assistant message
+                # (content + tool_calls), so the tool results that follow stay
+                # adjacent to their tool_calls. Emitting a separate assistant text
+                # message here splits one turn into two and wedges narration
+                # between a tool_call and its result — a malformed chat/completions
+                # history that makes thinking-enabled models narrate instead of
+                # calling the next tool (the "dead stop").
+                if role == 'assistant' && !pending_tool_calls.empty?
+                  content = item[:content]
+                  content = content.to_s if content && !content.is_a?(Array)
+                  flush_pending_tool_calls(messages, pending_tool_calls, assistant_content: content)
+                  next
+                end
+
+                flush_pending_tool_calls(messages, pending_tool_calls)
                 next unless role
 
                 role = 'system' if role == 'developer'
@@ -614,8 +633,13 @@ module Legion
           # ToolCall(name: nil) — provider translators then drop the call,
           # leaving an orphan tool_result that Bedrock rejects with
           # "unexpected tool_use_id in tool_result".
-          def flush_pending_tool_calls(messages, pending)
-            return if pending.empty?
+          def flush_pending_tool_calls(messages, pending, assistant_content: nil)
+            if pending.empty?
+              # No pending calls but an assistant text turn wants flushing — emit it
+              # so a trailing/standalone assistant message is never dropped.
+              messages << { role: 'assistant', content: assistant_content } if assistant_content
+              return
+            end
 
             tool_calls = pending.map do |tc|
               args = tc[:arguments]
@@ -630,8 +654,13 @@ module Legion
             last = messages.last
             if last && last[:role] == 'assistant' && !last.key?(:tool_calls)
               last[:tool_calls] = tool_calls
+              # Text arriving AFTER the calls (Codex order) belongs to this same turn.
+              last[:content] = assistant_content if assistant_content && last[:content].to_s.empty?
             else
-              messages << { role: 'assistant', content: '', tool_calls: tool_calls }
+              # assistant_content carries text that arrived AFTER the calls in the
+              # same turn — keep it ON the tool_calls message so the turn stays one
+              # message and the following tool results remain adjacent.
+              messages << { role: 'assistant', content: assistant_content.to_s, tool_calls: tool_calls }
             end
             pending.clear
           end
