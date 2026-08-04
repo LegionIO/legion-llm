@@ -7,8 +7,6 @@ module Legion
     module Tools
       module Interceptors
         module PythonVenv
-          VENV_DIR = (ENV['LEGION_PYTHON_VENV'] || File.expand_path('~/.legionio/python')).freeze
-
           TOOL_PATTERN = /\A(python3?|pip3?)\z/i
 
           module_function
@@ -24,7 +22,7 @@ module Legion
           end
 
           def venv_available?
-            Special.python_available? || File.exist?("#{VENV_DIR}/pyvenv.cfg")
+            Special.python_available? || File.exist?("#{venv_dir}/pyvenv.cfg")
           end
 
           def rewrite(**args)
@@ -43,11 +41,16 @@ module Legion
           end
 
           def python_path
-            Special.python_path || "#{VENV_DIR}/bin/python3"
+            Special.python_path || "#{venv_dir}/bin/python3"
           end
 
           def pip_path
-            Special.pip_path || "#{VENV_DIR}/bin/pip3"
+            Special.pip_path || "#{venv_dir}/bin/pip3"
+          end
+
+          def venv_dir
+            configured = Legion::Settings[:llm][:tools][:python_venv_dir]
+            File.expand_path(ENV['LEGION_PYTHON_VENV'] || configured)
           end
         end
       end

@@ -163,6 +163,25 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
       expect(result.first[:role]).to eq('system')
       expect(result.last[:role]).to eq('user')
     end
+
+    # Dead-stop root cause: an assistant `message` arriving AFTER function_call(s)
+    # and BEFORE their outputs (the Codex/Responses order) was split into a
+    # SEPARATE assistant message, producing assistant(tool_calls) → assistant(text)
+    # → tool. That wedges narration between a tool_call and its result and makes
+    # thinking-enabled models narrate-and-stop. It must stay ONE assistant turn.
+    it 'merges assistant text-after-calls into one assistant turn (no split)' do
+      result = subject.normalize_input_array([
+                                               { type: 'function_call', call_id: 'call_A', name: 'exec_command', arguments: '{}' },
+                                               { role: 'assistant', content: 'checking now' },
+                                               { type: 'function_call_output', call_id: 'call_A', output: 'ok' }
+                                             ])
+      roles = result.map { |m| m[:role] }
+      expect(roles.each_cons(2).count { |a, b| a == 'assistant' && b == 'assistant' }).to eq(0)
+      expect(roles).to eq(%w[assistant tool])
+      assistant = result.find { |m| m[:role] == 'assistant' }
+      expect(assistant[:tool_calls]).to be_an(Array)
+      expect(assistant[:content].to_s).to include('checking now')
+    end
   end
 
   describe 'GET /v1/responses/:id' do

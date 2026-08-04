@@ -308,7 +308,7 @@ confidence: 0.9 }],
           end
         end
         stub_const('Legion::Settings::Extensions', extensions_mod)
-        Legion::LLM.settings[:tool_trigger][:local_tool_limit] = 2
+        Legion::LLM.settings[:tools][:trigger][:local_tool_limit] = 2
 
         req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
         executor = described_class.new(req)
@@ -343,7 +343,7 @@ confidence: 0.9 }],
           end
         end
         stub_const('Legion::Settings::Extensions', extensions_mod)
-        Legion::LLM.settings[:tool_trigger][:local_tool_limit] = 1
+        Legion::LLM.settings[:tools][:trigger][:local_tool_limit] = 1
 
         req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
         executor = described_class.new(req)
@@ -613,7 +613,7 @@ confidence: 0.9 }],
     end
 
     it 'halts and raises PipelineError when tool rounds exceed max_tool_rounds setting' do
-      Legion::Settings[:llm][:max_tool_rounds] = 2
+      Legion::Settings[:llm][:tools][:max_rounds] = 2
       Legion::Settings[:llm][:routing][:escalation][:enabled] = false
       Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
 
@@ -630,7 +630,8 @@ confidence: 0.9 }],
     end
 
     it 'honors max_tool_rounds settings' do
-      Legion::Settings.set_prop(:llm, { max_tool_rounds: 2, routing: { escalation: { pipeline_enabled: false } } })
+      Legion::Settings[:llm][:tools][:max_rounds] = 2
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
 
       call_count = 0
       register_native_chat do
@@ -645,7 +646,7 @@ confidence: 0.9 }],
     end
 
     it 'uses default max_tool_rounds (200) when not configured in settings' do
-      Legion::Settings.set_prop(:llm, { routing: { escalation: { pipeline_enabled: false } } })
+      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
 
       register_native_chat { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }
       executor = described_class.new(request)

@@ -57,13 +57,14 @@ module Legion
           end
 
           def summarize_result(result_str, error)
-            return "error: #{result_str.to_s[0, 100]}" if error
+            history = Legion::Settings[:llm][:tools][:history]
+            return "error: #{result_str.to_s[0, history[:error_summary_chars]]}" if error
 
             str = result_str.to_s
             # If result is JSON but too long/truncated, avoid trying to parse incomplete JSON.
             # Large tool results (e.g. legion_list_special_tools) can be 2KB+ and get
             # truncated, causing parse errors that add noise to the logs.
-            if str.length > 2000 && str.start_with?('{')
+            if str.length > history[:large_json_threshold_chars] && str.start_with?('{')
               # Return a summary for large JSON results without parsing
               keys = extract_json_top_keys(str)
               return keys.empty? ? "large JSON result (#{str.length} chars)" : "JSON with keys: #{keys.join(', ')}"
@@ -72,7 +73,7 @@ module Legion
             begin
               parsed = Legion::JSON.load(str)
             rescue StandardError
-              return str[0, 200]
+              return str[0, history[:summary_chars]]
             end
 
             if parsed.is_a?(Array)
@@ -85,10 +86,10 @@ module Legion
               elsif parsed[:result].is_a?(Hash) && parsed[:result][:number]
                 "##{parsed[:result][:number]} at #{parsed[:result][:html_url]}"
               else
-                str[0, 200]
+                str[0, history[:summary_chars]]
               end
             else
-              str[0, 200]
+              str[0, history[:summary_chars]]
             end
           end
 
@@ -102,7 +103,8 @@ module Legion
             bracket_depth = 0
             in_string = false
             escaped = false
-            char_limit = [str.length, 500].min # Only scan first 500 chars
+            history = Legion::Settings[:llm][:tools][:history]
+            char_limit = [str.length, history[:json_scan_chars]].min
 
             (0...char_limit).each do |i|
               ch = str[i]
@@ -124,7 +126,7 @@ module Legion
                 in_key = false
                 keys << buffer unless buffer.empty?
                 buffer = +''
-                break if keys.size >= 3 # Only need first 3 keys
+                break if keys.size >= history[:json_key_limit]
               else
                 buffer << ch
               end

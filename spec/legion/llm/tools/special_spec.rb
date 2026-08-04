@@ -123,13 +123,43 @@ RSpec.describe Legion::LLM::Tools::Special do
       expect(result[:output_tail]).to include('from -e:1')
       expect(result[:result]).to include('exit=1', 'RuntimeError: boom')
     end
+
+    it 'terminates a runtime process at the requested deadline' do
+      allow(described_class).to receive(:ruby_path).and_return(RbConfig.ruby)
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      result = described_class.dispatch('ruby', code: 'sleep 5', timeout: 50)
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+      expect(result).to include(status: :error, error: 'ruby tool timed out after 50ms.')
+      expect(elapsed).to be < 1.0
+    end
+
+    it 'kills a runtime process that ignores TERM after the configured grace period' do
+      allow(described_class).to receive(:ruby_path).and_return(RbConfig.ruby)
+      Legion::Settings[:llm][:tools][:timeouts][:terminate_grace] = 50
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      result = described_class.dispatch('ruby', code: "trap('TERM') {}; sleep 5", timeout: 50)
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+      expect(result).to include(status: :error, error: 'ruby tool timed out after 50ms.')
+      expect(elapsed).to be < 1.0
+    end
+  end
+
+  describe '.timeout_ms' do
+    it 'uses the configured default and clamps requests to the configured maximum' do
+      expect(described_class.send(:timeout_ms, {})).to eq(1_000)
+      expect(described_class.send(:timeout_ms, timeout: 50_000)).to eq(10_000)
+    end
   end
 end
 
 RSpec.describe Legion::LLM::Tools::Dispatcher do
   describe '.error_log_detail' do
-    it 'uses llm.tool_error_log_chars instead of a hardcoded 200 character limit' do
-      allow(Legion::Settings).to receive(:[]).with(:llm).and_return(tool_error_log_chars: 500)
+    it 'uses llm.tools.error_log_chars instead of a hardcoded character limit' do
+      allow(Legion::Settings).to receive(:[]).with(:llm).and_return(tools: { error_log_chars: 500 })
       result = { status: :error, error: 'x' * 700 }
 
       detail = described_class.error_log_detail(result)

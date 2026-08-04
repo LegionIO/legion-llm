@@ -67,7 +67,7 @@ module Legion
             case ref
             when 'sh'
               cmd = kwargs[:command] || kwargs[:cmd] || kwargs.values.first.to_s
-              log.warn("[llm][native] client_tool=sh command=#{cmd[0, 120]}")
+              log.warn("[llm][native] client_tool=sh command=#{cmd[0, Legion::Settings[:llm][:tools][:command_log_chars]]}")
               output, status = ::Open3.capture2e(cmd, chdir: Dir.pwd)
               "exit=#{status.exitstatus}\n#{output}"
             when 'file_read'

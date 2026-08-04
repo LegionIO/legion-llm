@@ -94,7 +94,7 @@ module Legion
               @timeline.record(
                 category: :tool, key: "tool:result:#{tc[:name] || tc['name']}",
                 exchange_id: tool_exchange_id, direction: :inbound,
-                detail: result[:result].to_s[0..100].to_s,
+                detail: result[:result].to_s[0, Legion::Settings[:llm][:tools][:result_detail_chars]].to_s,
                 from: "tool:#{tc[:name] || tc['name']}", to: 'pipeline',
                 data: {
                   tool_call_id: tool_call_id,
@@ -325,7 +325,7 @@ module Legion
             counts.map { |key, count| "#{key}:#{count}" }.join(',')
           end
 
-          def format_tool_names(names, limit = 30)
+          def format_tool_names(names, limit = Legion::Settings[:llm][:tools][:name_log_limit])
             names = Array(names).map(&:to_s).reject(&:empty?)
             return 'none' if names.empty?
 

@@ -80,8 +80,9 @@ module Legion
               end
 
               client_tool_names = tool_declarations.map(&:name)
-              client_tool_summary = client_tool_names.empty? ? 'none' : client_tool_names.first(30).join(',')
-              client_tool_summary = "#{client_tool_summary},+#{client_tool_names.size - 30}more" if client_tool_names.size > 30
+              name_limit = Legion::Settings[:llm][:tools][:name_log_limit]
+              client_tool_summary = client_tool_names.empty? ? 'none' : client_tool_names.first(name_limit).join(',')
+              client_tool_summary = "#{client_tool_summary},+#{client_tool_names.size - name_limit}more" if client_tool_names.size > name_limit
               log.info(
                 "[llm][api][tools] action=client_tools_built request_id=#{request_id} " \
                 "conversation_id=#{conversation_id || 'none'} count=#{tool_declarations.size} names=#{client_tool_summary}"

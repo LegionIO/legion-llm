@@ -38,8 +38,7 @@ module Legion
 
         def execute_native_tool_loop # rubocop:disable Metrics/AbcSize
           messages = native_dispatch_messages.dup
-          max_rounds = Legion::Settings[:llm][:max_tool_rounds].to_i
-          max_rounds = 200 unless max_rounds.positive?
+          max_rounds = Legion::Settings[:llm][:tools][:max_rounds]
           round = 0
           # Track which (tool_name, args) pairs LegionIO executed,
           # and how many consecutive rounds ended in all Legion-tool failures.
@@ -69,7 +68,7 @@ module Legion
                         "result_text_length=#{result_text.to_s.length} " \
                         "result_text=#{result_text.to_s.inspect} " \
                         "thinking_length=#{result_thinking.to_s.length} " \
-                        "thinking_first_200=#{result_thinking.to_s[0, 200].inspect} " \
+                        "thinking_preview=#{result_thinking.to_s[0, Legion::Settings[:llm][:tools][:thinking_log_chars]].inspect} " \
                         "stop_reason=#{result.respond_to?(:stop_reason) ? result.stop_reason : 'n/a'}"
               log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=no_tool_calls"
               @last_tool_loop_messages = messages
@@ -135,7 +134,7 @@ module Legion
                 failed_names = round_results.map { |e| e[:tool_call][:name] }.join(',')
                 log.warn "[llm][native_tool_loop] action=all_legion_executed_tools_failed round=#{round} " \
                          "consecutive_failures=#{consecutive_failures} tools=#{failed_names}"
-                if consecutive_failures >= 2
+                if consecutive_failures >= Legion::Settings[:llm][:tools][:consecutive_failure_limit]
                   log.warn "[llm][native_tool_loop] action=legion_tool_failure_loop_broken consecutive_failures=#{consecutive_failures}"
                   return client_passthrough_tool_loop_result(result, client_calls, round)
                 end
@@ -156,8 +155,7 @@ module Legion
 
         def execute_native_streaming_tool_loop(&block) # rubocop:disable Metrics/AbcSize
           messages = native_dispatch_messages.dup
-          max_rounds = Legion::Settings[:llm][:max_tool_rounds].to_i
-          max_rounds = 200 unless max_rounds.positive?
+          max_rounds = Legion::Settings[:llm][:tools][:max_rounds]
           round = 0
           executed_calls = {}
           consecutive_failures = 0
@@ -187,7 +185,7 @@ module Legion
                         "result_text_length=#{result_text.to_s.length} " \
                         "result_text=#{result_text.to_s.inspect} " \
                         "thinking_length=#{result_thinking.to_s.length} " \
-                        "thinking_first_200=#{result_thinking.to_s[0, 200].inspect} " \
+                        "thinking_preview=#{result_thinking.to_s[0, Legion::Settings[:llm][:tools][:thinking_log_chars]].inspect} " \
                         "stop_reason=#{result.respond_to?(:stop_reason) ? result.stop_reason : 'n/a'}"
               log.debug "[llm][executor] action=native_streaming_tool_loop.complete rounds=#{round} reason=no_tool_calls"
               @last_tool_loop_messages = messages
@@ -244,7 +242,7 @@ module Legion
                 failed_names = round_results.map { |e| e[:tool_call][:name] }.join(',')
                 log.warn "[llm][native_tool_loop] action=all_legion_executed_tools_failed round=#{round} " \
                          "consecutive_failures=#{consecutive_failures} tools=#{failed_names}"
-                if consecutive_failures >= 2
+                if consecutive_failures >= Legion::Settings[:llm][:tools][:consecutive_failure_limit]
                   log.warn "[llm][native_tool_loop] action=legion_tool_failure_loop_broken consecutive_failures=#{consecutive_failures}"
                   return client_passthrough_tool_loop_result(result, client_calls, round)
                 end
@@ -267,7 +265,7 @@ module Legion
         # the provider adapter handles the wire format internally.
 
         def split_tool_calls_by_cap(tool_calls, round)
-          max_per_turn = Legion::Settings[:llm][:max_tool_calls_per_turn].to_i
+          max_per_turn = Legion::Settings[:llm][:tools][:max_calls_per_turn]
           return [tool_calls, []] unless max_per_turn.positive? && tool_calls.size > max_per_turn
 
           log.warn "[llm][native_tool_loop] action=cap_per_turn round=#{round} " \
@@ -326,7 +324,7 @@ module Legion
                         ext.translator.capabilities[:forced_tool_choice]
 
           text = latest_user_text.to_s.downcase
-          return if text.empty? || text.length > 500
+          return if text.empty? || text.length > Legion::Settings[:llm][:tools][:explicit_choice_max_chars]
 
           match = native_dispatch_tools.keys.map(&:to_s).sort_by { |tool_name| -tool_name.length }.find do |tool_name|
             explicit_tool_name_mentioned?(text, tool_name)

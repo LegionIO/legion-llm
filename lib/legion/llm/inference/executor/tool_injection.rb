@@ -96,7 +96,7 @@ module Legion
               return value if [true, false].include?(value)
             end
 
-            Legion::Settings.dig(:llm, :tool_trigger, :client_tool_passthrough) == true
+            Legion::Settings.dig(:llm, :tools, :trigger, :client_tool_passthrough) == true
           end
 
           def client_tool_passthrough_allowed?(definition)
@@ -111,7 +111,7 @@ module Legion
           end
 
           def client_tool_passthrough_list(key)
-            Array(Legion::Settings.dig(:llm, :tool_trigger, key)).flat_map do |entry|
+            Array(Legion::Settings.dig(:llm, :tools, :trigger, key)).flat_map do |entry|
               client_tool_policy_variants(entry)
             end.uniq
           end

@@ -125,12 +125,11 @@ module Legion
               .strip
           end
 
+          # -- substring check (each model
           def supports_response_format?(model)
-            # rubocop:disable Style/ArrayIntersect -- substring check (each model
             # fragment `include?`d in the model name), NOT array intersection.
             # `intersect?` raises TypeError on the String arg.
             SCHEMA_CAPABLE_MODELS.any? { |m| model.to_s.include?(m) }
-            # rubocop:enable Style/ArrayIntersect
           end
 
           def retry_enabled?
