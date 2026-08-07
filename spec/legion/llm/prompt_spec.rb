@@ -61,7 +61,6 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'when a caller passes only a provider-inferable model' do
       before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
         Legion::Settings[:llm][:default_provider] = 'vllm'
         Legion::Settings[:llm][:default_instance] = 'apollo'
         Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
@@ -100,7 +99,6 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'when defaults are configured' do
       before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
         Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
         Legion::Settings[:llm][:default_provider] = 'anthropic'
@@ -115,9 +113,8 @@ RSpec.describe Legion::LLM::Prompt do
       end
     end
 
-    context 'when Router is not enabled and no defaults exist' do
+    context 'when no defaults exist and inventory is empty' do
       before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
         Legion::LLM::Inventory.reset_live_store!
         Legion::Settings[:llm][:default_provider] = nil
         Legion::Settings[:llm][:default_model] = nil
@@ -131,10 +128,6 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     context 'with exclude parameter' do
-      before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-      end
-
       it 'accepts exclude parameter without error' do
         result = described_class.dispatch(
           'Hello',

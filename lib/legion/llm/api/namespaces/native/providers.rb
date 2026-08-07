@@ -35,7 +35,7 @@ module Legion
                 summary = {
                   total:           provider_list.size,
                   native:          provider_list.count { |p| p[:native] },
-                  routing_enabled: Legion::LLM::Router.routing_enabled?
+                  routing_enabled: true
                 }
 
                 log.debug("[llm][api][namespaces][providers] action=listed count=#{provider_list.size}")

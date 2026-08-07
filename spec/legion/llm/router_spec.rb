@@ -58,38 +58,6 @@ RSpec.describe Legion::LLM::Router do
     end
   end
 
-  # ─── 12. routing_enabled? false when disabled ─────────────────────────────────
-
-  describe '.routing_enabled? when disabled' do
-    it 'returns false when enabled is false' do
-      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(routing: { enabled: false }))
-      expect(described_class.routing_enabled?).to be false
-    end
-
-    it 'returns false when routing settings are absent' do
-      Legion::Settings.set_prop(:llm, {})
-      expect(described_class.routing_enabled?).to be false
-    end
-  end
-
-  # ─── 12a. auto_rules_populated? ─────────────────────────────────────────────
-
-  describe '.auto_rules_populated?' do
-    it 'returns false before populate_auto_rules is called' do
-      expect(described_class.auto_rules_populated?).to be false
-    end
-
-    it 'stays false after populate_auto_rules (no-op in P4 — rule engine removed)' do
-      described_class.populate_auto_rules({})
-      expect(described_class.auto_rules_populated?).to be false
-    end
-
-    it 'returns false after reset!' do
-      described_class.reset!
-      expect(described_class.auto_rules_populated?).to be false
-    end
-  end
-
   describe '.infer_provider_for_model' do
     {
       'qwen3.5:latest'                    => :ollama,

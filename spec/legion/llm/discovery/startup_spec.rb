@@ -31,12 +31,5 @@ RSpec.describe 'LLM startup discovery' do
       expect(Legion::LLM::Inventory::SettingsObserver).to receive(:attach!).and_call_original
       Legion::LLM.start
     end
-
-    it 'does NOT call Router.populate_auto_rules from Legion::LLM.start' do
-      # G8 / cyber-Medium: internal caller deleted in P4; external lex-llm-* callers still
-      # go through the no-op stub via their own respond_to? guards.
-      expect(Legion::LLM::Router).not_to receive(:populate_auto_rules)
-      Legion::LLM.start
-    end
   end
 end

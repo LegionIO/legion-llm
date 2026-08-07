@@ -940,7 +940,6 @@ confidence: 0.9 }],
     it 'keeps model-only requests out of router chains so provider inference wins' do
       Legion::Settings[:llm][:default_provider] = 'anthropic'
       Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
       expect(Legion::LLM::Router).not_to receive(:resolve)
       expect(Legion::LLM::Router).not_to receive(:resolve_chain)
       gpt_request = Legion::LLM::Inference::Request.build(
@@ -1017,7 +1016,6 @@ confidence: 0.9 }],
     it 'does not fall back to configured defaults when LegionIO auto routing has no available route' do
       Legion::Settings[:llm][:default_provider] = 'anthropic'
       Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
       allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(double('chain', empty?: true, primary: nil))
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],

@@ -157,7 +157,10 @@ module Legion
         caller_hash = kwargs.delete(:caller) || { requested_by: { type: :system, identity: 'legion:internal:chat_direct' } }
         cache_opt = kwargs.delete(:cache) { true }
         temperature = kwargs.delete(:temperature)
-        kwargs.delete(:urgency)
+        urgency = kwargs.delete(:urgency) { :normal }
+
+        deferred = try_defer(intent: intent, urgency: urgency, model: model, provider: provider, message: message, **kwargs)
+        return deferred if deferred
 
         cache_key = build_cache_key(model, provider, message, temperature) if cacheable?(cache_opt, temperature, message)
         if cache_key
@@ -173,7 +176,7 @@ module Legion
         resolved_provider = provider || Legion::Settings[:llm][:default_provider]
         resolved_model = model || Legion::Settings[:llm][:default_model]
 
-        unless resolved_provider || resolved_model || (intent && Router.routing_enabled?)
+        unless resolved_provider || resolved_model || intent
           log.debug '[llm][inference] chat_direct_governed.fallback_to_raw — no provider/model resolvable'
           return chat_direct_raw(model: model, provider: provider, intent: intent, tier: tier,
                                  escalate: escalate, max_escalations: max_escalations,
@@ -472,7 +475,7 @@ module Legion
         block ? executor.call_stream(&block) : executor.call
       end
 
-      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
+      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil)
         result = Call::DaemonClient.chat(
           message: message, model: model, provider: provider,
           context: context, tier_preference: tier || :auto
@@ -773,8 +776,6 @@ module Legion
       end
 
       def report_health(signal, resolution, duration_ms, failures: nil)
-        return unless Router.routing_enabled?
-
         metadata = { duration_ms: duration_ms }
         metadata[:failures] = failures if failures
         Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,

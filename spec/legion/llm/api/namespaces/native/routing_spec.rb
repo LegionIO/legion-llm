@@ -42,12 +42,11 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Routing' do
   end
 
   describe 'GET /api/llm/routing' do
-    it 'returns 200 with routing summary (rule engine removed in P4)' do
+    it 'returns 200 with routing summary (SSOT — routing unconditionally on)' do
       get '/api/llm/routing'
       expect(last_response.status).to eq(200)
       result = Legion::JSON.load(last_response.body)
-      expect(result[:data][:routing_enabled]).to eq(false)
-      expect(result[:data][:auto_rules_populated]).to eq(false)
+      expect(result[:data][:routing_enabled]).to eq(true)
       expect(result[:data][:rules]).to eq([])
       expect(result[:data][:summary][:total]).to eq(0)
     end

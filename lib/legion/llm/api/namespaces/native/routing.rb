@@ -20,10 +20,9 @@ module Legion
                 require_llm!
 
                 json_response({
-                                routing_enabled:      false,
-                                auto_rules_populated: false,
-                                rules:                [],
-                                summary:              { total: 0, auto: 0, manual: 0 }
+                                routing_enabled: true,
+                                rules:           [],
+                                summary:         { total: 0, auto: 0, manual: 0 }
                               })
               rescue StandardError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.routing.list')

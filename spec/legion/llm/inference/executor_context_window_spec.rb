@@ -14,7 +14,6 @@ RSpec.describe Legion::LLM::Inference::Executor, 'context window enforcement' do
   let(:executor) { described_class.new(request) }
 
   before do
-    allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
     allow(Legion::LLM::Audit).to receive(:emit_prompt)
   end
 

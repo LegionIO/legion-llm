@@ -28,7 +28,6 @@ RSpec.describe Legion::LLM::Inference::Executor, 'conversation history dedup' do
   let(:executor) { described_class.new(request) }
 
   before do
-    allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
     allow(Legion::LLM::Audit).to receive(:emit_prompt)
     executor.instance_variable_set(:@enrichments, {})
   end

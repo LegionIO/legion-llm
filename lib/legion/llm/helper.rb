@@ -103,13 +103,6 @@ module Legion
         false
       end
 
-      def llm_routing_enabled?
-        llm_connected? && Legion::LLM::Router.routing_enabled?
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'llm.helper.routing_enabled')
-        false
-      end
-
       # --- Cost / Budget ---
 
       def llm_cost_estimate(model: nil, input_tokens: 0, output_tokens: 0)

@@ -75,7 +75,6 @@ RSpec.describe Legion::LLM::Inference::Executor, 'client-write vs provider-error
   end
 
   before do
-    allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
     allow(Legion::LLM::Audit).to receive(:emit_prompt)
     allow(executor).to receive(:emit_escalation_attempt_metering)
     allow(executor).to receive(:emit_escalation_attempt_audit)

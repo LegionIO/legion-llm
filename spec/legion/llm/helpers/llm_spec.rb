@@ -279,19 +279,6 @@ RSpec.describe Legion::LLM::Helper do
     end
   end
 
-  describe '#llm_routing_enabled?' do
-    it 'returns true when routing is active' do
-      allow(Legion::LLM).to receive(:started?).and_return(true)
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-      expect(instance.llm_routing_enabled?).to be true
-    end
-
-    it 'returns false when not connected' do
-      allow(Legion::LLM).to receive(:started?).and_return(false)
-      expect(instance.llm_routing_enabled?).to be false
-    end
-  end
-
   describe '#llm_cost_estimate' do
     it 'delegates to CostEstimator' do
       allow(Legion::LLM::Metering::Pricing).to receive(:estimate)

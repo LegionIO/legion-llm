@@ -264,8 +264,6 @@ module Legion
           end
 
           def report_provider_health(signal, duration_ms, metadata: {})
-            return unless defined?(Legion::LLM::Router) && Legion::LLM::Router.routing_enabled?
-
             Legion::LLM::Router.health_tracker.report(provider: @resolved_provider, instance: @resolved_instance, # allowlist:write-side
                                                       offering_id: @resolved_offering_id,
                                                       signal: signal, value: 1, metadata: metadata.merge(duration_ms: duration_ms))
@@ -618,7 +616,6 @@ module Legion
                   execute_provider_request
                 end
                 duration_ms = ((Time.now - start_time) * 1000).round
-                report_provider_health(:success, duration_ms) if @resolved_offering_id
                 @timeline.record(
                   category: :provider, key: 'escalation:attempt', direction: :internal,
                   detail: "attempt #{attempt_idx}: #{@resolved_provider}:#{@resolved_model} => success",

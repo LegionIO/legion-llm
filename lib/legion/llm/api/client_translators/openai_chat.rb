@@ -305,7 +305,7 @@ module Legion
               # 'tool_calls' on the final done covers it.
             end
 
-            def on_tool_call_abort(block_index:, reason:) # rubocop:disable Lint/UnusedMethodArgument
+            def on_tool_call_abort(block_index:, reason:)
               nil
             end
 

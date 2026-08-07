@@ -93,7 +93,7 @@ end
 # calls request_lane, so specs must have at least one lane or they get NoLaneAvailable.
 def write_test_lane(provider: :vllm, instance: :default, model: 'gemma-12b', tier: :direct,
                     type: :inference, capabilities: %i[tools streaming vision thinking],
-                    lane_weight: nil) # rubocop:disable Lint/UnusedMethodArgument
+                    lane_weight: nil)
   id = "#{tier}:#{provider}:#{instance}:#{type}:#{model}"
   Legion::LLM::Inventory.write_lane(lane: {
                                       id:              id,

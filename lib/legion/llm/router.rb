@@ -38,10 +38,6 @@ module Legion
 
       OLLAMA_MODEL_PATTERN = %r{[:/]}
 
-      @auto_rules = []
-      @auto_rules_populated = false
-      @populate_auto_rules_warned = false
-
       class << self
         # Stateless lane selection — pure function of (Inventory snapshot, routing payload).
         # Returns one lane Hash or nil (caller raises NoLaneAvailable / EscalationExhausted).
@@ -159,31 +155,8 @@ module Legion
           @health_tracker ||= build_health_tracker
         end
 
-        def routing_enabled?
-          false
-        end
-
-        def auto_rules_populated?
-          @auto_rules_populated == true
-        end
-
-        # DEPRECATED in v0.14.0; delete in v0.15.0.
-        # See GitHub issues:
-        #   #155 — remove this stub in v0.15.0 (blocked-by #154)
-        #   #154 — drop call sites from 9 lex-llm-* gems
-        def populate_auto_rules(_discovered_instances = nil, **)
-          return if @populate_auto_rules_warned
-
-          @populate_auto_rules_warned = true
-          log.warn '[llm][router] populate_auto_rules is deprecated and is a no-op as of v0.14.0; ' \
-                   'lex-llm-* gems should drop this call (RANKING v2 replaces auto-rules with lane weights)'
-        end
-
         def reset!
           @health_tracker = nil
-          @auto_rules = []
-          @auto_rules_populated = false
-          @populate_auto_rules_warned = false
         end
 
         def tier_priority

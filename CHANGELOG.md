@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.15.3] - 2026-08-07
+
+### Fixed
+- **Circuits stuck open — removed dead `routing_enabled?` gate that suppressed `:success` while `:error` was ungated.** Fleet-wide circuit-recovery failure: any provider/instance whose circuit tripped open could never close because the health-signal `:success` emitter was gated behind `Router.routing_enabled?` (hardcoded `false`), while the `:error`/`trip_circuit` paths were ungated. Removed both guards (inference.rb, escalation.rb). Fixed double `:success` emission that would have doubled health signals once the gate was removed. Deleted the orphaned auto-rules cluster (`populate_auto_rules`, `auto_rules_populated?`, `routing_enabled?`) and the orphaned discovery offering-fetch cascade (`fetch_offering_models`, `report_discovery_health`, `report_discovery_failure`, `warn_on_model_divergence`, `model_family_match?`). Closes #155 stub deletion.
+
 ## [0.15.2] - 2026-08-04
 
 ### Fixed

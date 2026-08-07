@@ -44,7 +44,6 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
     allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return(registry_instances)
-    allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
     allow(Legion::LLM::Router).to receive(:health_tracker).and_return(nil)
   end
 
@@ -60,7 +59,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
     it 'includes routing_enabled in summary' do
       get '/api/llm/providers'
       result = Legion::JSON.load(last_response.body)
-      expect(result[:data][:summary][:routing_enabled]).to eq(false)
+      expect(result[:data][:summary][:routing_enabled]).to eq(true)
     end
 
     it 'returns 503 when LLM not started' do

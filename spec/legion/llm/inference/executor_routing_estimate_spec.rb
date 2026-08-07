@@ -34,7 +34,6 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
   let(:executor) { described_class.new(request) }
 
   before do
-    allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
     allow(Legion::LLM::Audit).to receive(:emit_prompt)
     executor.instance_variable_set(:@enrichments, {})
     executor.instance_variable_set(:@resolved_offering_metadata, { limits: { context_window: 8192 } })

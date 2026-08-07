@@ -157,4 +157,39 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
       expect(circuits.dig('anthropic/secondary', :state)).not_to eq(:open)
     end
   end
+
+  describe 'successful dispatch closes a half_open circuit and emits :success exactly once' do
+    it 'reports :success once and returns the lane to :closed' do
+      # Trip vllm/h200 open, then force it to half_open (simulating cooldown expiry).
+      trip_circuit(provider: :vllm, instance: :h200)
+      vllm_lane = Legion::LLM::Inventory.lane(id: 'fleet:vllm:h200:inference:qwen3-32b')
+      Legion::LLM::Inventory.write_lane(
+        lane:   vllm_lane.merge(lane_weight: 50_000_000),
+        ttl:    3600,
+        health: vllm_lane[:health].merge(circuit_state: :half_open, available: true)
+      )
+
+      # Register a FakeProvider that succeeds
+      vllm_adapter = Module.new do
+        define_singleton_method(:chat) { |**_| { content: 'recovered', usage: { input_tokens: 5, output_tokens: 3 } } }
+      end
+      Legion::LLM::Call::Registry.register(:vllm, vllm_adapter, instance: :h200)
+
+      # Instrument the health tracker to count :success reports
+      tracker = Legion::LLM::Router.health_tracker
+      success_reports = 0
+      allow(tracker).to receive(:report).and_wrap_original do |orig, **kw|
+        success_reports += 1 if kw[:signal] == :success
+        orig.call(**kw)
+      end
+
+      executor.call
+
+      # Exactly one :success (locks the double-emission fix)
+      expect(success_reports).to eq(1)
+      # Circuit must have closed after the successful probe
+      updated_lane = Legion::LLM::Inventory.lane(id: 'fleet:vllm:h200:inference:qwen3-32b')
+      expect(updated_lane[:health][:circuit_state]).to eq(:closed)
+    end
+  end
 end
