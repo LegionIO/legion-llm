@@ -7,7 +7,7 @@ RSpec.describe 'Provider layer mode switching' do
     Module.new do
       module_function
 
-      def chat(model:, messages:, **)
+      def chat(**)
         { content: 'native response', usage: { input_tokens: 7, output_tokens: 3 } }
       end
     end

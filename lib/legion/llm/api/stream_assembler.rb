@@ -231,7 +231,7 @@ module Legion
           end
         end
 
-        def provider_switched(from:, to:)
+        def provider_switched(to:, **)
           return if @closed
 
           @model = to.model.to_s

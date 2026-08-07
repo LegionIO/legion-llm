@@ -9,19 +9,19 @@ RSpec.describe Legion::LLM::Call::Dispatch do
     Module.new do
       module_function
 
-      def chat(model:, messages:, **)
+      def chat(**)
         { content: 'hello from native', usage: { input_tokens: 10, output_tokens: 5 } }
       end
 
-      def embed(model:, text:, **)
+      def embed(**)
         { content: [0.1, 0.2], usage: { input_tokens: 3, output_tokens: 0 } }
       end
 
-      def stream(model:, messages:, **, &)
+      def stream(**, &)
         { content: 'streamed', usage: { input_tokens: 8, output_tokens: 4 } }
       end
 
-      def count_tokens(model:, messages:, **)
+      def count_tokens(**)
         { content: 42, usage: {} }
       end
     end
@@ -267,7 +267,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.normalize_response (canonical)' do
         module_function
 
         def model_allowed?(model) = model.to_s.include?('haiku')
-        def chat(model:, messages:, **) = { content: 'should not reach', usage: {} }
+        def chat(**) = { content: 'should not reach', usage: {} }
       end
     end
 
@@ -296,7 +296,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.normalize_response (canonical)' do
       raising_ext = Module.new do
         module_function
 
-        def chat(model:, messages:, **)
+        def chat(model:, **)
           raise Legion::Extensions::Llm::ModelNotAllowedError.new(model: model, provider: :anthropic)
         end
       end

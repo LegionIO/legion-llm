@@ -475,7 +475,7 @@ module Legion
         block ? executor.call_stream(&block) : executor.call
       end
 
-      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil)
+      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, **)
         result = Call::DaemonClient.chat(
           message: message, model: model, provider: provider,
           context: context, tier_preference: tier || :auto

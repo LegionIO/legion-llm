@@ -54,7 +54,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
       Legion::LLM::Call::Registry.register(:vllm, Module.new do
         module_function
 
-        def chat(model:, messages:, **)
+        def chat(model:, **)
           {
             result: "The user said \"hello\".\n</think>\n\nHello! How can I help you today?",
             model:  model,

@@ -95,18 +95,20 @@ def write_test_lane(provider: :vllm, instance: :default, model: 'gemma-12b', tie
                     type: :inference, capabilities: %i[tools streaming vision thinking],
                     lane_weight: nil)
   id = "#{tier}:#{provider}:#{instance}:#{type}:#{model}"
-  Legion::LLM::Inventory.write_lane(lane: {
-                                      id:              id,
-                                      tier:            tier,
-                                      provider_family: provider,
-                                      instance_id:     instance,
-                                      model:           model.to_s,
-                                      type:            type,
-                                      capabilities:    capabilities,
-                                      limits:          { context_window: 200_000 },
-                                      cost:            { input: 0.0, output: 0.0 },
-                                      enabled:         true
-                                    }, ttl: nil)
+  lane = {
+    id:              id,
+    tier:            tier,
+    provider_family: provider,
+    instance_id:     instance,
+    model:           model.to_s,
+    type:            type,
+    capabilities:    capabilities,
+    limits:          { context_window: 200_000 },
+    cost:            { input: 0.0, output: 0.0 },
+    enabled:         true
+  }
+  lane[:lane_weight] = lane_weight if lane_weight
+  Legion::LLM::Inventory.write_lane(lane: lane, ttl: nil)
 end
 
 # Seed Discovery's per-provider model cache (a Concurrent::Map keyed by provider)
