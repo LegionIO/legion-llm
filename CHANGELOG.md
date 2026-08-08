@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.15.4] - 2026-08-07
+
+### Fixed
+- **P1: native_dispatch_options dropped temperature and all generation params before provider dispatch in the native tool loop.** Root cause of the parallel tool-call dead stop: `native_dispatch_options` (tool_injection.rb) built the dispatch Hash from request fields but never included generation sampling params from `@request.generation`. The LexLLMAdapter passes `temperature: opts[:temperature]` to the provider — when nil, vLLM/Ollama/any provider runs at its default temperature instead of the caller's explicit `temperature: 0`, producing nondeterministic output. For tool-call requests, this manifests as empty-argument tool calls (the model commits to tool call openers but generates EOS before argument tokens). Now propagates the full canonical generation params (temperature, top_p, top_k, frequency_penalty, presence_penalty, seed) via `apply_generation_params!`, using `.key?` to preserve explicit 0 values. Provider-agnostic fix at the executor boundary — all providers benefit.
+
+### Removed
+- **Deleted empty-args retry mechanism.** The retry was an interim approach during this investigation for the same symptom, now replaced by the root-cause fix. Removed: `tool_calls_all_empty_args_with_required_params?`, `tool_call_has_empty_args?`, `tool_schema_has_required_params?` helpers; both retry blocks (streaming + non-streaming loops); `llm.tools.empty_args_retry_limit` setting.
+
 ## [0.15.3] - 2026-08-07
 
 ### Fixed

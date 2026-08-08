@@ -74,6 +74,7 @@ module Legion
               @last_tool_loop_messages = messages
               return result
             end
+
             # Split tool calls into LegionIO-executable and client-passthrough.
             # Execute LegionIO tools first; return only client tools to
             # the client at the end. This prevents sending LegionIO tool calls to
@@ -191,6 +192,7 @@ module Legion
               @last_tool_loop_messages = messages
               return result
             end
+
             legion_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
 
             if client_calls.any?
