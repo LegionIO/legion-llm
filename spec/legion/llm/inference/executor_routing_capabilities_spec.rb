@@ -14,6 +14,13 @@ RSpec.describe Legion::LLM::Inference::Executor do
                                                                                     ])
     end
 
+    # Helper: build routing requirements from a request via the SSOT v3 path.
+    def build_reqs(request)
+      executor = described_class.new(request)
+      executor.send(:build_ssot_v3_routing_requirements)
+      executor.instance_variable_get(:@routing_requirements)
+    end
+
     it 'does not require :tools for plain non-streaming requests just because pinned tools exist' do
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'test' }],
@@ -21,13 +28,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stream:   false
       )
 
-      state = described_class.new(request).send(:routing_request_state)
+      reqs = build_reqs(request)
 
-      expect(state[:intent][:operation]).to eq(:chat)
-      expect(state[:intent][:effort]).to eq(:moderate)
-      expect(Array(state[:intent][:required_capabilities])).not_to include(:tools)
-      expect(Array(state[:intent][:required_capabilities])).not_to include(:thinking)
-      expect(state[:intent]).not_to have_key(:capability)
+      expect(reqs.operation).to eq(:chat)
+      expect(reqs.required_capabilities).not_to include(:tools)
+      expect(reqs.required_capabilities).not_to include(:thinking)
     end
 
     it 'does not require :tools for plain streaming requests just because pinned tools exist' do
@@ -37,13 +42,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stream:   true
       )
 
-      state = described_class.new(request).send(:routing_request_state)
+      reqs = build_reqs(request)
 
-      expect(state[:intent][:operation]).to eq(:stream)
-      expect(state[:intent][:effort]).to eq(:moderate)
-      expect(state[:intent][:required_capabilities]).to include(:streaming)
-      expect(state[:intent][:required_capabilities]).not_to include(:tools)
-      expect(state[:intent]).not_to have_key(:capability)
+      expect(reqs.operation).to eq(:stream_chat)
+      expect(reqs.required_capabilities).to include(:streaming)
+      expect(reqs.required_capabilities).not_to include(:tools)
     end
 
     it 'requires :tools when the request explicitly includes client tools' do
@@ -53,9 +56,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         tools:    [{ name: 'client_echo', description: 'echo', input_schema: { type: 'object', properties: {} } }]
       )
 
-      state = described_class.new(request).send(:routing_request_state)
+      reqs = build_reqs(request)
 
-      expect(state[:intent][:required_capabilities]).to include(:tools)
+      expect(reqs.required_capabilities).to include(:tools)
     end
 
     it 'includes :thinking in required_capabilities only for explicit thinking requests' do
@@ -65,9 +68,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         thinking: { effort: :medium, budget: 1024 }
       )
 
-      state = described_class.new(request).send(:routing_request_state)
+      reqs = build_reqs(request)
 
-      expect(state[:intent][:required_capabilities]).to include(:thinking)
+      expect(reqs.required_capabilities).to include(:thinking)
     end
 
     it 'does not include :thinking for requests without explicit thinking config' do
@@ -77,46 +80,50 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stream:   false
       )
 
-      state = described_class.new(request).send(:routing_request_state)
+      reqs = build_reqs(request)
 
-      expect(Array(state[:intent][:required_capabilities])).not_to include(:thinking)
+      expect(reqs.required_capabilities).not_to include(:thinking)
     end
 
     it 'ignores payload client_model as a routing pin when body routing hints are disabled' do
       request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  {},
-        metadata: { client_model: 'gpt-5.5' }
+        messages:     [{ role: :user, content: 'hello' }],
+        routing:      {},
+        client_model: 'gpt-5.5'
       )
 
-      state = described_class.new(request).send(:routing_request_state)
+      reqs = build_reqs(request)
 
-      expect(state[:model]).to be_nil
+      expect(reqs.model_pin).to be_nil
     end
 
     it 'honors payload client_model only when body routing hints are enabled' do
       Legion::Settings[:llm][:routing][:allow_body_routing_hints] = true
+      Legion::LLM::Router::SettingsState.reload!(
+        llm_settings:       Legion::Settings[:llm],
+        extension_settings: Legion::Settings[:extensions]
+      )
       request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  {},
-        metadata: { client_model: 'gpt-5.5' }
+        messages:     [{ role: :user, content: 'hello' }],
+        routing:      {},
+        client_model: 'gpt-5.5'
       )
 
-      state = described_class.new(request).send(:routing_request_state)
+      reqs = build_reqs(request)
 
-      expect(state[:model]).to eq('gpt-5.5')
+      expect(reqs.model_pin).to eq('gpt-5.5')
     end
 
     it 'still honors an explicit Legion routing model over payload auto aliases' do
       request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  { model: 'gemma-4-31b-it' },
-        metadata: { client_model: 'auto' }
+        messages:     [{ role: :user, content: 'hello' }],
+        routing:      { model: 'gemma-4-31b-it' },
+        client_model: 'auto'
       )
 
-      state = described_class.new(request).send(:routing_request_state)
+      reqs = build_reqs(request)
 
-      expect(state[:model]).to eq('gemma-4-31b-it')
+      expect(reqs.model_pin).to eq('gemma-4-31b-it')
     end
   end
 end

@@ -170,32 +170,20 @@ RSpec.describe Legion::LLM::Router::RejectionDiagnostics, :ssot_v3 do
       expect(r.http_status).to eq(503)
     end
 
-    it 'mix of unavailable and context-rejected: not all conclusively-fit → context_rejected' do
-      # One candidate is conclusively fit but unavailable;
-      # one candidate fails context — together the service_unavailable guard does not fire
-      # because not ALL conclusively-fit ones are the universe: the context-rejected candidate
-      # is NOT in conclusively_fit, so there is no "all unavailable" across the fit set only.
-      # Actually since the only fit one IS unavailable this triggers service_unavailable.
-      # Correct that: add a fit+available candidate to verify it does NOT fire 503.
+    it 'mixed available+unavailable candidates with no context/dimension failures → step 8 service_unavailable' do
+      # One conclusively-fit candidate is unavailable; one is available.
+      # Step 6's guard (all conclusively-fit are unavailable) does NOT fire
+      # because one candidate is :available.
+      # Step 7 (context_rejected) does NOT fire because neither candidate
+      # has context_state or dimension_state == :rejected.
+      # We fall through to step 8 — the service_unavailable catch-all.
       cands = [
-        candidate(availability_state: :unavailable),  # fit, unavailable
-        candidate(availability_state: :available)     # fit, available — should route
+        candidate(availability_state: :unavailable), # fit, unavailable
+        candidate(availability_state: :available)    # fit, available
       ]
-      # With one available fit candidate, we should NOT return service_unavailable.
-      # None of the other rejection steps fire, so the result is service_unavailable
-      # only when ALL fit candidates are unavailable.
       r = diagnose(candidates: cands, statuses: [pub_status(state: :complete)])
-      # One available candidate means service_unavailable guard does NOT fire;
-      # but context_state and dimension_state are both :not_applicable (fit), and
-      # availability is :available — this candidate IS ready, so we should reach
-      # context_rejected only if there's an actual context/dimension failure.
-      # Since the available candidate is fully ready, we fall through all steps
-      # to step 7 (context_rejected). But wait — all steps pass, meaning none
-      # of the rejection conditions fire, so we reach step 7 as the catch-all.
-      # Step 7 fires when we have no service_unavailable signal and remaining
-      # failures are context/dimension. With a mix of unavailable + available,
-      # step 6's guard (all conclusively_fit are unavailable) is false → step 7.
-      expect(r.kind).to eq(:context_rejected)
+      expect(r.kind).to eq(:service_unavailable)
+      expect(r.http_status).to eq(503)
     end
   end
 

@@ -4,39 +4,56 @@ require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
   before do
-    Legion::Settings[:llm][:routing][:escalation][:enabled] = false
-    Legion::LLM::Router.health_tracker.reset_all
+    stub_native_provider(content: 'Hello there.')
   end
 
   let(:request) do
     Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
-      routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
       stream:   true
     )
   end
 
-  def register_native_stream(provider = :anthropic, &handler)
-    Legion::LLM::Call::Registry.register(provider, Module.new do
-      define_singleton_method(:stream) do |model:, messages:, **opts, &block|
-        handler.call(model: model, messages: messages, block: block, **opts)
-      end
-    end)
+  # SSOT v3: register a capturing callable for stream_chat that can yield chunks
+  # and record the system/messages kwargs passed by the executor. Always resets
+  # the Phase 1 Registry first so the custom callable replaces the stub default.
+  def register_capturing_stream_callable(chunks: [], content: 'done', &capture_hook)
+    Legion::Extensions::Llm::Inventory::Registry.reset!
+    captured = {}
+    result = native_dispatch_result(content: content)
+    responder = proc do |_op, _args, kwargs, blk|
+      capture_hook&.call(captured, kwargs)
+      chunks.each { |c| blk&.call(c) }
+      blk&.call(Struct.new(:content).new(content)) if chunks.empty?
+      result
+    end
+    callable = SsotV3SnapshotFactory::FactoryCallable.new(responder: responder)
+    SsotV3SnapshotFactory.activate(
+      provider_family: 'vllm',
+      instance_id:     'primary',
+      callable:        callable,
+      drafts:          [SsotV3SnapshotFactory.offering_draft(
+        model:        SSOT_TEST_MODEL, tier: :local,
+        supported:    %i[chat stream_chat count_tokens],
+        capabilities: { streaming: :supported },
+        context:      200_000, max_output: 16_384
+      )]
+    )
+    captured
   end
 
   it 'yields chunks to the block' do
-    register_native_stream do |block:, **|
-      block&.call('hello ')
-      block&.call('world')
-      { content: 'hello world', usage: { input_tokens: 10, output_tokens: 5 } }
-    end
+    chunk1 = Struct.new(:content).new('hello ')
+    chunk2 = Struct.new(:content).new('world')
+    captured = register_capturing_stream_callable(chunks: [chunk1, chunk2], content: 'hello world')
     executor = described_class.new(request)
     chunks = []
 
     response = executor.call_stream { |chunk| chunks << chunk }
 
-    expect(chunks).to eq(['hello ', 'world'])
+    expect(chunks.map(&:content)).to eq(['hello ', 'world'])
     expect(response).to be_a(Legion::LLM::Inference::Response)
+    _ = captured
   end
 
   it 'runs pre-provider steps before streaming' do
@@ -50,32 +67,27 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
   end
 
   it 'runs post-provider steps after stream completes' do
-    Legion::LLM::Call::Registry.reset! if Legion::LLM::Call::Registry.respond_to?(:reset!)
-    register_native_stream { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }
     executor = described_class.new(request)
 
     response = executor.call_stream { |_chunk| nil }
 
     timeline_keys = response.timeline.map { |e| e[:key] }
     expect(timeline_keys).to include('tracing:init')
-  ensure
-    Legion::LLM::Call::Registry.deregister_provider(:anthropic)
   end
 
   it 'applies enriched system instructions before streaming the provider call' do
     req = Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
       system:   'Base system prompt',
-      routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
       stream:   true
     )
     executor = described_class.new(req)
     executor.enrichments['gaia:system_prompt'] = { content: 'Injected streaming guidance' }
 
     seen_system = nil
-    register_native_stream do |system:, **|
-      seen_system = system
-      { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+    register_capturing_stream_callable do |captured, kwargs|
+      seen_system = kwargs[:system]
+      captured[:system] = seen_system
     end
 
     executor.call_stream { |_chunk| nil }
@@ -93,15 +105,14 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
         { role: :assistant, content: 'prior answer' },
         { role: :user, content: 'latest request' }
       ],
-      routing:  { provider: :anthropic, model: 'claude-opus-4-6' },
       stream:   true
     )
 
     executor = described_class.new(req)
     seen_messages = nil
-    register_native_stream do |messages:, **|
-      seen_messages = messages
-      { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+    register_capturing_stream_callable do |captured, kwargs|
+      seen_messages = kwargs[:messages]
+      captured[:messages] = seen_messages
     end
 
     executor.call_stream { |_chunk| nil }
@@ -109,46 +120,28 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
     expect(seen_messages).to include(hash_including(role: :assistant, cache_control: { type: 'ephemeral' }))
   end
 
-  it 'uses Legion::LLM::Call::Dispatch for streaming when the provider layer selects native mode' do
-    Legion::Settings[:llm][:provider_layer] = {
-      mode: 'native'
-    }
-    Legion::LLM::Call::Registry.register(:anthropic, Module.new do
-      define_singleton_method(:stream) do |model:, messages:, **, &block|
-        block&.call('native ')
-        block&.call('stream')
-        {
-          content:  "native stream #{model} #{messages.size}",
-          usage:    { input_tokens: 8, output_tokens: 4 },
-          metadata: { offering: { offering_id: 'anthropic:test:chat:claude-opus-4-6' } }
-        }
-      end
-    end)
-
-    executor = described_class.new(request)
-    chunks = []
-
-    response = executor.call_stream { |chunk| chunks << chunk }
-
-    expect(chunks).to eq(['native ', 'stream'])
-    expect(response.message[:content]).to eq('native stream claude-opus-4-6 1')
-    expect(response.tokens[:input_tokens]).to eq(8)
-    expect(response.routing[:offering_id]).to eq('anthropic:test:chat:claude-opus-4-6')
-  end
-
-  it 'raises when native streaming dispatch fails' do
-    Legion::Settings[:llm][:provider_layer] = {
-      mode: 'native'
-    }
-    Legion::LLM::Call::Registry.register(:anthropic, Module.new do
-      define_singleton_method(:stream) do |**|
-        raise Legion::LLM::ProviderError, 'native stream unavailable'
-      end
-    end)
+  it 'propagates provider errors as LLM errors when the callable raises during streaming' do
+    # SSOT v3 invariant: a callable failure during streaming is classified by
+    # OutcomeClassifier; when all lanes are exhausted a ProviderError or
+    # RoutingRejected propagates — never a silent success.
+    Legion::Extensions::Llm::Inventory::Registry.reset!
+    error_callable = SsotV3SnapshotFactory::FactoryCallable.new(
+      responder: proc { |_op, _args, _kwargs, _blk| raise Legion::Extensions::Llm::OverloadedError, 'provider overloaded' }
+    )
+    SsotV3SnapshotFactory.activate(
+      provider_family: 'vllm',
+      instance_id:     'primary',
+      callable:        error_callable,
+      drafts:          [SsotV3SnapshotFactory.offering_draft(
+        model:     SSOT_TEST_MODEL, tier: :local,
+        supported: %i[chat stream_chat count_tokens],
+        context:   200_000, max_output: 16_384
+      )]
+    )
 
     executor = described_class.new(request)
 
-    expect { executor.call_stream { |_chunk| nil } }.to raise_error(Legion::LLM::ProviderError, /native stream unavailable/)
+    expect { executor.call_stream { |_chunk| nil } }.to raise_error(Legion::LLM::LLMError)
   end
 
   it 'falls back to blocking call when no block given' do

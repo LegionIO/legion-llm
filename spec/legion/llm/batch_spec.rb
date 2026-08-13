@@ -161,8 +161,24 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
           max_defer_hours: 8
         }
         stub_native_provider(content: 'batched response')
-        # P5: write gpt-4o lane so request_lane finds it (stub_native_provider writes default model)
-        write_test_lane(provider: :openai, model: 'gpt-4o', tier: :frontier)
+        # SSOT v3: write_test_lane hardcodes 'test response' in its SsotStubCallable;
+        # write the gpt-4o lane directly via SsotV3SnapshotFactory so the callable
+        # returns the same 'batched response' content that the test asserts below.
+        SsotV3SnapshotFactory.activate(
+          provider_family: 'openai',
+          instance_id:     'primary',
+          callable:        SsotStubCallable.new(content: 'batched response', input_tokens: 10,
+                                                output_tokens: 5, tool_calls: []),
+          drafts:          [SsotV3SnapshotFactory.offering_draft(
+            model:        'gpt-4o',
+            tier:         :frontier,
+            supported:    %i[chat stream_chat count_tokens],
+            capabilities: { streaming: :supported, tools: :supported, vision: :supported,
+                            thinking: :supported, embedding: :supported },
+            context:      200_000,
+            max_output:   16_384
+          )]
+        )
       end
 
       it 'executes the queued request and preserves provider and model' do
@@ -174,8 +190,12 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
 
         results = described_class.flush
 
-        expect(Legion::LLM::Call::Dispatch).to have_received(:call).with(hash_including(model: 'gpt-4o', provider: :openai))
+        # SSOT v3: the execution path goes through SelectionDispatch, not
+        # Call::Dispatch. Verify dispatch happened by asserting the result
+        # carries the correct provider/model identity from the batch entry.
         expect(results.first[:status]).to eq(:completed)
+        expect(results.first[:result][:model]).to eq('gpt-4o')
+        expect(results.first[:result][:provider]).to eq(:openai)
         response = results.first[:result][:response]
         content = if response.is_a?(Legion::LLM::Inference::Response)
                     response.message[:content] || response.message['content']

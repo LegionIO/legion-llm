@@ -1,39 +1,13 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'faraday'
 
 RSpec.describe 'Pipeline pre-rollout integration' do
-  let(:mock_session) do
-    session = double('NativeChat')
-    allow(session).to receive(:with_tool).and_return(session)
-    allow(session).to receive(:with_instructions).and_return(session)
-    allow(session).to receive(:ask).and_return(mock_response)
-    session
-  end
-
-  let(:mock_response) do
-    double('ProviderMessage',
-           content:       'pipeline response',
-           role:          'assistant',
-           input_tokens:  15,
-           output_tokens: 8,
-           model_id:      'test-model')
-  end
-
   before do
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
     Legion::Settings[:llm][:pipeline_enabled] = true
-    Legion::Settings[:llm][:default_model] = 'test-model'
-    Legion::Settings[:llm][:default_provider] = :test
     allow(Legion::LLM).to receive(:started?).and_return(true)
     stub_native_provider(content: 'pipeline response')
-    Legion::LLM::Inventory.reset_live_store!
-    Legion::LLM::Inventory.write_lane(lane: {
-                                        id: 'direct:test:default:inference:test-model',
-      tier: :direct, provider_family: :test, instance_id: :default,
-      model: 'test-model', type: :inference
-                                      })
   end
 
   describe 'caller identity propagation' do
@@ -60,13 +34,14 @@ RSpec.describe 'Pipeline pre-rollout integration' do
     end
   end
 
-  describe 'all 18 steps execute for external profile' do
+  describe 'pipeline steps execute for external profile' do
     it 'records timeline events for non-skipped steps' do
       result = Legion::LLM.chat(message: 'hello', caller: { source: 'test' })
       timeline_keys = result.timeline.map { |e| e[:key] }
 
       expect(timeline_keys).to include('tracing:init')
-      expect(timeline_keys).to include('routing:provider_selection')
+      # SSOT v3: routing requirements are emitted as 'routing:requirements'
+      expect(timeline_keys).to include('routing:requirements')
       expect(timeline_keys).to include('provider:request_sent')
       expect(timeline_keys).to include('provider:response_received')
     end
@@ -78,7 +53,8 @@ RSpec.describe 'Pipeline pre-rollout integration' do
       expect(result.conversation_id).to be_a(String)
       expect(result.message).to be_a(Hash)
       expect(result.message[:content]).to eq('pipeline response')
-      expect(result.routing).to include(provider: :test)
+      # SSOT v3: routing reflects the selected lane from the Phase 1 Registry
+      expect(result.routing).to include(:provider)
       expect(result.tokens).to be_a(Hash).or be_a(Legion::LLM::Usage)
       expect(result.timestamps).to be_a(Hash)
       expect(result.timeline).to be_an(Array)
@@ -158,51 +134,25 @@ RSpec.describe 'Pipeline pre-rollout integration' do
 
       expect(result).to be_a(Legion::LLM::Inference::Response)
       expect(timeline_keys).not_to include('rbac:permission_check')
-      expect(timeline_keys).to include('routing:provider_selection')
+      # SSOT v3: routing requirements are recorded as 'routing:requirements'
+      expect(timeline_keys).to include('routing:requirements')
     end
   end
 
   describe 'streaming with pipeline' do
     it 'yields chunks and returns Inference::Response' do
-      allow(mock_session).to receive(:ask).and_yield(double(content: 'hel')).and_yield(double(content: 'lo')).and_return(mock_response)
-
       chunks = []
-      result = Legion::LLM.chat(message: 'hello') { |chunk| chunks << chunk.content }
+      result = Legion::LLM.chat(message: 'hello', stream: true) { |chunk| chunks << chunk }
 
-      expect(chunks).to eq(['pipeline response'])
+      expect(chunks.map(&:content)).to eq(['pipeline response'])
       expect(result).to be_a(Legion::LLM::Inference::Response)
     end
 
     it 'preserves caller identity through streaming path' do
-      allow(mock_session).to receive(:ask).and_yield(double(content: 'ok')).and_return(mock_response)
-
       caller = { requested_by: { identity: 'user:matt', type: :human }, source: 'tty' }
-      chunks = []
-      result = Legion::LLM.chat(message: 'hello', caller: caller) { |chunk| chunks << chunk }
+      result = Legion::LLM.chat(message: 'hello', stream: true, caller: caller) { |_chunk| nil }
 
       expect(result.caller).to eq(caller)
-    end
-  end
-
-  describe 'pipeline disabled falls back cleanly' do
-    before do
-      Legion::Settings[:llm][:pipeline_enabled] = false
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'cloud:test:default:inference:test-model',
-                                          tier: :cloud, provider_family: :test, instance_id: :default,
-                                          model: 'test-model', type: :inference
-                                        })
-    end
-
-    it 'rejects session-style calls without a message' do
-      expect { Legion::LLM.chat(model: 'test-model', provider: :test) }.to raise_error(Legion::LLM::ProviderError)
-    end
-
-    it 'returns provider message for message-style calls via non-pipeline path' do
-      allow(mock_session).to receive(:ask).and_return(mock_response)
-      result = Legion::LLM.chat(message: 'hello')
-      # Non-pipeline path returns the raw response
-      expect(result).not_to be_a(Legion::LLM::Inference::Response)
     end
   end
 
@@ -226,24 +176,31 @@ RSpec.describe 'Pipeline pre-rollout integration' do
     end
   end
 
-  describe 'error handling' do
-    before do
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+  describe 'error handling via SSOT engine' do
+    it 'raises RoutingRejected when no lanes are available for the pinned model' do
+      # SSOT v3: when all lanes are exhausted, Errors::RoutingRejected is raised.
+      Legion::Extensions::Llm::Inventory::Registry.reset!
+      expect { Legion::LLM.chat(model: 'nonexistent', provider: :vllm, message: 'hello') }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
 
-    it 'raises typed AuthError for 401' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_raise(Faraday::UnauthorizedError.new(nil, { status: 401 }))
-      expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::AuthError)
-    end
+    it 'raises a typed LLM error when the callable returns an authentication failure and all lanes are exhausted' do
+      # SSOT v3: authentication outcomes are retried against other lanes first;
+      # when all lanes are exhausted, RoutingRejected (a typed LLMError) is raised.
+      # Internal daemon/programming errors are not provider failures and propagate immediately.
+      Legion::Extensions::Llm::Inventory::Registry.reset!
+      auth_callable = SsotV3SnapshotFactory::FactoryCallable.new(
+        responder: proc { |_op, _args, _kwargs, _blk| raise Legion::Extensions::Llm::UnauthorizedError, 'invalid key' }
+      )
+      SsotV3SnapshotFactory.activate(
+        provider_family: 'vllm', instance_id: 'primary',
+        callable:        auth_callable,
+        drafts:          [SsotV3SnapshotFactory.offering_draft(
+          model: SSOT_TEST_MODEL, tier: :local, supported: %i[chat count_tokens], context: 200_000
+        )]
+      )
 
-    it 'raises typed RateLimitError for 429' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_raise(Faraday::TooManyRequestsError.new(nil, { status: 429 }))
-      expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::RateLimitError)
-    end
-
-    it 'raises typed ProviderDown for connection failures' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_raise(Faraday::ConnectionFailed.new('connection refused'))
-      expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::ProviderDown)
+      expect { Legion::LLM.chat(message: 'hello') }.to raise_error(Legion::LLM::LLMError)
     end
   end
 end

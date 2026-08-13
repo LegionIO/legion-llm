@@ -33,9 +33,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
 
   before do
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
-    Legion::Settings[:llm][:pipeline_enabled] = true
-    Legion::Settings[:llm][:default_model] = 'test-model'
-    Legion::Settings[:llm][:default_provider] = :test
+    Legion::Settings[:llm][:default_model] = SSOT_TEST_MODEL
     allow(Legion::LLM).to receive(:started?).and_return(true)
     stub_native_provider(content: 'pipeline response')
     allow(mock_session).to receive(:ask).and_return(mock_response)
@@ -46,8 +44,7 @@ RSpec.describe 'Inference endpoint pipeline routing' do
       messages = [{ role: :user, content: 'what is legion?' }]
       result = Legion::LLM.chat(
         messages: messages,
-        model:    'test-model',
-        provider: :test,
+        model:    SSOT_TEST_MODEL,
         caller:   { source: 'api', path: '/api/llm/inference' }
       )
       expect(result).to be_a(Legion::LLM::Inference::Response)
@@ -82,10 +79,18 @@ RSpec.describe 'Inference endpoint pipeline routing' do
       end
 
       it 'injects prior messages before the final ask' do
-        expect(Legion::LLM::Call::Dispatch).to receive(:call)
-          .and_return(native_dispatch_result(content: 'pipeline response'))
+        # SSOT v3: dispatch goes through SelectionDispatch, not the legacy Call::Dispatch.
+        # Verify all turns are forwarded to the callable (the executor must not drop prior context).
+        captured_messages = nil
+        allow(Legion::LLM::Call::SelectionDispatch).to receive(:call).and_wrap_original do |orig, **kw|
+          captured_messages = kw[:arguments][:messages]
+          orig.call(**kw)
+        end
 
         Legion::LLM.chat(messages: multi_turn_messages)
+
+        expect(captured_messages).to be_an(Array)
+        expect(captured_messages.length).to be >= multi_turn_messages.length
       end
 
       it 'returns a Inference::Response for multi-turn conversations' do
@@ -107,43 +112,33 @@ RSpec.describe 'Inference endpoint pipeline routing' do
       end
 
       it 'passes tool classes to the pipeline' do
-        expect(Legion::LLM::Call::Dispatch).to receive(:call)
-          .with(hash_including(tools: hash_including(test_tool: hash_including(name: 'test_tool'))))
-          .and_return(native_dispatch_result(content: 'pipeline response'))
+        # SSOT v3: dispatch goes through SelectionDispatch; verify the compiled tool definition
+        # reaches the callable — executor ToolInjection must compile tool_class into native format.
+        captured_tools = nil
+        allow(Legion::LLM::Call::SelectionDispatch).to receive(:call).and_wrap_original do |orig, **kw|
+          captured_tools = kw[:arguments][:tools]
+          orig.call(**kw)
+        end
+
         Legion::LLM.chat(
           messages: [{ role: :user, content: 'use a tool' }],
           tools:    [tool_class]
         )
-      end
-    end
 
-    context 'when pipeline is disabled' do
-      before do
-        Legion::Settings[:llm][:pipeline_enabled] = false
-        Legion::LLM::Inventory.write_lane(lane: {
-                                            id: 'cloud:test:default:inference:test-model',
-                                            tier: :cloud, provider_family: :test, instance_id: :default,
-                                            model: 'test-model', type: :inference
-                                          })
-      end
-
-      it 'does not return a Inference::Response' do
-        allow(mock_session).to receive(:with_instructions)
-        result = Legion::LLM.chat(
-          message: 'no pipeline'
+        expect(captured_tools).to include(
+          test_tool: hash_including(name: 'test_tool')
         )
-        expect(result).not_to be_a(Legion::LLM::Inference::Response)
       end
     end
+
   end
 
   describe 'chat endpoint pipeline routing (sync fallback)' do
     it 'routes through pipeline when called with message: string' do
       result = Legion::LLM.chat(
-        message:  'sync chat message',
-        model:    'test-model',
-        provider: :test,
-        caller:   { source: 'api', path: '/api/llm/chat' }
+        message: 'sync chat message',
+        model:   SSOT_TEST_MODEL,
+        caller:  { source: 'api', path: '/api/llm/chat' }
       )
       expect(result).to be_a(Legion::LLM::Inference::Response)
     end

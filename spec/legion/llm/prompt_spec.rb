@@ -47,6 +47,8 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'when no inventory lane is available' do
       before do
+        # SSOT v3: reset both stores so only the written lane is selectable.
+        Legion::Extensions::Llm::Inventory::Registry.reset!
         Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
       end
@@ -61,11 +63,10 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'when a caller passes only a provider-inferable model' do
       before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
         Legion::Settings[:llm][:default_provider] = 'vllm'
         Legion::Settings[:llm][:default_instance] = 'apollo'
         Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
-        # P5: write Inventory lane for gpt-5.4 so the while remaining.positive? loop can dispatch it
+        # Write a lane for gpt-5.4 under openai so SSOT routing finds the pinned model.
         write_test_lane(provider: :openai, model: 'gpt-5.4', tier: :frontier)
       end
 
@@ -82,10 +83,10 @@ RSpec.describe Legion::LLM::Prompt do
         Legion::Settings[:llm][:default_provider] = 'vllm'
         Legion::Settings[:llm][:default_instance] = 'apollo'
         Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
-        # P5: reset Inventory so ONLY the anthropic lane exists for claude-sonnet-4-6.
-        # stub_native_provider (outer before) writes claude-sonnet-4-6 for all providers.
-        # With multiple providers offering the same model, routing_resolution_for may pick
-        # a non-anthropic provider, causing model_provider_mismatch → model cleared → raise.
+        # SSOT v3: reset registry so only the intended anthropic lane is reachable;
+        # auto-routing (legionio) performs unconstrained selection, so determinism
+        # requires a single available lane.
+        Legion::Extensions::Llm::Inventory::Registry.reset!
         Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
       end
@@ -100,7 +101,10 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'when defaults are configured' do
       before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+        # SSOT v3: routing_enabled? is always false (deleted gate); the governed
+        # pipeline always runs. Reset registry before writing the target lane so
+        # multi-lane non-determinism cannot cause a wrong-provider pick.
+        Legion::Extensions::Llm::Inventory::Registry.reset!
         Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
         Legion::Settings[:llm][:default_provider] = 'anthropic'
@@ -117,7 +121,9 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'when Router is not enabled and no defaults exist' do
       before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
+        # SSOT v3: routing_enabled? is always false; clearing the SSOT Registry
+        # and all legacy lanes ensures routing_resolvable? returns false → LLMError.
+        Legion::Extensions::Llm::Inventory::Registry.reset!
         Legion::LLM::Inventory.reset_live_store!
         Legion::Settings[:llm][:default_provider] = nil
         Legion::Settings[:llm][:default_model] = nil
@@ -131,10 +137,6 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     context 'with exclude parameter' do
-      before do
-        allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-      end
-
       it 'accepts exclude parameter without error' do
         result = described_class.dispatch(
           'Hello',
@@ -145,6 +147,28 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     context 'with all optional parameters' do
+      before do
+        # SSOT v3: the schema: parameter triggers a :structured_output capability
+        # requirement. stub_native_provider does not include structured_output
+        # evidence, so we write a single lane that explicitly supports it.
+        Legion::Extensions::Llm::Inventory::Registry.reset!
+        SsotV3SnapshotFactory.activate(
+          provider_family: 'anthropic',
+          instance_id:     'primary',
+          callable:        SsotStubCallable.new(content: 'pipeline response', input_tokens: 10,
+                                                output_tokens: 5, tool_calls: []),
+          drafts:          [SsotV3SnapshotFactory.offering_draft(
+            model:        'gemma-12b',
+            tier:         :frontier,
+            supported:    %i[chat stream_chat count_tokens],
+            capabilities: { streaming: :supported, tools: :supported, vision: :supported,
+                            thinking: :supported, embedding: :supported, structured_output: :supported },
+            context:      200_000,
+            max_output:   16_384
+          )]
+        )
+      end
+
       it 'accepts the full parameter set' do
         result = described_class.dispatch(
           'Hello',
@@ -169,17 +193,12 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'with real Router.resolve (no stub) — validates call-site keyword compatibility' do
       before do
-        Legion::Settings[:llm][:routing][:enabled] = true
-        Legion::Settings[:llm][:routing][:default_intent] = { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' }
-        Legion::Settings[:llm][:routing][:rules] = [
-          {
-            name:     'test-cloud-rule',
-            when:     { effort: 'moderate' },
-            then:     { tier: 'cloud', provider: 'anthropic', model: 'claude-sonnet-4-6' },
-            priority: 10
-          }
-        ]
-        Legion::LLM::Router.reset!
+        # SSOT v3: routing rules in Settings are not used by Router.next_lane
+        # (RANKING v2 uses lane weights, not rule-based selection). The test
+        # invariant — that dispatch with intent: does not raise ArgumentError and
+        # routes successfully — is preserved by publishing a single lane so the
+        # result is deterministic.
+        Legion::Extensions::Llm::Inventory::Registry.reset!
         Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :cloud)
       end
@@ -194,8 +213,8 @@ RSpec.describe Legion::LLM::Prompt do
       end
 
       it 'does not raise ArgumentError when passing exclude to dispatch with routing enabled' do
-        # exclude: is accepted by dispatch but forwarded to Router only when Router supports it (WS-00E)
-        # This verifies dispatch does not crash when exclude is passed, even if Router ignores it
+        # exclude: is accepted by dispatch but has no effect on SSOT next_lane selection;
+        # the single available lane is selected and the call succeeds without error.
         result = described_class.dispatch('Hello',
                                           intent:  { effort: :moderate },
                                           exclude: { anthropic: ['claude-sonnet-4-6'] })
@@ -206,6 +225,11 @@ RSpec.describe Legion::LLM::Prompt do
 
   describe '.request' do
     context 'with valid provider and model' do
+      before do
+        # SSOT v3: write the pinned lane so Router.next_lane can match provider/model.
+        write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
+      end
+
       it 'runs the pipeline in-process and returns a Inference::Response' do
         result = described_class.request('Hello', provider: :anthropic, model: 'claude-sonnet-4-6')
         expect(result).to be_a(Legion::LLM::Inference::Response)
@@ -236,7 +260,12 @@ RSpec.describe Legion::LLM::Prompt do
     end
 
     context 'with nil model and no lane satisfying the provider pin' do
-      before { Legion::LLM::Inventory.reset_live_store! }
+      before do
+        # SSOT v3: reset SSOT Registry too, otherwise gemma-12b lanes written by
+        # the outer before block satisfy the request and no error is raised.
+        Legion::LLM::Inventory.reset_live_store!
+        Legion::Extensions::Llm::Inventory::Registry.reset!
+      end
 
       it 'fails through routing when no lane matches the provider pin' do
         expect { described_class.request('Hello', provider: :anthropic, model: nil) }
@@ -299,10 +328,16 @@ RSpec.describe Legion::LLM::Prompt do
       end
     end
 
-    it 'does NOT call DaemonClient' do
-      expect(Legion::LLM::DaemonClient).not_to receive(:available?)
-      expect(Legion::LLM::DaemonClient).not_to receive(:chat)
-      described_class.request('Hello', provider: :anthropic, model: 'claude-sonnet-4-6')
+    context 'bypasses daemon client (request runs in-process pipeline)' do
+      before do
+        write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
+      end
+
+      it 'does NOT call DaemonClient' do
+        expect(Legion::LLM::DaemonClient).not_to receive(:available?)
+        expect(Legion::LLM::DaemonClient).not_to receive(:chat)
+        described_class.request('Hello', provider: :anthropic, model: 'claude-sonnet-4-6')
+      end
     end
   end
 
@@ -334,6 +369,28 @@ RSpec.describe Legion::LLM::Prompt do
 
   describe '.extract' do
     let(:schema) { { type: :object, properties: { name: { type: :string } } } }
+
+    before do
+      # SSOT v3: schema: triggers :structured_output capability requirement.
+      # stub_native_provider does not include structured_output evidence, so write
+      # a single lane with explicit structured_output support.
+      Legion::Extensions::Llm::Inventory::Registry.reset!
+      SsotV3SnapshotFactory.activate(
+        provider_family: 'anthropic',
+        instance_id:     'primary',
+        callable:        SsotStubCallable.new(content: 'pipeline response', input_tokens: 10,
+                                              output_tokens: 5, tool_calls: []),
+        drafts:          [SsotV3SnapshotFactory.offering_draft(
+          model:        'gemma-12b',
+          tier:         :frontier,
+          supported:    %i[chat stream_chat count_tokens],
+          capabilities: { streaming: :supported, tools: :supported, vision: :supported,
+                          thinking: :supported, embedding: :supported, structured_output: :supported },
+          context:      200_000,
+          max_output:   16_384
+        )]
+      )
+    end
 
     it 'delegates to dispatch with schema' do
       allow(described_class).to receive(:dispatch).and_call_original

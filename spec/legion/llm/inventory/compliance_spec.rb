@@ -153,11 +153,15 @@ RSpec.describe 'Compliance by absence' do
     end
   end
 
+  # NOTE: HealthTracker.deny_model is deleted in SSOT v3. Runtime IAM-deny is expressed
+  # as an explicit health: kwarg on write_lane (e.g. from a RoutingSession OutcomeClassifier
+  # :access_denied outcome dispatching via Registry). The invariant — denied lane has
+  # lane_weight <= 0 and health.denied — is re-expressed against the write_lane path.
   context 'runtime IAM-deny writes health.denied' do
-    it 'a denied lane has lane_weight <= 0 and is filtered by Router' do
-      write_lane(provider: :bedrock, instance: :a, model: 'sonnet')
-      Legion::LLM::Router.health_tracker.deny_model(
-        provider: :bedrock, instance: :a, model: 'sonnet', reason: :access_denied
+    it 'a denied lane written with health.denied has lane_weight <= 0' do
+      Legion::LLM::Inventory.write_lane(
+        lane: build_lane(provider: :bedrock, instance: :a, model: 'sonnet'),
+        health: { circuit_state: :closed, denied: true, available: false, adjustment: 0 }
       )
 
       lane = Legion::LLM::Inventory.lane(id: 'cloud:bedrock:a:inference:sonnet')

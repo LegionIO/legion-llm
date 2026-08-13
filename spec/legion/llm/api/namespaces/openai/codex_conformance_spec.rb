@@ -38,9 +38,10 @@ RSpec.describe 'Codex CLI conformance', :integration do
 
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
-    allow(Legion::LLM::Inventory).to receive(:offerings).and_return([
-                                                                      { model: 'legionio', provider_family: 'legion', type: :inference }
-                                                                    ])
+    # SSOT v3: models endpoint reads from the Phase-1 Registry snapshot via
+    # ModelCatalog.list, not from Inventory.offerings. Publish a real lane so
+    # the catalog projects 'legionio' in the compat model list.
+    write_test_lane(provider: :legion, model: 'legionio')
     allow(Legion::LLM::Inference::Request).to receive(:build).and_return(double('Request'))
     allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(
       double('Executor').tap do |ex|

@@ -6,12 +6,18 @@ require 'spec_helper'
 # "final payload estimate NNNNN tokens exceeds dispatch threshold" ContextOverflow
 # on small-context local lanes. See docs/work/planning/nxn-debugging-method.md.
 #
-# Four defects, one oracle:
-#   1. estimate_request_tokens used a naive shadow estimator + RAW system.
-#   2. routing estimated raw (not lane-independent-reduced) messages.
-#   3. step_context_load double-sent history (structured messages + injected
-#      "Prior conversation history" system text) for client-managed conversations.
-#   4. no offline coverage tied routing's estimate to the dispatch guard.
+# SSOT v3 rewrite: the deleted estimate_request_tokens / routing_request_state /
+# routing_resolution_for methods are replaced by:
+#   - InputBound.call(...)          → conservative byte-based input bound
+#   - build_ssot_v3_routing_requirements → sets @routing_requirements
+#   - Router.next_lane(...)          → selects the winning lane from a snapshot
+#
+# Three invariants survive:
+#   1. InputBound counts structured content blocks correctly (not near-zero).
+#   2. Routing input bound is never materially below dispatch token estimate
+#      (byte count >= token count by InputBound contract).
+#   3. Router.next_lane skips lanes whose context window the estimated payload
+#      would overflow (CandidateEvaluator §9.7 step 5).
 RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity' do
   let(:request) do
     Legion::LLM::Inference::Request.build(
@@ -22,8 +28,8 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
   end
   let(:messages) do
     # Structured content (array of content blocks), the shape Claude Code sends.
-    # A naive m[:content].to_s estimator reads this near-zero; the canonical
-    # estimator walks the blocks and sees the real text.
+    # A naive m[:content].to_s estimator reads this near-zero; InputBound
+    # walks the blocks and sees the real byte count.
     Array.new(20) do |i|
       {
         role:    (i.even? ? :user : :assistant),
@@ -34,121 +40,88 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
   let(:executor) { described_class.new(request) }
 
   before do
-    allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
     allow(Legion::LLM::Audit).to receive(:emit_prompt)
     executor.instance_variable_set(:@enrichments, {})
     executor.instance_variable_set(:@resolved_offering_metadata, { limits: { context_window: 8192 } })
-    # native_dispatch_options resolves tools/prefs against the registry, which
-    # needs a resolved provider/model. Pin the routing-resolved lane.
     executor.instance_variable_set(:@resolved_provider, :vllm)
     executor.instance_variable_set(:@resolved_model, 'gemma-12b-it')
     executor.instance_variable_set(:@resolved_instance, :default)
   end
 
-  describe '#estimate_request_tokens (Part 1 + Part 4)' do
+  describe 'InputBound (replaces estimate_request_tokens — Part 1 + Part 4)' do
     it 'counts structured content blocks, not a near-zero shadow estimate' do
-      estimated = executor.send(:estimate_request_tokens)
-      # 20 messages × ~400 words is thousands of tokens; a naive [:content].to_s
-      # estimator on an Array returns the inspect string length, wildly wrong.
-      expect(estimated).to be > 5_000
+      # InputBound.call counts UTF-8 bytes of all textual content blocks.
+      # 20 messages × ~400 words × ~5 bytes/word is tens of thousands of bytes;
+      # a naive [:content].to_s estimator on an Array returns near-zero.
+      bound = Legion::LLM::Router::InputBound.call(
+        messages: messages, system: 'You are a helpful assistant.'
+      )
+      expect(bound).to be > 5_000
     end
 
-    it 'tracks the dispatch guard estimate closely for the same request' do
-      # The router filters on estimate_request_tokens; the dispatch guard raises
-      # on final_dispatch_token_estimate. If routing materially under-counts vs
-      # dispatch, a too-small lane passes the filter then overflows at dispatch.
-      # The two are computed over different code paths so are not token-identical,
-      # but routing must track dispatch within a small tolerance — never the old
-      # thousands-of-tokens undercount (structured content + injected tools/system
-      # ignored) that shipped the ContextOverflow.
+    it 'routing input bound is never materially below dispatch token estimate' do
+      # InputBound counts bytes (1 byte >= 1 token by contract) so the
+      # bound is always >= a token-based dispatch estimate.
+      # This guards against any regression that would make routing UNDER-count
+      # the payload (the original bug that shipped ContextOverflow at dispatch).
+      executor.send(:build_ssot_v3_routing_requirements)
+      routing_bound = executor.instance_variable_get(:@routing_requirements).estimated_input_bound
+
       dispatch_messages = executor.send(:native_dispatch_messages)
       dispatch_options  = executor.send(:native_dispatch_options)
       dispatch_estimate = executor.send(:final_dispatch_token_estimate, dispatch_messages, dispatch_options)
 
-      routing_estimate = executor.send(:estimate_request_tokens)
-
-      # Routing must never materially under-count dispatch (that was the bug).
-      # A small negative delta (tool_prefs / gaia-triggered tools that depend on
-      # resolved state routing can't see) is tolerated; a thousands-of-tokens
-      # undercount is not.
-      expect(routing_estimate).to be >= (dispatch_estimate * 0.95)
-    end
-
-    it 'includes the injected system prompt, not just the raw request system' do
-      # Put a large enrichment into the system channel; routing must see it.
-      executor.instance_variable_set(:@enrichments,
-                                     { 'skill:active' => ('skill instruction ' * 2_000) })
-      with_enrichment = executor.send(:estimate_request_tokens)
-
-      executor.instance_variable_set(:@enrichments, {})
-      without_enrichment = executor.send(:estimate_request_tokens)
-
-      expect(with_enrichment).to be > without_enrichment
+      # By InputBound contract (bytes >= tokens), routing bound >= dispatch estimate.
+      expect(routing_bound).to be >= dispatch_estimate
     end
   end
 
-  describe '#estimate_request_tokens routes on reduced payload (Part 2)' do
-    let(:messages) do
-      # A giant tool-result message that trim_oversized_tool_results will shrink
-      # before dispatch. Routing must estimate the REDUCED size, not the raw one,
-      # so it does not over-escalate off a lane the reduced payload would fit.
-      [
-        { role: :user, content: 'run the tool' },
-        { role: :tool, tool_call_id: 'c1', content: 'RESULT ' * 20_000 },
-        { role: :user, content: 'thanks' }
-      ]
+  describe 'end-to-end lane selection — context filter (Part 4 commit gate)' do
+    # Write a single vllm instance with two offerings at different context sizes.
+    def write_lane_with_context(model:, context:)
+      SsotV3SnapshotFactory.activate(
+        provider_family: 'vllm',
+        instance_id:     model.tr('.', '-'),
+        callable:        SsotV3SnapshotFactory::FactoryCallable.new,
+        drafts:          [SsotV3SnapshotFactory.offering_draft(
+          model:     model,
+          tier:      :local,
+          supported: %i[chat stream_chat count_tokens],
+          context:   context
+        )]
+      )
     end
 
-    it 'reflects the trimmed tool result, not the raw oversized payload' do
-      dispatch_messages = executor.send(:native_dispatch_messages)
-      dispatch_options  = executor.send(:native_dispatch_options)
-      dispatch_estimate = executor.send(:final_dispatch_token_estimate, dispatch_messages, dispatch_options)
-      routing_estimate  = executor.send(:estimate_request_tokens)
+    after { Legion::Extensions::Llm::Inventory::Registry.reset! }
 
-      # Routing applies only the LANE-INDEPENDENT reductions (empty/thinking/
-      # oversized-tool-result trims); it must NOT apply enforce_context_window's
-      # lane-dependent compaction because the lane isn't chosen yet. dispatch
-      # here DID compact (against the 8192 lane), so routing legitimately sits
-      # at or above dispatch — never materially below. Below would be the bug.
-      expect(routing_estimate).to be >= (dispatch_estimate * 0.95)
-
-      # And it must reflect the TRIMMED tool result, not the raw 20k-token blob.
-      raw_estimate = Legion::LLM::Inference::ContextAccounting.estimate_message_tokens(messages)
-      expect(routing_estimate).to be < raw_estimate
-    end
-  end
-
-  describe 'end-to-end lane selection (Part 4 commit gate)' do
-    def write_lane(provider:, model:, limits:, tier: :direct)
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id:              "#{tier}:#{provider}:default:inference:#{model}",
-                                          tier:            tier, provider_family: provider,
-                                          instance_id:     :default, model: model, type: :inference,
-                                          capabilities:    [], limits: limits
-                                        })
-    end
-
-    after { Legion::LLM::Inventory.reset_live_store! }
-
-    # Provider pinned via routing, MODEL unspecified so the router selects the
-    # lane by filters+weight — the real "no model, let routing decide" path.
-    let(:request) do
-      Legion::LLM::Inference::Request.build(messages: messages, system: 'You are a helpful assistant.',
-                                            routing: { provider: :vllm })
-    end
-    # ~11k tokens of content: exceeds 8192*0.9 headroom but fits the 131k lane.
+    # ~11k words = ~55k bytes > 8192×0.9 threshold; fits the 131k lane.
     let(:messages) { [{ role: :user, content: [{ type: 'text', text: 'word ' * 11_000 }] }] }
 
+    # Provider pinned to vllm, no model pin — router selects the fitting lane.
+    let(:request) do
+      Legion::LLM::Inference::Request.build(
+        messages: messages,
+        system:   'You are a helpful assistant.',
+        routing:  { provider: :vllm }
+      )
+    end
+
     it 'skips the small-context lane whose window the injected payload would overflow' do
-      write_lane(provider: :vllm, model: 'gemma-12b-it', limits: { context_window: 8_192 })
-      write_lane(provider: :vllm, model: 'gemma-4-31b-it', limits: { context_window: 131_072 })
+      write_lane_with_context(model: 'gemma-12b-it',   context: 8_192)
+      write_lane_with_context(model: 'gemma-4-31b-it', context: 131_072)
 
-      state = executor.send(:routing_request_state)
-      expect(state[:estimated_tokens]).to be > (8_192 * 0.9) # would overflow the small lane
+      executor.send(:build_ssot_v3_routing_requirements)
+      reqs = executor.instance_variable_get(:@routing_requirements)
 
-      lane = executor.send(:routing_resolution_for, state)
-      expect(lane).not_to be_nil
-      expect(lane.model).to eq('gemma-4-31b-it')
+      # Routing bound must exceed the small lane's effective headroom.
+      expect(reqs.estimated_input_bound).to be > (8_192 * 0.9)
+
+      snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+      result = Legion::LLM::Router.next_lane(
+        requirements: reqs, exclusions: [], snapshot: snap
+      )
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.model).to eq('gemma-4-31b-it')
     end
   end
 end

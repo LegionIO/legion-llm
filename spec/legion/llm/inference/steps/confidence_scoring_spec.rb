@@ -94,26 +94,19 @@ RSpec.describe Legion::LLM::Inference::Steps::ConfidenceScoring do
         expect(step.confidence_score.score).to eq(0.9)
       end
 
-      it 'adds a structured warning and reports health when confidence is low' do
+      # NOTE: report_low_confidence_health (HealthTracker path) is deleted in SSOT v3.
+      # Low-confidence still produces a structured warning and an audit entry — those
+      # invariants are asserted here without the deleted health-tracker assertion.
+      it 'adds a structured warning and audit entry when confidence is low' do
         low_request = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'hello' }],
           extra:    { confidence_score: 0.1 }
         )
-        health_tracker = instance_double(Legion::LLM::Router::HealthTracker, report: nil)
-        allow(Legion::LLM::Router).to receive(:health_tracker).and_return(health_tracker)
         step = host_class.new(low_request, raw_response)
-        step.instance_variable_set(:@resolved_provider, :anthropic)
-        step.instance_variable_set(:@resolved_instance, :primary)
-        step.instance_variable_set(:@resolved_offering_id, 'anthropic:primary:chat:opus')
-
         step.step_confidence_scoring
 
         expect(step.warnings).to include(hash_including(type: :low_confidence, band: :very_low))
         expect(step.audit[:'confidence:action'][:outcome]).to eq(:warning)
-        expect(health_tracker).to have_received(:report).with(
-          hash_including(provider: :anthropic, instance: :primary, offering_id: 'anthropic:primary:chat:opus',
-                         signal: :quality_failure, value: 1)
-        )
       end
     end
 

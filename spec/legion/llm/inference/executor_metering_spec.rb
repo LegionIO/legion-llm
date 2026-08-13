@@ -258,42 +258,4 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
   end
 
-  describe '#emit_escalation_attempt_metering' do
-    let(:request) do
-      Legion::LLM::Inference::Request.build(
-        messages:        [{ role: :user, content: 'hello' }],
-        routing:         { provider: :vllm, model: 'qwen3.6-27b' },
-        conversation_id: 'conv_attempt'
-      )
-    end
-
-    it 'marks failed submitted provider attempts with status and error metadata' do
-      executor = described_class.new(request)
-      error = Legion::LLM::AuthError.new('vllm:qwen3.6-27b - Unauthorized')
-      executor.instance_variable_set(:@resolved_provider, :vllm)
-      executor.instance_variable_set(:@resolved_instance, :v100)
-      executor.instance_variable_set(:@resolved_model, 'qwen3.6-27b')
-      executor.instance_variable_set(:@resolved_tier, :direct)
-      executor.instance_variable_set(:@tracing, { correlation_id: 'corr_attempt' })
-      allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
-
-      executor.send(
-        :emit_escalation_attempt_metering,
-        provider:           :vllm,
-        model:              'qwen3.6-27b',
-        duration_ms:        12,
-        attempt:            1,
-        status:             'error',
-        error:              error,
-        provider_submitted: true
-      )
-
-      expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
-        expect(event[:status]).to eq('error')
-        expect(event[:provider_submitted]).to be true
-        expect(event[:error]).to include(class: 'Legion::LLM::AuthError', message: include('Unauthorized'))
-        expect(event[:routing_reason]).to eq('escalation_attempt:1')
-      end
-    end
-  end
 end

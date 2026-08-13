@@ -404,6 +404,12 @@ RSpec.describe 'Legion::LLM.ask' do
         defer_intents:   %w[batch background],
         max_defer_hours: 8
       }
+      # SSOT v3: the scheduling try_defer check lives in chat_direct_raw. The
+      # governed path (chat_direct_governed, used when pipeline_enabled=true)
+      # does not include scheduling deferral — it dispatches directly to the
+      # SSOT routing engine. Disable the pipeline so the raw direct path is used,
+      # which is the correct context for "direct path scheduling deferral" tests.
+      Legion::Settings[:llm][:pipeline_enabled] = false
     end
 
     after do
