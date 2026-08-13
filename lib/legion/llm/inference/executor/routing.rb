@@ -110,6 +110,44 @@ module Legion
               direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
               from: 'router', to: 'pipeline'
             )
+            build_ssot_v3_routing_requirements
+          end
+
+          # SSOT v3 §14 — build RequestRequirements once per request, after
+          # step_routing resolves the old-path provider/model. Silently degrades
+          # (sets @routing_requirements = nil) so the old path stays active on
+          # any failure (stale gem contract, missing routing_context seed, etc.).
+          def build_ssot_v3_routing_requirements
+            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+            return unless snap.generation.positive?
+
+            operation = @request.stream == true ? :stream_chat : :chat
+            required_caps = Legion::LLM::Router::RequiredCapabilities.call(
+              request: @request, operation: operation
+            )
+            framing = @request.routing_settings_snapshot&.input_framing_overhead_tokens || 0
+            input_bound = Legion::LLM::Router::InputBound.call(
+              operation:               operation,
+              messages:                @request.messages,
+              system:                  @request.system,
+              tools:                   @request.tools,
+              tool_choice:             @request.tool_choice,
+              thinking:                @request.thinking,
+              response_format:         @request.response_format,
+              framing_overhead_tokens: framing
+            )
+            @routing_requirements = Legion::LLM::Router::RequestRequirements.build(
+              request:                @request,
+              operation:              operation,
+              required_capabilities:  required_caps,
+              estimated_input_bound:  input_bound,
+              required_output_tokens: 0
+            )
+            log.debug "[llm][executor] action=ssot_v3_requirements_built operation=#{operation}"
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true,
+                                operation: 'llm.pipeline.build_ssot_v3_requirements')
+            @routing_requirements = nil
           end
 
           # When routing resolved a provider but no model, source the model from that

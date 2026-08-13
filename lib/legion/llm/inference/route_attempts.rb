@@ -31,6 +31,15 @@ module Legion
           idempotency_key = next_route_idempotency_key
           dispatch_options = native_dispatch_options
           enforce_final_context_budget!(messages, dispatch_options)
+
+          if @current_attempt_context
+            return ssot_v3_direct_dispatch(
+              operation: operation, messages: messages,
+              dispatch_options: dispatch_options, idempotency_key: idempotency_key,
+              stream_block: stream_block
+            )
+          end
+
           result = Legion::LLM::Call::Dispatch.call(
             provider:   @resolved_provider,
             instance:   @resolved_instance,
@@ -58,6 +67,53 @@ module Legion
             failure_reason:  e.message
           )
           raise
+        end
+
+        # SSOT v3 §15 — dispatch through SelectionDispatch using the AttemptContext
+        # set by run_provider_call_ssot_v3_single/stream. On SelectionDispatch success
+        # returns the provider value; on failure re-raises as the appropriate Legion
+        # error so the existing rescue clauses in run_provider_call_single /
+        # step_provider_call_stream continue to work.
+        def ssot_v3_direct_dispatch(operation:, messages:, dispatch_options:, idempotency_key:, stream_block:)
+          arguments = dispatch_options.merge(messages: messages)
+          sd_result = Legion::LLM::Call::SelectionDispatch.call(
+            attempt_context: @current_attempt_context,
+            arguments:       arguments,
+            &stream_block
+          )
+          if sd_result.success?
+            record_route_attempt(
+              dispatch_path:   :direct,
+              operation:       operation,
+              status:          :success,
+              idempotency_key: idempotency_key,
+              selected_lane:   nil
+            )
+            return sd_result.value
+          end
+
+          record_route_attempt(
+            dispatch_path:   :direct,
+            operation:       operation,
+            status:          :failure,
+            idempotency_key: idempotency_key,
+            selected_lane:   nil,
+            failure_reason:  sd_result.outcome.reason
+          )
+          raise ssot_v3_provider_outcome_error(sd_result.outcome)
+        end
+
+        def ssot_v3_provider_outcome_error(outcome)
+          case outcome.kind
+          when :overloaded, :rate_limited
+            Legion::LLM::ProviderError.new("provider #{outcome.kind}: #{outcome.reason}")
+          when :authentication
+            Legion::LLM::AuthError.new(outcome.reason)
+          when :authorization
+            Legion::LLM::AuthError.new(outcome.reason)
+          else
+            Legion::LLM::ProviderError.new("provider error #{outcome.kind}: #{outcome.reason}")
+          end
         end
 
         def dispatch_fleet_request(operation:, messages:, stream_block: nil)

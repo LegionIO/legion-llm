@@ -13,11 +13,91 @@ module Legion
           def step_provider_call
             escalation = pipeline_escalation_enabled?
             log.debug "[llm][executor] action=step_provider_call provider=#{@resolved_provider} model=#{@resolved_model} escalation=#{escalation}"
-            if escalation
+            if ssot_v3_inventory_active?
+              run_provider_call_ssot_v3_single
+            elsif escalation
               run_provider_call_with_attempts(routing_payload: build_routing_payload_from_resolved)
             else
               run_provider_call_single
             end
+          end
+
+          # True when the Phase 1 Registry has at least one activated lane for
+          # the RESOLVED provider AND RequestRequirements were built in step_routing.
+          # Gating on @resolved_provider prevents state-leaked ssot_v3-tagged specs
+          # from activating the SSOT v3 path for unrelated providers.
+          def ssot_v3_inventory_active?
+            return false if @routing_requirements.nil?
+            return false if @resolved_provider.nil?
+
+            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+            return false unless snap.generation.positive?
+
+            resolved = @resolved_provider.to_s
+            snap.each_instance.any? { |inst| inst.instance_key.provider_family.to_s == resolved }
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.ssot_v3_inventory_active')
+            false
+          end
+
+          # Populate resolved-state ivars from an AttemptContext so existing
+          # emit_* calls (metering / prompt-audit / tool-audit) see the correct
+          # provider/instance/model/tier/offering_id for this attempt.
+          def populate_ssot_v3_resolved_state(attempt_context)
+            sel = attempt_context.selection
+            @resolved_provider     = sel.provider_family.to_sym
+            @resolved_instance     = sel.instance_id.to_sym
+            @resolved_model        = sel.model
+            # @resolved_tier already set by step_routing; leave it intact for metering.
+            @resolved_offering_id  = sel.offering_id
+            @resolved_offering_metadata = {}
+            @current_attempt_context = attempt_context
+            log.debug "[llm][executor] action=ssot_v3_resolved provider=#{@resolved_provider} " \
+                      "instance=#{@resolved_instance} model=#{@resolved_model}"
+          end
+
+          # SSOT v3 single-attempt sync path. Selects via RoutingSession, delegates
+          # dispatch+error-handling to run_provider_call_single (preserves existing
+          # ProviderError → 529/502 behavior), classifies success.
+          def run_provider_call_ssot_v3_single
+            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+            session = Legion::LLM::Inference::RoutingSession.new(
+              request: @request, requirements: @routing_requirements
+            )
+            attempt_context = session.next_attempt!(snapshot: snap)
+            populate_ssot_v3_resolved_state(attempt_context)
+            run_provider_call_single
+            # On success, classify using a synthetic success Result (no retry loop needed —
+            # error handling is fully delegated to run_provider_call_single which re-raises).
+            fake_result = Legion::LLM::Call::SelectionDispatch::Result.success(value: @raw_response)
+            session.classify(dispatch_result: fake_result, attempt_context: attempt_context)
+          rescue Legion::LLM::Errors::RoutingRejected => e
+            # No lane available from Phase 1 Registry — degrade gracefully to old path.
+            log.warn "[llm][executor] action=ssot_v3_routing_rejected reason=#{e.rejection&.reason} falling_back=old_path"
+            @current_attempt_context = nil
+            run_provider_call_single
+          ensure
+            @current_attempt_context = nil
+          end
+
+          # SSOT v3 single-attempt stream path. Mirrors run_provider_call_ssot_v3_single.
+          def run_provider_call_ssot_v3_stream(&block)
+            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+            session = Legion::LLM::Inference::RoutingSession.new(
+              request: @request, requirements: @routing_requirements
+            )
+            attempt_context = session.next_attempt!(snapshot: snap)
+            populate_ssot_v3_resolved_state(attempt_context)
+            execute_provider_request_stream(&block)
+            # On success, classify (no retry loop — errors propagate from execute_provider_request_stream).
+            fake_result = Legion::LLM::Call::SelectionDispatch::Result.success(value: @raw_response)
+            session.classify(dispatch_result: fake_result, attempt_context: attempt_context)
+          rescue Legion::LLM::Errors::RoutingRejected => e
+            log.warn "[llm][executor] action=ssot_v3_stream_routing_rejected reason=#{e.rejection&.reason} falling_back=old_path"
+            @current_attempt_context = nil
+            execute_provider_request_stream(&block)
+          ensure
+            @current_attempt_context = nil
           end
 
           # Build a minimal routing_payload from the already-resolved routing state.
@@ -686,6 +766,11 @@ module Legion
           end
 
           def step_provider_call_stream(&block)
+            if ssot_v3_inventory_active?
+              run_provider_call_ssot_v3_stream(&block)
+              return
+            end
+
             if pipeline_escalation_enabled?
               run_provider_call_with_attempts(routing_payload: build_routing_payload_from_resolved,
                                               stream_block:    block)

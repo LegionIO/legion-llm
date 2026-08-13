@@ -126,6 +126,8 @@ module Legion
           @escalation_history = []
           @route_attempts = []
           @current_escalation_context = nil
+          @routing_requirements = nil
+          @current_attempt_context = nil
           @proactive_tier_assignment = nil
           @tool_event_handler = nil
           @sticky_turn_snapshot = nil

@@ -160,6 +160,29 @@ module FakeProvider
         scenario = FakeProvider.resolve_scenario(messages)
         ext.stream_response(scenario, model: model, messages: messages, &block)
       end
+      # SSOT v3 §15.1: SelectionDispatch calls stream_chat for the :stream_chat operation.
+      mod.define_singleton_method(:stream_chat) do |model:, messages:, **opts, &block|
+        FakeProvider.record_call(kind: :stream_chat, model: model, messages: messages,
+                                 tool_prefs: opts[:tool_prefs], tools: opts[:tools])
+        scenario = FakeProvider.resolve_scenario(messages)
+        ext.stream_response(scenario, model: model, messages: messages, &block)
+      end
+      # SSOT v3 §15.1: SelectionDispatch calls normalize_dispatch_error on StandardError.
+      mod.define_singleton_method(:normalize_dispatch_error) do |error:|
+        llm = Legion::Extensions::Llm
+        kind =
+          case error
+          when llm::OverloadedError then :overloaded
+          when llm::RateLimitError  then :rate_limited
+          when llm::UnauthorizedError then :authentication
+          when llm::ForbiddenError    then :authorization
+          when llm::BadRequestError   then :invalid_request
+          else :provider_error
+          end
+        reason = error.class.name.to_s
+        reason = 'UnknownError' if reason.empty?
+        llm::Routing::ProviderOutcome.new(kind: kind, reason: reason)
+      end
       mod.define_singleton_method(:responses) do |body:, messages:, stream:, **opts, &block|
         FakeProvider.record_call(kind: :responses, model: body[:model] || body['model'],
                                  messages: messages, tool_prefs: opts[:tool_prefs], tools: opts[:tools])

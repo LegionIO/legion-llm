@@ -101,12 +101,29 @@ module MatrixHelper
     FakeProvider.register!
     FakeProvider.reset!
     Thread.current[:fake_server_tool_round] = 0
+
+    # SSOT v3: activate FakeProvider in the Phase 1 Registry so RoutingSession
+    # can find a lane. The offering supports both :chat and :stream_chat.
+    Legion::Extensions::Llm::Inventory::Registry.reset!
+    SsotV3SnapshotFactory.activate(
+      provider_family: 'fake',
+      instance_id:     'test',
+      drafts:          [
+        SsotV3SnapshotFactory.offering_draft(
+          model:     FAKE_MODEL,
+          tier:      :local,
+          supported: %i[chat stream_chat embed count_tokens]
+        )
+      ],
+      callable: FakeProvider.adapter
+    )
   end
 
   # Counterpart to configure_for_fake! — call from `after(:each)` to restore
   # `Legion::LLM.started?` to false so subsequent specs see a clean state.
   def restore_started_state!
     Legion::LLM.instance_variable_set(:@started, nil)
+    Legion::Extensions::Llm::Inventory::Registry.reset!
   end
 
   # Register the LegionIO server-side tool for the execution-proxy spec. The
