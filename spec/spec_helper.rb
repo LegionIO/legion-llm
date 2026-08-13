@@ -16,6 +16,7 @@ require 'legion/settings'
 require 'legion/json'
 require_relative 'support/transport_stub'
 require 'legion/llm'
+require_relative 'support/ssot_v3_snapshot_factory'
 
 def native_dispatch_result(content: 'test response', input_tokens: 10, output_tokens: 5, tool_calls: [])
   canonical = Legion::Extensions::Llm::Canonical
