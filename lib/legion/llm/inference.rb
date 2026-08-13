@@ -432,7 +432,7 @@ module Legion
           "tier=#{tier} escalate=#{escalate} max_escalations=#{max_escalations} " \
           "quality_check=#{quality_check} message_present=#{!message.nil?} kwargs=#{kwargs.keys.sort}"
         )
-        if pipeline_enabled? && (message || kwargs[:messages]) && !block_given?
+        if (message || kwargs[:messages]) && !block_given?
           return Prompt.dispatch(
             message || kwargs[:messages],
             intent: intent, tier: tier, provider: provider, model: model,
@@ -441,15 +441,10 @@ module Legion
           )
         end
 
-        if pipeline_enabled? && (message || kwargs[:messages]) && block_given?
+        if (message || kwargs[:messages]) && block_given?
           return chat_via_pipeline(model: model, provider: provider, intent: intent, tier: tier,
                                    message: message, escalate: escalate, max_escalations: max_escalations,
                                    quality_check: quality_check, **kwargs, &)
-        end
-
-        if block_given? && message
-          return chat_single(model: model, provider: provider, intent: intent, tier: tier,
-                             message: message, **kwargs, &)
         end
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
@@ -573,62 +568,6 @@ module Legion
             tokens_out: meta[:tokens_out]
           }
         }
-      end
-
-      def chat_single(model:, provider:, tier:, message: nil, **kwargs, &)
-        explicit_tools = kwargs.delete(:tools)
-        tools = explicit_tools
-        tools = nil if tools.respond_to?(:empty?) && tools.empty?
-
-        if tier && external_tier?(tier.to_sym)
-          lane = Router.request_lane(type: :inference, tiers: [tier.to_sym],
-                                     providers: provider ? [provider.to_sym] : [],
-                                     models: model ? [model.to_s] : [])
-          if lane
-            model    = lane[:model]
-            provider = lane[:provider_family]
-            assert_external_allowed!
-          end
-        end
-
-        model ||= Legion::Settings[:llm][:default_model]
-        instance = kwargs[:instance] || kwargs[:instance_id] || kwargs[:provider_instance]
-        provider ||= (model && Router.infer_provider_for_model(model)) ||
-                     Legion::Settings[:llm][:default_provider]
-
-        opts = {}
-        opts[:model] = model if model
-        opts[:provider] = provider if provider
-        opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
-        opts.delete(:temperature) if opts[:temperature].nil?
-
-        opts[:tools] = tools if tools
-
-        log.debug "[llm][inference] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
-        chat_single_native(model: opts[:model], provider: opts[:provider], instance: instance, message: message,
-                           caller: kwargs[:caller], **opts.except(:model, :provider), &)
-      end
-
-      def chat_single_native(model:, provider:, message:, instance: nil, caller: nil, **, &block)
-        raise native_provider_error('session-style chat requires message or messages') unless message
-        raise native_provider_error('chat without a native provider') unless provider
-
-        messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
-        result = if block
-                   Call::Dispatch.call(provider: provider, instance: instance, capability: :stream, model: model,
-                                       messages: messages, **, &block)
-                 else
-                   Call::Dispatch.call(provider: provider, instance: instance, capability: :chat, model: model,
-                                       messages: messages, **)
-                 end
-        emit_non_pipeline_metering(result, model: model, provider: provider, caller: caller, messages: messages)
-        result
-      end
-
-      def native_provider_error(operation)
-        Legion::LLM::ProviderError.new(
-          "Native provider dispatch is required for #{operation}. Configure a registered lex-llm provider."
-        )
       end
 
       def try_defer(intent:, urgency:, model:, provider:, message:, **)
