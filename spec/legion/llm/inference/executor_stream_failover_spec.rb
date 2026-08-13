@@ -13,29 +13,30 @@ require 'legion/llm/api/stream_assembler'
 # RoutingSession, drives the StreamAssembler failover sequence
 # (provider_failover_pending! then begin_dispatch_on), and continues the same
 # SSE session without replaying already-emitted content.
-RSpec.describe Legion::LLM::Inference::Executor, 'SSOT v3 streaming failover', :ssot_v3 do
-  # Minimal emitter that records text deltas so we can prove continue-not-replay.
-  class FailoverRecordingEmitter
-    attr_reader :text_deltas
 
-    def initialize
-      @text_deltas = []
-    end
+# Minimal emitter that records text deltas so we can prove continue-not-replay.
+class FailoverRecordingEmitter
+  attr_reader :text_deltas
 
-    def on_text_delta(block_index:, text:)
-      _ = block_index
-      @text_deltas << text
-    end
-
-    def method_missing(_name, *_args, **)
-      nil
-    end
-
-    def respond_to_missing?(_name, _include_private = false)
-      true
-    end
+  def initialize
+    @text_deltas = []
   end
 
+  def on_text_delta(block_index:, text:)
+    _ = block_index
+    @text_deltas << text
+  end
+
+  def method_missing(_name, *_args, **)
+    nil
+  end
+
+  def respond_to_missing?(_name, _include_private = false)
+    true
+  end
+end
+
+RSpec.describe Legion::LLM::Inference::Executor, 'SSOT v3 streaming failover', :ssot_v3 do
   let(:canonical) { Legion::Extensions::Llm::Canonical }
   let(:routing) { Legion::Extensions::Llm::Routing }
 

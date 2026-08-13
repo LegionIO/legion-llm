@@ -220,7 +220,6 @@ module Legion
         def external_tier?(tier)
           TIER_EXTERNAL.include?(tier)
         end
-
       end
     end
   end

@@ -18,7 +18,7 @@ module Legion
         private_constant :SEED_PATTERN
 
         # rubocop:disable Metrics/AbcSize
-        def self.call(requirements:, evaluation_set:, snapshot:, **)
+        def self.call(requirements:, evaluation_set:, **)
           candidates   = evaluation_set.candidates
           pub_statuses = evaluation_set.publication_statuses
           gen          = evaluation_set.inventory_generation

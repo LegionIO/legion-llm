@@ -178,11 +178,11 @@ module Legion
           raise ArgumentError, "generation must be a positive Integer, got #{val.inspect}"
         end
 
-        def validate_tier_weights!(tw)
-          raise ArgumentError, "tier_weights must be a Hash, got #{tw.class}" unless tw.is_a?(Hash)
+        def validate_tier_weights!(wts)
+          raise ArgumentError, "tier_weights must be a Hash, got #{wts.class}" unless wts.is_a?(Hash)
 
           # Normalize keys to Symbol so YAML string keys work too.
-          norm = tw.transform_keys { |k| k.is_a?(Symbol) ? k : k.to_sym }
+          norm = wts.transform_keys { |k| k.is_a?(Symbol) ? k : k.to_sym }
           extra = norm.keys - TIER_KEYS
           raise ArgumentError, "tier_weights has unknown keys: #{extra.inspect}" if extra.any?
 
@@ -266,7 +266,7 @@ module Legion
           raise ArgumentError, "auto_routing_model_alias_metadata must be a Hash, got #{meta.class}" unless meta.is_a?(Hash)
 
           meta.each_with_object({}) do |(k, v), out|
-            key = k.is_a?(Symbol) ? k.to_s : k.to_s
+            key = k.to_s
             raise ArgumentError, "alias metadata key #{k.inspect} is not a known alias" unless aliases.include?(key)
             raise ArgumentError, "alias metadata value for #{key.inspect} must be a Hash, got #{v.class}" unless v.is_a?(Hash)
 
@@ -279,19 +279,19 @@ module Legion
           end.freeze
         end
 
-        def validate_alias_meta_values!(key, sv)
-          if sv.key?(:owned_by)
-            val = sv[:owned_by]
+        def validate_alias_meta_values!(key, sym_vals)
+          if sym_vals.key?(:owned_by)
+            val = sym_vals[:owned_by]
             raise ArgumentError, "alias_metadata[#{key}][:owned_by] must be a nonempty String" unless val.is_a?(String) && !val.empty?
           end
-          if sv.key?(:created)
-            val = sv[:created]
+          if sym_vals.key?(:created)
+            val = sym_vals[:created]
             raise ArgumentError, "alias_metadata[#{key}][:created] must be a nonnegative Integer" unless val.is_a?(Integer) && val >= 0
           end
           %i[context_window max_output_tokens].each do |lim|
-            next unless sv.key?(lim)
+            next unless sym_vals.key?(lim)
 
-            val = sv[lim]
+            val = sym_vals[lim]
             raise ArgumentError, "alias_metadata[#{key}][#{lim}] must be a positive Integer" unless val.is_a?(Integer) && val.positive?
           end
         end

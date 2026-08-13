@@ -225,7 +225,7 @@ module Legion
         # The API namespace translator has already parsed the Responses API format
         # into canonical form. The provider adapter decides how to wire canonical
         # requests internally — the executor is format-agnostic.
-        def call_responses(body:, stream: false, stream_observer: nil, &block)
+        def call_responses(stream: false, stream_observer: nil, **, &block)
           @stream_observer = stream_observer
           set_log_context
           Thread.current[:legion_llm_in_pipeline] = true

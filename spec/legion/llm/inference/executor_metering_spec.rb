@@ -257,5 +257,4 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
     end
   end
-
 end

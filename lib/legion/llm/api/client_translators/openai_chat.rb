@@ -305,7 +305,7 @@ module Legion
               # 'tool_calls' on the final done covers it.
             end
 
-            def on_tool_call_abort(block_index:, reason:)
+            def on_tool_call_abort(**)
               nil
             end
 

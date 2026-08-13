@@ -395,7 +395,7 @@ module Legion
               @output_items[state[:output_index]] = completed
             end
 
-            def on_tool_call_abort(block_index:, reason:)
+            def on_tool_call_abort(**)
               nil
             end
 

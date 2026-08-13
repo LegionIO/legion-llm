@@ -191,7 +191,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ss
         inst = post_run_snap.instance(instance_key: key)
         expect(inst).not_to be_nil
         expect(inst.availability.state).to eq(:available),
-          "expected #{instance_id} to remain available but availability.state was #{inst.availability.state}"
+                                           "expected #{instance_id} to remain available but availability.state was #{inst.availability.state}"
       end
     end
   end

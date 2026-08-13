@@ -91,5 +91,4 @@ RSpec.describe Legion::LLM::Router do
       expect(described_class::TIER_EXTERNAL).to eq(Set[:cloud, :frontier])
     end
   end
-
 end

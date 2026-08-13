@@ -5,17 +5,15 @@ require 'legion/llm/router/candidate_evaluation'
 require 'legion/llm/router/request_requirements'
 require 'legion/llm/router/ranker'
 
-RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
-  # ------------------------------------------------------------------ #
-  # Duck-typed requirements struct (used where we need precise control  #
-  # over individual formula inputs without the full Request machinery)  #
-  # ------------------------------------------------------------------ #
-  FAKE_REQS = Struct.new(
-    :tier_preference, :required_context_budget, :routing_affinities,
-    :affinity_strength_bps, :routing_seed,
-    keyword_init: true
-  )
+# Duck-typed requirements struct (used where we need precise control
+# over individual formula inputs without the full Request machinery)
+FAKE_REQS = Struct.new(
+  :tier_preference, :required_context_budget, :routing_affinities,
+  :affinity_strength_bps, :routing_seed,
+  keyword_init: true
+)
 
+RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
   def fake_reqs(**)
     defaults = {
       tier_preference:         nil,

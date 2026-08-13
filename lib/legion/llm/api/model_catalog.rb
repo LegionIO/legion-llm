@@ -97,7 +97,7 @@ module Legion
               unsupported_operations: offering.unsupported_operations.map(&:to_s).freeze,
               unknown_operations:     offering.unknown_operations.map(&:to_s).freeze,
               publication_state:      pub_by_key[ik]&.state&.to_s,
-              availability_state:     inst_by_key[ik]&.availability&.state&.to_s,
+              availability_state:     inst_by_key[ik]&.availability&.state&.to_s, # rubocop:disable Style/SafeNavigationChainLength
               publication_source:     offering.publication_source.to_s,
               metadata:               offering.metadata
             }.freeze

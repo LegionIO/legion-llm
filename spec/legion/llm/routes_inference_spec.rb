@@ -130,7 +130,6 @@ RSpec.describe 'Inference endpoint pipeline routing' do
         )
       end
     end
-
   end
 
   describe 'chat endpoint pipeline routing (sync fallback)' do

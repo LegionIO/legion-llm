@@ -115,9 +115,7 @@ module Legion
           case outcome.kind
           when :overloaded, :rate_limited
             Legion::LLM::ProviderError.new("provider #{outcome.kind}: #{outcome.reason}")
-          when :authentication
-            Legion::LLM::AuthError.new(outcome.reason)
-          when :authorization
+          when :authentication, :authorization
             Legion::LLM::AuthError.new(outcome.reason)
           else
             Legion::LLM::ProviderError.new("provider error #{outcome.kind}: #{outcome.reason}")

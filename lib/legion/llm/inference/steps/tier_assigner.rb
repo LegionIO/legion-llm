@@ -19,7 +19,7 @@ module Legion
             { pattern: 'user:*', tier: :frontier, intent: { effort: :reasoning } }
           ].freeze
 
-          def assign(caller:, classification:, priority:, gaia_hint:, existing_tier:, existing_intent: nil)
+          def assign(caller:, classification:, priority:, gaia_hint:, existing_tier:, **)
             # Privacy classifications are hard routing constraints. They must
             # override caller-supplied tier/intent and advisory signals.
             if privacy_constrained?(classification)

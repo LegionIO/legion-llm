@@ -216,7 +216,7 @@ RSpec.describe Legion::LLM::Router, '.next_lane (migrated from #request_lane)', 
   describe 'context budget filter (replaces request_lane estimated_context: param)' do
     it 'selects the lane whose context window is large enough for the request' do
       activate_with_context(provider: :vllm, instance_id: 'small', model: 'small-model',
-                             context: 8_000, tier: :local)
+                            context: 8_000, tier: :local)
       write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier) # 200_000
       result = nl(reqs(input: 50_000))
       expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
@@ -225,7 +225,7 @@ RSpec.describe Legion::LLM::Router, '.next_lane (migrated from #request_lane)', 
 
     it 'returns a Rejection when all offerings have insufficient context windows' do
       activate_with_context(provider: :vllm, instance_id: 'small', model: 'small-model',
-                             context: 8_000, tier: :local)
+                            context: 8_000, tier: :local)
       expect(nl(reqs(input: 50_000))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
     end
   end
@@ -251,7 +251,7 @@ RSpec.describe Legion::LLM::Router, '.next_lane (migrated from #request_lane)', 
       r = reqs
       first = nl(r)
       excl = attempt_exclusion(provider: first.provider_family, instance_id: first.instance_id,
-                                model: first.model)
+                               model: first.model)
       second = nl(r, exclusions: [excl])
       expect(second).to be_a(Legion::Extensions::Llm::Routing::Selection)
       expect(second.instance_id.to_s).not_to eq(first.instance_id.to_s)
@@ -328,7 +328,7 @@ RSpec.describe Legion::LLM::Router, '.next_lane (migrated from #request_lane)', 
 
   describe 'tier constraint isolates external tiers (replaces privacy: :strict)' do
     it 'selects only the local-tier instance when tier_constraint is :local' do
-      write_test_lane(provider: :vllm,      model: 'gemma-12b',          tier: :local)
+      write_test_lane(provider: :vllm,      model: 'gemma-12b', tier: :local)
       write_test_lane(provider: :bedrock,   instance: :b, model: 'claude-sonnet-4-6', tier: :cloud)
       write_test_lane(provider: :anthropic, instance: :c, model: 'claude-sonnet-4-6', tier: :frontier)
       result = nl(reqs(tier_constraint: :local))

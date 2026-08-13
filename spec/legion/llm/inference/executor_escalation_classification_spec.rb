@@ -50,14 +50,14 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
       # ValidationException errors are normalized to :invalid_request by the provider.
       # OutcomeClassifier marks them terminal — they never waste additional attempt slots.
       action = classify_outcome(:invalid_request, attempt_context: attempt_context,
-                                reason: 'ValidationException: tools.16.custom.input_schema.type: Field required')
+                                                  reason:          'ValidationException: tools.16.custom.input_schema.type: Field required')
       expect(action).to be_terminal
       expect(action.global_transition).to be_nil
     end
 
     it 'invalid_request for messages validation errors → terminal action, no global_transition' do
       action = classify_outcome(:invalid_request, attempt_context: attempt_context,
-                                reason: 'ValidationException: messages.3.content: Field required')
+                                                  reason:          'ValidationException: messages.3.content: Field required')
       expect(action).to be_terminal
       expect(action.global_transition).to be_nil
     end
@@ -71,14 +71,14 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
       # The consumed-target exclusion prevents reselecting this exact lane, but
       # the instance is NOT marked globally unavailable.
       action = classify_outcome(:authorization, attempt_context: attempt_context,
-                                reason: 'AccessDeniedException: not authorized for model X')
+                                                reason:          'AccessDeniedException: not authorized for model X')
       expect(action).to be_retry
       expect(action.global_transition).to be_nil
     end
 
     it 'authentication → retry action, no global_transition' do
       action = classify_outcome(:authentication, attempt_context: attempt_context,
-                                reason: 'Unauthorized')
+                                                 reason:          'Unauthorized')
       expect(action).to be_retry
       expect(action.global_transition).to be_nil
     end
@@ -92,7 +92,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
       # The failed instance is NOT marked globally unavailable — only the
       # consumed-target exclusion (request-local) prevents re-selection.
       action = classify_outcome(:provider_error, attempt_context: attempt_context,
-                                reason: 'Faraday::ConnectionFailed: connection refused')
+                                                 reason:          'Faraday::ConnectionFailed: connection refused')
       expect(action).to be_retry
       expect(action.global_transition).to be_nil
     end
@@ -111,7 +111,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
       # ContextOverflow does not affect provider health; the lane is only excluded
       # for this request (consumed-target exclusion). No dispatch_instance_unavailable.
       action = classify_outcome(:provider_error, attempt_context: attempt_context,
-                                reason: 'Legion::LLM::ContextOverflow')
+                                                 reason:          'Legion::LLM::ContextOverflow')
       expect(action).to be_retry
       expect(action.global_transition).to be_nil
     end
@@ -121,8 +121,8 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
     let(:attempt_context) { build_attempt_context }
 
     it 'instance_unavailable → retry with global_transition (dispatches to Registry)' do
-      action = classify_outcome(:instance_unavailable, attempt_context: attempt_context,
-                                attempts_remaining: 0)
+      action = classify_outcome(:instance_unavailable, attempt_context:    attempt_context,
+                                                       attempts_remaining: 0)
       expect(action).to be_retry
       expect(action.global_transition).not_to be_nil
       expect(action.global_transition.kind).to eq(:instance_unavailable)

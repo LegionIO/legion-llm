@@ -173,7 +173,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
         seen_system = nil
-        responder = ->(_op, _args, kwargs, _blk) do
+        responder = lambda do |_op, _args, kwargs, _blk|
           seen_system = kwargs[:system]
           native_dispatch_result(content: 'test')
         end
@@ -495,13 +495,13 @@ RSpec.describe Legion::LLM::Inference::Executor do
         instance_id:     'primary',
         callable:        callable,
         drafts:          [SsotV3SnapshotFactory.offering_draft(
-          model:         model,
-          tier:          :fleet,
-          supported:     %i[chat stream_chat count_tokens],
-          capabilities:  { tools: :supported, streaming: :supported },
-          context:       200_000,
-          max_output:    16_384,
-          metadata:      { fleet_execution_contract: 'exact_offering_v1' }
+          model:        model,
+          tier:         :fleet,
+          supported:    %i[chat stream_chat count_tokens],
+          capabilities: { tools: :supported, streaming: :supported },
+          context:      200_000,
+          max_output:   16_384,
+          metadata:     { fleet_execution_contract: 'exact_offering_v1' }
         )]
       )
     end
@@ -752,7 +752,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
       )
 
       call_count = 0
-      responder = ->(_op, _args, _kwargs, _blk) do
+      responder = lambda do |_op, _args, _kwargs, _blk|
         call_count += 1
         if call_count == 1
           native_dispatch_result(tool_calls: [{ id: 'tc_lookup', name: 'lookup', arguments: {} }])
@@ -943,7 +943,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stub_const('Legion::Settings::Extensions', extensions_mod)
 
         call_count = 0
-        responder = ->(_op, _args, _kwargs, _blk) do
+        responder = lambda do |_op, _args, _kwargs, _blk|
           call_count += 1
           if call_count == 1
             native_dispatch_result(tool_calls: [{ id: 'tc_abc', name: 'my_tool', arguments: {} }])
@@ -987,7 +987,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stub_const('Legion::Settings::Extensions', extensions_mod)
 
         call_count = 0
-        responder = ->(_op, _args, _kwargs, _blk) do
+        responder = lambda do |_op, _args, _kwargs, _blk|
           call_count += 1
           if call_count == 1
             native_dispatch_result(tool_calls: [{ id: 'tc_error', name: 'failing_tool', arguments: {} }])
@@ -1024,7 +1024,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stub_const('Legion::Settings::Extensions', extensions_mod)
 
         call_count = 0
-        responder = ->(_op, _args, _kwargs, _blk) do
+        responder = lambda do |_op, _args, _kwargs, _blk|
           call_count += 1
           if call_count == 1
             native_dispatch_result(tool_calls: [{ id: 'tc_big', name: 'big_tool', arguments: {} }])

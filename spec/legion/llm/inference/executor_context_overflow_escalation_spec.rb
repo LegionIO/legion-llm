@@ -22,7 +22,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'context overflow escalation' d
   describe '#non_provider_failure? for ContextOverflow' do
     it 'returns false — context overflow is a provider-side signal, not a daemon error' do
       executor = executor_class.allocate
-      err = Legion::LLM::ContextOverflow.new("vllm:gemma-4-31b-it — context too long")
+      err = Legion::LLM::ContextOverflow.new('vllm:gemma-4-31b-it — context too long')
       expect(executor.send(:non_provider_failure?, err)).to be false
     end
   end

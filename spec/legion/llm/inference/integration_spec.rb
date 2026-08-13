@@ -20,10 +20,10 @@ RSpec.describe 'Pipeline integration with Legion::LLM.chat' do
 
   it 'treats string-keyed pipeline_enabled as enabled' do
     allow(Legion::LLM::Inference).to receive(:settings).and_return({
-                                                                      'pipeline_enabled' => true,
-                                                                      'default_model'    => SSOT_TEST_MODEL,
-                                                                      'default_provider' => :vllm
-                                                                    })
+                                                                     'pipeline_enabled' => true,
+                                                                     'default_model'    => SSOT_TEST_MODEL,
+                                                                     'default_provider' => :vllm
+                                                                   })
 
     expect(Legion::LLM::Inference.pipeline_enabled?).to be(true)
   end

@@ -36,7 +36,6 @@ module Legion
           #                             SettingsSnapshot#input_framing_overhead_tokens)
           # @return [Integer] nonnegative token upper bound
           def call(
-            operation: nil,
             messages: nil,
             system: nil,
             tools: nil,
@@ -141,8 +140,7 @@ module Legion
             case value
             when nil    then true
             when String then value.strip.empty?
-            when Array  then value.empty?
-            when Hash   then value.empty?
+            when Array, Hash then value.empty?
             else false
             end
           end

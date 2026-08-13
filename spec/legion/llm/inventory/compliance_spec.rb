@@ -160,7 +160,7 @@ RSpec.describe 'Compliance by absence' do
   context 'runtime IAM-deny writes health.denied' do
     it 'a denied lane written with health.denied has lane_weight <= 0' do
       Legion::LLM::Inventory.write_lane(
-        lane: build_lane(provider: :bedrock, instance: :a, model: 'sonnet'),
+        lane:   build_lane(provider: :bedrock, instance: :a, model: 'sonnet'),
         health: { circuit_state: :closed, denied: true, available: false, adjustment: 0 }
       )
 
