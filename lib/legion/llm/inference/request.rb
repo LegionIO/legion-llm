@@ -1,5 +1,11 @@
 # frozen_string_literal: true
 
+require 'securerandom'
+require 'legion/llm/routing_context'
+require 'legion/llm/router/settings_state'
+require 'legion/llm/router/header_constraints'
+require 'legion/llm/router/body_model_hint_policy'
+
 module Legion
   module LLM
     module Inference
@@ -13,15 +19,35 @@ module Legion
         :cache, :priority, :ttl,
         :extra, :metadata, :enrichments, :predictions,
         :tracing, :classification, :caller, :agent,
-        :billing, :test, :modality, :hooks
+        :billing, :test, :modality, :hooks,
+        # SSOT v3 §7.2: trusted per-request routing context (server-created seed),
+        # the sole body-model hint decision, the immutable routing settings
+        # generation captured at ingress, and the trusted X-Legion-*/internal
+        # constraints. `routing` is retained only as compatibility metadata.
+        :routing_context, :body_model_hint_decision, :routing_settings_snapshot, :trusted_constraints
       ) do
-        def self.build(**kwargs)
+        # SSOT v3 §7.2 additive build order. `routing_context` is injected only by
+        # build_for_test; otherwise a fresh server seed is created here. The new
+        # trusted fields are always populated (derived from existing routing kwargs
+        # when a caller has not yet migrated), so every Request carries them.
+        def self.build(routing_context: nil, **kwargs)
           routing, extra = normalize_auto_routing(
             kwargs.fetch(:routing, { provider: nil, model: nil }),
             kwargs.fetch(:extra, {})
           )
 
+          ctx = routing_context || Legion::LLM::RoutingContext.build
+          settings_snapshot = kwargs[:routing_settings_snapshot] || Legion::LLM::Router::SettingsState.current
+          trusted = kwargs[:trusted_constraints] || trusted_from_routing(routing, settings_snapshot)
+          body_decision = Legion::LLM::Router::BodyModelHintPolicy.call(
+            body_model: kwargs[:client_model], trusted_model: trusted.model, settings_snapshot: settings_snapshot
+          )
+
           new(
+            routing_context:          ctx,
+            routing_settings_snapshot: settings_snapshot,
+            trusted_constraints:      trusted,
+            body_model_hint_decision: body_decision,
             id:               kwargs[:id] || "req_#{SecureRandom.hex(12)}",
             conversation_id:  kwargs[:conversation_id],
             idempotency_key:  kwargs[:idempotency_key],
@@ -116,6 +142,25 @@ module Legion
           }
           build_args[:id] = request_id if request_id
           build(**build_args)
+        end
+
+        # SSOT v3 §7.2 test helper: delegates to the production normalization
+        # path, substituting only a deterministic RoutingContext. It cannot
+        # bypass body policy, constraint derivation, or request freezing.
+        def self.build_for_test(routing_seed:, **keywords)
+          build(routing_context: Legion::LLM::RoutingContext.for_test(routing_seed: routing_seed), **keywords)
+        end
+
+        # Derive trusted constraints from a legacy `routing` hash for callers not
+        # yet migrated to pass an explicit trusted_constraints value. The routing
+        # hash is trusted internal input (not an untrusted client body field).
+        def self.trusted_from_routing(routing, settings_snapshot)
+          routing ||= {}
+          instance = routing[:instance] || routing[:instance_id] || routing[:provider_instance]
+          Legion::LLM::Router::HeaderConstraints.from_internal(
+            provider: routing[:provider], instance_id: instance, model: routing[:model],
+            tier: routing[:tier], maximum_attempts: nil, settings_snapshot: settings_snapshot
+          )
         end
 
         def self.auto_routing_model?(model)

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'concurrent/atomic/atomic_reference'
+require 'legion/llm/router/settings_snapshot'
 
 module Legion
   module LLM
@@ -42,7 +43,13 @@ module Legion
 
           # Return the currently installed SettingsSnapshot.  Callers must
           # capture this once per logical request and not read it again mid-flight.
+          # Lazily installs generation 1 if boot has not run (e.g. isolated unit
+          # specs), so a snapshot is always available.
           def current
+            snap = ref.get
+            return snap unless snap.nil?
+
+            install!
             ref.get
           end
 
