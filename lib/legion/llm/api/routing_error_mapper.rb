@@ -25,7 +25,7 @@ module Legion
         include Legion::Logging::Helper
         extend  Legion::Logging::Helper
 
-        # Immutable HTTP response value object (Data.define; instances are
+        # Immutable HTTP response value object (::Data.define; instances are
         # frozen automatically in Ruby 3.2+).
         Response = ::Data.define(:status, :headers, :body)
 
