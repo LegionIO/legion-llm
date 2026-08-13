@@ -131,7 +131,7 @@ RSpec.describe Legion::LLM::API::RoutingErrorMapper do
           it "is present for kind=#{kind}" do
             r = mapper.call(rejection: rejection(kind: kind), dialect: dialect)
             expect(r.headers).to have_key('Retry-After'),
-              "expected Retry-After for #{kind}/#{dialect}"
+                                 "expected Retry-After for #{kind}/#{dialect}"
           end
         end
 
@@ -139,7 +139,7 @@ RSpec.describe Legion::LLM::API::RoutingErrorMapper do
           it "is absent for kind=#{kind}" do
             r = mapper.call(rejection: rejection(kind: kind), dialect: dialect)
             expect(r.headers).not_to have_key('Retry-After'),
-              "unexpected Retry-After for #{kind}/#{dialect}"
+                                     "unexpected Retry-After for #{kind}/#{dialect}"
           end
         end
       end

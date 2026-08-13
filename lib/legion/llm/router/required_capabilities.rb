@@ -106,7 +106,7 @@ module Legion
             return false unless rf.is_a?(Hash)
 
             type_s = rf[:type].to_s
-            return true if type_s == 'json_object' || type_s == 'json_schema'
+            return true if %w[json_object json_schema].include?(type_s)
 
             rf[:schema].is_a?(Hash) && !rf[:schema].empty?
           end

@@ -20,9 +20,7 @@ module Legion
           generation = settings_snapshot.generation
 
           # 1. missing/blank body model → absent (requested_model carries nil).
-          if requested.nil?
-            return decision(requested_model: nil, disposition: :absent, settings_generation: generation)
-          end
+          return decision(requested_model: nil, disposition: :absent, settings_generation: generation) if requested.nil?
 
           # 2. body + trusted explicit model → trusted wins, body is metadata only.
           unless normalize(trusted_model).nil?
@@ -31,9 +29,7 @@ module Legion
           end
 
           # 3. auto-routing alias → auto (you-pick intent, no constraint).
-          if auto_alias?(requested, settings_snapshot.auto_routing_model_aliases)
-            return decision(requested_model: requested, disposition: :auto, settings_generation: generation)
-          end
+          return decision(requested_model: requested, disposition: :auto, settings_generation: generation) if auto_alias?(requested, settings_snapshot.auto_routing_model_aliases)
 
           # 4. body hints globally disabled → ignored.
           unless settings_snapshot.allow_body_routing_hints

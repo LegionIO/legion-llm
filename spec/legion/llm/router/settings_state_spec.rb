@@ -51,7 +51,7 @@ RSpec.describe Legion::LLM::Router::SettingsState do
 
     it 'increments the generation on success' do
       described_class.reload!(
-        llm_settings:      Legion::Settings[:llm],
+        llm_settings:       Legion::Settings[:llm],
         extension_settings: Legion::Settings[:extensions]
       )
       expect(described_class.current.generation).to eq(2)
@@ -59,7 +59,7 @@ RSpec.describe Legion::LLM::Router::SettingsState do
 
     it 'returns true on success' do
       result = described_class.reload!(
-        llm_settings:      Legion::Settings[:llm],
+        llm_settings:       Legion::Settings[:llm],
         extension_settings: Legion::Settings[:extensions]
       )
       expect(result).to be(true)
@@ -68,7 +68,7 @@ RSpec.describe Legion::LLM::Router::SettingsState do
     it 'replaces the snapshot atomically' do
       old_snap = described_class.current
       described_class.reload!(
-        llm_settings:      Legion::Settings[:llm],
+        llm_settings:       Legion::Settings[:llm],
         extension_settings: Legion::Settings[:extensions]
       )
       expect(described_class.current).not_to equal(old_snap)
@@ -77,7 +77,7 @@ RSpec.describe Legion::LLM::Router::SettingsState do
     it 'reflects a settings change after reload' do
       Legion::Settings.loader.settings[:llm][:routing][:max_attempts] = 7
       described_class.reload!(
-        llm_settings:      Legion::Settings[:llm],
+        llm_settings:       Legion::Settings[:llm],
         extension_settings: Legion::Settings[:extensions]
       )
       expect(described_class.current.maximum_attempts).to eq(7)
@@ -94,7 +94,7 @@ RSpec.describe Legion::LLM::Router::SettingsState do
     it 'returns false when settings are invalid' do
       Legion::Settings.loader.settings[:llm][:routing][:max_attempts] = 0 # invalid: must be positive
       result = described_class.reload!(
-        llm_settings:      Legion::Settings[:llm],
+        llm_settings:       Legion::Settings[:llm],
         extension_settings: Legion::Settings[:extensions]
       )
       expect(result).to be(false)
@@ -106,7 +106,7 @@ RSpec.describe Legion::LLM::Router::SettingsState do
 
       Legion::Settings.loader.settings[:llm][:routing][:max_attempts] = 0
       described_class.reload!(
-        llm_settings:      Legion::Settings[:llm],
+        llm_settings:       Legion::Settings[:llm],
         extension_settings: Legion::Settings[:extensions]
       )
 
@@ -117,7 +117,7 @@ RSpec.describe Legion::LLM::Router::SettingsState do
     it 'retains prior snapshot when tier_weight is a float' do
       Legion::Settings.loader.settings[:llm][:routing][:tier_weights] = { direct: 1.5, local: 110, fleet: 110, cloud: 120, frontier: 150 }
       described_class.reload!(
-        llm_settings:      Legion::Settings[:llm],
+        llm_settings:       Legion::Settings[:llm],
         extension_settings: Legion::Settings[:extensions]
       )
       expect(described_class.current.generation).to eq(1)
@@ -136,7 +136,7 @@ RSpec.describe Legion::LLM::Router::SettingsState do
       # Trigger the on_reload callback registered by install!
       # Simulate a valid reload by directly calling reload! as the callback does.
       described_class.reload!(
-        llm_settings:      Legion::Settings[:llm],
+        llm_settings:       Legion::Settings[:llm],
         extension_settings: Legion::Settings[:extensions]
       )
 

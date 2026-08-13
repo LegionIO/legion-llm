@@ -30,28 +30,26 @@ RSpec.describe Legion::LLM::Router::RejectionDiagnostics, :ssot_v3 do
   # Build a CandidateEvaluation with all-green defaults; callers override axes.
   def candidate(**axes)
     Legion::LLM::Router::CandidateEvaluation.new(
-      **{
-        offering:              stub_offering,
-        operation_state:       :supported,
-        pin_state:             :match,
-        policy_state:          :allowed,
-        capability_state:      :supported,
-        context_state:         :not_applicable,
-        dimension_state:       :not_applicable,
-        availability_state:    :available,
-        exclusion_state:       :clear,
-        fleet_contract_state:  :not_applicable,
-        weight_state:          :enabled
-      }.merge(axes)
+      offering:             stub_offering,
+      operation_state:      :supported,
+      pin_state:            :match,
+      policy_state:         :allowed,
+      capability_state:     :supported,
+      context_state:        :not_applicable,
+      dimension_state:      :not_applicable,
+      availability_state:   :available,
+      exclusion_state:      :clear,
+      fleet_contract_state: :not_applicable,
+      weight_state:         :enabled, **axes
     )
   end
 
   # Assemble an EvaluationSet from raw arrays.
   def eval_set(candidates: [], statuses: [], gen: 1)
     Legion::LLM::Router::EvaluationSet.new(
-      candidates:            candidates,
-      publication_statuses:  statuses,
-      inventory_generation:  gen
+      candidates:           candidates,
+      publication_statuses: statuses,
+      inventory_generation: gen
     )
   end
 

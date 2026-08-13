@@ -40,9 +40,9 @@ RSpec.describe Legion::LLM::Router::InputBound do
 
       it 'counts multi-byte UTF-8 characters by byte length, not char count' do
         # '€' is U+20AC — 3 bytes in UTF-8, 1 char
-        euro = "€"
+        euro = '€'
         result = described_class.call(system: euro, framing_overhead_tokens: 0)
-        expect(result).to eq(3)          # 3 bytes, not 1 char
+        expect(result).to eq(3) # 3 bytes, not 1 char
         expect(result).not_to eq(1)
       end
 
@@ -69,7 +69,7 @@ RSpec.describe Legion::LLM::Router::InputBound do
 
       it 'counts multi-byte text blocks by bytes not chars' do
         # "日本語" — 3 chars, 9 bytes in UTF-8
-        japanese = "日本語"
+        japanese = '日本語'
         msgs = [{ content: japanese }]
         result = described_class.call(messages: msgs, framing_overhead_tokens: 0)
         expect(result).to eq(9)
@@ -127,7 +127,7 @@ RSpec.describe Legion::LLM::Router::InputBound do
         serialized = Legion::JSON.dump(tools).bytesize
 
         result_with    = described_class.call(tools: tools, framing_overhead_tokens: 0)
-        result_without = described_class.call(tools: nil,  framing_overhead_tokens: 0)
+        result_without = described_class.call(tools: nil, framing_overhead_tokens: 0)
 
         expect(result_with - result_without).to eq(serialized)
       end
@@ -186,9 +186,9 @@ RSpec.describe Legion::LLM::Router::InputBound do
                    overhead
 
         result = described_class.call(
-          system: system,
-          messages: msgs,
-          tools: tools,
+          system:                  system,
+          messages:                msgs,
+          tools:                   tools,
           framing_overhead_tokens: overhead
         )
         expect(result).to eq(expected)
@@ -226,14 +226,14 @@ RSpec.describe Legion::LLM::Router::InputBound do
     context 'result type guarantees' do
       it 'always returns an Integer regardless of input variety' do
         result = described_class.call(
-          operation: :chat,
-          messages: [{ content: 'hello' }],
-          system: 'You are an assistant.',
-          tools: [{ name: 'tool1', input_schema: {} }],
-          tool_choice: { type: 'auto' },
-          thinking: { type: 'enabled', budget_tokens: 2048 },
-          response_format: { type: 'json_object' },
-          operation_payload: { temperature: 0.5 },
+          operation:               :chat,
+          messages:                [{ content: 'hello' }],
+          system:                  'You are an assistant.',
+          tools:                   [{ name: 'tool1', input_schema: {} }],
+          tool_choice:             { type: 'auto' },
+          thinking:                { type: 'enabled', budget_tokens: 2048 },
+          response_format:         { type: 'json_object' },
+          operation_payload:       { temperature: 0.5 },
           framing_overhead_tokens: 1024
         )
         expect(result).to be_a(Integer)
@@ -249,9 +249,9 @@ RSpec.describe Legion::LLM::Router::InputBound do
       it 'accepts extra unknown kwargs via trailing ** without raising' do
         expect do
           described_class.call(
-            system: 'hi',
+            system:                  'hi',
             framing_overhead_tokens: 10,
-            some_future_key: 'ignored'
+            some_future_key:         'ignored'
           )
         end.not_to raise_error
       end

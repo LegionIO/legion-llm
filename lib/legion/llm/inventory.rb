@@ -414,13 +414,13 @@ module Legion
         def project_instance(inst)
           key = inst.instance_key
           {
-            provider_family:  key.provider_family,
-            instance_id:      key.instance_id,
-            availability:     inst.availability.state,
-            publisher_id:     inst.publisher_id,
+            provider_family:    key.provider_family,
+            instance_id:        key.instance_id,
+            availability:       inst.availability.state,
+            publisher_id:       inst.publisher_id,
             publisher_token_id: inst.publisher_token_id,
             published_sequence: inst.published_sequence,
-            published_at:     inst.published_at
+            published_at:       inst.published_at
           }.freeze
         end
 

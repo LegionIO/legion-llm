@@ -23,8 +23,8 @@ module Legion
           # @callback_registered).
           def install!
             snap = Legion::LLM::Router::SettingsSnapshot.build(
-              generation:        1,
-              llm_settings:      Legion::Settings[:llm],
+              generation:         1,
+              llm_settings:       Legion::Settings[:llm],
               extension_settings: Legion::Settings[:extensions]
             )
             ref.set(snap)
@@ -34,7 +34,7 @@ module Legion
 
             Legion::Settings.on_reload do
               reload!(
-                llm_settings:      Legion::Settings[:llm],
+                llm_settings:       Legion::Settings[:llm],
                 extension_settings: Legion::Settings[:extensions]
               )
             end
@@ -61,8 +61,8 @@ module Legion
             next_gen = (prior&.generation || 0) + 1
 
             next_snap = Legion::LLM::Router::SettingsSnapshot.build(
-              generation:        next_gen,
-              llm_settings:      llm_settings,
+              generation:         next_gen,
+              llm_settings:       llm_settings,
               extension_settings: extension_settings
             )
             ref.set(next_snap)

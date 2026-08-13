@@ -181,17 +181,10 @@ module Legion
           end
         end
 
-        resolved_provider = provider || Legion::Settings[:llm][:default_provider]
-        resolved_model = model || Legion::Settings[:llm][:default_model]
-
-        unless resolved_provider || resolved_model || (intent && Router.routing_enabled?)
-          log.debug '[llm][inference] chat_direct_governed.fallback_to_raw — no provider/model resolvable'
-          return chat_direct_raw(model: model, provider: provider, intent: intent, tier: tier,
-                                 escalate: escalate, max_escalations: max_escalations,
-                                 quality_check: quality_check, message: message,
-                                 caller: caller_hash, cache: cache_opt, temperature: temperature, **kwargs)
-        end
-
+        # SSOT v3: no default provider/model and no legacy fallback. An
+        # unconstrained request (no provider/model/tier pin) is a valid
+        # unconstrained SSOT selection — next_lane ranks all eligible lanes.
+        # There is one engine (Prompt.dispatch -> Executor -> RoutingSession).
         result = Prompt.dispatch(
           message,
           intent: intent, tier: tier, provider: provider, model: model,
@@ -250,16 +243,16 @@ module Legion
           "[llm][inference] chat_direct_raw.dispatch model=#{model} provider=#{provider} " \
           "escalate=#{escalate} message_present=#{!message.nil?}"
         )
-        result = if escalate && message
-                   chat_with_escalation(
-                     model: model, provider: provider, tier: tier,
-                     max_escalations: max_escalations, quality_check: quality_check,
-                     message: message, temperature: temperature, **kwargs
-                   )
-                 else
-                   chat_single(model: model, provider: provider, intent: intent, tier: tier,
-                               temperature: temperature, message: message, **kwargs, &)
-                 end
+        # SSOT v3 single engine: retry/failover is inherent to the RoutingSession
+        # loop, so there is no separate escalation chain and no chat_single legacy
+        # selector — both collapse to one Prompt.dispatch -> Executor call.
+        result = Prompt.dispatch(
+          message,
+          intent: intent, tier: tier, provider: provider, model: model,
+          escalate: escalate, max_escalations: max_escalations,
+          quality_check: quality_check, caller: kwargs[:caller],
+          temperature: temperature, **kwargs.except(:messages, :caller), &
+        )
         log.debug("[llm][inference] chat_direct_raw.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
@@ -494,7 +487,7 @@ module Legion
         block ? executor.call_stream(&block) : executor.call
       end
 
-      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
+      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil)
         result = Call::DaemonClient.chat(
           message: message, model: model, provider: provider,
           context: context, tier_preference: tier || :auto

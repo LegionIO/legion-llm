@@ -27,7 +27,7 @@ module Legion
 
         # Immutable HTTP response value object (Data.define; instances are
         # frozen automatically in Ruby 3.2+).
-        Response = Data.define(:status, :headers, :body)
+        Response = ::Data.define(:status, :headers, :body)
 
         DIALECTS = %i[native openai anthropic].freeze
         private_constant :DIALECTS
@@ -69,49 +69,49 @@ module Legion
             openai_code:    nil,
             anthropic_type: 'api_error'
           },
-          invalid_request: {
+          invalid_request:         {
             native_code:    'invalid_request',
             openai_type:    'invalid_request_error',
             openai_code:    nil,
             anthropic_type: 'invalid_request_error'
           },
-          policy_denied: {
+          policy_denied:           {
             native_code:    'policy_denied',
             openai_type:    'permission_error',
             openai_code:    nil,
             anthropic_type: 'permission_error'
           },
-          failed_dependency: {
+          failed_dependency:       {
             native_code:    'failed_dependency',
             openai_type:    'server_error',
             openai_code:    nil,
             anthropic_type: 'api_error'
           },
-          too_early: {
+          too_early:               {
             native_code:    'routing_too_early',
             openai_type:    'server_error',
             openai_code:    'routing_too_early',
             anthropic_type: 'overloaded_error'
           },
-          service_unavailable: {
+          service_unavailable:     {
             native_code:    'service_unavailable',
             openai_type:    'server_error',
             openai_code:    nil,
             anthropic_type: 'overloaded_error'
           },
-          context_rejected: {
+          context_rejected:        {
             native_code:    'context_rejected',
             openai_type:    'invalid_request_error',
             openai_code:    nil,
             anthropic_type: 'invalid_request_error'
           },
-          attempts_exhausted: {
+          attempts_exhausted:      {
             native_code:    'attempts_exhausted',
             openai_type:    'server_error',
             openai_code:    nil,
             anthropic_type: 'overloaded_error'
           },
-          stale_selection: {
+          stale_selection:         {
             native_code:    'stale_selection',
             openai_type:    'server_error',
             openai_code:    nil,

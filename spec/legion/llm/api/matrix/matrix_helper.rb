@@ -125,7 +125,7 @@ module MatrixHelper
           max_output:   16_384
         )
       ],
-      callable: FakeProvider.adapter
+      callable:        FakeProvider.adapter
     )
   end
 

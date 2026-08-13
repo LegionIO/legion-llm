@@ -30,7 +30,7 @@ RSpec.describe Legion::LLM::Inference::AttemptContext, :ssot_v3 do
   end
 
   it 'raises Stale on inventory generation drift' do
-    snap, selection = activated_selection
+    _, selection = activated_selection
     # A newer generation: republish (claim again) bumps the generation.
     activate(provider_family: 'vllm', instance_id: 'other',
              drafts: [offering_draft(model: 'gemma4', supported: %i[chat])])

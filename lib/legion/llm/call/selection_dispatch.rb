@@ -21,16 +21,14 @@ module Legion
           attr_reader :value, :outcome
 
           def self.success(value:)
-            new(value: value,
+            new(value:   value,
                 outcome: Legion::Extensions::Llm::Routing::ProviderOutcome.new(
                   kind: :success, reason: 'provider call completed'
                 ))
           end
 
           def self.failure(outcome:)
-            if outcome.kind == :success
-              raise ArgumentError, 'SelectionDispatch::Result.failure requires a non-success ProviderOutcome'
-            end
+            raise ArgumentError, 'SelectionDispatch::Result.failure requires a non-success ProviderOutcome' if outcome.kind == :success
 
             new(value: nil, outcome: outcome)
           end
@@ -54,7 +52,7 @@ module Legion
 
           selection = attempt_context.selection
           invocation = plan_invocation(operation: selection.operation, model: selection.model,
-                                        arguments: arguments, block: block)
+                                       arguments: arguments, block: block)
 
           owned_lease = dispatch_lease.nil?
           lease = dispatch_lease || Legion::Extensions::Llm::Inventory::Registry.acquire(
@@ -143,9 +141,7 @@ module Legion
 
         # keyword-style protected arg: present (empty Array allowed for messages), removed once.
         def self.require_key!(args, key)
-          unless args.key?(key)
-            raise ArgumentError, "operation argument #{key.inspect} is required"
-          end
+          raise ArgumentError, "operation argument #{key.inspect} is required" unless args.key?(key)
 
           args.delete(key)
         end

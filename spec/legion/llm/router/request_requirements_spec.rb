@@ -12,8 +12,8 @@ RSpec.describe Legion::LLM::Router::RequestRequirements do
 
   def build(req = request, **over)
     described_class.build(
-      **{ request: req, operation: :chat, required_capabilities: [], estimated_input_bound: 100,
-          required_output_tokens: 50 }.merge(over)
+      request: req, operation: :chat, required_capabilities: [], estimated_input_bound: 100,
+      required_output_tokens: 50, **over
     )
   end
 

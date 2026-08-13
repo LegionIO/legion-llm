@@ -10,34 +10,11 @@ module Legion
         # Owns the provider-call lifecycle (single + escalating, sync + stream + responses-API),
         # error/retry classification, and the corresponding audit/metering emission.
         module Escalation
+          # SSOT v3 single engine (sync). There is exactly one selector+executor
+          # path: the request-scoped RoutingSession loop. No gate, no legacy
+          # selector, no fallback.
           def step_provider_call
-            escalation = pipeline_escalation_enabled?
-            log.debug "[llm][executor] action=step_provider_call provider=#{@resolved_provider} model=#{@resolved_model} escalation=#{escalation}"
-            if ssot_v3_inventory_active?
-              run_provider_call_ssot_v3_single
-            elsif escalation
-              run_provider_call_with_attempts(routing_payload: build_routing_payload_from_resolved)
-            else
-              run_provider_call_single
-            end
-          end
-
-          # True when the Phase 1 Registry has at least one activated lane for
-          # the RESOLVED provider AND RequestRequirements were built in step_routing.
-          # Gating on @resolved_provider prevents state-leaked ssot_v3-tagged specs
-          # from activating the SSOT v3 path for unrelated providers.
-          def ssot_v3_inventory_active?
-            return false if @routing_requirements.nil?
-            return false if @resolved_provider.nil?
-
-            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
-            return false unless snap.generation.positive?
-
-            resolved = @resolved_provider.to_s
-            snap.each_instance.any? { |inst| inst.instance_key.provider_family.to_s == resolved }
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.ssot_v3_inventory_active')
-            false
+            run_provider_call_engine
           end
 
           # Populate resolved-state ivars from an AttemptContext so existing
@@ -48,7 +25,7 @@ module Legion
             @resolved_provider     = sel.provider_family.to_sym
             @resolved_instance     = sel.instance_id.to_sym
             @resolved_model        = sel.model
-            # @resolved_tier already set by step_routing; leave it intact for metering.
+            @resolved_tier         = attempt_context.lane.tier
             @resolved_offering_id  = sel.offering_id
             @resolved_offering_metadata = {}
             @current_attempt_context = attempt_context
@@ -59,25 +36,62 @@ module Legion
           # SSOT v3 single-attempt sync path. Selects via RoutingSession, delegates
           # dispatch+error-handling to run_provider_call_single (preserves existing
           # ProviderError → 529/502 behavior), classifies success.
-          def run_provider_call_ssot_v3_single
-            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
-            session = Legion::LLM::Inference::RoutingSession.new(
+          # SSOT v3 single engine (sync). One request-scoped RoutingSession owns
+          # selection, one-and-done consumed-attempt identity, and retry. Each
+          # attempt selects the exact provider+instance+model via Router.next_lane,
+          # dispatches that EXACT callable (SelectionDispatch, via
+          # ssot_v3_direct_dispatch), and classifies. A retriable outcome selects
+          # the next eligible lane (the failed identity can never reappear); a
+          # normalized instance_unavailable also marks that exact instance
+          # unavailable (probe-cleared recovery — the original-incident fix). A
+          # terminal outcome or attempt exhaustion raises RoutingRejected, which
+          # the maintained route maps to the dialect HTTP status. No legacy
+          # fallback, no HealthTracker mutation.
+          def run_provider_call_engine
+            @routing_session = Legion::LLM::Inference::RoutingSession.new(
               request: @request, requirements: @routing_requirements
             )
-            attempt_context = session.next_attempt!(snapshot: snap)
-            populate_ssot_v3_resolved_state(attempt_context)
-            run_provider_call_single
-            # On success, classify using a synthetic success Result (no retry loop needed —
-            # error handling is fully delegated to run_provider_call_single which re-raises).
-            fake_result = Legion::LLM::Call::SelectionDispatch::Result.success(value: @raw_response)
-            session.classify(dispatch_result: fake_result, attempt_context: attempt_context)
-          rescue Legion::LLM::Errors::RoutingRejected => e
-            # No lane available from Phase 1 Registry — degrade gracefully to old path.
-            log.warn "[llm][executor] action=ssot_v3_routing_rejected reason=#{e.rejection&.reason} falling_back=old_path"
-            @current_attempt_context = nil
-            run_provider_call_single
+            @routing_requirements.maximum_attempts.times do
+              attempt = @routing_session.next_attempt!(
+                snapshot: Legion::Extensions::Llm::Inventory::Registry.snapshot
+              )
+              populate_ssot_v3_resolved_state(attempt)
+              result = ssot_v3_execute_attempt
+              action = @routing_session.classify(dispatch_result: result, attempt_context: attempt)
+              return if action.disposition == :success
+              raise Legion::LLM::Errors::RoutingRejected.new(rejection: action.rejection) if action.disposition == :terminal
+            end
+            raise Legion::LLM::Errors::RoutingRejected.new(rejection: attempts_exhausted_rejection)
           ensure
             @current_attempt_context = nil
+          end
+
+          # Run one selected attempt through the exact callable. Returns a Phase 1
+          # SelectionDispatch::Result (success value, or a normalized non-success
+          # ProviderOutcome). Client-write/disconnect and daemon/programming errors
+          # are NOT provider failures and propagate untouched (terminal).
+          def ssot_v3_execute_attempt
+            execute_provider_request
+            Legion::LLM::Call::SelectionDispatch::Result.success(value: @raw_response)
+          rescue StandardError => e
+            raise e if non_provider_failure?(e)
+
+            outcome = @last_ssot_dispatch_outcome
+            @last_ssot_dispatch_outcome = nil
+            outcome ||= Legion::Extensions::Llm::Routing::ProviderOutcome.new(
+              kind: :provider_error, reason: e.class.name.to_s
+            )
+            Legion::LLM::Call::SelectionDispatch::Result.failure(outcome: outcome)
+          end
+
+          def attempts_exhausted_rejection
+            Legion::Extensions::Llm::Routing::Rejection.new(
+              kind:                 :attempts_exhausted,
+              reason:               "maximum attempts (#{@routing_requirements.maximum_attempts}) reached",
+              inventory_generation: Legion::Extensions::Llm::Inventory::Registry.snapshot.generation,
+              candidate_counts:     {},
+              http_status:          503
+            )
           end
 
           # SSOT v3 §19 streaming preflight body. Called from Executor#stream_preflight!
@@ -87,11 +101,9 @@ module Legion
           # lane's DispatchLease, retaining both on the executor for the subsequent
           # call_stream. A rejection propagates as Errors::RoutingRejected (via
           # next_attempt!) so the route maps it to an HTTP status BEFORE headers —
-          # never an SSE server_error. Returns the selected lane Hash, or nil when
-          # the SSOT path is not active (fallback: call_stream selects inline).
+          # never an SSE server_error. Always selects (single engine) — an empty
+          # Registry yields a typed Rejection, never a legacy fallback.
           def ssot_v3_stream_preflight
-            return nil unless ssot_v3_inventory_active?
-
             snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
             @stream_session = Legion::LLM::Inference::RoutingSession.new(
               request: @request, requirements: @routing_requirements
@@ -134,11 +146,6 @@ module Legion
           def run_provider_call_ssot_v3_stream(&)
             session, attempt_context = ssot_v3_stream_session_and_attempt
             run_provider_call_ssot_v3_stream_loop(session: session, attempt_context: attempt_context, &)
-          rescue Legion::LLM::Errors::RoutingRejected => e
-            # No lane at inline selection (no preflight ran) — degrade to old path.
-            log.warn "[llm][executor] action=ssot_v3_stream_routing_rejected reason=#{e.rejection&.reason} falling_back=old_path"
-            @current_attempt_context = nil
-            execute_provider_request_stream(&)
           ensure
             @current_attempt_context = nil
           end
@@ -890,49 +897,14 @@ module Legion
             Legion::LLM::Router.request_lane(**routing_payload)
           end
 
-          def step_provider_call_stream(&block)
-            if ssot_v3_inventory_active?
-              run_provider_call_ssot_v3_stream(&block)
-              return
-            end
-
-            if pipeline_escalation_enabled?
-              run_provider_call_with_attempts(routing_payload: build_routing_payload_from_resolved,
-                                              stream_block:    block)
-              return
-            end
-
-            execute_provider_request_stream(&block)
-          rescue Legion::LLM::AuthError, Faraday::UnauthorizedError, Faraday::ForbiddenError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.auth',
-                             provider: @resolved_provider, model: @resolved_model)
-            report_provider_failure(e, status: 'auth_failed')
-            raise e.is_a?(Legion::LLM::AuthError) ? e : Legion::LLM::AuthError.new(e.message)
-          rescue Legion::LLM::ContextOverflow => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.context_overflow',
-                             provider: @resolved_provider, model: @resolved_model)
-            emit_error_audit(e, status: 'context_overflow')
-            raise
-          rescue Legion::LLM::RateLimitError, Faraday::TooManyRequestsError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.rate_limit',
-                             provider: @resolved_provider, model: @resolved_model)
-            report_provider_failure(e, status: 'rate_limited')
-            raise e.is_a?(Legion::LLM::RateLimitError) ? e : Legion::LLM::RateLimitError.new(e.message, retry_after: extract_retry_after(e))
-          rescue Legion::LLM::ProviderDown, Faraday::ConnectionFailed, Faraday::TimeoutError, Faraday::SSLError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_down',
-                             provider: @resolved_provider, model: @resolved_model)
-            report_provider_failure(e, status: 'provider_down')
-            raise e.is_a?(Legion::LLM::ProviderDown) ? e : Legion::LLM::ProviderDown.new(e.message)
-          rescue Legion::LLM::ProviderError, Faraday::ServerError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.provider_call_stream.provider_error',
-                             provider: @resolved_provider, model: @resolved_model)
-            report_provider_failure(e, status: 'provider_error')
-            raise e.is_a?(Legion::LLM::ProviderError) ? e : Legion::LLM::ProviderError.new(e.message)
-          rescue StandardError => e
-            raise if client_stream_error?(e)
-
-            report_provider_failure(e, status: 'provider_error')
-            raise
+          # SSOT v3 single engine (streaming). Preflight (Executor#stream_preflight!)
+          # already selected + acquired the exact lane before SSE opened; this runs
+          # the dispatch + post-first-byte failover through the same RoutingSession
+          # and consumed-attempt set. Provider failures are classified inside the
+          # failover loop (no HealthTracker mutation); terminal/exhausted outcomes
+          # re-raise so the route emits the dialect terminal SSE error.
+          def step_provider_call_stream(&)
+            run_provider_call_ssot_v3_stream(&)
           end
 
           def execute_provider_request_stream(&)

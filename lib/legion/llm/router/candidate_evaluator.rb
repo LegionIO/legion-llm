@@ -44,7 +44,7 @@ module Legion
             publication_statuses = []
             snapshot.each_publication_status { |ps| publication_statuses << ps }
 
-            log.debug("[llm][candidate_evaluator] action=evaluated " \
+            log.debug('[llm][candidate_evaluator] action=evaluated ' \
                       "candidates=#{candidates.size} " \
                       "pub_statuses=#{publication_statuses.size} " \
                       "generation=#{snapshot.generation}")
@@ -155,7 +155,7 @@ module Legion
             lane = snapshot.lane(lane_id: derived_id)
 
             if lane.nil?
-              log.debug("[llm][candidate_evaluator] action=missing_lane " \
+              log.debug('[llm][candidate_evaluator] action=missing_lane ' \
                         "instance=#{offering.instance_key.instance_id} " \
                         "model=#{offering.model} " \
                         "operation=#{requirements.operation}")

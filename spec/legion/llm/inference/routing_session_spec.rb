@@ -23,7 +23,7 @@ RSpec.describe Legion::LLM::Inference::RoutingSession, :ssot_v3 do
     Legion::Settings.loader.settings[:llm][:routing][:max_attempts] = max_attempts
     Legion::LLM::Router::SettingsState.reset!
     request = Legion::LLM::Inference::Request.build_for_test(routing_seed: 'ef' * 16, messages: [],
-                                                            routing: { model: 'gemma4' })
+                                                             routing: { model: 'gemma4' })
     Legion::LLM::Router::RequestRequirements.build(
       request: request, operation: :chat, required_capabilities: [],
       estimated_input_bound: 10, required_output_tokens: 0

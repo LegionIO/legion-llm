@@ -64,7 +64,7 @@ module Legion
             @when_conditions || {}
           end
 
-          def content(context: {}) # rubocop:disable Lint/UnusedMethodArgument
+          def content(context: {})
             path = content_path
             return ::File.read(path) if path && ::File.exist?(path)
 

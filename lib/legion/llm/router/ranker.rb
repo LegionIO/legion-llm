@@ -89,7 +89,7 @@ module Legion
           budget     = @requirements.required_context_budget
           with_range = ready.map { |c| [c, @settings_snapshot.preferred_context_range_for(lane: c.lane)] }
 
-          range_specific = with_range.select { |_, r| !r.nil? }
+          range_specific = with_range.compact
           generalist     = with_range.select { |_, r|  r.nil? }.map(&:first)
           matching       = range_specific.select { |_, r| range_contains?(r, budget) }.map(&:first)
 

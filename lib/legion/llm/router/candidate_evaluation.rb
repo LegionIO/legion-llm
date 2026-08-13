@@ -9,16 +9,16 @@ module Legion
       # single readiness predicate consumed by the Ranker; unknown is never ready.
       class CandidateEvaluation
         AXES = {
-          operation: %i[supported unsupported unknown],
-          pin: %i[match mismatch authority_unknown],
-          policy: %i[allowed denied],
-          capability: %i[supported unsupported unknown],
-          context: %i[fits rejected unknown not_applicable],
-          dimension: %i[match rejected unknown not_applicable],
-          availability: %i[available unavailable unknown],
-          exclusion: %i[clear excluded],
+          operation:      %i[supported unsupported unknown],
+          pin:            %i[match mismatch authority_unknown],
+          policy:         %i[allowed denied],
+          capability:     %i[supported unsupported unknown],
+          context:        %i[fits rejected unknown not_applicable],
+          dimension:      %i[match rejected unknown not_applicable],
+          availability:   %i[available unavailable unknown],
+          exclusion:      %i[clear excluded],
           fleet_contract: %i[supported legacy unknown not_applicable],
-          weight: %i[enabled disabled]
+          weight:         %i[enabled disabled]
         }.freeze
 
         attr_reader :lane, :offering, :instance, :publication_status, :operation_state, :pin_state,
@@ -74,9 +74,7 @@ module Legion
 
         def validate!(axis, value)
           allowed = AXES.fetch(axis)
-          unless allowed.include?(value)
-            raise ArgumentError, "invalid #{axis} axis value #{value.inspect}; allowed: #{allowed.inspect}"
-          end
+          raise ArgumentError, "invalid #{axis} axis value #{value.inspect}; allowed: #{allowed.inspect}" unless allowed.include?(value)
 
           value
         end

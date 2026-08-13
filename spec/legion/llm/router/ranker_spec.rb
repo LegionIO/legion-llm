@@ -16,15 +16,15 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
     keyword_init: true
   )
 
-  def fake_reqs(**opts)
+  def fake_reqs(**)
     defaults = {
-      tier_preference:       nil,
+      tier_preference:         nil,
       required_context_budget: 0,
-      routing_affinities:    [],
-      affinity_strength_bps: 10_000,
-      routing_seed:          '0' * 32
+      routing_affinities:      [],
+      affinity_strength_bps:   10_000,
+      routing_seed:            '0' * 32
     }
-    FAKE_REQS.new(**defaults.merge(opts))
+    FAKE_REQS.new(**defaults, **)
   end
 
   # ------------------------------------------------------------------ #
@@ -89,14 +89,14 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
   # ------------------------------------------------------------------ #
   def settings_with(**routing_overrides)
     Legion::LLM::Router::SettingsSnapshot.build(
-      generation: 99,
-      llm_settings: {
+      generation:         99,
+      llm_settings:       {
         routing: {
-          tier_weights:          { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
-          context_headroom_ppm:  900_000,
+          tier_weights:         { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
+          context_headroom_ppm: 900_000,
           **routing_overrides
         },
-        api: { routing_too_early_retry_after: 1 }
+        api:     { routing_too_early_retry_after: 1 }
       },
       extension_settings: { llm: {} }
     )
@@ -220,11 +220,11 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
     # affinity: this lane (provider 'vllm') gets score_bps = -1
     let(:reqs) do
       fake_reqs(
-        routing_affinities: [
+        routing_affinities:    [
           { source: :test, target_kind: :provider, target: 'vllm', score_bps: -1 }.freeze
         ],
         affinity_strength_bps: 100,
-        routing_seed: '0' * 32
+        routing_seed:          '0' * 32
       )
     end
 
@@ -232,7 +232,7 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       rc = call_ranker(evaluation_set: eval_set, requirements: reqs, settings: custom_settings)
       expect(rc).not_to be_nil
       expect(rc.preference_ppm).to eq(999_999),
-        "Expected floor: 1_000_000 + (-100/200)=-1 = 999_999, got #{rc.preference_ppm}"
+                                   "Expected floor: 1_000_000 + (-100/200)=-1 = 999_999, got #{rc.preference_ppm}"
     end
 
     it 'preference_ppm is strictly less than 1_000_000 (proves floor, not truncation)' do
@@ -324,10 +324,10 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
         counts[rc.evaluation.lane.instance_id] += 1
       end
 
-      expect(counts['h200']).to   be_between(4_500, 5_500),
-        "h200 count #{counts['h200']} is outside 4_500..5_500"
+      expect(counts['h200']).to be_between(4_500, 5_500),
+                                "h200 count #{counts['h200']} is outside 4_500..5_500"
       expect(counts['helios1']).to be_between(4_500, 5_500),
-        "helios1 count #{counts['helios1']} is outside 4_500..5_500"
+                                   "helios1 count #{counts['helios1']} is outside 4_500..5_500"
       expect(counts.values.sum).to eq(10_000)
     end
   end
@@ -358,8 +358,8 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       c2    = build_candidate(snap, provider_family: 'vllm', instance_id: 'helios1',
                                     model: 'gemma4',
                                     weight_inputs: { tier: 110, provider: 1, instance: 1, model_or_offering: 1 })
-      eval_set = build_eval_set(snap, c1, c2)
-      reqs     = fake_reqs(routing_seed: seed)
+      build_eval_set(snap, c1, c2)
+      reqs = fake_reqs(routing_seed: seed)
 
       # Internally ranked — extract scores by calling with single-candidate sets.
       rc1 = call_ranker(evaluation_set: build_eval_set(snap, c1), requirements: reqs)
@@ -381,8 +381,11 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
 
       rc1_alone = call_ranker(evaluation_set: build_eval_set(snap, c1), requirements: reqs)
       rc2_alone = call_ranker(evaluation_set: build_eval_set(snap, c2), requirements: reqs)
-      winner_id = rc1_alone.rendezvous_score > rc2_alone.rendezvous_score ?
-                    c1.lane.instance_id : c2.lane.instance_id
+      winner_id = if rc1_alone.rendezvous_score > rc2_alone.rendezvous_score
+                    c1.lane.instance_id
+                  else
+                    c2.lane.instance_id
+                  end
 
       rc_both = call_ranker(evaluation_set: eval_set, requirements: reqs)
       expect(rc_both.evaluation.lane.instance_id).to eq(winner_id)
@@ -422,16 +425,16 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       counts            = Hash.new(0)
 
       500.times do |i|
-        seed = format('%032x', i + 20_000)  # offset to avoid overlap with other tests
+        seed = format('%032x', i + 20_000) # offset to avoid overlap with other tests
         reqs = fake_reqs(routing_seed: seed, routing_affinities: provider_affinity)
         rc   = call_ranker(evaluation_set: eval_set, requirements: reqs)
         counts[rc.evaluation.lane.instance_id] += 1
       end
 
-      expect(counts['h200']).to   be_between(175, 325),
-        "h200 count #{counts['h200']} outside 175..325 — shared affinity broke distribution"
+      expect(counts['h200']).to be_between(175, 325),
+                                "h200 count #{counts['h200']} outside 175..325 — shared affinity broke distribution"
       expect(counts['helios1']).to be_between(175, 325),
-        "helios1 count #{counts['helios1']} outside 175..325 — shared affinity broke distribution"
+                                   "helios1 count #{counts['helios1']} outside 175..325 — shared affinity broke distribution"
     end
   end
 
@@ -477,7 +480,7 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       end
 
       expect(winners.uniq).to eq(['h200']),
-        "Expected h200 to win all 1000 seeds but got: #{winners.tally}"
+                              "Expected h200 to win all 1000 seeds but got: #{winners.tally}"
     end
 
     it 'always selects h200 when its offering affinity is strictly greater' do
@@ -494,7 +497,7 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       end
 
       expect(winners.uniq).to eq(['h200']),
-        "Expected h200 (offering affinity) to win all 100 seeds but got: #{winners.tally}"
+                              "Expected h200 (offering affinity) to win all 100 seeds but got: #{winners.tally}"
     end
   end
 
@@ -508,13 +511,13 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       # Only in the custom settings do we have preferred context configured.
       # We inject weight_inputs manually but consult custom settings for range lookup.
       custom_settings = Legion::LLM::Router::SettingsSnapshot.build(
-        generation: 88,
-        llm_settings: {
+        generation:         88,
+        llm_settings:       {
           routing: {
             tier_weights:         { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
             context_headroom_ppm: 900_000
           },
-          api: { routing_too_early_retry_after: 1 }
+          api:     { routing_too_early_retry_after: 1 }
         },
         extension_settings: {
           llm: {
@@ -553,13 +556,13 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
 
     it 'falls back to generalists when no range-specific candidate matches the budget' do
       custom_settings = Legion::LLM::Router::SettingsSnapshot.build(
-        generation: 89,
-        llm_settings: {
+        generation:         89,
+        llm_settings:       {
           routing: {
             tier_weights:         { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
             context_headroom_ppm: 900_000
           },
-          api: { routing_too_early_retry_after: 1 }
+          api:     { routing_too_early_retry_after: 1 }
         },
         extension_settings: {
           llm: {
@@ -599,19 +602,19 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
     it 'retains all ready candidates when there are no range-specific or generalist lanes (pure fallback)' do
       # Two range-specific lanes, neither matches → fall back to entire ready set.
       custom_settings = Legion::LLM::Router::SettingsSnapshot.build(
-        generation: 90,
-        llm_settings: {
+        generation:         90,
+        llm_settings:       {
           routing: {
             tier_weights:         { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
             context_headroom_ppm: 900_000
           },
-          api: { routing_too_early_retry_after: 1 }
+          api:     { routing_too_early_retry_after: 1 }
         },
         extension_settings: {
           llm: {
             vllm: {
               instances: {
-                h200: {
+                h200:    {
                   preferred_min_context_tokens: 1,
                   preferred_max_context_tokens: 100
                 },

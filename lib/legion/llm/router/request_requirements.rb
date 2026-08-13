@@ -66,9 +66,7 @@ module Legion
 
         def validate_operation!(operation)
           op = operation.to_sym
-          unless Legion::Extensions::Llm::Taxonomies::OPERATIONS.include?(op)
-            raise ArgumentError, "invalid operation #{operation.inspect}"
-          end
+          raise ArgumentError, "invalid operation #{operation.inspect}" unless Legion::Extensions::Llm::Taxonomies::OPERATIONS.include?(op)
 
           op
         end
@@ -77,9 +75,7 @@ module Legion
           return nil if tier.nil?
 
           sym = tier.to_sym
-          unless Legion::Extensions::Llm::Taxonomies::TIERS.include?(sym)
-            raise ArgumentError, "invalid tier #{tier.inspect}"
-          end
+          raise ArgumentError, "invalid tier #{tier.inspect}" unless Legion::Extensions::Llm::Taxonomies::TIERS.include?(sym)
 
           sym
         end
@@ -94,9 +90,7 @@ module Legion
         end
 
         def validate_seed!(seed)
-          unless seed.is_a?(String) && seed.match?(/\A[0-9a-f]{32}\z/)
-            raise Legion::LLM::Errors::InvalidRoutingContext, 'requirements built without a trusted routing seed'
-          end
+          raise Legion::LLM::Errors::InvalidRoutingContext, 'requirements built without a trusted routing seed' unless seed.is_a?(String) && seed.match?(/\A[0-9a-f]{32}\z/)
 
           seed
         end
@@ -125,9 +119,7 @@ module Legion
 
             seen[key] = true
             score = Integer(entry.fetch(:score_bps))
-            unless score.between?(-10_000, 10_000)
-              raise ArgumentError, "score_bps out of range: #{score}"
-            end
+            raise ArgumentError, "score_bps out of range: #{score}" unless score.between?(-10_000, 10_000)
 
             { source: entry[:source], target_kind: entry[:target_kind].to_sym,
               target: entry[:target], score_bps: score }.freeze
@@ -145,7 +137,7 @@ module Legion
 
         def deep_freeze(obj)
           case obj
-          when Hash then obj.each { |_, v| deep_freeze(v) }.freeze
+          when Hash then obj.each_value { |v| deep_freeze(v) }.freeze
           when Array then obj.each { |v| deep_freeze(v) }.freeze
           else obj.freeze
           end

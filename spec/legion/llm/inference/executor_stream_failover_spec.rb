@@ -27,7 +27,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'SSOT v3 streaming failover', :
       @text_deltas << text
     end
 
-    def method_missing(_name, *_args, **_kwargs)
+    def method_missing(_name, *_args, **)
       nil
     end
 

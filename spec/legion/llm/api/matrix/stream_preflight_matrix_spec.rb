@@ -35,7 +35,7 @@ RSpec.describe '[matrix] streaming preflight rejection', type: :request do
           context:      200_000
         )
       ],
-      callable: FakeProvider.adapter
+      callable:        FakeProvider.adapter
     )
   end
 
@@ -45,8 +45,8 @@ RSpec.describe '[matrix] streaming preflight rejection', type: :request do
 
   it 'returns a mapped HTTP error (not an opened SSE) when the streaming lane is rejected at preflight' do
     post '/v1/chat/completions',
-         Legion::JSON.dump(model: MatrixHelper::FAKE_MODEL,
-                           stream: true,
+         Legion::JSON.dump(model:    MatrixHelper::FAKE_MODEL,
+                           stream:   true,
                            messages: [{ role: 'user', content: 'stream please' }]),
          { 'CONTENT_TYPE' => 'application/json' }
 
@@ -84,13 +84,13 @@ RSpec.describe '[matrix] streaming preflight rejection', type: :request do
           context:      200_000
         )
       ],
-      callable: FakeProvider.adapter
+      callable:        FakeProvider.adapter
     )
 
     FakeProvider.with_scenario(:stream_text) do
       post '/v1/chat/completions',
-           Legion::JSON.dump(model: MatrixHelper::FAKE_MODEL,
-                             stream: true,
+           Legion::JSON.dump(model:    MatrixHelper::FAKE_MODEL,
+                             stream:   true,
                              messages: [{ role: 'user', content: 'stream please' }]),
            { 'CONTENT_TYPE' => 'application/json' }
     end

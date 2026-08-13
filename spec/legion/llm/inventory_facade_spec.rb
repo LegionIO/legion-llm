@@ -144,7 +144,7 @@ RSpec.describe Legion::LLM::Inventory, :ssot_v3 do
     end
 
     it 'does not write to the registry' do
-      gen_before = snapshot.generation
+      snapshot.generation
       activate(provider_family: 'vllm', instance_id: 'h200',
                drafts: [offering_draft(model: 'gemma4', supported: %i[chat])])
       snap = snapshot

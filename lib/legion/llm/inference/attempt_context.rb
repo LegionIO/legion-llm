@@ -63,21 +63,17 @@ module Legion
           mismatches << 'offering_id' unless @lane.offering_id == @selection.offering_id
           mismatches << 'model' unless @lane.model == @selection.model
           mismatches << 'operation' unless @lane.operation == @selection.operation
-          unless @lane.callable_handle.equal?(@selection.callable_handle)
-            mismatches << 'callable_handle'
-          end
+          mismatches << 'callable_handle' unless @lane.callable_handle.equal?(@selection.callable_handle)
           stale!("lane/selection mismatch: #{mismatches.join(',')}") unless mismatches.empty?
         end
 
         def validate_instance_against_selection!(instance)
-          unless instance.publisher_token_id == @selection.publisher_token_id
-            stale!('publisher token drift')
-          end
+          stale!('publisher token drift') unless instance.publisher_token_id == @selection.publisher_token_id
           # LaneRecord has no publisher-token field; validate the callable handle
           # against the activated instance record instead.
-          unless instance.callable_handle.equal?(@selection.callable_handle)
-            stale!('instance callable_handle mismatch')
-          end
+          return if instance.callable_handle.equal?(@selection.callable_handle)
+
+          stale!('instance callable_handle mismatch')
         end
 
         def stale!(reason)

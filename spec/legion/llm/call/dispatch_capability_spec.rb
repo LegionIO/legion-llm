@@ -9,24 +9,24 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
     Module.new do
       module_function
 
-      def chat(model:, messages:, **) # rubocop:disable Lint/UnusedMethodArgument
+      def chat(model:, messages:, **)
         { content: 'chat response', usage: { input_tokens: 10, output_tokens: 5 } }
       end
 
-      def embed(model:, text:, **) # rubocop:disable Lint/UnusedMethodArgument
+      def embed(model:, text:, **)
         { content: [0.1, 0.2], usage: { input_tokens: 3, output_tokens: 0 } }
       end
 
-      def stream(model:, messages:, **, &) # rubocop:disable Lint/UnusedMethodArgument
+      def stream(model:, messages:, **, &)
         yield('chunk') if block_given?
         { content: 'streamed response', usage: { input_tokens: 8, output_tokens: 4 } }
       end
 
-      def responses(model:, body:, messages:, stream:, **) # rubocop:disable Lint/UnusedMethodArgument
+      def responses(model:, body:, messages:, stream:, **)
         { content: 'responses response', usage: { input_tokens: 11, output_tokens: 6 } }
       end
 
-      def image(model:, prompt:, size:, **) # rubocop:disable Lint/UnusedMethodArgument
+      def image(model:, prompt:, size:, **)
         { result: [{ url: 'https://images.invalid/generated.png' }], model: model, usage: {} }
       end
     end
@@ -131,7 +131,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
       Module.new do
         module_function
 
-        def chat(model:, messages:, **) # rubocop:disable Lint/UnusedMethodArgument
+        def chat(model:, messages:, **)
           { content: 'default instance', usage: { input_tokens: 1, output_tokens: 1 } }
         end
       end
@@ -141,7 +141,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
       Module.new do
         module_function
 
-        def chat(model:, messages:, **) # rubocop:disable Lint/UnusedMethodArgument
+        def chat(model:, messages:, **)
           { content: 'named instance', usage: { input_tokens: 2, output_tokens: 2 } }
         end
       end
@@ -244,7 +244,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         Module.new do
           module_function
 
-          def embed(model:, text:, **) # rubocop:disable Lint/UnusedMethodArgument
+          def embed(model:, text:, **)
             { content: [0.1], usage: { input_tokens: 1, output_tokens: 0 } }
           end
 

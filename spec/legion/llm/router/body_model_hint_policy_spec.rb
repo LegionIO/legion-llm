@@ -42,7 +42,7 @@ RSpec.describe Legion::LLM::Router::BodyModelHintPolicy do
   end
 
   it 'auto aliases (legionio/auto/copilot-utility-small) → auto, no constraint' do
-    %w[legionio auto copilot-utility-small LEGIONIO  Auto ].each do |m|
+    %w[legionio auto copilot-utility-small LEGIONIO Auto].each do |m|
       expect(call(body: m).disposition).to eq(:auto)
     end
   end

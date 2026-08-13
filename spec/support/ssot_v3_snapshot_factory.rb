@@ -111,19 +111,19 @@ module SsotV3SnapshotFactory
     model_revision: nil, tokenizer: nil, quota_domains: {}, metadata: {}
   )
     inventory::OfferingDraft.new(
-      provider_native_key: native || model,
-      model: model,
-      tier: tier,
-      operation_evidence: operation_evidence(supported: supported, unsupported: unsupported),
-      capability_evidence: capability_evidence(capabilities),
-      context_evidence: context.nil? ? unknown_value : known_value(context),
-      max_output_evidence: max_output.nil? ? unknown_value : known_value(max_output),
+      provider_native_key:           native || model,
+      model:                         model,
+      tier:                          tier,
+      operation_evidence:            operation_evidence(supported: supported, unsupported: unsupported),
+      capability_evidence:           capability_evidence(capabilities),
+      context_evidence:              context.nil? ? unknown_value : known_value(context),
+      max_output_evidence:           max_output.nil? ? unknown_value : known_value(max_output),
       embedding_dimensions_evidence: embedding_dimensions.nil? ? unknown_value : known_value(embedding_dimensions),
-      model_revision_evidence: model_revision.nil? ? unknown_value : known_value(model_revision),
-      tokenizer_evidence: tokenizer.nil? ? unknown_value : known_value(tokenizer),
-      quota_domains: quota_domains,
-      metadata: metadata,
-      publication_source: :provider_catalog
+      model_revision_evidence:       model_revision.nil? ? unknown_value : known_value(model_revision),
+      tokenizer_evidence:            tokenizer.nil? ? unknown_value : known_value(tokenizer),
+      quota_domains:                 quota_domains,
+      metadata:                      metadata,
+      publication_source:            :provider_catalog
     )
   end
 

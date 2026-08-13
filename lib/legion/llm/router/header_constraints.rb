@@ -14,10 +14,10 @@ module Legion
         extend Legion::Logging::Helper
 
         HEADER_KEYS = {
-          provider: 'X-Legion-Provider',
-          instance_id: 'X-Legion-Instance',
-          model: 'X-Legion-Model',
-          tier: 'X-Legion-Tier',
+          provider:         'X-Legion-Provider',
+          instance_id:      'X-Legion-Instance',
+          model:            'X-Legion-Model',
+          tier:             'X-Legion-Tier',
           maximum_attempts: 'X-Legion-Max-Attempts'
         }.freeze
 
@@ -46,10 +46,10 @@ module Legion
         def self.from_internal(settings_snapshot:, provider: nil, instance_id: nil, model: nil,
                                tier: nil, maximum_attempts: nil)
           Value.new(
-            provider: normalize_provider(provider),
-            instance_id: blank_to_nil(instance_id),
-            model: blank_to_nil(model),
-            tier: normalize_tier(tier),
+            provider:         normalize_provider(provider),
+            instance_id:      blank_to_nil(instance_id),
+            model:            blank_to_nil(model),
+            tier:             normalize_tier(tier),
             maximum_attempts: normalize_max_attempts(maximum_attempts, settings_snapshot)
           )
         end
@@ -61,7 +61,7 @@ module Legion
 
           rack = "HTTP_#{name.upcase.tr('-', '_')}"
           value = headers[name] || headers[name.downcase] || headers[rack]
-          value.nil? ? nil : value.to_s
+          value&.to_s
         end
         private_class_method :fetch_header
 
@@ -110,9 +110,7 @@ module Legion
           v = blank_to_nil(value)
           return nil if v.nil?
 
-          unless v.match?(/\A\d+\z/)
-            raise Legion::LLM::Errors::InvalidHeader.new(header: HEADER_KEYS[:maximum_attempts], got: value, valid: [])
-          end
+          raise Legion::LLM::Errors::InvalidHeader.new(header: HEADER_KEYS[:maximum_attempts], got: value, valid: []) unless v.match?(/\A\d+\z/)
 
           n = Integer(v, 10)
           ceiling = settings_snapshot.maximum_attempts

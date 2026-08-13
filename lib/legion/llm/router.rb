@@ -66,25 +66,27 @@ module Legion
           ranked = Legion::LLM::Router::Ranker.call(
             evaluation_set: evaluation_set, requirements: requirements, settings_snapshot: settings_snapshot
           )
-          return Legion::LLM::Router::RejectionDiagnostics.call(
-            requirements: requirements, evaluation_set: evaluation_set, snapshot: snapshot
-          ) if ranked.nil?
+          if ranked.nil?
+            return Legion::LLM::Router::RejectionDiagnostics.call(
+              requirements: requirements, evaluation_set: evaluation_set, snapshot: snapshot
+            )
+          end
 
           build_selection(ranked: ranked, snapshot: snapshot)
         end
 
         def validate_exclusions!(exclusions)
           unless exclusions.is_a?(Array) &&
-                 exclusions.all? { |e| e.is_a?(Legion::Extensions::Llm::Routing::Exclusion) }
+                 exclusions.all?(Legion::Extensions::Llm::Routing::Exclusion)
             raise ArgumentError, 'exclusions must be an Array of Phase 1 Routing::Exclusion records'
           end
         end
         private :validate_exclusions!
 
         def validate_snapshot!(snapshot)
-          unless snapshot.is_a?(Legion::Extensions::Llm::Inventory::Snapshot)
-            raise ArgumentError, 'snapshot must be a Phase 1 Inventory::Snapshot'
-          end
+          return if snapshot.is_a?(Legion::Extensions::Llm::Inventory::Snapshot)
+
+          raise ArgumentError, 'snapshot must be a Phase 1 Inventory::Snapshot'
         end
         private :validate_snapshot!
 

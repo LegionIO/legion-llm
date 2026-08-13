@@ -14,10 +14,10 @@ module Legion
       module RejectionDiagnostics
         extend Legion::Logging::Helper
 
-        SEED_PATTERN = /\A[0-9a-f]{32}\z/.freeze
+        SEED_PATTERN = /\A[0-9a-f]{32}\z/
         private_constant :SEED_PATTERN
 
-        # rubocop:disable Metrics/MethodLength, Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+        # rubocop:disable Metrics/AbcSize
         def self.call(requirements:, evaluation_set:, snapshot:, **)
           candidates   = evaluation_set.candidates
           pub_statuses = evaluation_set.publication_statuses
@@ -31,7 +31,7 @@ module Legion
           # ---------------------------------------------------------------- #
           seed = requirements.routing_seed
           unless seed.is_a?(String) && seed.match?(SEED_PATTERN)
-            log.warn("[llm][rejection_diagnostics] action=diagnose result=invalid_routing_context")
+            log.warn('[llm][rejection_diagnostics] action=diagnose result=invalid_routing_context')
             return rejection(:invalid_routing_context, 500,
                              'routing context absent or malformed', gen, counts, pins)
           end
@@ -43,21 +43,19 @@ module Legion
             # Step 1 — pin proven absent: every candidate mismatches and every
             # relevant publication scope is complete (authoritative evidence
             # proves the pin does not exist).
-            if candidates.any? && candidates.all? { |c| c.pin_state == :mismatch }
-              if pub_statuses.empty? || pub_statuses.all? { |s| s.state == :complete }
-                log.debug("[llm][rejection_diagnostics] action=diagnose result=invalid_request " \
-                          "reason=pin_nonexistent pins=#{pins.keys.join(',')}")
-                return rejection(:invalid_request, 400,
-                                 'explicit pin not found in any complete publication scope',
-                                 gen, counts, pins)
-              end
+            if candidates.any? && candidates.all? { |c| c.pin_state == :mismatch } && (pub_statuses.empty? || pub_statuses.all? { |s| s.state == :complete })
+              log.debug('[llm][rejection_diagnostics] action=diagnose result=invalid_request ' \
+                        "reason=pin_nonexistent pins=#{pins.keys.join(',')}")
+              return rejection(:invalid_request, 400,
+                               'explicit pin not found in any complete publication scope',
+                               gen, counts, pins)
             end
 
             # Step 2 — pin not provable: no complete scope exists; cannot
             # confirm or deny the pinned identity.
             unless pub_statuses.any? { |s| s.state == :complete }
-              log.debug("[llm][rejection_diagnostics] action=diagnose result=too_early " \
-                        "reason=pin_authority_incomplete")
+              log.debug('[llm][rejection_diagnostics] action=diagnose result=too_early ' \
+                        'reason=pin_authority_incomplete')
               return rejection(:too_early, 425,
                                'explicit pin resolution blocked; all publication scopes are initializing or absent',
                                gen, counts, pins)
@@ -68,7 +66,7 @@ module Legion
           # Cold/empty catalog — no candidates regardless of cause            #
           # ---------------------------------------------------------------- #
           if candidates.empty?
-            log.debug("[llm][rejection_diagnostics] action=diagnose result=too_early " \
+            log.debug('[llm][rejection_diagnostics] action=diagnose result=too_early ' \
                       "reason=cold_catalog pub_scopes=#{pub_statuses.size}")
             return rejection(:too_early, 425,
                              'no selectable candidates; catalog is cold or all scopes are initializing',
@@ -80,7 +78,7 @@ module Legion
           # Every candidate is policy denied or weight disabled.              #
           # ---------------------------------------------------------------- #
           if candidates.all? { |c| c.policy_state == :denied || c.weight_state == :disabled }
-            log.debug("[llm][rejection_diagnostics] action=diagnose result=policy_denied " \
+            log.debug('[llm][rejection_diagnostics] action=diagnose result=policy_denied ' \
                       "count=#{candidates.size}")
             return rejection(:policy_denied, 403,
                              'all candidates are policy denied or weight disabled',
@@ -97,15 +95,15 @@ module Legion
           # the relevant op/cap axes).                                        #
           # ---------------------------------------------------------------- #
           all_scopes_complete    = pub_statuses.empty? || pub_statuses.all? { |s| s.state == :complete }
-          has_op_cap_unknown     = policy_eligible.any? { |c|
+          has_op_cap_unknown     = policy_eligible.any? do |c|
             c.operation_state == :unknown || c.capability_state == :unknown
-          }
-          all_op_cap_unsupported = policy_eligible.all? { |c|
+          end
+          all_op_cap_unsupported = policy_eligible.all? do |c|
             c.operation_state == :unsupported || c.capability_state == :unsupported
-          }
+          end
 
           if all_scopes_complete && all_op_cap_unsupported && !has_op_cap_unknown
-            log.debug("[llm][rejection_diagnostics] action=diagnose result=failed_dependency " \
+            log.debug('[llm][rejection_diagnostics] action=diagnose result=failed_dependency ' \
                       "count=#{policy_eligible.size}")
             return rejection(:failed_dependency, 424,
                              'all eligible candidates conclusively lack required operation or capability',
@@ -118,17 +116,17 @@ module Legion
           # hard-filter axis: operation, capability, context, dimension,     #
           # availability, or fleet contract.                                  #
           # ---------------------------------------------------------------- #
-          has_any_unknown = policy_eligible.any? { |c|
-            c.operation_state      == :unknown ||
+          has_any_unknown = policy_eligible.any? do |c|
+            c.operation_state == :unknown ||
               c.capability_state     == :unknown ||
               c.context_state        == :unknown ||
               c.dimension_state      == :unknown ||
               c.availability_state   == :unknown ||
               c.fleet_contract_state == :unknown
-          }
+          end
 
           if has_any_unknown
-            log.debug("[llm][rejection_diagnostics] action=diagnose result=too_early reason=unknown_evidence")
+            log.debug('[llm][rejection_diagnostics] action=diagnose result=too_early reason=unknown_evidence')
             return rejection(:too_early, 425,
                              'some candidates have unknown evidence; system may still be initializing',
                              gen, counts, pins)
@@ -140,15 +138,15 @@ module Legion
           # instance. "Conclusively fit" = authoritative supported for all   #
           # evidence axes; only availability blocks dispatch.                #
           # ---------------------------------------------------------------- #
-          conclusively_fit = policy_eligible.select { |c|
-            c.operation_state  == :supported &&
+          conclusively_fit = policy_eligible.select do |c|
+            c.operation_state == :supported &&
               c.capability_state == :supported &&
               %i[fits not_applicable].include?(c.context_state) &&
               %i[match not_applicable].include?(c.dimension_state)
-          }
+          end
 
           if conclusively_fit.any? && conclusively_fit.all? { |c| c.availability_state == :unavailable }
-            log.debug("[llm][rejection_diagnostics] action=diagnose result=service_unavailable " \
+            log.debug('[llm][rejection_diagnostics] action=diagnose result=service_unavailable ' \
                       "count=#{conclusively_fit.size}")
             return rejection(:service_unavailable, 503,
                              'all capable candidates are on unavailable instances',
@@ -157,16 +155,36 @@ module Legion
 
           # ---------------------------------------------------------------- #
           # Step 7 — context_rejected 400                                     #
-          # Every conclusive failure is a context or dimension constraint    #
-          # that cannot be satisfied.                                         #
+          # A conclusive context or dimension constraint blocks selection.   #
+          # Only when an authoritative context/dimension rejection is the    #
+          # actual cause — NOT when the sole blocker is request-local         #
+          # exclusion (a consumed attempt identity).                          #
           # ---------------------------------------------------------------- #
-          log.debug("[llm][rejection_diagnostics] action=diagnose result=context_rejected " \
-                    "count=#{policy_eligible.size}")
-          rejection(:context_rejected, 400,
-                    'all candidates fail context or dimension constraints',
+          if policy_eligible.any? { |c| c.context_state == :rejected || c.dimension_state == :rejected }
+            log.debug('[llm][rejection_diagnostics] action=diagnose result=context_rejected ' \
+                      "count=#{policy_eligible.size}")
+            return rejection(:context_rejected, 400,
+                             'all candidates fail context or dimension constraints',
+                             gen, counts, pins)
+          end
+
+          # ---------------------------------------------------------------- #
+          # Step 8 — service_unavailable 503 (retriable)                      #
+          # Candidates were otherwise eligible (capable, fit, not policy-     #
+          # denied, no unknown evidence) but every one is request-locally     #
+          # excluded (its exact provider+instance+model was already consumed  #
+          # this request) or on an unavailable instance. This is the "tried   #
+          # every eligible target, none left" state — retriable, never a      #
+          # 400 caller error and never a fabricated default. Maps to 503      #
+          # (native/OpenAI) / 529 (Anthropic) with Retry-After.               #
+          # ---------------------------------------------------------------- #
+          log.debug('[llm][rejection_diagnostics] action=diagnose result=service_unavailable ' \
+                    "reason=all_eligible_consumed_or_unavailable count=#{policy_eligible.size}")
+          rejection(:service_unavailable, 503,
+                    'all eligible candidates are consumed or unavailable for this request',
                     gen, counts, pins)
         end
-        # rubocop:enable Metrics/MethodLength, Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+        # rubocop:enable Metrics/AbcSize
 
         # ------------------------------------------------------------------ #
         # Private helpers                                                      #
@@ -174,12 +192,12 @@ module Legion
 
         def self.rejection(kind, http_status, reason, gen, counts, pins)
           Legion::Extensions::Llm::Routing::Rejection.new(
-            kind:                kind,
-            reason:              reason,
+            kind:                 kind,
+            reason:               reason,
             inventory_generation: gen,
-            candidate_counts:    counts,
-            explicit_pins:       pins,
-            http_status:         http_status
+            candidate_counts:     counts,
+            explicit_pins:        pins,
+            http_status:          http_status
           )
         end
         private_class_method :rejection

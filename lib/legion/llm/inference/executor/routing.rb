@@ -70,62 +70,35 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.step_tier_assignment')
           end
 
+          # SSOT v3 single-engine: step_routing derives the immutable
+          # RequestRequirements ONCE. It performs NO selection — no request_lane,
+          # no infer_provider, no default model/provider, no tier fabrication.
+          # The exact provider+instance+model is chosen only by Router.next_lane
+          # inside the RoutingSession loop at dispatch time, and @resolved_* are
+          # populated from that Selection. Failure raises (never nil-fail-open to
+          # a legacy path — there is no legacy path).
           def step_routing
-            log.debug "[llm][executor] action=step_routing.enter requested_provider=#{@request.routing[:provider]} requested_model=#{@request.routing[:model]}"
             @timestamps[:routing_start] = Time.now
-            state = resolve_routing_state(apply_proactive_tier_assignment(resolve_model_to_local_provider(routing_request_state)))
-            auto_route = state[:auto_route] == true
-
-            inferred = state[:model] && Router.infer_provider_for_model(state[:model])
-            inferred = nil unless state[:provider] || (inferred && Call::Registry.registered?(inferred))
-            @resolved_provider = state[:provider] ||
-                                 inferred ||
-                                 (Legion::Settings[:llm][:default_provider] unless auto_route)
-            @resolved_instance = resolve_provider_instance(state[:instance], @resolved_provider)
-
-            # If the resolved provider differs from the model's natural provider, swap to the
-            # provider's default model — sending "claude-sonnet-4-6" to vllm would fail.
-            resolved_model = state[:model]
-            if resolved_model && @resolved_provider
-              model_natural = Router.infer_provider_for_model(resolved_model)
-              if model_natural && !model_natural.to_s.eql?(@resolved_provider.to_s)
-                log.debug "[llm][executor] action=model_provider_mismatch model=#{resolved_model} " \
-                          "natural_provider=#{model_natural} resolved_provider=#{@resolved_provider} swapping"
-                resolved_model = nil
-              end
-            end
-            @resolved_model = resolved_model || fallback_model_for_resolved_provider(auto_route)
-            raise ProviderError, 'Auto routing could not resolve an available LLM provider/model' if auto_route && (@resolved_provider.nil? || @resolved_model.nil?)
-
-            @resolved_tier = state[:tier]&.to_sym || inferred_provider_tier(@resolved_provider)
-            @resolved_offering_id = state[:offering_id]
-            @resolved_offering_metadata = state[:offering_metadata]
-            record_forced_tier_selection unless @audit[:'routing:provider_selection']
-
-            log.info '[llm][inference] resolved ' \
-                     "provider=#{@resolved_provider} instance=#{@resolved_instance || 'default'} " \
-                     "model=#{@resolved_model} offering_id=#{@resolved_offering_id}"
+            build_ssot_v3_routing_requirements
             @timeline.record(
-              category: :audit, key: 'routing:provider_selection',
-              direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
+              category: :audit, key: 'routing:requirements',
+              direction: :internal,
+              detail: "operation=#{@routing_requirements.operation} caps=#{@routing_requirements.required_capabilities.inspect}",
               from: 'router', to: 'pipeline'
             )
-            build_ssot_v3_routing_requirements
           end
 
-          # SSOT v3 §14 — build RequestRequirements once per request, after
-          # step_routing resolves the old-path provider/model. Silently degrades
-          # (sets @routing_requirements = nil) so the old path stays active on
-          # any failure (stale gem contract, missing routing_context seed, etc.).
+          # SSOT v3 §9/§14 — build the immutable RequestRequirements once per
+          # request. Required output size participates in context eligibility
+          # (directive: never exclude it). No inventory-generation gate: an empty
+          # Registry yields a typed too_early/service_unavailable Rejection from
+          # next_lane, never a fabricated lane or a legacy fallback.
           def build_ssot_v3_routing_requirements
-            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
-            return unless snap.generation.positive?
-
             operation = @request.stream == true ? :stream_chat : :chat
             required_caps = Legion::LLM::Router::RequiredCapabilities.call(
               request: @request, operation: operation
             )
-            framing = @request.routing_settings_snapshot&.input_framing_overhead_tokens || 0
+            framing = @request.routing_settings_snapshot.input_framing_overhead_tokens
             input_bound = Legion::LLM::Router::InputBound.call(
               operation:               operation,
               messages:                @request.messages,
@@ -141,13 +114,19 @@ module Legion
               operation:              operation,
               required_capabilities:  required_caps,
               estimated_input_bound:  input_bound,
-              required_output_tokens: 0
+              required_output_tokens: required_output_tokens_for_request
             )
-            log.debug "[llm][executor] action=ssot_v3_requirements_built operation=#{operation}"
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true,
-                                operation: 'llm.pipeline.build_ssot_v3_requirements')
-            @routing_requirements = nil
+            log.debug "[llm][executor] action=ssot_v3_requirements_built operation=#{operation} " \
+                      "output_tokens=#{@routing_requirements.required_output_tokens}"
+          end
+
+          # Requested max output tokens — sourced from the canonical request token
+          # budget so context eligibility accounts for output size. Zero when the
+          # caller set no budget.
+          def required_output_tokens_for_request
+            tokens = @request.tokens
+            max = tokens.is_a?(Hash) ? (tokens[:max] || tokens[:max_tokens]) : nil
+            [max.to_i, 0].max
           end
 
           # When routing resolved a provider but no model, source the model from that

@@ -10,15 +10,15 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
 
   def valid_routing
     {
-      tier_weights:                    { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
-      context_headroom_ppm:            900_000,
-      input_framing_overhead_tokens:   1_024,
-      affinity_strength_bps:           10_000,
-      max_attempts:                    3,
-      allow_body_routing_hints:        false,
-      body_model_hint_whitelist:       [],
-      body_model_hint_blacklist:       [],
-      auto_routing_model_aliases:      %w[legionio auto copilot-utility-small],
+      tier_weights:                      { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
+      context_headroom_ppm:              900_000,
+      input_framing_overhead_tokens:     1_024,
+      affinity_strength_bps:             10_000,
+      max_attempts:                      3,
+      allow_body_routing_hints:          false,
+      body_model_hint_whitelist:         [],
+      body_model_hint_blacklist:         [],
+      auto_routing_model_aliases:        %w[legionio auto copilot-utility-small],
       auto_routing_model_alias_metadata: {
         'copilot-utility-small' => { owned_by: 'legionio' }
       }
@@ -39,8 +39,8 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
 
   def build(**overrides)
     described_class.build(
-      generation:        overrides.fetch(:generation, 1),
-      llm_settings:      overrides.fetch(:llm_settings, valid_llm_settings),
+      generation:         overrides.fetch(:generation, 1),
+      llm_settings:       overrides.fetch(:llm_settings, valid_llm_settings),
       extension_settings: overrides.fetch(:extension_settings, valid_ext)
     )
   end
@@ -210,7 +210,7 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
   describe 'legacy context_headroom deprecation' do
     it 'converts context_headroom 0.9 to 900_000 and emits a warning' do
       # Remove context_headroom_ppm so the legacy key takes precedence.
-      routing = valid_routing.reject { |k, _| k == :context_headroom_ppm }.merge(context_headroom: 0.9)
+      routing = valid_routing.except(:context_headroom_ppm).merge(context_headroom: 0.9)
       llm = valid_llm_settings.merge(routing: routing)
 
       snap = nil
@@ -219,27 +219,27 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
     end
 
     it 'converts context_headroom 1.0 to 1_000_000' do
-      routing = valid_routing.reject { |k, _| k == :context_headroom_ppm }.merge(context_headroom: 1.0)
+      routing = valid_routing.except(:context_headroom_ppm).merge(context_headroom: 1.0)
       llm = valid_llm_settings.merge(routing: routing)
       snap = build(llm_settings: llm)
       expect(snap.context_headroom_ppm).to eq(1_000_000)
     end
 
     it 'converts context_headroom 0.5 to 500_000' do
-      routing = valid_routing.reject { |k, _| k == :context_headroom_ppm }.merge(context_headroom: 0.5)
+      routing = valid_routing.except(:context_headroom_ppm).merge(context_headroom: 0.5)
       llm = valid_llm_settings.merge(routing: routing)
       snap = build(llm_settings: llm)
       expect(snap.context_headroom_ppm).to eq(500_000)
     end
 
     it 'rejects context_headroom of 0.0' do
-      routing = valid_routing.reject { |k, _| k == :context_headroom_ppm }.merge(context_headroom: 0.0)
+      routing = valid_routing.except(:context_headroom_ppm).merge(context_headroom: 0.0)
       llm = valid_llm_settings.merge(routing: routing)
       expect { build(llm_settings: llm) }.to raise_error(ArgumentError, /context_headroom/)
     end
 
     it 'rejects context_headroom greater than 1.0' do
-      routing = valid_routing.reject { |k, _| k == :context_headroom_ppm }.merge(context_headroom: 1.1)
+      routing = valid_routing.except(:context_headroom_ppm).merge(context_headroom: 1.1)
       llm = valid_llm_settings.merge(routing: routing)
       expect { build(llm_settings: llm) }.to raise_error(ArgumentError, /context_headroom/)
     end
@@ -374,7 +374,7 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
         llm: {
           vllm: {
             model_whitelist: %w[global-allowed],
-            instances: {
+            instances:       {
               h200: { model_whitelist: %w[instance-allowed] }
             }
           }
@@ -390,7 +390,7 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
         llm: {
           vllm: {
             model_whitelist: %w[provider-allowed],
-            instances: { h200: { weight: 1 } } # no :model_whitelist key
+            instances:       { h200: { weight: 1 } } # no :model_whitelist key
           }
         }
       }
@@ -403,7 +403,7 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
       ext = {
         llm: {
           model_whitelist: %w[global-allowed],
-          vllm: { weight: 1 }
+          vllm:            { weight: 1 }
         }
       }
       snap = build(extension_settings: ext)
@@ -416,7 +416,7 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
         llm: {
           vllm: {
             model_whitelist: %w[provider-allowed],
-            instances: { h200: { model_whitelist: [] } }
+            instances:       { h200: { model_whitelist: [] } }
           }
         }
       }
@@ -430,7 +430,7 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
         llm: {
           vllm: {
             model_blacklist: %w[provider-denied],
-            instances: { h200: { model_whitelist: %w[instance-allowed] } }
+            instances:       { h200: { model_whitelist: %w[instance-allowed] } }
           }
         }
       }

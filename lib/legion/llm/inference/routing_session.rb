@@ -16,7 +16,7 @@ module Legion
       class RoutingSession
         include Legion::Logging::Helper
 
-        attr_reader :request, :requirements
+        attr_reader :request, :requirements, :attempt_count
 
         def initialize(request:, requirements:)
           @request = request
@@ -36,10 +36,6 @@ module Legion
 
         def consumed_targets
           @consumed_targets.keys.freeze
-        end
-
-        def attempt_count
-          @attempt_count
         end
 
         # => AttemptContext or Phase 1 Rejection.
@@ -117,9 +113,9 @@ module Legion
 
         def apply_global_transition(transition)
           Legion::Extensions::Llm::Inventory::Registry.dispatch_instance_unavailable(
-            instance_key: transition.instance_key,
+            instance_key:       transition.instance_key,
             publisher_token_id: transition.publisher_token_id,
-            reason: transition.reason
+            reason:             transition.reason
           )
         end
 

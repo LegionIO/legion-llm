@@ -8,8 +8,8 @@ RSpec.describe Legion::LLM::Router::RequiredCapabilities do
   # The current worktree request.rb (pre-§7.2) does not yet require routing_settings_snapshot
   # or trusted_constraints, so we use Legion::LLM::Inference::Request.build directly with
   # the fields RequiredCapabilities reads. All build kwargs are optional with sensible defaults.
-  def build_request(**kwargs)
-    Legion::LLM::Inference::Request.build(**{ messages: [] }.merge(kwargs))
+  def build_request(**)
+    Legion::LLM::Inference::Request.build(messages: [], **)
   end
 
   let(:plain_request) { build_request }
@@ -288,10 +288,10 @@ RSpec.describe Legion::LLM::Router::RequiredCapabilities do
       it 'contains only canonical capability Symbols' do
         canonical = Legion::Extensions::Llm::Capabilities::CANONICAL
         all_caps_req = build_request(
-          tools: [{ name: 'search' }],
-          thinking: { enabled: true },
+          tools:           [{ name: 'search' }],
+          thinking:        { enabled: true },
           response_format: { type: :json_schema },
-          messages: [
+          messages:        [
             { role: :user, content: [{ type: :image_url, image_url: { url: 'https://example.com/img.png' } }] }
           ]
         )

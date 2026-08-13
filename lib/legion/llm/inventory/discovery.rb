@@ -96,7 +96,7 @@ module Legion
 
           # Return the size in bytes for a discovered model, or nil if unknown.
           # After P3, size_bytes is not stored on lanes; always nil.
-          def model_size(_model, provider: nil, instance: nil) # rubocop:disable Lint/UnusedMethodArgument
+          def model_size(_model, provider: nil, instance: nil)
             nil
           end
 

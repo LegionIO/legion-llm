@@ -16,9 +16,7 @@ module Legion
           attr_reader :kind, :instance_key, :publisher_token_id, :reason
 
           def initialize(instance_key:, publisher_token_id:, reason:, kind: :instance_unavailable)
-            unless kind == :instance_unavailable
-              raise ArgumentError, "unsupported global transition kind: #{kind.inspect}"
-            end
+            raise ArgumentError, "unsupported global transition kind: #{kind.inspect}" unless kind == :instance_unavailable
 
             @kind = kind
             @instance_key = instance_key
@@ -81,10 +79,10 @@ module Legion
         # Terminal provider outcomes → best-fit Rejection kind. cancelled/client_disconnect
         # preserve the outcome so the owner can skip HTTP rendering for a gone client.
         TERMINAL_REJECTION_KIND = {
-          policy: :policy_denied,
-          invalid_request: :invalid_request,
-          safety_refusal: :invalid_request,
-          cancelled: :invalid_request,
+          policy:            :policy_denied,
+          invalid_request:   :invalid_request,
+          safety_refusal:    :invalid_request,
+          cancelled:         :invalid_request,
           client_disconnect: :invalid_request
         }.freeze
 
@@ -99,9 +97,9 @@ module Legion
             return Action.retry(
               exclusions: [], outcome: outcome,
               global_transition: GlobalTransition.new(
-                instance_key: attempt_context.selection.instance_key,
+                instance_key:       attempt_context.selection.instance_key,
                 publisher_token_id: attempt_context.selection.publisher_token_id,
-                reason: outcome.reason
+                reason:             outcome.reason
               )
             )
           end
@@ -133,7 +131,7 @@ module Legion
 
         def self.attempts_exhausted(outcome)
           Action.terminal(
-            outcome: outcome,
+            outcome:   outcome,
             rejection: Legion::Extensions::Llm::Routing::Rejection.new(
               kind: :attempts_exhausted, reason: "attempts exhausted; last outcome=#{outcome.kind}",
               inventory_generation: 0, candidate_counts: {}, http_status: 503

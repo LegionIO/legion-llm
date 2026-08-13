@@ -22,8 +22,8 @@ module Legion
         # ------------------------------------------------------------------ #
 
         def self.build(generation:, llm_settings:, extension_settings:)
-          snap = new(generation: generation,
-                     llm_settings: llm_settings,
+          snap = new(generation:         generation,
+                     llm_settings:       llm_settings,
                      extension_settings: extension_settings)
           snap.freeze
           snap
@@ -112,29 +112,29 @@ module Legion
             :input_framing_overhead_tokens,
             routing.fetch(:input_framing_overhead_tokens, 1_024)
           )
-          @affinity_strength_bps           = validate_affinity_strength_bps!(
+          @affinity_strength_bps = validate_affinity_strength_bps!(
             routing.fetch(:affinity_strength_bps, 10_000)
           )
-          @maximum_attempts                = validate_positive_integer!(
+          @maximum_attempts = validate_positive_integer!(
             :maximum_attempts,
             routing.fetch(:max_attempts, 3)
           )
-          @routing_too_early_retry_after   = validate_retry_after!(
+          @routing_too_early_retry_after = validate_retry_after!(
             api.fetch(:routing_too_early_retry_after, 1)
           )
-          @allow_body_routing_hints        = validate_boolean!(
+          @allow_body_routing_hints = validate_boolean!(
             :allow_body_routing_hints,
             routing.fetch(:allow_body_routing_hints, false)
           )
-          @body_model_hint_whitelist       = validate_string_list!(
+          @body_model_hint_whitelist = validate_string_list!(
             :body_model_hint_whitelist,
             routing.fetch(:body_model_hint_whitelist, [])
           )
-          @body_model_hint_blacklist       = validate_string_list!(
+          @body_model_hint_blacklist = validate_string_list!(
             :body_model_hint_blacklist,
             routing.fetch(:body_model_hint_blacklist, [])
           )
-          @auto_routing_model_aliases      = validate_string_list!(
+          @auto_routing_model_aliases = validate_string_list!(
             :auto_routing_model_aliases,
             routing.fetch(:auto_routing_model_aliases, [])
           )
@@ -188,9 +188,7 @@ module Legion
 
           TIER_KEYS.each_with_object({}) do |k, out|
             raw = norm.fetch(k) { raise ArgumentError, "tier_weights missing key #{k}" }
-            unless raw.is_a?(Integer) && raw >= 0
-              raise ArgumentError, "tier_weights[#{k}] must be a nonnegative Integer, got #{raw.inspect}"
-            end
+            raise ArgumentError, "tier_weights[#{k}] must be a nonnegative Integer, got #{raw.inspect}" unless raw.is_a?(Integer) && raw >= 0
 
             out[k] = raw
           end.freeze
@@ -199,7 +197,7 @@ module Legion
         def resolve_context_headroom_ppm!(routing)
           if routing.key?(:context_headroom)
             val = routing[:context_headroom]
-            unless val.is_a?(Numeric) && !val.nan? && !val.infinite? && val > 0 && val <= 1
+            unless val.is_a?(Numeric) && !val.nan? && !val.infinite? && val.positive? && val <= 1
               raise ArgumentError,
                     "context_headroom must be a finite Numeric in (0, 1], got #{val.inspect}"
             end
@@ -207,9 +205,7 @@ module Legion
             log.warn('[llm][settings_snapshot] action=deprecation key=context_headroom ' \
                      'message="context_headroom Float is deprecated; use context_headroom_ppm Integer instead"')
             ppm = (BigDecimal(val.to_s) * 1_000_000).to_i
-            unless (1..1_000_000).cover?(ppm)
-              raise ArgumentError, "context_headroom #{val} converts to out-of-range ppm #{ppm}"
-            end
+            raise ArgumentError, "context_headroom #{val} converts to out-of-range ppm #{ppm}" unless (1..1_000_000).cover?(ppm)
 
             return ppm
           end
@@ -248,7 +244,7 @@ module Legion
         end
 
         def validate_boolean!(name, val)
-          return val if val == true || val == false
+          return val if [true, false].include?(val)
 
           raise ArgumentError, "#{name} must be true or false, got #{val.inspect}"
         end

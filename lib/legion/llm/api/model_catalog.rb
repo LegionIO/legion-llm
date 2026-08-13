@@ -81,12 +81,12 @@ module Legion
         def self.native_list(snapshot:)
           pub_by_key  = {}
           inst_by_key = {}
-          snapshot.each_publication_status { |ps|   pub_by_key[ps.instance_key]   = ps }
+          snapshot.each_publication_status { |ps|   pub_by_key[ps.instance_key] = ps }
           snapshot.each_instance           { |inst| inst_by_key[inst.instance_key] = inst }
 
           entries = []
           snapshot.each_offering do |offering|
-            ik   = offering.instance_key
+            ik = offering.instance_key
             entries << {
               id:                     offering.model.to_s,
               offering_id:            offering.offering_id.to_s,
@@ -118,7 +118,7 @@ module Legion
 
           # Collect eligible unique model identifiers; first-seen provider wins
           # for the owned_by field when the same model appears on multiple providers.
-          seen = {}   # model_id (String) => provider_family (String)
+          seen = {} # model_id (String) => provider_family (String)
           snapshot.each_offering do |offering|
             model_id = offering.model.to_s
             next if seen.key?(model_id)

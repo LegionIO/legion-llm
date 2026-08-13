@@ -4,7 +4,6 @@ require 'spec_helper'
 require 'legion/llm/router/request_requirements'
 require 'legion/llm/router/candidate_evaluator'
 
-# rubocop:disable RSpec/MultipleMemoizedHelpers
 RSpec.describe Legion::LLM::Router::CandidateEvaluator, :ssot_v3 do
   # SsotV3SnapshotFactory helpers are included via the :ssot_v3 metadata tag.
   # Registry.reset! runs before each example (also via the :ssot_v3 tag).
@@ -36,13 +35,13 @@ RSpec.describe Legion::LLM::Router::CandidateEvaluator, :ssot_v3 do
     routing: {}
   )
     Legion::LLM::Router::RequestRequirements.build(
-      request:                       build_request(routing: routing),
-      operation:                     operation,
-      required_capabilities:         caps,
-      estimated_input_bound:         input,
-      required_output_tokens:        output,
+      request:                        build_request(routing: routing),
+      operation:                      operation,
+      required_capabilities:          caps,
+      estimated_input_bound:          input,
+      required_output_tokens:         output,
       requested_embedding_dimensions: dims,
-      tier_constraint:               tier_constraint
+      tier_constraint:                tier_constraint
     )
   end
 
@@ -404,7 +403,7 @@ RSpec.describe Legion::LLM::Router::CandidateEvaluator, :ssot_v3 do
         instance_id:     'h200',
         model:           'gemma4'
       )
-      excl   = Legion::Extensions::Llm::Routing::Exclusion.new(
+      excl = Legion::Extensions::Llm::Routing::Exclusion.new(
         target_kind: :attempt_target,
         target:      atk,
         reason:      'attempt_consumed',
@@ -427,7 +426,7 @@ RSpec.describe Legion::LLM::Router::CandidateEvaluator, :ssot_v3 do
         instance_id:     'h200',
         model:           'llama3'
       )
-      excl   = Legion::Extensions::Llm::Routing::Exclusion.new(
+      excl = Legion::Extensions::Llm::Routing::Exclusion.new(
         target_kind: :attempt_target,
         target:      atk,
         reason:      'attempt_consumed',
@@ -485,7 +484,7 @@ RSpec.describe Legion::LLM::Router::CandidateEvaluator, :ssot_v3 do
         instance_id:     'h200',
         model:           'gemma4'
       )
-      excl   = Legion::Extensions::Llm::Routing::Exclusion.new(
+      excl = Legion::Extensions::Llm::Routing::Exclusion.new(
         target_kind: :attempt_target,
         target:      atk,
         reason:      'attempt_consumed',
@@ -731,4 +730,3 @@ RSpec.describe Legion::LLM::Router::CandidateEvaluator, :ssot_v3 do
     end
   end
 end
-# rubocop:enable RSpec/MultipleMemoizedHelpers
