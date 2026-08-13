@@ -125,6 +125,72 @@ module Legion
           end
         end
 
+        # ── SSOT v3 Phase 2 read-only facade ─────────────────────────────────────
+        # §13.1: projection surface over an immutable Phase 1 snapshot.
+        # NOTE: `providers`, `offerings`, and `lanes` exist on this module with
+        # incompatible signatures (live Concurrent::Map readers); those collisions
+        # are reported and the SSOT v3 equivalents are deferred until the live-store
+        # write API is removed in a later migration task.
+
+        VALID_FILTER_KEYS = %i[provider_family instance_id model tier operation availability].freeze
+        private_constant :VALID_FILTER_KEYS
+
+        # Returns the live Phase 1 snapshot (no args; generation-tagged).
+        def snapshot
+          Legion::Extensions::Llm::Inventory::Registry.snapshot
+        end
+
+        # Projects distinct, frozen, sorted provider-family Strings from the
+        # supplied snapshot.  Filters: :provider_family, :instance_id, :tier,
+        # :operation, :availability.  Unknown filter keys raise ArgumentError.
+        #
+        # NOTE: a `providers` method with a different signature already exists on
+        # this module (returns a Hash grouped from the live Concurrent::Map store).
+        # This method is named `providers_from` as a non-colliding bridge until the
+        # old writer is removed and `providers` can be reassigned to this signature.
+        def providers_from(snapshot:, filters: {}, **)
+          validate_filter_keys!(filters)
+          result = []
+          snapshot.each_instance do |inst|
+            next if filter_mismatch_instance?(inst, filters)
+
+            family = inst.instance_key.provider_family.to_s
+            result << family unless result.include?(family)
+          end
+          result.sort.freeze
+        end
+
+        # Projects frozen Array<Hash> of instance data from the supplied snapshot in
+        # canonical InstanceKey order. Filters: :provider_family, :instance_id,
+        # :availability. Unknown filter keys raise ArgumentError.
+        def instances(snapshot:, filters: {}, **)
+          validate_filter_keys!(filters)
+          result = []
+          snapshot.each_instance do |inst|
+            next if filter_mismatch_instance?(inst, filters)
+
+            result << project_instance(inst)
+          end
+          result.freeze
+        end
+
+        # Projects distinct, sorted, frozen Array<String> of model names from the
+        # supplied snapshot. Filters: :provider_family, :instance_id, :tier,
+        # :operation. Unknown filter keys raise ArgumentError.
+        def models(snapshot:, filters: {}, **)
+          validate_filter_keys!(filters)
+          result = []
+          snapshot.each_offering do |offering|
+            next if filter_mismatch_offering?(offering, filters)
+
+            model = offering.model
+            result << model unless result.include?(model)
+          end
+          result.sort.freeze
+        end
+
+        # ── end SSOT v3 Phase 2 read-only facade ─────────────────────────────────
+
         private
 
         # ── P1 live store private helpers ────────────────────────────────────────
@@ -306,6 +372,59 @@ module Legion
         def normalize_filter_hash(filters)
           filters.transform_keys(&:to_sym).compact
         end
+
+        # ── SSOT v3 private filter/projection helpers ─────────────────────────────
+
+        def validate_filter_keys!(filters)
+          unknown = filters.keys.map(&:to_sym) - VALID_FILTER_KEYS
+          raise ArgumentError, "unknown filter key(s): #{unknown.join(', ')}" unless unknown.empty?
+        end
+
+        # Returns true when the instance should be excluded by the supplied filters.
+        def filter_mismatch_instance?(inst, filters)
+          key = inst.instance_key
+          fam = filters[:provider_family]
+          iid = filters[:instance_id]
+          avail = filters[:availability]
+          return true if fam  && key.provider_family.to_s != fam.to_s
+          return true if iid  && key.instance_id != iid.to_s
+          return true if avail && inst.availability.state != avail.to_sym
+
+          false
+        end
+
+        # Returns true when the offering should be excluded by the supplied filters.
+        def filter_mismatch_offering?(offering, filters)
+          key = offering.instance_key
+          fam = filters[:provider_family]
+          iid = filters[:instance_id]
+          mod = filters[:model]
+          tier = filters[:tier]
+          op = filters[:operation]
+          return true if fam  && key.provider_family.to_s != fam.to_s
+          return true if iid  && key.instance_id != iid.to_s
+          return true if mod  && offering.model != mod.to_s
+          return true if tier && offering.tier != tier.to_sym
+          return true if op   && offering.operation_status(operation: op.to_sym) != :supported
+
+          false
+        end
+
+        # Projects a frozen Hash of safe, non-callable fields from an InstanceRecord.
+        def project_instance(inst)
+          key = inst.instance_key
+          {
+            provider_family:  key.provider_family,
+            instance_id:      key.instance_id,
+            availability:     inst.availability.state,
+            publisher_id:     inst.publisher_id,
+            publisher_token_id: inst.publisher_token_id,
+            published_sequence: inst.published_sequence,
+            published_at:     inst.published_at
+          }.freeze
+        end
+
+        # ── end SSOT v3 private filter/projection helpers ─────────────────────────
       end
     end
   end
