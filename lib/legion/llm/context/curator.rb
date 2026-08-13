@@ -639,7 +639,12 @@ module Legion
         def llm_summarize_tool_result(content, tool_name)
           return nil unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:chat_direct)
 
-          model = setting(:llm_model, nil) || detect_small_model
+          # SSOT v3: no provider-order/default small-model detection. Forward the
+          # explicitly configured curation model when set, otherwise skip LLM
+          # distillation (fall back to the heuristic path). When a model is set the
+          # turn flows through the canonical chat_direct -> Executor (RoutingSession)
+          # path; the router picks the eligible lane.
+          model = setting(:llm_model, nil)
           return nil unless model
 
           prompt = build_distillation_prompt(content, tool_name)
@@ -658,21 +663,6 @@ module Legion
             Tool result:
             #{content[0, 4000]}
           PROMPT
-        end
-
-        def detect_small_model
-          ext = Legion::Settings[:extensions]
-          providers = (ext.is_a?(Hash) && ext[:llm].is_a?(Hash) ? ext[:llm] : {})
-          %w[ollama vllm mlx].each do |provider|
-            config = providers[provider.to_sym] || providers[provider] || {}
-            enabled = config[:enabled]
-            model = config[:default_model]
-            return model if config.is_a?(Hash) && enabled && model
-          end
-          nil
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'llm.context_curator.detect_small_model')
-          nil
         end
       end
     end

@@ -593,18 +593,16 @@ RSpec.describe Legion::LLM::Inference::Steps::Classification do
         end
       end
 
-      context 'when provider comes from default_provider setting (no explicit routing)' do
+      context 'when no explicit provider is pinned (SSOT: gate never guesses a default)' do
         before do
           Legion::Settings[:llm][:compliance] = { phi_block_cloud: true }
           Legion::Settings[:llm][:default_provider] = :openai
         end
 
-        it 'blocks based on default provider when no explicit provider in routing' do
+        it 'does not block on a configured default_provider — routing enforces policy at selection' do
           step = build_gate_step(provider: nil)
-          expect { step.step_classification }.to raise_error(
-            Legion::LLM::InferenceError,
-            /cannot be sent to cloud provider openai/
-          )
+          expect { step.step_classification }.not_to raise_error
+          expect(step.enrichments['classification:scan'][:effective_level]).to eq(:restricted)
         end
       end
     end

@@ -31,6 +31,13 @@ module Legion
                      cache: nil,
                      quality_check: nil,
                      **)
+          # SSOT v3: dispatch no longer pre-selects a provider/model. It forwards the
+          # caller's explicit constraints or none — an omitted provider/model is an
+          # empty constraint the canonical Request -> Executor (RoutingSession) path
+          # resolves. The executor's routing step owns provider inference, tier
+          # lane selection, and any old-path default injection (kept behind the
+          # SSOT-active gate). The only thing done here is clearing the provider for
+          # an auto-routing placeholder model and defaulting its routing intent.
           routing_explicit = { provider: !provider.nil?, model: !model.nil?, tier: !tier.nil? }
           resolved_provider = provider
           resolved_model = model
@@ -39,19 +46,6 @@ module Legion
           if auto_route
             resolved_provider = nil
             intent ||= Inference::Request.default_auto_routing_intent
-          elsif resolved_provider.nil? && resolved_model && defined?(Router)
-            resolved_provider = Router.infer_provider_for_model(resolved_model)
-          end
-
-          if resolved_provider.nil? && resolved_model.nil? && defined?(Router) && tier
-            lane = Router.request_lane(type: :inference, tiers: [tier.to_sym])
-            resolved_provider = lane&.dig(:provider_family)
-            resolved_model    = lane&.dig(:model)
-          end
-
-          if !auto_route && resolved_provider.nil? && resolved_model.nil? && Legion::LLM::Inventory.lanes.none?
-            resolved_provider = Legion::Settings[:llm][:default_provider]
-            resolved_model = Legion::Settings[:llm][:default_model]
           end
 
           request(message,
@@ -94,10 +88,14 @@ module Legion
                     cache: nil,
                     quality_check: nil,
                     **)
+          # SSOT v3: provider/model resolution is the executor/RoutingSession's job.
+          # Forward explicit-or-nil and only raise when nothing can resolve the
+          # request — no explicit pin, no auto-routing placeholder, no inventory
+          # lane, no configured default, and no active SSOT registry.
           auto_route = Inference::Request.auto_routing_model?(model)
-          if !auto_route && (provider.nil? || model.nil?) && Legion::LLM::Inventory.lanes.none?
+          unless routing_resolvable?(provider, model, auto_route)
             raise LLMError, "Prompt.request: provider and model must be set (got provider=#{provider.inspect}, model=#{model.inspect}). " \
-                            'Configure Legion::Settings[:llm][:default_provider] and [:default_model], or pass them explicitly.'
+                            'Configure Legion::Settings[:llm][:default_provider] and [:default_model], publish an inventory lane, or pass them explicitly.'
           end
 
           pipeline_request = build_pipeline_request(
@@ -132,6 +130,23 @@ module Legion
         end
 
         # --- Private helpers ---
+
+        # True when the pipeline can resolve a provider/model for the request:
+        # an explicit pin, an auto-routing placeholder, a published inventory lane,
+        # a configured default, or an active SSOT (Phase 1) registry generation.
+        def routing_resolvable?(provider, model, auto_route)
+          return true if provider || model || auto_route
+          return true if Legion::LLM::Inventory.lanes.any?
+          return true if Legion::Settings[:llm][:default_provider] || Legion::Settings[:llm][:default_model]
+
+          ssot_registry_active?
+        end
+
+        def ssot_registry_active?
+          Legion::Extensions::Llm::Inventory::Registry.snapshot.generation.positive?
+        rescue StandardError
+          false
+        end
 
         def build_pipeline_request(message, provider:, model:, intent:, tier:, schema:, tools:,
                                    escalate:, max_escalations:, thinking:, temperature:,
@@ -230,7 +245,7 @@ module Legion
           "#{question}\n\nOptions:\n#{options_text}\n\nPick the best option and explain your reasoning."
         end
 
-        private_class_method :build_pipeline_request,
+        private_class_method :routing_resolvable?, :ssot_registry_active?, :build_pipeline_request,
                              :build_summarize_prompt, :build_extract_prompt, :build_decide_prompt
       end
     end

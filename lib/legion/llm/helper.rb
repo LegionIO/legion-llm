@@ -37,8 +37,10 @@ module Legion
       def llm_chat(message, model: nil, provider: nil, intent: nil, tier: nil, tools: [],
                    instructions: nil, compress: 0, escalate: nil, max_escalations: nil,
                    quality_check: nil, caller: nil, use_default_intent: false)
-        effective_model = model || llm_default_model
-        effective_provider = provider || llm_default_provider
+        # SSOT v3: forward explicit provider/model or none. An omitted model/provider
+        # is an empty constraint the router resolves, never a configured default.
+        effective_model = model
+        effective_provider = provider
         effective_intent = intent || (use_default_intent ? llm_default_intent : nil)
 
         if compress.positive?
@@ -70,8 +72,9 @@ module Legion
       end
 
       def llm_session(model: nil, provider: nil, intent: nil, tier: nil, caller: nil, use_default_intent: false)
-        effective_model = model || llm_default_model
-        effective_provider = provider || llm_default_provider
+        # SSOT v3: forward explicit provider/model or none (empty constraint).
+        effective_model = model
+        effective_provider = provider
         effective_intent = intent || (use_default_intent ? llm_default_intent : nil)
 
         Legion::LLM.chat(model: effective_model, provider: effective_provider,

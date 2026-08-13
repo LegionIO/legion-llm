@@ -222,23 +222,25 @@ RSpec.describe Legion::LLM::Prompt do
       end
     end
 
-    context 'with nil provider' do
+    # SSOT v3 invariant: a model pin never implies a provider and an omitted
+    # provider/model is an empty constraint, so a partial pin is a valid constraint
+    # that the router/executor resolves. When no lane can satisfy it the failure is
+    # surfaced by routing (an LLMError family error) rather than a pre-routing guard.
+    context 'with nil provider and no lane satisfying the model pin' do
       before { Legion::LLM::Inventory.reset_live_store! }
 
-      it 'raises LLMError' do
-        expect { described_class.request('Hello', provider: nil, model: 'claude-sonnet-4-6') }.to raise_error(
-          Legion::LLM::LLMError, /provider.*must be set/i
-        )
+      it 'fails through routing when no lane matches the model pin' do
+        expect { described_class.request('Hello', provider: nil, model: 'claude-sonnet-4-6') }
+          .to raise_error(Legion::LLM::LLMError)
       end
     end
 
-    context 'with nil model' do
+    context 'with nil model and no lane satisfying the provider pin' do
       before { Legion::LLM::Inventory.reset_live_store! }
 
-      it 'raises LLMError' do
-        expect { described_class.request('Hello', provider: :anthropic, model: nil) }.to raise_error(
-          Legion::LLM::LLMError, /model.*must be set/i
-        )
+      it 'fails through routing when no lane matches the provider pin' do
+        expect { described_class.request('Hello', provider: :anthropic, model: nil) }
+          .to raise_error(Legion::LLM::LLMError)
       end
     end
 

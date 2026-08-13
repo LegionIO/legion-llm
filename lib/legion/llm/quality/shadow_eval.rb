@@ -22,17 +22,25 @@ module Legion
           end
 
           def evaluate(primary_response:, messages: nil, shadow_model: nil)
-            shadow_model ||= shadow_setting(:model, 'gpt-4o-mini')
+            # SSOT v3: no hard-coded shadow model. Forward the configured shadow
+            # model when present, otherwise an empty constraint the router resolves.
+            shadow_model ||= shadow_setting(:model)
             log.info(
-              "[llm][shadow] evaluate primary_model=#{primary_response[:model]} shadow_model=#{shadow_model}"
+              "[llm][shadow] evaluate primary_model=#{primary_response[:model]} shadow_model=#{shadow_model || 'auto'}"
             )
 
-            shadow_response = Legion::LLM.send(:chat_single,
-                                               model: shadow_model, provider: nil,
-                                               messages: messages, intent: nil,
-                                               tier: nil)
+            # Route the shadow turn through the canonical Request -> Executor
+            # (RoutingSession) path, not a parallel selector.
+            shadow_response = normalize_shadow_response(
+              Legion::LLM.chat(
+                model: shadow_model, provider: nil, messages: messages,
+                intent: nil, tier: nil,
+                caller: { requested_by: { type: :system, identity: 'legion:internal:shadow_eval' } }
+              )
+            )
+            resolved_shadow_model = shadow_model || shadow_response[:model]
 
-            comparison = compare(primary_response, shadow_response, shadow_model)
+            comparison = compare(primary_response, shadow_response, resolved_shadow_model)
             record(comparison)
             log.info(
               "[llm][shadow] recorded primary_model=#{comparison[:primary_model]} " \
@@ -93,6 +101,31 @@ module Legion
           def shadow_setting(key, default = nil)
             value = Legion::Settings.dig(:llm, :shadow, key)
             value.nil? ? default : value
+          end
+
+          # Normalize a canonical pipeline Inference::Response (or hash / provider
+          # message) into the { content:, model:, usage: } shape compare expects.
+          def normalize_shadow_response(response)
+            return response if response.is_a?(Hash) && response.key?(:content)
+
+            if response.respond_to?(:message)
+              msg = response.message
+              content = msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg
+              routing = response.respond_to?(:routing) && response.routing.is_a?(Hash) ? response.routing : {}
+              tokens  = response.respond_to?(:tokens) && response.tokens.is_a?(Hash) ? response.tokens : {}
+              return { content: content.to_s, model: routing[:model] || routing['model'], usage: tokens }
+            end
+
+            if response.respond_to?(:content)
+              model = response.respond_to?(:model_id) ? response.model_id : nil
+              usage = response.respond_to?(:usage) ? response.usage : {}
+              return { content: response.content.to_s, model: model, usage: usage }
+            end
+
+            hash = response.is_a?(Hash) ? response : {}
+            { content: (hash[:content] || hash['content']).to_s,
+              model:   hash[:model] || hash['model'],
+              usage:   hash[:usage] || hash['usage'] || {} }
           end
 
           def record(comparison)

@@ -230,10 +230,14 @@ module Legion
             explicit_challenger = debate_setting(:challenger_model)
             explicit_judge      = debate_setting(:judge_model)
 
-            request_model    = @resolved_model || (request.routing.is_a?(Hash) ? request.routing[:model] : nil) || Legion::Settings[:llm][:default_model]
-            request_provider = @resolved_provider || (request.routing.is_a?(Hash) ? request.routing[:provider] : nil) || Legion::Settings[:llm][:default_provider]
+            # SSOT v3: the advocate is the exact lane that produced the primary
+            # response (resolved provider/model), or an explicitly configured debate
+            # advocate — never a configured default_model/default_provider.
+            request_model    = @resolved_model || (request.routing.is_a?(Hash) ? request.routing[:model] : nil)
+            request_provider = @resolved_provider || (request.routing.is_a?(Hash) ? request.routing[:provider] : nil)
 
-            advocate_model = explicit_advocate || "#{request_provider}:#{request_model}"
+            advocate_model = explicit_advocate ||
+                             (request_provider && request_model ? "#{request_provider}:#{request_model}" : nil)
 
             if explicit_challenger && explicit_judge
               return {

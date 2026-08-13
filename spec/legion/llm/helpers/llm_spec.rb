@@ -107,18 +107,18 @@ RSpec.describe Legion::LLM::Helper do
       expect(mock_chat).to have_received(:ask).with('The very important question')
     end
 
-    it 'applies layered model default when model is not provided' do
+    it 'forwards nil model/provider when none is provided (SSOT resolves, no injected default)' do
       allow(instance).to receive(:llm_default_model).and_return('llama3')
       allow(instance).to receive(:llm_default_provider).and_return(:ollama)
       allow(instance).to receive(:llm_default_intent).and_return(nil)
 
       instance.llm_chat('hello')
       expect(Legion::LLM).to have_received(:chat).with(
-        hash_including(model: 'llama3', provider: :ollama, escalate: false)
+        hash_including(model: nil, provider: nil, escalate: false)
       )
     end
 
-    it 'prefers explicit model over layered default' do
+    it 'prefers explicit model over an empty constraint' do
       allow(instance).to receive(:llm_default_model).and_return('llama3')
 
       instance.llm_chat('hello', model: 'gpt-4o')
@@ -204,14 +204,14 @@ RSpec.describe Legion::LLM::Helper do
   end
 
   describe '#llm_session' do
-    it 'returns a chat object with layered defaults' do
+    it 'returns a chat object forwarding nil model/provider (SSOT resolves, no injected default)' do
       allow(instance).to receive(:llm_default_model).and_return('llama3')
       allow(instance).to receive(:llm_default_provider).and_return(:ollama)
       allow(instance).to receive(:llm_default_intent).and_return(nil)
 
       instance.llm_session
       expect(Legion::LLM).to have_received(:chat).with(
-        hash_including(model: 'llama3', provider: :ollama, escalate: false)
+        hash_including(model: nil, provider: nil, escalate: false)
       )
     end
 

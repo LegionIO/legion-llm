@@ -159,11 +159,22 @@ module Legion
         temperature = kwargs.delete(:temperature)
         kwargs.delete(:urgency)
 
-        cache_key = build_cache_key(model, provider, message, temperature) if cacheable?(cache_opt, temperature, message)
-        if cache_key
+        # SSOT v3 §20.1: select first, then probe the response cache by the exact
+        # Selection identity — before any callable acquisition. Legacy pre-routing
+        # cache remains as the fallback when the SSOT inventory path is inactive.
+        cache_key = nil
+        ssot_cache = ssot_response_cache(message: message, model: model, provider: provider,
+                                         tier: tier, temperature: temperature, cache_opt: cache_opt,
+                                         shape: response_cache_shape(kwargs))
+        if ssot_cache
+          return ssot_cache[:response] if ssot_cache[:hit]
+
+          cache_key = ssot_cache[:key]
+        elsif cacheable?(cache_opt, temperature, message)
+          cache_key = build_cache_key(model, provider, message, temperature)
           cached = Cache.get(cache_key)
           if cached
-            log.debug '[llm][inference] chat_direct_governed cache=hit'
+            log.debug '[llm][inference] chat_direct_governed cache=hit path=legacy'
             cached_response = cached.dup
             cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
             return cached_response
@@ -208,12 +219,23 @@ module Legion
         temperature = kwargs.delete(:temperature)
 
         escalate = escalation_enabled? if escalate.nil?
-        cache_key = build_cache_key(model, provider, message, temperature) if cacheable?(cache_opt, temperature, message)
 
-        if cache_key
+        # SSOT v3 §20.1: select first, then probe the response cache by the exact
+        # Selection identity — before any callable acquisition. Legacy pre-routing
+        # cache remains as the fallback when the SSOT inventory path is inactive.
+        cache_key = nil
+        ssot_cache = ssot_response_cache(message: message, model: model, provider: provider,
+                                         tier: tier, temperature: temperature, cache_opt: cache_opt,
+                                         shape: response_cache_shape(kwargs))
+        if ssot_cache
+          return ssot_cache[:response] if ssot_cache[:hit]
+
+          cache_key = ssot_cache[:key]
+        elsif cacheable?(cache_opt, temperature, message)
+          cache_key = build_cache_key(model, provider, message, temperature)
           cached = Cache.get(cache_key)
           if cached
-            log.debug '[llm][inference] chat_direct_raw cache=hit'
+            log.debug '[llm][inference] chat_direct_raw cache=hit path=legacy'
             cached_response = cached.dup
             cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
             return cached_response
@@ -866,13 +888,141 @@ module Legion
       end
 
       def build_cache_key(model, provider, message, temperature)
+        # SSOT v3 §20.1: no provider/model default injection in the key builder.
+        # An omitted model/provider is an empty constraint, not a configured default.
         messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         Cache.key(
-          model:       model || Legion::Settings[:llm][:default_model],
-          provider:    provider || Legion::Settings[:llm][:default_provider],
+          model:       model,
+          provider:    provider,
           messages:    messages_arr,
           temperature: temperature
         )
+      end
+
+      # SSOT v3 §20.1 operation for the chat_direct response cache probe.
+      RESPONSE_CACHE_OPERATION = :chat
+
+      # SSOT v3 §20.1: select the exact lane through a per-request RoutingSession,
+      # then probe the response cache keyed by that Selection — AFTER next_attempt
+      # returns an AttemptContext but BEFORE any callable acquisition. A cache hit
+      # therefore proves current policy/capability/context/availability eligibility
+      # and reports the exact Selection identity while avoiding provider dispatch.
+      # Returns:
+      #   { hit: true,  response: <hash>, key: <str> } on hit,
+      #   { hit: false, response: nil,   key: <str> } on miss (caller dispatches + stores),
+      #   nil when the SSOT inventory path is inactive or the request is not
+      #     cacheable (caller keeps the legacy pre-routing cache path).
+      def ssot_response_cache(message:, model:, provider:, tier:, temperature:, cache_opt:, shape: {})
+        return nil unless cacheable?(cache_opt, temperature, message)
+
+        snapshot = Legion::Extensions::Llm::Inventory::Registry.snapshot
+        return nil unless snapshot.generation.positive?
+
+        request = ssot_cache_request(message: message, model: model, provider: provider,
+                                     tier: tier, temperature: temperature, shape: shape)
+        requirements = ssot_cache_requirements(request)
+        return nil unless requirements
+
+        session = Legion::LLM::Inference::RoutingSession.new(request: request, requirements: requirements)
+        attempt = session.next_attempt(snapshot: snapshot)
+        return nil if attempt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
+
+        key = ssot_cache_key_for(selection: attempt.selection, request: request, snapshot: snapshot)
+        cached = Cache.get(key)
+        return { hit: false, response: nil, key: key } unless cached
+
+        response = cached.dup
+        response[:meta] = (response[:meta] || {}).merge(
+          cached:   true,
+          provider: attempt.selection.provider_family,
+          model:    attempt.selection.model,
+          instance: attempt.selection.instance_id
+        )
+        log.debug "[llm][inference] action=ssot_response_cache cache=hit provider=#{attempt.selection.provider_family} model=#{attempt.selection.model}"
+        { hit: true, response: response, key: key }
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.ssot_response_cache')
+        nil
+      end
+
+      def ssot_cache_request(message:, model:, provider:, tier:, temperature:, shape:)
+        args = { message: message, model: model, provider: provider }
+        args[:tier] = tier if tier
+        args[:system] = shape[:system] if shape[:system]
+        args[:tools] = shape[:tools] if shape.key?(:tools)
+        args[:tool_choice] = shape[:tool_choice] if shape[:tool_choice]
+        args[:thinking] = shape[:thinking] if shape[:thinking]
+        args[:response_format] = shape[:response_format] if shape[:response_format]
+        args[:tokens] = shape[:tokens] if shape[:tokens]
+        generation = (shape[:generation] || {}).dup
+        generation[:temperature] = temperature unless temperature.nil?
+        args[:generation] = generation unless generation.empty?
+        Inference::Request.from_chat_args(**args)
+      end
+
+      # Mirror the executor's build_ssot_v3_routing_requirements so the probe
+      # selection uses the exact same requirement inputs the dispatch will.
+      def ssot_cache_requirements(request)
+        required_caps = Legion::LLM::Router::RequiredCapabilities.call(
+          request: request, operation: RESPONSE_CACHE_OPERATION
+        )
+        framing = request.routing_settings_snapshot&.input_framing_overhead_tokens || 0
+        input_bound = Legion::LLM::Router::InputBound.call(
+          operation:               RESPONSE_CACHE_OPERATION,
+          messages:                request.messages,
+          system:                  request.system,
+          tools:                   request.tools,
+          tool_choice:             request.tool_choice,
+          thinking:                request.thinking,
+          response_format:         request.response_format,
+          framing_overhead_tokens: framing
+        )
+        Legion::LLM::Router::RequestRequirements.build(
+          request:                request,
+          operation:              RESPONSE_CACHE_OPERATION,
+          required_capabilities:  required_caps,
+          estimated_input_bound:  input_bound,
+          required_output_tokens: 0
+        )
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.ssot_cache_requirements')
+        nil
+      end
+
+      def ssot_cache_key_for(selection:, request:, snapshot:)
+        offering = snapshot.offering(offering_id: selection.offering_id)
+        revision_evidence = offering.respond_to?(:model_revision_evidence) ? offering.model_revision_evidence : nil
+        revision = if revision_evidence.respond_to?(:known?) && revision_evidence.known?
+                     revision_evidence.value.to_s
+                   else
+                     "instance:#{selection.instance_id}"
+                   end
+        Cache.selection_key(
+          provider_family:   selection.provider_family,
+          model:             selection.model,
+          revision:          revision,
+          operation:         selection.operation,
+          system:            request.system,
+          messages:          request.messages,
+          tools:             request.tools,
+          tool_choice:       request.tool_choice,
+          thinking:          request.thinking,
+          response_format:   request.response_format,
+          max_output_tokens: (request.tokens.is_a?(Hash) ? request.tokens[:max] : nil),
+          generation:        request.generation
+        )
+      end
+
+      def response_cache_shape(kwargs)
+        {
+          system:          kwargs[:system],
+          tools:           kwargs[:tools],
+          tool_choice:     kwargs[:tool_choice],
+          thinking:        kwargs[:thinking],
+          response_format: kwargs[:response_format],
+          tokens:          kwargs[:tokens],
+          generation:      kwargs[:generation]
+        }
       end
 
       def escalation_enabled?

@@ -610,13 +610,15 @@ RSpec.describe Legion::LLM::Context::Curator do
       expect(Legion::Settings[:llm][:context_curation][:target_context_tokens]).to eq(40_000)
     end
 
-    it 'can use vLLM as the small local/fleet curation model' do
-      Legion::Settings[:extensions][:llm] = {
-        ollama: { enabled: false, default_model: 'llama3.1:8b' },
-        vllm:   { enabled: true, default_model: 'qwen3.6-27b' }
-      }
+    # SSOT v3: the curator no longer scans extension provider defaults to pick a
+    # small model (detect_small_model removed). It forwards the explicitly
+    # configured curation model, or skips LLM distillation when none is set.
+    it 'skips LLM distillation when no curation model is configured' do
+      allow(curator).to receive(:setting).and_call_original
+      allow(curator).to receive(:setting).with(:llm_model, nil).and_return(nil)
+      expect(Legion::LLM).not_to receive(:chat_direct)
 
-      expect(curator.send(:detect_small_model)).to eq('qwen3.6-27b')
+      expect(curator.send(:llm_summarize_tool_result, 'some tool output', 'read_file')).to be_nil
     end
   end
 

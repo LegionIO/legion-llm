@@ -247,13 +247,16 @@ module Legion
               custom_id = req[:custom_id] || req['custom_id'] || SecureRandom.uuid
               body      = req[:body] || req['body'] || {}
               messages  = body[:messages] || body['messages'] || []
-              model     = body[:model]    || body['model']    || 'default'
+              # SSOT v3: each batch item builds its own Request/seed/RoutingSession via
+              # the Executor. An omitted item model is an empty constraint the router
+              # resolves — never a literal 'default'.
+              model     = body[:model] || body['model']
 
               effective_caller = caller_context.empty? ? { source: 'openai_batch', path: "/v1/batches/#{batch_id}" } : caller_context
 
               inference_request = Legion::LLM::Inference::Request.build(
                 messages: messages,
-                routing:  { model: model },
+                routing:  (model ? { model: model } : {}),
                 caller:   effective_caller
               )
 

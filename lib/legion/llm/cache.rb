@@ -31,6 +31,35 @@ module Legion
         Digest::SHA256.hexdigest(payload)
       end
 
+      # SSOT v3 §20.1 response-cache identity. Built from the EXACT selected lane
+      # (provider_family + selected model + authoritative immutable model revision,
+      # or the exact instance_id when revision is unknown) plus every semantic
+      # request input that changes the answer. It deliberately never includes
+      # lane_id, offering_id, tier, weight, affinity, routing seed, or the
+      # requested/ignored body alias — identical model strings across provider
+      # families never share, and cross-instance sharing is allowed only with
+      # identical authoritative revision evidence.
+      def selection_key(provider_family:, model:, revision:, operation:, system:, messages:,
+                        tools: nil, tool_choice: nil, thinking: nil, response_format: nil,
+                        max_output_tokens: nil, generation: nil)
+        payload = Legion::JSON.dump({
+                                      schema_version:  RESPONSE_CACHE_SCHEMA_VERSION,
+                                      provider_family: provider_family.to_s,
+                                      model:           model.to_s,
+                                      revision:        revision.to_s,
+                                      operation:       operation.to_s,
+                                      system:          system,
+                                      messages:        messages,
+                                      tools:           tools,
+                                      tool_choice:     tool_choice,
+                                      thinking:        thinking,
+                                      response_format: response_format,
+                                      max_output:      max_output_tokens,
+                                      generation:      generation
+                                    })
+        Digest::SHA256.hexdigest(payload)
+      end
+
       # Returns the cached response hash, or nil on miss / cache unavailable.
       def get(cache_key)
         return nil unless available?
