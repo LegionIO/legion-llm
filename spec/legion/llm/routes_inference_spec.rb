@@ -309,6 +309,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:stream_preflight!).and_return(nil)
       allow(executor).to receive(:call_stream).and_return(response)
 
       response = post_json(
@@ -564,6 +565,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:stream_preflight!).and_return(nil)
       allow(executor).to receive(:call_stream) do |&block|
         block&.call('Hello ')
         block&.call('from pipeline')
@@ -593,6 +595,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:stream_preflight!).and_return(nil)
       allow(executor).to receive(:call_stream).and_return(response)
       allow_any_instance_of(test_app).to receive(:log).and_return(logger)
 
@@ -630,6 +633,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:stream_preflight!).and_return(nil)
       allow(executor).to receive(:call_stream) do |&block|
         handler.call(
           type:         :tool_result,
@@ -661,6 +665,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:stream_preflight!).and_return(nil)
       allow(executor).to receive(:call_stream) do |&block|
         block&.call(double('chunk1', content: [{ type: 'text', text: 'Plain ' }]))
         block&.call(double('chunk2', content: [{ type: 'tool_use', id: 'tc_1', name: 'legion_tools' }]))
@@ -688,6 +693,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:stream_preflight!).and_return(nil)
       allow(executor).to receive(:call_stream) do |&block|
         block&.call(double('thinking_chunk', content: nil, thinking: 'reasoning...'))
         block&.call(double('text_chunk', content: 'answer', thinking: nil))
@@ -714,6 +720,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
       allow(Legion::LLM::Inference::Request).to receive(:build).and_return(:req)
       allow(Legion::LLM::Inference::Executor).to receive(:new).with(:req).and_return(executor)
+      allow(executor).to receive(:stream_preflight!).and_return(nil)
       allow(executor).to receive(:call_stream) do |&block|
         block&.call(double('thinking_chunk', content: nil, thinking: 'reasoning...'))
         block&.call(double('text_chunk', content: 'answer', thinking: nil))

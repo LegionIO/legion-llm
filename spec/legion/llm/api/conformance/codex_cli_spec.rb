@@ -120,6 +120,7 @@ RSpec.describe 'Codex CLI conformance', :ssot_v3, type: :conformance do
 
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
+      allow(fake_executor).to receive(:stream_preflight!).and_return(nil)
       allow(fake_executor).to receive(:call_stream) do |&block|
         fake_chunks.each { |chunk| block.call(chunk) }
         fake_pipeline_response

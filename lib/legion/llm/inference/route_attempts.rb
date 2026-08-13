@@ -76,9 +76,14 @@ module Legion
         # step_provider_call_stream continue to work.
         def ssot_v3_direct_dispatch(operation:, messages:, dispatch_options:, idempotency_key:, stream_block:)
           arguments = dispatch_options.merge(messages: messages)
+          # §15.2: reuse the streaming preflight lease when present (attempt one on
+          # the exact selected callable). After a mid-stream failover the executor
+          # has released it (@preflight_lease == nil) and SelectionDispatch acquires
+          # its own lease for the re-selected callable.
           sd_result = Legion::LLM::Call::SelectionDispatch.call(
             attempt_context: @current_attempt_context,
             arguments:       arguments,
+            dispatch_lease:  @preflight_lease,
             &stream_block
           )
           if sd_result.success?
@@ -100,6 +105,9 @@ module Legion
             selected_lane:   nil,
             failure_reason:  sd_result.outcome.reason
           )
+          # Preserve the exact Phase 1 outcome for the streaming failover classifier
+          # (§19) — the raised Legion error alone would lose the normalized kind.
+          @last_ssot_dispatch_outcome = sd_result.outcome
           raise ssot_v3_provider_outcome_error(sd_result.outcome)
         end
 

@@ -45,6 +45,7 @@ RSpec.describe 'API::DebugFormats (G21)' do
   let(:mock_executor) do
     instance_double(Legion::LLM::Inference::Executor).tap do |ex|
       allow(ex).to receive(:call).and_return(mock_response)
+      allow(ex).to receive(:stream_preflight!).and_return(nil)
       allow(ex).to receive(:call_stream).and_yield(
         double(content: 'Hello there!', thinking: nil)
       ).and_return(mock_response)

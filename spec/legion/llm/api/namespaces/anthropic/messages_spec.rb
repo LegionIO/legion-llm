@@ -145,6 +145,7 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
 
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
+      allow(mock_executor).to receive(:stream_preflight!).and_return(nil)
       allow(mock_executor).to receive(:call_stream).and_yield(
         double(content: 'Hello', thinking: nil, respond_to?: true)
       ).and_return(mock_response)
@@ -193,6 +194,7 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
     end
 
     it 'emits thinking blocks in streaming when emit_thinking_blocks is enabled (default)' do
+      allow(mock_executor).to receive(:stream_preflight!).and_return(nil)
       allow(mock_executor).to receive(:call_stream).and_yield(
         double(content: nil, thinking: 'internal reasoning', respond_to?: true)
       ).and_return(mock_response)

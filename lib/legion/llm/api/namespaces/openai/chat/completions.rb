@@ -59,6 +59,11 @@ module Legion
                   echo_request = Legion::LLM::API::DebugFormats.echo_request?(env)
 
                   if streaming
+                    # SSOT v3 §19: select + acquire the exact lane BEFORE opening SSE
+                    # so a routing rejection surfaces as an HTTP error (below) rather
+                    # than an SSE server_error after headers are committed.
+                    preflight_lane = executor.stream_preflight!
+
                     content_type 'text/event-stream'
                     headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive', 'X-Accel-Buffering' => 'no'
                     stream do |out|
@@ -76,9 +81,9 @@ module Legion
                         emitter:      emitter,
                         request_id:   request_id,
                         model:        model,
-                        initial_lane: { id: 'unknown:pending' }
+                        initial_lane: preflight_lane || { id: 'unknown:pending' }
                       )
-                      pipeline_response = executor.call_stream { |c| assembler.push(c) }
+                      pipeline_response = executor.call_stream(stream_observer: assembler) { |c| assembler.push(c) }
                       assembler.finalize(pipeline_response)
                       log_api_completion_summary(
                         namespace:         'namespaces][openai][chat',

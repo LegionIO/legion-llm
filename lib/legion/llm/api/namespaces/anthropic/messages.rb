@@ -49,6 +49,11 @@ module Legion
               echo_request = Legion::LLM::API::DebugFormats.echo_request?(env)
 
               if streaming
+                # SSOT v3 §19: select + acquire the exact lane BEFORE opening SSE.
+                # A routing rejection raises Errors::RoutingRejected here (rescued
+                # below → RoutingErrorMapper) instead of an SSE error after headers.
+                preflight_lane = executor.stream_preflight!
+
                 content_type 'text/event-stream'
                 headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive',
                         'X-Accel-Buffering' => 'no', 'X-Legion-Conversation-Id' => conv_id
@@ -66,9 +71,9 @@ module Legion
                     request_id:   request_id,
                     model:        model,
                     input_tokens: estimate_input_tokens(inference_request.messages),
-                    initial_lane: { id: 'unknown:pending' }
+                    initial_lane: preflight_lane || { id: 'unknown:pending' }
                   )
-                  pipeline_response = executor.call_stream do |chunk|
+                  pipeline_response = executor.call_stream(stream_observer: assembler) do |chunk|
                     assembler.push(chunk)
                   end
                   assembler.finalize(pipeline_response)

@@ -74,6 +74,7 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
 
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
+      allow(fake_executor).to receive(:stream_preflight!).and_return(nil)
       allow(fake_executor).to receive(:call_stream) do |&block|
         ['Hello ', 'world!'].each { |text| block.call(text) }
         fake_pipeline_response
@@ -257,6 +258,7 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
 
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
+      allow(fake_executor).to receive(:stream_preflight!).and_return(nil)
       allow(fake_executor).to receive(:call_stream) do |&block|
         block.call('I will check the weather.')
         fake_pipeline_response

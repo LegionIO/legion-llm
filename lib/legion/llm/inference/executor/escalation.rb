@@ -80,24 +80,149 @@ module Legion
             @current_attempt_context = nil
           end
 
-          # SSOT v3 single-attempt stream path. Mirrors run_provider_call_ssot_v3_single.
-          def run_provider_call_ssot_v3_stream(&block)
+          # SSOT v3 §19 streaming preflight body. Called from Executor#stream_preflight!
+          # (before the route opens SSE) once pre-provider steps have built
+          # @routing_requirements. When the SSOT inventory path is active it selects
+          # the exact lane through a per-request RoutingSession and acquires that
+          # lane's DispatchLease, retaining both on the executor for the subsequent
+          # call_stream. A rejection propagates as Errors::RoutingRejected (via
+          # next_attempt!) so the route maps it to an HTTP status BEFORE headers —
+          # never an SSE server_error. Returns the selected lane Hash, or nil when
+          # the SSOT path is not active (fallback: call_stream selects inline).
+          def ssot_v3_stream_preflight
+            return nil unless ssot_v3_inventory_active?
+
+            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+            @stream_session = Legion::LLM::Inference::RoutingSession.new(
+              request: @request, requirements: @routing_requirements
+            )
+            attempt_context = @stream_session.next_attempt!(snapshot: snap)
+            populate_ssot_v3_resolved_state(attempt_context)
+            @preflight_lease = Legion::Extensions::Llm::Inventory::Registry.acquire(
+              callable_handle: attempt_context.selection.callable_handle
+            )
+            lane = ssot_v3_stream_lane_hash(attempt_context)
+            log.info "[llm][executor] action=ssot_v3_stream_preflight_selected lane=#{lane[:id]} " \
+                     "provider=#{@resolved_provider} model=#{@resolved_model}"
+            lane
+          end
+
+          # Lane Hash consumed by StreamAssembler (#initial_lane, #begin_dispatch_on,
+          # #provider_failover_pending!). Built from the exact Selection identity so
+          # the failover debug trailers report real lane IDs — NOT 'unknown:pending'.
+          def ssot_v3_stream_lane_hash(attempt_context)
+            sel = attempt_context.selection
+            {
+              id:              sel.lane_id,
+              provider_family: sel.provider_family,
+              instance_id:     sel.instance_id,
+              model:           sel.model,
+              tier:            attempt_context.lane.tier
+            }
+          end
+
+          # SSOT v3 §19 streaming dispatch + post-first-byte failover. Reuses the
+          # preflight RoutingSession/AttemptContext when present; otherwise selects
+          # inline (direct call_stream callers that did not preflight). On a
+          # retriable provider failure it preserves the existing StreamAssembler
+          # failover sequence: classify → retain consumed target + add justified
+          # exclusions → provider_failover_pending!(from:) → strip cross-provider
+          # thinking → next_attempt with a fresh snapshot → begin_dispatch_on(lane:)
+          # → continue the SAME client SSE session (no replay, no custom switch
+          # event). Terminal outcomes and exhaustion re-raise so the route emits the
+          # dialect terminal SSE error (headers are already committed).
+          def run_provider_call_ssot_v3_stream(&)
+            session, attempt_context = ssot_v3_stream_session_and_attempt
+            run_provider_call_ssot_v3_stream_loop(session: session, attempt_context: attempt_context, &)
+          rescue Legion::LLM::Errors::RoutingRejected => e
+            # No lane at inline selection (no preflight ran) — degrade to old path.
+            log.warn "[llm][executor] action=ssot_v3_stream_routing_rejected reason=#{e.rejection&.reason} falling_back=old_path"
+            @current_attempt_context = nil
+            execute_provider_request_stream(&)
+          ensure
+            @current_attempt_context = nil
+          end
+
+          # Resolve the (session, attempt_context) pair for streaming dispatch.
+          # Preflight (§19) already selected + acquired before SSE opened: reuse it.
+          # Otherwise select inline here (raises RoutingRejected → old-path fallback).
+          def ssot_v3_stream_session_and_attempt
+            return [@stream_session, @current_attempt_context] if @stream_session && @current_attempt_context
+
             snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
             session = Legion::LLM::Inference::RoutingSession.new(
               request: @request, requirements: @routing_requirements
             )
             attempt_context = session.next_attempt!(snapshot: snap)
             populate_ssot_v3_resolved_state(attempt_context)
-            execute_provider_request_stream(&block)
-            # On success, classify (no retry loop — errors propagate from execute_provider_request_stream).
-            fake_result = Legion::LLM::Call::SelectionDispatch::Result.success(value: @raw_response)
-            session.classify(dispatch_result: fake_result, attempt_context: attempt_context)
-          rescue Legion::LLM::Errors::RoutingRejected => e
-            log.warn "[llm][executor] action=ssot_v3_stream_routing_rejected reason=#{e.rejection&.reason} falling_back=old_path"
-            @current_attempt_context = nil
-            execute_provider_request_stream(&block)
-          ensure
-            @current_attempt_context = nil
+            [session, attempt_context]
+          end
+
+          # Bounded failover loop (no `loop do`/`retry`). RoutingSession bounds the
+          # attempt count: next_attempt returns an attempts_exhausted Rejection once
+          # requirements.maximum_attempts distinct targets are consumed.
+          def run_provider_call_ssot_v3_stream_loop(session:, attempt_context:, &)
+            current = attempt_context
+            while current
+              populate_ssot_v3_resolved_state(current)
+              begin
+                execute_provider_request_stream(&)
+                session.classify(
+                  dispatch_result: Legion::LLM::Call::SelectionDispatch::Result.success(value: @raw_response),
+                  attempt_context: current
+                )
+                return
+              rescue StandardError => e
+                current = ssot_v3_stream_handle_failure(error: e, session: session, attempt_context: current)
+              end
+            end
+          end
+
+          # Classify one streaming provider failure and either continue to the next
+          # eligible lane (returns the new AttemptContext) or re-raise (terminal,
+          # non-provider, or no replacement). Client-write/disconnect and daemon
+          # errors are never provider failures — they re-raise untouched.
+          def ssot_v3_stream_handle_failure(error:, session:, attempt_context:)
+            raise error if non_provider_failure?(error)
+
+            outcome = ssot_v3_stream_failover_outcome(error)
+            action = session.classify(
+              dispatch_result: Legion::LLM::Call::SelectionDispatch::Result.failure(outcome: outcome),
+              attempt_context: attempt_context
+            )
+            raise error if action.disposition == :terminal
+
+            # Preserve the existing StreamAssembler failover sequence (§19). The
+            # assembler clears its partial canonical buffer and strips provider-bound
+            # thinking/reasoning before the next provider renders a clean start.
+            @stream_observer&.provider_failover_pending!(from: ssot_v3_stream_lane_hash(attempt_context))
+
+            # The consumed target for the old provider is done; a re-selected lane on
+            # a different callable acquires its own lease inside SelectionDispatch.
+            release_preflight_lease
+
+            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+            nxt = session.next_attempt(snapshot: snap)
+            raise error if nxt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
+
+            @stream_observer&.begin_dispatch_on(lane: ssot_v3_stream_lane_hash(nxt))
+            log.warn "[llm][executor] action=ssot_v3_stream_failover from_kind=#{outcome.kind} " \
+                     "to_lane=#{nxt.selection.lane_id}"
+            nxt
+          end
+
+          # Map a raised streaming provider error to a Phase 1 ProviderOutcome for
+          # classification. The exact outcome from SelectionDispatch is preserved
+          # losslessly by ssot_v3_direct_dispatch (@last_ssot_dispatch_outcome);
+          # fall back to a conservative :provider_error when it is absent.
+          def ssot_v3_stream_failover_outcome(error)
+            outcome = @last_ssot_dispatch_outcome
+            @last_ssot_dispatch_outcome = nil
+            return outcome if outcome.is_a?(Legion::Extensions::Llm::Routing::ProviderOutcome)
+
+            Legion::Extensions::Llm::Routing::ProviderOutcome.new(
+              kind: :provider_error, reason: error.class.name.to_s
+            )
           end
 
           # Build a minimal routing_payload from the already-resolved routing state.

@@ -44,6 +44,7 @@ RSpec.describe 'Codex CLI conformance', :integration do
     allow(Legion::LLM::Inference::Request).to receive(:build).and_return(double('Request'))
     allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(
       double('Executor').tap do |ex|
+        allow(ex).to receive(:stream_preflight!).and_return(nil)
         allow(ex).to receive(:call_stream) do |&block|
           block.call(double('Chunk', content: 'def hello; end'))
           pipeline_response

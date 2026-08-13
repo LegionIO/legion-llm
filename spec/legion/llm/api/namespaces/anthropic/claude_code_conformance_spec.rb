@@ -127,6 +127,7 @@ input_schema: { type: 'object', properties: { file_path: { type: 'string' } }, r
                                       conversation_id: nil,
                                       request_id:      nil)
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
+      allow(mock_executor).to receive(:stream_preflight!).and_return(nil)
       allow(mock_executor).to receive(:call_stream).and_yield(
         double(content: 'Done.', thinking: nil, respond_to?: true)
       ).and_return(mock_response)
