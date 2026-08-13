@@ -49,6 +49,24 @@ module SsotV3SnapshotFactory
         { ok: true, op: op }
       end
     end
+
+    # Conservative provider-neutral normalizer mirroring the Phase 1 base table.
+    # Raw/unknown errors → :provider_error, never :instance_unavailable.
+    def normalize_dispatch_error(error:)
+      llm = Legion::Extensions::Llm
+      kind =
+        case error
+        when llm::OverloadedError then :overloaded
+        when llm::RateLimitError then :rate_limited
+        when llm::UnauthorizedError then :authentication
+        when llm::ForbiddenError then :authorization
+        when llm::BadRequestError then :invalid_request
+        else :provider_error
+        end
+      reason = error.class.name
+      reason = 'UnknownError' if reason.nil? || reason.empty?
+      llm::Routing::ProviderOutcome.new(kind: kind, reason: reason)
+    end
   end
 
   def unknown_value
@@ -145,6 +163,34 @@ module SsotV3SnapshotFactory
 
   def snapshot
     inventory::Registry.snapshot
+  end
+
+  def routing
+    Legion::Extensions::Llm::Routing
+  end
+
+  # Build a real Phase 1 Routing::Selection for an activated lane in +snapshot+.
+  # Test-only: normally the Router produces this. Supplies valid weight scalars.
+  def selection_for(snapshot:, provider_family:, instance_id:, model:, operation: :chat,
+                    weight_inputs: { tier: 1, provider: 1, instance: 1, model_or_offering: 1 })
+    key = instance_key(provider_family: provider_family, instance_id: instance_id)
+    offering = snapshot.offerings_for(instance_key: key).find { |o| o.model == model }
+    offering_id = offering.offering_id
+    lane_id = inventory::Identity.lane_id(
+      instance_key: key, operation: operation, model: model, offering_id: offering_id
+    )
+    lane = snapshot.lane(lane_id: lane_id)
+    inst = snapshot.instance(instance_key: key)
+    base = weight_inputs.values.reduce(1, :*)
+    ppm = 1_000_000
+    routing::Selection.new(
+      inventory_generation: snapshot.generation, lane_id: lane_id, instance_key: key,
+      offering_id: offering_id, provider_family: key.provider_family, instance_id: key.instance_id,
+      model: model, operation: operation, callable_handle: lane.callable_handle,
+      publisher_token_id: inst.publisher_token_id, capability_evidence: {}, context_evidence: unknown_value,
+      weight_inputs: weight_inputs, base_weight: base, preference_ppm: ppm,
+      effective_weight: base * ppm, rendezvous_score: 1
+    )
   end
 
   # Convenience: reset the registry to a clean generation-zero store (RSpec-only).
