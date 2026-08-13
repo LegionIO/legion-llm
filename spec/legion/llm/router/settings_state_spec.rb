@@ -34,8 +34,11 @@ RSpec.describe Legion::LLM::Router::SettingsState do
   end
 
   describe '.current' do
-    it 'returns nil before install!' do
-      expect(described_class.current).to be_nil
+    it 'lazily installs generation 1 when boot has not run' do
+      described_class.reset!
+      snap = described_class.current
+      expect(snap).not_to be_nil
+      expect(snap.generation).to eq(1)
     end
   end
 
@@ -146,10 +149,12 @@ RSpec.describe Legion::LLM::Router::SettingsState do
   # ------------------------------------------------------------------ #
 
   describe '.reset!' do
-    it 'clears the current snapshot' do
+    it 'clears the installed snapshot so the next current lazily reinstalls generation 1' do
       described_class.install!
+      described_class.reload!(llm_settings: Legion::Settings[:llm], extension_settings: Legion::Settings[:extensions])
       described_class.reset!
-      expect(described_class.current).to be_nil
+      # After reset, current lazily reinstalls a fresh generation-1 snapshot.
+      expect(described_class.current.generation).to eq(1)
     end
 
     it 'allows install! to be called again after reset' do

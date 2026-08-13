@@ -7,6 +7,12 @@ require_relative 'router/availability'
 require 'legion/llm/inventory/discovery/system'
 require 'legion/llm/inventory/discovery/memory_gate'
 
+# SSOT v3 next_lane selector stack.
+require 'legion/llm/router/settings_state'
+require 'legion/llm/router/candidate_evaluator'
+require 'legion/llm/router/ranker'
+require 'legion/llm/router/rejection_diagnostics'
+
 require 'legion/logging/helper'
 module Legion
   module LLM
@@ -43,6 +49,75 @@ module Legion
       @populate_auto_rules_warned = false
 
       class << self
+        # SSOT v3 §12: the single selection method. Pure function of
+        # (routing_seed+requirements, exclusions, one snapshot generation, one
+        # settings generation). Returns exactly one Phase 1 Selection or Rejection
+        # — never nil, a lane hash, a model/provider string, a chain, or an array.
+        def next_lane(requirements:, exclusions:, snapshot:)
+          validate_exclusions!(exclusions)
+          validate_snapshot!(snapshot)
+          snapshot.generation # capture once (immutable snapshot)
+          settings_snapshot = Legion::LLM::Router::SettingsState.current
+
+          evaluation_set = Legion::LLM::Router::CandidateEvaluator.call(
+            requirements: requirements, exclusions: exclusions,
+            snapshot: snapshot, settings_snapshot: settings_snapshot
+          )
+          ranked = Legion::LLM::Router::Ranker.call(
+            evaluation_set: evaluation_set, requirements: requirements, settings_snapshot: settings_snapshot
+          )
+          return Legion::LLM::Router::RejectionDiagnostics.call(
+            requirements: requirements, evaluation_set: evaluation_set, snapshot: snapshot
+          ) if ranked.nil?
+
+          build_selection(ranked: ranked, snapshot: snapshot)
+        end
+
+        def validate_exclusions!(exclusions)
+          unless exclusions.is_a?(Array) &&
+                 exclusions.all? { |e| e.is_a?(Legion::Extensions::Llm::Routing::Exclusion) }
+            raise ArgumentError, 'exclusions must be an Array of Phase 1 Routing::Exclusion records'
+          end
+        end
+        private :validate_exclusions!
+
+        def validate_snapshot!(snapshot)
+          unless snapshot.is_a?(Legion::Extensions::Llm::Inventory::Snapshot)
+            raise ArgumentError, 'snapshot must be a Phase 1 Inventory::Snapshot'
+          end
+        end
+        private :validate_snapshot!
+
+        # Construct the Phase 1 Selection from the chosen RankedCandidate and its
+        # evaluation's same-generation records. Never re-reads the registry.
+        def build_selection(ranked:, snapshot:)
+          evaluation = ranked.evaluation
+          lane = evaluation.lane
+          offering = evaluation.offering
+          instance = evaluation.instance
+
+          Legion::Extensions::Llm::Routing::Selection.new(
+            inventory_generation: snapshot.generation,
+            lane_id:              lane.lane_id,
+            instance_key:         lane.instance_key,
+            offering_id:          lane.offering_id,
+            provider_family:      lane.provider_family,
+            instance_id:          lane.instance_id,
+            model:                lane.model,
+            operation:            lane.operation,
+            callable_handle:      lane.callable_handle,
+            publisher_token_id:   instance.publisher_token_id,
+            capability_evidence:  offering.capability_evidence,
+            context_evidence:     offering.context_evidence,
+            weight_inputs:        ranked.weight_inputs,
+            base_weight:          ranked.base_weight,
+            preference_ppm:       ranked.preference_ppm,
+            effective_weight:     ranked.effective_weight,
+            rendezvous_score:     ranked.rendezvous_score
+          )
+        end
+        private :build_selection
+
         # Stateless lane selection — pure function of (Inventory snapshot, routing payload).
         # Returns one lane Hash or nil (caller raises NoLaneAvailable / EscalationExhausted).
         #
