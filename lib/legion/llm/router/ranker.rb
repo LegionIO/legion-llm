@@ -89,9 +89,14 @@ module Legion
           budget     = @requirements.required_context_budget
           with_range = ready.map { |c| [c, @settings_snapshot.preferred_context_range_for(lane: c.lane)] }
 
-          range_specific = with_range.compact
-          generalist     = with_range.select { |_, r|  r.nil? }.map(&:first)
-          matching       = range_specific.select { |_, r| range_contains?(r, budget) }.map(&:first)
+          # `with_range` is an array of [candidate, range|nil] pairs. A lane with
+          # no preferred range is a generalist; a lane whose range contains the
+          # budget matches. The nil guard is folded into the match select on
+          # purpose: `with_range.compact`/`reject { |_, r| r.nil? }` would misfire
+          # (Style/CollectionCompact treats it as hash semantics) and leave nil
+          # ranges in, which then crash range_contains? with `nil[:min]`.
+          generalist = with_range.select { |_, r| r.nil? }.map(&:first)
+          matching   = with_range.select { |_, r| r && range_contains?(r, budget) }.map(&:first)
 
           # Preferred range is soft: never makes any lane hard-ineligible.
           return matching   unless matching.empty?
