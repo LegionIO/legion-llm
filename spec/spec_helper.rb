@@ -203,5 +203,12 @@ RSpec.configure do |config|
     # write_test_lane / the ssot_v3 factory. (ssot_v3-tagged specs reset again
     # in their own before hook.)
     Legion::Extensions::Llm::Inventory::Registry.reset!
+
+    # Flush the shared cache between examples. A spec that connects Legion::Cache
+    # (e.g. cache_spec's Legion::Cache.setup) leaves it connected for the rest of
+    # the run; without this, embeddings/response caching would return stale hits
+    # and skip provider dispatch in later specs — order-dependent failures.
+    Legion::Cache.flush if defined?(Legion::Cache) && Legion::Cache.respond_to?(:flush) &&
+                           Legion::Cache.respond_to?(:connected?) && Legion::Cache.connected?
   end
 end
