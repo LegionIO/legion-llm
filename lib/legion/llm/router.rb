@@ -3,7 +3,6 @@
 require 'legion/llm/inventory/capabilities'
 require_relative 'router/resolution'
 require_relative 'router/health_tracker'
-require_relative 'router/availability'
 require 'legion/llm/inventory/discovery/system'
 require 'legion/llm/inventory/discovery/memory_gate'
 
