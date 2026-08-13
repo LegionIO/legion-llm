@@ -194,43 +194,6 @@ module Legion
             .sample(random: rng)
         end
 
-        def infer_provider_for_model(model)
-          return nil if model.nil? || model.to_s.empty?
-
-          model_s = model.to_s
-          return :bedrock if model_s.start_with?('us.')
-          return :bedrock if model_s.match?(/\A(anthropic|meta|mistral|cohere|amazon|ai21)\./i)
-          return :openai if model_s.match?(/\Agpt-|\Ao[134]-/)
-          return :anthropic if model_s.start_with?('claude-')
-          return :gemini if model_s.start_with?('gemini-')
-          return :ollama if model_s.match?(OLLAMA_MODEL_PATTERN)
-
-          nil
-        end
-
-        # The provider's own default model from Inventory — the single source of
-        # truth (already whitelist/blacklist-filtered and discovery-fed). Sourcing
-        # a model here guarantees an explicit provider is paired only with a model
-        # it actually offers: anthropic resolves to its own offered model, never a
-        # stale registry default or a global default that belongs to a different
-        # provider (the anthropic->qwen pairing class). Returns nil when Inventory
-        # has no catalog for the provider (cold boot), so callers fall through to
-        # their existing fallbacks.
-        def inventory_default_model(provider, instance = nil)
-          return nil unless provider && defined?(Inventory)
-
-          candidates = Inventory.lanes_for(provider: provider.to_sym, type: :inference)
-          return nil if candidates.nil? || candidates.empty?
-
-          inst = (instance || :default).to_s
-          offering = candidates.find { |o| (o[:instance_id] || o[:provider_instance]).to_s == inst } || candidates.first
-          model = offering[:model] || offering[:canonical_model_alias]
-          model&.to_s
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'router.inventory_default_model')
-          nil
-        end
-
         def health_tracker
           @health_tracker ||= build_health_tracker
         end
