@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.16.0] - 2026-08-13
+
+### Fixed
+- **Never-recovering open circuit eliminated (routing incident).** An exact provider+instance whose circuit tripped could stay open permanently, yielding continual `no_lanes_available`. The legacy `HealthTracker` circuit engine (opened on error; its success-close path was dead behind a hardcoded gate) is deleted. The only health mechanism now is a normalized `instance_unavailable` mark on the exact instance via the Phase-1 Registry, cleared automatically when provider readiness republishes the instance (probe-cleared recovery). Transient provider errors (overload/timeout/429/5xx) stay request-local and never poison an instance. Locked in by `spec/legion/llm/router/ssot_v3_instance_recovery_regression_spec.rb`.
+
+### Changed
+- **SSOT v3: one stateless selector.** `Router.next_lane(requirements:, exclusions:, snapshot:)` is the single selection path — a pure function of one Registry snapshot plus one settings snapshot. Removed every competing selector and legacy fallback: `Router.request_lane` and its hard-filter helpers, `infer_provider_for_model`, `inventory_default_model`, the executor's old resolution chain, the `chat_single`/`chat_with_escalation` escalation cluster, and the `pipeline_enabled?` routing gate — `dispatch_chat` now always routes through the pipeline. Exhaustion/empty returns a typed, retriable Rejection (`service_unavailable`/`too_early`, 503/425/529 + Retry-After), never `nil` or a fabricated default.
+- **Dead modules removed.** Deleted `Router::Availability` and `Inventory::Sweeper` (unreachable).
+
+### Notes
+- Tracked follow-ups (out of scope for this change): `lex-llm-*` provider gems auto-publishing to the Phase-1 Registry at boot — unblocks removing the residual `Call::Registry`/`Call::Providers` boot layer; and wiring GAIA `preferred_provider`/`preferred_model` into `RequestRequirements` pins on the SSOT path (`CandidateEvaluator` already enforces pins).
+
 ## [0.15.2] - 2026-08-04
 
 ### Fixed
