@@ -2,7 +2,6 @@
 
 require 'legion/llm/inventory/capabilities'
 require_relative 'router/resolution'
-require_relative 'router/health_tracker'
 require 'legion/llm/inventory/discovery/system'
 require 'legion/llm/inventory/discovery/memory_gate'
 
@@ -119,10 +118,6 @@ module Legion
         end
         private :build_selection
 
-        def health_tracker
-          @health_tracker ||= build_health_tracker
-        end
-
         def routing_enabled?
           false
         end
@@ -144,7 +139,6 @@ module Legion
         end
 
         def reset!
-          @health_tracker = nil
           @auto_rules = []
           @auto_rules_populated = false
           @populate_auto_rules_warned = false
@@ -227,17 +221,6 @@ module Legion
           TIER_EXTERNAL.include?(tier)
         end
 
-        def build_health_tracker
-          health = Legion::Settings.dig(:llm, :routing, :health) || {}
-          cb = health[:circuit_breaker] || {}
-
-          HealthTracker.new(
-            window_seconds:         health.fetch(:window_seconds, 300),
-            failure_threshold:      cb.fetch(:failure_threshold, 3),
-            cooldown_seconds:       cb.fetch(:cooldown_seconds, 60),
-            sweep_interval_seconds: cb.fetch(:sweep_interval_seconds, 5)
-          )
-        end
       end
     end
   end

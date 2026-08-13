@@ -84,23 +84,6 @@ module Legion
               detail: "low confidence band=#{@confidence_score.band}",
               from: 'confidence_scoring', to: 'pipeline'
             )
-            report_low_confidence_health
-          end
-
-          def report_low_confidence_health
-            return unless @resolved_provider
-
-            Router.health_tracker.report( # allowlist:write-side
-              provider:    @resolved_provider,
-              instance:    @resolved_instance,
-              offering_id: @resolved_offering_id,
-              signal:      :quality_failure,
-              value:       1,
-              metadata:    { reason: :low_confidence, confidence: @confidence_score.to_h }
-            )
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.confidence_scoring.health_report',
-                                provider: @resolved_provider)
           end
         end
       end
