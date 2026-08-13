@@ -6,6 +6,7 @@ require 'sinatra/namespace'
 require 'legion/logging/helper'
 require 'legion/llm/api/client_translators/anthropic_messages'
 require 'legion/llm/api/stream_assembler'
+require 'legion/llm/api/routing_error_mapper'
 require 'legion/llm/api/debug_formats'
 
 module Legion
@@ -121,6 +122,8 @@ module Legion
               translate_escalation_exhausted(e, operation: 'llm.ns.anthropic.messages.exhausted', client: :anthropic)
             rescue Legion::LLM::Errors::InvalidHeader => e
               translate_invalid_header(e, operation: 'llm.ns.anthropic.messages.invalid_header', client: :anthropic)
+            rescue Legion::LLM::Errors::RoutingRejected => e
+              translate_routing_rejected(e, dialect: :anthropic, operation: 'llm.ns.anthropic.messages.routing_rejected')
             rescue Legion::LLM::AuthError => e
               handle_exception(e, level: :error, handled: true, operation: 'llm.ns.anthropic.messages.auth')
               anthropic_error('authentication_error', e.message, status_code: 401)

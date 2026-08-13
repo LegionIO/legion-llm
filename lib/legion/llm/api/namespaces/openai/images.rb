@@ -157,6 +157,8 @@ module Legion
               handle_exception(e, level: :error, handled: true, operation: 'llm.api.openai.images.generations.provider')
               halt 502, { 'Content-Type' => 'application/json' },
                    Legion::JSON.dump({ error: { message: e.message, type: 'server_error', code: nil } })
+            rescue Legion::LLM::Errors::RoutingRejected => e
+              translate_routing_rejected(e, dialect: :openai, operation: 'llm.api.openai.images.generations.routing_rejected')
             rescue StandardError => e
               handle_exception(e, level: :error, handled: false, operation: 'llm.api.openai.images.generations')
               halt 500, { 'Content-Type' => 'application/json' },
@@ -240,6 +242,8 @@ module Legion
               handle_exception(e, level: :error, handled: true, operation: 'llm.api.openai.images.edits.provider')
               halt 502, { 'Content-Type' => 'application/json' },
                    Legion::JSON.dump({ error: { message: e.message, type: 'server_error', code: nil } })
+            rescue Legion::LLM::Errors::RoutingRejected => e
+              translate_routing_rejected(e, dialect: :openai, operation: 'llm.api.openai.images.edits.routing_rejected')
             rescue StandardError => e
               handle_exception(e, level: :error, handled: false, operation: 'llm.api.openai.images.edits')
               halt 500, { 'Content-Type' => 'application/json' },
@@ -308,6 +312,8 @@ module Legion
               handle_exception(e, level: :error, handled: true, operation: 'llm.api.openai.images.variations.provider')
               halt 502, { 'Content-Type' => 'application/json' },
                    Legion::JSON.dump({ error: { message: e.message, type: 'server_error', code: nil } })
+            rescue Legion::LLM::Errors::RoutingRejected => e
+              translate_routing_rejected(e, dialect: :openai, operation: 'llm.api.openai.images.variations.routing_rejected')
             rescue StandardError => e
               handle_exception(e, level: :error, handled: false, operation: 'llm.api.openai.images.variations')
               halt 500, { 'Content-Type' => 'application/json' },

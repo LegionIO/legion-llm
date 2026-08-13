@@ -118,13 +118,17 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(body[:error][:code]).to eq('model_not_found')
     end
 
-    it 'backs OpenAI-compatible model listing with the same inference inventory' do
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'direct:vllm:default:inference:qwen3.6-27b', tier: :direct,
-        provider_family: :vllm, instance_id: :default,
-        model: 'qwen3.6-27b', type: :inference,
-        capabilities: [], limits: { context_window: 32_768 }, enabled: true, cost: {}
-                                        })
+    # SSOT v3 Task 16: /v1/models is now projected by ModelCatalog from the
+    # Phase 1 Registry snapshot, so activate the offering through the released
+    # Registry (not the legacy write_lane facade).
+    it 'backs OpenAI-compatible model listing with the same inference inventory', :ssot_v3 do
+      Legion::LLM::Router::SettingsState.reset!
+      Legion::Settings.loader.settings[:extensions] ||= {}
+      Legion::Settings.loader.settings[:extensions][:llm] ||= {}
+      activate(
+        provider_family: 'vllm', instance_id: 'h200',
+        drafts: [offering_draft(model: 'qwen3.6-27b', tier: :direct, supported: %i[chat], context: 32_768)]
+      )
 
       response = get_json('/v1/models')
       body = Legion::JSON.load(response.body)
@@ -132,6 +136,8 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.status).to eq(200)
       expect(body[:data]).to include(hash_including(id: 'qwen3.6-27b', owned_by: 'vllm'))
       expect(body[:data]).not_to include(hash_including(id: 'amazon.titan-embed-text-v2:0'))
+    ensure
+      Legion::LLM::Router::SettingsState.reset!
     end
   end
 end

@@ -5,6 +5,8 @@ require 'legion/logging/helper'
 require 'legion/llm/api/namespaces/helpers'
 require 'legion/llm/api/native/models'
 require 'legion/llm/api/translators/openai_response'
+require 'legion/llm/api/model_catalog'
+require 'legion/llm/router/settings_state'
 
 module Legion
   module LLM
@@ -19,25 +21,33 @@ module Legion
             def self.registered(app)
               log.debug('[llm][api][namespaces][openai][models] registering routes')
 
+              # SSOT v3 Task 16: the maintained /v1/models tree is projected from a
+              # single Registry snapshot + SettingsState generation captured per
+              # request and rendered by ModelCatalog in the caller's dialect. The
+              # snapshot-only catalog never calls the router — availability and lane
+              # weight do not decide which models appear in the compat view.
               app.get '/v1/models' do
                 require_llm!
-                client = detect_client(env)
-                log.debug("[llm][api][namespaces][openai][models] action=list client=#{client}")
+                dialect = detect_client(env) == :anthropic ? :anthropic : :openai
+                log.debug("[llm][api][namespaces][openai][models] action=list dialect=#{dialect}")
 
-                model_list = Models.build_openai_model_list
-                log.debug("[llm][api][namespaces][openai][models] action=listed count=#{model_list.size}")
+                snapshot          = Legion::Extensions::Llm::Inventory::Registry.snapshot
+                settings_snapshot = Legion::LLM::Router::SettingsState.current
+                entries = Legion::LLM::API::ModelCatalog.list(
+                  snapshot: snapshot, settings_snapshot: settings_snapshot, dialect: dialect
+                )
+                log.debug("[llm][api][namespaces][openai][models] action=listed dialect=#{dialect} count=#{entries.size}")
 
                 content_type :json
-                if client == :anthropic
-                  anthropic_list = Models.to_anthropic_model_list(model_list)
+                if dialect == :anthropic
                   Legion::JSON.dump({
-                                      data:     anthropic_list,
+                                      data:     entries,
                                       has_more: false,
-                                      first_id: anthropic_list.first&.dig(:id),
-                                      last_id:  anthropic_list.last&.dig(:id)
+                                      first_id: entries.first&.dig(:id),
+                                      last_id:  entries.last&.dig(:id)
                                     })
                 else
-                  Legion::JSON.dump({ object: 'list', data: model_list })
+                  Legion::JSON.dump({ object: 'list', data: entries })
                 end
               rescue StandardError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.namespaces.openai.models.list')
@@ -47,8 +57,14 @@ module Legion
               Models.passthrough_model_ids.each do |passthrough_id|
                 app.get "/v1/models/#{passthrough_id}" do
                   require_llm!
-                  log.debug("[llm][api][namespaces][openai][models] action=passthrough_model id=#{passthrough_id}")
-                  found = Models.synthetic_model_for_auto_route(passthrough_id)
+                  dialect = detect_client(env) == :anthropic ? :anthropic : :openai
+                  log.debug("[llm][api][namespaces][openai][models] action=passthrough_model id=#{passthrough_id} dialect=#{dialect}")
+
+                  snapshot          = Legion::Extensions::Llm::Inventory::Registry.snapshot
+                  settings_snapshot = Legion::LLM::Router::SettingsState.current
+                  found = Legion::LLM::API::ModelCatalog.fetch(
+                    id: passthrough_id, snapshot: snapshot, settings_snapshot: settings_snapshot, dialect: dialect
+                  )
 
                   unless found
                     return openai_error("Model '#{passthrough_id}' not found",
@@ -67,11 +83,14 @@ module Legion
               app.get '/v1/models/:id' do
                 require_llm!
                 model_id = params[:id]
-                client   = detect_client(env)
-                log.debug("[llm][api][namespaces][openai][models] action=get id=#{model_id} client=#{client}")
+                dialect  = detect_client(env) == :anthropic ? :anthropic : :openai
+                log.debug("[llm][api][namespaces][openai][models] action=get id=#{model_id} dialect=#{dialect}")
 
-                model_list = Models.build_openai_model_list
-                found = model_list.find { |m| m[:id] == model_id }
+                snapshot          = Legion::Extensions::Llm::Inventory::Registry.snapshot
+                settings_snapshot = Legion::LLM::Router::SettingsState.current
+                found = Legion::LLM::API::ModelCatalog.fetch(
+                  id: model_id, snapshot: snapshot, settings_snapshot: settings_snapshot, dialect: dialect
+                )
 
                 unless found
                   return openai_error("Model '#{model_id}' not found",
@@ -79,11 +98,7 @@ module Legion
                 end
 
                 content_type :json
-                if client == :anthropic
-                  Legion::JSON.dump(Models.openai_to_anthropic_model(found))
-                else
-                  Legion::JSON.dump(found)
-                end
+                Legion::JSON.dump(found)
               rescue StandardError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.namespaces.openai.models.get')
                 openai_error(e.message, type: 'server_error', status_code: 500)

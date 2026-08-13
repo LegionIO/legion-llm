@@ -241,6 +241,8 @@ module Legion
                   payload.compact!
                   json_response(payload, status_code: 200)
                 end
+              rescue Legion::LLM::Errors::RoutingRejected => e
+                translate_routing_rejected(e, dialect: :native, operation: 'llm.api.inference.routing_rejected')
               rescue Legion::LLM::AuthError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.inference.auth', request_id: request_id)
                 json_error('auth_error', e.message, status_code: 401)

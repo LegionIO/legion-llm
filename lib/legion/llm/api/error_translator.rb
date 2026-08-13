@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/api/routing_error_mapper'
 
 module Legion
   module LLM
@@ -10,6 +11,8 @@ module Legion
       # NoLaneAvailable  → 400  (filters excluded everything; caller can fix the request)
       # EscalationExhausted → 503 + Retry-After (tried lanes, all failed; transient upstream degradation)
       # InvalidHeader    → 400  (x-legion-* header carries unrecognized value; caller can fix)
+      # RoutingRejected  → SSOT v3 §18 dialect status table (native 425 / openai 503 /
+      #                    anthropic 529 for too_early, etc.) via RoutingErrorMapper.
       #
       # Included into API Helpers so every inference route gets the mapping without
       # duplicating rescue clauses. Must be included BEFORE the route-level rescue
@@ -64,6 +67,22 @@ module Legion
           content_type :json
           status 400
           Legion::JSON.dump(body)
+        end
+
+        # SSOT v3 §18 / D16: render a typed Routing::Rejection carried by
+        # Errors::RoutingRejected through the dialect status/header/body table.
+        # dialect is :native | :openai | :anthropic. RoutingErrorMapper owns the
+        # status divergence (native 425 vs openai 503 vs anthropic 529 for
+        # too_early) and the Retry-After header for retryable kinds.
+        def translate_routing_rejected(error, dialect:, operation:)
+          handle_exception(error, level: :warn, handled: true, operation: operation)
+          response = Legion::LLM::API::RoutingErrorMapper.call(
+            rejection: error.rejection, dialect: dialect
+          )
+          response.headers.each { |k, v| headers k => v }
+          content_type :json
+          status response.status
+          Legion::JSON.dump(response.body)
         end
       end
     end

@@ -127,6 +127,8 @@ module Legion
                 translate_escalation_exhausted(e, operation: 'llm.api.namespaces.openai.responses.exhausted')
               rescue Legion::LLM::Errors::InvalidHeader => e
                 translate_invalid_header(e, operation: 'llm.api.namespaces.openai.responses.invalid_header')
+              rescue Legion::LLM::Errors::RoutingRejected => e
+                translate_routing_rejected(e, dialect: :openai, operation: 'llm.api.namespaces.openai.responses.routing_rejected')
               rescue Legion::LLM::AuthError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.namespaces.openai.responses.auth')
                 openai_error(e.message, type: 'authentication_error', status_code: 401)

@@ -94,6 +94,8 @@ module Legion
               rescue Legion::LLM::ProviderDown, Legion::LLM::ProviderError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.namespaces.openai.moderations.provider')
                 openai_error(e.message, type: 'server_error', status_code: 502)
+              rescue Legion::LLM::Errors::RoutingRejected => e
+                translate_routing_rejected(e, dialect: :openai, operation: 'llm.api.namespaces.openai.moderations.routing_rejected')
               rescue StandardError => e
                 handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.moderations')
                 openai_error(e.message, type: 'server_error', status_code: 500)
