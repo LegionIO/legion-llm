@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.1] - 2026-08-13
+
+### Fixed
+- **P1: native_dispatch_options dropped temperature and all generation params before provider dispatch in the native tool loop.** Root cause of the parallel tool-call dead stop: `native_dispatch_options` (tool_injection.rb) built the dispatch Hash from request fields but never included generation sampling params from `@request.generation`. The provider receives `opts[:temperature]` — when nil, vLLM/Ollama/any provider runs at its default temperature instead of the caller's explicit `temperature: 0`, producing nondeterministic output. For tool-call requests, this manifests as empty-argument tool calls (the model commits to tool call openers but generates EOS before argument tokens). Now propagates the full canonical generation params (temperature, top_p, top_k, frequency_penalty, presence_penalty, seed) via `apply_generation_params!`, using `.key?` to preserve explicit 0 values. Provider-agnostic fix at the executor boundary — all providers benefit.
+
 ## [0.16.0] - 2026-08-13
 
 ### Fixed

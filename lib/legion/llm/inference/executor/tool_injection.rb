@@ -31,6 +31,7 @@ module Legion
             options[:tools] = native_dispatch_tools if native_dispatch_tools.any?
             options[:tool_prefs] = native_tool_prefs if native_dispatch_tools.any? && native_tool_prefs
             options[:thinking] = native_dispatch_thinking if native_dispatch_thinking
+            apply_generation_params!(options)
             options.compact
           end
 
@@ -48,6 +49,20 @@ module Legion
               - Do not say you will use a tool unless you are actually making the tool call in this response.
               - Only provide a final answer when no further tool call is needed or possible.
             PROMPT
+          end
+
+          # Propagate generation sampling params from the canonical request into
+          # the dispatch options hash. Uses .key? so that explicit 0 values are
+          # preserved (0 is a valid temperature, not the same as absent/nil).
+          GENERATION_PARAMS = %i[temperature top_p top_k frequency_penalty presence_penalty seed].freeze
+
+          def apply_generation_params!(options)
+            generation = @request.generation
+            return unless generation.is_a?(Hash)
+
+            GENERATION_PARAMS.each do |param|
+              options[param] = generation[param] if generation.key?(param)
+            end
           end
 
           def native_dispatch_chat_options
