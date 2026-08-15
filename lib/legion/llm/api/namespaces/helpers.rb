@@ -48,7 +48,6 @@ module Legion
           # Called by inference routes before building the executor request.
           def validate_legion_routing_headers!(rack_env)
             http_headers = rack_env.select { |k, _| k.start_with?('HTTP_') }
-            return unless defined?(Legion::LLM::Inference::Executor::PayloadBuilder)
 
             # Build a flat header map from Rack env (HTTP_X_LEGION_TIERS → x-legion-tiers)
             mapped = http_headers.each_with_object({}) do |(k, v), h|
@@ -65,7 +64,8 @@ module Legion
             end
           rescue Legion::LLM::Errors::InvalidHeader
             raise
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'llm.api.validate_legion_routing_headers')
             nil
           end
 

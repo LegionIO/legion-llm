@@ -16,9 +16,11 @@ module Legion
               log.debug('[llm][api][routing] action=list_rules')
               require_llm!
 
+              # SSOT has no routing toggle or rule list: routing is enabled
+              # whenever the Registry holds at least one complete publication.
               json_response({
-                              routing_enabled:      false,
-                              auto_rules_populated: false,
+                              routing_enabled:      Legion::LLM::Router.routing_enabled?,
+                              auto_rules_populated: Legion::LLM::Router.auto_rules_populated?,
                               rules:                [],
                               summary:              { total: 0, auto: 0, manual: 0 }
                             })

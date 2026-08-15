@@ -2,6 +2,8 @@
 
 require 'securerandom'
 require 'legion/logging/helper'
+require 'legion/llm/inference/request'
+require 'legion/llm/inference/executor'
 
 module Legion
   module LLM
@@ -99,9 +101,6 @@ module Legion
                 "requested_tier=#{tier || 'auto'} requested_provider=#{provider || 'auto'} " \
                 "requested_model=#{model || 'auto'} stream=#{streaming}"
               )
-
-              require 'legion/llm/inference/request' unless defined?(Legion::LLM::Inference::Request)
-              require 'legion/llm/inference/executor' unless defined?(Legion::LLM::Inference::Executor)
 
               extra = {}
               extra[:tier] = tier.to_sym if tier

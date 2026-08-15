@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/router'
 
 module Legion
   module LLM
@@ -18,8 +19,8 @@ module Legion
               tiers_data = Legion::LLM::API::Native::Tiers.build_tiers_tree
               json_response({
                               tiers:        tiers_data,
-                              priority:     Legion::LLM::API::Native::Tiers.tier_priority,
-                              privacy_mode: Legion::LLM::API::Native::Tiers.privacy_mode?
+                              priority:     Legion::LLM::Router.tier_priority,
+                              privacy_mode: Legion::LLM::Router.privacy_mode?
                             })
             rescue StandardError => e
               handle_exception(e, level: :error, handled: true, operation: 'llm.api.tiers.list')
@@ -159,58 +160,62 @@ module Legion
             log.debug('[llm][api][tiers] tier routes registered')
           end
 
-          def self.tier_priority
-            return Legion::LLM::Router.tier_priority if defined?(Legion::LLM::Router)
+          # Legacy display names for supported operations (same mapping the
+          # LegacyCoordinatorAdapter and provider actors use for the
+          # capabilities display surface).
+          CAPABILITY_NAMES_BY_OPERATION = {
+            chat: :completion, stream_chat: :streaming, embed: :embedding, image: :image,
+            transcribe: :audio_transcription, translate: :audio_transcription, speak: :audio_speech,
+            moderate: :moderation
+          }.freeze
 
-            routing_config = Legion::Settings[:llm][:routing]
-            top_level = Legion::Settings[:llm][:tier_order]
-            Array(top_level || routing_config[:tier_order] || routing_config[:tier_priority] ||
-                  %w[local direct fleet cloud frontier])
-          end
-
-          def self.privacy_mode?
-            return false unless defined?(Legion::LLM::Router)
-
-            Legion::LLM::Router.respond_to?(:privacy_mode?) && Legion::LLM::Router.privacy_mode?
-          end
-
-          def self.tier_available?(tier_sym)
-            return true unless defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:tier_available?)
-
-            Legion::LLM::Router.tier_available?(tier_sym)
-          end
-
+          # D14: the tier tree is projected from the NEW Registry snapshot
+          # (model_catalog.rb is the in-repo precedent). Instance-level health
+          # display derives from the instance's AvailabilityFact — the same
+          # fact the provider actors copy into the settings health hash —
+          # because the tree is keyed by the derived instance id, which the
+          # settings hash (keyed by config name) cannot address. The
+          # AvailabilityFact remains the routing authority; this is display.
           def self.build_tiers_tree
-            offerings = Legion::LLM::Inventory.offerings({})
+            snapshot = Legion::LLM::Inventory.snapshot
+            inst_by_key = {}
+            snapshot.each_instance { |inst| inst_by_key[inst.instance_key] = inst }
+
             grouped = {}
+            snapshot.each_offering do |offering|
+              # Compliance-by-absence: denied models never appear in the tier
+              # view (same §9.5 policy as the offerings surface).
+              next unless Legion::LLM::API::Native::Offerings.policy_permits?(offering)
 
-            offerings.each do |offering|
-              tier_name = (offering[:tier] || :unknown).to_s
-              provider_name = (offering[:provider_family] || :unknown).to_s
-              instance_name = (offering[:instance_id] || offering[:provider_instance] || :default).to_s
+              ik = offering.instance_key
+              tier_name = offering.tier.to_s
+              provider_name = ik.provider_family.to_s
+              instance_name = ik.instance_id.to_s
 
-              grouped[tier_name] ||= { available: tier_available?(tier_name.to_sym), providers: {} }
+              grouped[tier_name] ||= { available: Legion::LLM::Router.tier_available?(tier_name.to_sym), providers: {} }
               grouped[tier_name][:providers][provider_name] ||= { instances: {} }
               grouped[tier_name][:providers][provider_name][:instances][instance_name] ||= {
-                health:       offering_instance_health(provider_name, instance_name),
+                health:       instance_health_display(inst_by_key[ik]&.availability),
                 capabilities: [],
                 models:       []
               }
 
               inst = grouped[tier_name][:providers][provider_name][:instances][instance_name]
-              inst[:capabilities] = (inst[:capabilities] + Array(offering[:capabilities])).uniq.sort
+              inst[:capabilities] = (inst[:capabilities] + offering_capabilities(offering)).uniq.sort
               inst[:models] << build_model_entry(offering)
             end
 
-            # Sort tiers by priority order
-            priority = tier_priority
+            # Sort tiers by priority order. Router.tier_priority yields symbols;
+            # the tree is keyed by tier Strings, so normalize to avoid duplicate
+            # (symbol + string) keys for the same tier.
+            priority = Legion::LLM::Router.tier_priority.map(&:to_s)
             sorted = {}
             priority.each { |t| sorted[t] = grouped.delete(t) if grouped.key?(t) }
             grouped.each { |t, v| sorted[t] = v }
 
             # Ensure all priority tiers appear even if empty
             priority.each do |t|
-              sorted[t] ||= { available: tier_available?(t.to_sym), providers: {} }
+              sorted[t] ||= { available: Legion::LLM::Router.tier_available?(t.to_sym), providers: {} }
             end
 
             sorted
@@ -218,27 +223,39 @@ module Legion
 
           def self.build_model_entry(offering)
             {
-              id:           offering[:model].to_s,
-              offering_id:  offering[:offering_id] || offering[:id],
-              type:         offering[:type].to_s,
-              capabilities: Array(offering[:capabilities]).map(&:to_s),
-              limits:       offering[:limits] || {},
-              enabled:      offering[:enabled] != false,
-              cost:         offering[:cost] || {},
-              model_family: offering[:model_family]&.to_s
+              id:           offering.model.to_s,
+              offering_id:  offering.offering_id.to_s,
+              type:         offering.operation_status(operation: :embed) == :supported ? 'embedding' : 'inference',
+              capabilities: offering_capabilities(offering),
+              limits:       offering_limits(offering),
+              enabled:      true,
+              cost:         {},
+              model_family: offering.metadata[:model_family]&.to_s
             }.compact
           end
 
-          def self.offering_instance_health(provider_name, instance_name)
-            # Read from Inventory lane health (P2: lane is the SSOT for health).
-            lanes = Legion::LLM::Inventory.lanes_for(provider: provider_name.to_sym,
-                                                     instance: instance_name.to_sym)
-            return lanes.first[:health][:circuit_state].to_s if lanes.any?
+          # Legacy response shape: a single circuit-state string per instance.
+          def self.instance_health_display(availability)
+            case availability&.state
+            when :available then 'closed'
+            when :unavailable then 'open'
+            else 'unknown'
+            end
+          end
 
-            'unknown'
-          rescue StandardError => e
-            log.debug "[llm][tiers] action=offering_instance_health provider=#{provider_name} instance=#{instance_name} error=#{e.class} — #{e.message}"
-            'unknown'
+          def self.offering_capabilities(offering)
+            caps = offering.supported_operations.map { |op| CAPABILITY_NAMES_BY_OPERATION.fetch(op, op) }
+            offering.capability_evidence.each do |capability, evidence|
+              caps << capability if evidence.status == :supported
+            end
+            caps.map(&:to_s)
+          end
+
+          def self.offering_limits(offering)
+            limits = {}
+            limits[:context_window] = offering.context_evidence.value if offering.context_evidence.known?
+            limits[:max_output_tokens] = offering.max_output_evidence.value if offering.max_output_evidence.known?
+            limits
           end
         end
       end

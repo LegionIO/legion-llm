@@ -238,7 +238,8 @@ module Legion
           return nil unless provider_start && provider_end
 
           ((provider_end - provider_start) * 1000).round
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.api.provider_latency_ms')
           nil
         end
 
@@ -553,8 +554,8 @@ module Legion
               parsed = Legion::JSON.load(turn_metadata)
               caller_hash[:parent_request_ref] = parsed['turn_id'] if parsed['turn_id']
               caller_hash[:codex_turn_metadata] = parsed
-            rescue StandardError
-              # Ignore malformed metadata
+            rescue StandardError => e
+              handle_exception(e, level: :debug, handled: true, operation: 'llm.api.build_server_caller.turn_metadata')
             end
           end
 

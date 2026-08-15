@@ -53,8 +53,8 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Tiers' do
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
     allow(Legion::LLM::API::Native::Tiers).to receive(:build_tiers_tree).and_return(tiers_tree)
-    allow(Legion::LLM::API::Native::Tiers).to receive(:tier_priority).and_return(%w[local fleet frontier])
-    allow(Legion::LLM::API::Native::Tiers).to receive(:privacy_mode?).and_return(false)
+    allow(Legion::LLM::Router).to receive(:tier_priority).and_return(%w[local fleet frontier])
+    allow(Legion::LLM::Router).to receive(:privacy_mode?).and_return(false)
     Legion::LLM::API::Namespaces::Native::Tiers.reset_cache!
   end
 

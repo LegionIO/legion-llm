@@ -3,6 +3,7 @@
 require 'securerandom'
 require 'open3'
 require 'time'
+require 'pdf-reader'
 require 'legion/cache/helper'
 require 'legion/logging/helper'
 require 'legion/llm/api/translators/openai_response'
@@ -152,8 +153,6 @@ module Legion
           end
 
           def read_pdf_text(path)
-            require 'pdf-reader' unless defined?(::PDF::Reader)
-
             reader = ::PDF::Reader.new(path)
             text = reader.pages.map(&:text).join("\n\n").strip
             text.empty? ? 'PDF contained no extractable text.' : text

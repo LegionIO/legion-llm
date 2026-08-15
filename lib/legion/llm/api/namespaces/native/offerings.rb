@@ -21,7 +21,7 @@ module Legion
                 require_llm!
 
                 filters = Legion::LLM::API::Native::Offerings.request_filters(params)
-                raw_offerings = Legion::LLM::Inventory.offerings(filters)
+                raw_offerings = Legion::LLM::API::Native::Offerings.snapshot_offerings(filters)
                 grouped = Legion::LLM::API::Native::Offerings.group_offerings(raw_offerings)
 
                 json_response({
@@ -38,7 +38,7 @@ module Legion
                 log.debug("[llm][api][namespaces][offerings] action=get_offering id=#{offering_id}")
                 require_llm!
 
-                offering = Legion::LLM::Inventory.offerings(offering_id: offering_id).first
+                offering = Legion::LLM::API::Native::Offerings.snapshot_offering(offering_id)
                 halt json_error('offering_not_found', "Offering '#{offering_id}' not found", status_code: 404) unless offering
 
                 json_response({ offering: offering })

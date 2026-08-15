@@ -8,17 +8,25 @@ RSpec.describe Legion::LLM::Router do
     described_class.reset!
   end
 
-  # ─── routing_enabled? always false in SSOT v3 ────────────────────────────────
+  # ─── routing_enabled? is derived: true iff the Registry holds at least one
+  # complete publication (SSOT has no operator routing toggle) ─────────────────
 
-  describe '.routing_enabled? when disabled' do
-    it 'returns false when enabled is false' do
-      Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(routing: { enabled: false }))
+  describe '.routing_enabled?' do
+    it 'returns false when the Registry has no complete publications' do
       expect(described_class.routing_enabled?).to be false
     end
 
-    it 'returns false when routing settings are absent' do
-      Legion::Settings.set_prop(:llm, {})
+    it 'returns false for an initializing (unactivated) claim' do
+      SsotV3SnapshotFactory.claim_only(provider_family: :vllm, instance_id: 'primary')
       expect(described_class.routing_enabled?).to be false
+    end
+
+    it 'returns true once an instance has a complete publication' do
+      SsotV3SnapshotFactory.activate(
+        provider_family: :vllm, instance_id: 'primary',
+        drafts: [SsotV3SnapshotFactory.offering_draft(model: 'gemma-12b', tier: :local, supported: %i[chat])]
+      )
+      expect(described_class.routing_enabled?).to be true
     end
   end
 

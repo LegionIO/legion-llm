@@ -81,27 +81,30 @@ module Legion
             provider_key = entry[:provider].to_sym
             instance_key = entry[:instance].to_sym
 
-            # Read health from Inventory lanes (P2: lane is the SSOT for health).
-            # Falls back to empty hash if no lanes are populated yet (cold-boot).
-            health_hash = begin
-              lanes = Legion::LLM::Inventory.lanes_for(provider: provider_key, instance: instance_key)
-              if lanes.any?
-                h = lanes.first[:health]
-                { circuit_state: h[:circuit_state].to_s, adjustment: h[:adjustment].to_i }
-              else
-                {}
-              end
+            # D14: display health/capabilities live in the per-instance settings
+            # hash the provider's discovery actor writes after each registry
+            # commit (the visibility surface). The Registry AvailabilityFact
+            # remains the routing authority. entry[:instance] is the config name
+            # (Call::Registry keys instances by the operator config name), which
+            # is exactly the settings key the actor writes under.
+            instance_settings = begin
+              cfg = Legion::Settings.dig(:extensions, :llm, provider_key, :instances, instance_key)
+              cfg.is_a?(Hash) ? cfg : {}
             rescue StandardError => e
-              handle_exception(e, level: :warn, handled: true, operation: 'api.providers.health_lookup')
+              handle_exception(e, level: :warn, handled: true, operation: 'api.providers.instance_settings')
               {}
             end
+
+            tier = instance_settings[:tier] || entry.dig(:metadata, :tier)
+            capabilities = Array(instance_settings[:capabilities]).map(&:to_s)
+            capabilities = Array(entry.dig(:metadata, :capabilities)).map(&:to_s) if capabilities.empty?
 
             result = {
               provider:     entry[:provider].to_s,
               instance:     entry[:instance].to_s,
-              tier:         entry.dig(:metadata, :tier)&.to_s,
-              capabilities: Array(entry.dig(:metadata, :capabilities)).map(&:to_s),
-              health:       health_hash,
+              tier:         tier&.to_s,
+              capabilities: capabilities,
+              health:       instance_settings[:health] || {},
               native:       true
             }
             result[:source] = entry.dig(:metadata, :source) if entry.dig(:metadata, :source)

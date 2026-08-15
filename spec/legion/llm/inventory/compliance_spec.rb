@@ -188,10 +188,19 @@ RSpec.describe 'Compliance by absence' do
       it 'a blacklisted model never appears in /api/llm/offerings' do
         allow(Legion::LLM).to receive(:started?).and_return(true)
         Legion::Settings.loader.settings[:extensions][:llm][:vllm] = { model_blacklist: ['gemma-12b'] }
-        Legion::LLM::Inventory.send(:invalidate_policy_sets!, provider: :vllm)
-
-        write_lane(provider: :vllm, model: 'gemma-12b', tier: :direct)
-        write_lane(provider: :vllm, model: 'gemma-31b', tier: :direct)
+        # SSOT v3: the provider publishes the FULL catalog to the new Registry
+        # (the registry does not filter by model policy); the display surface
+        # applies the §9.5 fail-closed policy. Rebuild the SettingsState
+        # snapshot after mutating settings.
+        Legion::LLM::Router::SettingsState.reset!
+        SsotV3SnapshotFactory.activate(
+          provider_family: :vllm,
+          instance_id:     'gpu-01',
+          drafts:          [
+            SsotV3SnapshotFactory.offering_draft(model: 'gemma-12b', tier: :direct, supported: %i[chat]),
+            SsotV3SnapshotFactory.offering_draft(model: 'gemma-31b', tier: :direct, supported: %i[chat])
+          ]
+        )
 
         response = get_json('/api/llm/offerings')
         body     = Legion::JSON.load(response.body)

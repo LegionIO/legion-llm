@@ -4,6 +4,7 @@ require 'legion/llm/inventory/capabilities'
 require_relative 'router/resolution'
 require 'legion/llm/inventory/discovery/system'
 require 'legion/llm/inventory/discovery/memory_gate'
+require 'legion/extensions/llm/inventory/registry'
 
 # SSOT v3 next_lane selector stack.
 require 'legion/llm/router/settings_state'
@@ -118,8 +119,12 @@ module Legion
         end
         private :build_selection
 
+        # SSOT has no operator routing toggle (auto-rules era is gone): routing
+        # is enabled whenever at least one instance has a complete publication
+        # in the Registry.
         def routing_enabled?
-          false
+          Legion::Extensions::Llm::Inventory::Registry.snapshot
+                                                      .each_publication_status.any? { |ps| ps.state == :complete }
         end
 
         def auto_rules_populated?
@@ -181,6 +186,16 @@ module Legion
           true
         end
 
+        # Public query for status endpoints (/api/llm/tiers). Reflects the
+        # enterprise-privacy setting (or LEGION_ENTERPRISE_PRIVACY env override).
+        def privacy_mode?
+          if Legion::Settings.respond_to?(:enterprise_privacy?)
+            Legion::Settings.enterprise_privacy?
+          else
+            ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+          end
+        end
+
         private
 
         # Fraction of a lane's context_window the router treats as usable when
@@ -207,14 +222,6 @@ module Legion
             sym = c.to_s.downcase.strip.tr('-', '_').to_sym
             aliases.fetch(sym, sym)
           end.uniq
-        end
-
-        def privacy_mode?
-          if Legion::Settings.respond_to?(:enterprise_privacy?)
-            Legion::Settings.enterprise_privacy?
-          else
-            ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
-          end
         end
 
         def external_tier?(tier)

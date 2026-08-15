@@ -60,11 +60,24 @@ module Legion
                 instances << {
                   id:       "#{provider_name}/#{inst_id}",
                   provider: provider_name.to_s,
-                  instance: inst_id.to_s
+                  instance: inst_id.to_s,
+                  health:   instance_health(provider_name, inst_id)
                 }
               end
             end
             instances.sort_by { |inst| inst[:id] }
+          end
+
+          # D14: display health is the per-instance settings hash the provider's
+          # discovery actor writes after each registry commit. The registry
+          # instance name here is the operator config name — the same settings
+          # key. Empty hash when the actor has not committed yet (cold boot).
+          def self.instance_health(provider_name, inst_id)
+            cfg = Legion::Settings.dig(:extensions, :llm, provider_name.to_sym, :instances, inst_id.to_sym)
+            (cfg.is_a?(Hash) ? cfg : {})[:health] || {}
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'api.instances.health_lookup')
+            {}
           end
 
           def self.find_registry_instance(instance_id)

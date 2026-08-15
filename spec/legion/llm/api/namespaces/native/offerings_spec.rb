@@ -27,25 +27,23 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Offerings' do
     end
   end
 
-  let(:sample_offering) do
-    {
-      offering_id:     'ollama:local:inference:llama3.2',
-      model:           'llama3.2',
-      type:            :inference,
-      provider_family: 'ollama',
-      instance_id:     'local',
-      tier:            :local,
-      capabilities:    ['chat'],
-      limits:          {},
-      enabled:         true,
-      cost:            {},
-      health:          {}
-    }
-  end
-
+  # D14: offerings are projected from the NEW Registry snapshot — publish a
+  # real instance through the Phase 1 registry API instead of stubbing the
+  # (no longer read) legacy lane store.
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
-    allow(Legion::LLM::Inventory).to receive(:offerings).and_return([sample_offering])
+    SsotV3SnapshotFactory.activate(
+      provider_family: :ollama,
+      instance_id:     'local',
+      drafts:          [
+        SsotV3SnapshotFactory.offering_draft(model: 'llama3.2', tier: :local, supported: %i[chat stream_chat])
+      ]
+    )
+  end
+
+  def activated_offering_id
+    key = SsotV3SnapshotFactory.instance_key(provider_family: :ollama, instance_id: 'local')
+    SsotV3SnapshotFactory.snapshot.offerings_for(instance_key: key).first.offering_id
   end
 
   describe 'GET /api/llm/offerings' do
@@ -61,6 +59,9 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Offerings' do
       get '/api/llm/offerings'
       result = Legion::JSON.load(last_response.body)
       expect(result[:data][:offerings][:local]).to be_a(Hash)
+      offering = result[:data][:offerings][:local][:ollama][:local].first
+      expect(offering[:model]).to eq('llama3.2')
+      expect(offering[:health]).to include(available: true, circuit_state: 'closed')
     end
 
     it 'returns 503 when LLM not started' do
@@ -72,15 +73,14 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Offerings' do
 
   describe 'GET /api/llm/offerings/:id' do
     it 'returns 200 for known offering' do
-      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(offering_id: 'ollama:local:inference:llama3.2')).and_return([sample_offering])
-      get '/api/llm/offerings/ollama:local:inference:llama3.2'
+      get "/api/llm/offerings/#{activated_offering_id}"
       expect(last_response.status).to eq(200)
       result = Legion::JSON.load(last_response.body)
       expect(result[:data][:offering]).to be_a(Hash)
+      expect(result[:data][:offering][:model]).to eq('llama3.2')
     end
 
     it 'returns 404 for unknown offering' do
-      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(offering_id: 'bad:id')).and_return([])
       get '/api/llm/offerings/bad:id'
       expect(last_response.status).to eq(404)
       result = Legion::JSON.load(last_response.body)
