@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'bigdecimal'
+require 'legion/extensions/llm/settings_cascade'
 
 module Legion
   module LLM
@@ -15,7 +16,11 @@ module Legion
         TIER_KEYS             = %i[direct local fleet cloud frontier].freeze
         ALLOWED_ALIAS_META    = %i[owned_by created context_window max_output_tokens].freeze
         IDENTITY_WEIGHT       = 1
-        private_constant :TIER_KEYS, :ALLOWED_ALIAS_META, :IDENTITY_WEIGHT
+        # Shared 3-level settings cascade (lex-llm): provider -> instance ->
+        # model, most-specific-first. The instance leg is the operator's
+        # CONFIG NAME (InstanceKey#instance_id), never a derived id.
+        CASCADE               = Legion::Extensions::Llm::SettingsCascade
+        private_constant :TIER_KEYS, :ALLOWED_ALIAS_META, :IDENTITY_WEIGHT, :CASCADE
 
         # ------------------------------------------------------------------ #
         # Public factory                                                       #
@@ -52,28 +57,47 @@ module Legion
 
         # Returns a frozen Hash { tier:, provider:, instance:, model_or_offering: }
         # where each value is a positive Integer >= 1 (missing component → identity 1).
-        # A zero tier weight is stored as-is (disabled lane); callers check for zero.
+        # The provider/instance/model scopes are read through the lex-llm
+        # cascade, keyed by the config name (lane.instance_id): the instance
+        # leg is instances.<name>, the model leg is the instance's models.<model>
+        # entry overriding the provider's models.<model> entry. A zero tier
+        # weight is stored as-is (disabled lane); callers check for zero.
         def weight_inputs_for(lane:)
           tier_w  = tier_weights[lane.tier] || IDENTITY_WEIGHT
           prov    = ext_llm_provider(lane.provider_family)
-          prov_w  = prov.fetch(:weight, IDENTITY_WEIGHT)
-          inst_w  = ext_llm_instance(prov, lane.instance_id).fetch(:weight, IDENTITY_WEIGHT)
-          off_w   = prov.dig(:offerings, lane.offering_id, :weight)
-          model_w = off_w || prov.dig(:models, lane.model, :weight) || IDENTITY_WEIGHT
+          inst    = ext_llm_instance(prov, lane.instance_id)
+          prov_w  = CASCADE.lookup(prov, :weight) || IDENTITY_WEIGHT
+          inst_w  = CASCADE.lookup(inst, :weight) || IDENTITY_WEIGHT
+          off_entry = CASCADE.lookup(CASCADE.lookup(prov, :offerings), lane.offering_id)
+          model_cfg = CASCADE.merge_model_scopes(provider_conf: prov, instance_cfg: inst, model: lane.model)
+          model_w = CASCADE.lookup(off_entry, :weight) || CASCADE.lookup(model_cfg, :weight) || IDENTITY_WEIGHT
           { tier: tier_w, provider: prov_w, instance: inst_w, model_or_offering: model_w }.freeze
         end
 
         # Returns { min: Integer_or_nil, max: Integer_or_nil } or nil when no
-        # preferred range is configured for the exact instance.
+        # preferred range is configured. Resolved through the lex-llm 3-level
+        # cascade (provider -> instance -> model, most-specific-first) keyed
+        # by the config name, so a provider- or model-level leg can supply
+        # either bound.
         def preferred_context_range_for(lane:)
-          inst = ext_llm_instance(ext_llm_provider(lane.provider_family), lane.instance_id)
-          return nil if inst.empty?
-
-          min_v = inst[:preferred_min_context_tokens]
-          max_v = inst[:preferred_max_context_tokens]
+          min_v = cascade_value(provider_family: lane.provider_family, instance_id: lane.instance_id,
+                                key: :preferred_min_context_tokens, model: lane.model)
+          max_v = cascade_value(provider_family: lane.provider_family, instance_id: lane.instance_id,
+                                key: :preferred_max_context_tokens, model: lane.model)
           return nil unless min_v || max_v
 
           { min: min_v, max: max_v }.freeze
+        end
+
+        # The operator's cascaded enable_<capability> routing override for the
+        # exact instance (config name), resolved through the lex-llm 3-level
+        # cascade (provider -> instance -> model, most-specific-first).
+        # Returns true or false when the operator configured it; nil when unset.
+        # Routing-side read only: providers do not publish the override as
+        # capability evidence (config remains unknown-only evidence).
+        def capability_override_for(provider_family:, instance_id:, capability:, model:)
+          cascade_value(provider_family: provider_family, instance_id: instance_id,
+                        key: :"enable_#{capability}", model: model)
         end
 
         # Returns { whitelist: Array<String>, blacklist: Array<String> } using the
@@ -158,6 +182,19 @@ module Legion
         def ext_llm_instance(prov_hash, instance_id)
           instances = prov_hash[:instances] || {}
           instances[instance_id.to_sym] || instances[instance_id] || {}
+        end
+
+        # One key through the lex-llm 3-level cascade (model scopes →
+        # instance → provider) against the snapshot's captured extensions.llm
+        # subtree. instance_id is the operator's config name.
+        def cascade_value(provider_family:, instance_id:, key:, model:)
+          CASCADE.resolve_from(
+            llm_conf:        @ext_llm,
+            provider_family: provider_family,
+            instance:        instance_id,
+            key:             key,
+            model:           model
+          )
         end
 
         # §9.5 — first scope whose key EXISTS wins, including explicit empty Array.

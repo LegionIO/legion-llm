@@ -143,23 +143,27 @@ RSpec.describe Legion::LLM::Router::RejectionDiagnostics, :ssot_v3 do
     end
   end
 
-  describe 'Step 5 — too_early: unknown evidence on eligible candidates' do
-    it 'unknown capability state → :too_early 425' do
-      cands = [candidate(capability_state: :unknown)]
+  describe 'Step 5 — service_unavailable: tripped reports before unknown' do
+    it 'a tripped fit candidate + an unknown-capability candidate → :service_unavailable 503 (not too_early/529)' do
+      cands = [
+        candidate(availability_state: :unavailable),             # fit, tripped
+        candidate(capability_state: :unknown)                    # unknown required cap
+      ]
       r = diagnose(candidates: cands, statuses: [pub_status(state: :complete)])
-      expect(r.kind).to eq(:too_early)
-      expect(r.http_status).to eq(425)
+      expect(r.kind).to eq(:service_unavailable)
+      expect(r.http_status).to eq(503)
     end
 
-    it 'unknown availability state → :too_early 425' do
-      cands = [candidate(availability_state: :unknown)]
+    it 'a tripped not-fit candidate + an unknown-capability candidate → :service_unavailable 503' do
+      cands = [
+        candidate(capability_state: :unsupported, availability_state: :unavailable),
+        candidate(capability_state: :unknown)
+      ]
       r = diagnose(candidates: cands, statuses: [pub_status(state: :complete)])
-      expect(r.kind).to eq(:too_early)
-      expect(r.http_status).to eq(425)
+      expect(r.kind).to eq(:service_unavailable)
+      expect(r.http_status).to eq(503)
     end
-  end
 
-  describe 'Step 6 — service_unavailable' do
     it 'all conclusively-fit candidates unavailable → :service_unavailable 503' do
       cands = [
         candidate(availability_state: :unavailable),
@@ -170,13 +174,80 @@ RSpec.describe Legion::LLM::Router::RejectionDiagnostics, :ssot_v3 do
       expect(r.http_status).to eq(503)
     end
 
-    it 'mixed available+unavailable candidates with no context/dimension failures → step 8 service_unavailable' do
+    it 'is skipped when a conclusively-fit available candidate exists (consumed-target state → step 9)' do
+      # fit + available but excluded for this request, alongside a tripped
+      # instance: the tripped report is skipped (a usable target exists) and
+      # the state falls through to the step 9 catch-all — still 503.
+      cands = [
+        candidate(availability_state: :unavailable),
+        candidate(exclusion_state: :excluded)
+      ]
+      r = diagnose(candidates: cands, statuses: [pub_status(state: :complete)])
+      expect(r.kind).to eq(:service_unavailable)
+      expect(r.http_status).to eq(503)
+    end
+  end
+
+  describe 'Step 6 — invalid_request: terminal settled-unknown (the 529 fix)' do
+    it 'a complete scope with an unknown required capability → typed 400, not unbounded too_early' do
+      cands = [candidate(capability_state: :unknown)]
+      r = diagnose(candidates: cands, statuses: [pub_status(state: :complete)])
+      expect(r.kind).to eq(:invalid_request)
+      expect(r.http_status).to eq(400)
+    end
+
+    it 'an initializing scope with an unknown required capability → :too_early 425 (genuinely initializing)' do
+      cands = [candidate(capability_state: :unknown)]
+      r = diagnose(candidates: cands, statuses: [pub_status(state: :initializing)])
+      expect(r.kind).to eq(:too_early)
+      expect(r.http_status).to eq(425)
+    end
+
+    it 'mixed complete+initializing scopes with an unknown required capability → :too_early 425' do
+      cands = [candidate(capability_state: :unknown)]
+      r = diagnose(
+        candidates: cands,
+        statuses:   [pub_status(state: :complete), pub_status(state: :initializing, instance_id: 'helios1')]
+      )
+      expect(r.kind).to eq(:too_early)
+      expect(r.http_status).to eq(425)
+    end
+
+    it 'is skipped when a conclusively-fit available candidate exists (falls to step 7 too_early)' do
+      cands = [
+        candidate(exclusion_state: :excluded), # fit + available, consumed this request
+        candidate(capability_state: :unknown)
+      ]
+      r = diagnose(candidates: cands, statuses: [pub_status(state: :complete)])
+      expect(r.kind).to eq(:too_early)
+      expect(r.http_status).to eq(425)
+    end
+  end
+
+  describe 'Step 7 — too_early: unknown evidence on non-capability axes' do
+    it 'unknown availability state → :too_early 425' do
+      cands = [candidate(availability_state: :unknown)]
+      r = diagnose(candidates: cands, statuses: [pub_status(state: :complete)])
+      expect(r.kind).to eq(:too_early)
+      expect(r.http_status).to eq(425)
+    end
+
+    it 'unknown operation state with complete scopes → :too_early 425' do
+      cands = [candidate(operation_state: :unknown)]
+      r = diagnose(candidates: cands, statuses: [pub_status(state: :complete)])
+      expect(r.kind).to eq(:too_early)
+      expect(r.http_status).to eq(425)
+    end
+  end
+
+  describe 'Step 6 (legacy ordering) — mixed available+unavailable with no unknowns' do
+    it 'mixed available+unavailable candidates with no context/dimension failures → step 9 service_unavailable' do
       # One conclusively-fit candidate is unavailable; one is available.
-      # Step 6's guard (all conclusively-fit are unavailable) does NOT fire
-      # because one candidate is :available.
-      # Step 7 (context_rejected) does NOT fire because neither candidate
-      # has context_state or dimension_state == :rejected.
-      # We fall through to step 8 — the service_unavailable catch-all.
+      # Step 5's tripped report is skipped because a fit+available candidate
+      # exists; step 6 (settled-unknown) has no unknown; step 7 has no unknown;
+      # step 8 (context_rejected) does not fire because neither candidate has
+      # context_state or dimension_state == :rejected.
+      # We fall through to step 9 — the service_unavailable catch-all.
       cands = [
         candidate(availability_state: :unavailable), # fit, unavailable
         candidate(availability_state: :available)    # fit, available

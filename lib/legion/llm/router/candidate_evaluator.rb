@@ -78,8 +78,12 @@ module Legion
             # Step 3 — model policy via SettingsSnapshot specificity cascade
             policy_state = evaluate_policy(offering: offering, settings_snapshot: settings_snapshot)
 
-            # Step 4 — required capabilities (tri-state reduction)
-            capability_state = evaluate_capabilities(offering: offering, requirements: requirements)
+            # Step 4 — required capabilities (tri-state reduction + enable_* override)
+            capability_state = evaluate_capabilities(
+              offering:          offering,
+              requirements:      requirements,
+              settings_snapshot: settings_snapshot
+            )
 
             # Step 5 — context budget against authoritative limit
             context_state = evaluate_context(
@@ -195,10 +199,11 @@ module Legion
             :allowed
           end
 
-          # §9.7 step 4 — capability reduction.
-          # All supported → :supported; any unknown → :unknown (highest priority);
-          # any authoritative unsupported with no unknown → :unsupported.
-          def evaluate_capabilities(offering:, requirements:)
+          # §9.7 step 4 — capability reduction with the operator's enable_*
+          # routing override (fail-forward decision 2).
+          # All satisfied → :supported; any unknown → :unknown (highest
+          # priority); any not-ready with no unknown → :unsupported.
+          def evaluate_capabilities(offering:, requirements:, settings_snapshot:)
             caps = requirements.required_capabilities
             return :supported if caps.empty?
 
@@ -206,7 +211,11 @@ module Legion
             any_unsupported = false
 
             caps.each do |cap|
-              case offering.capability_status(capability: cap)
+              case resolved_capability_status(
+                offering:          offering,
+                capability:        cap,
+                settings_snapshot: settings_snapshot
+              )
               when :unknown     then any_unknown     = true
               when :unsupported then any_unsupported = true
               end
@@ -216,6 +225,29 @@ module Legion
             return :unsupported if any_unsupported
 
             :supported
+          end
+
+          # Axis state for one required capability. The operator's cascaded
+          # enable_<cap> for the exact instance (config name) is consulted
+          # ONLY when the published evidence is :unknown — the provider does
+          # not publish this (contract-forbidden as evidence), the router
+          # reads the config: operator true satisfies the axis, operator
+          # false makes it not ready, unset falls back to the evidence.
+          # Authoritative :supported/:unsupported evidence is never overridden.
+          def resolved_capability_status(offering:, capability:, settings_snapshot:)
+            status = offering.capability_status(capability: capability)
+            return status unless status == :unknown
+
+            override = settings_snapshot.capability_override_for(
+              provider_family: offering.instance_key.provider_family,
+              instance_id:     offering.instance_key.instance_id,
+              model:           offering.model,
+              capability:      capability
+            )
+            return :supported   if override == true
+            return :unsupported if override == false
+
+            status
           end
 
           # §9.7 step 5 — context budget.
@@ -340,8 +372,9 @@ module Legion
 
           # §10.1 preferred-context soft sieve input.
           # True when required_context_budget falls within the configured
-          # preferred range for the exact instance. False when no range is
-          # configured or no lane was resolved.
+          # preferred range for the exact instance — upper-exclusive seam
+          # (budget < max), matching the Ranker sieve and the baseline.
+          # False when no range is configured or no lane was resolved.
           def evaluate_preferred_context(lane:, requirements:, settings_snapshot:)
             return false if lane.nil?
 
@@ -350,7 +383,7 @@ module Legion
 
             budget = requirements.required_context_budget
             min_ok = range[:min].nil? || budget >= range[:min]
-            max_ok = range[:max].nil? || budget <= range[:max]
+            max_ok = range[:max].nil? || budget < range[:max]
             min_ok && max_ok
           end
         end

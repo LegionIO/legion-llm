@@ -94,7 +94,13 @@ module Legion
               idempotency_key: idempotency_key,
               selected_lane:   nil
             )
-            return sd_result.value
+            # Dispatch-boundary contract (pre-SSOT Call::Dispatch.call): the
+            # executor consumes a Canonical::Response, never the raw provider
+            # value. SelectionDispatch returns the raw callable return (a
+            # lex-llm Message for sync/stream chat), so normalize it here —
+            # the native tool loop and response translation are written
+            # against Canonical::Response.
+            return Legion::LLM::Call::Dispatch.normalize_response(sd_result.value)
           end
 
           record_route_attempt(

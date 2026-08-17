@@ -353,6 +353,161 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
   end
 
   # ------------------------------------------------------------------ #
+  # capability_override_for — cascaded enable_<cap> (fail-forward)      #
+  # ------------------------------------------------------------------ #
+
+  describe '#capability_override_for' do
+    it 'resolves the instance-level (config-name keyed) enable_* value' do
+      ext = { llm: { vllm: { instances: { 'h200' => { enable_thinking: true } } } } }
+      snap = build(extension_settings: ext)
+      expect(
+        snap.capability_override_for(provider_family: :vllm, instance_id: 'h200',
+                                     capability: :thinking, model: 'gemma4')
+      ).to be(true)
+    end
+
+    it 'preserves an explicit false (not a missing value)' do
+      ext = { llm: { vllm: { instances: { h200: { enable_thinking: false } } } } }
+      snap = build(extension_settings: ext)
+      expect(
+        snap.capability_override_for(provider_family: :vllm, instance_id: 'h200',
+                                     capability: :thinking, model: 'gemma4')
+      ).to be(false)
+    end
+
+    it 'falls through to the provider leg when the instance leg is unset' do
+      ext = { llm: { vllm: { enable_thinking: true, instances: { h200: { weight: 1 } } } } }
+      snap = build(extension_settings: ext)
+      expect(
+        snap.capability_override_for(provider_family: :vllm, instance_id: 'h200',
+                                     capability: :thinking, model: 'gemma4')
+      ).to be(true)
+    end
+
+    it 'lets the model leg beat the instance leg (most-specific-first)' do
+      ext = {
+        llm: {
+          vllm: {
+            instances: {
+              h200: {
+                enable_thinking: true,
+                models:          { 'gemma4' => { enable_thinking: false } }
+              }
+            }
+          }
+        }
+      }
+      snap = build(extension_settings: ext)
+      expect(
+        snap.capability_override_for(provider_family: :vllm, instance_id: 'h200',
+                                     capability: :thinking, model: 'gemma4')
+      ).to be(false)
+    end
+
+    it 'returns nil when no scope carries the key' do
+      snap = build
+      expect(
+        snap.capability_override_for(provider_family: :vllm, instance_id: 'h200',
+                                     capability: :thinking, model: 'gemma4')
+      ).to be_nil
+    end
+
+    it 'returns nil for an unknown instance' do
+      ext = { llm: { vllm: { instances: { h200: { enable_thinking: true } } } } }
+      snap = build(extension_settings: ext)
+      expect(
+        snap.capability_override_for(provider_family: :vllm, instance_id: 'other',
+                                     capability: :thinking, model: 'gemma4')
+      ).to be_nil
+    end
+  end
+
+  # ------------------------------------------------------------------ #
+  # Cascade legs — weight + preferred range keyed by config name        #
+  # ------------------------------------------------------------------ #
+
+  describe 'cascade legs' do
+    def lane_stub(tier:, provider_family:, instance_id:, model:, offering_id: 'off:v1:abc')
+      double(
+        'LaneRecord',
+        tier:            tier,
+        provider_family: provider_family,
+        instance_id:     instance_id,
+        model:           model,
+        offering_id:     offering_id
+      )
+    end
+
+    it 'resolves the instance-scoped models.<model> weight before the provider-scoped one' do
+      ext = {
+        llm: {
+          vllm: {
+            models:    { 'gemma4' => { weight: 50 } },
+            instances: { 'h200' => { models: { 'gemma4' => { weight: 150 } } } }
+          }
+        }
+      }
+      snap = build(extension_settings: ext)
+      lane = lane_stub(tier: :local, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
+      expect(snap.weight_inputs_for(lane: lane)[:model_or_offering]).to eq(150)
+    end
+
+    it 'still prefers the offering weight over any model-scope weight' do
+      ext = {
+        llm: {
+          vllm: {
+            offerings: { 'off:v1:xyz' => { weight: 300 } },
+            instances: { 'h200' => { models: { 'gemma4' => { weight: 150 } } } }
+          }
+        }
+      }
+      snap = build(extension_settings: ext)
+      lane = lane_stub(tier: :local, provider_family: :vllm, instance_id: 'h200',
+                       model: 'gemma4', offering_id: 'off:v1:xyz')
+      expect(snap.weight_inputs_for(lane: lane)[:model_or_offering]).to eq(300)
+    end
+
+    it 'resolves a preferred range from a provider-level leg' do
+      ext = { llm: { vllm: { preferred_max_context_tokens: 8192 } } }
+      snap = build(extension_settings: ext)
+      lane = lane_stub(tier: :local, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
+      expect(snap.preferred_context_range_for(lane: lane)).to eq({ min: nil, max: 8192 })
+    end
+
+    it 'merges instance-level min with provider-level max (per-key cascade)' do
+      ext = {
+        llm: {
+          vllm: {
+            preferred_max_context_tokens: 8192,
+            instances:                    { 'h200' => { preferred_min_context_tokens: 1024 } }
+          }
+        }
+      }
+      snap = build(extension_settings: ext)
+      lane = lane_stub(tier: :local, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
+      expect(snap.preferred_context_range_for(lane: lane)).to eq({ min: 1024, max: 8192 })
+    end
+
+    it 'lets the model leg override the instance preferred bounds' do
+      ext = {
+        llm: {
+          vllm: {
+            instances: {
+              'h200' => {
+                preferred_min_context_tokens: 1024,
+                models:                       { 'gemma4' => { preferred_min_context_tokens: 2048 } }
+              }
+            }
+          }
+        }
+      }
+      snap = build(extension_settings: ext)
+      lane = lane_stub(tier: :local, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
+      expect(snap.preferred_context_range_for(lane: lane)).to eq({ min: 2048, max: nil })
+    end
+  end
+
+  # ------------------------------------------------------------------ #
   # model_policy_for — §9.5 specificity cascade                         #
   # ------------------------------------------------------------------ #
 

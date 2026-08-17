@@ -79,4 +79,102 @@ RSpec.describe Legion::LLM::Router, '.next_lane', :ssot_v3 do
     expect { described_class.next_lane(requirements: requirements, exclusions: [], snapshot: :notsnap) }
       .to raise_error(ArgumentError)
   end
+
+  # ------------------------------------------------------------------- #
+  # Fail-forward (2026-08-16): typed failures, no unbounded 529          #
+  # ------------------------------------------------------------------- #
+
+  describe 'fail-forward: a settled :unknown required capability' do
+    before { Legion::LLM::Router::SettingsState.reset! }
+
+    it 'is a terminal typed 400 (invalid_request), never an unbounded too_early/529' do
+      # A complete publication scope whose provider cannot attest :thinking
+      # (evidence :unknown, config contract-forbidden as evidence) and no
+      # operator enable_thinking override.
+      activate(
+        provider_family: 'vllm', instance_id: 'apollo',
+        drafts: [offering_draft(
+          model: 'gemma4', supported: %i[chat stream_chat], context: 200_000,
+          capabilities: { streaming: :supported, tools: :supported }
+          # thinking: absent → :unknown
+        )]
+      )
+      rej = next_lane(requirements(capabilities: %i[thinking]))
+
+      expect(rej).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+      expect(rej.kind).to eq(:invalid_request)
+      expect(rej.http_status).to eq(400)
+      expect(rej.kind).not_to eq(:too_early)
+    end
+
+    it 'routes when the operator attests the capability via the config-name enable_* override' do
+      activate(
+        provider_family: 'vllm', instance_id: 'apollo',
+        drafts: [offering_draft(
+          model: 'gemma4', supported: %i[chat stream_chat], context: 200_000,
+          capabilities: { streaming: :supported, tools: :supported }
+          # thinking: absent → :unknown
+        )]
+      )
+      # The frozen employee-config shape: per-instance tuning keyed by the
+      # config NAME, with an enable_* override.
+      Legion::Settings[:extensions][:llm][:vllm] = {
+        instances: { 'apollo' => { enable_thinking: true, weight: 100 } }
+      }
+
+      sel = next_lane(requirements(capabilities: %i[thinking]))
+      expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(sel.instance_id).to eq('apollo')
+    end
+
+    it 'reports a tripped instance as 503, not 529, when another candidate has unknown evidence' do
+      token = activate(
+        provider_family: 'vllm', instance_id: 'apollo',
+        drafts: [offering_draft(
+          model: 'gemma4', supported: %i[chat stream_chat], context: 200_000,
+          capabilities: { streaming: :supported, tools: :supported }
+        )]
+      )
+      activate(
+        provider_family: 'ollama', instance_id: 'apollo-embed',
+        drafts: [offering_draft(
+          model: 'gemma4', supported: %i[chat stream_chat], context: 200_000,
+          capabilities: { streaming: :supported, tools: :supported }
+          # thinking: absent → :unknown
+        )]
+      )
+      mark_unavailable(
+        provider_family:    'vllm',
+        instance_id:        'apollo',
+        publisher_token_id: token.publisher_token_id
+      )
+
+      rej = next_lane(requirements(capabilities: %i[thinking]))
+      expect(rej).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+      expect(rej.kind).to eq(:service_unavailable)
+      expect(rej.http_status).to eq(503)
+    end
+
+    it 'routes a tools+thinking request to the sibling provider that CAN attest both' do
+      activate(
+        provider_family: 'vllm', instance_id: 'apollo',
+        drafts: [offering_draft(
+          model: 'gemma4', supported: %i[chat stream_chat], context: 200_000,
+          capabilities: { streaming: :supported, tools: :supported }
+          # thinking: absent → :unknown (no misroute here — not ready)
+        )]
+      )
+      activate(
+        provider_family: 'bedrock', instance_id: 'primary',
+        drafts: [offering_draft(
+          model: 'gemma4', supported: %i[chat stream_chat], context: 200_000, tier: :cloud,
+          capabilities: { streaming: :supported, tools: :supported, thinking: :supported }
+        )]
+      )
+
+      sel = next_lane(requirements(capabilities: %i[tools thinking]))
+      expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(sel.provider_family).to eq(:bedrock)
+    end
+  end
 end

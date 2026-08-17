@@ -80,8 +80,13 @@ module Legion
           end
           outcome
         rescue StandardError => e
+          # Log the ORIGINAL dispatch error too — a normalizer that raises must never
+          # mask the provider error it was asked to classify; that mask is what made this
+          # class of bug undiagnosable from the daemon log (the original was lost entirely).
           handle_exception(e, level: :warn, operation: 'llm.call.selection_dispatch.normalize_error',
-                              handled: false, lane_id: nil)
+                              handled: false, lane_id: nil,
+                              original_error_class: error.class.name,
+                              original_error_message: error.message.to_s.dup.force_encoding(::Encoding::UTF_8).scrub('?')[0, 512])
           raise
         end
         private_class_method :normalize

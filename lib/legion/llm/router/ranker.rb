@@ -105,10 +105,12 @@ module Legion
           ready
         end
 
-        # True when +budget+ falls within the (nil-open) range [min, max].
+        # True when +budget+ falls within the (nil-open) range [min, max) —
+        # the range-sieve seam is upper-exclusive (budget < max), matching
+        # the baseline lane_in_range? (estimated_context < upper).
         def range_contains?(range, budget)
           (range[:min].nil? || budget >= range[:min]) &&
-            (range[:max].nil? || budget <= range[:max])
+            (range[:max].nil? || budget < range[:max])
         end
 
         # ------------------------------------------------------------------ #

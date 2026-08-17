@@ -204,6 +204,129 @@ RSpec.describe Legion::LLM::Router::CandidateEvaluator, :ssot_v3 do
         expect(result.candidates.first.capability_state).to eq(:supported)
       end
     end
+
+    # Fail-forward decision 2 — the operator's cascaded enable_<cap> for the
+    # exact instance (config name) is a routing override consulted ONLY when
+    # the published evidence is :unknown.
+    context 'operator enable_* override (config-name keyed cascade)' do
+      before do
+        activate(
+          provider_family: 'vllm',
+          instance_id:     'h200',
+          drafts:          [offering_draft(
+            model: 'gemma4', supported: %i[chat],
+            capabilities: { tools: :supported }
+            # thinking absent → :unknown evidence
+          )]
+        )
+      end
+
+      context 'when the operator sets enable_thinking true for the exact instance' do
+        before do
+          Legion::Settings[:extensions][:llm][:vllm] = {
+            instances: { 'h200' => { enable_thinking: true } }
+          }
+        end
+
+        it 'satisfies the :unknown axis → capability_state :supported and ready' do
+          snap   = snapshot
+          reqs   = build_requirements(caps: %i[thinking])
+          result = call_evaluator(reqs, [], snap)
+
+          candidate = result.candidates.first
+          expect(candidate.capability_state).to eq(:supported)
+          expect(candidate.ready?).to be true
+        end
+      end
+
+      context 'when the operator sets enable_thinking false for the exact instance' do
+        before do
+          Legion::Settings[:extensions][:llm][:vllm] = {
+            instances: { 'h200' => { enable_thinking: false } }
+          }
+        end
+
+        it 'marks the axis not ready → capability_state :unsupported' do
+          snap   = snapshot
+          reqs   = build_requirements(caps: %i[thinking])
+          result = call_evaluator(reqs, [], snap)
+
+          candidate = result.candidates.first
+          expect(candidate.capability_state).to eq(:unsupported)
+          expect(candidate.ready?).to be false
+        end
+      end
+
+      context 'when the operator sets no override' do
+        it 'falls back to the evidence → capability_state :unknown' do
+          snap   = snapshot
+          reqs   = build_requirements(caps: %i[thinking])
+          result = call_evaluator(reqs, [], snap)
+
+          expect(result.candidates.first.capability_state).to eq(:unknown)
+        end
+      end
+
+      context 'when the model-level override beats the instance-level override' do
+        before do
+          Legion::Settings[:extensions][:llm][:vllm] = {
+            instances: {
+              'h200' => {
+                enable_thinking: true,
+                models:          { 'gemma4' => { enable_thinking: false } }
+              }
+            }
+          }
+        end
+
+        it 'resolves enable_thinking to false (most-specific-first)' do
+          snap   = snapshot
+          reqs   = build_requirements(caps: %i[thinking])
+          result = call_evaluator(reqs, [], snap)
+
+          expect(result.candidates.first.capability_state).to eq(:unsupported)
+        end
+      end
+
+      context 'when the provider-level override is the only one set' do
+        before do
+          Legion::Settings[:extensions][:llm][:vllm] = { enable_thinking: true }
+        end
+
+        it 'resolves enable_thinking to true via the provider leg' do
+          snap   = snapshot
+          reqs   = build_requirements(caps: %i[thinking])
+          result = call_evaluator(reqs, [], snap)
+
+          expect(result.candidates.first.capability_state).to eq(:supported)
+        end
+      end
+
+      context 'when a sibling instance has authoritatively unsupported evidence' do
+        before do
+          activate(
+            provider_family: 'vllm',
+            instance_id:     'h201',
+            drafts:          [offering_draft(
+              model: 'gemma4', supported: %i[chat],
+              capabilities: { thinking: :unsupported }
+            )]
+          )
+          Legion::Settings[:extensions][:llm][:vllm] = {
+            instances: { 'h201' => { enable_thinking: true } }
+          }
+        end
+
+        it 'does not let operator true override authoritative :unsupported evidence' do
+          snap   = snapshot
+          reqs   = build_requirements(caps: %i[thinking])
+          result = call_evaluator(reqs, [], snap)
+
+          h201 = result.candidates.find { |c| c.offering.instance_key.instance_id == 'h201' }
+          expect(h201.capability_state).to eq(:unsupported)
+        end
+      end
+    end
   end
 
   # ---------------------------------------------------------------------------

@@ -110,11 +110,53 @@ module Legion
                              gen, counts, pins)
           end
 
+          has_tripped     = policy_eligible.any? { |c| c.availability_state == :unavailable }
+          # Pin-aware: only a pin-MATCHING fit+available candidate can satisfy a
+          # pinned request. A pin-mismatched fit sibling (vllm/bedrock under an
+          # ollama pin) cannot be selected, so it must not suppress the tripped
+          # 503 (step 5) or the settled-unknown 400 (step 6). Unpinned requests
+          # are unaffected — every candidate is pin_state :match with no pin.
+          fit_available   = policy_eligible.any? { |c| conclusively_fit?(c) && c.availability_state == :available && c.pin_state == :match }
+
           # ---------------------------------------------------------------- #
-          # Step 5 — too_early 425 (unknown evidence)                         #
-          # Any potentially eligible candidate has unknown evidence on any   #
-          # hard-filter axis: operation, capability, context, dimension,     #
-          # availability, or fleet contract.                                  #
+          # Step 5 — service_unavailable 503 (tripped before unknown)         #
+          # An UNAVAILABLE (tripped) candidate reports before an unknown-     #
+          # evidence one: a tripped instance is 503 (recoverable without a    #
+          # restart), never 529 (unbounded overload retry). Skipped when a    #
+          # conclusively fit and available candidate exists (its not-ready    #
+          # state — e.g. a consumed attempt target — is the step 9 state).    #
+          # ---------------------------------------------------------------- #
+          if has_tripped && !fit_available
+            log.debug('[llm][rejection_diagnostics] action=diagnose result=service_unavailable ' \
+                      "reason=tripped_before_unknown count=#{policy_eligible.size}")
+            return rejection(:service_unavailable, 503,
+                             'tripped instance reported before unknown evidence; recovers without a restart',
+                             gen, counts, pins)
+          end
+
+          # ---------------------------------------------------------------- #
+          # Step 6 — invalid_request 400 (terminal settled-unknown)           #
+          # A SETTLED (complete) publication scope with an unsatisfied        #
+          # :unknown required capability is TERMINAL: the evidence will not   #
+          # settle on its own, so the request fails as a typed no-lane (400), #
+          # never an unbounded too_early/529 retry loop. too_early (step 7)   #
+          # is bounded to genuinely-initializing scopes and to unknowns on    #
+          # the non-capability hard-filter axes.                              #
+          # ---------------------------------------------------------------- #
+          if all_scopes_complete && !fit_available &&
+             policy_eligible.any? { |c| c.capability_state == :unknown }
+            log.debug('[llm][rejection_diagnostics] action=diagnose result=invalid_request ' \
+                      "reason=settled_unknown_capability count=#{policy_eligible.size}")
+            return rejection(:invalid_request, 400,
+                             'no lane can attest the required capabilities; published evidence is unknown and no operator enable_* override is set',
+                             gen, counts, pins)
+          end
+
+          # ---------------------------------------------------------------- #
+          # Step 7 — too_early 425 (unknown evidence)                         #
+          # Genuinely-initializing publication scopes, or unknown evidence    #
+          # on a non-capability hard-filter axis: operation, context,        #
+          # dimension, availability, or fleet contract.                       #
           # ---------------------------------------------------------------- #
           has_any_unknown = policy_eligible.any? do |c|
             c.operation_state == :unknown ||
@@ -133,28 +175,7 @@ module Legion
           end
 
           # ---------------------------------------------------------------- #
-          # Step 6 — service_unavailable 503                                  #
-          # Every conclusively capable/fit candidate is on an unavailable    #
-          # instance. "Conclusively fit" = authoritative supported for all   #
-          # evidence axes; only availability blocks dispatch.                #
-          # ---------------------------------------------------------------- #
-          conclusively_fit = policy_eligible.select do |c|
-            c.operation_state == :supported &&
-              c.capability_state == :supported &&
-              %i[fits not_applicable].include?(c.context_state) &&
-              %i[match not_applicable].include?(c.dimension_state)
-          end
-
-          if conclusively_fit.any? && conclusively_fit.all? { |c| c.availability_state == :unavailable }
-            log.debug('[llm][rejection_diagnostics] action=diagnose result=service_unavailable ' \
-                      "count=#{conclusively_fit.size}")
-            return rejection(:service_unavailable, 503,
-                             'all capable candidates are on unavailable instances',
-                             gen, counts, pins)
-          end
-
-          # ---------------------------------------------------------------- #
-          # Step 7 — context_rejected 400                                     #
+          # Step 8 — context_rejected 400                                     #
           # A conclusive context or dimension constraint blocks selection.   #
           # Only when an authoritative context/dimension rejection is the    #
           # actual cause — NOT when the sole blocker is request-local         #
@@ -169,7 +190,7 @@ module Legion
           end
 
           # ---------------------------------------------------------------- #
-          # Step 8 — service_unavailable 503 (retriable)                      #
+          # Step 9 — service_unavailable 503 (retriable)                      #
           # Candidates were otherwise eligible (capable, fit, not policy-     #
           # denied, no unknown evidence) but every one is request-locally     #
           # excluded (its exact provider+instance+model was already consumed  #
@@ -189,6 +210,17 @@ module Legion
         # ------------------------------------------------------------------ #
         # Private helpers                                                      #
         # ------------------------------------------------------------------ #
+
+        # "Conclusively fit" = authoritative pass on every evidence axis
+        # (operation, capability, context, dimension). Only availability,
+        # exclusion, or pin state can still block dispatch.
+        def self.conclusively_fit?(candidate)
+          candidate.operation_state == :supported &&
+            candidate.capability_state == :supported &&
+            %i[fits not_applicable].include?(candidate.context_state) &&
+            %i[match not_applicable].include?(candidate.dimension_state)
+        end
+        private_class_method :conclusively_fit?
 
         def self.rejection(kind, http_status, reason, gen, counts, pins)
           Legion::Extensions::Llm::Routing::Rejection.new(

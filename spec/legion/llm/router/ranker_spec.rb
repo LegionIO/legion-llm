@@ -647,6 +647,141 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       expect(rc).not_to be_nil
       expect(%w[h200 helios1]).to include(rc.evaluation.lane.instance_id)
     end
+
+    it 'seam: a budget exactly AT the upper bound is outside the range (upper-exclusive)' do
+      custom_settings = Legion::LLM::Router::SettingsSnapshot.build(
+        generation:         91,
+        llm_settings:       {
+          routing: {
+            tier_weights:         { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
+            context_headroom_ppm: 900_000
+          },
+          api:     { routing_too_early_retry_after: 1 }
+        },
+        extension_settings: {
+          llm: {
+            vllm: {
+              instances: {
+                h200: {
+                  preferred_min_context_tokens: 100,
+                  preferred_max_context_tokens: 1_000
+                }
+                # helios1: generalist
+              }
+            }
+          }
+        }
+      )
+
+      activate(provider_family: 'vllm', instance_id: 'h200',
+               drafts: [offering_draft(model: 'gemma4', tier: :local, supported: %i[chat])])
+      activate(provider_family: 'vllm', instance_id: 'helios1',
+               drafts: [offering_draft(model: 'gemma4', tier: :local, supported: %i[chat])])
+      snap = snapshot
+
+      c_h200   = build_candidate(snap, provider_family: 'vllm', instance_id: 'h200',    model: 'gemma4')
+      c_helios = build_candidate(snap, provider_family: 'vllm', instance_id: 'helios1', model: 'gemma4')
+      eval_set = build_eval_set(snap, c_h200, c_helios)
+
+      # budget = 1_000 == max → NOT in [100, 1_000) → fall back to the generalist.
+      reqs = fake_reqs(required_context_budget: 1_000, routing_seed: '22' * 16)
+      rc   = described_class.call(
+        evaluation_set:    eval_set,
+        requirements:      reqs,
+        settings_snapshot: custom_settings
+      )
+      expect(rc.evaluation.lane.instance_id).to eq('helios1')
+    end
+
+    it 'seam: a budget one below the upper bound is inside the range' do
+      custom_settings = Legion::LLM::Router::SettingsSnapshot.build(
+        generation:         92,
+        llm_settings:       {
+          routing: {
+            tier_weights:         { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
+            context_headroom_ppm: 900_000
+          },
+          api:     { routing_too_early_retry_after: 1 }
+        },
+        extension_settings: {
+          llm: {
+            vllm: {
+              instances: {
+                h200: {
+                  preferred_min_context_tokens: 100,
+                  preferred_max_context_tokens: 1_000
+                }
+                # helios1: generalist
+              }
+            }
+          }
+        }
+      )
+
+      activate(provider_family: 'vllm', instance_id: 'h200',
+               drafts: [offering_draft(model: 'gemma4', tier: :local, supported: %i[chat])])
+      activate(provider_family: 'vllm', instance_id: 'helios1',
+               drafts: [offering_draft(model: 'gemma4', tier: :local, supported: %i[chat])])
+      snap = snapshot
+
+      c_h200   = build_candidate(snap, provider_family: 'vllm', instance_id: 'h200',    model: 'gemma4')
+      c_helios = build_candidate(snap, provider_family: 'vllm', instance_id: 'helios1', model: 'gemma4')
+      eval_set = build_eval_set(snap, c_h200, c_helios)
+
+      # budget = 999 < max → in [100, 1_000) → h200 preferred.
+      reqs = fake_reqs(required_context_budget: 999, routing_seed: '23' * 16)
+      rc   = described_class.call(
+        evaluation_set:    eval_set,
+        requirements:      reqs,
+        settings_snapshot: custom_settings
+      )
+      expect(rc.evaluation.lane.instance_id).to eq('h200')
+    end
+
+    it 'seam: a budget exactly AT the lower bound is inside the range (lower-inclusive)' do
+      custom_settings = Legion::LLM::Router::SettingsSnapshot.build(
+        generation:         93,
+        llm_settings:       {
+          routing: {
+            tier_weights:         { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
+            context_headroom_ppm: 900_000
+          },
+          api:     { routing_too_early_retry_after: 1 }
+        },
+        extension_settings: {
+          llm: {
+            vllm: {
+              instances: {
+                h200: {
+                  preferred_min_context_tokens: 100,
+                  preferred_max_context_tokens: 1_000
+                }
+                # helios1: generalist
+              }
+            }
+          }
+        }
+      )
+
+      activate(provider_family: 'vllm', instance_id: 'h200',
+               drafts: [offering_draft(model: 'gemma4', tier: :local, supported: %i[chat])])
+      activate(provider_family: 'vllm', instance_id: 'helios1',
+               drafts: [offering_draft(model: 'gemma4', tier: :local, supported: %i[chat])])
+      snap = snapshot
+
+      c_h200   = build_candidate(snap, provider_family: 'vllm', instance_id: 'h200',    model: 'gemma4')
+      c_helios = build_candidate(snap, provider_family: 'vllm', instance_id: 'helios1', model: 'gemma4')
+      eval_set = build_eval_set(snap, c_h200, c_helios)
+
+      # budget = 100 == min → in [100, 1_000) → h200 preferred.
+      reqs = fake_reqs(required_context_budget: 100, routing_seed: '24' * 16)
+      rc   = described_class.call(
+        evaluation_set:    eval_set,
+        requirements:      reqs,
+        settings_snapshot: custom_settings
+      )
+      expect(rc.evaluation.lane.instance_id).to eq('h200')
+    end
   end
 
   # ------------------------------------------------------------------ #

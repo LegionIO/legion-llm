@@ -16,6 +16,20 @@ RSpec.describe Legion::LLM::Call::SelectionDispatch, :ssot_v3 do
     Legion::LLM::Inference::AttemptContext.build(selection: sel, snapshot: snap, attempt_number: 1)
   end
 
+  # Publish one vllm instance with +callable+ and return [AttemptContext, callable_handle]
+  # for a :chat selection of 'gemma4' — the SSOT v3 dispatch setup shared by the
+  # error-normalization regression examples below.
+  def dispatch_context_and_handle(instance_id:, callable:)
+    activate(provider_family: 'vllm', instance_id: instance_id,
+             drafts: [offering_draft(model: 'gemma4', supported: %i[chat])],
+             callable: callable)
+    snap = snapshot
+    sel = selection_for(snapshot: snap, provider_family: 'vllm', instance_id: instance_id,
+                        model: 'gemma4', operation: :chat)
+    ctx = Legion::LLM::Inference::AttemptContext.build(selection: sel, snapshot: snap, attempt_number: 1)
+    [ctx, sel.callable_handle]
+  end
+
   describe 'Result' do
     it 'success carries value and a success outcome' do
       r = described_class::Result.success(value: { ok: true })
@@ -75,6 +89,68 @@ RSpec.describe Legion::LLM::Call::SelectionDispatch, :ssot_v3 do
     result = described.call(attempt_context: ctx, arguments: { messages: [] })
     expect(result).to be_failure
     expect(result.outcome).to be_a(Legion::Extensions::Llm::Routing::ProviderOutcome)
+    expect(handle.reference_count).to eq(0)
+  end
+
+  # Regression (dispatch boundary, SSOT v3): a provider error message can arrive
+  # as ASCII-8BIT — raw provider response bodies, Ruby kernel error messages.
+  # The production adapter normalizers (e.g. lex-llm-vllm) pass the bounded error
+  # message as the outcome reason, and RecordSupport#sanitized_reason once RAISED
+  # ValidationError 'is not valid UTF-8' on such a reason — masking the real
+  # dispatch error as an unclassifiable retriable 500. It now coerces to valid
+  # UTF-8, so a non-UTF-8 provider error normalizes to a typed outcome, never a
+  # crash. The offline router suite (selection only, ASCII FakeProvider) never
+  # covered this boundary.
+  it 'normalizes a non-UTF-8 provider error message into a valid-UTF-8 failure outcome, never a raise' do
+    raw = "provider 500 \xFF\x80 truncated".dup.force_encoding(Encoding::BINARY)
+    callable = Class.new(SsotV3SnapshotFactory::FactoryCallable) do
+      # Mirrors the production adapter normalizer: the bounded error message IS the reason.
+      define_method(:normalize_dispatch_error) do |error:|
+        llm = Legion::Extensions::Llm
+        reason = error.message.to_s[0, 512]
+        llm::Routing::ProviderOutcome.new(kind: :provider_error, reason: reason.empty? ? 'unknown dispatch error' : reason)
+      end
+    end.new(responder: ->(_op, _a, _k, _b) { raise raw })
+    ctx, handle = dispatch_context_and_handle(instance_id: 'utf8', callable: callable)
+    result = described.call(attempt_context: ctx, arguments: { messages: [] })
+    expect(result).to be_failure
+    expect(result.value).to be_nil
+    expect(result.outcome).to be_a(Legion::Extensions::Llm::Routing::ProviderOutcome)
+    expect(result.outcome.kind).to eq(:provider_error)
+    expect(result.outcome.reason).to be_a(String)
+    expect(result.outcome.reason.encoding).to eq(Encoding::UTF_8)
+    expect(result.outcome.reason).to be_valid_encoding
+    expect(handle.reference_count).to eq(0)
+  end
+
+  # Regression (same incident, observability): a normalizer that raises must
+  # never mask the provider error it was asked to classify. The normalize
+  # rescue logs the ORIGINAL dispatch error's class and scrubbed message before
+  # re-raising the programming failure. Pre-fix, the non-UTF-8 ValidationError
+  # from sanitized_reason escaped SelectionDispatch with the original dispatch
+  # error lost entirely from the daemon log.
+  it 'logs the original dispatch error class and message when the normalizer itself raises' do
+    raw = "provider 500 \xFF\x80 truncated".dup.force_encoding(Encoding::BINARY)
+    original = RuntimeError.new(raw)
+    normalizer_error = Legion::Extensions::Llm::Inventory::Errors::ValidationError.new('reason is not valid UTF-8')
+    callable = Class.new(SsotV3SnapshotFactory::FactoryCallable) do
+      define_method(:normalize_dispatch_error) do |error:|
+        _ = error
+        raise normalizer_error
+      end
+    end.new(responder: ->(_op, _a, _k, _b) { raise original })
+    ctx, handle = dispatch_context_and_handle(instance_id: 'normfail', callable: callable)
+    allow(described_class).to receive(:handle_exception)
+    expect { described.call(attempt_context: ctx, arguments: { messages: [] }) }.to raise_error(normalizer_error)
+    expect(described_class).to have_received(:handle_exception).with(
+      normalizer_error,
+      hash_including(
+        level:                  :warn,
+        handled:                false,
+        original_error_class:   'RuntimeError',
+        original_error_message: 'provider 500 ?? truncated'
+      )
+    )
     expect(handle.reference_count).to eq(0)
   end
 end
