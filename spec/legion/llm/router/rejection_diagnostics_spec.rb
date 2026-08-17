@@ -292,4 +292,46 @@ RSpec.describe Legion::LLM::Router::RejectionDiagnostics, :ssot_v3 do
     r = diagnose(candidates: cands, statuses: [pub_status(state: :complete)])
     expect(r.candidate_counts[:policy_denied]).to eq(1)
   end
+
+  # ---------------------------------------------------------------------------
+  # Regression — BINARY-encoded (Puma 8) header-derived pin (500 → typed 400)
+  # ---------------------------------------------------------------------------
+  #
+  # Puma 8 serves X-Legion-* header values as ASCII-8BIT (BINARY) strings. A
+  # pinned request that is rejected builds the Rejection record with those pin
+  # values; lex-llm's ImmutableValue accepts only valid UTF-8/US-ASCII, so the
+  # BINARY pin raised an untyped ValidationError (HTTP 500) instead of the
+  # typed rejection. Pin values are normalized to UTF-8 at the trust boundary
+  # (HeaderConstraints), so the rejection path always receives valid UTF-8.
+
+  describe 'regression — BINARY-encoded (Puma 8) header-derived model pin' do
+    # The production pin path: client translator reads the raw Rack env value
+    # into the routing hash → Request.build → trusted_from_routing →
+    # HeaderConstraints.from_internal → RequestRequirements.model_pin.
+    def binary_pin_requirements(model)
+      req = Legion::LLM::Inference::Request.build_for_test(
+        routing_seed: 'ab' * 16, messages: [], routing: { model: model }
+      )
+      Legion::LLM::Router::RequestRequirements.build(
+        request: req, operation: :chat, required_capabilities: [],
+        estimated_input_bound: 10, required_output_tokens: 0
+      )
+    end
+
+    it 'returns the typed pin-nonexistent rejection, not ValidationError (500)' do
+      pin = 'us.anthropic.claude-sonnet-4-6'.b # Puma 8: ASCII-8BIT, ascii_only? true
+      expect(pin.encoding).to eq(Encoding::ASCII_8BIT)
+      expect(pin.ascii_only?).to be(true)
+
+      cands = [candidate(pin_state: :mismatch), candidate(pin_state: :mismatch)]
+      r = described_class.call(
+        requirements:   binary_pin_requirements(pin),
+        evaluation_set: eval_set(candidates: cands, statuses: [pub_status(state: :complete)])
+      )
+      expect(r.kind).to eq(:invalid_request)
+      expect(r.http_status).to eq(400)
+      expect(r.explicit_pins[:model]).to eq('us.anthropic.claude-sonnet-4-6')
+      expect(r.explicit_pins[:model].encoding).to eq(Encoding::UTF_8)
+    end
+  end
 end

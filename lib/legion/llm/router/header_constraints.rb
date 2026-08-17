@@ -46,11 +46,12 @@ module Legion
         def self.from_internal(settings_snapshot:, provider: nil, instance_id: nil, model: nil,
                                tier: nil, maximum_attempts: nil)
           Value.new(
-            provider:         normalize_provider(provider),
-            instance_id:      blank_to_nil(instance_id),
-            model:            blank_to_nil(model),
-            tier:             normalize_tier(tier),
-            maximum_attempts: normalize_max_attempts(maximum_attempts, settings_snapshot)
+            provider:         normalize_provider(normalize_utf8!(provider, HEADER_KEYS[:provider])),
+            instance_id:      blank_to_nil(normalize_utf8!(instance_id, HEADER_KEYS[:instance_id])),
+            model:            blank_to_nil(normalize_utf8!(model, HEADER_KEYS[:model])),
+            tier:             normalize_tier(normalize_utf8!(tier, HEADER_KEYS[:tier])),
+            maximum_attempts: normalize_max_attempts(normalize_utf8!(maximum_attempts, HEADER_KEYS[:maximum_attempts]),
+                                                     settings_snapshot)
           )
         end
 
@@ -61,9 +62,29 @@ module Legion
 
           rack = "HTTP_#{name.upcase.tr('-', '_')}"
           value = headers[name] || headers[name.downcase] || headers[rack]
-          value&.to_s
+          normalize_utf8!(value&.to_s, name)
         end
         private_class_method :fetch_header
+
+        # Trust boundary: Puma 8 serves HTTP header values as ASCII-8BIT
+        # (BINARY) strings, and the frozen lex-llm inventory records accept
+        # only valid UTF-8/US-ASCII — a BINARY pin would crash Rejection
+        # validation (HTTP 500). ASCII-8BIT ASCII-only bytes re-encode to
+        # UTF-8 losslessly; genuinely invalid UTF-8 is a malformed trusted
+        # hint (Errors::InvalidHeader, HTTP 400).
+        def self.normalize_utf8!(value, header)
+          return value unless value.is_a?(String)
+          return value if value.encoding == Encoding::UTF_8 && value.valid_encoding?
+
+          normalized = value.dup.force_encoding(Encoding::UTF_8)
+          return normalized if normalized.valid_encoding?
+
+          raise Legion::LLM::Errors::InvalidHeader.new(
+            header: header, got: value, valid: [],
+            message: "#{header} value must be valid UTF-8"
+          )
+        end
+        private_class_method :normalize_utf8!
 
         def self.blank_to_nil(value)
           return nil if value.nil?
