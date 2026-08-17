@@ -485,6 +485,51 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       expect(result[:vector].size).to eq(1024)
       expect(result[:dimensions]).to eq(1024)
     end
+
+    # Legacy-shape preservation: a callable that returns a BARE numeric array
+    # (no Hash wrapper, pre-SSOT shape) must keep working.
+    it 'still accepts a callable that returns a raw numeric array' do
+      publish_embed(model: 'raw-array') do |_op, _a, kwargs, _b|
+        texts = kwargs[:text]
+        texts.is_a?(Array) ? texts.map { Array.new(1024, 0.3) } : Array.new(1024, 0.3)
+      end
+      result = described_class.generate(text: 'test', model: 'raw-array', routing_seed: seed)
+      expect(result[:vector].size).to eq(1024)
+      expect(result[:vector].first).to eq(0.3)
+      expect(result[:tokens]).to eq(0)
+    end
+  end
+
+  # Production SSOT v3 callable contract: the lex-llm-* parse_embedding_response
+  # implementations return the provider-native Legion::Extensions::Llm::Embedding
+  # value object (NOT the legacy {result:, usage:} Hash). The embed consumer must
+  # unwrap it at the boundary, mirroring the chat path's normalize_response.
+  # Pre-fix this raised ProviderError 'embedding provider returned no usable
+  # vector' — every live embed 502'd.
+  describe '.generate SSOT v3 native Embedding value object' do
+    it 'unwraps the native object: vectors returned, input_tokens extracted' do
+      publish_embed(model: 'native-embed') do |_op, _a, kwargs, _b|
+        texts = kwargs[:text]
+        vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.1) } : Array.new(1024, 0.1)
+        Legion::Extensions::Llm::Embedding.new(vectors: vectors, model: 'native-embed', input_tokens: 37)
+      end
+      result = described_class.generate(text: 'test', model: 'native-embed', routing_seed: seed)
+      expect(result[:vector].size).to eq(1024)
+      expect(result[:vector].first).to eq(0.1)
+      expect(result[:tokens]).to eq(37)
+    end
+
+    it 'unwraps a native object carrying one vector per batch entry' do
+      publish_embed(model: 'native-batch') do |_op, _a, kwargs, _b|
+        vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
+        Legion::Extensions::Llm::Embedding.new(vectors: vectors, model: 'native-batch', input_tokens: 30)
+      end
+      results = described_class.generate_batch(texts: %w[hello world], model: 'native-batch', routing_seed: seed)
+      expect(results.size).to eq(2)
+      expect(results.map { |r| r[:index] }).to eq([0, 1])
+      expect(results.first[:vector].first).to eq(1.0)
+      expect(results.last[:vector].first).to eq(2.0)
+    end
   end
 
   describe '.generate chunking (offering context contract, §21.1)' do

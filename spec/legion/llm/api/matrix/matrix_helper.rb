@@ -18,6 +18,7 @@ require 'legion/llm/api/namespaces/helpers'
 require 'legion/llm/api/namespaces/anthropic/messages'
 require 'legion/llm/api/namespaces/openai/responses'
 require 'legion/llm/api/namespaces/openai/chat/completions'
+require 'legion/llm/api/namespaces/openai/embeddings'
 require 'legion/llm/api/debug_formats'
 
 require_relative '../../../../support/fake_provider'
@@ -77,6 +78,7 @@ module MatrixHelper
       namespace('/v1/messages') { register Legion::LLM::API::Namespaces::Anthropic::Messages }
       register Legion::LLM::API::Namespaces::OpenAI::Responses
       register Legion::LLM::API::Namespaces::OpenAI::Chat::Completions
+      register Legion::LLM::API::Namespaces::OpenAI::Embeddings
     end
   end
 
@@ -120,7 +122,8 @@ module MatrixHelper
           tier:         :local,
           supported:    %i[chat stream_chat embed count_tokens],
           capabilities: { streaming: :supported, tools: :supported,
-                          thinking: :supported, vision: :supported },
+                          thinking: :supported, vision: :supported,
+                          embedding: :supported },
           context:      200_000,
           max_output:   16_384
         )

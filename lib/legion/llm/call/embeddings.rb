@@ -461,7 +461,18 @@ module Legion
           # ----------------------------------------------------------------
 
           # Normalize the provider return into a flat Array of numeric vectors.
+          #
+          # SSOT v3 callables return the provider-native
+          # Legion::Extensions::Llm::Embedding value object (the lex-llm
+          # parse_embedding_response contract). Like the chat path, which
+          # normalizes the native Message at the dispatch boundary
+          # (Inference::RouteAttempts -> Call::Dispatch.normalize_response),
+          # the native object is unwrapped HERE, at the embed consumer
+          # boundary — the callables stay raw. Its +vectors+ field is consumed
+          # exactly as the legacy Hash's +result:+ field: a flat numeric vector
+          # for a single input, an Array of them for a batch.
           def provider_vectors(value)
+            value = value.vectors if value.respond_to?(:vectors)
             raw = value.is_a?(Hash) ? value[:result] : value
             return [] if raw.nil?
             return [raw] if raw.is_a?(Array) && raw.first.is_a?(Numeric)
@@ -489,6 +500,10 @@ module Legion
           end
 
           def extract_tokens(value)
+            # The native Embedding value object carries input_tokens directly
+            # (no usage wrapper) — same duck guard as provider_vectors.
+            return value.input_tokens.to_i if value.respond_to?(:vectors) && value.respond_to?(:input_tokens)
+
             usage = value.is_a?(Hash) ? value[:usage] : nil
             return usage.input_tokens.to_i if usage.respond_to?(:input_tokens)
             return usage[:input_tokens].to_i if usage.is_a?(Hash) && usage.key?(:input_tokens)
