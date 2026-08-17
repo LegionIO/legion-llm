@@ -1,5 +1,21 @@
 # Legion LLM Changelog
 
+## [0.16.2] - 2026-08-17
+
+### Fixed
+- **Status API repointed off the dead legacy store.** `/api/llm/providers` and `/instances` now read the per-instance health hash from `Legion::Settings` (4-key legacy shape keyed by config name, written by the discovery actors); `/tiers` and `/offerings` read the live `Inventory::Registry` snapshot. `routing_enabled?` is derived from the Registry instead of the hardcoded `false` stub.
+- **Dispatch-boundary response normalization (latent 500 after a provider 200).** `Call::Dispatch.normalize_response` is public; the SSOT direct-dispatch path (`ssot_v3_direct_dispatch` in `route_attempts.rb`) wraps the raw provider `Message` in a canonical `Canonical::Response` at the executor consumption point, so the tool loop no longer NoMethodErrors on duck-typed `result[:tool_calls]`. Regression: `dispatch_message_normalization_spec.rb`.
+- **SelectionDispatch logs the original dispatch error.** The `normalize` rescue records the original error's class + message (scrubbed), so a raising normalizer (e.g. a non-UTF-8 `ArgumentError` masked as `reason is not valid UTF-8`) can no longer hide the real error behind an infinite-retry 500.
+- **Bounded 529 / typed rejection diagnostics.** A required capability that is `:unknown` on a settled (`:complete`) candidate set is now a terminal typed 400 instead of unbounded 529 `too_early` retries; tripped instances report before unknown (503, not 529); `too_early` is reserved for genuinely-`:initializing` candidates.
+- **Pin-aware `fit_available` (release bar 6a).** A pinned tools+thinking request against an unserviceable provider no longer falls to unbounded 529 when pin-mismatched fit+available siblings exist — it returns the terminal typed 400.
+- **Per-instance tuning keyed by config name.** `SettingsSnapshot` weight/`preferred_context` lookups used the derived `host:port/ak` id while config is keyed by name — silently inert. Tuning now resolves via the shared `SettingsCascade` keyed by the operator's config name.
+- **Upper-exclusive binning seam restored.** `preferred_context_sieve` is back to `budget < max`; adjacent bins no longer double-match at the shared boundary.
+
+### Changed
+- **`enable_*` keys are operator overrides consumed by the router.** The `enable_thinking`/`enable_tools`/`enable_streaming` cascade (provider → instance → model) is applied as a routing override — `true` satisfies the axis, `false` makes the candidate ineligible, unset falls back to provider evidence. Provider capability evidence itself is unchanged.
+- **`legion-settings >= 1.4.2` floor.** The published 1.4.0 gem resolved nested `lex-llm-*` extensions to flat settings keys, leaving `settings[:instances]` nil so discovery actors saw zero instances; 1.4.2 ships the segments-based nested-path fix.
+- **Fail-forward release bar locked in.** New 12-example frozen-config behavioral spec (`ssot_v3_fail_forward_release_bar_spec.rb`) drives the real router against the no-regression bar: fail forward, no config changes required, typed failures, recovery without restart.
+
 ## [0.16.1] - 2026-08-13
 
 ### Fixed
