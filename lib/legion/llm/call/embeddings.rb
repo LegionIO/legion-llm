@@ -54,7 +54,7 @@ module Legion
         CACHE_NORMALIZATION = 'none'
 
         class << self
-          # @return [Hash] { vector:, model:, provider:, dimensions:, tokens:, chunks:, tier:, cache_hit: }
+          # @return [Hash] { vector:, model:, provider:, instance:, dimensions:, tokens:, chunks:, tier:, cache_hit: }
           # @raise [Legion::LLM::Errors::RoutingRejected] when no eligible embedding function / attempts exhausted.
           def generate(text:, model: nil, dimensions: nil, task: :document,
                        provider: nil, instance: nil, request: nil, routing_session: nil, routing_seed: nil, **)
@@ -273,6 +273,7 @@ module Legion
               vector:     vector,
               model:      selection.model,
               provider:   selection.provider_family,
+              instance:   selection.instance_id,
               tier:       attempt.lane.tier,
               dimensions: dimensions || vector.size,
               tokens:     tokens,
@@ -288,6 +289,7 @@ module Legion
               vector:     vector,
               model:      selection.model,
               provider:   selection.provider_family,
+              instance:   selection.instance_id,
               tier:       attempt.lane.tier,
               dimensions: dimensions || vector.size,
               chunks:     chunks,
@@ -352,6 +354,7 @@ module Legion
               vector:     payload[:vector],
               model:      payload[:model],
               provider:   payload[:provider]&.to_s,
+              instance:   payload[:instance],
               tier:       payload[:tier]&.to_s,
               dimensions: payload[:dimensions],
               tokens:     payload[:tokens],

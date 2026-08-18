@@ -13,11 +13,12 @@ module Legion
           include Legion::LLM::API::SharedHelpers
           include Legion::LLM::API::ErrorTranslator
 
-          def openai_error(message, type: 'server_error', code: nil, status_code: 500)
+          # OpenAI error envelope — ALWAYS carries all four keys (message, type,
+          # param, code); param/code are null when not applicable.
+          def openai_error(message, type: 'server_error', code: nil, param: nil, status_code: 500)
             content_type :json
             status status_code
-            body = { error: { message: message, type: type } }
-            body[:error][:code] = code if code
+            body = { error: { message: message, type: type, param: param, code: code } }
             Legion::JSON.dump(body)
           end
 
