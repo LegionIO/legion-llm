@@ -26,6 +26,20 @@ module Legion
               tier_preference: tier_preference, routing_affinities: routing_affinities, policy_context: policy_context)
         end
 
+        # SSOT v3 v2-parity hint fallback (Router.next_lane `model_hint_miss`):
+        # a frozen copy with ONLY the model pin cleared, so an honored body-model
+        # hint that matched no candidate falls back to normal weighted selection.
+        # Trusted X-Legion-Model pins never use this path — explicit pins stay hard.
+        def without_model_pin
+          variant = self.class.allocate
+          instance_variables.each do |ivar|
+            variant.instance_variable_set(ivar, instance_variable_get(ivar)) unless ivar == :@model_pin
+          end
+          variant.instance_variable_set(:@model_pin, nil)
+          variant.freeze
+          variant
+        end
+
         def initialize(request:, operation:, required_capabilities:, estimated_input_bound:,
                        required_output_tokens:, requested_embedding_dimensions:, tier_constraint:,
                        tier_preference:, routing_affinities:, policy_context:)

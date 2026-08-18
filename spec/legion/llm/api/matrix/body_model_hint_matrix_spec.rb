@@ -74,6 +74,19 @@ RSpec.describe '[matrix] /v1/chat/completions x body-model hint', type: :request
         end
       end
     end
+
+    # v2 parity (v2 executor/routing.rb model_discovery_miss: model=nil,
+    # auto_route=true): a body model that no lane holds is not a caller error —
+    # the hint pin is cleared and normal weighted selection picks a lane.
+    it 'falls back to weighted selection (200, a lane) when the honored hint matches no lane' do
+      with_body_hints(allow: true) do
+        FakeProvider.with_scenario(:text) do
+          resp = post_chat(model: 'no-such-model', messages: [{ role: 'user', content: 'hi' }])
+          expect(resp.status).to eq(200)
+          expect([MatrixHelper::FAKE_MODEL, alt_model]).to include(resp.headers['X-Legion-Model'])
+        end
+      end
+    end
   end
 
   describe 'scenario: hints disabled (default)' do

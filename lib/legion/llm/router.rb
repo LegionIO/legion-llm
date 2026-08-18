@@ -65,6 +65,28 @@ module Legion
           ranked = Legion::LLM::Router::Ranker.call(
             evaluation_set: evaluation_set, requirements: requirements, settings_snapshot: settings_snapshot
           )
+
+          if ranked.nil? && hint_model_pin_active?(requirements)
+            # v2 parity (v2 executor/routing.rb resolve_model_to_local_provider
+            # model_discovery_miss: state[:model]=nil, auto_route=true): an
+            # HONORED body-model hint that no candidate matches is not a caller
+            # error — clear the hint pin and re-evaluate with normal weighted
+            # selection (N x N: route to ANY qualifying lane). A trusted
+            # X-Legion-Model pin never reaches this branch — explicit pins stay
+            # hard. If the re-evaluation finds nothing, the normal no-lane
+            # rejection stands (a real no-lane, not a hint problem).
+            log.info("[llm][router] action=model_hint_miss model=#{requirements.model_pin} " \
+                     'falling_back=weighted_selection')
+            requirements = requirements.without_model_pin
+            evaluation_set = Legion::LLM::Router::CandidateEvaluator.call(
+              requirements: requirements, exclusions: exclusions,
+              snapshot: snapshot, settings_snapshot: settings_snapshot
+            )
+            ranked = Legion::LLM::Router::Ranker.call(
+              evaluation_set: evaluation_set, requirements: requirements, settings_snapshot: settings_snapshot
+            )
+          end
+
           if ranked.nil?
             return Legion::LLM::Router::RejectionDiagnostics.call(
               requirements: requirements, evaluation_set: evaluation_set, snapshot: snapshot
@@ -197,6 +219,17 @@ module Legion
         end
 
         private
+
+        # True only when the requirements' model pin is HINT-derived: an honored
+        # body-model decision whose constraint is the active model pin. A trusted
+        # X-Legion-Model pin supersedes the hint (disposition
+        # :superseded_by_explicit_model, trusted.model wins in
+        # RequestRequirements#resolve_model_pin) and never qualifies — explicit
+        # pins stay hard and their miss is a caller error (400).
+        def hint_model_pin_active?(requirements)
+          decision = requirements.body_model_hint_decision
+          decision.disposition == :honored && decision.model_constraint == requirements.model_pin
+        end
 
         # Fraction of a lane's context_window the router treats as usable when
         # applying the estimated_context filter. Mirrors the dispatch-time budget

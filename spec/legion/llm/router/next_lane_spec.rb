@@ -177,4 +177,106 @@ RSpec.describe Legion::LLM::Router, '.next_lane', :ssot_v3 do
       expect(sel.provider_family).to eq(:bedrock)
     end
   end
+
+  # ------------------------------------------------------------------- #
+  # Honored body-model hint fallback (v2 parity)                         #
+  # ------------------------------------------------------------------- #
+  # v2 evidence (origin/main lib/legion/llm/inference/executor/routing.rb:379-388,
+  # resolve_model_to_local_provider): on a model-preference miss the v2 selector
+  # did state[:model] = nil; state[:auto_route] = true and logged
+  # model_discovery_miss - a body model preference that discovers nothing
+  # auto-routes; it never 400'd. v3 parity: an HONORED body hint that matches no
+  # candidate clears the hint pin and re-evaluates with normal weighted
+  # selection at the evaluation boundary (Router.next_lane). Trusted
+  # X-Legion-Model pins are a different mechanism and stay hard (400 on miss).
+
+  describe 'honored body-model hint fallback (v2 parity)' do
+    def hint_requirements(client_model:, seed: 'ab' * 16, routing: {})
+      request = Legion::LLM::Inference::Request.build_for_test(
+        routing_seed: seed, messages: [], routing: routing, client_model: client_model
+      )
+      Legion::LLM::Router::RequestRequirements.build(
+        request: request, operation: :chat, required_capabilities: [],
+        estimated_input_bound: 10, required_output_tokens: 0
+      )
+    end
+
+    def with_body_hints
+      Legion::Settings[:llm][:routing][:allow_body_routing_hints] = true
+      Legion::LLM::Router::SettingsState.reset!
+      yield
+    ensure
+      Legion::Settings[:llm][:routing][:allow_body_routing_hints] = false
+      Legion::LLM::Router::SettingsState.reset!
+    end
+
+    it 'falls back to weighted selection when the honored hint matches no lane (no 400)' do
+      with_body_hints do
+        activate(provider_family: 'vllm', instance_id: 'h200',
+                 drafts: [offering_draft(model: 'gemma4', supported: %i[chat], context: 200_000)])
+        sel = next_lane(hint_requirements(client_model: 'no-such-model'))
+        expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
+        expect(sel.model).to eq('gemma4')
+      end
+    end
+
+    it 'still pins the lane when the honored hint matches' do
+      with_body_hints do
+        activate(provider_family: 'vllm', instance_id: 'h200',
+                 drafts: [offering_draft(model: 'gemma4', supported: %i[chat], context: 200_000)])
+        activate(provider_family: 'ollama', instance_id: 'local1',
+                 drafts: [offering_draft(model: 'mistral7', supported: %i[chat], context: 200_000)])
+        sel = next_lane(hint_requirements(client_model: 'mistral7'))
+        expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
+        expect(sel.model).to eq('mistral7')
+      end
+    end
+
+    it 'keeps trusted provider pins while falling back the hint' do
+      with_body_hints do
+        activate(provider_family: 'vllm', instance_id: 'h200',
+                 drafts: [offering_draft(model: 'gemma4', supported: %i[chat], context: 200_000)])
+        activate(provider_family: 'ollama', instance_id: 'local1',
+                 drafts: [offering_draft(model: 'gemma4', supported: %i[chat], context: 200_000)])
+        sel = next_lane(hint_requirements(client_model: 'no-such-model', routing: { provider: 'vllm' }))
+        expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
+        expect(sel.provider_family).to eq(:vllm)
+      end
+    end
+
+    it 'leaves a trusted X-Legion-Model miss hard (pin_nonexistent 400, no fallback)' do
+      activate(provider_family: 'vllm', instance_id: 'h200',
+               drafts: [offering_draft(model: 'gemma4', supported: %i[chat], context: 200_000)])
+      rej = next_lane(requirements(routing: { model: 'no-such-model' }))
+      expect(rej).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+      expect(rej.kind).to eq(:invalid_request)
+      expect(rej.http_status).to eq(400)
+    end
+
+    it 'reports a tripped catalog as 503 (a real no-lane), not pin_nonexistent 400, after the fallback' do
+      with_body_hints do
+        token = activate(
+          provider_family: 'vllm', instance_id: 'h200',
+          drafts: [offering_draft(model: 'gemma4', supported: %i[chat], context: 200_000)]
+        )
+        mark_unavailable(
+          provider_family:    'vllm',
+          instance_id:        'h200',
+          publisher_token_id: token.publisher_token_id
+        )
+        rej = next_lane(hint_requirements(client_model: 'no-such-model'))
+        expect(rej).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+        expect(rej.kind).to eq(:service_unavailable)
+        expect(rej.http_status).to eq(503)
+      end
+    end
+
+    it 'is too_early on a cold catalog after the fallback, not a hint 400' do
+      with_body_hints do
+        rej = next_lane(hint_requirements(client_model: 'no-such-model'))
+        expect(rej).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+        expect(rej.kind).to eq(:too_early)
+      end
+    end
+  end
 end
