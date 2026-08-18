@@ -1,5 +1,17 @@
 # Legion LLM Changelog
 
+## [0.16.3] - 2026-08-17
+
+### Changed
+- **`llm.context_curation.tool_result_max_chars` 2,000 → 10,000.** The tool-result distillation cap is raised so larger tool outputs (file reads, command logs) survive curation intact before the heuristic summary kicks in.
+- **Strict direct-first tier weights.** `llm.routing.tier_weights` is now `{ direct: 150, local: 120, fleet: 115, cloud: 110, frontier: 105 }` — a strict direct → local → fleet → cloud → frontier order with no ties. The previous default ranked frontier first (`{ direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 }`, local/fleet tied at 110).
+
+### Removed
+- **`llm.routing.last_resort_model` / `last_resort_provider` defaults.** No code path reads either key (verified); the stale `claude-sonnet-4-6` / `anthropic` last-resort fallback is gone.
+
+### Notes
+- **Curation threshold audit (blocking ceiling / no-curation floor), mapped by behavior.** (1) The *no-curation floor* — `llm.context_curation.target_context_tokens`, at/below which drop-and-archive curation is a no-op (`context/curator.rb`) — is 120,000 → 120,000 (confirmed unchanged); the conversation auto-compact floor (`llm.conversation.summarize_threshold`, `inference/executor.rb`) sits at the same 120,000. (2) The *size-based blocking ceiling* that compacts the outgoing call — `llm.context_curation.context_window_threshold` (`inference/executor/context_window.rb`) — 0.90 → 0.85: the synchronous curation ceiling is now 85% of the model's context window (850k on the 1M-window vllm lanes).
+
 ## [0.16.2] - 2026-08-17
 
 ### Fixed

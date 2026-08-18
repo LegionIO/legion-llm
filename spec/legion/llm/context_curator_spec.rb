@@ -643,7 +643,7 @@ RSpec.describe Legion::LLM::Context::Curator do
     end
 
     it 'tool_result_max_chars defaults to 10000' do
-      expect(Legion::Settings.dig(:llm, :context_curation, :tool_result_max_chars)).to eq(2_000)
+      expect(Legion::Settings.dig(:llm, :context_curation, :tool_result_max_chars)).to eq(10_000)
     end
 
     it 'thinking_eviction defaults to true' do

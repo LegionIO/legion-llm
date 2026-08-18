@@ -263,9 +263,9 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
       expect(result.provider_family).to eq(:vllm)
       expect(result.instance_id).to eq('helios-0001')
       expect(result.model).to eq('helios-model')
-      # Name-keyed weight resolved into the decision inputs (105 direct x 115 instance).
-      expect(result.weight_inputs).to eq(tier: 105, provider: 1, instance: 115, model_or_offering: 1)
-      expect(result.base_weight).to eq(12_075)
+      # Name-keyed weight resolved into the decision inputs (150 direct x 115 instance).
+      expect(result.weight_inputs).to eq(tier: 150, provider: 1, instance: 115, model_or_offering: 1)
+      expect(result.base_weight).to eq(17_250)
     end
   end
 
@@ -282,7 +282,7 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
       # 10_000 is inside h200's [4096, 48000) and outside helios's [48000, 262000).
       # If the preferred ranges were not resolved by name (the identity-drift
       # bug), every lane would be a generalist and weight alone would pick
-      # helios-0001 (12_075 > 11_550). The bar requires h200.
+      # helios-0001 (17_250 > 16_500). The bar requires h200.
       expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
       expect(sel.instance_id).to eq('h200')
       expect(sel.model).to eq('h200-model')
@@ -310,25 +310,25 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
 
       # Budget 0 matches no preferred range, no generalist survives, so the
       # full vllm ready set competes purely on name-keyed instance weight:
-      # 105 x 115 vs 105 x 111 vs 105 x 110.
+      # 150 x 115 vs 150 x 111 vs 150 x 110.
       sel = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_MAIN), budget: 0))
       expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
       expect(sel.instance_id).to eq('helios-0001')
-      expect(sel.weight_inputs).to eq(tier: 105, provider: 1, instance: 115, model_or_offering: 1)
-      expect(sel.base_weight).to eq(12_075)
+      expect(sel.weight_inputs).to eq(tier: 150, provider: 1, instance: 115, model_or_offering: 1)
+      expect(sel.base_weight).to eq(17_250)
 
       # Deterministic across seeds: weight picks the winner, not the rendezvous tie-break.
       again = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_ALT), budget: 0))
       expect(again.instance_id).to eq('helios-0001')
     end
 
-    it 'ranks by weight bucket when no preferred range matches: cloud uais (120) outranks local apollo (110)' do
+    it 'ranks by weight bucket when no preferred range matches: local apollo (120) outranks cloud uais (110)' do
       seed_frozen_world!
       sel = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_MAIN), budget: 0))
 
-      expect(sel.provider_family).to eq(:bedrock)
-      expect(sel.instance_id).to eq('uais')
-      expect(sel.model).to eq('anthropic.claude-sonnet-4-5')
+      expect(sel.provider_family).to eq(:ollama)
+      expect(sel.instance_id).to eq('apollo')
+      expect(sel.model).to eq('gemma3')
       expect(sel.weight_inputs[:tier]).to eq(120)
     end
   end

@@ -224,9 +224,10 @@ module Legion
           enabled:                           true,
           tier_priority:                     %w[local direct fleet cloud frontier],
           # Multiplicative tier weights for lane_weight computation (P1 SSOT RANKING v2).
-          # Default 100 for all tiers. Operators can override per-tier to bias routing.
+          # Strict direct-first default, no ties: direct > local > fleet > cloud > frontier.
+          # Operators can override per-tier to bias routing.
           # Used by Inventory.write_lane to compute lane_weight = tier_w * provider_w * instance_w * model_w * health_mult.
-          tier_weights:                      { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
+          tier_weights:                      { direct: 150, local: 120, fleet: 115, cloud: 110, frontier: 105 },
           max_attempts:                      3,
           # SSOT v3 §8.1: integer PPM headroom the selector applies to a lane's
           # authoritative context evidence. A candidate fits when
@@ -260,11 +261,6 @@ module Legion
             'copilot-utility-small' => { owned_by: 'legionio' }
           },
           default_intent:                    { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
-          # Last-resort fallback model when both `default_model` and the
-          # discovered provider chain are empty. Owned by routing because
-          # the chain builder is the only consumer.
-          last_resort_model:                 'claude-sonnet-4-6',
-          last_resort_provider:              :anthropic,
           tiers:                             {
             local:    { provider: 'ollama' },
             fleet:    {
@@ -440,7 +436,7 @@ module Legion
           mode:                     'heuristic',
           llm_assisted:             false,
           llm_model:                nil,
-          tool_result_max_chars:    2_000,
+          tool_result_max_chars:    10_000,
           thinking_eviction:        true,
           exchange_folding:         true,
           superseded_eviction:      true,
@@ -464,7 +460,7 @@ module Legion
             'was modified, either by the user or by a linter'
           ],
           target_context_tokens:    120_000,
-          context_window_threshold: 0.90,
+          context_window_threshold: 0.85,
           archive_dropped_turns:    true,
           archive_preserve_recent:  10
         }
