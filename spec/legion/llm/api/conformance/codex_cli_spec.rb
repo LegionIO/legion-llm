@@ -6,7 +6,7 @@ require 'sinatra/base'
 require 'sinatra/namespace'
 require 'legion/llm/api/namespaces/registration'
 
-RSpec.describe 'Codex CLI conformance', type: :conformance do
+RSpec.describe 'Codex CLI conformance', :ssot_v3, type: :conformance do
   include Rack::Test::Methods
 
   # Build a minimal Sinatra app with namespace routes registered
@@ -23,10 +23,12 @@ RSpec.describe 'Codex CLI conformance', type: :conformance do
     allow(Legion::LLM).to receive(:settings).and_return(
       Legion::LLM::Settings.default
     )
-    # Ensure model list includes a legionio entry
-    allow(Legion::LLM::Inventory).to receive(:offerings).and_return([
-                                                                      { model: 'legionio', provider_family: 'legionio', type: :inference }
-                                                                    ])
+    # SSOT v3: GET /v1/models now projects the Phase 1 Registry snapshot via
+    # ModelCatalog. Publish a policy-permitted supported inference offering so
+    # the compat model view is non-empty and the auto-routing aliases
+    # (legionio/auto/copilot-utility-small) are surfaced for Codex validation.
+    activate(provider_family: 'vllm', instance_id: 'h200',
+             drafts: [offering_draft(model: 'gemma4', supported: %i[chat], context: 200_000)])
   end
 
   # ─── GET /v1/models ────────────────────────────────────────────────────────
@@ -118,6 +120,7 @@ RSpec.describe 'Codex CLI conformance', type: :conformance do
 
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
+      allow(fake_executor).to receive(:stream_preflight!).and_return(nil)
       allow(fake_executor).to receive(:call_stream) do |&block|
         fake_chunks.each { |chunk| block.call(chunk) }
         fake_pipeline_response

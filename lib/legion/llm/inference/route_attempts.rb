@@ -31,6 +31,15 @@ module Legion
           idempotency_key = next_route_idempotency_key
           dispatch_options = native_dispatch_options
           enforce_final_context_budget!(messages, dispatch_options)
+
+          if @current_attempt_context
+            return ssot_v3_direct_dispatch(
+              operation: operation, messages: messages,
+              dispatch_options: dispatch_options, idempotency_key: idempotency_key,
+              stream_block: stream_block
+            )
+          end
+
           result = Legion::LLM::Call::Dispatch.call(
             provider:   @resolved_provider,
             instance:   @resolved_instance,
@@ -58,6 +67,65 @@ module Legion
             failure_reason:  e.message
           )
           raise
+        end
+
+        # SSOT v3 §15 — dispatch through SelectionDispatch using the AttemptContext
+        # set by run_provider_call_ssot_v3_single/stream. On SelectionDispatch success
+        # returns the provider value; on failure re-raises as the appropriate Legion
+        # error so the existing rescue clauses in run_provider_call_single /
+        # step_provider_call_stream continue to work.
+        def ssot_v3_direct_dispatch(operation:, messages:, dispatch_options:, idempotency_key:, stream_block:)
+          arguments = dispatch_options.merge(messages: messages)
+          # §15.2: reuse the streaming preflight lease when present (attempt one on
+          # the exact selected callable). After a mid-stream failover the executor
+          # has released it (@preflight_lease == nil) and SelectionDispatch acquires
+          # its own lease for the re-selected callable.
+          sd_result = Legion::LLM::Call::SelectionDispatch.call(
+            attempt_context: @current_attempt_context,
+            arguments:       arguments,
+            dispatch_lease:  @preflight_lease,
+            &stream_block
+          )
+          if sd_result.success?
+            record_route_attempt(
+              dispatch_path:   :direct,
+              operation:       operation,
+              status:          :success,
+              idempotency_key: idempotency_key,
+              selected_lane:   nil
+            )
+            # Dispatch-boundary contract (pre-SSOT Call::Dispatch.call): the
+            # executor consumes a Canonical::Response, never the raw provider
+            # value. SelectionDispatch returns the raw callable return (a
+            # lex-llm Message for sync/stream chat), so normalize it here —
+            # the native tool loop and response translation are written
+            # against Canonical::Response.
+            return Legion::LLM::Call::Dispatch.normalize_response(sd_result.value)
+          end
+
+          record_route_attempt(
+            dispatch_path:   :direct,
+            operation:       operation,
+            status:          :failure,
+            idempotency_key: idempotency_key,
+            selected_lane:   nil,
+            failure_reason:  sd_result.outcome.reason
+          )
+          # Preserve the exact Phase 1 outcome for the streaming failover classifier
+          # (§19) — the raised Legion error alone would lose the normalized kind.
+          @last_ssot_dispatch_outcome = sd_result.outcome
+          raise ssot_v3_provider_outcome_error(sd_result.outcome)
+        end
+
+        def ssot_v3_provider_outcome_error(outcome)
+          case outcome.kind
+          when :overloaded, :rate_limited
+            Legion::LLM::ProviderError.new("provider #{outcome.kind}: #{outcome.reason}")
+          when :authentication, :authorization
+            Legion::LLM::AuthError.new(outcome.reason)
+          else
+            Legion::LLM::ProviderError.new("provider error #{outcome.kind}: #{outcome.reason}")
+          end
         end
 
         def dispatch_fleet_request(operation:, messages:, stream_block: nil)

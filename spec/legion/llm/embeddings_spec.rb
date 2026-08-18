@@ -330,468 +330,263 @@ RSpec.describe '.detect_embedding_capability' do
   end
 end
 
-RSpec.describe 'Legion::LLM::Embeddings' do
-  describe '.generate calls Dispatch.call(capability: :embed)' do
-    before do
-      Legion::LLM.instance_variable_set(:@started, true)
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :openai, instance: :default, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
+# SSOT v3 §21: Call::Embeddings selects ONE exact lane via Router.next_lane
+# (through a per-call RoutingSession) and dispatches the offering's exact callable
+# via Call::SelectionDispatch. No request_lane, no Call::Dispatch, no configured
+# default model/provider/instance. An omitted model is an unconstrained selection.
+RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
+  let(:seed) { 'ab' * 16 }
+
+  before { Legion::LLM.instance_variable_set(:@started, true) }
+  after  { Legion::LLM.instance_variable_set(:@started, nil) }
+
+  # Publish an embed offering into the Phase 1 Registry. The callable records the
+  # embed arguments it receives and, by default, echoes one 1024-d vector per
+  # input with a fixed token count. Pass a block to override the response.
+  def publish_embed(model: 'text-embedding-3-small', provider: 'openai', instance: 'primary',
+                    tier: :frontier, dims: [1024], context: 200_000, input_tokens: 5, &responder)
+    @dispatched ||= []
+    responder ||= lambda do |_op, _args, kwargs, _block|
+      @dispatched << kwargs
+      texts = kwargs[:text]
+      vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
+      { result: vectors, usage: Legion::LLM::Usage.new(input_tokens: input_tokens) }
     end
+    activate(
+      provider_family: provider, instance_id: instance,
+      callable: SsotV3SnapshotFactory::FactoryCallable.new(responder: responder),
+      drafts: [offering_draft(model: model, tier: tier, supported: %i[embed],
+                              capabilities: { embedding: :supported },
+                              embedding_dimensions: dims, context: context)]
+    )
+  end
 
-    it 'dispatches through Dispatch.call with capability: :embed' do
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        provider:   :openai,
-        instance:   :default,
-        capability: :embed,
-        model:      'text-embedding-3-small',
-        text:       'test',
-        dimensions: nil
-      ).and_return(native_embed_response)
-
-      result = Legion::LLM::Embeddings.generate(text: 'test')
+  describe '.generate exact selection + dispatch' do
+    it 'dispatches the selected lane callable (never Call::Dispatch)' do
+      expect(defined?(Legion::LLM::Call::Dispatch) ? Legion::LLM::Call::Dispatch : nil).not_to receive(:call) if defined?(Legion::LLM::Call::Dispatch)
+      publish_embed
+      result = described_class.generate(text: 'test', model: 'text-embedding-3-small', routing_seed: seed)
       expect(result[:vector]).to be_a(Array)
       expect(result[:vector].size).to eq(1024)
       expect(result[:provider]).to eq(:openai)
+      expect(result[:model]).to eq('text-embedding-3-small')
     end
 
-    it 'passes custom model, provider, and instance' do
-      write_test_lane(provider: :bedrock, instance: :us_west, model: 'custom-model', tier: :cloud, type: :embedding)
-
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        provider:   :bedrock,
-        instance:   :us_west,
-        capability: :embed,
-        model:      'custom-model',
-        text:       'text',
-        dimensions: 512
-      ).and_return(native_embed_response)
-
-      result = Legion::LLM::Embeddings.generate(
-        text: 'text', model: 'custom-model', dimensions: 512
-      )
-      expect(result[:model]).to eq('custom-model')
+    it 'selects only the pinned model when a model is supplied' do
+      publish_embed(model: 'text-embedding-3-small', provider: 'openai', instance: 'primary')
+      publish_embed(model: 'other-embed-model', provider: 'bedrock', instance: 'usw2', tier: :cloud)
+      result = described_class.generate(text: 'test', model: 'other-embed-model', routing_seed: seed)
+      expect(result[:model]).to eq('other-embed-model')
       expect(result[:provider]).to eq(:bedrock)
     end
 
-    it 'chunks oversized Ollama embedding input before provider dispatch' do
-      Legion::Settings[:llm][:embedding][:model] = 'mxbai-embed-large'
-      write_test_lane(provider: :ollama, model: 'mxbai-embed-large', tier: :local, type: :embedding)
-      Legion::Settings[:llm][:embedding][:ollama_context_chars]['mxbai-embed-large'] = 10
-
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        hash_including(
-          provider: :ollama,
-          model:    'mxbai-embed-large',
-          text:     [('a' * 10), ('a' * 10), ('a' * 10)]
-        )
-      ).and_return(
-        native_embed_response(
-          vectors:      [
-            Array.new(1024, 1.0),
-            Array.new(1024, 3.0),
-            Array.new(1024, 5.0)
-          ],
-          input_tokens: 30
-        )
-      )
-
-      result = Legion::LLM::Embeddings.generate(text: 'a' * 30)
-
-      expect(result[:vector].first).to eq(3.0)
-      expect(result[:chunks]).to eq(3)
-      expect(result[:tokens]).to eq(30)
+    it 'selects an embedding-capable lane when no model is pinned (unconstrained, not a default)' do
+      publish_embed(model: 'the-only-embed', provider: 'ollama', instance: 'gpu1', tier: :local)
+      result = described_class.generate(text: 'test', routing_seed: seed)
+      expect(result[:model]).to eq('the-only-embed')
+      expect(result[:provider]).to eq(:ollama)
     end
   end
 
-  describe '.generate dimension enforcement' do
-    before do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response)
-      Legion::LLM.instance_variable_set(:@started, true)
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
+  describe '.generate does not invent a default model' do
+    it 'never reads :llm, :embedding, :default_model for selection' do
+      Legion::Settings[:llm][:embedding][:default_model] = 'settings-default-embed'
+      # No lane for that model is published, so if it were used selection would
+      # succeed; instead the unconstrained request finds nothing -> RoutingRejected.
+      expect { described_class.generate(text: 'test', routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
 
-    it 'returns exactly 1024 dimensions' do
-      result = Legion::LLM::Embeddings.generate(text: 'test')
-      expect(result[:vector].size).to eq(1024)
-      expect(result[:dimensions]).to eq(1024)
+    it 'is unaffected by the chat default_provider' do
+      Legion::Settings[:llm][:default_provider] = :vllm
+      publish_embed(model: 'real-embed', provider: 'openai', instance: 'primary')
+      result = described_class.generate(text: 'test', routing_seed: seed)
+      expect(result[:provider]).to eq(:openai)
+    end
+  end
+
+  describe '.generate dimension matching (§9.7 step 6)' do
+    it 'selects an offering that publishes the requested dimension' do
+      publish_embed(model: 'dims-model', dims: [512, 1024])
+      result = described_class.generate(text: 'test', model: 'dims-model', dimensions: 512, routing_seed: seed)
+      expect(result[:dimensions]).to eq(512)
     end
 
-    context 'when provider returns wrong dimensions' do
-      it 'truncates to 1024' do
-        allow(Legion::LLM::Call::Dispatch).to receive(:call)
-          .and_return(native_embed_response(vectors: [Array.new(1536, 0.1)]))
+    it 'rejects (context_rejected) when the requested dimension is not published' do
+      publish_embed(model: 'dims-model', dims: [1024])
+      expect { described_class.generate(text: 'test', model: 'dims-model', dimensions: 3072, routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected) { |e| expect(e.rejection.kind).to eq(:context_rejected) }
+    end
 
-        result = Legion::LLM::Embeddings.generate(text: 'test')
-        expect(result[:vector].size).to eq(1024)
+    it 'returns the provider vector as-is when no dimension is requested (no truncate/pad)' do
+      publish_embed(model: 'raw-model', dims: [768]) do |_op, _a, kwargs, _b|
+        vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(768, 0.2) } : [Array.new(768, 0.2)]
+        { result: vecs, usage: Legion::LLM::Usage.new(input_tokens: 4) }
       end
-    end
-
-    context 'when provider returns fewer dimensions' do
-      it 'returns the vector as-is (no upscale)' do
-        allow(Legion::LLM::Call::Dispatch).to receive(:call)
-          .and_return(native_embed_response(vectors: [Array.new(768, 0.1)]))
-
-        result = Legion::LLM::Embeddings.generate(text: 'test')
-        expect(result[:vector].size).to eq(768)
-      end
-    end
-  end
-
-  describe '.generate when LLM not started' do
-    before { allow(Legion::LLM).to receive(:started?).and_return(false) }
-
-    it 'returns error without dispatching' do
-      expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
-
-      result = Legion::LLM::Embeddings.generate(text: 'test')
-      expect(result[:error]).to eq('LLM not started')
-      expect(result[:vector]).to be_nil
-    end
-  end
-
-  describe '.generate when no provider configured' do
-    before do
-      Legion::LLM.instance_variable_set(:@started, true)
-      Legion::Settings[:llm][:embedding][:model] = nil
-    end
-
-    it 'raises LLMError without dispatching' do
-      expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
-
-      expect { Legion::LLM::Embeddings.generate(text: 'test') }.to raise_error(Legion::LLM::LLMError)
-    end
-  end
-
-  describe '.generate error handling' do
-    before do
-      Legion::LLM.instance_variable_set(:@started, true)
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
-    end
-
-    it 'returns error hash on dispatch failure' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call)
-        .and_raise(StandardError.new('provider down'))
-
-      result = Legion::LLM::Embeddings.generate(text: 'test')
-      expect(result[:vector]).to be_nil
-      expect(result[:error]).to include('provider down')
-    end
-  end
-
-  describe '.generate prefix injection' do
-    before do
-      Legion::LLM.instance_variable_set(:@started, true)
-      Legion::Settings[:llm][:embedding][:model] = 'nomic-embed-text'
-      write_test_lane(provider: :ollama, model: 'nomic-embed-text', tier: :local, type: :embedding)
-    end
-
-    it 'prepends search_document prefix for nomic model' do
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        hash_including(text: 'search_document: hello world')
-      ).and_return(native_embed_response)
-
-      Legion::LLM::Embeddings.generate(text: 'hello world', task: :document)
-    end
-
-    it 'prepends search_query prefix for nomic model with query task' do
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        hash_including(text: 'search_query: hello world')
-      ).and_return(native_embed_response)
-
-      Legion::LLM::Embeddings.generate(text: 'hello world', task: :query)
-    end
-
-    it 'prepends prefix for mxbai model with query task' do
-      Legion::Settings[:llm][:embedding][:model] = 'mxbai-embed-large'
-      write_test_lane(provider: :ollama, model: 'mxbai-embed-large', tier: :local, type: :embedding)
-
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        hash_including(text: 'Represent this sentence for searching relevant passages: hello')
-      ).and_return(native_embed_response)
-
-      Legion::LLM::Embeddings.generate(text: 'hello', task: :query)
-    end
-
-    it 'does not prefix for unknown models' do
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
-
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        hash_including(text: 'hello')
-      ).and_return(native_embed_response)
-
-      Legion::LLM::Embeddings.generate(text: 'hello')
-    end
-  end
-
-  describe '.generate text coercion' do
-    before do
-      Legion::LLM.instance_variable_set(:@started, true)
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
-    end
-
-    it 'passes strings through unchanged' do
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        hash_including(text: 'hello world')
-      ).and_return(native_embed_response)
-
-      Legion::LLM::Embeddings.generate(text: 'hello world')
-    end
-
-    it 'flattens structured text blocks from arrays' do
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        hash_including(text: 'what tools are available to you?')
-      ).and_return(native_embed_response)
-
-      Legion::LLM::Embeddings.generate(text: [{ type: 'text', text: 'what tools are available to you?' }])
-    end
-
-    it 'extracts text from Hash input' do
-      expect(Legion::LLM::Call::Dispatch).to receive(:call).with(
-        hash_including(text: 'from hash')
-      ).and_return(native_embed_response)
-
-      Legion::LLM::Embeddings.generate(text: { text: 'from hash' })
+      result = described_class.generate(text: 'test', model: 'raw-model', routing_seed: seed)
+      expect(result[:vector].size).to eq(768)
+      expect(result[:dimensions]).to eq(768)
     end
   end
 
   describe '.generate token extraction' do
-    before do
-      Legion::LLM.instance_variable_set(:@started, true)
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
-    end
-
-    it 'extracts tokens from Usage object' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call)
-        .and_return(native_embed_response(input_tokens: 42))
-
-      result = Legion::LLM::Embeddings.generate(text: 'test')
+    it 'extracts tokens from a Usage object' do
+      publish_embed(input_tokens: 42)
+      result = described_class.generate(text: 'test', model: 'text-embedding-3-small', routing_seed: seed)
       expect(result[:tokens]).to eq(42)
     end
 
-    it 'extracts tokens from hash usage' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call)
-        .and_return({ result: [Array.new(1024, 0.1)], usage: { input_tokens: 7 } })
-
-      result = Legion::LLM::Embeddings.generate(text: 'test')
+    it 'extracts tokens from a Hash usage' do
+      publish_embed(model: 'hash-usage') do |_op, _a, kwargs, _b|
+        vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
+        { result: vecs, usage: { input_tokens: 7 } }
+      end
+      result = described_class.generate(text: 'test', model: 'hash-usage', routing_seed: seed)
       expect(result[:tokens]).to eq(7)
     end
 
-    it 'defaults to 0 when no usage present' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call)
-        .and_return({ result: [Array.new(1024, 0.1)], usage: nil })
-
-      result = Legion::LLM::Embeddings.generate(text: 'test')
+    it 'defaults to 0 when no usage is present' do
+      publish_embed(model: 'no-usage') do |_op, _a, kwargs, _b|
+        vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
+        { result: vecs, usage: nil }
+      end
+      result = described_class.generate(text: 'test', model: 'no-usage', routing_seed: seed)
       expect(result[:tokens]).to eq(0)
     end
   end
-end
 
-RSpec.describe Legion::LLM::Embeddings do
-  before do
-    allow(Legion::Settings).to receive(:dig).and_return(nil)
-    Legion::LLM.instance_variable_set(:@can_embed, nil)
-    Legion::LLM.instance_variable_set(:@started, true)
-    Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-    write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
-  end
-
-  after do
-    Legion::LLM.instance_variable_set(:@started, nil)
-  end
-
-  describe '.generate' do
-    it 'returns vector hash structure' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response)
-
-      result = described_class.generate(text: 'hello world')
-      expect(result[:vector].size).to eq(1024)
-      expect(result[:dimensions]).to eq(1024)
-      expect(result[:tokens]).to eq(5)
+  describe '.generate text coercion (before prefix/chunking)' do
+    it 'passes plain strings through unchanged' do
+      publish_embed(model: 'coerce')
+      described_class.generate(text: 'hello world', model: 'coerce', routing_seed: seed)
+      expect(@dispatched.last[:text]).to eq('hello world')
     end
 
-    it 'handles errors gracefully' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_raise(StandardError.new('provider down'))
-      result = described_class.generate(text: 'test')
-      expect(result[:vector]).to be_nil
-      expect(result[:error]).to include('provider down')
+    it 'flattens structured text blocks from an array' do
+      publish_embed(model: 'coerce')
+      described_class.generate(text: [{ type: 'text', text: 'what tools are available to you?' }],
+                               model: 'coerce', routing_seed: seed)
+      expect(@dispatched.last[:text]).to eq('what tools are available to you?')
     end
 
-    it 'handles unwrapped vectors from providers that flatten single-input results' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call)
-        .and_return({ result: Array.new(1024, 0.1), usage: Legion::LLM::Usage.new(input_tokens: 5) })
+    it 'extracts text from a Hash input' do
+      publish_embed(model: 'coerce')
+      described_class.generate(text: { text: 'from hash' }, model: 'coerce', routing_seed: seed)
+      expect(@dispatched.last[:text]).to eq('from hash')
+    end
+  end
 
-      result = described_class.generate(text: 'test')
-      expect(result[:vector]).to be_a(Array)
+  describe '.generate returns a well-formed vector hash' do
+    it 'unwraps a single flat vector from providers that do not nest' do
+      publish_embed(model: 'flat') do |_op, _a, _kwargs, _b|
+        { result: Array.new(1024, 0.1), usage: Legion::LLM::Usage.new(input_tokens: 5) }
+      end
+      result = described_class.generate(text: 'test', model: 'flat', routing_seed: seed)
       expect(result[:vector].size).to eq(1024)
       expect(result[:dimensions]).to eq(1024)
     end
 
-    it 'does not resolve provider from chat default_provider when not specified' do
-      Legion::Settings[:llm][:default_provider] = :bedrock
-      Legion::Settings[:llm][:embedding][:model] = nil
-
-      expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
-
-      expect { described_class.generate(text: 'test') }.to raise_error(Legion::LLM::LLMError)
-    end
-
-    it 'does not route embeddings to vllm when vllm is the chat default provider' do
-      Legion::Settings[:llm][:default_provider] = :vllm
-      Legion::Settings[:llm][:embedding][:model] = nil
-
-      expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
-
-      expect { described_class.generate(text: 'test') }.to raise_error(Legion::LLM::LLMError)
+    # Legacy-shape preservation: a callable that returns a BARE numeric array
+    # (no Hash wrapper, pre-SSOT shape) must keep working.
+    it 'still accepts a callable that returns a raw numeric array' do
+      publish_embed(model: 'raw-array') do |_op, _a, kwargs, _b|
+        texts = kwargs[:text]
+        texts.is_a?(Array) ? texts.map { Array.new(1024, 0.3) } : Array.new(1024, 0.3)
+      end
+      result = described_class.generate(text: 'test', model: 'raw-array', routing_seed: seed)
+      expect(result[:vector].size).to eq(1024)
+      expect(result[:vector].first).to eq(0.3)
+      expect(result[:tokens]).to eq(0)
     end
   end
 
-  describe '.generate_batch' do
-    it 'calls Dispatch.call with capability: :embed for batch' do
-      batch_vectors = [Array.new(1024, 0.1), Array.new(1024, 0.2)]
-      allow(Legion::LLM::Call::Dispatch).to receive(:call)
-        .and_return({ result: batch_vectors, usage: Legion::LLM::Usage.new(input_tokens: 10) })
+  # Production SSOT v3 callable contract: the lex-llm-* parse_embedding_response
+  # implementations return the provider-native Legion::Extensions::Llm::Embedding
+  # value object (NOT the legacy {result:, usage:} Hash). The embed consumer must
+  # unwrap it at the boundary, mirroring the chat path's normalize_response.
+  # Pre-fix this raised ProviderError 'embedding provider returned no usable
+  # vector' — every live embed 502'd.
+  describe '.generate SSOT v3 native Embedding value object' do
+    it 'unwraps the native object: vectors returned, input_tokens extracted' do
+      publish_embed(model: 'native-embed') do |_op, _a, kwargs, _b|
+        texts = kwargs[:text]
+        vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.1) } : Array.new(1024, 0.1)
+        Legion::Extensions::Llm::Embedding.new(vectors: vectors, model: 'native-embed', input_tokens: 37)
+      end
+      result = described_class.generate(text: 'test', model: 'native-embed', routing_seed: seed)
+      expect(result[:vector].size).to eq(1024)
+      expect(result[:vector].first).to eq(0.1)
+      expect(result[:tokens]).to eq(37)
+    end
 
-      results = described_class.generate_batch(texts: %w[hello world])
+    it 'unwraps a native object carrying one vector per batch entry' do
+      publish_embed(model: 'native-batch') do |_op, _a, kwargs, _b|
+        vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
+        Legion::Extensions::Llm::Embedding.new(vectors: vectors, model: 'native-batch', input_tokens: 30)
+      end
+      results = described_class.generate_batch(texts: %w[hello world], model: 'native-batch', routing_seed: seed)
+      expect(results.size).to eq(2)
+      expect(results.map { |r| r[:index] }).to eq([0, 1])
+      expect(results.first[:vector].first).to eq(1.0)
+      expect(results.last[:vector].first).to eq(2.0)
+    end
+  end
+
+  describe '.generate chunking (offering context contract, §21.1)' do
+    it 'chunks oversized input, dispatches all chunks to the one lane, and aggregates' do
+      captured = nil
+      publish_embed(model: 'text-embedding-3-small', context: 200_000) do |_op, _a, kwargs, _b|
+        captured = kwargs[:text]
+        vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
+        { result: vectors, usage: Legion::LLM::Usage.new(input_tokens: 30) }
+      end
+      # budget = min(200_000, 512) tokens * 4 chars = 2048 chars/chunk; 8192 / 2048 = 4 chunks.
+      result = described_class.generate(text: 'a' * 8192, model: 'text-embedding-3-small', routing_seed: seed)
+      expect(captured).to be_an(Array)
+      expect(captured.size).to eq(4)
+      expect(result[:chunks]).to eq(4)
+      # equal-length chunks -> uniform weights -> mean of [1,2,3,4] = 2.5
+      expect(result[:vector].first).to eq(2.5)
+      expect(result[:tokens]).to eq(30)
+    end
+  end
+
+  describe '.generate_batch (N -> N, ordering preserved)' do
+    it 'returns one vector per input in order' do
+      publish_embed(model: 'batch')
+      results = described_class.generate_batch(texts: %w[hello world], model: 'batch', routing_seed: seed)
       expect(results.size).to eq(2)
       expect(results.first[:vector].size).to eq(1024)
-      expect(results.last[:index]).to eq(1)
+      expect(results.map { |r| r[:index] }).to eq([0, 1])
     end
 
-    it 'chunks oversized batch entries without sending oversized array inputs to the provider' do
-      Legion::Settings[:llm][:embedding][:model] = 'mxbai-embed-large'
-      write_test_lane(provider: :ollama, model: 'mxbai-embed-large', tier: :local, type: :embedding)
-      Legion::Settings[:llm][:embedding][:ollama_context_chars]['mxbai-embed-large'] = 10
-
-      dispatched_texts = []
-      allow(Legion::LLM::Call::Dispatch).to receive(:call) do |args|
-        dispatched_texts << args[:text]
-        if args[:text].is_a?(Array)
-          native_embed_response(
-            vectors:      args[:text].each_index.map { |index| Array.new(1024, index + 1.0) },
-            input_tokens: 30
-          )
-        else
-          native_embed_response(vectors: [Array.new(1024, 0.5)], input_tokens: 1)
-        end
+    it 'chunks an oversized batch entry and reassembles per-item vectors' do
+      publish_embed(model: 'batch-chunk', context: 200_000) do |_op, _a, kwargs, _b|
+        vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
+        { result: vectors, usage: Legion::LLM::Usage.new(input_tokens: 30) }
       end
-
-      results = described_class.generate_batch(texts: ['short', 'b' * 30])
-
-      expect(dispatched_texts).to eq(['short', [('b' * 10), ('b' * 10), ('b' * 10)]])
+      results = described_class.generate_batch(texts: ['short', 'b' * 8192], model: 'batch-chunk', routing_seed: seed)
       expect(results.size).to eq(2)
-      expect(results.first[:index]).to eq(0)
-      expect(results.last[:index]).to eq(1)
-      expect(results.last[:chunks]).to eq(3)
+      expect(results.first[:chunks]).to eq(1)
+      expect(results.last[:chunks]).to eq(4)
+      expect(results.map { |r| r[:index] }).to eq([0, 1])
     end
+  end
 
-    it 'handles batch errors gracefully' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_raise(StandardError.new('batch fail'))
-      results = described_class.generate_batch(texts: %w[a b])
-      expect(results.size).to eq(2)
-      expect(results.all? { |r| r[:vector].nil? }).to be true
-    end
-
-    it 'returns not-started errors when LLM not started' do
-      Legion::LLM.instance_variable_set(:@started, false)
+  describe 'lifecycle guard (precondition, not a routing outcome)' do
+    it '.generate returns a not-started hash without selecting when LLM is not started' do
       allow(Legion::LLM).to receive(:started?).and_return(false)
+      expect(Legion::LLM::Router).not_to receive(:next_lane)
+      result = described_class.generate(text: 'test', model: 'x', routing_seed: seed)
+      expect(result[:error]).to eq('LLM not started')
+      expect(result[:vector]).to be_nil
+    end
 
-      results = described_class.generate_batch(texts: %w[a b c])
+    it '.generate_batch returns one not-started hash per input' do
+      allow(Legion::LLM).to receive(:started?).and_return(false)
+      results = described_class.generate_batch(texts: %w[a b c], model: 'x', routing_seed: seed)
       expect(results.size).to eq(3)
-      expect(results.all? { |r| r[:error] == 'LLM not started' }).to be true
-    end
-  end
-
-  describe '.default_model' do
-    it 'returns the cached embedding model' do
-      expect(described_class.default_model).to eq('text-embedding-3-small')
-    end
-
-    it 'returns the configured model from settings (P5: reads embedding.model key)' do
-      Legion::Settings[:llm][:embedding][:model] = 'amazon.titan-embed-text-v2:0'
-      expect(described_class.default_model).to eq('amazon.titan-embed-text-v2:0')
-    end
-
-    it 'returns nil when embedding.model is not configured' do
-      Legion::Settings[:llm][:embedding][:model] = nil
-      expect(described_class.default_model).to be_nil
-    end
-  end
-end
-
-# Hash-shaped settings (deployed config: provider/instance/default_model).
-# Documents the post-Inventory-SSOT contract — see G15 in inventory-ssot-stateless-router.md.
-RSpec.describe 'Legion::LLM::Embeddings hash-shaped settings (G15)' do
-  before do
-    Legion::LLM.instance_variable_set(:@started, true)
-    Legion::Settings[:llm][:embedding][:model] = nil
-    Legion::Settings[:llm][:embedding][:provider] = nil
-    Legion::Settings[:llm][:embedding][:instance] = nil
-    Legion::Settings[:llm][:embedding][:default_model] = nil
-  end
-
-  describe '.generate with :default_model configured' do
-    before do
-      Legion::Settings[:llm][:embedding][:default_model] = 'mxbai-embed-large:latest'
-      write_test_lane(provider: :ollama, instance: :apollo_embed,
-                      model: 'mxbai-embed-large:latest', tier: :direct, type: :embedding)
-    end
-
-    it 'resolves a lane and dispatches when only :default_model is set' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response)
-      result = Legion::LLM::Embeddings.generate(text: 'hello')
-      expect(result[:vector]).to be_a(Array)
-      expect(result[:model]).to eq('mxbai-embed-large:latest')
-    end
-  end
-
-  describe '.generate when :default_model is empty' do
-    it 'raises ConfigError with the documented key path' do
-      expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
-      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.to raise_error(
-        Legion::LLM::Errors::ConfigError,
-        /:llm, :embedding, :default_model/
-      )
-    end
-  end
-
-  describe '.generate with :provider and :instance pinned' do
-    before do
-      Legion::Settings[:llm][:embedding][:default_model] = 'mxbai-embed-large:latest'
-      Legion::Settings[:llm][:embedding][:provider] = :ollama
-      Legion::Settings[:llm][:embedding][:instance] = :apollo_embed
-      # The matching lane:
-      write_test_lane(provider: :ollama, instance: :apollo_embed,
-                      model: 'mxbai-embed-large:latest', tier: :direct, type: :embedding)
-      # A non-matching lane (different instance) — must NOT be selected.
-      write_test_lane(provider: :ollama, instance: :other_box,
-                      model: 'mxbai-embed-large:latest', tier: :direct, type: :embedding)
-    end
-
-    it 'passes provider/instance as hard filters into Router.request_lane' do
-      expect(Legion::LLM::Router).to receive(:request_lane).with(
-        hash_including(
-          type:      :embedding,
-          models:    ['mxbai-embed-large:latest'],
-          providers: [:ollama],
-          instances: [:apollo_embed]
-        )
-      ).and_call_original
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response)
-
-      result = Legion::LLM::Embeddings.generate(text: 'hello')
-      expect(result[:provider]).to eq(:ollama)
-    end
-
-    it 'raises NoLaneAvailable when the pinned (provider, instance, model) lane is absent' do
-      Legion::Settings[:llm][:embedding][:instance] = :nonexistent_box
-      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.to raise_error(
-        Legion::LLM::Errors::NoLaneAvailable
-      )
+      expect(results).to all(include(error: 'LLM not started', vector: nil))
     end
   end
 end

@@ -2,29 +2,20 @@
 
 require 'spec_helper'
 
-# G25 / h200 C1 / PR #152 C5/C6 — P5 commit 1
-RSpec.describe 'Internal error is terminal — no retry (P5)' do
+# G25 / h200 C1 / PR #152 C5/C6 — SSOT v3 rewrite
+#
+# Internal errors (NoMethodError/ArgumentError) come from shared daemon code —
+# retrying on a different lane guarantees the same crash. In SSOT v3 these are
+# classified as non_provider_failure? and re-raise immediately from
+# ssot_v3_execute_attempt before any ProviderOutcome is produced. Consequently:
+#   • OutcomeClassifier is never called → no global_transition → no dispatch_instance_unavailable.
+#   • The consumed-target exclusion is never appended (no attempt was recorded).
+#   • Transient errors (plain RuntimeError) return a failure SelectionDispatch::Result and
+#     let the RoutingSession accumulate a request-local consumed-target exclusion.
+RSpec.describe 'Internal error is terminal — no retry (SSOT v3)' do
   include Legion::Logging::Helper
 
   let(:executor_class) { Legion::LLM::Inference::Executor }
-
-  def build_lane(provider: :vllm, instance: :a, model: 'gemma-12b', tier: :direct)
-    {
-      id:              "#{tier}:#{provider}:#{instance}:inference:#{model}",
-      tier:            tier,
-      provider_family: provider,
-      instance_id:     instance,
-      model:           model,
-      type:            :inference,
-      capabilities:    [],
-      limits:          { context_window: 200_000 },
-      cost:            { input: 0.0, output: 0.0 },
-      enabled:         true,
-      lane_weight:     100_000_000,
-      health:          { circuit_state: :closed, denied: false, available: true, adjustment: 0 },
-      expires_at:      nil
-    }
-  end
 
   it 'internal_error? returns true for NoMethodError and ArgumentError' do
     executor = executor_class.allocate
@@ -34,61 +25,49 @@ RSpec.describe 'Internal error is terminal — no retry (P5)' do
     expect(executor.send(:internal_error?, StandardError.new('whatever'))).to be false
   end
 
-  it 'classify_error returns :internal_error for NoMethodError before :account_specific check' do
+  it 'non_provider_failure? returns true for NoMethodError (replaces :internal_error classify_error path)' do
     executor = executor_class.allocate
-
     # An error that would match account_specific pattern but is also a NoMethodError
     err = NoMethodError.new('credit balance exceeded')
-    expect(executor.send(:classify_error, error: err)).to eq(:internal_error)
+    expect(executor.send(:non_provider_failure?, err)).to be true
+    expect(executor.send(:internal_error?, err)).to be true
   end
 
-  it 'classify_error returns :transient for runtime errors' do
+  it 'non_provider_failure? returns false for plain RuntimeError (transient, eligible for retry)' do
     executor = executor_class.allocate
-    expect(executor.send(:classify_error, error: RuntimeError.new('timeout'))).to eq(:transient)
+    expect(executor.send(:non_provider_failure?, RuntimeError.new('timeout'))).to be false
   end
 
-  it 'classify_and_accumulate_exclusions re-raises internal_error immediately' do
+  it 'ssot_v3_execute_attempt re-raises NoMethodError immediately (internal error terminal)' do
     executor = executor_class.allocate
-    lane = build_lane
-    payload = { tried_lanes: [] }
     error = NoMethodError.new('typo in shared code')
+    allow(executor).to receive(:execute_provider_request).and_raise(error)
 
-    expect { executor.send(:classify_and_accumulate_exclusions, error: error, lane: lane, payload: payload) }
-      .to raise_error(NoMethodError, 'typo in shared code')
-    expect(payload[:tried_lanes]).to be_empty
+    expect { executor.send(:ssot_v3_execute_attempt) }.to raise_error(NoMethodError, 'typo in shared code')
   end
 
-  it 'classify_and_accumulate_exclusions does NOT call health_tracker for internal_error' do
+  it 'ssot_v3_execute_attempt does NOT invoke OutcomeClassifier or dispatch_instance_unavailable for internal_error' do
+    # Internal errors re-raise from ssot_v3_execute_attempt before classify is reached,
+    # so OutcomeClassifier.call is never invoked and Registry.dispatch_instance_unavailable
+    # is never called.
     executor = executor_class.allocate
-    lane = build_lane
-    payload = { tried_lanes: [] }
     error = NoMethodError.new('typo')
+    allow(executor).to receive(:execute_provider_request).and_raise(error)
 
-    expect(Legion::LLM::Router.health_tracker).not_to receive(:trip_circuit)
-    expect(Legion::LLM::Router.health_tracker).not_to receive(:report)
+    expect(Legion::Extensions::Llm::Inventory::Registry).not_to receive(:dispatch_instance_unavailable)
+    expect(Legion::LLM::Router::OutcomeClassifier).not_to receive(:call)
 
-    expect { executor.send(:classify_and_accumulate_exclusions, error: error, lane: lane, payload: payload) }
-      .to raise_error(NoMethodError)
+    expect { executor.send(:ssot_v3_execute_attempt) }.to raise_error(NoMethodError)
   end
 
-  it 'classify_and_accumulate_exclusions pushes lane to tried_lanes for transient error' do
+  it 'ssot_v3_execute_attempt returns a failure SelectionDispatch::Result for a transient RuntimeError' do
     executor = executor_class.allocate
-    lane = build_lane
-    payload = { tried_lanes: [] }
     error = RuntimeError.new('transient failure')
+    allow(executor).to receive(:execute_provider_request).and_raise(error)
 
-    executor.send(:classify_and_accumulate_exclusions, error: error, lane: lane, payload: payload)
-    expect(payload[:tried_lanes]).to include(lane[:id])
-  end
-
-  it 'classify_and_accumulate_exclusions re-raises payload_error immediately' do
-    executor = executor_class.allocate
-    lane = build_lane
-    payload = { tried_lanes: [] }
-    error = RuntimeError.new('ValidationException: output_config: Input does not match the expected shape.')
-
-    expect { executor.send(:classify_and_accumulate_exclusions, error: error, lane: lane, payload: payload) }
-      .to raise_error(RuntimeError, /output_config/)
-    expect(payload[:tried_lanes]).to be_empty
+    result = executor.send(:ssot_v3_execute_attempt)
+    expect(result).to be_a(Legion::LLM::Call::SelectionDispatch::Result)
+    expect(result.failure?).to be true
+    expect(result.outcome.kind).to eq(:provider_error)
   end
 end

@@ -43,25 +43,56 @@ RSpec.describe Legion::LLM::Inference::Executor do
   end
 
   describe '#call thinking normalization' do
-    it 'strips malformed provider think tags before returning visible content' do
+    # SSOT v3: the provider adapter (lex-llm-*) is responsible for stripping
+    # inline think tags and building a canonical::Response with text and thinking
+    # already separated. The executor's contract is to forward .text as the
+    # visible message content and .thinking (if present) as the thinking metadata.
+    # This test verifies that invariant via a Phase-1 callable that returns a
+    # canonical::Response with both fields correctly populated.
+    it 'surfaces thinking content and clean text from a canonical response with thinking' do
+      canonical = Legion::Extensions::Llm::Canonical
+      thinking_obj = canonical::Thinking.new(
+        content:   'The user said "hello".',
+        signature: nil
+      )
+      usage = canonical::Usage.new(
+        input_tokens: 10, output_tokens: 5,
+        cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}
+      )
+      provider_response = canonical::Response.new(
+        text:        'Hello! How can I help you today?',
+        thinking:    thinking_obj,
+        tool_calls:  [],
+        usage:       usage,
+        stop_reason: :end_turn,
+        model:       'qwen3.6-27b',
+        routing:     {},
+        metadata:    {}
+      )
+
+      callable = Class.new do
+        define_method(:chat) { |**| provider_response }
+        define_method(:normalize_dispatch_error) do |error:|
+          Legion::Extensions::Llm::Routing::ProviderOutcome.new(kind: :provider_error, reason: error.message)
+        end
+        define_method(:disconnect) { nil }
+      end.new
+
+      # SSOT v3: publish via Phase-1 Registry so RoutingSession selects the lane.
+      SsotV3SnapshotFactory.activate(
+        provider_family: 'vllm',
+        instance_id:     'primary',
+        callable:        callable,
+        drafts:          [SsotV3SnapshotFactory.offering_draft(
+          model: 'qwen3.6-27b', tier: :local, supported: %i[chat], context: 200_000
+        )]
+      )
+
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :vllm, model: 'qwen3.6-27b' }
       )
       Legion::Settings[:llm][:fleet][:dispatch][:enabled] = false
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
-
-      Legion::LLM::Call::Registry.register(:vllm, Module.new do
-        module_function
-
-        def chat(model:, messages:, **) # rubocop:disable Lint/UnusedMethodArgument
-          {
-            result: "The user said \"hello\".\n</think>\n\nHello! How can I help you today?",
-            model:  model,
-            usage:  { input_tokens: 10, output_tokens: 5 }
-          }
-        end
-      end)
 
       response = described_class.new(request).call
 

@@ -46,8 +46,8 @@ module Legion
                 tiers_data = Tiers.tiers_tree
                 json_response({
                                 tiers:        tiers_data,
-                                priority:     Legion::LLM::API::Native::Tiers.tier_priority,
-                                privacy_mode: Legion::LLM::API::Native::Tiers.privacy_mode?
+                                priority:     Legion::LLM::Router.tier_priority,
+                                privacy_mode: Legion::LLM::Router.privacy_mode?
                               })
               rescue StandardError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.tiers.list')

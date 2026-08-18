@@ -4,46 +4,46 @@ require 'legion/logging/helper'
 module Legion
   module LLM
     module Call
+      # Structured (JSON-schema) generation. SSOT v3: every provider-backed turn
+      # flows through the canonical Request -> Executor/RoutingSession path via
+      # Prompt.dispatch. The json_schema response_format makes
+      # Router::RequiredCapabilities derive the `structured_output` capability, so
+      # the router selects a lane whose offering advertises it — there is no
+      # hard-coded capable-model list, no model/provider default, and no dead
+      # resolve_chain. Callers forward explicit provider/model or none.
       module StructuredOutput
         extend Legion::Logging::Helper
 
-        SCHEMA_CAPABLE_MODELS = %w[gpt-4o gpt-4o-mini gpt-4-turbo claude-3-5-sonnet claude-4-sonnet claude-4-opus].freeze
-
         class << self
-          def generate(messages:, schema:, model: nil, provider: nil, **)
-            model ||= Legion::Settings[:llm][:default_model]
-            result = call_with_schema(messages, schema, model, provider: provider, **)
-            log.info "[llm][structured_output] model=#{model} provider=#{provider} valid=true"
-
-            content = strip_markdown_fences(result.respond_to?(:content) ? result.content : result[:content])
-            raw_model = result.respond_to?(:model_id) ? result.model_id : result[:model]
+          def generate(messages:, schema:, model: nil, provider: nil, **opts)
+            result = run_structured_chat(messages: messages, schema: schema, model: model,
+                                         provider: provider, **opts.except(:attempt))
+            content = strip_markdown_fences(response_content(result))
+            raw_model = response_model(result)
 
             parsed = Legion::JSON.load(content)
+            log.info "[llm][structured_output] model=#{raw_model || model} provider=#{provider} valid=true"
             { data: parsed, raw: content, model: raw_model, valid: true }
           rescue Legion::JSON::ParseError => e
             log.warn "[llm][structured_output] model=#{model} provider=#{provider} parse_error=#{e.message}"
-            handle_parse_error(e, messages, schema, model, provider, result, **)
+            handle_parse_error(e, messages, schema, model, provider, result, **opts)
           end
 
           private
 
-          def call_with_schema(messages, schema, model, provider: nil, **opts)
-            if supports_response_format?(model)
-              Legion::LLM::Inference.send(:chat_single,
-                                          model: model, provider: provider, intent: nil, tier: nil,
-                                          response_format: { type:        'json_schema',
-                                                             json_schema: { name: 'response', schema: schema } },
-                                          **opts.except(:attempt))
-            else
-              log.debug("StructuredOutput using prompt-based fallback for model=#{model}")
-              instruction = "You MUST respond with valid JSON matching this schema:\n" \
-                            "```json\n#{Legion::JSON.dump(schema)}\n```\n" \
-                            'Respond with ONLY the JSON object, no other text.'
-              user_content = extract_user_content(messages, instruction)
-              Legion::LLM::Inference.send(:chat_single,
-                                          model: model, provider: provider, intent: nil, tier: nil,
-                                          message: user_content, **opts.except(:attempt))
-            end
+          # Route the structured turn through the canonical pipeline. Prompt.dispatch
+          # translates `schema:` into a json_schema response_format, so capability
+          # derivation requires `structured_output` and the router selects an
+          # eligible lane. Explicit provider/model are forwarded; nil means an empty
+          # constraint (SSOT selection), never a default.
+          def run_structured_chat(messages:, schema:, model:, provider:, **)
+            Legion::LLM::Inference::Prompt.dispatch(
+              Array(messages),
+              model:    model,
+              provider: provider,
+              schema:   schema,
+              **
+            )
           end
 
           def handle_parse_error(error, messages, schema, model, provider, result, **opts)
@@ -52,65 +52,61 @@ module Legion
             if retry_enabled? && attempt < max_retries
               retry_with_instruction(messages, schema, model, provider: provider, attempt: attempt + 1, **opts)
             else
-              raw = strip_markdown_fences(result.respond_to?(:content) ? result&.content : result&.dig(:content))
+              raw = strip_markdown_fences(response_content(result))
               { data: nil, error: "JSON parse failed: #{error.message}", raw: raw, valid: false }
             end
           end
 
+          # Retry keeps the same explicit constraints (or none) and re-requests with a
+          # corrective instruction appended. The router re-selects an eligible lane;
+          # there is no separate alternate-route chain.
           def retry_with_instruction(messages, schema, model, provider: nil, **opts)
-            instruction = "Your previous response was not valid JSON. Respond with ONLY a valid JSON object matching this schema:\n#{Legion::JSON.dump(schema)}"
-            user_content = extract_user_content(messages, instruction)
-            route = alternate_retry_route(model, provider)
-            retry_model = route[:model] || model
-            retry_provider = route[:provider] || provider
-            result = Legion::LLM::Inference.send(:chat_single,
-                                                 model: retry_model, provider: retry_provider, intent: nil, tier: nil,
-                                                 message: user_content, **opts.except(:attempt))
+            instruction = 'Your previous response was not valid JSON. Respond with ONLY a valid JSON object ' \
+                          "matching this schema:\n#{Legion::JSON.dump(schema)}"
+            retry_messages = messages_with_instruction(messages, instruction)
+            result = run_structured_chat(messages: retry_messages, schema: schema, model: model,
+                                         provider: provider, **opts.except(:attempt))
 
-            retry_content = strip_markdown_fences(result.respond_to?(:content) ? result.content : result[:content])
-            retry_model = result.respond_to?(:model_id) ? result.model_id : result[:model]
+            retry_content = strip_markdown_fences(response_content(result))
+            retry_model = response_model(result)
 
             parsed = Legion::JSON.load(retry_content)
-            { data: parsed, raw: retry_content, model: retry_model, valid: true, retried: true, retry_route: route }
+            { data: parsed, raw: retry_content, model: retry_model, valid: true, retried: true }
           rescue StandardError => e
             handle_exception(e, level: :warn)
             { data: nil, error: e.message, valid: false }
           end
 
-          def alternate_retry_route(model, provider)
-            return {} unless defined?(Legion::LLM::Router) && Legion::LLM::Router.respond_to?(:resolve_chain)
-
-            chain = Legion::LLM::Router.resolve_chain(intent: { operation: :structured_output }, max_escalations: max_retries + 1)
-            route = Array(chain).find do |candidate|
-              candidate_model = route_value(candidate, :model)
-              candidate_provider = route_value(candidate, :provider)
-              next false if candidate_model.nil? && candidate_provider.nil?
-
-              candidate_model.to_s != model.to_s || candidate_provider.to_s != provider.to_s
-            end
-            return {} unless route
-
-            { model: route_value(route, :model), provider: route_value(route, :provider) }.compact
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.structured_output.alternate_retry_route')
-            {}
+          def messages_with_instruction(messages, instruction)
+            Array(messages) + [{ role: 'user', content: instruction }]
           end
 
-          def route_value(route, key)
-            return route.public_send(key) if route.respond_to?(key)
-            return route[key] if route.respond_to?(:key?) && route.key?(key)
+          # Extract text from a pipeline Inference::Response, a provider message, or
+          # a hash-shaped result.
+          def response_content(result)
+            return nil if result.nil?
 
-            string_key = key.to_s
-            route[string_key] if route.respond_to?(:key?) && route.key?(string_key)
+            if result.respond_to?(:message)
+              msg = result.message
+              return (msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg).to_s
+            end
+            return result.content if result.respond_to?(:content)
+            return result[:content] || result['content'] if result.respond_to?(:[])
+
+            nil
           end
 
-          def extract_user_content(messages, instruction)
-            parts = [instruction]
-            Array(messages).each do |msg|
-              content = msg[:content] || msg['content']
-              parts << content.to_s unless content.to_s.empty?
+          def response_model(result)
+            return nil if result.nil?
+
+            if result.respond_to?(:routing)
+              routing = result.routing
+              return routing[:model] || routing['model'] if routing.is_a?(Hash)
             end
-            parts.join("\n\n")
+            return result.model_id if result.respond_to?(:model_id)
+            return result[:model] || result['model'] if result.respond_to?(:[])
+
+            nil
           end
 
           def strip_markdown_fences(text)
@@ -123,13 +119,6 @@ module Legion
               .sub(/\A`{3,}[[:space:]]*(?:json)?[[:space:]]*\n?/i, '')
               .sub(/\n?[[:space:]]*`{3,}\z/, '')
               .strip
-          end
-
-          # -- substring check (each model
-          def supports_response_format?(model)
-            # fragment `include?`d in the model name), NOT array intersection.
-            # `intersect?` raises TypeError on the String arg.
-            SCHEMA_CAPABLE_MODELS.any? { |m| model.to_s.include?(m) }
           end
 
           def retry_enabled?

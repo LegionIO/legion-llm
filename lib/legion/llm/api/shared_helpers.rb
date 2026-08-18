@@ -211,8 +211,12 @@ module Legion
                           request_id: request_id)
         end
 
-        def set_routing_response_headers(pipeline_response:)
-          routing = pipeline_response.respond_to?(:routing) ? pipeline_response.routing || {} : {}
+        # Emits the X-Legion-Provider/Instance/Model attribution headers. Accepts
+        # either a pipeline response (reads its #routing hash, as the four
+        # inference routes do) or a flat routing hash carrying provider/instance/
+        # model directly (embed results carry them at the top level).
+        def set_routing_response_headers(pipeline_response: nil, routing: nil)
+          routing ||= pipeline_response.respond_to?(:routing) ? pipeline_response.routing || {} : {}
           provider_val = api_hash_value(routing, :provider)
           instance_val = api_hash_value(routing, :instance)
           model_val = api_hash_value(routing, :model)
@@ -238,7 +242,8 @@ module Legion
           return nil unless provider_start && provider_end
 
           ((provider_end - provider_start) * 1000).round
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, handled: true, operation: 'llm.api.provider_latency_ms')
           nil
         end
 
@@ -553,8 +558,8 @@ module Legion
               parsed = Legion::JSON.load(turn_metadata)
               caller_hash[:parent_request_ref] = parsed['turn_id'] if parsed['turn_id']
               caller_hash[:codex_turn_metadata] = parsed
-            rescue StandardError
-              # Ignore malformed metadata
+            rescue StandardError => e
+              handle_exception(e, level: :debug, handled: true, operation: 'llm.api.build_server_caller.turn_metadata')
             end
           end
 

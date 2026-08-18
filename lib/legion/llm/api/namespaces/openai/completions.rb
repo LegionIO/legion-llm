@@ -27,15 +27,17 @@ module Legion
                 end
 
                 request_id = SecureRandom.uuid
-                model      = body[:model] || Legion::Settings[:llm][:default_model] || 'default'
+                # SSOT v3: an omitted body model is an empty constraint the router
+                # resolves — never a configured/global default injected at the route.
+                model      = body[:model]
                 messages   = [{ role: 'user', content: prompt.to_s }]
 
-                log.info("[llm][api][namespaces][openai][completions] action=accepted request_id=#{request_id} model=#{model}")
+                log.info("[llm][api][namespaces][openai][completions] action=accepted request_id=#{request_id} model=#{model || 'auto'}")
 
                 inference_request = Legion::LLM::Inference::Request.build(
                   id:       request_id,
                   messages: messages,
-                  routing:  { model: model },
+                  routing:  (model ? { model: model } : {}),
                   tools:    [],
                   caller:   build_server_caller(source: 'openai_completions', path: request.path, env: env),
                   stream:   false,
@@ -83,6 +85,8 @@ module Legion
               rescue Legion::LLM::ProviderDown, Legion::LLM::ProviderError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.namespaces.openai.completions.provider')
                 openai_error(e.message, type: 'server_error', status_code: 502)
+              rescue Legion::LLM::Errors::RoutingRejected => e
+                translate_routing_rejected(e, dialect: :openai, operation: 'llm.api.namespaces.openai.completions.routing_rejected')
               rescue StandardError => e
                 handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.completions')
                 openai_error(e.message, type: 'server_error', status_code: 500)

@@ -57,6 +57,11 @@ module Legion
                 echo_request = Legion::LLM::API::DebugFormats.echo_request?(env)
 
                 if streaming
+                  # SSOT v3 §19: select + acquire the exact lane BEFORE opening SSE
+                  # so a routing rejection surfaces as an HTTP error (below) rather
+                  # than an SSE server_error after headers are committed.
+                  preflight_lane = executor.stream_preflight!
+
                   content_type 'text/event-stream'
                   headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive', 'X-Accel-Buffering' => 'no'
                   stream do |out|
@@ -71,11 +76,11 @@ module Legion
                       emitter:      emitter,
                       request_id:   request_id,
                       model:        model,
-                      initial_lane: { id: 'unknown:pending' }
+                      initial_lane: preflight_lane || { id: 'unknown:pending' }
                     )
                     # N×N: Canonical streaming path — responses body is already
                     # translated to canonical form by the translator above.
-                    pipeline_response = executor.call_stream { |c| assembler.push(c) }
+                    pipeline_response = executor.call_stream(stream_observer: assembler) { |c| assembler.push(c) }
                     assembler.finalize(pipeline_response)
                     log_api_completion_summary(
                       namespace:         'namespaces][openai][responses',
@@ -127,6 +132,8 @@ module Legion
                 translate_escalation_exhausted(e, operation: 'llm.api.namespaces.openai.responses.exhausted')
               rescue Legion::LLM::Errors::InvalidHeader => e
                 translate_invalid_header(e, operation: 'llm.api.namespaces.openai.responses.invalid_header')
+              rescue Legion::LLM::Errors::RoutingRejected => e
+                translate_routing_rejected(e, dialect: :openai, operation: 'llm.api.namespaces.openai.responses.routing_rejected')
               rescue Legion::LLM::AuthError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.namespaces.openai.responses.auth')
                 openai_error(e.message, type: 'authentication_error', status_code: 401)

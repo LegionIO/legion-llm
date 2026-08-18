@@ -38,6 +38,20 @@ RSpec.describe Legion::LLM::API::ErrorTranslator do
         )
         translate_invalid_header(error, operation: 'test.invalid_header')
       end
+
+      # SSOT v3 §18: RoutingRejected mapped per dialect via RoutingErrorMapper.
+      %i[native openai anthropic].each do |dialect|
+        post "/test/routing_rejected/#{dialect}" do
+          rejection = Legion::Extensions::Llm::Routing::Rejection.new(
+            kind:                 :too_early,
+            reason:               'inventory still initializing',
+            inventory_generation: 1,
+            candidate_counts:     {}
+          )
+          error = Legion::LLM::Errors::RoutingRejected.new(rejection: rejection)
+          translate_routing_rejected(error, dialect: dialect, operation: "test.routing_rejected.#{dialect}")
+        end
+      end
     end
   end
 
@@ -102,6 +116,33 @@ RSpec.describe Legion::LLM::API::ErrorTranslator do
     it 'includes header name and valid values' do
       body = Legion::JSON.load(last_response.body)
       expect(body[:error][:header]).to eq('x-legion-tiers')
+    end
+  end
+
+  describe 'RoutingRejected → dialect status table (SSOT v3 §18)' do
+    it 'native too_early keeps HTTP 425 with a Retry-After header' do
+      post '/test/routing_rejected/native'
+      expect(last_response.status).to eq(425)
+      expect(last_response.headers['Retry-After']).not_to be_nil
+      body = Legion::JSON.load(last_response.body)
+      expect(body[:error][:code]).to eq('routing_too_early')
+    end
+
+    it 'openai too_early maps to retryable HTTP 503 with a Retry-After header' do
+      post '/test/routing_rejected/openai'
+      expect(last_response.status).to eq(503)
+      expect(last_response.headers['Retry-After']).not_to be_nil
+      body = Legion::JSON.load(last_response.body)
+      expect(body[:error][:type]).to eq('server_error')
+    end
+
+    it 'anthropic too_early maps to overloaded HTTP 529 with a Retry-After header' do
+      post '/test/routing_rejected/anthropic'
+      expect(last_response.status).to eq(529)
+      expect(last_response.headers['Retry-After']).not_to be_nil
+      body = Legion::JSON.load(last_response.body)
+      expect(body[:type]).to eq('error')
+      expect(body[:error][:type]).to eq('overloaded_error')
     end
   end
 end

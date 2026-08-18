@@ -6,6 +6,7 @@ require 'sinatra/namespace'
 require 'legion/logging/helper'
 require 'legion/llm/api/client_translators/anthropic_messages'
 require 'legion/llm/api/stream_assembler'
+require 'legion/llm/api/routing_error_mapper'
 require 'legion/llm/api/debug_formats'
 
 module Legion
@@ -48,6 +49,11 @@ module Legion
               echo_request = Legion::LLM::API::DebugFormats.echo_request?(env)
 
               if streaming
+                # SSOT v3 §19: select + acquire the exact lane BEFORE opening SSE.
+                # A routing rejection raises Errors::RoutingRejected here (rescued
+                # below → RoutingErrorMapper) instead of an SSE error after headers.
+                preflight_lane = executor.stream_preflight!
+
                 content_type 'text/event-stream'
                 headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive',
                         'X-Accel-Buffering' => 'no', 'X-Legion-Conversation-Id' => conv_id
@@ -65,9 +71,9 @@ module Legion
                     request_id:   request_id,
                     model:        model,
                     input_tokens: estimate_input_tokens(inference_request.messages),
-                    initial_lane: { id: 'unknown:pending' }
+                    initial_lane: preflight_lane || { id: 'unknown:pending' }
                   )
-                  pipeline_response = executor.call_stream do |chunk|
+                  pipeline_response = executor.call_stream(stream_observer: assembler) do |chunk|
                     assembler.push(chunk)
                   end
                   assembler.finalize(pipeline_response)
@@ -121,6 +127,8 @@ module Legion
               translate_escalation_exhausted(e, operation: 'llm.ns.anthropic.messages.exhausted', client: :anthropic)
             rescue Legion::LLM::Errors::InvalidHeader => e
               translate_invalid_header(e, operation: 'llm.ns.anthropic.messages.invalid_header', client: :anthropic)
+            rescue Legion::LLM::Errors::RoutingRejected => e
+              translate_routing_rejected(e, dialect: :anthropic, operation: 'llm.ns.anthropic.messages.routing_rejected')
             rescue Legion::LLM::AuthError => e
               handle_exception(e, level: :error, handled: true, operation: 'llm.ns.anthropic.messages.auth')
               anthropic_error('authentication_error', e.message, status_code: 401)

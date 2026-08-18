@@ -126,6 +126,12 @@ module Legion
           @escalation_history = []
           @route_attempts = []
           @current_escalation_context = nil
+          @routing_requirements = nil
+          @current_attempt_context = nil
+          @pre_provider_steps_done = false
+          @stream_session = nil
+          @preflight_lease = nil
+          @last_ssot_dispatch_outcome = nil
           @proactive_tier_assignment = nil
           @tool_event_handler = nil
           @sticky_turn_snapshot = nil
@@ -158,6 +164,31 @@ module Legion
           clear_log_context
         end
 
+        # SSOT v3 §19 streaming preflight. Runs the pre-provider steps and, when
+        # the SSOT inventory path is active, selects AND acquires the exact lane
+        # (RoutingSession#next_attempt! + a DispatchLease) BEFORE the route opens
+        # the SSE event-stream. A routing rejection therefore surfaces as
+        # Errors::RoutingRejected here — mapped to a proper HTTP status by the
+        # route's RoutingErrorMapper rescue — instead of an SSE server_error
+        # emitted after the response headers are already committed.
+        #
+        # Returns the selected lane Hash (for StreamAssembler#initial_lane) when
+        # SSOT selection ran, or nil when the SSOT path is not active (fallback
+        # preserves the prior behavior: the route opens SSE and call_stream selects
+        # inline). The selected AttemptContext, RoutingSession, and lease are
+        # retained on the executor and reused by the subsequent call_stream.
+        def stream_preflight!
+          set_log_context
+          Thread.current[:legion_llm_in_pipeline] = true
+          log.debug "[llm][executor] action=stream_preflight request_id=#{@request.id} profile=#{@profile}"
+          execute_pre_provider_steps
+          @pre_provider_steps_done = true
+          ssot_v3_stream_preflight
+        ensure
+          Thread.current[:legion_llm_in_pipeline] = nil
+          clear_log_context
+        end
+
         def call_stream(stream_observer: nil, &block)
           @stream_observer = stream_observer
           return call unless block
@@ -165,21 +196,36 @@ module Legion
           set_log_context
           Thread.current[:legion_llm_in_pipeline] = true
           log.debug "[llm][executor] action=call_stream request_id=#{@request.id} profile=#{@profile}"
-          execute_pre_provider_steps
+          execute_pre_provider_steps unless @pre_provider_steps_done
           step_provider_call_stream(&block)
           execute_post_provider_steps
           build_response
         ensure
+          release_preflight_lease
           @stream_observer = nil
           Thread.current[:legion_llm_in_pipeline] = nil
           clear_log_context
+        end
+
+        # Release the streaming preflight DispatchLease (SSOT v3 §15.2). Always
+        # called from call_stream's ensure so every streaming exit — success,
+        # provider failure, cancellation, client disconnect, thread interruption —
+        # retires the exact lease acquired during preflight exactly once.
+        def release_preflight_lease
+          return unless @preflight_lease
+
+          @preflight_lease.release unless @preflight_lease.released?
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.release_preflight_lease')
+        ensure
+          @preflight_lease = nil
         end
 
         # N×N: Delegates to the canonical execution path.
         # The API namespace translator has already parsed the Responses API format
         # into canonical form. The provider adapter decides how to wire canonical
         # requests internally — the executor is format-agnostic.
-        def call_responses(body:, stream: false, stream_observer: nil, &block) # rubocop:disable Lint/UnusedMethodArgument
+        def call_responses(stream: false, stream_observer: nil, **, &block)
           @stream_observer = stream_observer
           set_log_context
           Thread.current[:legion_llm_in_pipeline] = true

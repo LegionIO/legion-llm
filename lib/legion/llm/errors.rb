@@ -140,6 +140,28 @@ module Legion
         def retryable? = false
       end
 
+      # SSOT v3: the trusted server-created routing context is missing or
+      # malformed (e.g. a client attempted to set the routing seed, or a request
+      # bypassed RoutingContext.build). This is an internal programming/protocol
+      # failure mapped to HTTP 500 — never a caller-correctable InvalidRequest.
+      class InvalidRoutingContext < LLMError
+        def retryable? = false
+      end
+
+      # SSOT v3: raised by RoutingSession#next_attempt! when Router.next_lane
+      # returned a typed Rejection. Carries the exact Phase 1 Rejection so HTTP
+      # boundaries can map it through RoutingErrorMapper before StandardError.
+      class RoutingRejected < LLMError
+        attr_reader :rejection
+
+        def initialize(rejection:, message: nil, **)
+          @rejection = rejection
+          super(message || "routing rejected: #{rejection.kind} (#{rejection.reason})")
+        end
+
+        def retryable? = false
+      end
+
       # An x-legion-* header carried an unrecognized value (e.g. invalid tier name).
       # Raised by PayloadBuilder at ingress per G31. HTTP 400.
       class InvalidHeader < LLMError

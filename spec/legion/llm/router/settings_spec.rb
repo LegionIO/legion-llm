@@ -127,7 +127,7 @@ RSpec.describe Legion::LLM::Settings do
 
     it 'defines overridable auto routing model aliases under llm.routing' do
       routing = described_class.routing_defaults
-      expect(routing[:auto_routing_model_aliases]).to eq(%w[legionio auto])
+      expect(routing[:auto_routing_model_aliases]).to eq(%w[legionio auto copilot-utility-small])
     end
 
     describe 'health' do

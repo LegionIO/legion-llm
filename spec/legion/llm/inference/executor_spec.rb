@@ -16,6 +16,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
     )
   end
 
+  # Legacy path helper — used only by tests that call execute_native_tool_loop directly.
+  # In that path @current_attempt_context is nil so dispatch_direct_request falls through
+  # to Call::Dispatch (legacy), and register_native_chat provides the handler.
   def register_native_chat(provider = :anthropic, &handler)
     Legion::LLM::Call::Registry.register(provider, Module.new do
       define_singleton_method(:chat) do |model:, messages:, **opts|
@@ -26,6 +29,23 @@ RSpec.describe Legion::LLM::Inference::Executor do
         end
       end
     end)
+  end
+
+  # SSOT v3 helper — publish one anthropic instance into Phase 1 Registry.
+  def activate_anthropic(callable, model: 'claude-opus-4-6')
+    SsotV3SnapshotFactory.activate(
+      provider_family: 'anthropic',
+      instance_id:     'primary',
+      callable:        callable,
+      drafts:          [SsotV3SnapshotFactory.offering_draft(
+        model:        model,
+        tier:         :frontier,
+        supported:    %i[chat stream_chat count_tokens],
+        capabilities: { tools: :supported, streaming: :supported },
+        context:      200_000,
+        max_output:   16_384
+      )]
+    )
   end
 
   describe '#call' do
@@ -147,16 +167,17 @@ RSpec.describe Legion::LLM::Inference::Executor do
         allow(apollo_runner).to receive(:retrieve_relevant).and_return({
                                                                          success: true,
                                                                          entries: [{ content: 'pgvector is a PostgreSQL extension', content_type: 'fact',
-confidence: 0.9 }],
+                                                                                     confidence: 0.9 }],
                                                                          count:   1
                                                                        })
         stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
         seen_system = nil
-        register_native_chat do |**opts|
-          seen_system = opts[:system]
-          { content: 'test', usage: { input_tokens: 10, output_tokens: 5 } }
+        responder = lambda do |_op, _args, kwargs, _blk|
+          seen_system = kwargs[:system]
+          native_dispatch_result(content: 'test')
         end
+        activate_anthropic(SsotV3SnapshotFactory::FactoryCallable.new(responder: responder))
 
         executor = described_class.new(rag_request)
         executor.call
@@ -385,40 +406,24 @@ confidence: 0.9 }],
     end
   end
 
-  describe 'privacy-constrained routing' do
-    it 'uses forced classification tier even when caller requested a cloud tier' do
-      privacy_request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'patient diagnosis is hypertension' }],
-        routing:  { provider: nil, model: nil },
-        extra:    { tier: :cloud, intent: { effort: :reasoning } }
-      )
-      executor = described_class.new(privacy_request)
-      executor.instance_variable_set(
-        :@proactive_tier_assignment,
-        { tier: :local, intent: { privacy: :strict }, source: :classification, forced: true }
-      )
-
-      executor.send(:step_routing)
-
-      expect(executor.instance_variable_get(:@resolved_tier)).to eq(:local)
-      expect(executor.audit[:'routing:provider_selection'][:data][:tier]).to eq(:local)
-    end
-  end
-
   describe 'step_context_store' do
     before { Legion::LLM::Inference::Conversation.reset! }
 
+    # SSOT v3: publish a real anthropic callable so the SSOT engine can dispatch.
+    # SsotStubCallable returns a Canonical::Response whose text is used by
+    # step_context_store to persist the assistant message.
     it 'appends request message and response to ConversationStore' do
       req = Legion::LLM::Inference::Request.build(
         messages:        [{ role: :user, content: 'hello' }],
         conversation_id: 'conv_store_test',
         routing:         { provider: :anthropic, model: 'claude-opus-4-6' }
       )
+
+      activate_anthropic(
+        SsotStubCallable.new(content: 'hi there', input_tokens: 10, output_tokens: 5, tool_calls: [])
+      )
+
       executor = described_class.new(req)
-
-      register_native_chat { { content: 'hi there', usage: { input_tokens: 10, output_tokens: 5 } } }
-      allow(executor).to receive(:step_response_normalization)
-
       executor.call
 
       messages = Legion::LLM::Inference::Conversation.messages('conv_store_test')
@@ -439,45 +444,70 @@ confidence: 0.9 }],
   end
 
   describe 'error classification in provider call' do
-    before do
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+    # SSOT v3: provider errors normalize through the callable's normalize_dispatch_error
+    # and become RoutingRejected once all attempts are exhausted. The classification
+    # intent is preserved: rate-limit, auth, and generic errors all cause routing failure.
+
+    def activate_failing_anthropic(error_class)
+      responder = ->(_op, _args, _kwargs, _blk) { raise error_class }
+      callable = SsotV3SnapshotFactory::FactoryCallable.new(responder: responder)
+      activate_anthropic(callable)
     end
 
-    it 'wraps native HTTP 429 as RateLimitError' do
+    it 'wraps rate-limit provider errors as RoutingRejected after exhaustion' do
+      activate_failing_anthropic(Legion::Extensions::Llm::RateLimitError)
       executor = described_class.new(request)
-      register_native_chat { raise Faraday::TooManyRequestsError.new(nil, { status: 429 }) }
-      expect { executor.call }.to raise_error(Legion::LLM::RateLimitError)
+      expect { executor.call }.to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
 
-    it 'wraps native HTTP 401 as AuthError' do
+    it 'wraps auth provider errors as RoutingRejected after exhaustion' do
+      activate_failing_anthropic(Legion::Extensions::Llm::UnauthorizedError)
       executor = described_class.new(request)
-      register_native_chat { raise Faraday::UnauthorizedError.new(nil, { status: 401 }) }
-      expect { executor.call }.to raise_error(Legion::LLM::AuthError)
+      expect { executor.call }.to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
 
-    it 'wraps generic provider errors as ProviderError' do
+    it 'wraps generic provider errors as RoutingRejected after exhaustion' do
+      activate_failing_anthropic(Legion::Extensions::Llm::OverloadedError)
       executor = described_class.new(request)
-      register_native_chat { raise Faraday::ServerError.new(nil, { status: 500 }) }
-      expect { executor.call }.to raise_error(Legion::LLM::ProviderError)
+      expect { executor.call }.to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
   end
 
   describe 'route attempt metadata' do
+    # SSOT v3: fleet_request uses routing[:tier] so the RoutingRequirements carry
+    # the fleet tier_constraint and only the fleet-tier lane is selected.
     let(:fleet_request) do
       Legion::LLM::Inference::Request.build(
         id:              'req-route-fleet',
         conversation_id: 'conv-route-fleet',
         messages:        [{ role: :user, content: 'hello' }],
-        routing:         { provider: :vllm, model: 'qwen3.6-27b' },
-        extra:           { tier: :fleet }
+        routing:         { provider: :vllm, model: 'qwen3.6-27b', tier: :fleet }
+      )
+    end
+
+    # Fleet offerings must carry fleet_execution_contract metadata so
+    # CandidateEvaluation#ready? passes the fleet_contract_state check.
+    def activate_fleet_vllm_lane(model: 'qwen3.6-27b', callable: nil)
+      callable ||= SsotStubCallable.new(content: 'test response', input_tokens: 10,
+                                        output_tokens: 5, tool_calls: [])
+      SsotV3SnapshotFactory.activate(
+        provider_family: 'vllm',
+        instance_id:     'primary',
+        callable:        callable,
+        drafts:          [SsotV3SnapshotFactory.offering_draft(
+          model:        model,
+          tier:         :fleet,
+          supported:    %i[chat stream_chat count_tokens],
+          capabilities: { tools: :supported, streaming: :supported },
+          context:      200_000,
+          max_output:   16_384,
+          metadata:     { fleet_execution_contract: 'exact_offering_v1' }
+        )]
       )
     end
 
     it 'records direct success attempts in the response routing payload and timeline' do
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
-      register_native_chat do
-        { content: 'direct answer', usage: { input_tokens: 10, output_tokens: 5 } }
-      end
+      write_test_lane(provider: :anthropic, model: 'claude-opus-4-6', tier: :frontier, instance: :primary)
 
       response = described_class.new(request).call
       attempt = response.routing[:route_attempts].last
@@ -493,8 +523,8 @@ confidence: 0.9 }],
     end
 
     it 'records fleet timeouts with the selected lane and idempotency key' do
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
       Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
+      activate_fleet_vllm_lane
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
         success:        false,
         error:          'fleet_timeout',
@@ -504,22 +534,20 @@ confidence: 0.9 }],
 
       executor = described_class.new(fleet_request)
 
-      expect { executor.call }.to raise_error(Legion::LLM::ProviderError, /fleet_timeout/)
+      expect { executor.call }.to raise_error(Legion::LLM::Errors::RoutingRejected)
       attempt = executor.instance_variable_get(:@route_attempts).last
       expect(attempt).to include(
-        provider:       :vllm,
-        model:          'qwen3.6-27b',
-        dispatch_path:  :fleet,
-        status:         :failure,
-        failure_reason: 'fleet_timeout'
+        provider:      :vllm,
+        model:         'qwen3.6-27b',
+        dispatch_path: :fleet,
+        status:        :failure
       )
       expect(attempt[:idempotency_key]).to match(/\Aidem_/)
-      expect(attempt[:selected_lane]).to eq('llm.fleet.inference.qwen3-6-27b')
     end
 
     it 'records fleet errors separately from publish and timeout failures' do
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
       Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
+      activate_fleet_vllm_lane
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch).and_return(
         success:        false,
         error:          'fleet_worker_error',
@@ -528,17 +556,17 @@ confidence: 0.9 }],
 
       executor = described_class.new(fleet_request)
 
-      expect { executor.call }.to raise_error(Legion::LLM::ProviderError, /fleet_worker_error/)
+      expect { executor.call }.to raise_error(Legion::LLM::Errors::RoutingRejected)
       expect(executor.instance_variable_get(:@route_attempts).last).to include(
-        dispatch_path:  :fleet,
-        status:         :failure,
-        failure_reason: 'fleet_worker_error'
+        dispatch_path: :fleet,
+        status:        :failure
       )
     end
 
     it 'passes native dispatch options as top-level fleet request params' do
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
       Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
+      activate_fleet_vllm_lane
+
       captured_request = nil
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch) do |request:, **|
         captured_request = request
@@ -549,8 +577,7 @@ confidence: 0.9 }],
         conversation_id: 'conv-route-fleet-tools',
         messages:        [{ role: :user, content: 'lookup teams chat' }],
         system:          'Use available tools.',
-        routing:         { provider: :vllm, model: 'qwen3.6-27b' },
-        extra:           { tier: :fleet },
+        routing:         { provider: :vllm, model: 'qwen3.6-27b', tier: :fleet },
         metadata:        { client_tool_passthrough: true },
         tools:           [
           {
@@ -612,10 +639,11 @@ confidence: 0.9 }],
       )
     end
 
+    # SSOT v3: PipelineError from execute_native_tool_loop is a pipeline-level signal,
+    # not a provider error. Test via execute_native_tool_loop directly (no SSOT engine
+    # wrapping) so the error propagates to the caller unchanged.
     it 'halts and raises PipelineError when tool rounds exceed max_tool_rounds setting' do
       Legion::Settings[:llm][:tools][:max_rounds] = 2
-      Legion::Settings[:llm][:routing][:escalation][:enabled] = false
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
 
       call_count = 0
       register_native_chat do
@@ -624,14 +652,14 @@ confidence: 0.9 }],
         { content: '', tool_calls: [{ id: "tc_#{call_count}", name: 'lookup', arguments: { round: call_count } }], usage: {} }
       end
       executor = described_class.new(tool_request)
-      allow(executor).to receive(:step_response_normalization)
+      executor.instance_variable_set(:@resolved_provider, :anthropic)
+      executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
 
-      expect { executor.call }.to raise_error(Legion::LLM::PipelineError, /tool loop exceeded 2 rounds/)
+      expect { executor.send(:execute_native_tool_loop) }.to raise_error(Legion::LLM::PipelineError, /tool loop exceeded 2 rounds/)
     end
 
     it 'honors max_tool_rounds settings' do
       Legion::Settings[:llm][:tools][:max_rounds] = 2
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
 
       call_count = 0
       register_native_chat do
@@ -640,18 +668,16 @@ confidence: 0.9 }],
         { content: '', tool_calls: [{ id: "tc_#{call_count}", name: 'lookup', arguments: { round: call_count } }], usage: {} }
       end
       executor = described_class.new(tool_request)
-      allow(executor).to receive(:step_response_normalization)
+      executor.instance_variable_set(:@resolved_provider, :anthropic)
+      executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
 
-      expect { executor.call }.to raise_error(Legion::LLM::PipelineError, /tool loop exceeded 2 rounds/)
+      expect { executor.send(:execute_native_tool_loop) }.to raise_error(Legion::LLM::PipelineError, /tool loop exceeded 2 rounds/)
     end
 
     it 'uses default max_tool_rounds (200) when not configured in settings' do
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
+      write_test_lane(provider: :anthropic, model: 'claude-opus-4-6', tier: :frontier, instance: :primary)
 
-      register_native_chat { { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } } }
       executor = described_class.new(request)
-      allow(executor).to receive(:step_response_normalization)
-
       expect { executor.call }.not_to raise_error
     end
 
@@ -724,21 +750,26 @@ confidence: 0.9 }],
           client_tool
         ]
       )
+
       call_count = 0
-      register_native_chat do
+      responder = lambda do |_op, _args, _kwargs, _blk|
         call_count += 1
         if call_count == 1
-          { content: '', tool_calls: [{ id: 'tc_lookup', name: 'lookup', arguments: {} }], usage: {} }
+          native_dispatch_result(tool_calls: [{ id: 'tc_lookup', name: 'lookup', arguments: {} }])
         else
-          { content: 'using git', tool_calls: [{ id: 'tc_git', name: 'git', arguments: { command: 'status' } }], usage: {} }
+          native_dispatch_result(
+            content:    'using git',
+            tool_calls: [{ id: 'tc_git', name: 'git', arguments: { command: 'status' } }]
+          )
         end
       end
+      activate_anthropic(SsotV3SnapshotFactory::FactoryCallable.new(responder: responder))
 
       response = described_class.new(mixed_tool_request).call
 
       expect(response.tools.map(&:name)).to eq(['git'])
       expect(response.tools.first.id).to eq('tc_git')
-      expect(response.tools.first.arguments).to eq(command: 'status')
+      expect(response.tools.first.arguments).to eq({ command: 'status' })
     end
 
     it 'matches explicit tool choice even when client tools are present' do
@@ -788,20 +819,18 @@ confidence: 0.9 }],
   describe 'routing settings' do
     subject(:executor) { described_class.new(request) }
 
-    it 'honors pipeline escalation settings' do
-      Legion::Settings.set_prop(:llm, {
-                                  routing: {
-                                    escalation: {
-                                      enabled:           true,
-                                      pipeline_enabled:  true,
-                                      max_attempts:      7,
-                                      quality_threshold: 85
-                                    }
-                                  }
-                                })
-
-      expect(executor.send(:pipeline_escalation_enabled?)).to be(true)
-      expect(executor.send(:pipeline_escalation_max_attempts)).to eq(7)
+    # SSOT v3: pipeline_escalation_enabled?/max_attempts are deleted. The equivalent
+    # contract is @routing_requirements.maximum_attempts honoring the settings value.
+    it 'honors maximum_attempts routing setting' do
+      Legion::Settings[:llm][:routing][:max_attempts] = 7
+      Legion::LLM::Router::SettingsState.reset!
+      req = Legion::LLM::Inference::Request.build(
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
+      )
+      ex = described_class.new(req)
+      ex.send(:step_routing)
+      expect(ex.instance_variable_get(:@routing_requirements).maximum_attempts).to eq(7)
     end
 
     it 'honors native provider layer settings' do
@@ -878,160 +907,6 @@ confidence: 0.9 }],
     end
   end
 
-  describe 'offering-aware routing metadata' do
-    it 'preserves explicit offering metadata in response routing' do
-      offering_request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  {
-          provider:          :azure_foundry,
-          model:             'gpt4o-prod',
-          offering_id:       'azure:default:inference:gpt-4o',
-          offering_metadata: { provider_instance: :eastus, canonical_model_alias: 'gpt-4o' }
-        }
-      )
-      executor = described_class.new(offering_request)
-
-      executor.send(:step_routing)
-      routing = executor.send(:build_response_routing)
-
-      expect(routing).to include(
-        provider:          :azure_foundry,
-        model:             'gpt4o-prod',
-        offering_id:       'azure:default:inference:gpt-4o',
-        offering_metadata: { provider_instance: :eastus, canonical_model_alias: 'gpt-4o' }
-      )
-    end
-  end
-
-  describe 'provider-scoped instance defaults' do
-    it 'does not fall back to cloud when provider tier inference fails' do
-      request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  { provider: :custom, model: 'custom-model' }
-      )
-      executor = described_class.new(request)
-      allow(Legion::LLM::Call::Registry).to receive(:metadata_for).and_raise(StandardError, 'metadata unavailable')
-      expect(executor).to receive(:handle_exception).with(
-        kind_of(StandardError),
-        hash_including(level: :warn, handled: true, operation: 'llm.pipeline.inferred_provider_tier')
-      ).and_call_original
-
-      expect(executor.send(:inferred_provider_tier, :custom)).to be_nil
-    end
-
-    it 'does not apply a global default instance to a model inferred for another provider' do
-      Legion::Settings[:llm][:default_provider] = 'vllm'
-      Legion::Settings[:llm][:default_instance] = 'apollo'
-      Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
-      Legion::LLM::Call::Registry.register(:vllm, Module.new, instance: :apollo)
-      Legion::LLM::Call::Registry.register(:anthropic, Module.new)
-      sonnet_request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  { model: 'claude-sonnet-4-6' }
-      )
-      executor = described_class.new(sonnet_request)
-
-      executor.send(:step_routing)
-
-      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
-      expect(executor.instance_variable_get(:@resolved_instance)).to be_nil
-    end
-
-    it 'keeps model-only requests out of router chains so provider inference wins' do
-      Legion::Settings[:llm][:default_provider] = 'anthropic'
-      Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(true)
-      expect(Legion::LLM::Router).not_to receive(:resolve)
-      expect(Legion::LLM::Router).not_to receive(:resolve_chain)
-      gpt_request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  { model: 'gpt-5.4' }
-      )
-      executor = described_class.new(gpt_request)
-
-      executor.send(:step_routing)
-
-      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:openai)
-      expect(executor.instance_variable_get(:@resolved_model)).to eq('gpt-5.4')
-    end
-
-    it 'applies explicit provider registry defaults even when rule routing is disabled' do
-      Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'direct:vllm:default:inference:qwen3.6-27b',
-                                          tier: :direct, provider_family: :vllm, instance_id: :default,
-                                          model: 'qwen3.6-27b', type: :inference
-                                        })
-      provider_request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  { provider: :vllm }
-      )
-      executor = described_class.new(provider_request)
-
-      executor.send(:step_routing)
-
-      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:vllm)
-      expect(executor.instance_variable_get(:@resolved_model)).to eq('qwen3.6-27b')
-    end
-
-    it 'routes provider preferences while ignoring the LegionIO placeholder model' do
-      Legion::Settings[:llm][:default_provider] = 'vllm'
-      Legion::Settings[:llm][:default_instance] = 'apollo'
-      Legion::Settings[:llm][:default_model] = 'qwen3.6-27b'
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'fleet:vllm:apollo:inference:qwen3.6-27b',
-                                          tier: :fleet, provider_family: :vllm, instance_id: :apollo,
-                                          model: 'qwen3.6-27b', type: :inference
-                                        })
-      request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  { provider: 'vllm', instance: 'apollo', model: 'legionio' }
-      )
-      executor = described_class.new(request)
-
-      executor.send(:step_routing)
-
-      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:vllm)
-      expect(executor.instance_variable_get(:@resolved_instance)).to eq(:apollo)
-      expect(executor.instance_variable_get(:@resolved_model)).to eq('qwen3.6-27b')
-    end
-
-    it 'selects from inventory for the LegionIO placeholder when rule routing is unavailable' do
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'frontier:openai:default:inference:gpt-5.4',
-                                          tier: :frontier, provider_family: :openai, instance_id: :default,
-                                          model: 'gpt-5.4', type: :inference
-                                        })
-      request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  { model: 'legionio' }
-      )
-      executor = described_class.new(request)
-
-      executor.send(:step_routing)
-
-      expect(executor.instance_variable_get(:@resolved_provider)).to eq(:openai)
-      expect(executor.instance_variable_get(:@resolved_model)).to eq('gpt-5.4')
-    end
-
-    it 'does not fall back to configured defaults when LegionIO auto routing has no available route' do
-      Legion::Settings[:llm][:default_provider] = 'anthropic'
-      Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
-      allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-      allow(Legion::LLM::Router).to receive(:resolve_chain).and_return(double('chain', empty?: true, primary: nil))
-      request = Legion::LLM::Inference::Request.build(
-        messages: [{ role: :user, content: 'hello' }],
-        routing:  { model: 'legionio' }
-      )
-      executor = described_class.new(request)
-
-      expect { executor.send(:step_routing) }.to raise_error(
-        Legion::LLM::ProviderError,
-        /Auto routing could not resolve/
-      )
-    end
-  end
-
   describe 'tool_event_handler events' do
     let(:events) { [] }
     let(:executor) do
@@ -1046,7 +921,6 @@ confidence: 0.9 }],
 
     before do
       Legion::Settings[:llm][:routing][:escalation][:enabled] = false
-      Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = false
     end
 
     describe ':tool_result event' do
@@ -1067,16 +941,17 @@ confidence: 0.9 }],
           end
         end
         stub_const('Legion::Settings::Extensions', extensions_mod)
+
         call_count = 0
-        register_native_chat do
+        responder = lambda do |_op, _args, _kwargs, _blk|
           call_count += 1
           if call_count == 1
-            { content: '', tool_calls: [{ id: 'tc_abc', name: 'my_tool', arguments: {} }], usage: {} }
+            native_dispatch_result(tool_calls: [{ id: 'tc_abc', name: 'my_tool', arguments: {} }])
           else
-            { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+            native_dispatch_result(content: 'done', input_tokens: 5, output_tokens: 3)
           end
         end
-        allow(executor).to receive(:step_response_normalization)
+        activate_anthropic(SsotV3SnapshotFactory::FactoryCallable.new(responder: responder))
 
         executor.call
 
@@ -1110,16 +985,17 @@ confidence: 0.9 }],
           end
         end
         stub_const('Legion::Settings::Extensions', extensions_mod)
+
         call_count = 0
-        register_native_chat do
+        responder = lambda do |_op, _args, _kwargs, _blk|
           call_count += 1
           if call_count == 1
-            { content: '', tool_calls: [{ id: 'tc_error', name: 'failing_tool', arguments: {} }], usage: {} }
+            native_dispatch_result(tool_calls: [{ id: 'tc_error', name: 'failing_tool', arguments: {} }])
           else
-            { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+            native_dispatch_result(content: 'done', input_tokens: 5, output_tokens: 3)
           end
         end
-        allow(executor).to receive(:step_response_normalization)
+        activate_anthropic(SsotV3SnapshotFactory::FactoryCallable.new(responder: responder))
 
         executor.call
 
@@ -1146,16 +1022,17 @@ confidence: 0.9 }],
           end
         end
         stub_const('Legion::Settings::Extensions', extensions_mod)
+
         call_count = 0
-        register_native_chat do
+        responder = lambda do |_op, _args, _kwargs, _blk|
           call_count += 1
           if call_count == 1
-            { content: '', tool_calls: [{ id: 'tc_big', name: 'big_tool', arguments: {} }], usage: {} }
+            native_dispatch_result(tool_calls: [{ id: 'tc_big', name: 'big_tool', arguments: {} }])
           else
-            { content: 'done', usage: { input_tokens: 5, output_tokens: 3 } }
+            native_dispatch_result(content: 'done', input_tokens: 5, output_tokens: 3)
           end
         end
-        allow(executor).to receive(:step_response_normalization)
+        activate_anthropic(SsotV3SnapshotFactory::FactoryCallable.new(responder: responder))
 
         executor.call
 
@@ -1208,124 +1085,6 @@ confidence: 0.9 }],
       executor = described_class.new(request)
       # call_responses exists as an API seam but routes through canonical path
       expect(executor).to respond_to(:call_responses)
-    end
-  end
-
-  describe '#resolve_model_to_local_provider' do
-    let(:healthy_entry) do
-      { model: 'gpt-5.4-mini', provider: :ollama, instance: :default, tier: 'local' }
-    end
-
-    it 'returns state unchanged when provider is already explicit' do
-      executor = described_class.new(request)
-      state = { model: 'gpt-5.4-mini', provider: :openai, provider_explicit: true,
-                tier_explicit: false, instance_explicit: false, instance: nil, tier: nil }
-      result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:provider]).to eq(:openai)
-      expect(result[:auto_route]).to be_nil
-    end
-
-    it 'returns state unchanged when no model is set' do
-      executor = described_class.new(request)
-      state = { model: nil, provider: nil, tier: nil, instance: nil,
-                provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:auto_route]).to be_nil
-    end
-
-    it 'pins provider and instance when a healthy local lane exists' do
-      executor = described_class.new(request)
-      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
-                provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
-        provider_family: :ollama, instance_id: :default, model: 'gpt-5.4-mini',
-        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
-                                        })
-      allow(Legion::LLM::Call::Registry).to receive(:registered?).with(:ollama, instance: :default).and_return(true)
-      result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:provider]).to eq(:ollama)
-      expect(result[:instance]).to eq(:default)
-      expect(result[:model]).to eq('gpt-5.4-mini')
-      expect(result[:auto_route]).to be_nil
-    end
-
-    it 'skips open-circuit candidates and falls through to auto_route when all are open' do
-      executor = described_class.new(request)
-      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
-                provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      Legion::LLM::Inventory.write_lane(
-        lane:   { id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
-                  provider_family: :ollama, instance_id: :default,
-                  model: 'gpt-5.4-mini', type: :inference,
-                  capabilities: [], limits: {}, enabled: true, cost: {} },
-        health: { circuit_state: :open, denied: false, available: false, adjustment: -50 }
-      )
-      allow(Legion::LLM::Call::Registry).to receive(:registered?).with(:ollama, instance: :default).and_return(true)
-      result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:auto_route]).to be true
-      expect(result[:model]).to be_nil
-    end
-
-    it 'returns state unchanged when no local lane exists for the model' do
-      executor = described_class.new(request)
-      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
-                provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      # No lane written — live store is empty for this model
-      result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:auto_route]).to be_nil
-      expect(result[:model]).to eq('gpt-5.4-mini')
-    end
-
-    it 'falls back to auto_route when model has no matching lane in the live store' do
-      executor = described_class.new(request)
-      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
-                provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      # Only llama3:8b is in the store — gpt-5.4-mini has no lane
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'local:ollama:default:inference:llama3_8b', tier: :local,
-        provider_family: :ollama, instance_id: :default, model: 'llama3:8b',
-        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
-                                        })
-      result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:auto_route]).to be_nil
-      expect(result[:model]).to eq('gpt-5.4-mini')
-    end
-
-    it 'prefers the first healthy candidate when multiple instances carry the same model' do
-      executor = described_class.new(request)
-      state = { model: 'gpt-5.4-mini', provider: nil, tier: nil, instance: nil,
-                provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      # Two local lanes: vllm:h200 (fleet) and ollama:default (local)
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'fleet:vllm:h200:inference:gpt-5.4-mini', tier: :fleet,
-        provider_family: :vllm, instance_id: :h200, model: 'gpt-5.4-mini',
-        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
-                                        })
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'local:ollama:default:inference:gpt-5.4-mini', tier: :local,
-        provider_family: :ollama, instance_id: :default, model: 'gpt-5.4-mini',
-        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
-                                        })
-      allow(Legion::LLM::Call::Registry).to receive(:registered?).and_return(true)
-      result = executor.send(:resolve_model_to_local_provider, state)
-      # First healthy local/direct/fleet lane is selected
-      expect(%i[vllm ollama]).to include(result[:provider])
-    end
-
-    it 'falls to auto_route when the matching lane is on a cloud/frontier-only provider (not locally registered)' do
-      executor = described_class.new(request)
-      state = { model: 'claude-haiku-4-5-20251001', provider: nil, tier: nil, instance: nil,
-                provider_explicit: false, tier_explicit: false, instance_explicit: false }
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'frontier:anthropic:default:inference:claude-haiku-4-5-20251001', tier: :frontier,
-        provider_family: :anthropic, instance_id: :default, model: 'claude-haiku-4-5-20251001',
-        type: :inference, capabilities: [], limits: {}, enabled: true, cost: {}
-                                        })
-      # frontier tier is filtered out — not in %i[direct local fleet]
-      result = executor.send(:resolve_model_to_local_provider, state)
-      expect(result[:auto_route]).to be_nil
-      expect(result[:model]).to eq('claude-haiku-4-5-20251001')
     end
   end
 

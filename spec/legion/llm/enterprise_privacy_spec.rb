@@ -38,8 +38,8 @@ RSpec.describe 'Legion::LLM enterprise privacy mode' do
 
   describe '.chat_direct with tier: :local' do
     it 'does not raise PrivacyModeError for local tier' do
-      Legion::LLM::Call::Registry.register(:ollama, Module.new, metadata: { default_model: 'llama3', tier: :local })
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_dispatch_result(content: 'pipeline response'))
+      # SSOT v3: publish via Phase-1 Registry so RoutingSession can select the lane.
+      write_test_lane(provider: :ollama, model: 'llama3', tier: :local)
       expect do
         Legion::LLM.chat_direct(tier: :local, provider: :ollama, model: 'llama3', message: 'hello')
       end.not_to raise_error

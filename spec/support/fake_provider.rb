@@ -21,7 +21,9 @@ require 'legion/llm/errors'
 #   * supports?(capability)
 #
 # Each call returns a Canonical::Response or yields Canonical::Chunks built
-# from the named fixture, with no I/O of any kind.
+# from the named fixture, with no I/O of any kind. embed returns the
+# provider-native Legion::Extensions::Llm::Embedding value object (the
+# production SSOT v3 callable contract).
 module FakeProvider
   Canonical = Legion::Extensions::Llm::Canonical
 
@@ -107,13 +109,14 @@ module FakeProvider
       Thread.current[:fake_provider_calls] ||= []
     end
 
-    def record_call(kind:, model:, messages:, tool_prefs: nil, tools: nil)
+    def record_call(kind:, model:, messages:, tool_prefs: nil, tools: nil, temperature: nil)
       calls << {
-        kind:       kind,
-        model:      model,
-        messages:   deep_dup(messages),
-        tool_prefs: deep_dup(tool_prefs),
-        tools:      deep_dup(tools)
+        kind:        kind,
+        model:       model,
+        messages:    deep_dup(messages),
+        tool_prefs:  deep_dup(tool_prefs),
+        tools:       deep_dup(tools),
+        temperature: temperature
       }
     end
 
@@ -150,19 +153,46 @@ module FakeProvider
       end
       mod.define_singleton_method(:chat) do |model:, messages:, **opts|
         FakeProvider.record_call(kind: :chat, model: model, messages: messages,
-                                 tool_prefs: opts[:tool_prefs], tools: opts[:tools])
+                                 tool_prefs: opts[:tool_prefs], tools: opts[:tools],
+                                 temperature: opts[:temperature])
         scenario = FakeProvider.resolve_scenario(messages)
         ext.chat_response(scenario, model: model, messages: messages)
       end
       mod.define_singleton_method(:stream) do |model:, messages:, **opts, &block|
         FakeProvider.record_call(kind: :stream, model: model, messages: messages,
-                                 tool_prefs: opts[:tool_prefs], tools: opts[:tools])
+                                 tool_prefs: opts[:tool_prefs], tools: opts[:tools],
+                                 temperature: opts[:temperature])
         scenario = FakeProvider.resolve_scenario(messages)
         ext.stream_response(scenario, model: model, messages: messages, &block)
       end
+      # SSOT v3 §15.1: SelectionDispatch calls stream_chat for the :stream_chat operation.
+      mod.define_singleton_method(:stream_chat) do |model:, messages:, **opts, &block|
+        FakeProvider.record_call(kind: :stream_chat, model: model, messages: messages,
+                                 tool_prefs: opts[:tool_prefs], tools: opts[:tools],
+                                 temperature: opts[:temperature])
+        scenario = FakeProvider.resolve_scenario(messages)
+        ext.stream_response(scenario, model: model, messages: messages, &block)
+      end
+      # SSOT v3 §15.1: SelectionDispatch calls normalize_dispatch_error on StandardError.
+      mod.define_singleton_method(:normalize_dispatch_error) do |error:|
+        llm = Legion::Extensions::Llm
+        kind =
+          case error
+          when llm::OverloadedError then :overloaded
+          when llm::RateLimitError  then :rate_limited
+          when llm::UnauthorizedError then :authentication
+          when llm::ForbiddenError    then :authorization
+          when llm::BadRequestError   then :invalid_request
+          else :provider_error
+          end
+        reason = error.class.name.to_s
+        reason = 'UnknownError' if reason.empty?
+        llm::Routing::ProviderOutcome.new(kind: kind, reason: reason)
+      end
       mod.define_singleton_method(:responses) do |body:, messages:, stream:, **opts, &block|
         FakeProvider.record_call(kind: :responses, model: body[:model] || body['model'],
-                                 messages: messages, tool_prefs: opts[:tool_prefs], tools: opts[:tools])
+                                 messages: messages, tool_prefs: opts[:tool_prefs], tools: opts[:tools],
+                                 temperature: opts[:temperature])
         scenario = FakeProvider.resolve_scenario(messages)
         if stream
           ext.stream_response(scenario, model: body[:model] || body['model'], messages: messages, &block)
@@ -223,13 +253,26 @@ module FakeProvider
       end
     end
 
+    # Production shape: SSOT v3 callables return the provider-native
+    # Legion::Extensions::Llm::Embedding value object (the lex-llm
+    # parse_embedding_response contract), NOT the legacy {result:, usage:}
+    # Hash — the chat path's equivalent is the canonical Message the same way.
+    # Single text -> flat vectors array; array text -> one vectors array per
+    # entry (exactly what every lex-llm-* provider produces). The embed
+    # consumer must normalize at its boundary —
+    # spec/legion/llm/api/matrix/embeddings_matrix_spec.rb guards this end
+    # to end.
     def embed_response(model:, text:)
-      vector = Array.new(8) { |i| ((text.to_s.bytes.sum + i) % 7) / 7.0 }
-      {
-        result: [vector],
-        usage:  { input_tokens: (text.to_s.length / 4) + 1, output_tokens: 0 },
-        model:  model
-      }
+      vectors = if text.is_a?(Array)
+                  text.map { |t| Array.new(8) { |i| ((t.to_s.bytes.sum + i) % 7) / 7.0 } }
+                else
+                  Array.new(8) { |i| ((text.to_s.bytes.sum + i) % 7) / 7.0 }
+                end
+      Legion::Extensions::Llm::Embedding.new(
+        vectors:      vectors,
+        model:        model,
+        input_tokens: (text.to_s.length / 4) + 1
+      )
     end
 
     def text_response(model)

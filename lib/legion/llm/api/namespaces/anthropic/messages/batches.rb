@@ -156,13 +156,11 @@ module Legion
                   batch_store.delete(id)
                 end
 
-                # rubocop:disable Lint/UnusedMethodArgument
-                def list_batches(limit:, before_id: nil, after_id: nil)
+                def list_batches(limit:, **)
                   all = batch_store.values.map { |e| e[:batch] }.sort_by { |b| b[:created_at] }.reverse
                   all = all.first(limit.clamp(1, 100))
                   { data: all, has_more: false, first_id: all.first&.dig(:id), last_id: all.last&.dig(:id) }
                 end
-                # rubocop:enable Lint/UnusedMethodArgument
 
                 def batch_results(id)
                   batch_store.dig(id, :results) || []

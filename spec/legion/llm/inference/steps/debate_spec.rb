@@ -304,10 +304,12 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       expect(metadata[:judge_model]).to eq('anthropic:claude-sonnet-4-5')
     end
 
-    it 'uses debate and provider settings via set_prop' do
+    it 'derives the advocate from the resolved lane (not a configured default) via set_prop' do
+      # SSOT v3: the advocate is the provider/model the router actually resolved for
+      # this request, never Settings default_provider/default_model.
       Legion::Settings.set_prop(:llm, {
-                                  default_provider: :anthropic,
-                                  default_model:    'claude-sonnet-4-6',
+                                  default_provider: :vllm,
+                                  default_model:    'should-not-be-used',
                                   debate:           {
                                     enabled:          true,
                                     default_rounds:   1,
@@ -328,6 +330,8 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       }
 
       step = host_class.new(base_request, raw_response)
+      step.resolved_provider = :anthropic
+      step.resolved_model    = 'claude-sonnet-4-6'
       step.step_debate
       metadata = step.enrichments['debate:result'][:data]
       expect(metadata[:advocate_model]).to eq('anthropic:claude-sonnet-4-6')

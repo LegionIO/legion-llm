@@ -25,6 +25,7 @@ RSpec.describe 'Namespaces::OpenAI::Chat::Completions' do
   let(:executor_double) do
     double('Executor').tap do |ex|
       allow(ex).to receive(:call).and_return(pipeline_response)
+      allow(ex).to receive(:stream_preflight!).and_return(nil)
       allow(ex).to receive(:call_stream).and_return(pipeline_response)
     end
   end
@@ -66,6 +67,7 @@ RSpec.describe 'Namespaces::OpenAI::Chat::Completions' do
     end
 
     it 'streams data: chunks terminated by data: [DONE]' do
+      allow(executor_double).to receive(:stream_preflight!).and_return(nil)
       allow(executor_double).to receive(:call_stream) do |&block|
         block.call(double('Chunk', content: 'Hello '))
         block.call(double('Chunk', content: 'world'))

@@ -1,387 +1,407 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'legion/llm/router/request_requirements'
 
-RSpec.describe Legion::LLM::Router, '#request_lane' do
-  let(:rng) { Random.new(42) }
+# Behavioral equivalents of the legacy #request_lane suite, migrated to the SSOT v3
+# Router.next_lane selector stack.  request_lane is deleted; every surviving invariant
+# is re-expressed here as next_lane -> Selection / Rejection.
+#
+# Deleted (no SSOT v3 equivalent):
+#   - Bedrock region-prefix model normalization (request_lane-specific sieve logic)
+#   - thinking: :forbid / :any  (not a routing filter in SSOT v3)
+#   - half_open circuit state   (HealthTracker concept; replaced by instance availability)
+#   - M1 indexed-read optimization  (internal implementation detail, Inventory.lanes_for)
+#   - "treats missing context_window as unlimited"  (behavior changed: unknown context → not ready)
+#   - Bucket selection via lane_weight patching  (internal weight mechanism has no SSOT v3 path)
+RSpec.describe Legion::LLM::Router, '.next_lane (migrated from #request_lane)', :ssot_v3 do
+  # Build a RequestRequirements from a lightweight test request. All params
+  # except seed forward to RequestRequirements.build so callers can override any axis.
+  def reqs(operation: :chat, capabilities: [], routing: {}, seed: 'ab' * 16,
+           input: 0, output: 0, tier_constraint: nil)
+    request = Legion::LLM::Inference::Request.build_for_test(
+      routing_seed: seed, messages: [], routing: routing
+    )
+    Legion::LLM::Router::RequestRequirements.build(
+      request:                request,
+      operation:              operation,
+      required_capabilities:  capabilities,
+      estimated_input_bound:  input,
+      required_output_tokens: output,
+      tier_constraint:        tier_constraint
+    )
+  end
 
-  def write_lane(provider:, model:, instance: :default, tier: :direct, type: :inference,
-                 capabilities: [], limits: {}, lane_weight: nil, health: nil)
-    lane = {
-      id:              "#{tier}:#{provider}:#{instance}:#{type}:#{model}",
-      tier:            tier,
-      provider_family: provider,
-      instance_id:     instance,
-      model:           model,
-      type:            type,
-      capabilities:    capabilities,
-      limits:          limits
-    }
-    opts = { lane: lane }
-    opts[:health] = health if health
-    if lane_weight
-      # Write without lane_weight first, then re-write with explicit weight to bypass compute
-      written = Legion::LLM::Inventory.write_lane(**opts)
-      # Patch the lane_weight directly for testing purposes
-      Legion::LLM::Inventory.send(:live_map).put(lane[:id], written.merge(lane_weight: lane_weight))
-    else
-      Legion::LLM::Inventory.write_lane(**opts)
+  # Invoke the selector, taking a fresh snapshot each time so callers do not need to
+  # capture it explicitly unless they need snapshot-stable multi-call tests.
+  def nl(requirements = reqs, exclusions: [])
+    described_class.next_lane(requirements: requirements, exclusions: exclusions, snapshot: snapshot)
+  end
+
+  # Build an attempt_target Exclusion for the given (provider, instance_id, model) triple.
+  def attempt_exclusion(provider:, instance_id:, model:)
+    atk = Legion::Extensions::Llm::Routing::AttemptTargetKey.new(
+      provider_family: provider.to_sym,
+      instance_id:     instance_id.to_s,
+      model:           model.to_s
+    )
+    Legion::Extensions::Llm::Routing::Exclusion.new(
+      target_kind: :attempt_target, target: atk,
+      reason: 'attempt_consumed', evidence: {}, lifetime: :request
+    )
+  end
+
+  # Activate a single instance with a specific context window. write_test_lane always
+  # uses context: 200_000; use this helper when a test needs a different value.
+  def activate_with_context(provider:, instance_id:, model:, context:, tier: :local)
+    SsotV3SnapshotFactory.activate(
+      provider_family: provider.to_s,
+      instance_id:     instance_id.to_s,
+      callable:        SsotStubCallable.new(content: 'ok', input_tokens: 10,
+                                            output_tokens: 5, tool_calls: []),
+      drafts:          [SsotV3SnapshotFactory.offering_draft(
+        model:     model.to_s,
+        tier:      tier,
+        supported: %i[chat stream_chat count_tokens],
+        context:   context
+      )]
+    )
+  end
+
+  # ─── Operation (type) filter ───────────────────────────────────────────────
+
+  describe 'operation filter' do
+    it 'returns a Rejection when no offering supports the requested operation' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', type: :inference)
+      expect(nl(reqs(operation: :embed))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+    end
+
+    it 'returns a Selection when an offering supports the requested operation' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', type: :inference)
+      result = nl(reqs(operation: :chat))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.provider_family).to eq(:vllm)
     end
   end
 
-  after { Legion::LLM::Inventory.reset_live_store! }
+  # ─── Tier constraint ───────────────────────────────────────────────────────
 
-  # ─── Hard filters ──────────────────────────────────────────────────────────
-
-  describe 'hard filters' do
-    it 'filters by type — returns nil when no lane matches the type' do
-      write_lane(provider: :vllm, model: 'gemma-12b', type: :inference)
-      expect(Legion::LLM::Router.request_lane(type: :embedding, rng: rng)).to be_nil
+  describe 'tier constraint (replaces request_lane tiers: allow-set)' do
+    it 'selects the matching-tier offering and excludes the other tier' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', tier: :local)
+      write_test_lane(provider: :bedrock, instance: :b, model: 'claude-sonnet-4-6', tier: :cloud)
+      result = nl(reqs(tier_constraint: :local))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.provider_family).to eq(:vllm)
     end
 
-    it 'filters by type — returns lane when type matches' do
-      write_lane(provider: :vllm, model: 'gemma-12b', type: :inference)
-      lane = Legion::LLM::Router.request_lane(type: :inference, rng: rng)
-      expect(lane).not_to be_nil
-      expect(lane[:type]).to eq(:inference)
+    it 'returns a Rejection when the tier constraint excludes all available offerings' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', tier: :local)
+      expect(nl(reqs(tier_constraint: :cloud))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+    end
+  end
+
+  # ─── Provider pin ──────────────────────────────────────────────────────────
+
+  describe 'provider pin (replaces request_lane providers: allow-set)' do
+    it 'selects only the pinned provider' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', tier: :local)
+      write_test_lane(provider: :bedrock, instance: :b, model: 'claude-sonnet-4-6', tier: :cloud)
+      result = nl(reqs(routing: { provider: 'bedrock' }))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.provider_family).to eq(:bedrock)
     end
 
-    it 'filters by tiers (hard allow-set) — excludes non-matching tier' do
-      write_lane(provider: :vllm, model: 'gemma-12b', tier: :direct)
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6', tier: :cloud)
-      lane = Legion::LLM::Router.request_lane(type: :inference, tiers: [:direct], rng: rng)
-      expect(lane[:tier]).to eq(:direct)
-      expect(lane[:provider_family]).to eq(:vllm)
+    it 'returns a Rejection when the pinned provider has no offerings in the registry' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', tier: :local)
+      expect(nl(reqs(routing: { provider: 'bedrock' }))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+    end
+  end
+
+  # ─── Instance pin ──────────────────────────────────────────────────────────
+
+  describe 'instance pin (replaces request_lane instances: allow-set)' do
+    it 'selects only the pinned instance' do
+      write_test_lane(provider: :vllm, instance: :apollo, model: 'gemma-12b')
+      write_test_lane(provider: :vllm, instance: :hermes, model: 'gemma-12b')
+      result = nl(reqs(routing: { instance: 'apollo' }))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.instance_id.to_s).to eq('apollo')
+    end
+  end
+
+  # ─── Model pin ────────────────────────────────────────────────────────────
+
+  describe 'model pin (replaces request_lane models: allow-set)' do
+    it 'selects only the pinned model' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b')
+      write_test_lane(provider: :vllm, instance: :b, model: 'llama3-8b')
+      result = nl(reqs(routing: { model: 'llama3-8b' }))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.model).to eq('llama3-8b')
+    end
+  end
+
+  # ─── No constraints = permissive ─────────────────────────────────────────
+
+  describe 'unconstrained request' do
+    it 'selects any eligible lane when no pins or constraints are set (empty lists are all-pass)' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b')
+      expect(nl).to be_a(Legion::Extensions::Llm::Routing::Selection)
+    end
+  end
+
+  # ─── Required capabilities ────────────────────────────────────────────────
+
+  describe 'required capabilities' do
+    it 'selects the lane that is a superset of the requested capabilities' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', capabilities: [:streaming])
+      write_test_lane(provider: :anthropic, instance: :a, model: 'claude-sonnet-4-6',
+                      capabilities: %i[tools streaming])
+      result = nl(reqs(capabilities: [:tools]))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.provider_family).to eq(:anthropic)
     end
 
-    it 'filters by tiers — cloud filter excludes local lane' do
-      write_lane(provider: :vllm, model: 'gemma-12b', tier: :direct)
-      expect(Legion::LLM::Router.request_lane(type: :inference, tiers: [:cloud], rng: rng)).to be_nil
+    it 'returns a Rejection when no offering declares the required capability' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', capabilities: [:streaming])
+      expect(nl(reqs(capabilities: [:tools]))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
     end
 
-    it 'filters by providers (hard allow-set)' do
-      write_lane(provider: :vllm, model: 'gemma-12b', tier: :direct)
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6', tier: :cloud)
-      lane = Legion::LLM::Router.request_lane(type: :inference, providers: [:bedrock], rng: rng)
-      expect(lane[:provider_family]).to eq(:bedrock)
+    # Capability normalization: :function_calling and :tool_use are both aliases for
+    # :tools.  RequestRequirements normalizes via Capabilities.normalize so requesting
+    # an alias selects a lane that declares the canonical form.
+    it 'capability normalization — requesting :function_calling selects a :tools lane (alias collapses)' do
+      write_test_lane(provider: :openai, model: 'gpt-5.4', capabilities: [:tools])
+      result = nl(reqs(capabilities: [:function_calling]))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.provider_family).to eq(:openai)
     end
 
-    it 'filters by instances (hard allow-set)' do
-      write_lane(provider: :vllm, instance: :apollo, model: 'gemma-12b')
-      write_lane(provider: :vllm, instance: :hermes, model: 'gemma-12b')
-      lane = Legion::LLM::Router.request_lane(type: :inference, instances: [:apollo], rng: rng)
-      expect(lane[:instance_id]).to eq(:apollo)
+    it 'capability normalization — requesting :tool_use selects a :tools lane (alias collapses)' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', capabilities: [:tools])
+      result = nl(reqs(capabilities: [:tool_use]))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
     end
 
-    it 'filters by models (hard allow-set)' do
-      write_lane(provider: :vllm, model: 'gemma-12b')
-      write_lane(provider: :vllm, model: 'llama3-8b')
-      lane = Legion::LLM::Router.request_lane(type: :inference, models: ['llama3-8b'], rng: rng)
-      expect(lane[:model]).to eq('llama3-8b')
-    end
-
-    it 'filters Bedrock region-prefixed model ids against unprefixed inventory lanes' do
-      write_lane(provider: :bedrock, model: 'anthropic.claude-sonnet-4-6',
-                 tier: :cloud, capabilities: %i[tools streaming])
-
-      lane = Legion::LLM::Router.request_lane(
-        type:         :inference,
-        models:       ['us.anthropic.claude-sonnet-4-6'],
-        capabilities: [:tools],
-        rng:          rng
+    it 'capability normalization — an offering declaring both :function_calling and :tools is selected via :tool_use' do
+      SsotV3SnapshotFactory.activate(
+        provider_family: 'anthropic',
+        instance_id:     'cloud1',
+        callable:        SsotStubCallable.new(content: 'ok', input_tokens: 10,
+                                              output_tokens: 5, tool_calls: []),
+        drafts:          [SsotV3SnapshotFactory.offering_draft(
+          model:        'claude-sonnet-4-6',
+          tier:         :frontier,
+          supported:    %i[chat stream_chat count_tokens],
+          capabilities: { function_calling: :supported, tools: :supported }
+        )]
       )
-
-      expect(lane).not_to be_nil
-      expect(lane[:provider_family]).to eq(:bedrock)
-      expect(lane[:model]).to eq('anthropic.claude-sonnet-4-6')
+      result = nl(reqs(capabilities: [:tool_use]))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
     end
 
-    it 'empty filter lists are permissive (all-pass)' do
-      write_lane(provider: :vllm, model: 'gemma-12b')
-      lane = Legion::LLM::Router.request_lane(type: :inference, tiers: [], providers: [], instances: [], models: [], rng: rng)
-      expect(lane).not_to be_nil
-    end
-
-    it 'filters by capabilities — lane must be a superset of requested capabilities' do
-      write_lane(provider: :vllm, model: 'gemma-12b', capabilities: [:streaming])
-      write_lane(provider: :anthropic, model: 'claude-sonnet-4-6', capabilities: %i[tools streaming])
-      lane = Legion::LLM::Router.request_lane(type: :inference, capabilities: [:tools], rng: rng)
-      expect(lane[:provider_family]).to eq(:anthropic)
-    end
-
-    it 'capability normalization — request :tools matches lane :function_calling (PR #152 I1)' do
-      write_lane(provider: :openai, model: 'gpt-5.4', capabilities: [:function_calling])
-      lane = Legion::LLM::Router.request_lane(type: :inference, capabilities: [:tools], rng: rng)
-      expect(lane).not_to be_nil
-      expect(lane[:provider_family]).to eq(:openai)
-    end
-
-    it 'capability normalization — request :tools matches lane :function_calling (aliases collapse to canonical)' do
-      write_lane(provider: :vllm, model: 'gemma-12b', capabilities: [:function_calling])
-      lane = Legion::LLM::Router.request_lane(type: :inference, capabilities: [:tools], rng: rng)
-      expect(lane).not_to be_nil
-    end
-
-    it 'capability normalization — request :tools matches lane declaring both :function_calling and :tools' do
-      write_lane(provider: :anthropic, model: 'claude-sonnet-4-6',
-                 tier: :frontier, capabilities: %i[function_calling tools])
-      lane = Legion::LLM::Router.request_lane(type: :inference, capabilities: [:tool_use], rng: rng)
-      expect(lane).not_to be_nil
-    end
-
-    it 'filters by thinking: :require — requires :thinking capability' do
-      write_lane(provider: :vllm, model: 'gemma-12b', capabilities: [:streaming])
-      write_lane(provider: :anthropic, model: 'claude-sonnet-4-6', capabilities: %i[streaming thinking])
-      lane = Legion::LLM::Router.request_lane(type: :inference, thinking: :require, rng: rng)
-      expect(lane[:provider_family]).to eq(:anthropic)
-    end
-
-    it 'thinking: :forbid is NOT a filter — returns any lane including thinking-capable ones' do
-      write_lane(provider: :anthropic, model: 'claude-sonnet-4-6', capabilities: [:thinking])
-      lane = Legion::LLM::Router.request_lane(type: :inference, thinking: :forbid, rng: rng)
-      expect(lane).not_to be_nil
-    end
-
-    it 'thinking: :any is a no-op filter' do
-      write_lane(provider: :vllm, model: 'gemma-12b')
-      lane = Legion::LLM::Router.request_lane(type: :inference, thinking: :any, rng: rng)
-      expect(lane).not_to be_nil
-    end
-
-    it 'filters by privacy: :strict — strips cloud and frontier tiers' do
-      write_lane(provider: :vllm, model: 'gemma-12b', tier: :direct)
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6', tier: :cloud)
-      write_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
-      lane = Legion::LLM::Router.request_lane(type: :inference, privacy: :strict, rng: rng)
-      expect(lane[:tier]).to eq(:direct)
-    end
-
-    it 'privacy: :strict returns nil when only external tiers exist' do
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6', tier: :cloud)
-      expect(Legion::LLM::Router.request_lane(type: :inference, privacy: :strict, rng: rng)).to be_nil
-    end
-
-    it 'filters by estimated_context — lane context_window must be >= request' do
-      write_lane(provider: :vllm, model: 'small-model', limits: { context_window: 8_000 })
-      write_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier,
-                 limits: { context_window: 200_000 })
-      lane = Legion::LLM::Router.request_lane(type: :inference, estimated_context: 50_000, rng: rng)
-      expect(lane[:provider_family]).to eq(:anthropic)
-    end
-
-    it 'treats missing context_window as unlimited (nil = pass)' do
-      write_lane(provider: :vllm, model: 'gemma-12b')
-      lane = Legion::LLM::Router.request_lane(type: :inference, estimated_context: 50_000, rng: rng)
-      expect(lane).not_to be_nil
+    it 'filters by thinking: :require — only a thinking-capable lane is selected' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', capabilities: [:streaming])
+      write_test_lane(provider: :anthropic, instance: :a, model: 'claude-sonnet-4-6',
+                      capabilities: %i[streaming thinking])
+      result = nl(reqs(capabilities: [:thinking]))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.provider_family).to eq(:anthropic)
     end
   end
 
-  # ─── tried_lanes exclusion ─────────────────────────────────────────────────
+  # ─── Context budget filter ────────────────────────────────────────────────
 
-  describe 'tried_lanes exclusion' do
-    it 'excludes lanes by id' do
-      write_lane(provider: :vllm, instance: :a, model: 'gemma-12b')
-      write_lane(provider: :vllm, instance: :b, model: 'gemma-12b')
-      lane = Legion::LLM::Router.request_lane(
-        type: :inference, rng: rng,
-        tried_lanes: ['direct:vllm:a:inference:gemma-12b']
+  describe 'context budget filter (replaces request_lane estimated_context: param)' do
+    it 'selects the lane whose context window is large enough for the request' do
+      activate_with_context(provider: :vllm, instance_id: 'small', model: 'small-model',
+                            context: 8_000, tier: :local)
+      write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier) # 200_000
+      result = nl(reqs(input: 50_000))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.provider_family).to eq(:anthropic)
+    end
+
+    it 'returns a Rejection when all offerings have insufficient context windows' do
+      activate_with_context(provider: :vllm, instance_id: 'small', model: 'small-model',
+                            context: 8_000, tier: :local)
+      expect(nl(reqs(input: 50_000))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+    end
+  end
+
+  # ─── Exclusions (tried-lanes analog) ─────────────────────────────────────
+
+  describe 'exclusions (replaces request_lane tried_lanes: param)' do
+    it 'excludes the consumed instance and selects the alternative' do
+      write_test_lane(provider: :vllm, instance: :a, model: 'gemma-12b')
+      write_test_lane(provider: :vllm, instance: :b, model: 'gemma-12b')
+      r = reqs
+      first = nl(r)
+      expect(first).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      excl = attempt_exclusion(provider: :vllm, instance_id: first.instance_id, model: first.model)
+      second = nl(r, exclusions: [excl])
+      expect(second).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(second.instance_id.to_s).not_to eq(first.instance_id.to_s)
+    end
+
+    it 'falls back when the first selection is excluded — alternative tiers / instances are served' do
+      write_test_lane(provider: :vllm, instance: :primary, model: 'gemma-12b', tier: :local)
+      write_test_lane(provider: :bedrock, instance: :secondary, model: 'claude-sonnet-4-6', tier: :cloud)
+      r = reqs
+      first = nl(r)
+      excl = attempt_exclusion(provider: first.provider_family, instance_id: first.instance_id,
+                               model: first.model)
+      second = nl(r, exclusions: [excl])
+      expect(second).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(second.instance_id.to_s).not_to eq(first.instance_id.to_s)
+    end
+
+    it 'returns a Rejection when all eligible instances are excluded (single-lane inventory)' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b')
+      r = reqs
+      first = nl(r)
+      excl = attempt_exclusion(provider: :vllm, instance_id: first.instance_id, model: first.model)
+      expect(nl(r, exclusions: [excl])).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+    end
+
+    it 'returns a Rejection when all instances are excluded (two-lane inventory, both consumed)' do
+      write_test_lane(provider: :vllm, instance: :a, model: 'gemma-12b')
+      write_test_lane(provider: :vllm, instance: :b, model: 'gemma-12b')
+      snap = snapshot
+      r    = reqs
+      first = described_class.next_lane(requirements: r, exclusions: [], snapshot: snap)
+      excl_a = attempt_exclusion(provider: :vllm, instance_id: first.instance_id, model: first.model)
+      second = described_class.next_lane(requirements: r, exclusions: [excl_a], snapshot: snap)
+      expect(second).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      excl_b = attempt_exclusion(provider: :vllm, instance_id: second.instance_id, model: second.model)
+      result = described_class.next_lane(requirements: r, exclusions: [excl_a, excl_b], snapshot: snap)
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+    end
+  end
+
+  # ─── Instance unavailability (replaces lane_weight ≤ 0 / circuit-open) ────
+
+  describe 'instance unavailability (circuit-open analog)' do
+    it 'returns a Rejection when the only instance is marked unavailable' do
+      token = SsotV3SnapshotFactory.activate(
+        provider_family: 'vllm',
+        instance_id:     'primary',
+        callable:        SsotStubCallable.new(content: 'ok', input_tokens: 10,
+                                              output_tokens: 5, tool_calls: []),
+        drafts:          [SsotV3SnapshotFactory.offering_draft(
+          model:     'gemma-12b',
+          tier:      :local,
+          supported: %i[chat stream_chat count_tokens]
+        )]
       )
-      expect(lane[:instance_id]).to eq(:b)
+      SsotV3SnapshotFactory.mark_unavailable(
+        provider_family:    'vllm',
+        instance_id:        'primary',
+        publisher_token_id: token.publisher_token_id
+      )
+      expect(nl).to be_a(Legion::Extensions::Llm::Routing::Rejection)
     end
 
-    it 'falls back to lower-weight bucket when top bucket is fully excluded' do
-      # Two tiers — direct (higher default weight) and cloud (lower)
-      write_lane(provider: :vllm, model: 'gemma-12b', tier: :direct)
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6', tier: :cloud)
-      # Exclude the direct lane
-      direct_id = 'direct:vllm:default:inference:gemma-12b'
-      lane = Legion::LLM::Router.request_lane(type: :inference, tried_lanes: [direct_id], rng: rng)
-      expect(lane[:tier]).to eq(:cloud)
-    end
-
-    it 'returns nil when all eligible lanes are in tried_lanes' do
-      write_lane(provider: :vllm, model: 'gemma-12b')
-      id = 'direct:vllm:default:inference:gemma-12b'
-      expect(Legion::LLM::Router.request_lane(type: :inference, tried_lanes: [id], rng: rng)).to be_nil
-    end
-  end
-
-  # ─── lane_weight ≤ 0 filtering ─────────────────────────────────────────────
-
-  describe 'lane_weight ≤ 0 filtering' do
-    it 'rejects open-circuit lanes (lane_weight negative)' do
-      write_lane(provider: :vllm, model: 'gemma-12b',
-                 health: { circuit_state: :open, denied: false, available: false, adjustment: 0 })
-      expect(Legion::LLM::Router.request_lane(type: :inference, rng: rng)).to be_nil
-    end
-
-    it 'rejects denied lanes (lane_weight negative via denied bit)' do
-      write_lane(provider: :vllm, model: 'gemma-12b',
-                 health: { circuit_state: :closed, denied: true, available: false, adjustment: 0 })
-      expect(Legion::LLM::Router.request_lane(type: :inference, rng: rng)).to be_nil
-    end
-
-    it 'keeps half_open lanes (lane_weight positive but reduced — still eligible)' do
-      write_lane(provider: :vllm, model: 'gemma-12b',
-                 health: { circuit_state: :half_open, denied: false, available: true, adjustment: 0 })
-      lane = Legion::LLM::Router.request_lane(type: :inference, rng: rng)
-      expect(lane).not_to be_nil
-      expect(lane[:health][:circuit_state]).to eq(:half_open)
+    it 'never bypasses instance unavailability — a disabled instance stays disabled (denied-lane analog)' do
+      token = SsotV3SnapshotFactory.activate(
+        provider_family: 'openai',
+        instance_id:     'primary',
+        callable:        SsotStubCallable.new(content: 'ok', input_tokens: 10,
+                                              output_tokens: 5, tool_calls: []),
+        drafts:          [SsotV3SnapshotFactory.offering_draft(
+          model:     'gpt-5.5',
+          tier:      :frontier,
+          supported: %i[chat stream_chat count_tokens]
+        )]
+      )
+      SsotV3SnapshotFactory.mark_unavailable(
+        provider_family:    'openai',
+        instance_id:        'primary',
+        publisher_token_id: token.publisher_token_id
+      )
+      expect(nl).to be_a(Legion::Extensions::Llm::Routing::Rejection)
     end
   end
 
-  # ─── Bucket selection ──────────────────────────────────────────────────────
+  # ─── Tier constraint isolates external tiers (privacy-strict analog) ───────
 
-  describe 'bucket selection' do
-    it 'always picks from the max-lane_weight bucket' do
-      # Write two lanes with different weights; higher-weight should always win
-      write_lane(provider: :vllm, instance: :low, model: 'small-model')
-      write_lane(provider: :anthropic, instance: :default, model: 'claude-sonnet-4-6',
-                 tier: :frontier)
-      # Patch low weight to ensure vllm has lower weight
-      low_id = 'direct:vllm:low:inference:small-model'
-      low_lane = Legion::LLM::Inventory.lane(id: low_id)
-      Legion::LLM::Inventory.send(:live_map).put(low_id, low_lane.merge(lane_weight: 1)) if low_lane
-
-      # Should always pick the anthropic lane (highest weight)
-      100.times do
-        lane = Legion::LLM::Router.request_lane(type: :inference, rng: Random.new(rand(1000)))
-        expect(lane[:provider_family]).to eq(:anthropic)
-      end
+  describe 'tier constraint isolates external tiers (replaces privacy: :strict)' do
+    it 'selects only the local-tier instance when tier_constraint is :local' do
+      write_test_lane(provider: :vllm,      model: 'gemma-12b', tier: :local)
+      write_test_lane(provider: :bedrock,   instance: :b, model: 'claude-sonnet-4-6', tier: :cloud)
+      write_test_lane(provider: :anthropic, instance: :c, model: 'claude-sonnet-4-6', tier: :frontier)
+      result = nl(reqs(tier_constraint: :local))
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.provider_family).to eq(:vllm)
     end
 
-    it 'samples within bucket with seeded RNG (deterministic within bucket)' do
-      # Same seed → same result; 3 equal-weight lanes in one bucket
-      3.times do |i|
-        write_lane(provider: :vllm, instance: :"i#{i}", model: 'gemma-12b')
-      end
-      first  = Legion::LLM::Router.request_lane(type: :inference, rng: Random.new(42))
-      second = Legion::LLM::Router.request_lane(type: :inference, rng: Random.new(42))
-      expect(first[:instance_id]).to eq(second[:instance_id])
+    it 'returns a Rejection when tier_constraint excludes all available offerings' do
+      write_test_lane(provider: :bedrock, model: 'claude-sonnet-4-6', tier: :cloud)
+      expect(nl(reqs(tier_constraint: :local))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+    end
+  end
+
+  # ─── No hail-mary (G24) ────────────────────────────────────────────────────
+
+  describe 'no hail-mary (G24) — no implicit default bypass' do
+    it 'returns a Rejection when provider pin excludes all lanes — even if a default provider is configured' do
+      Legion::Settings.loader.settings[:llm][:default_provider] = :openai
+      Legion::Settings.loader.settings[:llm][:default_model]    = 'gpt-5.5'
+      write_test_lane(provider: :openai, model: 'gpt-5.5', tier: :frontier)
+      expect(nl(reqs(routing: { provider: 'bedrock' }))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
     end
 
-    it 'spreads across the bucket with different seeds' do
-      3.times do |i|
-        write_lane(provider: :vllm, instance: :"i#{i}", model: 'gemma-12b')
-      end
-      results = 30.times.map { |i| Legion::LLM::Router.request_lane(type: :inference, rng: Random.new(i))[:instance_id] }
-      expect(results.uniq.size).to be > 1
+    it 'configured default lane is not a hail-mary bypass — filters still apply' do
+      Legion::Settings.loader.settings[:llm][:default_provider] = :anthropic
+      Legion::Settings.loader.settings[:llm][:default_model]    = 'claude-sonnet-4-6'
+      write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
+      expect(nl(reqs(routing: { provider: 'bedrock' }))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+    end
+
+    it 'settings key llm.routing.last_resort_default has no effect (G24)' do
+      Legion::Settings.loader.settings[:llm][:routing] ||= {}
+      Legion::Settings.loader.settings[:llm][:routing][:last_resort_default] = 'gpt-5.5'
+      write_test_lane(provider: :openai, model: 'gpt-5.5', tier: :frontier)
+      expect(nl(reqs(routing: { provider: 'bedrock' }))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
     end
   end
 
   # ─── Exhaustion ────────────────────────────────────────────────────────────
 
   describe 'exhaustion' do
-    it 'returns nil when all lanes are filtered out by hard filters' do
-      write_lane(provider: :vllm, model: 'gemma-12b', tier: :direct)
-      expect(Legion::LLM::Router.request_lane(type: :inference, tiers: [:cloud], rng: rng)).to be_nil
+    it 'returns a Rejection when the inventory is empty' do
+      expect(nl).to be_a(Legion::Extensions::Llm::Routing::Rejection)
     end
 
-    it 'returns nil when all eligible lanes are in tried_lanes' do
-      write_lane(provider: :vllm, model: 'gemma-12b')
-      write_lane(provider: :vllm, instance: :b, model: 'gemma-12b')
-      tried = %w[direct:vllm:default:inference:gemma-12b direct:vllm:b:inference:gemma-12b]
-      expect(Legion::LLM::Router.request_lane(type: :inference, tried_lanes: tried, rng: rng)).to be_nil
-    end
-
-    it 'returns nil when inventory is empty' do
-      expect(Legion::LLM::Router.request_lane(type: :inference, rng: rng)).to be_nil
+    it 'returns a Rejection when all lanes are filtered out by hard filters' do
+      write_test_lane(provider: :vllm, model: 'gemma-12b', tier: :local)
+      expect(nl(reqs(tier_constraint: :cloud))).to be_a(Legion::Extensions::Llm::Routing::Rejection)
     end
   end
 
-  # ─── No hail-mary (G24) ────────────────────────────────────────────────────
+  # ─── Determinism (G25) ────────────────────────────────────────────────────
 
-  describe 'no hail-mary (G24)' do
-    it 'returns nil when providers filter excludes all lanes — even if default lane exists' do
-      Legion::Settings.loader.settings[:llm][:default_provider] = :openai
-      Legion::Settings.loader.settings[:llm][:default_model]    = 'gpt-5.5'
-      write_lane(provider: :openai, model: 'gpt-5.5', tier: :frontier)
-
-      expect(Legion::LLM::Router.request_lane(type: :inference, providers: [:bedrock], rng: rng)).to be_nil
+  describe 'determinism (G25)' do
+    it 'same seed + same catalog + same snapshot = same selection every time' do
+      3.times { |i| write_test_lane(provider: :vllm, instance: :"i#{i}", model: 'gemma-12b') }
+      snap = snapshot
+      seed = 'cd' * 16
+      a = described_class.next_lane(requirements: reqs(seed: seed), exclusions: [], snapshot: snap)
+      b = described_class.next_lane(requirements: reqs(seed: seed), exclusions: [], snapshot: snap)
+      expect(a).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(a.lane_id).to eq(b.lane_id)
     end
 
-    it 'never bypasses lane_weight ≤ 0 — operator-disabled lane stays disabled' do
-      write_lane(provider: :openai, model: 'gpt-5.5', tier: :frontier,
-                 health: { circuit_state: :open, denied: false, available: false, adjustment: 0 })
-      expect(Legion::LLM::Router.request_lane(type: :inference, rng: rng)).to be_nil
-    end
-
-    it 'configured default lane is not a hail-mary bypass — it must pass normal filters' do
-      # Even with a configured default provider/model, filters must be respected
-      Legion::Settings.loader.settings[:llm][:default_provider] = :anthropic
-      Legion::Settings.loader.settings[:llm][:default_model]    = 'claude-sonnet-4-6'
-      write_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
-
-      # Request with a bedrock-only filter → anthropic default not injected
-      expect(Legion::LLM::Router.request_lane(type: :inference, providers: [:bedrock], rng: rng)).to be_nil
-    end
-
-    it 'settings key llm.routing.last_resort_default has no effect (G24)' do
-      Legion::Settings.loader.settings[:llm][:routing] ||= {}
-      Legion::Settings.loader.settings[:llm][:routing][:last_resort_default] = 'gpt-5.5'
-      write_lane(provider: :openai, model: 'gpt-5.5', tier: :frontier)
-
-      # Requesting with a filter that excludes openai → nil even with last_resort_default set
-      expect(Legion::LLM::Router.request_lane(type: :inference, providers: [:bedrock], rng: rng)).to be_nil
-    end
-  end
-
-  # ─── Bucket-G25 determinism ────────────────────────────────────────────────
-
-  describe 'bucket-G25 determinism' do
-    it 'same payload + same catalog + same seed = same lane (deterministic to bucket)' do
-      3.times do |i|
-        write_lane(provider: :vllm, instance: :"i#{i}", model: 'gemma-12b')
+    it 'different seeds with the same catalog distribute selection across instances' do
+      3.times { |i| write_test_lane(provider: :vllm, instance: :"i#{i}", model: 'gemma-12b') }
+      snap    = snapshot
+      results = 30.times.map do |i|
+        seed = i.to_s(16).rjust(2, '0') * 16
+        described_class.next_lane(requirements: reqs(seed: seed), exclusions: [], snapshot: snap)
       end
-
-      seed = 42
-      result_a = Legion::LLM::Router.request_lane(type: :inference, rng: Random.new(seed))
-      result_b = Legion::LLM::Router.request_lane(type: :inference, rng: Random.new(seed))
-      expect(result_a[:id]).to eq(result_b[:id])
-    end
-
-    it 'same payload + same catalog + different seed = potentially different lane within bucket' do
-      3.times do |i|
-        write_lane(provider: :vllm, instance: :"i#{i}", model: 'gemma-12b')
-      end
-
-      results = 30.times.map { |i| Legion::LLM::Router.request_lane(type: :inference, rng: Random.new(i))[:id] }
-      expect(results.uniq.size).to be > 1
-    end
-
-    it 'deterministic to weight-bucket: same weight bucket always wins across seeds' do
-      write_lane(provider: :vllm, model: 'gemma-12b', tier: :direct)
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6', tier: :cloud)
-
-      # Ensure direct > cloud by patching weights
-      direct_id = 'direct:vllm:default:inference:gemma-12b'
-      cloud_id  = 'cloud:bedrock:default:inference:claude-sonnet-4-6'
-      direct_lane = Legion::LLM::Inventory.lane(id: direct_id)
-      cloud_lane  = Legion::LLM::Inventory.lane(id: cloud_id)
-      Legion::LLM::Inventory.send(:live_map).put(direct_id, direct_lane.merge(lane_weight: 200_000_000)) if direct_lane
-      Legion::LLM::Inventory.send(:live_map).put(cloud_id, cloud_lane.merge(lane_weight: 100_000_000)) if cloud_lane
-
-      100.times do |i|
-        lane = Legion::LLM::Router.request_lane(type: :inference, rng: Random.new(i))
-        expect(lane[:tier]).to eq(:direct)
-      end
-    end
-  end
-
-  # ─── M1 fast path ──────────────────────────────────────────────────────────
-
-  describe 'M1 indexed read optimization' do
-    it 'uses lanes_for when providers.size == 1 && instances.size <= 1' do
-      write_lane(provider: :vllm, model: 'gemma-12b')
-      expect(Legion::LLM::Inventory).to receive(:lanes_for).and_call_original
-      Legion::LLM::Router.request_lane(type: :inference, providers: [:vllm], rng: rng)
-    end
-
-    it 'uses lanes directly when multiple providers are specified' do
-      write_lane(provider: :vllm, model: 'gemma-12b')
-      # With multiple providers, request_lane calls Inventory.lanes (not lanes_for)
-      expect(Legion::LLM::Inventory).to receive(:lanes).and_call_original
-      Legion::LLM::Router.request_lane(type: :inference, providers: %i[vllm bedrock], rng: rng)
+      expect(results).to all(be_a(Legion::Extensions::Llm::Routing::Selection))
+      expect(results.map(&:instance_id).uniq.size).to be > 1
     end
   end
 end

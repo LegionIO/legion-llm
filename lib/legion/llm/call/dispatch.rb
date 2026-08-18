@@ -182,32 +182,19 @@ module Legion
           Registry.registered?(provider)
         end
 
-        private
-
-        def fetch_extension!(provider, instance: nil)
-          ext = Registry.for(provider, instance: instance)
-          return ext if ext
-
-          if instance && instance.to_s != 'default'
-            ext = Registry.for(provider, instance: :default)
-            if ext
-              log.warn("[llm][native] instance_fallback provider=#{provider} requested=#{instance} using=default")
-              return ext
-            end
-          end
-
-          instance_suffix = instance ? "/#{instance}" : ''
-          log.error("[llm][native] provider_not_registered provider=#{provider}#{instance_suffix}")
-          raise Legion::LLM::ProviderError,
-                "Native provider not registered: #{provider}#{instance_suffix}. " \
-                'Ensure the lex-* extension is loaded before dispatching.'
-        end
-
         # Normalize a raw extension response into a Canonical::Response.
+        #
+        # Dispatch-boundary response contract: Call::Dispatch.call has always
+        # returned this shape, and the SSOT v3 executor dispatch
+        # (Inference::RouteAttempts#ssot_v3_direct_dispatch) normalizes the raw
+        # SelectionDispatch value through this before the executor consumes it —
+        # the native tool loop and response translation are written against
+        # Canonical::Response, never the raw provider Message.
         #
         # Expected extension return shapes (any subset is acceptable):
         #   { content:, usage: { input_tokens:, output_tokens: }, model: }
         #   { result:, usage: ... }
+        #   lex-llm Message (the sync/stream provider return shape)
         #
         # @return [Canonical::Response]
         def normalize_response(raw)
@@ -246,6 +233,27 @@ module Legion
             routing:     {},
             metadata:    metadata
           )
+        end
+
+        private
+
+        def fetch_extension!(provider, instance: nil)
+          ext = Registry.for(provider, instance: instance)
+          return ext if ext
+
+          if instance && instance.to_s != 'default'
+            ext = Registry.for(provider, instance: :default)
+            if ext
+              log.warn("[llm][native] instance_fallback provider=#{provider} requested=#{instance} using=default")
+              return ext
+            end
+          end
+
+          instance_suffix = instance ? "/#{instance}" : ''
+          log.error("[llm][native] provider_not_registered provider=#{provider}#{instance_suffix}")
+          raise Legion::LLM::ProviderError,
+                "Native provider not registered: #{provider}#{instance_suffix}. " \
+                'Ensure the lex-* extension is loaded before dispatching.'
         end
 
         # Extract the text content from a raw hash response.

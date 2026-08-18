@@ -2,10 +2,15 @@
 
 require 'legion/llm/inventory/capabilities'
 require_relative 'router/resolution'
-require_relative 'router/health_tracker'
-require_relative 'router/availability'
 require 'legion/llm/inventory/discovery/system'
 require 'legion/llm/inventory/discovery/memory_gate'
+require 'legion/extensions/llm/inventory/registry'
+
+# SSOT v3 next_lane selector stack.
+require 'legion/llm/router/settings_state'
+require 'legion/llm/router/candidate_evaluator'
+require 'legion/llm/router/ranker'
+require 'legion/llm/router/rejection_diagnostics'
 
 require 'legion/logging/helper'
 module Legion
@@ -43,124 +48,105 @@ module Legion
       @populate_auto_rules_warned = false
 
       class << self
-        # Stateless lane selection — pure function of (Inventory snapshot, routing payload).
-        # Returns one lane Hash or nil (caller raises NoLaneAvailable / EscalationExhausted).
-        #
-        # M1: when filters narrow to a single provider/instance, uses the indexed read
-        # (Inventory.lanes_for) instead of full enumeration — same semantics, cheaper.
-        # B-E / sonnet W2: lanes are Hashes; use { _1[:lane_weight] }, NOT &:lane_weight.
-        def request_lane(
-          type:,
-          tiers: [], providers: [], instances: [], models: [],
-          capabilities: [], thinking: :any, privacy: :normal,
-          estimated_context: nil, tried_lanes: [],
-          rng: default_rng,
-          **
-        )
-          # Advance open circuits past cooldown to half_open before selection
-          # so their lanes carry a positive weight and pass the soft filter.
-          health_tracker.sweep_circuits!
+        # SSOT v3 §12: the single selection method. Pure function of
+        # (routing_seed+requirements, exclusions, one snapshot generation, one
+        # settings generation). Returns exactly one Phase 1 Selection or Rejection
+        # — never nil, a lane hash, a model/provider string, a chain, or an array.
+        def next_lane(requirements:, exclusions:, snapshot:)
+          validate_exclusions!(exclusions)
+          validate_snapshot!(snapshot)
+          snapshot.generation # capture once (immutable snapshot)
+          settings_snapshot = Legion::LLM::Router::SettingsState.current
 
-          # 0. GAIA Preferred Provider/Model (OP2)
-          if type == :inference && (tiers.include?(:gaia) || tiers.include?('gaia'))
-            pref_provider = Legion::Settings.dig(:llm, :gaia, :preferred_provider)
-            pref_model    = Legion::Settings.dig(:llm, :gaia, :preferred_model)
+          evaluation_set = Legion::LLM::Router::CandidateEvaluator.call(
+            requirements: requirements, exclusions: exclusions,
+            snapshot: snapshot, settings_snapshot: settings_snapshot
+          )
+          ranked = Legion::LLM::Router::Ranker.call(
+            evaluation_set: evaluation_set, requirements: requirements, settings_snapshot: settings_snapshot
+          )
 
-            if pref_provider || pref_model
-              # If either is set, we try to force a lane matching both (if both set) or either.
-              # We prioritize this over general weights for the :gaia tier.
-              candidates = Legion::LLM::Inventory.lanes_for(
-                provider: pref_provider,
-                model:    pref_model,
-                type:     type
-              )
-
-              if candidates&.any?
-                # Filter candidates by hard constraints (privacy, context, etc)
-                passing = candidates.select do |lane|
-                  lane_passes_hard_filters?(
-                    lane: lane, type: type, tiers: tiers, providers: providers, instances: instances,
-                    models: models, capabilities: capabilities, thinking: thinking, privacy: privacy,
-                    estimated_context: estimated_context
-                  )
-                end
-                # Use the first one that passes hard filters as the preferred selection
-                return passing.first if passing.any?
-              end
-            end
-          end
-
-          candidates = if providers.size == 1 && instances.size <= 1
-                         Legion::LLM::Inventory.lanes_for(
-                           provider: providers.first, instance: instances.first, type: type
-                         )
-                       else
-                         Legion::LLM::Inventory.lanes
-                       end
-
-          passing = candidates.select do |lane|
-            lane_passes_hard_filters?(
-              lane: lane, type: type, tiers: tiers, providers: providers, instances: instances,
-              models: models, capabilities: capabilities, thinking: thinking, privacy: privacy,
-              estimated_context: estimated_context
+          if ranked.nil? && hint_model_pin_active?(requirements)
+            # v2 parity (v2 executor/routing.rb resolve_model_to_local_provider
+            # model_discovery_miss: state[:model]=nil, auto_route=true): an
+            # HONORED body-model hint that no candidate matches is not a caller
+            # error — clear the hint pin and re-evaluate with normal weighted
+            # selection (N x N: route to ANY qualifying lane). A trusted
+            # X-Legion-Model pin never reaches this branch — explicit pins stay
+            # hard. If the re-evaluation finds nothing, the normal no-lane
+            # rejection stands (a real no-lane, not a hint problem).
+            log.info("[llm][router] action=model_hint_miss model=#{requirements.model_pin} " \
+                     'falling_back=weighted_selection')
+            requirements = requirements.without_model_pin
+            evaluation_set = Legion::LLM::Router::CandidateEvaluator.call(
+              requirements: requirements, exclusions: exclusions,
+              snapshot: snapshot, settings_snapshot: settings_snapshot
+            )
+            ranked = Legion::LLM::Router::Ranker.call(
+              evaluation_set: evaluation_set, requirements: requirements, settings_snapshot: settings_snapshot
             )
           end
-          eligible = passing.reject { |lane| tried_lanes.include?(lane[:id]) || lane[:lane_weight].to_i <= 0 }
 
-          return nil if eligible.empty?
+          if ranked.nil?
+            return Legion::LLM::Router::RejectionDiagnostics.call(
+              requirements: requirements, evaluation_set: evaluation_set, snapshot: snapshot
+            )
+          end
 
-          pool = range_sieve(eligible: eligible, estimated_context: estimated_context)
-
-          pool
-            .group_by { |lane| lane[:lane_weight] }
-            .max_by { |weight, _| weight }
-            .last
-            .sample(random: rng)
+          build_selection(ranked: ranked, snapshot: snapshot)
         end
 
-        def infer_provider_for_model(model)
-          return nil if model.nil? || model.to_s.empty?
-
-          model_s = model.to_s
-          return :bedrock if model_s.start_with?('us.')
-          return :bedrock if model_s.match?(/\A(anthropic|meta|mistral|cohere|amazon|ai21)\./i)
-          return :openai if model_s.match?(/\Agpt-|\Ao[134]-/)
-          return :anthropic if model_s.start_with?('claude-')
-          return :gemini if model_s.start_with?('gemini-')
-          return :ollama if model_s.match?(OLLAMA_MODEL_PATTERN)
-
-          nil
+        def validate_exclusions!(exclusions)
+          unless exclusions.is_a?(Array) &&
+                 exclusions.all?(Legion::Extensions::Llm::Routing::Exclusion)
+            raise ArgumentError, 'exclusions must be an Array of Phase 1 Routing::Exclusion records'
+          end
         end
+        private :validate_exclusions!
 
-        # The provider's own default model from Inventory — the single source of
-        # truth (already whitelist/blacklist-filtered and discovery-fed). Sourcing
-        # a model here guarantees an explicit provider is paired only with a model
-        # it actually offers: anthropic resolves to its own offered model, never a
-        # stale registry default or a global default that belongs to a different
-        # provider (the anthropic->qwen pairing class). Returns nil when Inventory
-        # has no catalog for the provider (cold boot), so callers fall through to
-        # their existing fallbacks.
-        def inventory_default_model(provider, instance = nil)
-          return nil unless provider && defined?(Inventory)
+        def validate_snapshot!(snapshot)
+          return if snapshot.is_a?(Legion::Extensions::Llm::Inventory::Snapshot)
 
-          candidates = Inventory.lanes_for(provider: provider.to_sym, type: :inference)
-          return nil if candidates.nil? || candidates.empty?
-
-          inst = (instance || :default).to_s
-          offering = candidates.find { |o| (o[:instance_id] || o[:provider_instance]).to_s == inst } || candidates.first
-          model = offering[:model] || offering[:canonical_model_alias]
-          model&.to_s
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'router.inventory_default_model')
-          nil
+          raise ArgumentError, 'snapshot must be a Phase 1 Inventory::Snapshot'
         end
+        private :validate_snapshot!
 
-        def health_tracker
-          @health_tracker ||= build_health_tracker
+        # Construct the Phase 1 Selection from the chosen RankedCandidate and its
+        # evaluation's same-generation records. Never re-reads the registry.
+        def build_selection(ranked:, snapshot:)
+          evaluation = ranked.evaluation
+          lane = evaluation.lane
+          offering = evaluation.offering
+          instance = evaluation.instance
+
+          Legion::Extensions::Llm::Routing::Selection.new(
+            inventory_generation: snapshot.generation,
+            lane_id:              lane.lane_id,
+            instance_key:         lane.instance_key,
+            offering_id:          lane.offering_id,
+            provider_family:      lane.provider_family,
+            instance_id:          lane.instance_id,
+            model:                lane.model,
+            operation:            lane.operation,
+            callable_handle:      lane.callable_handle,
+            publisher_token_id:   instance.publisher_token_id,
+            capability_evidence:  offering.capability_evidence,
+            context_evidence:     offering.context_evidence,
+            weight_inputs:        ranked.weight_inputs,
+            base_weight:          ranked.base_weight,
+            preference_ppm:       ranked.preference_ppm,
+            effective_weight:     ranked.effective_weight,
+            rendezvous_score:     ranked.rendezvous_score
+          )
         end
+        private :build_selection
 
+        # SSOT has no operator routing toggle (auto-rules era is gone): routing
+        # is enabled whenever at least one instance has a complete publication
+        # in the Registry.
         def routing_enabled?
-          false
+          Legion::Extensions::Llm::Inventory::Registry.snapshot
+                                                      .each_publication_status.any? { |ps| ps.state == :complete }
         end
 
         def auto_rules_populated?
@@ -180,7 +166,6 @@ module Legion
         end
 
         def reset!
-          @health_tracker = nil
           @auto_rules = []
           @auto_rules_populated = false
           @populate_auto_rules_warned = false
@@ -223,76 +208,27 @@ module Legion
           true
         end
 
+        # Public query for status endpoints (/api/llm/tiers). Reflects the
+        # enterprise-privacy setting (or LEGION_ENTERPRISE_PRIVACY env override).
+        def privacy_mode?
+          if Legion::Settings.respond_to?(:enterprise_privacy?)
+            Legion::Settings.enterprise_privacy?
+          else
+            ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
+          end
+        end
+
         private
 
-        def range_sieve(eligible:, estimated_context:)
-          return eligible if estimated_context.nil?
-
-          specific, generalist = eligible.partition { |lane| lane_has_range?(lane) }
-          matched = specific.select { |lane| lane_in_range?(lane: lane, estimated_context: estimated_context) }
-
-          return matched unless matched.empty?
-          return generalist unless generalist.empty?
-
-          eligible
-        end
-
-        def lane_has_range?(lane)
-          !lane[:preferred_min_context_tokens].nil? || !lane[:preferred_max_context_tokens].nil?
-        end
-
-        def lane_in_range?(lane:, estimated_context:)
-          lower = (lane[:preferred_min_context_tokens] || 0).to_i
-          upper = lane[:preferred_max_context_tokens]
-          upper = upper ? upper.to_i : Float::INFINITY
-
-          estimated_context >= lower && estimated_context < upper
-        end
-
-        def lane_passes_hard_filters?(lane:, type:, tiers:, providers:, instances:, models:,
-                                      capabilities:, thinking:, privacy:, estimated_context:, **)
-          return false if lane[:type] != type
-          return false if !tiers.empty?     && !tiers.map(&:to_sym).include?(lane[:tier])
-          return false if !providers.empty? && !providers.map(&:to_sym).include?(lane[:provider_family])
-          return false if !instances.empty? && !instances.map(&:to_sym).include?(lane[:instance_id])
-          return false if !models.empty?    && !model_filter_match?(lane, models)
-
-          # H-C / opus H3 / PR #152 I1: normalize capabilities on BOTH sides so :tools and
-          # :function_calling/:tool_use are treated as aliases. Collapse to canonical-only
-          # (aliases → canonical, drop the alias symbol) so the set-difference only compares
-          # canonical forms: normalize([:function_calling]) = [:tools],
-          # normalize([:tool_use]) = [:tools]. Bidirectional aliasing.
-          requested = canonicalize_capabilities(capabilities)
-          available = canonicalize_capabilities(Array(lane[:capabilities]))
-          return false unless (requested - available).empty?
-
-          return false if thinking == :require && !available.include?(:thinking)
-
-          # Apply the same headroom the dispatch budget guard uses: a lane is only
-          # eligible when estimated_context fits within context_window * headroom.
-          # Keeps routing and RouteAttempts#enforce_final_context_budget! in
-          # agreement so the router never picks a lane the pre-dispatch guard rejects.
-          context_window = lane.dig(:limits, :context_window)
-          if estimated_context && context_window
-            usable = (context_window.to_i * context_headroom).to_i
-            return false if usable < estimated_context
-          end
-          return false if privacy == :strict && %i[cloud frontier].include?(lane[:tier])
-
-          true
-        end
-
-        def model_filter_match?(lane, requested_models)
-          lane_models = [lane[:model], lane[:canonical_model_alias]].compact.map { |value| normalize_model_filter_value(value) }.uniq
-          requested = Array(requested_models).map { |value| normalize_model_filter_value(value) }.uniq
-
-          !!lane_models.intersect?(requested)
-        end
-
-        def normalize_model_filter_value(value)
-          model = value.to_s
-          model = model.sub(/\A(?:us|eu|ap)\./, '') if model.match?(/\A(?:us|eu|ap)\./)
-          model
+        # True only when the requirements' model pin is HINT-derived: an honored
+        # body-model decision whose constraint is the active model pin. A trusted
+        # X-Legion-Model pin supersedes the hint (disposition
+        # :superseded_by_explicit_model, trusted.model wins in
+        # RequestRequirements#resolve_model_pin) and never qualifies — explicit
+        # pins stay hard and their miss is a caller error (400).
+        def hint_model_pin_active?(requirements)
+          decision = requirements.body_model_hint_decision
+          decision.disposition == :honored && decision.model_constraint == requirements.model_pin
         end
 
         # Fraction of a lane's context_window the router treats as usable when
@@ -321,28 +257,8 @@ module Legion
           end.uniq
         end
 
-        def privacy_mode?
-          if Legion::Settings.respond_to?(:enterprise_privacy?)
-            Legion::Settings.enterprise_privacy?
-          else
-            ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
-          end
-        end
-
         def external_tier?(tier)
           TIER_EXTERNAL.include?(tier)
-        end
-
-        def build_health_tracker
-          health = Legion::Settings.dig(:llm, :routing, :health) || {}
-          cb = health[:circuit_breaker] || {}
-
-          HealthTracker.new(
-            window_seconds:         health.fetch(:window_seconds, 300),
-            failure_threshold:      cb.fetch(:failure_threshold, 3),
-            cooldown_seconds:       cb.fetch(:cooldown_seconds, 60),
-            sweep_interval_seconds: cb.fetch(:sweep_interval_seconds, 5)
-          )
         end
       end
     end

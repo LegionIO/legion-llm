@@ -22,20 +22,6 @@ module Legion
             %i[ollama vllm].include?(@resolved_provider&.to_sym)
           end
 
-          def inferred_provider_tier(provider)
-            return nil unless provider
-
-            meta = Call::Registry.metadata_for(provider, @resolved_instance || :default)
-            return meta[:tier].to_sym if meta.is_a?(Hash) && meta[:tier]
-            return Router.provider_tier(provider) if defined?(Router) && Router.respond_to?(:provider_tier)
-
-            Router::PROVIDER_TIER.fetch(provider.to_sym, nil) if defined?(Router::PROVIDER_TIER)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.inferred_provider_tier',
-                                provider: provider)
-            nil
-          end
-
           def step_tier_assignment
             gaia_hint = @enrichments['gaia:routing_hint']
             classification = @enrichments['classification:scan']
@@ -70,413 +56,63 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.step_tier_assignment')
           end
 
+          # SSOT v3 single-engine: step_routing derives the immutable
+          # RequestRequirements ONCE. It performs NO selection — no request_lane,
+          # no infer_provider, no default model/provider, no tier fabrication.
+          # The exact provider+instance+model is chosen only by Router.next_lane
+          # inside the RoutingSession loop at dispatch time, and @resolved_* are
+          # populated from that Selection. Failure raises (never nil-fail-open to
+          # a legacy path — there is no legacy path).
           def step_routing
-            log.debug "[llm][executor] action=step_routing.enter requested_provider=#{@request.routing[:provider]} requested_model=#{@request.routing[:model]}"
             @timestamps[:routing_start] = Time.now
-            state = resolve_routing_state(apply_proactive_tier_assignment(resolve_model_to_local_provider(routing_request_state)))
-            auto_route = state[:auto_route] == true
-
-            inferred = state[:model] && Router.infer_provider_for_model(state[:model])
-            inferred = nil unless state[:provider] || (inferred && Call::Registry.registered?(inferred))
-            @resolved_provider = state[:provider] ||
-                                 inferred ||
-                                 (Legion::Settings[:llm][:default_provider] unless auto_route)
-            @resolved_instance = resolve_provider_instance(state[:instance], @resolved_provider)
-
-            # If the resolved provider differs from the model's natural provider, swap to the
-            # provider's default model — sending "claude-sonnet-4-6" to vllm would fail.
-            resolved_model = state[:model]
-            if resolved_model && @resolved_provider
-              model_natural = Router.infer_provider_for_model(resolved_model)
-              if model_natural && !model_natural.to_s.eql?(@resolved_provider.to_s)
-                log.debug "[llm][executor] action=model_provider_mismatch model=#{resolved_model} " \
-                          "natural_provider=#{model_natural} resolved_provider=#{@resolved_provider} swapping"
-                resolved_model = nil
-              end
-            end
-            @resolved_model = resolved_model || fallback_model_for_resolved_provider(auto_route)
-            raise ProviderError, 'Auto routing could not resolve an available LLM provider/model' if auto_route && (@resolved_provider.nil? || @resolved_model.nil?)
-
-            @resolved_tier = state[:tier]&.to_sym || inferred_provider_tier(@resolved_provider)
-            @resolved_offering_id = state[:offering_id]
-            @resolved_offering_metadata = state[:offering_metadata]
-            record_forced_tier_selection unless @audit[:'routing:provider_selection']
-
-            log.info '[llm][inference] resolved ' \
-                     "provider=#{@resolved_provider} instance=#{@resolved_instance || 'default'} " \
-                     "model=#{@resolved_model} offering_id=#{@resolved_offering_id}"
+            build_ssot_v3_routing_requirements
             @timeline.record(
-              category: :audit, key: 'routing:provider_selection',
-              direction: :internal, detail: "routed to #{@resolved_provider}:#{@resolved_model}",
+              category: :audit, key: 'routing:requirements',
+              direction: :internal,
+              detail: "operation=#{@routing_requirements.operation} caps=#{@routing_requirements.required_capabilities.inspect}",
               from: 'router', to: 'pipeline'
             )
           end
 
-          # When routing resolved a provider but no model, source the model from that
-          # provider's own catalog (Inventory SSOT) — never the global default_model,
-          # which may belong to a different provider. This prevents pairing e.g.
-          # anthropic with a vllm-family global default. The global default applies
-          # only when no provider resolved, or the resolved provider IS the configured
-          # default_provider (so the global default legitimately belongs to it).
-          def fallback_model_for_resolved_provider(auto_route)
-            return nil if auto_route
-
-            if @resolved_provider && Router.respond_to?(:inventory_default_model)
-              provider_model = Router.inventory_default_model(@resolved_provider, @resolved_instance)
-              return provider_model if provider_model
-            end
-
-            global = Legion::Settings[:llm][:default_model]
-            return nil if global.nil? || global.to_s.empty?
-
-            default_provider = Legion::Settings[:llm][:default_provider]&.to_sym
-            return global if @resolved_provider.nil? || @resolved_provider.to_sym == default_provider
-
-            nil
-          end
-
-          def resolve_provider_instance(requested_instance, provider)
-            return provider_scoped_instance(requested_instance, provider, preserve_unknown: true) if requested_instance
-
-            provider_scoped_instance(Legion::Settings[:llm][:default_instance], provider, preserve_unknown: false)
-          end
-
-          def provider_scoped_instance(instance, provider, preserve_unknown:)
-            return nil if instance.nil? || instance.to_s.empty? || provider.nil? || provider.to_s.empty?
-
-            provider_sym = provider.to_sym
-            instance_sym = instance.to_sym
-            return instance_sym if Call::Registry.registered?(provider_sym, instance: instance_sym)
-
-            if Call::Registry.registered?(provider_sym)
-              # Provider is registered but the specific instance is not.
-              # Only return nil if there's at least one instance registered for this provider.
-              instances = Call::Registry.instances_for(provider_sym)
-              return nil if instances.is_a?(Array) && instances.any?
-            end
-
-            preserve_unknown ? instance_sym : nil
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.provider_scoped_instance')
-            preserve_unknown ? instance : nil
-          end
-
-          def routing_request_state
-            routing_explicit = @request.extra[:routing_explicit]
-            request_intent = @request.extra[:intent]
-            instance = @request.routing[:instance] || @request.routing[:instance_id] || @request.routing[:provider_instance]
-            tier = @request.extra[:tier]
-            {
-              provider:          @request.routing[:provider],
-              instance:          instance,
-              model:             routing_model_preference,
-              offering_id:       @request.routing[:offering_id] || @request.routing[:id],
-              offering_metadata: normalize_offering_metadata(@request.routing[:offering_metadata] ||
-                                                             @request.routing[:offering]),
-              intent:            routing_intent_for_request(request_intent),
-              intent_explicit:   routing_intent_present?(request_intent),
-              tier:              tier,
-              auto_route:        @request.extra[:auto_route],
-              provider_explicit: routing_field_explicit?(routing_explicit, :provider, @request.routing[:provider]),
-              instance_explicit: routing_field_explicit?(routing_explicit, :instance, instance),
-              tier_explicit:     routing_field_explicit?(routing_explicit, :tier, tier),
-              estimated_tokens:  estimate_request_tokens
-            }
-          end
-
-          def routing_model_preference
-            explicit_model = @request.routing[:model]
-            return explicit_model unless explicit_model.nil? || explicit_model.to_s.empty?
-
-            client_model = @request.metadata&.dig(:client_model)&.to_s
-            return nil if client_model.nil? || client_model.empty?
-            return nil if Legion::LLM::Inference::Request.auto_routing_model?(client_model)
-            return nil unless body_routing_hints_enabled?
-
-            client_model
-          end
-
-          def body_routing_hints_enabled?
-            Legion::Settings.dig(:llm, :routing, :allow_body_routing_hints) == true
-          end
-
-          # One oracle: routing must estimate the SAME payload the dispatch guard
-          # (RouteAttempts#final_dispatch_token_estimate) measures, or a too-small
-          # lane passes the router's context-window filter then overflows at
-          # dispatch. Use ContextAccounting (walks canonical structs / content
-          # blocks) for messages, estimate the INJECTED system (baseline + RAG +
-          # skills + prior-history text), and count client tools. Messages are the
-          def estimate_request_tokens
-            reduced = reduce_messages_for_dispatch(Array(@request.messages))
-
-            msg_tokens = ContextAccounting.estimate_message_tokens(reduced)
-            sys_tokens = ContextAccounting.estimate_text_tokens(routing_estimate_injected_system)
-            tool_tokens = ContextAccounting.estimate_json_tokens(routing_estimate_tool_defs)
-            choice_tokens = @request.tool_choice ? ContextAccounting.estimate_json_tokens(@request.tool_choice) : 0
-            thinking_tokens = @request.thinking.is_a?(Hash) && @request.thinking.any? ? ContextAccounting.estimate_json_tokens(@request.thinking) : 0
-
-            msg_tokens + sys_tokens + tool_tokens + choice_tokens + thinking_tokens
-          end
-
-          # The system prompt as it will be dispatched — baseline + GAIA + prior
-          # history + RAG + skills injected. EnrichmentInjector.inject is pure, so
-          # calling it here and again at dispatch has no side effects.
-          def routing_estimate_injected_system
-            EnrichmentInjector.inject(system: @request.system, enrichments: @enrichments || {})
-          end
-
-          def routing_estimate_tool_defs
-            defs = Tools::Special.pinned_definitions.map(&:to_h)
-            Array(@request.tools).each { |t| defs << (t.respond_to?(:to_h) ? t.to_h : t) }
-            Array(@discovered_tools).each { |t| defs << (t.respond_to?(:to_h) ? t.to_h : t) }
-            defs
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.routing_estimate_tool_defs')
-            Array(@request.tools).map { |t| t.respond_to?(:to_h) ? t.to_h : t }
-          end
-
-          def chain_required_capabilities
-            caps = []
-            caps << :streaming if @request.stream == true
-            caps << :tools     if native_tools_requested_for_routing?
-            caps
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.chain_required_capabilities')
-            []
-          end
-
-          def routing_intent_present?(intent)
-            intent.is_a?(Hash) && intent.any?
-          end
-
-          def routing_intent_for_request(intent)
-            normalized = if intent.is_a?(Hash)
-                           intent.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-                         else
-                           {}
-                         end
-            required = normalize_required_capabilities(
-              normalized.delete(:required_capabilities) || normalized.delete(:requires)
+          # SSOT v3 §9/§14 — build the immutable RequestRequirements once per
+          # request. Required output size participates in context eligibility
+          # (directive: never exclude it). No inventory-generation gate: an empty
+          # Registry yields a typed too_early/service_unavailable Rejection from
+          # next_lane, never a fabricated lane or a legacy fallback.
+          def build_ssot_v3_routing_requirements
+            operation = @request.stream == true ? :stream_chat : :chat
+            required_caps = Legion::LLM::Router::RequiredCapabilities.call(
+              request: @request, operation: operation
             )
-
-            normalized[:operation] = :stream if @request.stream == true
-            normalized[:operation] ||= :chat
-            normalized[:effort] ||= :moderate
-
-            required << :streaming if @request.stream == true
-            required << :tools if native_tools_requested_for_routing?
-            required << :vision if request_has_vision_content?
-            required << :thinking if request_requires_thinking?
-            normalized[:required_capabilities] = required.uniq if required.any?
-            normalized
-          end
-
-          def request_requires_thinking?
-            thinking = @request.thinking
-            return true if thinking.is_a?(Hash) && thinking.any?
-            return true if thinking.respond_to?(:to_h) && thinking.to_h.any?
-
-            extra = @request.extra || {}
-            return false unless extra.is_a?(Hash)
-
-            normalized_extra = extra.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-            !!(normalized_extra[:thinking] || normalized_extra[:reasoning] || normalized_extra[:max_thinking_tokens])
-          end
-
-          def request_has_vision_content?
-            return true if @request.modality == :vision
-
-            @request.messages.any? do |msg|
-              content = msg[:content] || msg['content']
-              next false unless content.is_a?(Array)
-
-              content.any? do |block|
-                next false unless block.is_a?(Hash)
-
-                type = (block[:type] || block['type']).to_s
-                type == 'image' || type == 'image_url' ||
-                  (block[:source] && (block.dig(:source, :type) || block.dig(:source, 'type')).to_s == 'base64')
-              end
-            end
-          end
-
-          def native_tools_requested_for_routing?
-            Array(@request.tools).any? ||
-              requested_deferred_tool_names.any? ||
-              @triggered_tools.any?
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.routing_tools_required')
-            false
-          end
-
-          def normalize_required_capabilities(capabilities)
-            aliases = {
-              function_calling: :tools,
-              functions:        :tools,
-              tool:             :tools,
-              tool_use:         :tools,
-              stream:           :streaming,
-              stream_chat:      :streaming
-            }
-            Array(capabilities).compact.each_with_object([]) do |capability, normalized|
-              next unless capability.respond_to?(:to_s)
-
-              capability_sym = capability.to_s.downcase.strip.to_sym
-              next if capability_sym.to_s.empty?
-
-              normalized << capability_sym
-              alias_sym = aliases[capability_sym]
-              normalized << alias_sym if alias_sym
-            end.uniq
-          end
-
-          def apply_proactive_tier_assignment(state)
-            # Forced assignments carry security/privacy constraints and override
-            # caller-supplied tier/intent. Advisory assignments only fill blanks.
-            if @proactive_tier_assignment&.dig(:forced)
-              state[:tier] = @proactive_tier_assignment[:tier]
-              state[:tier_explicit] = true
-              state[:intent] = merge_routing_intent(state[:intent], @proactive_tier_assignment[:intent])
-              log.info "[llm][routing] action=forced_tier source=#{@proactive_tier_assignment[:source]} tier=#{state[:tier]}"
-            elsif @proactive_tier_assignment && !state[:tier] && !state[:intent] && !state[:instance] &&
-                  !state[:provider] && !state[:model]
-              state[:tier] = @proactive_tier_assignment[:tier]
-              state[:tier_explicit] = true
-              state[:intent] = @proactive_tier_assignment[:intent]
-            end
-            state
-          end
-
-          # If the caller named a model but gave no explicit provider/tier/instance,
-          # search discovered providers for that model with a healthy circuit.
-          # On a hit: pin provider + instance so normal routing runs against the local copy.
-          # On a miss: clear the model name and set auto_route so the pipeline picks the best
-          # available provider rather than blindly forwarding a frontier model name.
-          #
-          # Pin a model to a local/direct provider when the Inventory live store has a
-          # matching lane from a locally-registered instance (vLLM, Ollama, MLX).
-          # Only local/direct/fleet tiers are eligible — cloud/frontier tiers merely
-          # advertise models in their static catalog; routing through them here would
-          # pin frontier model names to providers that do not hold a local copy.
-          def resolve_model_to_local_provider(state)
-            return state if state[:provider_explicit] || state[:tier_explicit] || state[:instance_explicit]
-            return state if state[:provider] || state[:tier] || state[:instance]
-            return state unless state[:model] && defined?(Legion::LLM::Inventory) && defined?(Router)
-
-            model = state[:model].to_s
-            local_tiers = %i[direct local fleet]
-
-            candidates = Legion::LLM::Inventory.lanes_for(model: model, type: :inference).select do |l|
-              local_tiers.include?(l[:tier].to_sym) &&
-                Call::Registry.registered?(l[:provider_family], instance: l[:instance_id])
-            end
-
-            return state if candidates.empty?
-
-            healthy = candidates.find do |l|
-              l[:health][:circuit_state] != :open
-            end
-
-            if healthy
-              log.info "[llm][executor] action=model_discovery_pin model=#{model} " \
-                       "provider=#{healthy[:provider_family]} instance=#{healthy[:instance_id]}"
-              state[:provider] = healthy[:provider_family]
-              state[:instance] = healthy[:instance_id]
-            else
-              log.info "[llm][executor] action=model_discovery_miss model=#{model} falling_back=auto_route"
-              state[:model] = nil
-              state[:auto_route] = true
-            end
-
-            state
-          end
-
-          def resolve_routing_state(state)
-            return state unless defined?(Router)
-            return state unless Legion::LLM::Inventory.lanes.any?
-
-            resolution = routing_resolution_for(state)
-            return state unless resolution
-
-            apply_routing_resolution(state, resolution)
-          end
-
-          def routing_resolution_for(state)
-            tiers      = state[:tier]     ? [state[:tier].to_sym]     : []
-            providers  = state[:provider] ? [state[:provider].to_sym] : []
-            instances  = state[:instance] ? [state[:instance].to_sym] : []
-            models     = state[:model]    ? [state[:model].to_s]      : []
-
-            lane = Legion::LLM::Router.request_lane(
-              type:              :inference,
-              tiers:             tiers,
-              providers:         providers,
-              instances:         instances,
-              models:            models,
-              capabilities:      chain_required_capabilities,
-              estimated_context: state[:estimated_tokens],
-              tried_lanes:       Array(state[:tried_lanes])
+            framing = @request.routing_settings_snapshot.input_framing_overhead_tokens
+            input_bound = Legion::LLM::Router::InputBound.call(
+              operation:               operation,
+              messages:                @request.messages,
+              system:                  @request.system,
+              tools:                   @request.tools,
+              tool_choice:             @request.tool_choice,
+              thinking:                @request.thinking,
+              response_format:         @request.response_format,
+              framing_overhead_tokens: framing
             )
-
-            return nil if lane.nil?
-
-            Legion::LLM::Router::Resolution.new(
-              tier:     lane[:tier],
-              provider: lane[:provider_family],
-              model:    lane[:model],
-              instance: lane[:instance_id],
-              rule:     'request_lane'
+            @routing_requirements = Legion::LLM::Router::RequestRequirements.build(
+              request:                @request,
+              operation:              operation,
+              required_capabilities:  required_caps,
+              estimated_input_bound:  input_bound,
+              required_output_tokens: required_output_tokens_for_request
             )
+            log.debug "[llm][executor] action=ssot_v3_requirements_built operation=#{operation} " \
+                      "output_tokens=#{@routing_requirements.required_output_tokens}"
           end
 
-          def apply_routing_resolution(state, resolution)
-            provider_changed = resolution.provider && resolution.provider != state[:provider]
-            state[:provider] = resolution.provider
-            state[:instance] = if resolution.instance
-                                 resolution.instance
-                               elsif provider_changed
-                                 nil
-                               else
-                                 state[:instance]
-                               end
-            state[:model] = resolution.model
-            state[:tier] = resolution.tier
-            state[:offering_id] = resolution.offering_id || state[:offering_id]
-            state[:offering_metadata] = resolution.offering_metadata unless resolution.offering_metadata.empty?
-            @audit[:'routing:provider_selection'] = {
-              outcome: :success,
-              detail: "selected #{state[:provider]}:#{state[:model]} via #{resolution.rule}",
-              data: { strategy: resolution.rule, tier: resolution.tier, instance: state[:instance],
-                      offering_id: state[:offering_id], offering_metadata: state[:offering_metadata] }.compact,
-              duration_ms: 0, timestamp: Time.now
-            }
-            state
-          end
-
-          def routing_field_explicit?(flags, key, value)
-            return false if value.nil? || value.to_s.empty?
-            return true unless flags.is_a?(Hash)
-
-            flags.fetch(key, flags.fetch(key.to_s, true)) == true
-          end
-
-          def merge_routing_intent(existing, assignment)
-            existing_hash = existing.is_a?(Hash) ? existing : {}
-            assignment_hash = assignment.is_a?(Hash) ? assignment : {}
-            existing_hash.merge(assignment_hash)
-          end
-
-          def record_forced_tier_selection
-            return unless @proactive_tier_assignment&.dig(:forced)
-
-            @audit[:'routing:provider_selection'] = {
-              outcome:     :success,
-              detail:      "forced tier #{@resolved_tier} by #{@proactive_tier_assignment[:source]}",
-              data:        { tier: @resolved_tier, strategy: @proactive_tier_assignment[:source],
-                             provider: @resolved_provider, model: @resolved_model }.compact,
-              duration_ms: 0,
-              timestamp:   Time.now
-            }
+          # Requested max output tokens — sourced from the canonical request token
+          # budget so context eligibility accounts for output size. Zero when the
+          # caller set no budget.
+          def required_output_tokens_for_request
+            tokens = @request.tokens
+            max = tokens.is_a?(Hash) ? (tokens[:max] || tokens[:max_tokens]) : nil
+            [max.to_i, 0].max
           end
 
           def step_request_normalization

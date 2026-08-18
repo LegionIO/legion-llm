@@ -98,5 +98,52 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(response.status).to eq(404)
       expect(body[:error][:code]).to eq('provider_not_found')
     end
+
+    # D14: display health/capabilities come from the per-instance settings hash
+    # the provider's discovery actor writes after each registry commit — not
+    # the (no longer populated) legacy lane store.
+    it 'surfaces the actor-written settings health hash and capabilities' do
+      stub_mod = Module.new
+      Legion::LLM::Call::Registry.register(:vllm, stub_mod, instance: :apollo,
+                                                            metadata: { tier: :fleet, capabilities: %i[chat] })
+      extensions = Legion::Settings.loader.settings[:extensions] ||= {}
+      extensions[:llm] ||= {}
+      extensions[:llm][:vllm] = {
+        instances: {
+          apollo: {
+            tier:         :fleet,
+            health:       {
+              circuit_state: :open, denied: false, available: false, adjustment: -50,
+              reason: 'Vertex models-list returned 403', last_probe_outcome: :failure, source: :ssot_discovery_actor
+            },
+            capabilities: %w[completion streaming embedding]
+          }
+        }
+      }
+
+      response = get_json('/api/llm/providers/vllm')
+      body = Legion::JSON.load(response.body)
+
+      expect(response.status).to eq(200)
+      entry = body[:data][:instances].find { |p| p[:instance] == 'apollo' }
+      expect(entry[:health]).to include(
+        available: false, circuit_state: 'open', adjustment: -50, source: 'ssot_discovery_actor'
+      )
+      expect(entry[:capabilities]).to eq(%w[completion streaming embedding])
+      expect(entry[:tier]).to eq('fleet')
+    end
+
+    it 'reports empty health before the actor has committed (cold boot)' do
+      stub_mod = Module.new
+      Legion::LLM::Call::Registry.register(:bedrock, stub_mod, instance: :cold,
+                                                               metadata: { tier: :cloud })
+
+      response = get_json('/api/llm/providers/bedrock')
+      body = Legion::JSON.load(response.body)
+
+      entry = body[:data][:instances].find { |p| p[:instance] == 'cold' }
+      expect(entry[:health]).to eq({})
+      expect(entry[:capabilities]).to eq([])
+    end
   end
 end

@@ -25,6 +25,7 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
 
   let(:executor_double) do
     double('Executor').tap do |ex|
+      allow(ex).to receive(:stream_preflight!).and_return(nil)
       allow(ex).to receive(:call_stream).and_return(
         double('Response', routing: { model: 'legionio' }, tokens: { input_tokens: 5, output_tokens: 10 }, tools: [])
       )
@@ -105,6 +106,7 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
                                    routing: { model: 'legionio' },
                                    tokens:  { input_tokens: 5, output_tokens: 10 },
                                    tools:   [])
+        allow(executor_double).to receive(:stream_preflight!).and_return(nil)
         allow(executor_double).to receive(:call_stream) do |&block|
           block.call(double('Chunk', content: 'Hello '))
           block.call(double('Chunk', content: 'world'))
@@ -128,6 +130,7 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
                                      routing: { model: 'legionio' },
                                      tokens:  { input_tokens: 5, output_tokens: 10 },
                                      tools:   [])
+          allow(executor_double).to receive(:stream_preflight!).and_return(nil)
           allow(executor_double).to receive(:call_stream).and_return(pipeline_response)
           post '/v1/responses',
                Legion::JSON.dump({ input: 'Hi', model: 'legionio', stream: true }),

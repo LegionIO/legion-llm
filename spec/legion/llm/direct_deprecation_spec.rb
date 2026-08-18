@@ -11,6 +11,10 @@ RSpec.describe 'Deprecated _direct methods emit metering' do
     Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
     Legion::Settings[:llm][:pipeline_enabled] = true
     stub_native_provider(content: 'governed response')
+    # SSOT v3: chat_direct pins provider/model on the request; the SSOT routing
+    # session requires an exact lane for the pin. Write anthropic:claude-sonnet-4-6
+    # so the governed pipeline can dispatch it successfully.
+    write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
     allow(Legion::LLM::Metering).to receive(:emit).and_return(:spooled)
   end
 

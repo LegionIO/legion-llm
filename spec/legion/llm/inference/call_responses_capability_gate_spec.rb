@@ -4,7 +4,7 @@ require 'spec_helper'
 require 'legion/llm/inference/executor'
 
 # N×N regression spec: Executor#call_responses delegates to the canonical
-# execution path (execute_provider_request / execute_provider_request_stream).
+# execution path (step_provider_call / step_provider_call_stream).
 # The executor is blind to provider API formats; the API namespace translator
 # converts Responses API format to canonical before the executor sees it.
 # See CLAUDE.md §N×N: "the router/executor should not know the difference between
@@ -21,46 +21,37 @@ RSpec.describe 'Executor#call_responses delegates to canonical' do
   end
 
   let(:executor) { Legion::LLM::Inference::Executor.new(request) }
+  let(:fake_response) { double('Inference::Response') }
 
+  # SSOT v3: mock at step_provider_call / step_provider_call_stream — the
+  # canonical seam below execute_pre_provider_steps. Mocking execute_pre_provider_steps
+  # alone leaves @routing_requirements nil, which causes RoutingSession to blow
+  # up on maximum_attempts. Asserting at the step_* level is the correct SSOT v3
+  # boundary: it tests that call_responses routes to the right canonical path
+  # without needing the full routing-session machinery.
   context 'non-streaming' do
     before do
-      Legion::Settings[:llm][:routing][:escalation][:enabled] = false
-      allow(executor).to receive(:execute_pre_provider_steps) do
-        executor.instance_variable_set(:@resolved_provider, :openai)
-        executor.instance_variable_set(:@resolved_instance, :env)
-        executor.instance_variable_set(:@resolved_model, 'gpt-5.4-mini')
-      end
-    end
-
-    it 'delegates to execute_provider_request via step_provider_call' do
-      fake_response = double('Inference::Response')
-      allow(executor).to receive(:execute_provider_request).and_return(fake_response)
+      allow(executor).to receive(:execute_pre_provider_steps)
       allow(executor).to receive(:execute_post_provider_steps)
       allow(executor).to receive(:build_response).and_return(fake_response)
+    end
 
+    it 'delegates to step_provider_call for the canonical execution path' do
+      expect(executor).to receive(:step_provider_call).and_return(nil)
       expect { executor.call_responses(body: { input: 'hi' }, stream: false) }.not_to raise_error
-      expect(executor).to have_received(:execute_provider_request)
     end
   end
 
   context 'streaming' do
     before do
-      Legion::Settings[:llm][:routing][:escalation][:enabled] = false
-      allow(executor).to receive(:execute_pre_provider_steps) do
-        executor.instance_variable_set(:@resolved_provider, :openai)
-        executor.instance_variable_set(:@resolved_instance, :env)
-        executor.instance_variable_set(:@resolved_model, 'gpt-5.4-mini')
-      end
-    end
-
-    it 'delegates to execute_provider_request_stream via step_provider_call_stream' do
-      fake_response = double('Inference::Response')
-      allow(executor).to receive(:execute_provider_request_stream).and_return(fake_response)
+      allow(executor).to receive(:execute_pre_provider_steps)
       allow(executor).to receive(:execute_post_provider_steps)
       allow(executor).to receive(:build_response).and_return(fake_response)
+    end
 
+    it 'delegates to step_provider_call_stream for the canonical execution path' do
+      expect(executor).to receive(:step_provider_call_stream).and_return(nil)
       expect { executor.call_responses(body: { input: 'hi' }, stream: true) { |_chunk| nil } }.not_to raise_error
-      expect(executor).to have_received(:execute_provider_request_stream)
     end
   end
 

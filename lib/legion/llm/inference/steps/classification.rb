@@ -311,10 +311,14 @@ module Legion
             false
           end
 
+          # SSOT v3: the PHI cloud gate is enforced against the provider actually
+          # pinned for this request, never a configured default_provider (which may
+          # not be the lane the router selects). When no provider is explicitly
+          # pinned the gate cannot know the destination yet, so it does not block on
+          # a guessed default — routing eligibility/policy is enforced at selection.
           def resolve_current_provider
             routing = @request.respond_to?(:routing) ? @request.routing : nil
             provider = routing[:provider] if routing.is_a?(Hash)
-            provider ||= settings_value(:default_provider)
             provider&.to_sym
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true,

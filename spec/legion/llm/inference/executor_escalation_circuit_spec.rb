@@ -1,160 +1,198 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'legion/llm/router/request_requirements'
+require 'legion/llm/inference/routing_session'
 
-# P5: Executor circuit-guard tests migrated to use Inventory lanes + HealthTracker writes.
-# The old @escalation_chain ivar approach is replaced by the while remaining.positive? loop
-# that calls Router.request_lane → which reads lane health from Inventory (P2 SSOT).
-RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard' do
-  let(:request) do
-    Legion::LLM::Inference::Request.build(
-      messages: [{ role: :user, content: 'hello' }],
-      routing:  { provider: :vllm, model: 'qwen3:32b' }
+# Executor circuit-guard tests — SSOT v3 rewrite.
+#
+# In SSOT v3 there is no HealthTracker / circuit concept. The equivalent is:
+#   • dispatch_instance_unavailable marks an exact Phase 1 instance unavailable globally,
+#     so next_lane's CandidateEvaluator filters it from all subsequent snapshots.
+#   • Provider errors that are NOT :instance_unavailable are request-local (consumed-target
+#     exclusion only). The instance remains available to other requests.
+#
+# The INVARIANTS all survive:
+#   1. An unavailable instance is skipped; the next eligible lane is used.
+#   2. When ALL instances are unavailable → typed Rejection → RoutingRejected (503).
+#   3. Empty registry → RoutingRejected (early Rejection kind).
+#   4. A credit/auth error on the first instance causes retry on a sibling; the failed
+#      instance is NOT marked globally unavailable (only request-local exclusion).
+RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ssot_v3 do
+  let(:model) { 'circuit-test-model' }
+
+  # Build a request + RequestRequirements pair for the shared model name.
+  def build_engine_setup(routing_seed: 'ab' * 16)
+    request = Legion::LLM::Inference::Request.build_for_test(
+      routing_seed: routing_seed,
+      messages:     [{ role: :user, content: 'hello' }],
+      routing:      { model: model }
+    )
+    reqs = Legion::LLM::Router::RequestRequirements.build(
+      request: request, operation: :chat, required_capabilities: [],
+      estimated_input_bound: 10, required_output_tokens: 0
+    )
+    [request, reqs]
+  end
+
+  # Activate a chat instance in the Phase 1 Registry with the shared model.
+  def activate_chat(provider_family:, instance_id:)
+    activate(provider_family: provider_family, instance_id: instance_id,
+             drafts: [offering_draft(model: model, supported: %i[chat], context: 200_000)])
+  end
+
+  # Mark an exact instance unavailable via the Phase 1 dispatch path
+  # (equivalent to "trip the circuit" in the legacy health_tracker model).
+  def mark_unavailable(provider_family:, instance_id:)
+    key = instance_key(provider_family: provider_family, instance_id: instance_id)
+    snap = snapshot
+    inst = snap.instance(instance_key: key)
+    Legion::Extensions::Llm::Inventory::Registry.dispatch_instance_unavailable(
+      instance_key: key, publisher_token_id: inst.publisher_token_id,
+      reason: 'test: dispatch unavailable'
     )
   end
-  let(:executor) { described_class.new(request) }
 
-  before do
-    allow(Legion::LLM::Audit).to receive(:emit_prompt)
-    Legion::LLM::Router.reset!
-    Legion::Settings[:extensions][:llm][:vllm]    ||= { weight: 100, instances: {}, models: {} }
-    Legion::Settings[:extensions][:llm][:bedrock] ||= { weight: 100, instances: {}, models: {} }
-    Legion::Settings[:extensions][:llm][:anthropic] ||= { weight: 100, instances: {}, models: {} }
-    # Write Inventory lanes — HealthTracker writes update these, request_lane reads them.
-    write_test_lane(provider: :vllm,     instance: :h200,      model: 'qwen3-32b',
-                    tier: :fleet,     lane_weight: 100_000_000)
-    write_test_lane(provider: :bedrock,  instance: :primary,   model: 'anthropic.claude-sonnet-4',
-                    tier: :cloud,     lane_weight: 90_000_000)
-    write_test_lane(provider: :anthropic, instance: :primary,  model: 'claude-haiku-4-5',
-                    tier: :frontier,  lane_weight: 80_000_000)
-    write_test_lane(provider: :anthropic, instance: :secondary, model: 'claude-haiku-4-5',
-                    tier: :frontier,  lane_weight: 80_000_000)
-
-    Legion::Settings[:llm][:routing][:escalation][:pipeline_enabled] = true
+  # Run the provider-call engine for an executor with pre-set routing requirements.
+  # Yields the executor before dispatch so the caller can stub execute_provider_request.
+  def run_engine(request, reqs, &setup_executor)
+    executor = described_class.new(request)
+    executor.instance_variable_set(:@routing_requirements, reqs)
+    setup_executor&.call(executor)
+    executor.send(:run_provider_call_engine)
+    executor
   end
 
-  def trip_circuit(provider:, instance:)
-    tracker = Legion::LLM::Router.health_tracker
-    4.times do
-      tracker.report(provider: provider, instance: instance, signal: :error, value: 1)
-    end
-  end
+  describe 'skipping unavailable instances (was: open circuit)' do
+    it 'skips an unavailable instance and routes to the next eligible lane' do
+      activate_chat(provider_family: 'vllm', instance_id: 'h200')
+      activate_chat(provider_family: 'bedrock', instance_id: 'primary')
 
-  describe 'skipping open circuits' do
-    it 'skips a lane whose circuit is open and uses the next highest-weight lane' do
-      trip_circuit(provider: :vllm, instance: :h200)
+      # Mark vllm/h200 as unavailable — equivalent to "open circuit" in the old model.
+      mark_unavailable(provider_family: 'vllm', instance_id: 'h200')
 
-      # P5: add bedrock lane with the same model so request_lane can find it after vllm is tripped
-      write_test_lane(provider: :bedrock, instance: :primary, model: 'qwen3-32b', tier: :cloud,
-                      lane_weight: 90_000_000)
-      bedrock_adapter = Module.new do
-        define_singleton_method(:chat) { |**_| { content: 'from bedrock', usage: { input_tokens: 5, output_tokens: 3 } } }
+      request, reqs = build_engine_setup
+      executor = run_engine(request, reqs) do |ex|
+        allow(ex).to receive(:execute_provider_request)
       end
-      Legion::LLM::Call::Registry.register(:bedrock, bedrock_adapter, instance: :primary)
 
-      executor.call
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:bedrock)
     end
 
-    it 'allows half_open lane as a recovery probe' do
-      trip_circuit(provider: :vllm, instance: :h200)
-      # Force vllm lane to half_open via direct lane update (simulating cooldown expiry)
-      vllm_lane = Legion::LLM::Inventory.lane(id: 'fleet:vllm:h200:inference:qwen3-32b')
-      if vllm_lane
-        Legion::LLM::Inventory.write_lane(
-          lane:   vllm_lane.merge(lane_weight: 50_000_000),
-          ttl:    3600,
-          health: vllm_lane[:health].merge(circuit_state: :half_open, available: true)
-        )
-      end
+    it 're-activating an unavailable instance allows it to be selected again' do
+      # This is the probe-cleared recovery invariant: publish → unavailable → re-publish.
+      activate_chat(provider_family: 'vllm', instance_id: 'primary')
+      mark_unavailable(provider_family: 'vllm', instance_id: 'primary')
 
-      vllm_adapter = Module.new do
-        define_singleton_method(:chat) { |**_| { content: 'from vllm', usage: { input_tokens: 5, output_tokens: 3 } } }
-      end
-      Legion::LLM::Call::Registry.register(:vllm, vllm_adapter, instance: :h200)
+      # Without re-activation, the only available lane is gone → RoutingRejected.
+      request1, reqs1 = build_engine_setup(routing_seed: 'aa' * 16)
+      expect do
+        run_engine(request1, reqs1) { |ex| allow(ex).to receive(:execute_provider_request) }
+      end.to raise_error(Legion::LLM::Errors::RoutingRejected)
 
-      executor.call
+      # Re-activate (simulate probe success republishing the instance snapshot).
+      activate_chat(provider_family: 'vllm', instance_id: 'primary')
+
+      # After re-activation the instance must be selectable again.
+      request2, reqs2 = build_engine_setup(routing_seed: 'bb' * 16)
+      executor = run_engine(request2, reqs2) do |ex|
+        allow(ex).to receive(:execute_provider_request)
+      end
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:vllm)
     end
 
-    it 'raises when all circuit lanes are open (no eligible lanes → EscalationExhausted or NoLaneAvailable)' do
-      trip_circuit(provider: :vllm, instance: :h200)
-      trip_circuit(provider: :bedrock, instance: :primary)
-      trip_circuit(provider: :anthropic, instance: :primary)
-      trip_circuit(provider: :anthropic, instance: :secondary)
+    it 'raises RoutingRejected when all instances are unavailable (no eligible lanes)' do
+      activate_chat(provider_family: 'vllm', instance_id: 'h200')
+      activate_chat(provider_family: 'bedrock', instance_id: 'primary')
+      activate_chat(provider_family: 'anthropic', instance_id: 'primary')
 
-      expect { executor.call }.to raise_error do |error|
-        expect(error).to be_a(Legion::LLM::Errors::EscalationExhausted)
-                     .or be_a(Legion::LLM::Errors::NoLaneAvailable)
-                     .or be_a(Legion::LLM::EscalationExhausted)
+      # Capture snapshot once so all token_ids are read before any mark changes state.
+      ready_snap = snapshot
+      %w[vllm bedrock anthropic].each do |pf|
+        key = instance_key(provider_family: pf, instance_id: 'primary')
+        # vllm uses 'h200', others use 'primary'
+        key = instance_key(provider_family: 'vllm', instance_id: 'h200') if pf == 'vllm'
+        inst = ready_snap.instance(instance_key: key)
+        Legion::Extensions::Llm::Inventory::Registry.dispatch_instance_unavailable(
+          instance_key: key, publisher_token_id: inst.publisher_token_id,
+          reason: 'test: all unavailable'
+        )
       end
+
+      request, reqs = build_engine_setup
+      expect do
+        run_engine(request, reqs) { |ex| allow(ex).to receive(:execute_provider_request) }
+      end.to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
 
-    it 'raises a routing error when Inventory is empty' do
-      Legion::LLM::Inventory.reset_live_store!
-
-      expect { executor.call }.to raise_error do |error|
-        expect(error).to be_a(Legion::LLM::Errors::NoLaneAvailable)
-                     .or be_a(Legion::LLM::EscalationExhausted)
-                     .or be_a(Legion::LLM::RoutingFailedDependency)
-      end
+    it 'raises RoutingRejected when the registry is empty (no instances published)' do
+      # Registry.reset! is called by :ssot_v3 before hook — no instances activated here.
+      request, reqs = build_engine_setup
+      expect do
+        run_engine(request, reqs) { |ex| allow(ex).to receive(:execute_provider_request) }
+      end.to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
   end
 
   describe 'failing over across instances of the same provider' do
-    before do
-      # P5: reset Inventory AND Router so ONLY anthropic lanes exist — prevents vllm/bedrock
-      # from being dispatched first, and clears any circuit state from previous tests.
-      # Use 'qwen3:32b' (colon) to match the request's routing model exactly.
-      Legion::LLM::Router.reset!
-      Legion::LLM::Inventory.reset_live_store!
-      # Give primary a higher weight so it's ALWAYS dispatched first.
-      # This ensures the credit-failure triggers on primary, not secondary.
-      Legion::Settings[:extensions][:llm][:anthropic] ||= {}
-      Legion::Settings[:extensions][:llm][:anthropic][:instances] = {
-        primary:   { weight: 200 },
-        secondary: { weight: 100 }
-      }
-      write_test_lane(provider: :anthropic, instance: :primary,   model: 'qwen3:32b', tier: :frontier)
-      write_test_lane(provider: :anthropic, instance: :secondary, model: 'qwen3:32b', tier: :frontier)
-    end
+    it 'tries a sibling instance after an account-scoped (credit) error on the first attempt' do
+      activate(provider_family: 'anthropic', instance_id: 'primary',
+               drafts: [offering_draft(model: model, supported: %i[chat], context: 200_000)],
+               sequence: 0)
+      activate(provider_family: 'anthropic', instance_id: 'secondary',
+               drafts: [offering_draft(model: model, supported: %i[chat], context: 200_000)],
+               sequence: 0)
 
-    it 'tries a sibling instance after an account-scoped (credit) error' do
-      primary = Module.new do
-        define_singleton_method(:chat) do |**_|
-          raise Legion::LLM::ProviderError, 'Your credit balance is too low to access the Anthropic API'
+      request, reqs = build_engine_setup
+      call_count = 0
+      first_instance = nil
+      executor = run_engine(request, reqs) do |ex|
+        allow(ex).to receive(:execute_provider_request) do
+          call_count += 1
+          if call_count == 1
+            first_instance = ex.instance_variable_get(:@resolved_instance)
+            raise Legion::LLM::ProviderError, 'Your credit balance is too low to access the Anthropic API'
+          end
+          # second call: succeeds
         end
       end
-      secondary = Module.new do
-        define_singleton_method(:chat) { |**_| { content: 'from the second account', usage: { input_tokens: 5, output_tokens: 3 } } }
-      end
-      Legion::LLM::Call::Registry.register(:anthropic, primary, instance: :primary)
-      Legion::LLM::Call::Registry.register(:anthropic, secondary, instance: :secondary)
 
-      executor.call
-
+      # Two dispatch attempts were made (failover happened).
+      expect(call_count).to eq(2)
+      # The second attempt landed on a different instance than the first.
+      final_instance = executor.instance_variable_get(:@resolved_instance)
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:anthropic)
-      expect(executor.instance_variable_get(:@resolved_instance)).to eq(:secondary)
+      expect(final_instance).not_to eq(first_instance)
+      expect(%i[primary secondary]).to include(final_instance)
     end
 
-    it 'deprioritizes the creditless instance circuit without denying the model or touching siblings' do
-      tracker = Legion::LLM::Router.health_tracker
-      primary = Module.new do
-        define_singleton_method(:chat) do |**_|
-          raise Legion::LLM::ProviderError, 'Your credit balance is too low to access the Anthropic API'
+    it 'does not globally mark either instance unavailable after a credit error (request-local exclusion only)' do
+      activate(provider_family: 'anthropic', instance_id: 'primary',
+               drafts: [offering_draft(model: model, supported: %i[chat], context: 200_000)],
+               sequence: 0)
+      activate(provider_family: 'anthropic', instance_id: 'secondary',
+               drafts: [offering_draft(model: model, supported: %i[chat], context: 200_000)],
+               sequence: 0)
+
+      request, reqs = build_engine_setup
+      call_count = 0
+      run_engine(request, reqs) do |ex|
+        allow(ex).to receive(:execute_provider_request) do
+          call_count += 1
+          raise Legion::LLM::ProviderError, 'credit balance too low' if call_count == 1
         end
       end
-      secondary = Module.new do
-        define_singleton_method(:chat) { |**_| { content: 'from the second account', usage: { input_tokens: 5, output_tokens: 3 } } }
+
+      # Both instances remain available in the Phase 1 Registry after the run.
+      # Only the first-attempt target was excluded request-locally (consumed-target exclusion).
+      post_run_snap = snapshot
+      %w[primary secondary].each do |instance_id|
+        key = instance_key(provider_family: 'anthropic', instance_id: instance_id)
+        inst = post_run_snap.instance(instance_key: key)
+        expect(inst).not_to be_nil
+        expect(inst.availability.state).to eq(:available),
+                                           "expected #{instance_id} to remain available but availability.state was #{inst.availability.state}"
       end
-      Legion::LLM::Call::Registry.register(:anthropic, primary, instance: :primary)
-      Legion::LLM::Call::Registry.register(:anthropic, secondary, instance: :secondary)
-
-      executor.call
-
-      circuits = tracker.instance_variable_get(:@circuits)
-      expect(circuits.dig('anthropic/primary', :state)).to eq(:open)
-      expect(circuits.dig('anthropic/secondary', :state)).not_to eq(:open)
     end
   end
 end

@@ -74,6 +74,7 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
 
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
+      allow(fake_executor).to receive(:stream_preflight!).and_return(nil)
       allow(fake_executor).to receive(:call_stream) do |&block|
         ['Hello ', 'world!'].each { |text| block.call(text) }
         fake_pipeline_response
@@ -257,6 +258,7 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
 
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
+      allow(fake_executor).to receive(:stream_preflight!).and_return(nil)
       allow(fake_executor).to receive(:call_stream) do |&block|
         block.call('I will check the weather.')
         fake_pipeline_response
@@ -383,12 +385,15 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
   # ─── POST /v1/messages — error handling ────────────────────────────────────
 
   describe 'POST /v1/messages error handling' do
-    it 'returns 400 when model is missing (no lane available — P5 NoLaneAvailable semantics)' do
-      # P5: no available lane → NoLaneAvailable → HTTP 400 (caller can fix by providing a valid model).
-      # Previously returned 500 (ProviderError); now correctly returns 400 per G14/D-G.
+    it 'returns 400 when requested model is not in catalog (pin-mismatch → invalid_request, P5 equivalent)' do
+      # SSOT v3 P5 equivalent: publish a real catalog entry so the scope is
+      # complete, then route via X-Legion-Model to a model that does NOT exist.
+      # Complete scope + explicit pin mismatch → RejectionDiagnostics :invalid_request → 400.
+      # Previously returned 500 (ProviderError); now typed 400 per G14/D-G.
+      write_test_lane(provider: :vllm, model: 'legionio')
       post '/v1/messages',
            Legion::JSON.dump({ max_tokens: 1024, messages: [{ role: 'user', content: 'Hi' }] }),
-           claude_code_headers
+           claude_code_headers.merge('HTTP_X_LEGION_MODEL' => 'nonexistent-model-abc123')
       expect(last_response.status).to eq(400)
       body = Legion::JSON.load(last_response.body)
       expect(body).to be_a(Hash)

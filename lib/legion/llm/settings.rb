@@ -2,6 +2,7 @@
 
 require 'legion/logging/helper'
 require 'legion/llm/settings/tools'
+require 'legion/llm/settings/api'
 require 'legion/settings'
 
 module Legion
@@ -47,7 +48,7 @@ module Legion
           debate:                    debate_defaults,
           provider_layer:            provider_layer_defaults,
           tools:                     Legion::LLM::Settings::Tools.defaults,
-          api:                       api_defaults,
+          api:                       Legion::LLM::Settings::API.defaults,
           streaming:                 streaming_defaults,
           compliance:                compliance_defaults,
           skills:                    skills_defaults,
@@ -220,33 +221,47 @@ module Legion
 
       def self.routing_defaults
         {
-          enabled:                    true,
-          tier_priority:              %w[local direct fleet cloud frontier],
+          enabled:                           true,
+          tier_priority:                     %w[local direct fleet cloud frontier],
           # Multiplicative tier weights for lane_weight computation (P1 SSOT RANKING v2).
-          # Default 100 for all tiers. Operators can override per-tier to bias routing.
+          # Strict direct-first default, no ties: direct > local > fleet > cloud > frontier.
+          # Operators can override per-tier to bias routing.
           # Used by Inventory.write_lane to compute lane_weight = tier_w * provider_w * instance_w * model_w * health_mult.
-          tier_weights:               { direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 },
-          max_attempts:               3,
-          # Fraction of a lane's context_window the router treats as usable when
-          # applying the estimated_context hard filter. A lane is excluded when
-          # estimated_context >= context_window * context_headroom. Mirrors the
-          # dispatch-time headroom (context_curation.context_window_threshold and
-          # RouteAttempts#enforce_final_context_budget!'s 0.90) so routing and
-          # dispatch agree on what "fits" — a lane the router picks must still
-          # clear the pre-dispatch budget guard. 1.0 disables headroom.
-          context_headroom:           0.90,
+          tier_weights:                      { direct: 150, local: 120, fleet: 115, cloud: 110, frontier: 105 },
+          max_attempts:                      3,
+          # SSOT v3 §8.1: integer PPM headroom the selector applies to a lane's
+          # authoritative context evidence. A candidate fits when
+          # required_context_budget <= (limit * context_headroom_ppm) / 1_000_000.
+          # Integer-only selection math (no Float). A still-configured legacy
+          # `context_headroom` Float in (0,1] is accepted with a deprecation
+          # warning by Router::SettingsSnapshot.build.
+          context_headroom_ppm:              900_000,
+          # Conservative provider-neutral framing overhead (tokens) added to the
+          # pre-selection input bound (Router::InputBound). Nonnegative Integer.
+          input_framing_overhead_tokens:     1_024,
+          # D17 generic routing-affinity strength (bps, 0..10_000). Default is the
+          # maximum so a supplied affinity has full configured effect.
+          affinity_strength_bps:             10_000,
           # Body-level routing hints are gated by this flag. Auto-routing aliases
           # like legionio/auto are still accepted as "you pick" intent.
-          allow_body_routing_hints:   false,
-          model_passthrough_ids:      %w[copilot-utility-small],
-          auto_routing_model_aliases: %w[legionio auto],
-          default_intent:             { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
-          # Last-resort fallback model when both `default_model` and the
-          # discovered provider chain are empty. Owned by routing because
-          # the chain builder is the only consumer.
-          last_resort_model:          'claude-sonnet-4-6',
-          last_resort_provider:       :anthropic,
-          tiers:                      {
+          allow_body_routing_hints:          false,
+          # D19 body-model hint policy lists (case-insensitive substring match,
+          # applied only to the untrusted request-body model value, never to
+          # trusted X-Legion-Model). Empty lists honor any non-auto body model.
+          body_model_hint_whitelist:         [],
+          body_model_hint_blacklist:         [],
+          # Legacy Copilot BYOK passthrough aliases. Retained as a reader and
+          # unioned into auto_routing_model_aliases during the migration window
+          # (D19); removed only after a later announced migration release.
+          model_passthrough_ids:             %w[copilot-utility-small],
+          auto_routing_model_aliases:        %w[legionio auto copilot-utility-small],
+          # D19 alias discovery metadata keyed by normalized alias. Values may
+          # carry owned_by/created/context_window/max_output_tokens only.
+          auto_routing_model_alias_metadata: {
+            'copilot-utility-small' => { owned_by: 'legionio' }
+          },
+          default_intent:                    { privacy: 'normal', effort: 'moderate', operation: 'chat', cost: 'normal' },
+          tiers:                             {
             local:    { provider: 'ollama' },
             fleet:    {
               queue:           'llm.fleet',
@@ -257,21 +272,21 @@ module Legion
             cloud:    { providers: %w[bedrock azure gemini] },
             frontier: { providers: %w[anthropic openai] }
           },
-          health:                     {
+          health:                            {
             window_seconds:               300,
             circuit_breaker:              { failure_threshold: 3, cooldown_seconds: 60, sweep_interval_seconds: 5 },
             latency_penalty_threshold_ms: 5000,
             budget:                       { daily_limit_usd: nil, monthly_limit_usd: nil }
           },
-          escalation:                 {
+          escalation:                        {
             enabled:            true,
             pipeline_enabled:   true,
             max_attempts:       3,
             quality_threshold:  0,
             skip_open_circuits: true
           },
-          rules:                      [],
-          tier_mappings:              []
+          rules:                             [],
+          tier_mappings:                     []
         }
       end
 
@@ -421,7 +436,7 @@ module Legion
           mode:                     'heuristic',
           llm_assisted:             false,
           llm_model:                nil,
-          tool_result_max_chars:    2_000,
+          tool_result_max_chars:    10_000,
           thinking_eviction:        true,
           exchange_folding:         true,
           superseded_eviction:      true,
@@ -445,7 +460,7 @@ module Legion
             'was modified, either by the user or by a linter'
           ],
           target_context_tokens:    120_000,
-          context_window_threshold: 0.90,
+          context_window_threshold: 0.85,
           archive_dropped_turns:    true,
           archive_preserve_recent:  10
         }
@@ -483,24 +498,8 @@ module Legion
         }
       end
 
-      def self.api_defaults
-        {
-          use_namespaces:                   true,
-          batch_pool_size:                  4,
-          auth:                             {
-            enabled:      false,
-            api_keys:     [],
-            pass_through: false
-          },
-          # G21 — X-Legion-Format and X-Legion-Debug surface. Default ON for
-          # lite/dev because the envelope leaks routing/escalation internals;
-          # production deployments must explicitly opt in.
-          debug_formats:                    debug_formats_defaults,
-          # opus M5 / G14: Retry-After seconds sent with EscalationExhausted (503).
-          # SDKs auto-retry on 503; this value tells them when to retry.
-          escalation_exhausted_retry_after: 5
-        }
-      end
+      # api_defaults extracted to Legion::LLM::Settings::API (lib/legion/llm/settings/api.rb)
+      # per SSOT v3 D16 (owning surface for routing_too_early_retry_after).
 
       def self.debug_formats_defaults
         { enabled: debug_formats_default_enabled }

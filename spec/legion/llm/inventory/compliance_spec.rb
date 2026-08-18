@@ -153,11 +153,15 @@ RSpec.describe 'Compliance by absence' do
     end
   end
 
+  # NOTE: HealthTracker.deny_model is deleted in SSOT v3. Runtime IAM-deny is expressed
+  # as an explicit health: kwarg on write_lane (e.g. from a RoutingSession OutcomeClassifier
+  # :access_denied outcome dispatching via Registry). The invariant — denied lane has
+  # lane_weight <= 0 and health.denied — is re-expressed against the write_lane path.
   context 'runtime IAM-deny writes health.denied' do
-    it 'a denied lane has lane_weight <= 0 and is filtered by Router' do
-      write_lane(provider: :bedrock, instance: :a, model: 'sonnet')
-      Legion::LLM::Router.health_tracker.deny_model(
-        provider: :bedrock, instance: :a, model: 'sonnet', reason: :access_denied
+    it 'a denied lane written with health.denied has lane_weight <= 0' do
+      Legion::LLM::Inventory.write_lane(
+        lane:   build_lane(provider: :bedrock, instance: :a, model: 'sonnet'),
+        health: { circuit_state: :closed, denied: true, available: false, adjustment: 0 }
       )
 
       lane = Legion::LLM::Inventory.lane(id: 'cloud:bedrock:a:inference:sonnet')
@@ -184,10 +188,19 @@ RSpec.describe 'Compliance by absence' do
       it 'a blacklisted model never appears in /api/llm/offerings' do
         allow(Legion::LLM).to receive(:started?).and_return(true)
         Legion::Settings.loader.settings[:extensions][:llm][:vllm] = { model_blacklist: ['gemma-12b'] }
-        Legion::LLM::Inventory.send(:invalidate_policy_sets!, provider: :vllm)
-
-        write_lane(provider: :vllm, model: 'gemma-12b', tier: :direct)
-        write_lane(provider: :vllm, model: 'gemma-31b', tier: :direct)
+        # SSOT v3: the provider publishes the FULL catalog to the new Registry
+        # (the registry does not filter by model policy); the display surface
+        # applies the §9.5 fail-closed policy. Rebuild the SettingsState
+        # snapshot after mutating settings.
+        Legion::LLM::Router::SettingsState.reset!
+        SsotV3SnapshotFactory.activate(
+          provider_family: :vllm,
+          instance_id:     'gpu-01',
+          drafts:          [
+            SsotV3SnapshotFactory.offering_draft(model: 'gemma-12b', tier: :direct, supported: %i[chat]),
+            SsotV3SnapshotFactory.offering_draft(model: 'gemma-31b', tier: :direct, supported: %i[chat])
+          ]
+        )
 
         response = get_json('/api/llm/offerings')
         body     = Legion::JSON.load(response.body)

@@ -159,28 +159,32 @@ module Legion
         temperature = kwargs.delete(:temperature)
         kwargs.delete(:urgency)
 
-        cache_key = build_cache_key(model, provider, message, temperature) if cacheable?(cache_opt, temperature, message)
-        if cache_key
+        # SSOT v3 §20.1: select first, then probe the response cache by the exact
+        # Selection identity — before any callable acquisition. Legacy pre-routing
+        # cache remains as the fallback when the SSOT inventory path is inactive.
+        cache_key = nil
+        ssot_cache = ssot_response_cache(message: message, model: model, provider: provider,
+                                         tier: tier, temperature: temperature, cache_opt: cache_opt,
+                                         shape: response_cache_shape(kwargs))
+        if ssot_cache
+          return ssot_cache[:response] if ssot_cache[:hit]
+
+          cache_key = ssot_cache[:key]
+        elsif cacheable?(cache_opt, temperature, message)
+          cache_key = build_cache_key(model, provider, message, temperature)
           cached = Cache.get(cache_key)
           if cached
-            log.debug '[llm][inference] chat_direct_governed cache=hit'
+            log.debug '[llm][inference] chat_direct_governed cache=hit path=legacy'
             cached_response = cached.dup
             cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
             return cached_response
           end
         end
 
-        resolved_provider = provider || Legion::Settings[:llm][:default_provider]
-        resolved_model = model || Legion::Settings[:llm][:default_model]
-
-        unless resolved_provider || resolved_model || (intent && Router.routing_enabled?)
-          log.debug '[llm][inference] chat_direct_governed.fallback_to_raw — no provider/model resolvable'
-          return chat_direct_raw(model: model, provider: provider, intent: intent, tier: tier,
-                                 escalate: escalate, max_escalations: max_escalations,
-                                 quality_check: quality_check, message: message,
-                                 caller: caller_hash, cache: cache_opt, temperature: temperature, **kwargs)
-        end
-
+        # SSOT v3: no default provider/model and no legacy fallback. An
+        # unconstrained request (no provider/model/tier pin) is a valid
+        # unconstrained SSOT selection — next_lane ranks all eligible lanes.
+        # There is one engine (Prompt.dispatch -> Executor -> RoutingSession).
         result = Prompt.dispatch(
           message,
           intent: intent, tier: tier, provider: provider, model: model,
@@ -208,12 +212,23 @@ module Legion
         temperature = kwargs.delete(:temperature)
 
         escalate = escalation_enabled? if escalate.nil?
-        cache_key = build_cache_key(model, provider, message, temperature) if cacheable?(cache_opt, temperature, message)
 
-        if cache_key
+        # SSOT v3 §20.1: select first, then probe the response cache by the exact
+        # Selection identity — before any callable acquisition. Legacy pre-routing
+        # cache remains as the fallback when the SSOT inventory path is inactive.
+        cache_key = nil
+        ssot_cache = ssot_response_cache(message: message, model: model, provider: provider,
+                                         tier: tier, temperature: temperature, cache_opt: cache_opt,
+                                         shape: response_cache_shape(kwargs))
+        if ssot_cache
+          return ssot_cache[:response] if ssot_cache[:hit]
+
+          cache_key = ssot_cache[:key]
+        elsif cacheable?(cache_opt, temperature, message)
+          cache_key = build_cache_key(model, provider, message, temperature)
           cached = Cache.get(cache_key)
           if cached
-            log.debug '[llm][inference] chat_direct_raw cache=hit'
+            log.debug '[llm][inference] chat_direct_raw cache=hit path=legacy'
             cached_response = cached.dup
             cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
             return cached_response
@@ -228,16 +243,16 @@ module Legion
           "[llm][inference] chat_direct_raw.dispatch model=#{model} provider=#{provider} " \
           "escalate=#{escalate} message_present=#{!message.nil?}"
         )
-        result = if escalate && message
-                   chat_with_escalation(
-                     model: model, provider: provider, tier: tier,
-                     max_escalations: max_escalations, quality_check: quality_check,
-                     message: message, temperature: temperature, **kwargs
-                   )
-                 else
-                   chat_single(model: model, provider: provider, intent: intent, tier: tier,
-                               temperature: temperature, message: message, **kwargs, &)
-                 end
+        # SSOT v3 single engine: retry/failover is inherent to the RoutingSession
+        # loop, so there is no separate escalation chain and no chat_single legacy
+        # selector — both collapse to one Prompt.dispatch -> Executor call.
+        result = Prompt.dispatch(
+          message,
+          intent: intent, tier: tier, provider: provider, model: model,
+          escalate: escalate, max_escalations: max_escalations,
+          quality_check: quality_check, caller: kwargs[:caller],
+          temperature: temperature, **kwargs.except(:messages, :caller), &
+        )
         log.debug("[llm][inference] chat_direct_raw.exit result_class=#{result.class} result_nil=#{result.nil?}")
 
         if cache_key && result.is_a?(Hash)
@@ -417,7 +432,7 @@ module Legion
           "tier=#{tier} escalate=#{escalate} max_escalations=#{max_escalations} " \
           "quality_check=#{quality_check} message_present=#{!message.nil?} kwargs=#{kwargs.keys.sort}"
         )
-        if pipeline_enabled? && (message || kwargs[:messages]) && !block_given?
+        if (message || kwargs[:messages]) && !block_given?
           return Prompt.dispatch(
             message || kwargs[:messages],
             intent: intent, tier: tier, provider: provider, model: model,
@@ -426,15 +441,10 @@ module Legion
           )
         end
 
-        if pipeline_enabled? && (message || kwargs[:messages]) && block_given?
+        if (message || kwargs[:messages]) && block_given?
           return chat_via_pipeline(model: model, provider: provider, intent: intent, tier: tier,
                                    message: message, escalate: escalate, max_escalations: max_escalations,
                                    quality_check: quality_check, **kwargs, &)
-        end
-
-        if block_given? && message
-          return chat_single(model: model, provider: provider, intent: intent, tier: tier,
-                             message: message, **kwargs, &)
         end
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
@@ -472,7 +482,7 @@ module Legion
         block ? executor.call_stream(&block) : executor.call
       end
 
-      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, identity: nil) # rubocop:disable Lint/UnusedMethodArgument
+      def daemon_ask(message:, model: nil, provider: nil, context: {}, tier: nil, **)
         result = Call::DaemonClient.chat(
           message: message, model: model, provider: provider,
           context: context, tier_preference: tier || :auto
@@ -560,62 +570,6 @@ module Legion
         }
       end
 
-      def chat_single(model:, provider:, tier:, message: nil, **kwargs, &)
-        explicit_tools = kwargs.delete(:tools)
-        tools = explicit_tools
-        tools = nil if tools.respond_to?(:empty?) && tools.empty?
-
-        if tier && external_tier?(tier.to_sym)
-          lane = Router.request_lane(type: :inference, tiers: [tier.to_sym],
-                                     providers: provider ? [provider.to_sym] : [],
-                                     models: model ? [model.to_s] : [])
-          if lane
-            model    = lane[:model]
-            provider = lane[:provider_family]
-            assert_external_allowed!
-          end
-        end
-
-        model ||= Legion::Settings[:llm][:default_model]
-        instance = kwargs[:instance] || kwargs[:instance_id] || kwargs[:provider_instance]
-        provider ||= (model && Router.infer_provider_for_model(model)) ||
-                     Legion::Settings[:llm][:default_provider]
-
-        opts = {}
-        opts[:model] = model if model
-        opts[:provider] = provider if provider
-        opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
-        opts.delete(:temperature) if opts[:temperature].nil?
-
-        opts[:tools] = tools if tools
-
-        log.debug "[llm][inference] chat_single model=#{opts[:model]} provider=#{opts[:provider]} message_present=#{!message.nil?} tools=#{tools&.size || 0}"
-        chat_single_native(model: opts[:model], provider: opts[:provider], instance: instance, message: message,
-                           caller: kwargs[:caller], **opts.except(:model, :provider), &)
-      end
-
-      def chat_single_native(model:, provider:, message:, instance: nil, caller: nil, **, &block)
-        raise native_provider_error('session-style chat requires message or messages') unless message
-        raise native_provider_error('chat without a native provider') unless provider
-
-        messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
-        result = if block
-                   Call::Dispatch.call(provider: provider, instance: instance, capability: :stream, model: model,
-                                       messages: messages, **, &block)
-                 else
-                   Call::Dispatch.call(provider: provider, instance: instance, capability: :chat, model: model,
-                                       messages: messages, **)
-                 end
-        emit_non_pipeline_metering(result, model: model, provider: provider, caller: caller, messages: messages)
-        result
-      end
-
-      def native_provider_error(operation)
-        Legion::LLM::ProviderError.new(
-          "Native provider dispatch is required for #{operation}. Configure a registered lex-llm provider."
-        )
-      end
-
       def try_defer(intent:, urgency:, model:, provider:, message:, **)
         return nil unless Scheduling.enabled? && Scheduling.should_defer?(intent: intent || :normal, urgency: urgency)
         return nil unless Legion::LLM::Scheduling::Batch.enabled?
@@ -638,151 +592,6 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.inference.shadow_eval')
         end
-      end
-
-      def chat_with_escalation(model:, provider:, tier:, max_escalations:, quality_check:, message:, **kwargs)
-        log.debug "[llm][inference] chat_with_escalation.enter model=#{model} provider=#{provider} max_escalations=#{max_escalations}"
-        chain = build_escalation_chain_from_inventory(
-          model: model, provider: provider, tier: tier, max_escalations: max_escalations
-        )
-
-        threshold = escalation_quality_threshold
-        history = []
-        last_error = nil
-
-        chain.each do |resolution|
-          response, error = run_escalation_attempt(
-            resolution, message: message, kwargs: kwargs, threshold: threshold,
-            quality_check: quality_check, history: history, chain: chain
-          )
-          last_error = error if error
-          return response if response
-        end
-
-        publish_escalation_event(history, :exhausted, caller: kwargs[:caller]) if history.size > 1
-        message = "All #{history.size} escalation attempts failed"
-        if last_error
-          providers = history.filter_map { |attempt| attempt[:provider] }.uniq.join(', ')
-          message = "#{message}; no usable native provider handled the request. " \
-                    "providers=#{providers} last_error=#{last_error.class}: #{last_error.message}"
-        end
-
-        raise Legion::LLM::EscalationExhausted, message
-      end
-
-      def run_escalation_attempt(resolution, message:, kwargs:, threshold:, quality_check:, history:, chain:)
-        start_time = Time.now
-        assert_external_allowed! if resolution.respond_to?(:external?) && resolution.external?
-
-        response = escalation_attempt_response(resolution, message, kwargs)
-        duration_ms = ((Time.now - start_time) * 1000).round
-        result = Quality::Checker.check(response, quality_threshold: threshold, quality_check: quality_check)
-
-        return [response, nil] if escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain,
-                                                             caller: kwargs[:caller])
-
-        report_health(:quality_failure, resolution, duration_ms, failures: result.failures)
-        history << build_attempt(resolution, :quality_failure, result.failures, duration_ms)
-        log.debug "[llm][inference] chat_with_escalation quality_failure attempt=#{history.size} failures=#{result.failures}"
-        [nil, nil]
-      rescue Legion::LLM::PrivacyModeError, Legion::LLM::ModelNotAllowed
-        # Terminal outcomes — privacy/policy, not provider failures. Re-raise without
-        # recording a health failure or walking the escalation chain (a policy-denied
-        # model is not an escalation).
-        raise
-      rescue StandardError => e
-        duration_ms = ((Time.now - start_time) * 1000).round
-        record_escalation_error(e, resolution, duration_ms, history)
-        [nil, e]
-      end
-
-      def build_escalation_chain_from_inventory(model:, provider:, tier:, max_escalations: nil)
-        tiers     = tier     ? [tier.to_sym]     : []
-        providers = provider ? [provider.to_sym] : []
-        models    = model    ? [model.to_s]      : []
-        tried     = []
-        max       = (max_escalations || Legion::Settings.dig(:llm, :routing, :escalation, :max_attempts) || 3).to_i
-        resolutions = []
-
-        max.times do
-          lane = Router.request_lane(type: :inference, tiers: tiers, providers: providers, models: models, tried_lanes: tried)
-          break unless lane
-
-          tried << lane[:id]
-          resolutions << Router::Resolution.new(
-            tier:     lane[:tier],
-            provider: lane[:provider_family],
-            model:    lane[:model],
-            instance: lane[:instance_id],
-            rule:     'inventory_chain'
-          )
-        end
-
-        resolutions
-      end
-
-      def escalation_attempt_response(resolution, message, kwargs)
-        opts = { model: resolution.model, provider: resolution.provider }
-        opts.merge!(kwargs.except(*FRAMEWORK_KEYS))
-        chat_single_native(model: opts[:model], provider: opts[:provider],
-                           message: message, caller: kwargs[:caller],
-                           **opts.except(:model, :provider))
-      end
-
-      def escalation_attempt_passed?(response, result, resolution, duration_ms, history, chain, caller: nil)
-        return false unless result.passed
-
-        report_health(:success, resolution, duration_ms)
-        history << build_attempt(resolution, :success, [], duration_ms)
-        attach_escalation_history(response, history, resolution, chain)
-        publish_escalation_event(history, :success, caller: caller) if history.size > 1
-        log.debug "[llm][inference] chat_with_escalation success attempts=#{history.size}"
-        true
-      end
-
-      def record_escalation_error(error, resolution, duration_ms, history)
-        handle_exception(
-          error,
-          level:     :warn,
-          handled:   true,
-          operation: 'llm.inference.escalation_attempt',
-          model:     resolution&.model,
-          provider:  resolution&.provider,
-          tier:      resolution&.tier
-        )
-        report_health(:error, resolution, duration_ms) if resolution
-        history << build_attempt(resolution, :error, [error.class.name], duration_ms) if resolution
-      end
-
-      def build_attempt(resolution, outcome, failures, duration_ms)
-        attempt = { model: resolution.model, provider: resolution.provider, tier: resolution.tier,
-                    outcome: outcome, failures: failures, duration_ms: duration_ms }
-        attempt[:offering_id] = resolution.offering_id if resolution.offering_id
-        attempt[:offering_metadata] = resolution.offering_metadata unless resolution.offering_metadata.empty?
-        attempt
-      end
-
-      def attach_escalation_history(response, history, resolution, chain)
-        return unless response.respond_to?(:extend)
-        return if response.frozen?
-
-        response.extend(EscalationHistory)
-        history.each { |h| response.record_escalation_attempt(**h) }
-        response.final_resolution = resolution
-        response.escalation_chain = chain
-      end
-
-      def report_health(signal, resolution, duration_ms, failures: nil)
-        return unless Router.routing_enabled?
-
-        metadata = { duration_ms: duration_ms }
-        metadata[:failures] = failures if failures
-        Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
-                                     offering_id: resolution.offering_id,
-                                     signal: signal, value: 1, metadata: metadata)
-        Router.health_tracker.report(provider: resolution.provider, instance: resolution.instance,
-                                     offering_id: resolution.offering_id,
-                                     signal: :latency, value: duration_ms, metadata: {})
       end
 
       def publish_escalation_event(history, final_outcome, caller: nil)
@@ -866,13 +675,141 @@ module Legion
       end
 
       def build_cache_key(model, provider, message, temperature)
+        # SSOT v3 §20.1: no provider/model default injection in the key builder.
+        # An omitted model/provider is an empty constraint, not a configured default.
         messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
         Cache.key(
-          model:       model || Legion::Settings[:llm][:default_model],
-          provider:    provider || Legion::Settings[:llm][:default_provider],
+          model:       model,
+          provider:    provider,
           messages:    messages_arr,
           temperature: temperature
         )
+      end
+
+      # SSOT v3 §20.1 operation for the chat_direct response cache probe.
+      RESPONSE_CACHE_OPERATION = :chat
+
+      # SSOT v3 §20.1: select the exact lane through a per-request RoutingSession,
+      # then probe the response cache keyed by that Selection — AFTER next_attempt
+      # returns an AttemptContext but BEFORE any callable acquisition. A cache hit
+      # therefore proves current policy/capability/context/availability eligibility
+      # and reports the exact Selection identity while avoiding provider dispatch.
+      # Returns:
+      #   { hit: true,  response: <hash>, key: <str> } on hit,
+      #   { hit: false, response: nil,   key: <str> } on miss (caller dispatches + stores),
+      #   nil when the SSOT inventory path is inactive or the request is not
+      #     cacheable (caller keeps the legacy pre-routing cache path).
+      def ssot_response_cache(message:, model:, provider:, tier:, temperature:, cache_opt:, shape: {})
+        return nil unless cacheable?(cache_opt, temperature, message)
+
+        snapshot = Legion::Extensions::Llm::Inventory::Registry.snapshot
+        return nil unless snapshot.generation.positive?
+
+        request = ssot_cache_request(message: message, model: model, provider: provider,
+                                     tier: tier, temperature: temperature, shape: shape)
+        requirements = ssot_cache_requirements(request)
+        return nil unless requirements
+
+        session = Legion::LLM::Inference::RoutingSession.new(request: request, requirements: requirements)
+        attempt = session.next_attempt(snapshot: snapshot)
+        return nil if attempt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
+
+        key = ssot_cache_key_for(selection: attempt.selection, request: request, snapshot: snapshot)
+        cached = Cache.get(key)
+        return { hit: false, response: nil, key: key } unless cached
+
+        response = cached.dup
+        response[:meta] = (response[:meta] || {}).merge(
+          cached:   true,
+          provider: attempt.selection.provider_family,
+          model:    attempt.selection.model,
+          instance: attempt.selection.instance_id
+        )
+        log.debug "[llm][inference] action=ssot_response_cache cache=hit provider=#{attempt.selection.provider_family} model=#{attempt.selection.model}"
+        { hit: true, response: response, key: key }
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.ssot_response_cache')
+        nil
+      end
+
+      def ssot_cache_request(message:, model:, provider:, tier:, temperature:, shape:)
+        args = { message: message, model: model, provider: provider }
+        args[:tier] = tier if tier
+        args[:system] = shape[:system] if shape[:system]
+        args[:tools] = shape[:tools] if shape.key?(:tools)
+        args[:tool_choice] = shape[:tool_choice] if shape[:tool_choice]
+        args[:thinking] = shape[:thinking] if shape[:thinking]
+        args[:response_format] = shape[:response_format] if shape[:response_format]
+        args[:tokens] = shape[:tokens] if shape[:tokens]
+        generation = (shape[:generation] || {}).dup
+        generation[:temperature] = temperature unless temperature.nil?
+        args[:generation] = generation unless generation.empty?
+        Inference::Request.from_chat_args(**args)
+      end
+
+      # Mirror the executor's build_ssot_v3_routing_requirements so the probe
+      # selection uses the exact same requirement inputs the dispatch will.
+      def ssot_cache_requirements(request)
+        required_caps = Legion::LLM::Router::RequiredCapabilities.call(
+          request: request, operation: RESPONSE_CACHE_OPERATION
+        )
+        framing = request.routing_settings_snapshot&.input_framing_overhead_tokens || 0
+        input_bound = Legion::LLM::Router::InputBound.call(
+          operation:               RESPONSE_CACHE_OPERATION,
+          messages:                request.messages,
+          system:                  request.system,
+          tools:                   request.tools,
+          tool_choice:             request.tool_choice,
+          thinking:                request.thinking,
+          response_format:         request.response_format,
+          framing_overhead_tokens: framing
+        )
+        Legion::LLM::Router::RequestRequirements.build(
+          request:                request,
+          operation:              RESPONSE_CACHE_OPERATION,
+          required_capabilities:  required_caps,
+          estimated_input_bound:  input_bound,
+          required_output_tokens: 0
+        )
+      rescue StandardError => e
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.ssot_cache_requirements')
+        nil
+      end
+
+      def ssot_cache_key_for(selection:, request:, snapshot:)
+        offering = snapshot.offering(offering_id: selection.offering_id)
+        revision_evidence = offering.respond_to?(:model_revision_evidence) ? offering.model_revision_evidence : nil
+        revision = if revision_evidence.respond_to?(:known?) && revision_evidence.known?
+                     revision_evidence.value.to_s
+                   else
+                     "instance:#{selection.instance_id}"
+                   end
+        Cache.selection_key(
+          provider_family:   selection.provider_family,
+          model:             selection.model,
+          revision:          revision,
+          operation:         selection.operation,
+          system:            request.system,
+          messages:          request.messages,
+          tools:             request.tools,
+          tool_choice:       request.tool_choice,
+          thinking:          request.thinking,
+          response_format:   request.response_format,
+          max_output_tokens: (request.tokens.is_a?(Hash) ? request.tokens[:max] : nil),
+          generation:        request.generation
+        )
+      end
+
+      def response_cache_shape(kwargs)
+        {
+          system:          kwargs[:system],
+          tools:           kwargs[:tools],
+          tool_choice:     kwargs[:tool_choice],
+          thinking:        kwargs[:thinking],
+          response_format: kwargs[:response_format],
+          tokens:          kwargs[:tokens],
+          generation:      kwargs[:generation]
+        }
       end
 
       def escalation_enabled?

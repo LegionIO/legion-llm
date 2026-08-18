@@ -176,49 +176,52 @@ RSpec.describe Legion::LLM::Inventory::Discovery do
       expect(models.first[:loaded]).to be(true)
     end
 
-    it 'reports :success signal to health tracker for healthy offerings' do
+    # SSOT v3: discovery no longer calls health_tracker. Healthy offerings record
+    # :ok discovery status (not a health signal). Health metadata is preserved in
+    # the returned offering hash for downstream informational use.
+    it 'records :ok discovery status when offerings are returned successfully' do
       adapter = instance_double('Adapter')
       allow(adapter).to receive(:offerings).with(live: true).and_return(
         [{ id: 'model-a', capabilities: %i[completion], health: { status: 'healthy' } }]
       )
 
       entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
-      expect(Legion::LLM::Router.health_tracker).to receive(:report).with(
-        hash_including(provider: :vllm, instance: :apollo, signal: :success)
-      )
-
       described_class.send(:fetch_offering_models, entry)
+
+      expect(described_class.discovery_status(provider: :vllm, instance: :apollo)).to eq(:ok)
     end
 
-    it 'reports :error signal for unhealthy offerings' do
+    # SSOT v3: an offering with health.status == 'unhealthy' does NOT trip a
+    # circuit or set discovery status to :error. Health-based instance
+    # unavailability is driven exclusively by Registry.dispatch_instance_unavailable
+    # from the dispatcher layer — discovery only records :ok/:empty/:unreachable.
+    it 'does not mark discovery status as :error for offerings with unhealthy health metadata' do
       adapter = instance_double('Adapter')
       allow(adapter).to receive(:offerings).with(live: true).and_return(
         [{ id: 'model-a', capabilities: %i[completion], health: { status: 'unhealthy' } }]
       )
 
       entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
-      expect(Legion::LLM::Router.health_tracker).to receive(:report).with(
-        hash_including(provider: :vllm, instance: :apollo, signal: :error)
-      )
-
       described_class.send(:fetch_offering_models, entry)
+
+      status = described_class.discovery_status(provider: :vllm, instance: :apollo)
+      expect(status).to eq(:ok)
+      expect(status).not_to eq(:error)
     end
 
-    it 'reports :latency signal when latency_ms is present' do
+    # SSOT v3: latency_ms is preserved in the health field of the returned
+    # offering data (for informational use). Discovery no longer dispatches a
+    # separate :latency signal to any health tracker.
+    it 'preserves latency_ms in the health field of the returned offering data' do
       adapter = instance_double('Adapter')
       allow(adapter).to receive(:offerings).with(live: true).and_return(
         [{ id: 'model-a', capabilities: %i[completion], health: { status: 'healthy', latency_ms: 150 } }]
       )
 
       entry = { provider: :vllm, instance: :apollo, adapter: adapter, metadata: {} }
-      expect(Legion::LLM::Router.health_tracker).to receive(:report).with(
-        hash_including(signal: :success)
-      )
-      expect(Legion::LLM::Router.health_tracker).to receive(:report).with(
-        hash_including(signal: :latency, value: 150)
-      )
+      models = described_class.send(:fetch_offering_models, entry)
 
-      described_class.send(:fetch_offering_models, entry)
+      expect(models.first[:health]).to include(latency_ms: 150)
     end
   end
 

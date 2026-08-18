@@ -96,7 +96,7 @@ module Legion
 
           # Return the size in bytes for a discovered model, or nil if unknown.
           # After P3, size_bytes is not stored on lanes; always nil.
-          def model_size(_model, provider: nil, instance: nil) # rubocop:disable Lint/UnusedMethodArgument
+          def model_size(_model, **)
             nil
           end
 
@@ -107,7 +107,6 @@ module Legion
             begin
               models = Array(adapter.offerings(live: true)).map do |offering|
                 data = normalize_offering(offering)
-                report_discovery_health(entry, data)
                 {
                   model:              (data[:id] || data[:name] || data[:model]).to_s,
                   provider:           entry[:provider],
@@ -216,34 +215,6 @@ module Legion
             end
           end
 
-          def report_discovery_health(entry, offering_data)
-            return unless defined?(Router) && Router.respond_to?(:health_tracker)
-
-            provider = entry[:provider]
-            instance = normalize_instance_id(
-              offering_data[:instance_id] || offering_data[:provider_instance] || entry[:instance]
-            )
-            health = offering_data[:health] || offering_data['health'] || {}
-            health = {} unless health.is_a?(Hash)
-            status = (health[:status] || health['status'] || health[:circuit_state] || health['circuit_state']).to_s
-            latency_ms = health[:latency_ms] || health['latency_ms']
-
-            if %w[healthy ready closed available].include?(status) || health[:ready] == true || health['ready'] == true
-              Router.health_tracker.report(provider: provider, instance: instance, signal: :success, value: 1,
-                                           metadata: { source: :discovery })
-            elsif %w[unhealthy down unavailable open tripped].include?(status)
-              Router.health_tracker.report(provider: provider, instance: instance, signal: :error, value: 1,
-                                           metadata: { source: :discovery, status: status })
-            end
-
-            return unless latency_ms.to_i.positive?
-
-            Router.health_tracker.report(provider: provider, instance: instance, signal: :latency,
-                                         value: latency_ms.to_i, metadata: { source: :discovery })
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'discovery.report_health')
-          end
-
           def report_discovery_failure(entry, error)
             provider = entry[:provider]
             instance = entry[:instance]
@@ -260,22 +231,6 @@ module Legion
 
             record_discovery_status(provider: provider, instance: instance,
                                     status: connection_error ? :unreachable : :error)
-
-            return unless defined?(Router) && Router.respond_to?(:health_tracker)
-
-            trip_on_unreachable = Legion::Settings[:llm].dig(:discovery, :trip_circuit_on_unreachable) != false
-            if connection_error && trip_on_unreachable
-              Router.health_tracker.trip_circuit(
-                provider: provider, instance: instance,
-                reason: "discovery_unreachable: #{error.class.name}"
-              )
-            else
-              Router.health_tracker.report(
-                provider: provider, instance: instance,
-                signal: :error, value: 1,
-                metadata: { reason: error.class.name, source: :discovery }
-              )
-            end
           end
 
           def normalize_offering(offering)

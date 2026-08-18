@@ -3,102 +3,83 @@
 require 'spec_helper'
 require 'legion/llm/call/embeddings'
 
-def native_embed_response(response = nil, vectors: nil, input_tokens: nil)
-  vectors ||= response.vectors if response.respond_to?(:vectors)
-  input_tokens ||= response.input_tokens if response.respond_to?(:input_tokens)
-  {
-    result: vectors || [Array.new(1024, 0.1)],
-    usage:  Legion::LLM::Usage.new(input_tokens: input_tokens || 5)
-  }
-end
+# SSOT v3 §21: there is no provider "gating" from settings anymore. Eligibility is
+# decided entirely by Router.next_lane over the published Registry. An omitted
+# model is an UNCONSTRAINED selection (not a default). When nothing eligible
+# exists, or every attempt fails, the caller receives a typed RoutingRejected —
+# never a nil/zero-vector/safe hash.
+RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
+  let(:seed) { 'cd' * 16 }
 
-RSpec.describe 'Legion::LLM::Embeddings provider gating' do
-  before do
-    Legion::LLM.instance_variable_set(:@started, true)
-    Legion::Settings[:llm][:embedding][:model] = nil
+  before { Legion::LLM.instance_variable_set(:@started, true) }
+  after  { Legion::LLM.instance_variable_set(:@started, nil) }
+
+  def publish_embed(model: 'text-embedding-3-small', provider: 'openai', instance: 'primary',
+                    tier: :frontier, dims: [1024], &responder)
+    responder ||= lambda do |_op, _args, kwargs, _block|
+      texts = kwargs[:text]
+      vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.5) } : [Array.new(1024, 0.5)]
+      { result: vectors, usage: { input_tokens: 7 } }
+    end
+    activate(
+      provider_family: provider, instance_id: instance,
+      callable: SsotV3SnapshotFactory::FactoryCallable.new(responder: responder),
+      drafts: [offering_draft(model: model, tier: tier, supported: %i[embed],
+                              capabilities: { embedding: :supported },
+                              embedding_dimensions: dims, context: 200_000)]
+    )
   end
 
-  after do
-    Legion::LLM.instance_variable_set(:@started, nil)
-  end
-
-  describe 'Legion::LLM::Embeddings.generate with no provider configured' do
-    it 'raises LLMError when no model is configured' do
-      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.to raise_error(Legion::LLM::LLMError)
-    end
-  end
-
-  describe 'Legion::LLM::Embeddings.generate when Dispatch raises' do
-    before do
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :azure, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
+  describe '.generate with no eligible embedding function' do
+    it 'raises RoutingRejected(:too_early) on a cold registry (no default is invented)' do
+      expect { described_class.generate(text: 'hello', routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected) { |e| expect(e.rejection.kind).to eq(:too_early) }
     end
 
-    it 'propagates ProviderError (LLMError subclass) to callers' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call)
-        .and_raise(Legion::LLM::ProviderError.new('Native provider not registered: azure'))
-
-      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.to raise_error(Legion::LLM::ProviderError, /azure/)
-    end
-
-    it 'does not raise to callers' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call)
-        .and_raise(StandardError.new('connection refused'))
-
-      expect { Legion::LLM::Embeddings.generate(text: 'hello') }.not_to raise_error
+    it 'is an LLMError subclass so existing error boundaries still catch it' do
+      expect { described_class.generate(text: 'hello', routing_seed: seed) }
+        .to raise_error(Legion::LLM::LLMError)
     end
   end
 
-  describe 'Legion::LLM::Embeddings.generate with an enabled provider' do
-    let(:mock_response) do
-      double('EmbedResponse', vectors: [Array.new(1024, 0.5)], input_tokens: 7)
-    end
+  describe '.generate when every attempt fails at the provider' do
+    before { publish_embed { |*| raise StandardError, 'connection refused' } }
 
-    before do
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response(mock_response))
+    it 'retries on the same session, consumes the target, and raises RoutingRejected (no safe hash)' do
+      expect { described_class.generate(text: 'hello', routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
+  end
 
-    it 'is not blocked and returns a vector' do
-      result = Legion::LLM::Embeddings.generate(text: 'hello', provider: :openai)
-      expect(result[:vector]).not_to be_nil
+  describe '.generate with an eligible embedding function' do
+    before { publish_embed }
+
+    it 'selects the lane and returns a vector' do
+      result = described_class.generate(text: 'hello', routing_seed: seed)
+      expect(result[:vector]).to be_a(Array)
+      expect(result[:vector].size).to eq(1024)
+      expect(result[:provider]).to eq(:openai)
       expect(result[:error]).to be_nil
     end
   end
 
-  describe 'Legion::LLM::Embeddings.generate_batch with an enabled provider' do
-    let(:mock_response) do
-      double('EmbedResponse', vectors: [Array.new(1024, 0.5), Array.new(1024, 0.6)])
-    end
+  describe '.generate_batch with an eligible embedding function' do
+    before { publish_embed }
 
-    before do
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
-      allow(Legion::LLM::Call::Dispatch).to receive(:call).and_return(native_embed_response(mock_response))
-    end
-
-    it 'is not blocked and returns vectors' do
-      results = Legion::LLM::Embeddings.generate_batch(texts: %w[foo bar], provider: :openai)
-      expect(results.size).to eq(2)
-      expect(results.first[:vector]).not_to be_nil
+    it 'returns one vector per input, in order (N -> N)' do
+      results = described_class.generate_batch(texts: %w[foo bar baz], routing_seed: seed)
+      expect(results.size).to eq(3)
+      expect(results.map { |r| r[:index] }).to eq([0, 1, 2])
+      expect(results).to all(include(vector: be_a(Array)))
     end
   end
 
-  describe 'Legion::LLM::Embeddings.generate_batch when Dispatch raises' do
-    before do
-      Legion::Settings[:llm][:embedding][:model] = 'text-embedding-3-small'
-      write_test_lane(provider: :openai, model: 'text-embedding-3-small', tier: :frontier, type: :embedding)
-    end
+  describe '.generate_batch when every attempt fails at the provider' do
+    before { publish_embed { |*| raise StandardError, 'batch dispatch failed' } }
 
-    it 'returns error hashes for all texts' do
-      allow(Legion::LLM::Call::Dispatch).to receive(:call)
-        .and_raise(StandardError.new('batch dispatch failed'))
-
-      results = Legion::LLM::Embeddings.generate_batch(texts: %w[foo bar baz], provider: :openai)
-      expect(results.size).to eq(3)
-      expect(results).to all(include(vector: nil))
-      expect(results.map { |r| r[:error] }).to all(include('batch dispatch failed'))
+    it 'discards partial vectors and raises RoutingRejected for the whole batch' do
+      expect { described_class.generate_batch(texts: %w[foo bar baz], routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
   end
 end

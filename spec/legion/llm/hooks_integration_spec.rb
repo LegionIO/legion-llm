@@ -3,7 +3,10 @@
 require 'spec_helper'
 
 RSpec.describe 'Legion::LLM hooks integration' do
-  before { Legion::LLM::Hooks.reset! }
+  before do
+    Legion::LLM::Hooks.reset!
+    stub_native_provider(content: 'hook test response')
+  end
 
   describe 'before_chat blocking' do
     it 'prevents LLM call when before hook blocks' do
@@ -20,14 +23,13 @@ RSpec.describe 'Legion::LLM hooks integration' do
       expect(result[:response][:blocked]).to be true
     end
 
-    it 'returns a structured blocked response when a hook blocks without a response body' do
-      Legion::Settings[:llm][:pipeline_enabled] = false
+    it 'returns a structured blocked response for session-style calls when a hook blocks' do
+      # SSOT v3: hooks blocking is exercised via the session-style (no-message) path,
+      # which checks Hooks.run_before before dispatching to the provider.
       Legion::LLM::Hooks.before_chat { { action: :block, reason: 'blocked by policy' } }
-      expect(Legion::LLM::Inference).not_to receive(:chat_direct)
 
       result = Legion::LLM::Inference.chat(
-        message: 'forbidden input',
-        model:   'test-model'
+        model: SSOT_TEST_MODEL
       )
 
       expect(result).to include(error: 'request_blocked', message: 'blocked by policy')

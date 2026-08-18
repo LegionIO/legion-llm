@@ -1,5 +1,50 @@
 # Legion LLM Changelog
 
+## [0.16.3] - 2026-08-17
+
+### Changed
+- **`llm.context_curation.tool_result_max_chars` 2,000 → 10,000.** The tool-result distillation cap is raised so larger tool outputs (file reads, command logs) survive curation intact before the heuristic summary kicks in.
+- **Strict direct-first tier weights.** `llm.routing.tier_weights` is now `{ direct: 150, local: 120, fleet: 115, cloud: 110, frontier: 105 }` — a strict direct → local → fleet → cloud → frontier order with no ties. The previous default ranked frontier first (`{ direct: 105, local: 110, fleet: 110, cloud: 120, frontier: 150 }`, local/fleet tied at 110).
+
+### Removed
+- **`llm.routing.last_resort_model` / `last_resort_provider` defaults.** No code path reads either key (verified); the stale `claude-sonnet-4-6` / `anthropic` last-resort fallback is gone.
+
+### Notes
+- **Curation threshold audit (blocking ceiling / no-curation floor), mapped by behavior.** (1) The *no-curation floor* — `llm.context_curation.target_context_tokens`, at/below which drop-and-archive curation is a no-op (`context/curator.rb`) — is 120,000 → 120,000 (confirmed unchanged); the conversation auto-compact floor (`llm.conversation.summarize_threshold`, `inference/executor.rb`) sits at the same 120,000. (2) The *size-based blocking ceiling* that compacts the outgoing call — `llm.context_curation.context_window_threshold` (`inference/executor/context_window.rb`) — 0.90 → 0.85: the synchronous curation ceiling is now 85% of the model's context window (850k on the 1M-window vllm lanes).
+
+## [0.16.2] - 2026-08-17
+
+### Fixed
+- **Status API repointed off the dead legacy store.** `/api/llm/providers` and `/instances` now read the per-instance health hash from `Legion::Settings` (4-key legacy shape keyed by config name, written by the discovery actors); `/tiers` and `/offerings` read the live `Inventory::Registry` snapshot. `routing_enabled?` is derived from the Registry instead of the hardcoded `false` stub.
+- **Dispatch-boundary response normalization (latent 500 after a provider 200).** `Call::Dispatch.normalize_response` is public; the SSOT direct-dispatch path (`ssot_v3_direct_dispatch` in `route_attempts.rb`) wraps the raw provider `Message` in a canonical `Canonical::Response` at the executor consumption point, so the tool loop no longer NoMethodErrors on duck-typed `result[:tool_calls]`. Regression: `dispatch_message_normalization_spec.rb`.
+- **SelectionDispatch logs the original dispatch error.** The `normalize` rescue records the original error's class + message (scrubbed), so a raising normalizer (e.g. a non-UTF-8 `ArgumentError` masked as `reason is not valid UTF-8`) can no longer hide the real error behind an infinite-retry 500.
+- **Bounded 529 / typed rejection diagnostics.** A required capability that is `:unknown` on a settled (`:complete`) candidate set is now a terminal typed 400 instead of unbounded 529 `too_early` retries; tripped instances report before unknown (503, not 529); `too_early` is reserved for genuinely-`:initializing` candidates.
+- **Pin-aware `fit_available` (release bar 6a).** A pinned tools+thinking request against an unserviceable provider no longer falls to unbounded 529 when pin-mismatched fit+available siblings exist — it returns the terminal typed 400.
+- **Per-instance tuning keyed by config name.** `SettingsSnapshot` weight/`preferred_context` lookups used the derived `host:port/ak` id while config is keyed by name — silently inert. Tuning now resolves via the shared `SettingsCascade` keyed by the operator's config name.
+- **Upper-exclusive binning seam restored.** `preferred_context_sieve` is back to `budget < max`; adjacent bins no longer double-match at the shared boundary.
+
+### Changed
+- **`enable_*` keys are operator overrides consumed by the router.** The `enable_thinking`/`enable_tools`/`enable_streaming` cascade (provider → instance → model) is applied as a routing override — `true` satisfies the axis, `false` makes the candidate ineligible, unset falls back to provider evidence. Provider capability evidence itself is unchanged.
+- **`legion-settings >= 1.4.2` floor.** The published 1.4.0 gem resolved nested `lex-llm-*` extensions to flat settings keys, leaving `settings[:instances]` nil so discovery actors saw zero instances; 1.4.2 ships the segments-based nested-path fix.
+- **Fail-forward release bar locked in.** New 12-example frozen-config behavioral spec (`ssot_v3_fail_forward_release_bar_spec.rb`) drives the real router against the no-regression bar: fail forward, no config changes required, typed failures, recovery without restart.
+
+## [0.16.1] - 2026-08-13
+
+### Fixed
+- **P1: native_dispatch_options dropped temperature and all generation params before provider dispatch in the native tool loop.** Root cause of the parallel tool-call dead stop: `native_dispatch_options` (tool_injection.rb) built the dispatch Hash from request fields but never included generation sampling params from `@request.generation`. The provider receives `opts[:temperature]` — when nil, vLLM/Ollama/any provider runs at its default temperature instead of the caller's explicit `temperature: 0`, producing nondeterministic output. For tool-call requests, this manifests as empty-argument tool calls (the model commits to tool call openers but generates EOS before argument tokens). Now propagates the full canonical generation params (temperature, top_p, top_k, frequency_penalty, presence_penalty, seed) via `apply_generation_params!`, using `.key?` to preserve explicit 0 values. Provider-agnostic fix at the executor boundary — all providers benefit.
+
+## [0.16.0] - 2026-08-13
+
+### Fixed
+- **Never-recovering open circuit eliminated (routing incident).** An exact provider+instance whose circuit tripped could stay open permanently, yielding continual `no_lanes_available`. The legacy `HealthTracker` circuit engine (opened on error; its success-close path was dead behind a hardcoded gate) is deleted. The only health mechanism now is a normalized `instance_unavailable` mark on the exact instance via the Phase-1 Registry, cleared automatically when provider readiness republishes the instance (probe-cleared recovery). Transient provider errors (overload/timeout/429/5xx) stay request-local and never poison an instance. Locked in by `spec/legion/llm/router/ssot_v3_instance_recovery_regression_spec.rb`.
+
+### Changed
+- **SSOT v3: one stateless selector.** `Router.next_lane(requirements:, exclusions:, snapshot:)` is the single selection path — a pure function of one Registry snapshot plus one settings snapshot. Removed every competing selector and legacy fallback: `Router.request_lane` and its hard-filter helpers, `infer_provider_for_model`, `inventory_default_model`, the executor's old resolution chain, the `chat_single`/`chat_with_escalation` escalation cluster, and the `pipeline_enabled?` routing gate — `dispatch_chat` now always routes through the pipeline. Exhaustion/empty returns a typed, retriable Rejection (`service_unavailable`/`too_early`, 503/425/529 + Retry-After), never `nil` or a fabricated default.
+- **Dead modules removed.** Deleted `Router::Availability` and `Inventory::Sweeper` (unreachable).
+
+### Notes
+- Tracked follow-ups (out of scope for this change): `lex-llm-*` provider gems auto-publishing to the Phase-1 Registry at boot — unblocks removing the residual `Call::Registry`/`Call::Providers` boot layer; and wiring GAIA `preferred_provider`/`preferred_model` into `RequestRequirements` pins on the SSOT path (`CandidateEvaluator` already enforces pins).
+
 ## [0.15.2] - 2026-08-04
 
 ### Fixed

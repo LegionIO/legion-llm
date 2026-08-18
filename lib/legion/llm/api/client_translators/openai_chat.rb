@@ -95,6 +95,10 @@ module Legion
               messages:        messages,
               system:          canonical_request.system,
               routing:         canonical_request.routing,
+              # Body-model routing hint (SSOT v3 D19): the sole input to
+              # BodyModelHintPolicy. The trusted X-Legion-Model pin in
+              # `routing` supersedes it — RequestRequirements keeps that order.
+              client_model:    canonical_request.metadata[:client_model],
               tools:           tool_defs,
               tool_choice:     canonical_request.tool_choice,
               caller:          server_caller,
@@ -305,7 +309,7 @@ module Legion
               # 'tool_calls' on the final done covers it.
             end
 
-            def on_tool_call_abort(block_index:, reason:) # rubocop:disable Lint/UnusedMethodArgument
+            def on_tool_call_abort(**)
               nil
             end
 

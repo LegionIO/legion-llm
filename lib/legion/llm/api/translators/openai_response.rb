@@ -138,24 +138,43 @@ module Legion
             }
           end
 
-          def format_embeddings(vector, model:, input_text:, usage: nil)
-            tokens = embedding_token_count(usage, input_text)
+          # @param entries [Array] one element per input item, in input order.
+          #   Each element is a Hash carrying the raw float vector under :vector
+          #   (and the provider token count under :tokens when present) or a bare
+          #   Array of floats.
+          # @param encoding_format [String] 'float' (default) emits raw floats;
+          #   'base64' emits a base64 string of little-endian float32 words.
+          def format_embeddings(entries, model:, input_texts: nil, encoding_format: 'float')
+            base64 = encoding_format.to_s == 'base64'
+            data = Array(entries).each_with_index.map do |entry, index|
+              vector = entry.is_a?(Hash) ? (entry[:vector] || entry['vector']) : entry
+              vector = [] unless vector.is_a?(Array)
+              {
+                object:    'embedding',
+                embedding: base64 ? base64_float32_vector(vector) : vector,
+                index:     index
+              }
+            end
+            prompt_tokens = embedding_token_count(entries, input_texts)
 
             {
               object: 'list',
-              data:   [
-                {
-                  object:    'embedding',
-                  embedding: vector,
-                  index:     0
-                }
-              ],
+              data:   data,
               model:  model.to_s,
               usage:  {
-                prompt_tokens: tokens,
-                total_tokens:  tokens
+                prompt_tokens: prompt_tokens,
+                total_tokens:  prompt_tokens
               }
             }
+          end
+
+          # OpenAI encoding_format: 'base64' — the vector as one base64 string of
+          # little-endian float32 words ('g' is little-endian). pack('g*')
+          # yields the binary words; base64-ENCODING that binary is
+          # [binary].pack('m0') (m0 = base64 without line breaks; unpack1('m0')
+          # would DECODE, and String has no #pack).
+          def base64_float32_vector(vector)
+            [vector.pack('g*')].pack('m0')
           end
 
           def format_model_object(id, created: nil, owned_by: 'legion', limits: nil)
@@ -213,14 +232,14 @@ module Legion
             nil
           end
 
-          def embedding_token_count(usage, input_text)
-            usage_hash = usage.respond_to?(:key?) ? usage : {}
-            token_count = usage_hash[:prompt_tokens] || usage_hash['prompt_tokens'] ||
-                          usage_hash[:input_tokens] || usage_hash['input_tokens'] ||
-                          usage_hash[:total_tokens] || usage_hash['total_tokens']
-            return token_count.to_i if token_count
+          # Prefers the provider's token counts (carried under :tokens on each
+          # embed result); falls back to the input word count when no entry
+          # carries a count.
+          def embedding_token_count(entries, input_texts)
+            counts = Array(entries).filter_map { |e| e.is_a?(Hash) ? (e[:tokens] || e['tokens']) : nil }
+            return counts.sum.to_i unless counts.empty?
 
-            input_text.to_s.split.size
+            Array(input_texts).sum { |t| t.to_s.split.size }
           end
 
           # Heuristic: does the content look like a bare JSON object that is

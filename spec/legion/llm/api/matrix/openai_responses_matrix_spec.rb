@@ -273,10 +273,12 @@ RSpec.describe '[matrix] /v1/responses (OpenAI Responses) × FakeProvider', type
       expect(body[:error][:type]).to eq('invalid_request_error')
     end
 
-    it 'maps provider errors to a 502 server_error' do
+    it 'maps an exhausted provider error to a retriable 503 server_error (SSOT: no lane left)' do
       FakeProvider.with_scenario(:error) do
         resp = post_responses(model: 'fake-default', input: 'fail')
-        expect(resp.status).to eq(502)
+        # SSOT single engine: retriable provider error consumes the only lane;
+        # next_lane has no eligible target -> service_unavailable (503+Retry-After).
+        expect(resp.status).to eq(503)
         body = Legion::JSON.load(resp.body)
         expect(body[:error][:type]).to eq('server_error')
       end

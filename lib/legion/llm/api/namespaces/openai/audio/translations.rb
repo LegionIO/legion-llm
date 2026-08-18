@@ -190,6 +190,8 @@ module Legion
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.openai.audio.translations.provider')
                 halt 502, { 'Content-Type' => 'application/json' },
                      Legion::JSON.dump({ error: { message: e.message, type: 'server_error', code: nil } })
+              rescue Legion::LLM::Errors::RoutingRejected => e
+                translate_routing_rejected(e, dialect: :openai, operation: 'llm.api.openai.audio.translations.routing_rejected')
               rescue StandardError => e
                 handle_exception(e, level: :error, handled: false, operation: 'llm.api.openai.audio.translations')
                 halt 500, { 'Content-Type' => 'application/json' },

@@ -18,6 +18,7 @@ require 'legion/llm/api/namespaces/helpers'
 require 'legion/llm/api/namespaces/anthropic/messages'
 require 'legion/llm/api/namespaces/openai/responses'
 require 'legion/llm/api/namespaces/openai/chat/completions'
+require 'legion/llm/api/namespaces/openai/embeddings'
 require 'legion/llm/api/debug_formats'
 
 require_relative '../../../../support/fake_provider'
@@ -77,6 +78,7 @@ module MatrixHelper
       namespace('/v1/messages') { register Legion::LLM::API::Namespaces::Anthropic::Messages }
       register Legion::LLM::API::Namespaces::OpenAI::Responses
       register Legion::LLM::API::Namespaces::OpenAI::Chat::Completions
+      register Legion::LLM::API::Namespaces::OpenAI::Embeddings
     end
   end
 
@@ -101,12 +103,40 @@ module MatrixHelper
     FakeProvider.register!
     FakeProvider.reset!
     Thread.current[:fake_server_tool_round] = 0
+
+    # SSOT v3: activate FakeProvider in the Phase 1 Registry so RoutingSession
+    # can genuinely select a lane for BOTH chat and stream_chat scenarios (Task 11).
+    # The offering must carry COMPLETE capability + context evidence, otherwise
+    # next_lane returns too_early (unknown evidence) and the executor falls back
+    # to the old selector — which means the SSOT preflight/dispatch path never
+    # actually runs in the matrix. Publishing authoritative evidence for the
+    # capabilities the matrix exercises (streaming/tools/thinking/vision) plus an
+    # authoritative context/max_output envelope makes next_lane select for real.
+    Legion::Extensions::Llm::Inventory::Registry.reset!
+    SsotV3SnapshotFactory.activate(
+      provider_family: 'fake',
+      instance_id:     'test',
+      drafts:          [
+        SsotV3SnapshotFactory.offering_draft(
+          model:        FAKE_MODEL,
+          tier:         :local,
+          supported:    %i[chat stream_chat embed count_tokens],
+          capabilities: { streaming: :supported, tools: :supported,
+                          thinking: :supported, vision: :supported,
+                          embedding: :supported },
+          context:      200_000,
+          max_output:   16_384
+        )
+      ],
+      callable:        FakeProvider.adapter
+    )
   end
 
   # Counterpart to configure_for_fake! — call from `after(:each)` to restore
   # `Legion::LLM.started?` to false so subsequent specs see a clean state.
   def restore_started_state!
     Legion::LLM.instance_variable_set(:@started, nil)
+    Legion::Extensions::Llm::Inventory::Registry.reset!
   end
 
   # Register the LegionIO server-side tool for the execution-proxy spec. The

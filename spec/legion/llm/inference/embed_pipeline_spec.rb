@@ -3,6 +3,12 @@
 require 'spec_helper'
 require 'legion/llm/inference/embed_pipeline'
 
+# SSOT v3 §21: EmbedPipeline is a slim governed entry over Call::Embeddings.
+# Selection, dispatch, and the content-addressed cache are owned by Call::Embeddings
+# (which selects the exact lane BEFORE any cache lookup, per §21.2).
+# EmbedPipeline no longer reads cache keys, calls Cache directly, or holds a
+# cache_key method. It normalizes the caller input, routes through
+# Call::Embeddings.generate, and emits the metering event.
 RSpec.describe Legion::LLM::Inference::EmbedPipeline do
   let(:successful_result) do
     {
@@ -11,20 +17,18 @@ RSpec.describe Legion::LLM::Inference::EmbedPipeline do
       provider:   :ollama,
       dimensions: 3,
       tokens:     7,
-      chunks:     1
+      chunks:     1,
+      tier:       'local',
+      cache_hit:  false
     }
   end
 
   before do
-    Legion::LLM::Cache.instance_variable_set(:@local_cache_connected, nil) if Legion::LLM::Cache.instance_variable_defined?(:@local_cache_connected)
     allow(Legion::LLM::Metering).to receive(:emit).and_return(:published)
-    allow(Legion::LLM::Call::Embeddings).to receive(:default_model).and_return('mxbai-embed-large')
   end
 
-  describe '.call — cache miss path' do
+  describe '.call — delegates to Call::Embeddings and emits metering' do
     before do
-      allow(Legion::LLM::Cache).to receive(:get).and_return(nil)
-      allow(Legion::LLM::Cache).to receive(:set).and_return(true)
       allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(successful_result)
     end
 
@@ -32,18 +36,10 @@ RSpec.describe Legion::LLM::Inference::EmbedPipeline do
       result = described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
       expect(result[:vector]).to eq([0.1, 0.2, 0.3])
       expect(result[:dimensions]).to eq(3)
-      expect(result[:cache_hit]).to be_nil
     end
 
     it 'invokes the underlying provider call exactly once' do
       expect(Legion::LLM::Call::Embeddings).to receive(:generate).once.and_return(successful_result)
-      described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
-    end
-
-    it 'persists the vector under llm:embed:<model>:<dims>:<sha256>' do
-      digest = Digest::SHA256.hexdigest('hello world')
-      expected_key = "llm:embed:mxbai-embed-large:3:#{digest}"
-      expect(Legion::LLM::Cache).to receive(:set).with(expected_key, kind_of(Hash), ttl: kind_of(Integer))
       described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
     end
 
@@ -53,25 +49,25 @@ RSpec.describe Legion::LLM::Inference::EmbedPipeline do
     end
   end
 
-  describe '.call — cache hit path' do
-    let(:cached_payload) do
+  # SSOT v3 §21.2: the cache lives inside Call::Embeddings (select -> cache -> dispatch).
+  # EmbedPipeline surfaces the cache_hit: true signal from generate's return value
+  # and emits the appropriate zero-cost metering event — it never calls Cache directly.
+  describe '.call — cache hit path (Call::Embeddings returns cache_hit: true)' do
+    let(:cached_result) do
       {
-        'vector'     => [0.9, 0.8, 0.7],
-        'model'      => 'mxbai-embed-large',
-        'provider'   => 'ollama',
-        'dimensions' => 3,
-        'tokens'     => 11
+        vector:     [0.9, 0.8, 0.7],
+        model:      'mxbai-embed-large',
+        provider:   :ollama,
+        dimensions: 3,
+        tokens:     11,
+        chunks:     1,
+        tier:       'local',
+        cache_hit:  true
       }
     end
 
     before do
-      allow(Legion::LLM::Cache).to receive(:get).and_return(cached_payload)
-      allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-    end
-
-    it 'short-circuits and never calls the provider' do
-      expect(Legion::LLM::Call::Embeddings).not_to receive(:generate)
-      described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
+      allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(cached_result)
     end
 
     it 'returns the cached vector with cache_hit: true' do
@@ -87,60 +83,37 @@ RSpec.describe Legion::LLM::Inference::EmbedPipeline do
       )
       described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
     end
-
-    it 'looks the cached value up at the canonical key llm:embed:<model>:<dims>:<sha256>' do
-      digest = Digest::SHA256.hexdigest('hello world')
-      expect(Legion::LLM::Cache).to receive(:get).with("llm:embed:mxbai-embed-large:3:#{digest}").and_return(cached_payload)
-      described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
-    end
   end
 
-  describe '.call — cache disabled' do
+  describe '.call — Call::Embeddings always invoked (cache is its responsibility)' do
     before do
-      Legion::Settings[:llm][:embedding][:cache] = { enabled: false, ttl: 86_400, key_prefix: 'llm:embed' }
-      allow(Legion::LLM::Cache).to receive(:get)
-      allow(Legion::LLM::Cache).to receive(:set)
       allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(successful_result)
     end
 
-    after do
-      Legion::Settings[:llm][:embedding][:cache] = { enabled: true, ttl: 86_400, key_prefix: 'llm:embed' }
-    end
-
-    it 'skips cache lookup entirely' do
-      expect(Legion::LLM::Cache).not_to receive(:get)
-      described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
-    end
-
-    it 'still calls the provider and returns its result' do
+    it 'calls the provider and returns its result' do
       expect(Legion::LLM::Call::Embeddings).to receive(:generate).once.and_return(successful_result)
       result = described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
       expect(result[:vector]).to eq([0.1, 0.2, 0.3])
     end
   end
 
+  # SSOT v3: errors from Call::Embeddings propagate to the caller.
+  # LLMErrors are re-raised directly; other StandardErrors are logged then re-raised.
+  # EmbedPipeline never swallows an exception or returns an error hash.
   describe '.call — error path' do
     before do
-      allow(Legion::LLM::Cache).to receive(:get).and_return(nil)
       allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_raise(StandardError.new('boom'))
     end
 
-    it 'returns an error hash without raising' do
-      result = described_class.call(text: 'hello world', model: 'mxbai-embed-large')
-      expect(result[:error]).to eq('boom')
-      expect(result[:vector]).to be_nil
+    it 'propagates the error to the caller (never swallows)' do
+      expect { described_class.call(text: 'hello world', model: 'mxbai-embed-large') }
+        .to raise_error(StandardError, 'boom')
     end
 
     it 'does not emit metering for a failed call' do
       expect(Legion::LLM::Metering).not_to receive(:emit)
-      described_class.call(text: 'hello world', model: 'mxbai-embed-large')
-    end
-  end
-
-  describe '.cache_key' do
-    it 'uses the configured prefix and includes model + dims + digest' do
-      key = described_class.cache_key(model: 'voyage-3', dimensions: 1024, digest: 'abc')
-      expect(key).to eq('llm:embed:voyage-3:1024:abc')
+      expect { described_class.call(text: 'hello world', model: 'mxbai-embed-large') }
+        .to raise_error(StandardError)
     end
   end
 end

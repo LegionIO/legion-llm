@@ -118,6 +118,7 @@ RSpec.describe Legion::LLM::API::OpenAI::Responses do
       executor = double('Executor')
       out = +''
 
+      allow(executor).to receive(:stream_preflight!).and_return(nil)
       allow(executor).to receive(:call_stream) do |&block|
         block.call('Hello ')
         block.call('world')
@@ -178,6 +179,7 @@ RSpec.describe Legion::LLM::API::OpenAI::Responses do
       executor = double('Executor')
       out = +''
 
+      allow(executor).to receive(:stream_preflight!).and_return(nil)
       allow(executor).to receive(:call_stream).and_return(pipeline_response)
 
       described_class.stream_response(out, executor, request_id: 'resp_stream', model: 'fallback-model')

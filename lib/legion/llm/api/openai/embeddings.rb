@@ -44,10 +44,10 @@ module Legion
                              when Hash  then vector[:vector] || vector['vector'] || vector[:embedding] || vector['embedding'] || []
                              else []
                              end
-              usage = vector.is_a?(Hash) ? (vector[:usage] || vector['usage'] || vector) : nil
+              tokens = vector.is_a?(Hash) ? (vector[:tokens] || vector['tokens']) : nil
 
               response_body = Legion::LLM::API::Translators::OpenAIResponse.format_embeddings(
-                vector_array, model: model, input_text: text, usage: usage
+                [{ vector: vector_array, tokens: tokens }], model: model, input_texts: text
               )
 
               log.info("[llm][api][openai][embeddings] action=complete model=#{model} dims=#{vector_array.size}")
