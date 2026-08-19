@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'faraday'
+require 'legion/extensions/llm/taxonomies'
 
 module Legion
   module LLM
@@ -58,9 +59,21 @@ module Legion
               populate_ssot_v3_resolved_state(attempt)
               result = ssot_v3_execute_attempt
               action = @routing_session.classify(dispatch_result: result, attempt_context: attempt)
+              unless action.disposition == :success
+                lane = attempt.lane
+                log.warn("[llm][executor] action=ssot_v3_attempt_failed attempt=#{attempt.attempt_number} " \
+                         "lane=#{lane.tier}:#{lane.provider_family}:#{lane.instance_id}:#{lane_type_for(lane.operation)}:#{lane.model} " \
+                         "provider=#{@resolved_provider} " \
+                         "instance=#{@resolved_instance} model=#{@resolved_model} " \
+                         "outcome_kind=#{result.outcome.kind} outcome_reason=#{result.outcome.reason.to_s[0, 200]} " \
+                         "disposition=#{action.disposition}")
+              end
               return if action.disposition == :success
               raise Legion::LLM::Errors::RoutingRejected.new(rejection: action.rejection) if action.disposition == :terminal
             end
+            log.warn('[llm][executor] action=ssot_v3_attempts_exhausted kind=attempts_exhausted ' \
+                     "reason=maximum attempts (#{@routing_requirements.maximum_attempts}) reached " \
+                     "http_status=503 generation=#{Legion::Extensions::Llm::Inventory::Registry.snapshot.generation}")
             raise Legion::LLM::Errors::RoutingRejected.new(rejection: attempts_exhausted_rejection)
           ensure
             @current_attempt_context = nil
@@ -78,6 +91,10 @@ module Legion
 
             outcome = @last_ssot_dispatch_outcome
             @last_ssot_dispatch_outcome = nil
+            if outcome.nil?
+              log.warn("[llm][executor] action=ssot_v3_unnormalized_error class=#{e.class.name} " \
+                       "message=#{e.message.to_s[0, 200]}")
+            end
             outcome ||= Legion::Extensions::Llm::Routing::ProviderOutcome.new(
               kind: :provider_error, reason: e.class.name.to_s
             )
@@ -114,7 +131,8 @@ module Legion
               callable_handle: attempt_context.selection.callable_handle
             )
             lane = ssot_v3_stream_lane_hash(attempt_context)
-            log.info "[llm][executor] action=ssot_v3_stream_preflight_selected lane=#{lane[:id]} " \
+            log.info "[llm][executor] action=ssot_v3_stream_preflight_selected " \
+                     "lane=#{lane[:tier]}:#{lane[:provider_family]}:#{lane[:instance_id]}:#{lane[:type]}:#{lane[:model]} " \
                      "provider=#{@resolved_provider} model=#{@resolved_model}"
             lane
           end
@@ -124,12 +142,14 @@ module Legion
           # the failover debug trailers report real lane IDs — NOT 'unknown:pending'.
           def ssot_v3_stream_lane_hash(attempt_context)
             sel = attempt_context.selection
+            lane = attempt_context.lane
             {
               id:              sel.lane_id,
               provider_family: sel.provider_family,
               instance_id:     sel.instance_id,
               model:           sel.model,
-              tier:            attempt_context.lane.tier
+              tier:            lane.tier,
+              type:            lane_type_for(lane.operation)
             }
           end
 
@@ -197,6 +217,10 @@ module Legion
               dispatch_result: Legion::LLM::Call::SelectionDispatch::Result.failure(outcome: outcome),
               attempt_context: attempt_context
             )
+            if action.disposition == :terminal
+              log.warn("[llm][executor] action=ssot_v3_stream_terminal class=#{error.class.name} " \
+                       "message=#{error.message.to_s[0, 200]} outcome_kind=#{outcome.kind}")
+            end
             raise error if action.disposition == :terminal
 
             # Preserve the existing StreamAssembler failover sequence (§19). The
@@ -210,12 +234,25 @@ module Legion
 
             snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
             nxt = session.next_attempt(snapshot: snap)
+            if nxt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
+              log.warn("[llm][executor] action=ssot_v3_stream_exhausted kind=#{nxt.kind} reason=#{nxt.reason.to_s[0, 200]} " \
+                       "class=#{error.class.name} message=#{error.message.to_s[0, 200]}")
+            end
             raise error if nxt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
 
             @stream_observer&.begin_dispatch_on(lane: ssot_v3_stream_lane_hash(nxt))
+            next_lane = nxt.lane
+            next_identity = [
+              next_lane.tier, next_lane.provider_family, next_lane.instance_id,
+              lane_type_for(next_lane.operation), next_lane.model
+            ].join(':')
             log.warn "[llm][executor] action=ssot_v3_stream_failover from_kind=#{outcome.kind} " \
-                     "to_lane=#{nxt.selection.lane_id}"
+                     "outcome_reason=#{outcome.reason.to_s[0, 200]} to_lane=#{next_identity}"
             nxt
+          end
+
+          def lane_type_for(operation)
+            Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: operation)
           end
 
           # Map a raised streaming provider error to a Phase 1 ProviderOutcome for

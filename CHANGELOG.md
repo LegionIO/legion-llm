@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.16.4] - 2026-08-19
+
+### Changed
+- **Human-readable SSOT routing identities.** Ranked, selected, failed-attempt, streaming preflight, and streaming failover decision logs now carry the Inventory five-tuple (`tier:provider:instance:type:model`) instead of opaque `lane:v1:` hashes. StreamAssembler preserves historically accepted public lane inputs while redacting incomplete or malformed identities as `lane_identity_missing=true`; failover-chain state is unchanged.
+- **`lex-llm >= 0.7.4` floor.** Routing logs consume the shared authoritative operation-to-lane-type mapping rather than maintaining a daemon-local copy.
+
 ## [0.16.3] - 2026-08-17
 
 ### Changed

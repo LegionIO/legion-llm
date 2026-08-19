@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'digest'
+require 'legion/extensions/llm/taxonomies'
 
 module Legion
   module LLM
@@ -99,9 +100,20 @@ module Legion
           matching   = with_range.select { |_, r| r && range_contains?(r, budget) }.map(&:first)
 
           # Preferred range is soft: never makes any lane hard-ineligible.
-          return matching   unless matching.empty?
+          unless matching.empty?
+            log.debug("[llm][ranker] action=preferred_context_sieve budget=#{budget} " \
+                      "matching=#{matching.size} generalist=#{generalist.size} branch=matching")
+          end
+          return matching unless matching.empty?
+
+          unless generalist.empty?
+            log.debug("[llm][ranker] action=preferred_context_sieve budget=#{budget} " \
+                      "matching=#{matching.size} generalist=#{generalist.size} branch=generalist")
+          end
           return generalist unless generalist.empty?
 
+          log.debug("[llm][ranker] action=preferred_context_sieve budget=#{budget} " \
+                    "matching=#{matching.size} generalist=#{generalist.size} branch=ready")
           ready
         end
 
@@ -128,7 +140,9 @@ module Legion
             eff   = base * ppm
             score = rendezvous_score(candidate)
 
-            log.debug("[llm][ranker] action=ranked lane=#{candidate.lane.lane_id[0, 20]}... " \
+            lane = candidate.lane
+            log.debug("[llm][ranker] action=ranked " \
+                      "lane=#{lane.tier}:#{lane.provider_family}:#{lane.instance_id}:#{lane_type_for(lane.operation)}:#{lane.model} " \
                       "base=#{base} ppm=#{ppm} eff=#{eff}")
 
             RankedCandidate.new(
@@ -216,7 +230,16 @@ module Legion
         def select_winner(ranked)
           max_ew = ranked.map(&:effective_weight).max
           bucket = ranked.select { |rc| rc.effective_weight == max_ew }
-          bucket.min_by { |rc| [-rc.rendezvous_score, rc.evaluation.lane.lane_id] }
+          winner = bucket.min_by { |rc| [-rc.rendezvous_score, rc.evaluation.lane.lane_id] }
+          lane = winner.evaluation.lane
+          log.debug("[llm][ranker] action=selected " \
+                    "lane=#{lane.tier}:#{lane.provider_family}:#{lane.instance_id}:#{lane_type_for(lane.operation)}:#{lane.model} " \
+                    "eff=#{winner.effective_weight}")
+          winner
+        end
+
+        def lane_type_for(operation)
+          Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: operation)
         end
       end
     end
