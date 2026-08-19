@@ -86,7 +86,7 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
 
     seen_system = nil
     register_capturing_stream_callable do |captured, kwargs|
-      seen_system = kwargs[:system]
+      seen_system = kwargs.fetch(:messages).first.content
       captured[:system] = seen_system
     end
 

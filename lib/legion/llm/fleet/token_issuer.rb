@@ -3,6 +3,7 @@
 require 'securerandom'
 require 'time'
 
+require 'legion/extensions/llm/fleet/protocol'
 require 'legion/extensions/llm/fleet/token_error'
 
 module Legion
@@ -59,6 +60,20 @@ module Legion
             raise TokenError, "missing token claim source: #{key}" if value.nil?
 
             claims[key] = value
+          end
+          execution_contract = payload[:execution_contract]
+          unless execution_contract.nil?
+            unless execution_contract == ::Legion::Extensions::Llm::Fleet::Protocol::EXACT_EXECUTION_CONTRACT
+              raise TokenError, "unknown fleet execution_contract marker: #{execution_contract.inspect}"
+            end
+
+            offering_id = payload[:offering_id]
+            unless offering_id.is_a?(String) && !offering_id.strip.empty?
+              raise TokenError, 'missing token claim source: nonempty String offering_id (exact execution marker present)'
+            end
+
+            claims[:execution_contract] = execution_contract
+            claims[:offering_id] = offering_id
           end
           claims
         end

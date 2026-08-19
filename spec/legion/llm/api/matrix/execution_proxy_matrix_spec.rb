@@ -198,10 +198,18 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
       calls = FakeProvider.calls
       expect(calls.size).to be >= 2
       followup = calls[1]
-      followup_roles = followup[:messages].map { |m| (m[:role] || m['role']).to_s }
+      followup_roles = followup[:messages].map do |message|
+        (message.respond_to?(:role) ? message.role : (message[:role] || message['role'])).to_s
+      end
       expect(followup_roles).to include('tool')
-      tool_msg = followup[:messages].find { |m| (m[:role] || m['role']).to_s == 'tool' }
-      tool_content = (tool_msg[:content] || tool_msg['content']).to_s
+      tool_msg = followup[:messages].find do |message|
+        (message.respond_to?(:role) ? message.role : (message[:role] || message['role'])).to_s == 'tool'
+      end
+      tool_content = if tool_msg.respond_to?(:content)
+                       tool_msg.content.to_s
+                     else
+                       (tool_msg[:content] || tool_msg['content']).to_s
+                     end
       expect(tool_content).to include('echo:ping')
 
       # G24 point 5 (round-trip — substring) — the LegionIO tool name
@@ -275,8 +283,9 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
       calls = FakeProvider.calls
       expect(calls.size).to be >= 2
       tool_in_followup = calls[1][:messages].any? do |m|
-        role = (m[:role] || m['role']).to_s
-        role == 'tool' && (m[:content] || m['content']).to_s.include?('echo:ping')
+        role = (m.respond_to?(:role) ? m.role : (m[:role] || m['role'])).to_s
+        content = m.respond_to?(:content) ? m.content : (m[:content] || m['content'])
+        role == 'tool' && content.to_s.include?('echo:ping')
       end
       expect(tool_in_followup).to be(true)
     end
@@ -313,8 +322,9 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
       calls = FakeProvider.calls
       expect(calls.size).to be >= 2
       tool_in_followup = calls[1][:messages].any? do |m|
-        role = (m[:role] || m['role']).to_s
-        role == 'tool' && (m[:content] || m['content']).to_s.include?('echo:ping')
+        role = (m.respond_to?(:role) ? m.role : (m[:role] || m['role'])).to_s
+        content = m.respond_to?(:content) ? m.content : (m[:content] || m['content'])
+        role == 'tool' && content.to_s.include?('echo:ping')
       end
       expect(tool_in_followup).to be(true)
     end

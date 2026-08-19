@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.16.5] - 2026-08-19
+
+### Fixed
+- **Shared SSOT dispatch-boundary contract.** Direct and fleet requests now project only provider-callable contract keys, fold the authoritative system prompt into canonical messages exactly once, and move non-contract generation parameters under `params`. Legacy/non-SSOT calls retain their original messages and options.
+- **Signed fleet exact execution.** SSOT fleet envelopes carry and sign `execution_contract: exact_offering_v1` plus a validated nonempty `offering_id`; both dispatcher and independently callable token issuer reject unknown markers instead of silently downgrading to legacy execution. Daemon-only offering metadata never crosses the provider boundary.
+
 ## [0.16.4] - 2026-08-19
 
 ### Changed

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'legion/extensions/llm/fleet/protocol'
+
 module Legion
   module LLM
     module Inference
@@ -12,13 +14,27 @@ module Legion
         end
 
         def dispatch_provider_request(capability:, operation:, messages:, stream_block: nil)
+          raw_options = native_dispatch_options
+          dispatch_messages, dispatch_options = if @current_attempt_context
+                                                   project_dispatch_arguments(
+                                                     messages: messages, options: raw_options
+                                                   )
+                                                 else
+                                                   [messages, raw_options]
+                                                 end
           if fleet_dispatch?
             log.debug "[llm][route_attempts] action=dispatch path=fleet provider=#{@resolved_provider} model=#{@resolved_model} operation=#{operation}"
-            dispatch_fleet_request(operation: operation, messages: messages, stream_block: stream_block)
+            dispatch_fleet_request(
+              operation: operation, messages: dispatch_messages,
+              dispatch_options: dispatch_options, stream_block: stream_block
+            )
           else
             log.debug "[llm][route_attempts] action=dispatch path=direct provider=#{@resolved_provider} model=#{@resolved_model} operation=#{operation}"
-            dispatch_direct_request(capability: capability, operation: operation, messages: messages,
-                                    stream_block: stream_block)
+            dispatch_direct_request(
+              capability: capability, operation: operation, messages: dispatch_messages,
+              raw_messages: messages, dispatch_options: dispatch_options,
+              raw_dispatch_options: raw_options, stream_block: stream_block
+            )
           end
         end
 
@@ -27,10 +43,10 @@ module Legion
         # The capability :responses capability is a provider wire-format detail — the canonical
         # core only knows :chat and :stream. See lex-llm-* adapters for wire-format decisions.
 
-        def dispatch_direct_request(capability:, operation:, messages:, stream_block: nil)
+        def dispatch_direct_request(capability:, operation:, messages:, raw_messages:,
+                                    dispatch_options:, raw_dispatch_options:, stream_block: nil)
           idempotency_key = next_route_idempotency_key
-          dispatch_options = native_dispatch_options
-          enforce_final_context_budget!(messages, dispatch_options)
+          enforce_final_context_budget!(raw_messages, raw_dispatch_options)
 
           if @current_attempt_context
             return ssot_v3_direct_dispatch(
@@ -128,7 +144,7 @@ module Legion
           end
         end
 
-        def dispatch_fleet_request(operation:, messages:, stream_block: nil)
+        def dispatch_fleet_request(operation:, messages:, dispatch_options:, stream_block: nil)
           idempotency_key = next_route_idempotency_key
           selected_lane = fleet_selected_lane(operation)
           log.info "[llm][route_attempts] action=fleet_dispatch provider=#{@resolved_provider} model=#{@resolved_model} lane=#{selected_lane} operation=#{operation}"
@@ -136,7 +152,9 @@ module Legion
             operation:       operation,
             routing_key:     selected_lane,
             message_context: fleet_message_context,
-            request:         fleet_dispatch_request(messages, idempotency_key)
+            request:         fleet_dispatch_request(
+              messages, idempotency_key, dispatch_options: dispatch_options
+            )
           )
           if result[:success] == false || result['success'] == false
             failure_reason = result[:error] || result['error'] || 'fleet_error'
@@ -197,7 +215,7 @@ module Legion
           (metadata[:context_window] || metadata['context_window'] || limits[:context_window]).to_i
         end
 
-        def fleet_dispatch_request(messages, idempotency_key)
+        def fleet_dispatch_request(messages, idempotency_key, dispatch_options:)
           {
             provider:          @resolved_provider,
             provider_instance: @resolved_instance || :default,
@@ -207,7 +225,52 @@ module Legion
             caller:            @request.caller,
             trace_context:     @tracing || {},
             timeout:           @request.ttl
-          }.merge(native_dispatch_options).compact
+          }.merge(dispatch_options).merge(exact_execution_envelope_fields).compact
+        end
+
+        def exact_execution_envelope_fields
+          return {} unless @current_attempt_context
+
+          unless @resolved_offering_id.is_a?(String) && !@resolved_offering_id.strip.empty?
+            raise ArgumentError, 'SSOT fleet dispatch requires a nonempty String resolved offering_id'
+          end
+
+          {
+            execution_contract: ::Legion::Extensions::Llm::Fleet::Protocol::EXACT_EXECUTION_CONTRACT,
+            offering_id:        @resolved_offering_id
+          }
+        end
+
+        CONTRACT_OPTION_KEYS = %i[tools temperature params headers schema thinking tool_prefs].freeze
+        NONCONTRACT_GENERATION_KEYS = %i[top_p top_k frequency_penalty presence_penalty seed].freeze
+
+        def project_dispatch_arguments(messages:, options:)
+          system_text = options[:system].to_s
+          folded = if system_text.strip.empty?
+                     messages
+                   else
+                     fold_system_into_messages(messages: messages, system: system_text)
+                   end
+          projected = options.slice(*CONTRACT_OPTION_KEYS)
+          params = projected[:params]
+          unless params.nil? || params.is_a?(Hash)
+            raise ArgumentError, "dispatch params must be a Hash, got #{params.class}"
+          end
+          extras = NONCONTRACT_GENERATION_KEYS.each_with_object({}) do |key, acc|
+            acc[key] = options[key] if options.key?(key) && !options[key].nil?
+          end
+          projected[:params] = (params || {}).merge(extras) unless extras.empty?
+          [folded, projected]
+        end
+
+        def fold_system_into_messages(messages:, system:)
+          message_class = Legion::Extensions::Llm::Canonical::Message
+          first = messages.first
+          if first.is_a?(message_class) && first.role.to_s == 'system'
+            [first.with(content: system), *messages[1..]]
+          else
+            [message_class.build(role: :system, content: system), *messages]
+          end
         end
 
         def normalize_fleet_result(result)
@@ -260,6 +323,10 @@ module Legion
         end
 
         def record_route_attempt(dispatch_path:, operation:, status:, idempotency_key:, selected_lane:, failure_reason: nil)
+          log.debug "[llm][route_attempts] action=route_attempt provider=#{@resolved_provider} " \
+                    "instance=#{@resolved_instance} model=#{@resolved_model} operation=#{operation} " \
+                    "dispatch_path=#{dispatch_path} status=#{status} " \
+                    "failure_reason=#{failure_reason.to_s[0, 200] if failure_reason}"
           attempt = {
             provider:          @resolved_provider,
             provider_instance: @resolved_instance || :default,

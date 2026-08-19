@@ -174,7 +174,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
         seen_system = nil
         responder = lambda do |_op, _args, kwargs, _blk|
-          seen_system = kwargs[:system]
+          seen_system = kwargs.fetch(:messages).first.content
           native_dispatch_result(content: 'test')
         end
         activate_anthropic(SsotV3SnapshotFactory::FactoryCallable.new(responder: responder))
@@ -563,7 +563,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
       )
     end
 
-    it 'passes native dispatch options as top-level fleet request params' do
+    it 'projects native dispatch options and sends exact offering fields outside fleet params' do
       Legion::Settings[:llm][:fleet][:dispatch][:enabled] = true
       activate_fleet_vllm_lane
 
@@ -591,9 +591,12 @@ RSpec.describe Legion::LLM::Inference::Executor do
       response = described_class.new(tool_request).call
 
       expect(response.message[:content]).to eq('fleet answer')
-      expect(captured_request).to include(:system, :tools)
+      expect(captured_request).to include(:messages, :tools, :execution_contract, :offering_id)
       expect(captured_request).not_to have_key(:options)
-      expect(captured_request[:system]).to eq('Use available tools.')
+      expect(captured_request).not_to have_key(:system)
+      expect(captured_request[:messages].first).to have_attributes(role: :system, content: 'Use available tools.')
+      expect(captured_request[:execution_contract]).to eq('exact_offering_v1')
+      expect(captured_request[:offering_id]).to match(/\Aoff:v1:/)
       expect(captured_request[:tools]).to include(
         legion_lookup: hash_including(name: 'legion_lookup', description: 'Lookup data')
       )
@@ -1123,11 +1126,16 @@ RSpec.describe Legion::LLM::Inference::Executor do
       expect(Legion::LLM::Call::Dispatch).not_to receive(:call)
 
       expect do
+        raw_messages = [{ role: :user, content: 'hello' }]
+        raw_options = { system: 's' * 400 }
         executor.send(
           :dispatch_direct_request,
-          capability: :stream,
-          operation:  :chat,
-          messages:   [{ role: :user, content: 'hello' }]
+          capability:           :stream,
+          operation:            :chat,
+          messages:             raw_messages,
+          raw_messages:         raw_messages,
+          dispatch_options:     raw_options,
+          raw_dispatch_options: raw_options
         )
       end.to raise_error(Legion::LLM::ContextOverflow, /final payload estimate/)
     end
