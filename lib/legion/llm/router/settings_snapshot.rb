@@ -15,12 +15,11 @@ module Legion
 
         TIER_KEYS             = %i[direct local fleet cloud frontier].freeze
         ALLOWED_ALIAS_META    = %i[owned_by created context_window max_output_tokens].freeze
-        IDENTITY_WEIGHT       = 1
         # Shared 3-level settings cascade (lex-llm): provider -> instance ->
         # model, most-specific-first. The instance leg is the operator's
         # CONFIG NAME (InstanceKey#instance_id), never a derived id.
         CASCADE               = Legion::Extensions::Llm::SettingsCascade
-        private_constant :TIER_KEYS, :ALLOWED_ALIAS_META, :IDENTITY_WEIGHT, :CASCADE
+        private_constant :TIER_KEYS, :ALLOWED_ALIAS_META, :CASCADE
 
         # ------------------------------------------------------------------ #
         # Public factory                                                       #
@@ -50,29 +49,6 @@ module Legion
                     :body_model_hint_blacklist,
                     :auto_routing_model_aliases,
                     :auto_routing_model_alias_metadata
-
-        # ------------------------------------------------------------------ #
-        # Per-lane weight inputs (called per candidate during ranking)        #
-        # ------------------------------------------------------------------ #
-
-        # Returns a frozen Hash { tier:, provider:, instance:, model_or_offering: }
-        # where each value is a positive Integer >= 1 (missing component → identity 1).
-        # The provider/instance/model scopes are read through the lex-llm
-        # cascade, keyed by the config name (lane.instance_id): the instance
-        # leg is instances.<name>, the model leg is the instance's models.<model>
-        # entry overriding the provider's models.<model> entry. A zero tier
-        # weight is stored as-is (disabled lane); callers check for zero.
-        def weight_inputs_for(lane:)
-          tier_w  = tier_weights[lane.tier] || IDENTITY_WEIGHT
-          prov    = ext_llm_provider(lane.provider_family)
-          inst    = ext_llm_instance(prov, lane.instance_id)
-          prov_w  = CASCADE.lookup(prov, :weight) || IDENTITY_WEIGHT
-          inst_w  = CASCADE.lookup(inst, :weight) || IDENTITY_WEIGHT
-          off_entry = CASCADE.lookup(CASCADE.lookup(prov, :offerings), lane.offering_id)
-          model_cfg = CASCADE.merge_model_scopes(provider_conf: prov, instance_cfg: inst, model: lane.model)
-          model_w = CASCADE.lookup(off_entry, :weight) || CASCADE.lookup(model_cfg, :weight) || IDENTITY_WEIGHT
-          { tier: tier_w, provider: prov_w, instance: inst_w, model_or_offering: model_w }.freeze
-        end
 
         # Returns { min: Integer_or_nil, max: Integer_or_nil } or nil when no
         # preferred range is configured. Resolved through the lex-llm 3-level

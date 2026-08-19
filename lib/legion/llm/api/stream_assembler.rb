@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/extensions/llm/taxonomies'
 require 'legion/llm/api/client_translators/shared_extractors'
 
 module Legion
@@ -246,9 +247,14 @@ module Legion
         def provider_failover_pending!(from:, **)
           return if @closed
 
-          from_id = from.is_a?(Hash) ? from[:id] : from.to_s
-          log.warn('[llm][stream_assembler] action=provider_failover_pending ' \
-                   "from=#{from_id} request_id=#{@request_id}")
+          identity = lane_identity(from)
+          if identity
+            log.warn('[llm][stream_assembler] action=provider_failover_pending ' \
+                     "from=#{identity} request_id=#{@request_id}")
+          else
+            log.warn('[llm][stream_assembler] action=provider_failover_pending ' \
+                     "lane_identity_missing=true request_id=#{@request_id}")
+          end
           # Clear the partial canonical buffer — partial responses can't cross providers
           # (thinking strip, context invalidation). The next provider starts fresh.
           close_thinking_block if @thinking_block_open
@@ -272,8 +278,14 @@ module Legion
 
           @current_lane = lane
           @failover_chain << (lane.is_a?(Hash) ? lane[:id] : lane.to_s)
-          log.info("[llm][stream_assembler] action=begin_dispatch lane=#{lane.is_a?(Hash) ? lane[:id] : lane} " \
-                   "request_id=#{@request_id}")
+          identity = lane_identity(lane)
+          if identity
+            log.info("[llm][stream_assembler] action=begin_dispatch lane=#{identity} " \
+                     "request_id=#{@request_id}")
+          else
+            log.warn('[llm][stream_assembler] action=begin_dispatch ' \
+                     "lane_identity_missing=true request_id=#{@request_id}")
+          end
         end
 
         def safe_replay_snapshot
@@ -302,6 +314,24 @@ module Legion
         end
 
         private
+
+        # Returns the exact five-tuple for complete internal lane hashes.
+        # Opaque or partial public values retain control behavior but are never
+        # echoed into logs.
+        def lane_identity(lane)
+          keys = %i[tier provider_family instance_id type model]
+          return unless lane.is_a?(Hash)
+          return unless keys.all? do |key|
+            value = lane[key]
+            next false unless lane.key?(key) && (value.is_a?(String) || value.is_a?(Symbol))
+
+            text = value.to_s
+            text.valid_encoding? && !text.match?(/[[:cntrl:]]/) && !text.strip.empty?
+          end
+          return unless Legion::Extensions::Llm::Taxonomies::TYPES.include?(lane[:type].to_sym)
+
+          "#{lane[:tier]}:#{lane[:provider_family]}:#{lane[:instance_id]}:#{lane[:type]}:#{lane[:model]}"
+        end
 
         # G30 / D-F: emit x-legion-failover-* debug trailers after on_done.
         # Only fires when failover actually happened (@failover_chain has markers).

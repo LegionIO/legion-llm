@@ -156,13 +156,13 @@ RSpec.describe 'Namespaces::OpenAI::Audio::Speech' do
       end
 
       it 'passes voice, speed, and format to inference meta' do
-        expect(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        expect(Legion::LLM::Inference::Request).to receive(:build).and_wrap_original do |original, **kwargs|
           expect(kwargs[:meta][:task]).to eq(:text_to_speech)
           expect(kwargs[:meta][:voice]).to eq('nova')
           expect(kwargs[:meta][:speed]).to eq(1.5)
           expect(kwargs[:meta][:response_format]).to eq('mp3')
-          Legion::LLM::Inference::Request.build(**kwargs)
-        end.and_call_original
+          original.call(**kwargs)
+        end
 
         post '/v1/audio/speech',
              Legion::JSON.dump(valid_body.merge(voice: 'nova', speed: 1.5, response_format: 'mp3')),

@@ -246,83 +246,6 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
   end
 
   # ------------------------------------------------------------------ #
-  # weight_inputs_for — missing-component identity 1 cascade            #
-  # ------------------------------------------------------------------ #
-
-  describe '#weight_inputs_for' do
-    # Minimal LaneRecord-like stub
-    def lane_stub(tier:, provider_family:, instance_id:, model:, offering_id: 'off:v1:abc')
-      double(
-        'LaneRecord',
-        tier:            tier,
-        provider_family: provider_family,
-        instance_id:     instance_id,
-        model:           model,
-        offering_id:     offering_id
-      )
-    end
-
-    it 'returns all identity weights when no extension settings are present' do
-      snap = build
-      lane = lane_stub(tier: :local, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
-      wi = snap.weight_inputs_for(lane: lane)
-      expect(wi[:tier]).to eq(110)         # from tier_weights[:local]
-      expect(wi[:provider]).to eq(1)       # missing in extension_settings
-      expect(wi[:instance]).to eq(1)       # missing
-      expect(wi[:model_or_offering]).to eq(1) # missing
-    end
-
-    it 'returns configured provider weight' do
-      ext = { llm: { vllm: { weight: 200 } } }
-      snap = build(extension_settings: ext)
-      lane = lane_stub(tier: :local, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
-      expect(snap.weight_inputs_for(lane: lane)[:provider]).to eq(200)
-    end
-
-    it 'returns configured instance weight' do
-      ext = { llm: { vllm: { instances: { h200: { weight: 150 } } } } }
-      snap = build(extension_settings: ext)
-      lane = lane_stub(tier: :direct, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
-      expect(snap.weight_inputs_for(lane: lane)[:instance]).to eq(150)
-    end
-
-    it 'prefers offering weight over model weight' do
-      offering_id = 'off:v1:xyz'
-      ext = {
-        llm: {
-          vllm: {
-            offerings: { 'off:v1:xyz' => { weight: 300 } },
-            models:    { 'gemma4' => { weight: 50 } }
-          }
-        }
-      }
-      snap = build(extension_settings: ext)
-      lane = lane_stub(tier: :direct, provider_family: :vllm, instance_id: 'h200', model: 'gemma4', offering_id: offering_id)
-      expect(snap.weight_inputs_for(lane: lane)[:model_or_offering]).to eq(300)
-    end
-
-    it 'falls back to model weight when offering weight absent' do
-      ext = { llm: { vllm: { models: { 'gemma4' => { weight: 75 } } } } }
-      snap = build(extension_settings: ext)
-      lane = lane_stub(tier: :cloud, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
-      expect(snap.weight_inputs_for(lane: lane)[:model_or_offering]).to eq(75)
-    end
-
-    it 'returns frozen weight_inputs hash' do
-      snap = build
-      lane = lane_stub(tier: :frontier, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
-      expect(snap.weight_inputs_for(lane: lane)).to be_frozen
-    end
-
-    it 'returns zero tier weight when tier weight is zero (disabled)' do
-      routing = valid_routing.merge(tier_weights: valid_routing[:tier_weights].merge(fleet: 0))
-      snap = build(llm_settings: valid_llm_settings.merge(routing: routing))
-      lane = lane_stub(tier: :fleet, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
-      expect(snap.weight_inputs_for(lane: lane)[:tier]).to eq(0)
-    end
-  end
-
-  # ------------------------------------------------------------------ #
   # preferred_context_range_for                                         #
   # ------------------------------------------------------------------ #
 
@@ -423,7 +346,7 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
   end
 
   # ------------------------------------------------------------------ #
-  # Cascade legs — weight + preferred range keyed by config name        #
+  # Cascade legs — preferred range keyed by config name                 #
   # ------------------------------------------------------------------ #
 
   describe 'cascade legs' do
@@ -436,35 +359,6 @@ RSpec.describe Legion::LLM::Router::SettingsSnapshot do
         model:           model,
         offering_id:     offering_id
       )
-    end
-
-    it 'resolves the instance-scoped models.<model> weight before the provider-scoped one' do
-      ext = {
-        llm: {
-          vllm: {
-            models:    { 'gemma4' => { weight: 50 } },
-            instances: { 'h200' => { models: { 'gemma4' => { weight: 150 } } } }
-          }
-        }
-      }
-      snap = build(extension_settings: ext)
-      lane = lane_stub(tier: :local, provider_family: :vllm, instance_id: 'h200', model: 'gemma4')
-      expect(snap.weight_inputs_for(lane: lane)[:model_or_offering]).to eq(150)
-    end
-
-    it 'still prefers the offering weight over any model-scope weight' do
-      ext = {
-        llm: {
-          vllm: {
-            offerings: { 'off:v1:xyz' => { weight: 300 } },
-            instances: { 'h200' => { models: { 'gemma4' => { weight: 150 } } } }
-          }
-        }
-      }
-      snap = build(extension_settings: ext)
-      lane = lane_stub(tier: :local, provider_family: :vllm, instance_id: 'h200',
-                       model: 'gemma4', offering_id: 'off:v1:xyz')
-      expect(snap.weight_inputs_for(lane: lane)[:model_or_offering]).to eq(300)
     end
 
     it 'resolves a preferred range from a provider-level leg' do

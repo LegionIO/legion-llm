@@ -37,8 +37,26 @@ RSpec.describe 'Mid-stream failover is silent (P5)' do
     end.new
   end
 
-  let(:lane_a) { { id: 'cloud:bedrock:primary:inference:claude-sonnet-4-6', provider_family: :bedrock } }
-  let(:lane_b) { { id: 'frontier:anthropic:default:inference:claude-sonnet-4-6', provider_family: :anthropic } }
+  let(:lane_a) do
+    {
+      id:              'cloud:bedrock:primary:inference:claude-sonnet-4-6',
+      tier:            :cloud,
+      provider_family: :bedrock,
+      instance_id:     :primary,
+      type:            :inference,
+      model:           'claude-sonnet-4-6'
+    }
+  end
+  let(:lane_b) do
+    {
+      id:              'frontier:anthropic:default:inference:claude-sonnet-4-6',
+      tier:            :frontier,
+      provider_family: :anthropic,
+      instance_id:     :default,
+      type:            :inference,
+      model:           'claude-sonnet-4-6'
+    }
+  end
 
   describe 'StreamAssembler construction' do
     it 'requires non-nil initial_lane — raises ArgumentError when nil' do

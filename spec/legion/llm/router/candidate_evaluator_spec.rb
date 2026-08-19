@@ -91,6 +91,27 @@ RSpec.describe Legion::LLM::Router::CandidateEvaluator, :ssot_v3 do
     end
   end
 
+  describe 'stored lane weight' do
+    it 'disables a lane when any stored component is zero' do
+      weight_inputs = { tier: 100, provider: 100, instance: 0, model_or_offering: 100 }
+      activate(
+        provider_family: 'vllm',
+        instance_id:     'disabled',
+        drafts:          [offering_draft(
+          model: 'gemma4', supported: %i[chat],
+          weight_inputs: weight_inputs, base_weight: 0
+        )]
+      )
+
+      result    = call_evaluator(build_requirements, [], snapshot)
+      candidate = result.candidates.first
+
+      expect(candidate.weight_state).to eq(:disabled)
+      expect(candidate.weight_inputs).to be_nil
+      expect(candidate.ready?).to be(false)
+    end
+  end
+
   describe 'unsupported operation' do
     before do
       activate(

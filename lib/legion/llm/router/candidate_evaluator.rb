@@ -48,6 +48,15 @@ module Legion
                       "candidates=#{candidates.size} " \
                       "pub_statuses=#{publication_statuses.size} " \
                       "generation=#{snapshot.generation}")
+            log.debug('[llm][candidate_evaluator] action=evaluated_summary ' \
+                      "ready=#{candidates.count(&:ready?)} " \
+                      "not_ready=#{candidates.count { |c| !c.ready? }} " \
+                      "policy_denied=#{candidates.count { |c| !c.ready? && c.policy_state == :denied }} " \
+                      "capability_failed=#{candidates.count { |c| !c.ready? && c.capability_state != :supported }} " \
+                      "context_rejected=#{candidates.count { |c| !c.ready? && !%i[fits not_applicable].include?(c.context_state) }} " \
+                      "unavailable=#{candidates.count { |c| !c.ready? && c.availability_state == :unavailable }} " \
+                      "excluded=#{candidates.count { |c| !c.ready? && c.exclusion_state == :excluded }} " \
+                      "weight_disabled=#{candidates.count { |c| !c.ready? && c.weight_state == :disabled }}")
 
             EvaluationSet.new(
               candidates:           candidates,
@@ -109,11 +118,8 @@ module Legion
             # Step 9 — fleet contract marker when tier is :fleet
             fleet_contract_state = evaluate_fleet_contract(offering: offering)
 
-            # Step 10 — configured weight components
-            weight_state, weight_inputs = evaluate_weight(
-              lane:              lane,
-              settings_snapshot: settings_snapshot
-            )
+            # Step 10 — stored write-time weight components
+            weight_state, weight_inputs = evaluate_weight(lane: lane)
 
             # Soft sieve input for Ranker §10.1
             preferred_context_match = evaluate_preferred_context(
@@ -355,15 +361,15 @@ module Legion
             end
           end
 
-          # §9.7 step 10 — configured weight components.
+          # §9.7 step 10 — stored write-time weight components.
           # Any zero component → :disabled with nil weight_inputs.
           # All positive → :enabled with frozen weight_inputs Hash.
           # Nil lane (unsupported/unknown operation) → :disabled.
-          def evaluate_weight(lane:, settings_snapshot:)
+          def evaluate_weight(lane:)
             return [:disabled, nil] if lane.nil?
 
-            inputs = settings_snapshot.weight_inputs_for(lane: lane)
-            if inputs.values.any?(&:zero?)
+            inputs = lane.weight_inputs
+            if inputs.nil? || inputs.values.any?(&:zero?)
               [:disabled, nil]
             else
               [:enabled, inputs]

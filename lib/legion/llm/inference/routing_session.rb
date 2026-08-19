@@ -72,6 +72,8 @@ module Legion
         # remove or overwrite a consumed attempt-target exclusion.
         def add_exclusion(exclusion:)
           @exclusions << exclusion
+          log.debug("[llm][routing_session] action=exclusion_added kind=#{exclusion.target_kind} " \
+                    "reason=#{exclusion.reason} target_kind_seen=#{exclusion.target_kind}")
           exclusion
         end
 
@@ -85,6 +87,8 @@ module Legion
           )
           apply_global_transition(action.global_transition) if action.global_transition
           action.exclusions.each { |ex| add_exclusion(exclusion: ex) }
+          log.debug("[llm][routing_session] action=outcome_classified kind=#{dispatch_result.outcome.kind} " \
+                    "disposition=#{action.disposition} exclusions_added=#{action.exclusions.size}")
           action
         end
 
@@ -109,6 +113,7 @@ module Legion
             target_kind: :attempt_target, target: key, reason: 'attempt_consumed',
             evidence: { attempt_number: @attempt_count }, lifetime: :request
           )
+          log.debug("[llm][routing_session] action=attempt_consumed attempt_number=#{@attempt_count} target=#{key}")
         end
 
         def apply_global_transition(transition)

@@ -16,9 +16,10 @@ module Legion
         extend Legion::Logging::Helper
 
         ENVELOPE_KEYS = %i[
-          app_id caller correlation_id expires_at idempotency_key identity message_context operation
-          model priority protocol_version provider provider_instance reply_to request_id routing_key
-          signed_token timeout timeout_seconds trace_context ttl
+          app_id caller correlation_id expires_at execution_contract idempotency_key identity
+          message_context offering_id operation model priority protocol_version provider
+          provider_instance reply_to request_id routing_key signed_token timeout timeout_seconds
+          trace_context ttl
         ].freeze
         LEGACY_FIELDS = %i[schema_version request_type fleet_correlation_id].freeze
 
@@ -96,6 +97,18 @@ module Legion
             expires_at:        (Time.now.utc + timeout).iso8601,
             ttl:               effective_ttl(request_opts, timeout)
           }
+          execution_contract = fetch_option(request_opts, :execution_contract)
+          unless execution_contract.nil?
+            unless execution_contract == ::Legion::Extensions::Llm::Fleet::Protocol::EXACT_EXECUTION_CONTRACT
+              raise ArgumentError, "unknown fleet execution_contract marker: #{execution_contract.inspect}"
+            end
+
+            offering_id = fetch_option(request_opts, :offering_id)
+            raise ArgumentError, 'exact execution contract requires a nonempty String offering_id' unless offering_id.is_a?(String) && !offering_id.strip.empty?
+
+            envelope[:execution_contract] = execution_contract
+            envelope[:offering_id] = offering_id
+          end
           envelope[:signed_token] = dispatch_auth_required? ? TokenIssuer.issue(envelope) : 'unsigned'
           envelope
         end

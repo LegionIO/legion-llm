@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'digest'
+require 'legion/extensions/llm/taxonomies'
 
 module Legion
   module LLM
@@ -66,12 +67,22 @@ module Legion
           log.debug("[llm][ranker] action=rank ready_count=#{ready.size} " \
                     "seed=#{@requirements.routing_seed[0, 8]}...")
 
-          # Step 2 (§10.1): preferred-context soft sieve.
-          sieved = preferred_context_sieve(ready)
+          # Two-pass band ordering (preferred != required): pass 1 ranks the in-band
+          # lanes; pass 2 (only when pass 1 is empty) ranks everything else,
+          # band-ignoring. No lane is excluded by the band -- the band is a priority,
+          # not a filter. Only the selected pass is computed, so the ranked log lines
+          # are exactly the lanes eligible for this attempt.
+          in_band, out_of_band = band_partition(ready)
+
+          log.debug("[llm][ranker] action=preferred_band_partition ready=#{ready.size} " \
+                    "in_band=#{in_band.size} out_of_band=#{out_of_band.size}")
 
           # Steps 3–4 (§10.2 + D17): base weight, affinity, effective weight.
           # Step 5 (§10.3): rendezvous score.
-          ranked = compute_ranked(sieved)
+          # Pass 1 wins if non-empty; otherwise pass 2. Within a pass: greatest
+          # effective_weight bucket -> greatest rendezvous score -> ascending lane_id.
+          ranked = compute_ranked(in_band) if in_band.any?
+          ranked ||= compute_ranked(out_of_band)
 
           # Select the winner (greatest effective_weight bucket → greatest rendezvous
           # score → lexicographically ascending lane_id for cryptographically
@@ -85,24 +96,22 @@ module Legion
         # §10.1 Preferred-context soft sieve                                   #
         # ------------------------------------------------------------------ #
 
-        def preferred_context_sieve(ready)
-          budget     = @requirements.required_context_budget
-          with_range = ready.map { |c| [c, @settings_snapshot.preferred_context_range_for(lane: c.lane)] }
-
-          # `with_range` is an array of [candidate, range|nil] pairs. A lane with
-          # no preferred range is a generalist; a lane whose range contains the
-          # budget matches. The nil guard is folded into the match select on
-          # purpose: `with_range.compact`/`reject { |_, r| r.nil? }` would misfire
-          # (Style/CollectionCompact treats it as hash semantics) and leave nil
-          # ranges in, which then crash range_contains? with `nil[:min]`.
-          generalist = with_range.select { |_, r| r.nil? }.map(&:first)
-          matching   = with_range.select { |_, r| r && range_contains?(r, budget) }.map(&:first)
-
-          # Preferred range is soft: never makes any lane hard-ineligible.
-          return matching   unless matching.empty?
-          return generalist unless generalist.empty?
-
-          ready
+        # Partition ready candidates by preferred-band containment. A lane with no
+        # configured range is out_of_band (generalist). A lane whose range does not
+        # contain the budget is also out_of_band -- never excluded.
+        def band_partition(ready)
+          budget      = @requirements.required_context_budget
+          in_band     = []
+          out_of_band = []
+          ready.each do |candidate|
+            range = @settings_snapshot.preferred_context_range_for(lane: candidate.lane)
+            if range && range_contains?(range, budget)
+              in_band << candidate
+            else
+              out_of_band << candidate
+            end
+          end
+          [in_band, out_of_band]
         end
 
         # True when +budget+ falls within the (nil-open) range [min, max) —
@@ -118,42 +127,31 @@ module Legion
         # ------------------------------------------------------------------ #
 
         def compute_ranked(candidates)
-          # Precompute the tier boost value once; it is the same for every candidate.
-          tier_max_plus_one = @settings_snapshot.tier_weights.values.max + 1
-
           candidates.map do |candidate|
-            wi    = build_weight_inputs(candidate, tier_max_plus_one)
-            base  = wi.values.reduce(1, :*)
+            # Stored write-time scalar: the operator's tier/provider/instance/model
+            # weights are baked in by the inventory writer. The former request-time
+            # tier_preference substitution is deliberately removed: applying a tier
+            # component to the stored scalar would double-count that axis. A future
+            # request-time tier preference requires a first-class ppm-domain term.
+            base  = candidate.lane.base_weight
             ppm   = compute_preference_ppm(candidate)
             eff   = base * ppm
             score = rendezvous_score(candidate)
 
-            log.debug("[llm][ranker] action=ranked lane=#{candidate.lane.lane_id[0, 20]}... " \
+            lane = candidate.lane
+            log.debug('[llm][ranker] action=ranked ' \
+                      "lane=#{lane.tier}:#{lane.provider_family}:#{lane.instance_id}:#{lane_type_for(lane.operation)}:#{lane.model} " \
                       "base=#{base} ppm=#{ppm} eff=#{eff}")
 
             RankedCandidate.new(
               evaluation:       candidate,
-              weight_inputs:    wi,
+              weight_inputs:    candidate.lane.weight_inputs,
               base_weight:      base,
               preference_ppm:   ppm,
               effective_weight: eff,
               rendezvous_score: score
             )
           end
-        end
-
-        # §10.2: optionally substitute the tier weight for the preferred tier.
-        # All other components are taken verbatim from the evaluation-time snapshot.
-        def build_weight_inputs(candidate, tier_max_plus_one)
-          base_wi = candidate.weight_inputs
-          tier_w  = if @requirements.tier_preference &&
-                       candidate.lane.tier == @requirements.tier_preference
-                      tier_max_plus_one
-                    else
-                      base_wi[:tier]
-                    end
-          { tier: tier_w, provider: base_wi[:provider],
-            instance: base_wi[:instance], model_or_offering: base_wi[:model_or_offering] }.freeze
         end
 
         # §10.2/D17: compute preference_ppm using integer floor division throughout.
@@ -216,7 +214,16 @@ module Legion
         def select_winner(ranked)
           max_ew = ranked.map(&:effective_weight).max
           bucket = ranked.select { |rc| rc.effective_weight == max_ew }
-          bucket.min_by { |rc| [-rc.rendezvous_score, rc.evaluation.lane.lane_id] }
+          winner = bucket.min_by { |rc| [-rc.rendezvous_score, rc.evaluation.lane.lane_id] }
+          lane = winner.evaluation.lane
+          log.debug('[llm][ranker] action=selected ' \
+                    "lane=#{lane.tier}:#{lane.provider_family}:#{lane.instance_id}:#{lane_type_for(lane.operation)}:#{lane.model} " \
+                    "eff=#{winner.effective_weight}")
+          winner
+        end
+
+        def lane_type_for(operation)
+          Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: operation)
         end
       end
     end

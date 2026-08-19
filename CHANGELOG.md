@@ -1,5 +1,35 @@
 # Legion LLM Changelog
 
+## [0.16.8] - 2026-08-19
+
+### Fixed
+- **Routing consumes the SSOT lane's write-time weight.** The stateless ranker reads the immutable 100-based `weight_inputs`/`base_weight` pair published on `LaneRecord`; request-time settings recomputation and the dormant tier-component substitution are removed.
+- **Zero-weight disable remains explicit.** Any zero stored component disables the lane before ranking, while health remains the binary availability axis.
+- **Exact fleet streaming preserves the selected operation.** SSOT fleet dispatch now sources `operation` from the immutable selection, verifies it against the bound lane before envelope construction, and signs `stream_chat` through to the worker's exact stream callable instead of silently executing the chat lane.
+
+## [0.16.7] - 2026-08-19
+
+### Fixed
+- **Preferred-context bands now order without excluding.** Routing ranks in-band lanes first, then ranks every remaining ready lane when no band matches. Out-of-band lanes are never dropped, while release-bar in-band steering remains intact.
+
+## [0.16.6] - 2026-08-19
+
+### Fixed
+- **Daemon faults stay terminal.** `NoMethodError`, `ArgumentError`, `NotImplementedError`, and `TypeError` are never laundered into retryable provider outcomes; caught daemon faults re-raise raw with the original backtrace.
+- **Lease lifecycle parity across sync and stream.** Retired or disposed callable handles classify as `instance_unavailable`, trigger the existing exact-instance transition/probe behavior, and retry a different eligible lane. Streaming preflight uses an explicit bounded loop and rejects before headers when the attempt budget is exhausted.
+
+## [0.16.5] - 2026-08-19
+
+### Fixed
+- **Shared SSOT dispatch-boundary contract.** Direct and fleet requests now project only provider-callable contract keys, fold the authoritative system prompt into canonical messages exactly once, and move non-contract generation parameters under `params`. Legacy/non-SSOT calls retain their original messages and options.
+- **Signed fleet exact execution.** SSOT fleet envelopes carry and sign `execution_contract: exact_offering_v1` plus a validated nonempty `offering_id`; both dispatcher and independently callable token issuer reject unknown markers instead of silently downgrading to legacy execution. Daemon-only offering metadata never crosses the provider boundary.
+
+## [0.16.4] - 2026-08-19
+
+### Changed
+- **Human-readable SSOT routing identities.** Ranked, selected, failed-attempt, streaming preflight, and streaming failover decision logs now carry the Inventory five-tuple (`tier:provider:instance:type:model`) instead of opaque `lane:v1:` hashes. StreamAssembler preserves historically accepted public lane inputs while redacting incomplete or malformed identities as `lane_identity_missing=true`; failover-chain state is unchanged.
+- **`lex-llm >= 0.7.4` floor.** Routing logs consume the shared authoritative operation-to-lane-type mapping rather than maintaining a daemon-local copy.
+
 ## [0.16.3] - 2026-08-17
 
 ### Changed

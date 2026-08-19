@@ -108,7 +108,8 @@ module SsotV3SnapshotFactory
   def offering_draft(
     model:, native: nil, tier: :local, supported: %i[chat], unsupported: [],
     capabilities: {}, context: nil, max_output: nil, embedding_dimensions: nil,
-    model_revision: nil, tokenizer: nil, quota_domains: {}, metadata: {}
+    model_revision: nil, tokenizer: nil, quota_domains: {}, metadata: {},
+    weight_inputs: nil, base_weight: nil
   )
     inventory::OfferingDraft.new(
       provider_native_key:           native || model,
@@ -123,7 +124,9 @@ module SsotV3SnapshotFactory
       tokenizer_evidence:            tokenizer.nil? ? unknown_value : known_value(tokenizer),
       quota_domains:                 quota_domains,
       metadata:                      metadata,
-      publication_source:            :provider_catalog
+      publication_source:            :provider_catalog,
+      weight_inputs:                 weight_inputs,
+      base_weight:                   base_weight
     )
   end
 
