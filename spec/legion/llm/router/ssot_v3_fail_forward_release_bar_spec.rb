@@ -129,30 +129,45 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
     @tokens['vllm/helios-0001'] = publish(
       instance_key: keyed_instance(provider_family: 'vllm', instance_id: 'helios-0001', physical_id: HELIOS_ENDPOINT),
       drafts:       [offering_draft(model: 'helios-model', tier: :direct, supported: %i[chat stream_chat],
-                                    capabilities: vllm_caps, context: 294_912)]
+                                    capabilities: vllm_caps, context: 294_912,
+                                    weight_inputs: { tier: 150, provider: 100, instance: 115,
+                                                     model_or_offering: 100 },
+                                    base_weight: 172_500_000)]
     )
     @tokens['vllm/h200'] = publish(
       instance_key: keyed_instance(provider_family: 'vllm', instance_id: 'h200', physical_id: '10.0.1.12:8000'),
       drafts:       [offering_draft(model: 'h200-model', tier: :direct, supported: %i[chat stream_chat],
-                                    capabilities: vllm_caps, context: 49_152)]
+                                    capabilities: vllm_caps, context: 49_152,
+                                    weight_inputs: { tier: 150, provider: 100, instance: 110,
+                                                     model_or_offering: 100 },
+                                    base_weight: 165_000_000)]
     )
     @tokens['vllm/v100'] = publish(
       instance_key: keyed_instance(provider_family: 'vllm', instance_id: 'v100', physical_id: '10.0.1.13:8000'),
       drafts:       [offering_draft(model: 'v100-model', tier: :direct, supported: %i[chat stream_chat],
-                                    capabilities: vllm_caps, context: 4_608)]
+                                    capabilities: vllm_caps, context: 4_608,
+                                    weight_inputs: { tier: 150, provider: 100, instance: 111,
+                                                     model_or_offering: 100 },
+                                    base_weight: 166_500_000)]
     )
     # bedrock uais: its claude model attests thinking.
     @tokens['bedrock/uais'] = publish(
       instance_key: keyed_instance(provider_family: 'bedrock', instance_id: 'uais', physical_id: 'us-east-1'),
       drafts:       [offering_draft(model: 'anthropic.claude-sonnet-4-5', tier: :cloud, supported: %i[chat stream_chat],
                                     capabilities: { streaming: :supported, tools: :supported, thinking: :supported },
-                                    context: 200_000)]
+                                    context: 200_000,
+                                    weight_inputs: { tier: 110, provider: 100, instance: 100,
+                                                     model_or_offering: 100 },
+                                    base_weight: 110_000_000)]
     )
     # ollama: two config names on ONE physical endpoint; tools/thinking :unknown.
     @tokens['ollama/apollo'] = publish(
       instance_key: keyed_instance(provider_family: 'ollama', instance_id: 'apollo', physical_id: APOLLO_ENDPOINT),
       drafts:       [offering_draft(model: 'gemma3', tier: :local, supported: %i[chat stream_chat],
-                                    capabilities: { streaming: :supported }, context: 32_768)]
+                                    capabilities: { streaming: :supported }, context: 32_768,
+                                    weight_inputs: { tier: 140, provider: 100, instance: 100,
+                                                     model_or_offering: 100 },
+                                    base_weight: 140_000_000)]
     )
     # Embedding model: chat is authoritatively :unsupported (decision 6).
     @tokens['ollama/apollo-embed'] = publish(
@@ -160,7 +175,10 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
       drafts:       [offering_draft(model: 'nomic-embed', tier: :local, supported: %i[embed],
                                     unsupported: %i[chat stream_chat],
                                     capabilities: { embedding: :supported, streaming: :supported },
-                                    context: 8_192, embedding_dimensions: [768])]
+                                    context: 8_192, embedding_dimensions: [768],
+                                    weight_inputs: { tier: 140, provider: 100, instance: 100,
+                                                     model_or_offering: 100 },
+                                    base_weight: 140_000_000)]
     )
   end
 
@@ -264,8 +282,8 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
       expect(result.instance_id).to eq('helios-0001')
       expect(result.model).to eq('helios-model')
       # Name-keyed weight resolved into the decision inputs (150 direct x 115 instance).
-      expect(result.weight_inputs).to eq(tier: 150, provider: 1, instance: 115, model_or_offering: 1)
-      expect(result.base_weight).to eq(17_250)
+      expect(result.weight_inputs).to eq(tier: 150, provider: 100, instance: 115, model_or_offering: 100)
+      expect(result.base_weight).to eq(172_500_000)
     end
   end
 
@@ -314,8 +332,8 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
       sel = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_MAIN), budget: 0))
       expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
       expect(sel.instance_id).to eq('helios-0001')
-      expect(sel.weight_inputs).to eq(tier: 150, provider: 1, instance: 115, model_or_offering: 1)
-      expect(sel.base_weight).to eq(17_250)
+      expect(sel.weight_inputs).to eq(tier: 150, provider: 100, instance: 115, model_or_offering: 100)
+      expect(sel.base_weight).to eq(172_500_000)
 
       # Deterministic across seeds: weight picks the winner, not the rendezvous tie-break.
       again = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_ALT), budget: 0))

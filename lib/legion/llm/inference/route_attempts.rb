@@ -7,6 +7,10 @@ module Legion
     module Inference
       # Shared executor helpers for direct/fleet provider dispatch attempt metadata.
       module RouteAttempts
+        CONTRACT_OPTION_KEYS = %i[tools temperature params headers schema thinking tool_prefs].freeze
+        NONCONTRACT_GENERATION_KEYS = %i[top_p top_k frequency_penalty presence_penalty seed].freeze
+        private_constant :CONTRACT_OPTION_KEYS, :NONCONTRACT_GENERATION_KEYS
+
         private
 
         def fleet_dispatch?
@@ -16,12 +20,12 @@ module Legion
         def dispatch_provider_request(capability:, operation:, messages:, stream_block: nil)
           raw_options = native_dispatch_options
           dispatch_messages, dispatch_options = if @current_attempt_context
-                                                   project_dispatch_arguments(
-                                                     messages: messages, options: raw_options
-                                                   )
-                                                 else
-                                                   [messages, raw_options]
-                                                 end
+                                                  project_dispatch_arguments(
+                                                    messages: messages, options: raw_options
+                                                  )
+                                                else
+                                                  [messages, raw_options]
+                                                end
           if fleet_dispatch?
             log.debug "[llm][route_attempts] action=dispatch path=fleet provider=#{@resolved_provider} model=#{@resolved_model} operation=#{operation}"
             dispatch_fleet_request(
@@ -231,18 +235,13 @@ module Legion
         def exact_execution_envelope_fields
           return {} unless @current_attempt_context
 
-          unless @resolved_offering_id.is_a?(String) && !@resolved_offering_id.strip.empty?
-            raise ArgumentError, 'SSOT fleet dispatch requires a nonempty String resolved offering_id'
-          end
+          raise ArgumentError, 'SSOT fleet dispatch requires a nonempty String resolved offering_id' unless @resolved_offering_id.is_a?(String) && !@resolved_offering_id.strip.empty?
 
           {
             execution_contract: ::Legion::Extensions::Llm::Fleet::Protocol::EXACT_EXECUTION_CONTRACT,
             offering_id:        @resolved_offering_id
           }
         end
-
-        CONTRACT_OPTION_KEYS = %i[tools temperature params headers schema thinking tool_prefs].freeze
-        NONCONTRACT_GENERATION_KEYS = %i[top_p top_k frequency_penalty presence_penalty seed].freeze
 
         def project_dispatch_arguments(messages:, options:)
           system_text = options[:system].to_s
@@ -253,9 +252,8 @@ module Legion
                    end
           projected = options.slice(*CONTRACT_OPTION_KEYS)
           params = projected[:params]
-          unless params.nil? || params.is_a?(Hash)
-            raise ArgumentError, "dispatch params must be a Hash, got #{params.class}"
-          end
+          raise ArgumentError, "dispatch params must be a Hash, got #{params.class}" unless params.nil? || params.is_a?(Hash)
+
           extras = NONCONTRACT_GENERATION_KEYS.each_with_object({}) do |key, acc|
             acc[key] = options[key] if options.key?(key) && !options[key].nil?
           end

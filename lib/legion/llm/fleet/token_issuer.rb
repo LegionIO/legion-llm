@@ -68,9 +68,7 @@ module Legion
             end
 
             offering_id = payload[:offering_id]
-            unless offering_id.is_a?(String) && !offering_id.strip.empty?
-              raise TokenError, 'missing token claim source: nonempty String offering_id (exact execution marker present)'
-            end
+            raise TokenError, 'missing token claim source: nonempty String offering_id (exact execution marker present)' unless offering_id.is_a?(String) && !offering_id.strip.empty?
 
             claims[:execution_contract] = execution_contract
             claims[:offering_id] = offering_id

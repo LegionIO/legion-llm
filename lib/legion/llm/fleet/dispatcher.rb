@@ -104,9 +104,7 @@ module Legion
             end
 
             offering_id = fetch_option(request_opts, :offering_id)
-            unless offering_id.is_a?(String) && !offering_id.strip.empty?
-              raise ArgumentError, 'exact execution contract requires a nonempty String offering_id'
-            end
+            raise ArgumentError, 'exact execution contract requires a nonempty String offering_id' unless offering_id.is_a?(String) && !offering_id.strip.empty?
 
             envelope[:execution_contract] = execution_contract
             envelope[:offering_id] = offering_id

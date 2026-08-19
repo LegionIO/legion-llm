@@ -46,7 +46,13 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
     )
     lane_obj    = snap.lane(lane_id: lid)
     inst_obj    = snap.instance(instance_key: ik)
-    wi          = weight_inputs || settings_snap.weight_inputs_for(lane: lane_obj)
+    if weight_inputs
+      lane_obj = lane_obj.with(
+        weight_inputs: weight_inputs,
+        base_weight:   weight_inputs.values.reduce(1, :*)
+      )
+    end
+    wi = lane_obj.weight_inputs
 
     Legion::LLM::Router::CandidateEvaluation.new(
       offering:             offering,
@@ -200,17 +206,7 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
     let(:custom_settings) { settings_with(affinity_strength_bps: 100) }
 
     let(:candidate) do
-      # Use weight_inputs from the custom settings so weight_inputs_for uses the same snapshot.
-      ik       = instance_key(provider_family: 'vllm', instance_id: 'h200')
-      offering = snap.offerings_for(instance_key: ik).find { |o| o.model == 'gemma4' }
-      off_id   = offering.offering_id
-      lid      = inventory::Identity.lane_id(
-        instance_key: ik, operation: :chat, model: 'gemma4', offering_id: off_id
-      )
-      lane_obj = snap.lane(lane_id: lid)
-      wi       = custom_settings.weight_inputs_for(lane: lane_obj)
-      build_candidate(snap, provider_family: 'vllm', instance_id: 'h200', model: 'gemma4',
-                           weight_inputs: wi)
+      build_candidate(snap, provider_family: 'vllm', instance_id: 'h200', model: 'gemma4')
     end
 
     let(:eval_set) { build_eval_set(snap, candidate) }
@@ -793,29 +789,45 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
   # ------------------------------------------------------------------ #
 
   describe '§10.2 tier preference' do
-    it 'boosts the tier-preference lane above an otherwise-equal lane on a different tier' do
+    it 'does not rewrite the stored scalar when tier_preference matches the lane' do
+      weight_inputs = { tier: 140, provider: 100, instance: 100, model_or_offering: 100 }
       activate(provider_family: 'vllm', instance_id: 'h200',
-               drafts: [offering_draft(model: 'gemma4', tier: :local,    supported: %i[chat])])
-      activate(provider_family: 'vllm', instance_id: 'cloud1',
-               drafts: [offering_draft(model: 'gemma4', tier: :cloud,    supported: %i[chat])])
+               drafts: [offering_draft(
+                 model: 'gemma4', tier: :local, supported: %i[chat],
+                 weight_inputs: weight_inputs, base_weight: 140_000_000
+               )])
       snap = snapshot
 
-      # Same non-tier weights so tier is the differentiator.
       c_local = build_candidate(snap, provider_family: 'vllm', instance_id: 'h200',
-                                      model: 'gemma4',
-                                      weight_inputs: { tier: 110, provider: 1, instance: 1, model_or_offering: 1 })
-      c_cloud = build_candidate(snap, provider_family: 'vllm', instance_id: 'cloud1',
-                                      model: 'gemma4',
-                                      weight_inputs: { tier: 120, provider: 1, instance: 1, model_or_offering: 1 })
-      eval_set = build_eval_set(snap, c_local, c_cloud)
+                                      model: 'gemma4')
+      eval_set = build_eval_set(snap, c_local)
 
-      # Prefer :local → local tier gets tier_weights.values.max + 1 = 151.
-      # local effective: (151 * 1 * 1 * 1) * 1_000_000 > cloud: (120 * 1 * 1 * 1) * 1_000_000.
       reqs = fake_reqs(tier_preference: :local, routing_seed: '77' * 16)
       rc   = call_ranker(evaluation_set: eval_set, requirements: reqs)
-      expect(rc.evaluation.lane.instance_id).to eq('h200')
-      # The boosted tier component must be tier_weights.values.max + 1.
-      expect(rc.weight_inputs[:tier]).to eq(settings_snap.tier_weights.values.max + 1)
+      expect(rc.weight_inputs).to eq(weight_inputs)
+      expect(rc.base_weight).to eq(140_000_000)
+    end
+  end
+
+  describe 'stored write-time lane weight' do
+    it 'uses LaneRecord base_weight rather than recomputing from request settings' do
+      weight_inputs = { tier: 150, provider: 100, instance: 115, model_or_offering: 100 }
+      activate(provider_family: 'vllm', instance_id: 'helios-0001',
+               drafts: [offering_draft(
+                 model: 'helios-model', tier: :direct, supported: %i[chat],
+                 weight_inputs: weight_inputs, base_weight: 172_500_000
+               )])
+      snap      = snapshot
+      candidate = build_candidate(snap, provider_family: 'vllm', instance_id: 'helios-0001',
+                                        model: 'helios-model')
+
+      ranked = call_ranker(
+        evaluation_set: build_eval_set(snap, candidate),
+        requirements:   fake_reqs(routing_seed: '78' * 16)
+      )
+
+      expect(ranked.weight_inputs).to eq(weight_inputs)
+      expect(ranked.base_weight).to eq(172_500_000)
     end
   end
 end

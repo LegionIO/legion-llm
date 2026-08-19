@@ -249,10 +249,10 @@ module Legion
 
           identity = lane_identity(from)
           if identity
-            log.warn("[llm][stream_assembler] action=provider_failover_pending " \
+            log.warn('[llm][stream_assembler] action=provider_failover_pending ' \
                      "from=#{identity} request_id=#{@request_id}")
           else
-            log.warn("[llm][stream_assembler] action=provider_failover_pending " \
+            log.warn('[llm][stream_assembler] action=provider_failover_pending ' \
                      "lane_identity_missing=true request_id=#{@request_id}")
           end
           # Clear the partial canonical buffer — partial responses can't cross providers
@@ -283,7 +283,7 @@ module Legion
             log.info("[llm][stream_assembler] action=begin_dispatch lane=#{identity} " \
                      "request_id=#{@request_id}")
           else
-            log.warn("[llm][stream_assembler] action=begin_dispatch " \
+            log.warn('[llm][stream_assembler] action=begin_dispatch ' \
                      "lane_identity_missing=true request_id=#{@request_id}")
           end
         end

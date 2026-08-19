@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.16.8] - 2026-08-19
+
+### Fixed
+- **Routing consumes the SSOT lane's write-time weight.** The stateless ranker reads the immutable 100-based `weight_inputs`/`base_weight` pair published on `LaneRecord`; request-time settings recomputation and the dormant tier-component substitution are removed.
+- **Zero-weight disable remains explicit.** Any zero stored component disables the lane before ranking, while health remains the binary availability axis.
+
 ## [0.16.7] - 2026-08-19
 
 ### Fixed

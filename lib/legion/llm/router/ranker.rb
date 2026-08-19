@@ -127,44 +127,31 @@ module Legion
         # ------------------------------------------------------------------ #
 
         def compute_ranked(candidates)
-          # Precompute the tier boost value once; it is the same for every candidate.
-          tier_max_plus_one = @settings_snapshot.tier_weights.values.max + 1
-
           candidates.map do |candidate|
-            wi    = build_weight_inputs(candidate, tier_max_plus_one)
-            base  = wi.values.reduce(1, :*)
+            # Stored write-time scalar: the operator's tier/provider/instance/model
+            # weights are baked in by the inventory writer. The former request-time
+            # tier_preference substitution is deliberately removed: applying a tier
+            # component to the stored scalar would double-count that axis. A future
+            # request-time tier preference requires a first-class ppm-domain term.
+            base  = candidate.lane.base_weight
             ppm   = compute_preference_ppm(candidate)
             eff   = base * ppm
             score = rendezvous_score(candidate)
 
             lane = candidate.lane
-            log.debug("[llm][ranker] action=ranked " \
+            log.debug('[llm][ranker] action=ranked ' \
                       "lane=#{lane.tier}:#{lane.provider_family}:#{lane.instance_id}:#{lane_type_for(lane.operation)}:#{lane.model} " \
                       "base=#{base} ppm=#{ppm} eff=#{eff}")
 
             RankedCandidate.new(
               evaluation:       candidate,
-              weight_inputs:    wi,
+              weight_inputs:    candidate.lane.weight_inputs,
               base_weight:      base,
               preference_ppm:   ppm,
               effective_weight: eff,
               rendezvous_score: score
             )
           end
-        end
-
-        # §10.2: optionally substitute the tier weight for the preferred tier.
-        # All other components are taken verbatim from the evaluation-time snapshot.
-        def build_weight_inputs(candidate, tier_max_plus_one)
-          base_wi = candidate.weight_inputs
-          tier_w  = if @requirements.tier_preference &&
-                       candidate.lane.tier == @requirements.tier_preference
-                      tier_max_plus_one
-                    else
-                      base_wi[:tier]
-                    end
-          { tier: tier_w, provider: base_wi[:provider],
-            instance: base_wi[:instance], model_or_offering: base_wi[:model_or_offering] }.freeze
         end
 
         # §10.2/D17: compute preference_ppm using integer floor division throughout.
@@ -229,7 +216,7 @@ module Legion
           bucket = ranked.select { |rc| rc.effective_weight == max_ew }
           winner = bucket.min_by { |rc| [-rc.rendezvous_score, rc.evaluation.lane.lane_id] }
           lane = winner.evaluation.lane
-          log.debug("[llm][ranker] action=selected " \
+          log.debug('[llm][ranker] action=selected ' \
                     "lane=#{lane.tier}:#{lane.provider_family}:#{lane.instance_id}:#{lane_type_for(lane.operation)}:#{lane.model} " \
                     "eff=#{winner.effective_weight}")
           winner

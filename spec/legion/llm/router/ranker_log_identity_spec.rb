@@ -31,14 +31,13 @@ RSpec.describe 'SSOT v3 routing log lane identity', :ssot_v3 do
     lane = snap.each_lane.first
     offering = snap.offering(offering_id: lane.offering_id)
     instance = snap.instance(instance_key: lane.instance_key)
-    settings = Legion::LLM::Router::SettingsState.current
     Legion::LLM::Router::CandidateEvaluation.new(
       offering: offering, lane: lane, instance: instance,
       operation_state: :supported, pin_state: :match, policy_state: :allowed,
       capability_state: :supported, context_state: :not_applicable,
       dimension_state: :not_applicable, availability_state: :available,
       exclusion_state: :clear, fleet_contract_state: :not_applicable,
-      weight_state: :enabled, weight_inputs: settings.weight_inputs_for(lane: lane)
+      weight_state: :enabled, weight_inputs: lane.weight_inputs
     )
   end
 
@@ -55,8 +54,8 @@ RSpec.describe 'SSOT v3 routing log lane identity', :ssot_v3 do
     allow_any_instance_of(Legion::LLM::Router::Ranker).to receive(:log).and_return(logger)
 
     Legion::LLM::Router::Ranker.call(
-      evaluation_set: evaluation_set,
-      requirements: ranker_requirements,
+      evaluation_set:    evaluation_set,
+      requirements:      ranker_requirements,
       settings_snapshot: Legion::LLM::Router::SettingsState.current
     )
 

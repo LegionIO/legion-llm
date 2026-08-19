@@ -145,7 +145,7 @@ module Legion
                 )
               rescue Legion::Extensions::Llm::Inventory::Errors::StaleCallableError,
                      Legion::Extensions::Llm::Inventory::Errors::CallableDisposedError => e
-                log.warn("[llm][executor] action=ssot_v3_stream_preflight_stale_callable " \
+                log.warn('[llm][executor] action=ssot_v3_stream_preflight_stale_callable ' \
                          "class=#{e.class.name} message=#{e.message.to_s[0, 200]}")
                 @stream_session.classify(
                   dispatch_result: Legion::LLM::Call::SelectionDispatch::Result.failure(
@@ -160,7 +160,7 @@ module Legion
 
               populate_ssot_v3_resolved_state(attempt_context)
               lane = ssot_v3_stream_lane_hash(attempt_context)
-              log.info "[llm][executor] action=ssot_v3_stream_preflight_selected " \
+              log.info '[llm][executor] action=ssot_v3_stream_preflight_selected ' \
                        "lane=#{lane[:tier]}:#{lane[:provider_family]}:#{lane[:instance_id]}:#{lane[:type]}:#{lane[:model]} " \
                        "provider=#{@resolved_provider} model=#{@resolved_model}"
               return lane

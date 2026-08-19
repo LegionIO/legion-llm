@@ -23,7 +23,7 @@ RSpec.describe Legion::LLM::Router::Ranker, 'preferred-context band partition', 
       },
       extension_settings: {
         llm: {
-          vllm:   {
+          vllm:    {
             instances: {
               'helios-0001': {
                 weight: 115, preferred_min_context_tokens: 48_000,
@@ -51,13 +51,13 @@ RSpec.describe Legion::LLM::Router::Ranker, 'preferred-context band partition', 
     )
   end
 
-  def candidate(snap, settings, provider_family:, instance_id:, model:)
+  def candidate(snap, provider_family:, instance_id:, model:)
     ik       = instance_key(provider_family: provider_family, instance_id: instance_id)
     offering = snap.offerings_for(instance_key: ik).find { |entry| entry.model == model }
     lane_id  = inventory::Identity.lane_id(
       instance_key: ik, operation: :chat, model: model, offering_id: offering.offering_id
     )
-    lane     = snap.lane(lane_id: lane_id)
+    lane = snap.lane(lane_id: lane_id)
 
     Legion::LLM::Router::CandidateEvaluation.new(
       offering:             offering,
@@ -73,22 +73,34 @@ RSpec.describe Legion::LLM::Router::Ranker, 'preferred-context band partition', 
       exclusion_state:      :clear,
       fleet_contract_state: :not_applicable,
       weight_state:         :enabled,
-      weight_inputs:        settings.weight_inputs_for(lane: lane).freeze
+      weight_inputs:        lane.weight_inputs
     )
   end
 
-  def frozen_candidates(settings: band_settings)
+  def frozen_candidates(settings: band_settings, cloud_weight: 100)
+    helios_weights = { tier: 150, provider: 100, instance: 115, model_or_offering: 100 }
+    h200_weights   = { tier: 150, provider: 100, instance: 110, model_or_offering: 100 }
+    cloud_weights  = { tier: 110, provider: 100, instance: cloud_weight, model_or_offering: 100 }
     activate(provider_family: 'vllm', instance_id: 'helios-0001',
-             drafts: [offering_draft(model: 'helios-model', tier: :direct, supported: %i[chat])])
+             drafts: [offering_draft(
+               model: 'helios-model', tier: :direct, supported: %i[chat],
+               weight_inputs: helios_weights, base_weight: helios_weights.values.reduce(1, :*)
+             )])
     activate(provider_family: 'vllm', instance_id: 'h200',
-             drafts: [offering_draft(model: 'h200-model', tier: :direct, supported: %i[chat])])
+             drafts: [offering_draft(
+               model: 'h200-model', tier: :direct, supported: %i[chat],
+               weight_inputs: h200_weights, base_weight: h200_weights.values.reduce(1, :*)
+             )])
     activate(provider_family: 'bedrock', instance_id: 'uais',
-             drafts: [offering_draft(model: 'cloud-model', tier: :cloud, supported: %i[chat])])
-    snap     = snapshot
+             drafts: [offering_draft(
+               model: 'cloud-model', tier: :cloud, supported: %i[chat],
+               weight_inputs: cloud_weights, base_weight: cloud_weights.values.reduce(1, :*)
+             )])
+    snap = snapshot
     candidates = [
-      candidate(snap, settings, provider_family: 'vllm', instance_id: 'helios-0001', model: 'helios-model'),
-      candidate(snap, settings, provider_family: 'vllm', instance_id: 'h200', model: 'h200-model'),
-      candidate(snap, settings, provider_family: 'bedrock', instance_id: 'uais', model: 'cloud-model')
+      candidate(snap, provider_family: 'vllm', instance_id: 'helios-0001', model: 'helios-model'),
+      candidate(snap, provider_family: 'vllm', instance_id: 'h200', model: 'h200-model'),
+      candidate(snap, provider_family: 'bedrock', instance_id: 'uais', model: 'cloud-model')
     ]
     [snap, settings, candidates]
   end
@@ -127,7 +139,7 @@ RSpec.describe Legion::LLM::Router::Ranker, 'preferred-context band partition', 
 
   it 'does not rank pass 2 when pass 1 is non-empty' do
     settings = band_settings(cloud_weight: 10_000)
-    _snap, _settings, candidates = frozen_candidates(settings: settings)
+    _snap, _settings, candidates = frozen_candidates(settings: settings, cloud_weight: 10_000)
 
     winner = rank(settings: settings, candidates: candidates, budget: 10_000)
     expect(winner.evaluation.lane.instance_id).to eq('h200')
