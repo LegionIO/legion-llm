@@ -552,7 +552,7 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       expect(rc.evaluation.lane.instance_id).to eq('h200')
     end
 
-    it 'falls back to generalists when no range-specific candidate matches the budget' do
+    it 'ranks every ready candidate when no preferred band matches the budget' do
       custom_settings = Legion::LLM::Router::SettingsSnapshot.build(
         generation:         89,
         llm_settings:       {
@@ -587,14 +587,16 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       c_helios = build_candidate(snap, provider_family: 'vllm', instance_id: 'helios1', model: 'gemma4')
       eval_set = build_eval_set(snap, c_h200, c_helios)
 
-      # budget = 10_000 is ABOVE h200's range (100..500) → no match → fall back to helios1 (generalist).
+      # budget = 10_000 is ABOVE h200's range (100..500), so pass 1 is empty and
+      # pass 2 ranks both h200 and the generalist. The seeded rendezvous frame
+      # deterministically selects h200; neither lane is excluded by its band.
       reqs = fake_reqs(required_context_budget: 10_000, routing_seed: 'ff' * 16)
       rc   = described_class.call(
         evaluation_set:    eval_set,
         requirements:      reqs,
         settings_snapshot: custom_settings
       )
-      expect(rc.evaluation.lane.instance_id).to eq('helios1')
+      expect(rc.evaluation.lane.instance_id).to eq('h200')
     end
 
     it 'retains all ready candidates when there are no range-specific or generalist lanes (pure fallback)' do
@@ -683,14 +685,16 @@ RSpec.describe Legion::LLM::Router::Ranker, :ssot_v3 do
       c_helios = build_candidate(snap, provider_family: 'vllm', instance_id: 'helios1', model: 'gemma4')
       eval_set = build_eval_set(snap, c_h200, c_helios)
 
-      # budget = 1_000 == max → NOT in [100, 1_000) → fall back to the generalist.
+      # budget = 1_000 == max → NOT in [100, 1_000), leaving pass 1 empty.
+      # Pass 2 ranks both lanes and deterministically selects h200; this still
+      # proves that h200 was not treated as in-band at the upper bound.
       reqs = fake_reqs(required_context_budget: 1_000, routing_seed: '22' * 16)
       rc   = described_class.call(
         evaluation_set:    eval_set,
         requirements:      reqs,
         settings_snapshot: custom_settings
       )
-      expect(rc.evaluation.lane.instance_id).to eq('helios1')
+      expect(rc.evaluation.lane.instance_id).to eq('h200')
     end
 
     it 'seam: a budget one below the upper bound is inside the range' do

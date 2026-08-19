@@ -322,14 +322,17 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
       expect(again.instance_id).to eq('helios-0001')
     end
 
-    it 'ranks by weight bucket when no preferred range matches: local apollo (120) outranks cloud uais (110)' do
+    it 'ranks every ready lane by weight when no preferred range matches' do
       seed_frozen_world!
       sel = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_MAIN), budget: 0))
 
-      expect(sel.provider_family).to eq(:ollama)
-      expect(sel.instance_id).to eq('apollo')
-      expect(sel.model).to eq('gemma3')
-      expect(sel.weight_inputs[:tier]).to eq(120)
+      # No band contains zero, so pass 2 ranks all ready lanes. Direct helios
+      # (150 tier x 115 instance) outranks local apollo and cloud uais; ranged
+      # lanes remain eligible when their preferred band does not match.
+      expect(sel.provider_family).to eq(:vllm)
+      expect(sel.instance_id).to eq('helios-0001')
+      expect(sel.model).to eq('helios-model')
+      expect(sel.weight_inputs[:tier]).to eq(150)
     end
   end
 

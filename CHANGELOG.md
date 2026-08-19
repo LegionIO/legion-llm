@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.7] - 2026-08-19
+
+### Fixed
+- **Preferred-context bands now order without excluding.** Routing ranks in-band lanes first, then ranks every remaining ready lane when no band matches. Out-of-band lanes are never dropped, while release-bar in-band steering remains intact.
+
 ## [0.16.6] - 2026-08-19
 
 ### Fixed

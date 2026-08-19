@@ -67,12 +67,22 @@ module Legion
           log.debug("[llm][ranker] action=rank ready_count=#{ready.size} " \
                     "seed=#{@requirements.routing_seed[0, 8]}...")
 
-          # Step 2 (§10.1): preferred-context soft sieve.
-          sieved = preferred_context_sieve(ready)
+          # Two-pass band ordering (preferred != required): pass 1 ranks the in-band
+          # lanes; pass 2 (only when pass 1 is empty) ranks everything else,
+          # band-ignoring. No lane is excluded by the band -- the band is a priority,
+          # not a filter. Only the selected pass is computed, so the ranked log lines
+          # are exactly the lanes eligible for this attempt.
+          in_band, out_of_band = band_partition(ready)
+
+          log.debug("[llm][ranker] action=preferred_band_partition ready=#{ready.size} " \
+                    "in_band=#{in_band.size} out_of_band=#{out_of_band.size}")
 
           # Steps 3–4 (§10.2 + D17): base weight, affinity, effective weight.
           # Step 5 (§10.3): rendezvous score.
-          ranked = compute_ranked(sieved)
+          # Pass 1 wins if non-empty; otherwise pass 2. Within a pass: greatest
+          # effective_weight bucket -> greatest rendezvous score -> ascending lane_id.
+          ranked = compute_ranked(in_band) if in_band.any?
+          ranked ||= compute_ranked(out_of_band)
 
           # Select the winner (greatest effective_weight bucket → greatest rendezvous
           # score → lexicographically ascending lane_id for cryptographically
@@ -86,35 +96,22 @@ module Legion
         # §10.1 Preferred-context soft sieve                                   #
         # ------------------------------------------------------------------ #
 
-        def preferred_context_sieve(ready)
-          budget     = @requirements.required_context_budget
-          with_range = ready.map { |c| [c, @settings_snapshot.preferred_context_range_for(lane: c.lane)] }
-
-          # `with_range` is an array of [candidate, range|nil] pairs. A lane with
-          # no preferred range is a generalist; a lane whose range contains the
-          # budget matches. The nil guard is folded into the match select on
-          # purpose: `with_range.compact`/`reject { |_, r| r.nil? }` would misfire
-          # (Style/CollectionCompact treats it as hash semantics) and leave nil
-          # ranges in, which then crash range_contains? with `nil[:min]`.
-          generalist = with_range.select { |_, r| r.nil? }.map(&:first)
-          matching   = with_range.select { |_, r| r && range_contains?(r, budget) }.map(&:first)
-
-          # Preferred range is soft: never makes any lane hard-ineligible.
-          unless matching.empty?
-            log.debug("[llm][ranker] action=preferred_context_sieve budget=#{budget} " \
-                      "matching=#{matching.size} generalist=#{generalist.size} branch=matching")
+        # Partition ready candidates by preferred-band containment. A lane with no
+        # configured range is out_of_band (generalist). A lane whose range does not
+        # contain the budget is also out_of_band -- never excluded.
+        def band_partition(ready)
+          budget      = @requirements.required_context_budget
+          in_band     = []
+          out_of_band = []
+          ready.each do |candidate|
+            range = @settings_snapshot.preferred_context_range_for(lane: candidate.lane)
+            if range && range_contains?(range, budget)
+              in_band << candidate
+            else
+              out_of_band << candidate
+            end
           end
-          return matching unless matching.empty?
-
-          unless generalist.empty?
-            log.debug("[llm][ranker] action=preferred_context_sieve budget=#{budget} " \
-                      "matching=#{matching.size} generalist=#{generalist.size} branch=generalist")
-          end
-          return generalist unless generalist.empty?
-
-          log.debug("[llm][ranker] action=preferred_context_sieve budget=#{budget} " \
-                    "matching=#{matching.size} generalist=#{generalist.size} branch=ready")
-          ready
+          [in_band, out_of_band]
         end
 
         # True when +budget+ falls within the (nil-open) range [min, max) —
