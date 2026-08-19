@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.16.6] - 2026-08-19
+
+### Fixed
+- **Daemon faults stay terminal.** `NoMethodError`, `ArgumentError`, `NotImplementedError`, and `TypeError` are never laundered into retryable provider outcomes; caught daemon faults re-raise raw with the original backtrace.
+- **Lease lifecycle parity across sync and stream.** Retired or disposed callable handles classify as `instance_unavailable`, trigger the existing exact-instance transition/probe behavior, and retry a different eligible lane. Streaming preflight uses an explicit bounded loop and rejects before headers when the attempt budget is exhausted.
+
 ## [0.16.5] - 2026-08-19
 
 ### Fixed

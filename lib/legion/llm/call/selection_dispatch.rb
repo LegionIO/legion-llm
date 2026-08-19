@@ -58,16 +58,28 @@ module Legion
           lease = dispatch_lease || Legion::Extensions::Llm::Inventory::Registry.acquire(
             callable_handle: selection.callable_handle
           )
+          log.debug("[llm][selection_dispatch] action=lease_acquired handle=#{selection.callable_handle.handle_id} " \
+                    "lease=#{lease.lease_id}")
           callable = lease.callable
 
           begin
             Result.success(value: invocation.call(callable))
           rescue StandardError => e
+            log.warn("[llm][selection_dispatch] action=dispatch_failed class=#{e.class.name} " \
+                     "message=#{e.message.to_s[0, 200]}")
+            raise if daemon_fault?(e)
+
             Result.failure(outcome: normalize(callable: callable, error: e))
           ensure
             lease.release if owned_lease && !lease.released?
           end
         end
+
+        def self.daemon_fault?(error)
+          error.is_a?(::NoMethodError) || error.is_a?(::ArgumentError) ||
+            error.is_a?(::NotImplementedError) || error.is_a?(::TypeError)
+        end
+        private_class_method :daemon_fault?
 
         # Normalize a provider error through the exact callable's Phase 1
         # normalizer. A normalizer that raises or returns the wrong type is a
@@ -78,6 +90,8 @@ module Legion
             raise TypeError,
                   "normalize_dispatch_error returned #{outcome.class}, expected ProviderOutcome"
           end
+          log.warn("[llm][selection_dispatch] action=dispatch_normalized kind=#{outcome.kind} " \
+                   "reason=#{outcome.reason.to_s[0, 200]}")
           outcome
         rescue StandardError => e
           # Log the ORIGINAL dispatch error too — a normalizer that raises must never
@@ -87,6 +101,8 @@ module Legion
                               handled: false, lane_id: nil,
                               original_error_class: error.class.name,
                               original_error_message: error.message.to_s.dup.force_encoding(::Encoding::UTF_8).scrub('?')[0, 512])
+          log.warn("[llm][selection_dispatch] action=normalizer_failed class=#{e.class.name} " \
+                   "message=#{e.message.to_s[0, 200]}")
           raise
         end
         private_class_method :normalize

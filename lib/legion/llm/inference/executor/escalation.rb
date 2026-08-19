@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'faraday'
+require 'legion/extensions/llm/inventory/errors'
 require 'legion/extensions/llm/taxonomies'
 
 module Legion
@@ -86,8 +87,17 @@ module Legion
           def ssot_v3_execute_attempt
             execute_provider_request
             Legion::LLM::Call::SelectionDispatch::Result.success(value: @raw_response)
+          rescue Legion::Extensions::Llm::Inventory::Errors::StaleCallableError,
+                 Legion::Extensions::Llm::Inventory::Errors::CallableDisposedError => e
+            log.warn("[llm][executor] action=ssot_v3_stale_callable class=#{e.class.name} " \
+                     "message=#{e.message.to_s[0, 200]}")
+            Legion::LLM::Call::SelectionDispatch::Result.failure(
+              outcome: Legion::Extensions::Llm::Routing::ProviderOutcome.new(
+                kind: :instance_unavailable, reason: e.class.name
+              )
+            )
           rescue StandardError => e
-            raise e if non_provider_failure?(e)
+            raise if non_provider_failure?(e)
 
             outcome = @last_ssot_dispatch_outcome
             @last_ssot_dispatch_outcome = nil
@@ -121,20 +131,42 @@ module Legion
           # never an SSE server_error. Always selects (single engine) — an empty
           # Registry yields a typed Rejection, never a legacy fallback.
           def ssot_v3_stream_preflight
-            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
             @stream_session = Legion::LLM::Inference::RoutingSession.new(
               request: @request, requirements: @routing_requirements
             )
-            attempt_context = @stream_session.next_attempt!(snapshot: snap)
-            populate_ssot_v3_resolved_state(attempt_context)
-            @preflight_lease = Legion::Extensions::Llm::Inventory::Registry.acquire(
-              callable_handle: attempt_context.selection.callable_handle
-            )
-            lane = ssot_v3_stream_lane_hash(attempt_context)
-            log.info "[llm][executor] action=ssot_v3_stream_preflight_selected " \
-                     "lane=#{lane[:tier]}:#{lane[:provider_family]}:#{lane[:instance_id]}:#{lane[:type]}:#{lane[:model]} " \
-                     "provider=#{@resolved_provider} model=#{@resolved_model}"
-            lane
+            remaining = @routing_requirements.maximum_attempts
+            while remaining.positive?
+              remaining -= 1
+              snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+              attempt_context = @stream_session.next_attempt!(snapshot: snap)
+              begin
+                @preflight_lease = Legion::Extensions::Llm::Inventory::Registry.acquire(
+                  callable_handle: attempt_context.selection.callable_handle
+                )
+              rescue Legion::Extensions::Llm::Inventory::Errors::StaleCallableError,
+                     Legion::Extensions::Llm::Inventory::Errors::CallableDisposedError => e
+                log.warn("[llm][executor] action=ssot_v3_stream_preflight_stale_callable " \
+                         "class=#{e.class.name} message=#{e.message.to_s[0, 200]}")
+                @stream_session.classify(
+                  dispatch_result: Legion::LLM::Call::SelectionDispatch::Result.failure(
+                    outcome: Legion::Extensions::Llm::Routing::ProviderOutcome.new(
+                      kind: :instance_unavailable, reason: e.class.name
+                    )
+                  ),
+                  attempt_context: attempt_context
+                )
+                next
+              end
+
+              populate_ssot_v3_resolved_state(attempt_context)
+              lane = ssot_v3_stream_lane_hash(attempt_context)
+              log.info "[llm][executor] action=ssot_v3_stream_preflight_selected " \
+                       "lane=#{lane[:tier]}:#{lane[:provider_family]}:#{lane[:instance_id]}:#{lane[:type]}:#{lane[:model]} " \
+                       "provider=#{@resolved_provider} model=#{@resolved_model}"
+              return lane
+            end
+
+            raise Legion::LLM::Errors::RoutingRejected.new(rejection: attempts_exhausted_rejection)
           end
 
           # Lane Hash consumed by StreamAssembler (#initial_lane, #begin_dispatch_on,
@@ -212,7 +244,16 @@ module Legion
           def ssot_v3_stream_handle_failure(error:, session:, attempt_context:)
             raise error if non_provider_failure?(error)
 
-            outcome = ssot_v3_stream_failover_outcome(error)
+            outcome = if error.is_a?(Legion::Extensions::Llm::Inventory::Errors::StaleCallableError) ||
+                         error.is_a?(Legion::Extensions::Llm::Inventory::Errors::CallableDisposedError)
+                        log.warn("[llm][executor] action=ssot_v3_stream_stale_callable class=#{error.class.name} " \
+                                 "message=#{error.message.to_s[0, 200]}")
+                        Legion::Extensions::Llm::Routing::ProviderOutcome.new(
+                          kind: :instance_unavailable, reason: error.class.name
+                        )
+                      else
+                        ssot_v3_stream_failover_outcome(error)
+                      end
             action = session.classify(
               dispatch_result: Legion::LLM::Call::SelectionDispatch::Result.failure(outcome: outcome),
               attempt_context: attempt_context
@@ -328,7 +369,8 @@ module Legion
           # shared daemon code — retrying on a different lane guarantees the same crash. Classified as
           # terminal: raise immediately, never retry, never trip circuits, never push to tried_lanes.
           def internal_error?(err)
-            err.is_a?(::NoMethodError) || err.is_a?(::ArgumentError) || err.is_a?(::NotImplementedError)
+            err.is_a?(::NoMethodError) || err.is_a?(::ArgumentError) ||
+              err.is_a?(::NotImplementedError) || err.is_a?(::TypeError)
           end
 
           # SSE assembly / canonical parse / translation errors originate inside LegionIO's
