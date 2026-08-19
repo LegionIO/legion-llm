@@ -5,6 +5,7 @@
 ### Fixed
 - **Routing consumes the SSOT lane's write-time weight.** The stateless ranker reads the immutable 100-based `weight_inputs`/`base_weight` pair published on `LaneRecord`; request-time settings recomputation and the dormant tier-component substitution are removed.
 - **Zero-weight disable remains explicit.** Any zero stored component disables the lane before ranking, while health remains the binary availability axis.
+- **Exact fleet streaming preserves the selected operation.** SSOT fleet dispatch now sources `operation` from the immutable selection, verifies it against the bound lane before envelope construction, and signs `stream_chat` through to the worker's exact stream callable instead of silently executing the chat lane.
 
 ## [0.16.7] - 2026-08-19
 

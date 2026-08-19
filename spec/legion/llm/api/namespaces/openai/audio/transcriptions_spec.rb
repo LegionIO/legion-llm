@@ -122,10 +122,10 @@ RSpec.describe 'Namespaces::OpenAI::Audio::Transcriptions' do
       end
 
       it 'passes language hint to inference request' do
-        expect(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        expect(Legion::LLM::Inference::Request).to receive(:build).and_wrap_original do |original, **kwargs|
           expect(kwargs[:meta][:language]).to eq('fr')
-          Legion::LLM::Inference::Request.build(**kwargs)
-        end.and_call_original
+          original.call(**kwargs)
+        end
 
         post '/v1/audio/transcriptions',
              { model: 'whisper-1', file: 'fake_audio_data', language: 'fr' },

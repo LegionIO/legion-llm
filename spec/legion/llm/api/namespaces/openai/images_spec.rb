@@ -91,13 +91,13 @@ RSpec.describe 'Namespaces::OpenAI::Images' do
       end
 
       it 'passes prompt, model, n, size to inference request' do
-        expect(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        expect(Legion::LLM::Inference::Request).to receive(:build).and_wrap_original do |original, **kwargs|
           expect(kwargs[:routing][:model]).to eq('dall-e-3')
           expect(kwargs[:meta][:prompt]).to eq('a white siamese cat')
           expect(kwargs[:meta][:n]).to eq(1)
           expect(kwargs[:meta][:size]).to eq('1024x1024')
-          Legion::LLM::Inference::Request.build(**kwargs)
-        end.and_call_original
+          original.call(**kwargs)
+        end
 
         post '/v1/images/generations',
              Legion::JSON.dump({ prompt: 'a white siamese cat', n: 1, size: '1024x1024', model: 'dall-e-3' }),

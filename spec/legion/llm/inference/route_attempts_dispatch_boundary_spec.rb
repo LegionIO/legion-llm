@@ -39,9 +39,14 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
     end.new(fleet, context, raw_options, logger)
   end
 
+  def attempt_context(operation = :chat)
+    endpoint = Struct.new(:operation).new(operation)
+    Struct.new(:selection, :lane).new(endpoint, endpoint)
+  end
+
   it 'projects and folds once before both SSOT dispatch branches' do
     direct = harness(fleet: false, context: Object.new, raw_options: raw_options)
-    fleet = harness(fleet: true, context: Object.new, raw_options: raw_options)
+    fleet = harness(fleet: true, context: attempt_context, raw_options: raw_options)
 
     [direct, fleet].each do |subject|
       subject.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: messages)
@@ -77,6 +82,21 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
     expect do
       malformed.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: messages)
     end.to raise_error(ArgumentError, /dispatch params must be a Hash/)
+  end
+
+  it 'rejects a fleet selection/lane operation mismatch and preserves legacy fleet operation' do
+    selection = Struct.new(:operation).new(:stream_chat)
+    lane = Struct.new(:operation).new(:chat)
+    mismatch = Struct.new(:selection, :lane).new(selection, lane)
+    malformed = harness(fleet: true, context: mismatch, raw_options: raw_options)
+
+    expect do
+      malformed.send(:dispatch_provider_request, capability: :stream, operation: :chat, messages: messages)
+    end.to raise_error(ArgumentError, %r{selection/lane operation mismatch})
+
+    legacy = harness(fleet: true, context: nil, raw_options: raw_options)
+    legacy.send(:dispatch_provider_request, capability: :stream, operation: :chat, messages: messages)
+    expect(legacy.captured[:operation]).to eq(:chat)
   end
 
   describe 'fleet exact-execution envelope' do

@@ -27,9 +27,10 @@ module Legion
                                                   [messages, raw_options]
                                                 end
           if fleet_dispatch?
-            log.debug "[llm][route_attempts] action=dispatch path=fleet provider=#{@resolved_provider} model=#{@resolved_model} operation=#{operation}"
+            fleet_operation = ssot_v3_fleet_operation(operation)
+            log.debug "[llm][route_attempts] action=dispatch path=fleet provider=#{@resolved_provider} model=#{@resolved_model} operation=#{fleet_operation}"
             dispatch_fleet_request(
-              operation: operation, messages: dispatch_messages,
+              operation: fleet_operation, messages: dispatch_messages,
               dispatch_options: dispatch_options, stream_block: stream_block
             )
           else
@@ -149,6 +150,7 @@ module Legion
         end
 
         def dispatch_fleet_request(operation:, messages:, dispatch_options:, stream_block: nil)
+          validate_ssot_v3_fleet_operation!(operation)
           idempotency_key = next_route_idempotency_key
           selected_lane = fleet_selected_lane(operation)
           log.info "[llm][route_attempts] action=fleet_dispatch provider=#{@resolved_provider} model=#{@resolved_model} lane=#{selected_lane} operation=#{operation}"
@@ -184,6 +186,28 @@ module Legion
             selected_lane:   selected_lane
           )
           normalized
+        end
+
+        def ssot_v3_fleet_operation(requested_operation)
+          return requested_operation unless @current_attempt_context
+
+          selection_operation = @current_attempt_context.selection.operation
+          lane_operation = @current_attempt_context.lane.operation
+          unless selection_operation == lane_operation
+            raise ArgumentError,
+                  "SSOT fleet selection/lane operation mismatch: #{selection_operation.inspect} != #{lane_operation.inspect}"
+          end
+
+          selection_operation
+        end
+
+        def validate_ssot_v3_fleet_operation!(operation)
+          return unless @current_attempt_context
+          return if operation == @current_attempt_context.selection.operation
+
+          raise ArgumentError,
+                "SSOT fleet envelope operation mismatch: #{operation.inspect} != " \
+                "#{@current_attempt_context.selection.operation.inspect}"
         end
 
         def enforce_final_context_budget!(messages, dispatch_options)

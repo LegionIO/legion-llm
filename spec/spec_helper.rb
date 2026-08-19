@@ -4,7 +4,8 @@ require 'simplecov'
 require 'base64'
 ENV['LEGION_DNS_BOOTSTRAP'] = 'false'
 SimpleCov.start do
-  add_filter '/spec/'
+  skip '/spec/'
+  formatter SimpleCov::Formatter::HTMLFormatter.new(silent: true)
 end
 
 require 'webmock/rspec'

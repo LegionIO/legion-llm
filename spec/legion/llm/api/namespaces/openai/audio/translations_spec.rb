@@ -86,11 +86,11 @@ RSpec.describe 'Namespaces::OpenAI::Audio::Translations' do
       end
 
       it 'always targets English (no language param accepted)' do
-        expect(Legion::LLM::Inference::Request).to receive(:build) do |**kwargs|
+        expect(Legion::LLM::Inference::Request).to receive(:build).and_wrap_original do |original, **kwargs|
           expect(kwargs[:meta][:task]).to eq(:audio_translation)
           expect(kwargs[:meta][:target_language]).to eq('en')
-          Legion::LLM::Inference::Request.build(**kwargs)
-        end.and_call_original
+          original.call(**kwargs)
+        end
 
         post '/v1/audio/translations',
              { model: 'whisper-1', file: 'fake_audio_data', language: 'fr' },
