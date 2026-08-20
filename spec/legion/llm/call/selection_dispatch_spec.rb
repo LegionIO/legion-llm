@@ -30,6 +30,24 @@ RSpec.describe Legion::LLM::Call::SelectionDispatch, :ssot_v3 do
     [ctx, sel.callable_handle]
   end
 
+  def message_operation_contexts(callable:)
+    activate(
+      provider_family: 'openai', instance_id: 'env', callable: callable,
+      drafts: [offering_draft(model: 'gpt-test', supported: %i[chat stream_chat count_tokens])]
+    )
+    snap = snapshot
+    %i[chat stream_chat count_tokens].to_h do |operation|
+      selection = selection_for(
+        snapshot: snap, provider_family: 'openai', instance_id: 'env',
+        model: 'gpt-test', operation: operation
+      )
+      context = Legion::LLM::Inference::AttemptContext.build(
+        selection: selection, snapshot: snap, attempt_number: 1
+      )
+      [operation, context]
+    end
+  end
+
   describe 'Result' do
     it 'success carries value and a success outcome' do
       r = described_class::Result.success(value: { ok: true })
@@ -58,6 +76,63 @@ RSpec.describe Legion::LLM::Call::SelectionDispatch, :ssot_v3 do
     result = described.call(attempt_context: ctx, arguments: { messages: [{ role: 'user', content: 'hi' }] })
     expect(result).to be_success
     expect(result.value[:op]).to eq(:chat)
+    expect(handle.reference_count).to eq(0)
+  end
+
+  it 'rehydrates hash messages for every exact message operation without mutating the input' do
+    calls = []
+    callable = Class.new(SsotV3SnapshotFactory::FactoryCallable) do
+      define_method(:chat) do |messages:, model:, **|
+        calls << { operation: :chat, messages: messages, model: model }
+        { content: 'ok' }
+      end
+      define_method(:stream_chat) do |messages:, model:, **, &block|
+        calls << { operation: :stream_chat, messages: messages, model: model, block: block }
+        { content: 'ok' }
+      end
+      define_method(:count_tokens) do |messages:, model:, **|
+        calls << { operation: :count_tokens, messages: messages, model: model }
+        1
+      end
+    end.new
+    contexts = message_operation_contexts(callable: callable)
+    legacy_message = Legion::Extensions::Llm::Message.new(role: :assistant, content: 'legacy')
+    raw_messages = [
+      { role: 'system', content: 'rules' },
+      {
+        role: 'assistant', content: '', cache_control: { type: 'ephemeral' },
+        tool_calls: [{ id: 'call-1', name: 'lookup', arguments: { query: 'status' } }]
+      },
+      { 'role' => 'tool', 'tool_call_id' => 'call-1', 'content' => 'clean' },
+      legacy_message
+    ]
+    original = raw_messages[0, 3].map(&:dup)
+
+    contexts.each do |operation, context|
+      stream_block = proc { |_chunk| nil } if operation == :stream_chat
+      described.call(attempt_context: context, arguments: { messages: raw_messages }, &stream_block)
+    end
+
+    expect(calls.map { |call| call[:operation] }).to eq(%i[chat stream_chat count_tokens])
+    calls.each do |call|
+      expect(call[:messages][0, 3]).to all(be_a(Legion::Extensions::Llm::Canonical::Message))
+      expect(call[:messages].last).to equal(legacy_message)
+      expect(call[:messages].map(&:role)).to eq(%i[system assistant tool assistant])
+      expect(call[:messages][1].tool_calls.first.name).to eq('lookup')
+      expect(call[:messages][2].tool_call_id).to eq('call-1')
+      expect(call[:messages][1].to_h).not_to have_key(:cache_control)
+    end
+    expect(calls.find { |call| call[:operation] == :stream_chat }[:block]).to be_a(Proc)
+    expect(raw_messages[0, 3]).to eq(original)
+  end
+
+  it 'rejects an invalid hash message role before acquiring a callable lease' do
+    ctx = chat_context
+    handle = ctx.selection.callable_handle
+
+    expect do
+      described.call(attempt_context: ctx, arguments: { messages: [{ role: 'invalid', content: 'hi' }] })
+    end.to raise_error(ArgumentError, /Invalid role/)
     expect(handle.reference_count).to eq(0)
   end
 

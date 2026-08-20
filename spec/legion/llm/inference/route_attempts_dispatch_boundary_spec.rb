@@ -16,7 +16,13 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
       schema: nil, thinking: nil, tool_prefs: nil, top_p: 0.7, seed: 42
     }
   end
-  let(:messages) { [canonical::Message.build(role: :user, content: 'hello')] }
+  let(:messages) do
+    [
+      { role: :assistant, content: '', tool_calls: [{ id: 'call-1', name: 'lookup', arguments: { query: 'status' } }] },
+      { role: :tool, tool_call_id: 'call-1', content: 'clean' },
+      { role: :user, content: 'hello' }
+    ]
+  end
 
   def harness(fleet:, context:, raw_options:)
     Class.new do
@@ -51,6 +57,7 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
     [direct, fleet].each do |subject|
       subject.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: messages)
       captured = subject.captured
+      expect(captured[:messages]).to all(be_a(canonical::Message))
       expect(captured[:messages].count { |message| message.role == :system }).to eq(1)
       expect(captured[:messages].first.content).to eq('authoritative system')
       options = captured[:dispatch_options]
@@ -70,6 +77,30 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
 
     expect(subject.captured[:messages].count { |message| message.role == :system }).to eq(1)
     expect(subject.captured[:messages].first.content).to eq('round two continuation')
+  end
+
+  it 'canonicalizes every SSOT message even when no system text is present' do
+    subject = harness(fleet: false, context: Object.new, raw_options: raw_options.merge(system: nil))
+
+    subject.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: messages)
+
+    expect(subject.captured[:messages]).to all(be_a(canonical::Message))
+    expect(subject.captured[:messages].map(&:role)).to eq(%i[assistant tool user])
+    expect(subject.captured[:messages].first.tool_calls.first.name).to eq('lookup')
+  end
+
+  it 'replaces a leading hash system message exactly once without mutating the input' do
+    input = [{ role: :system, content: 'stale system' }, *messages]
+    original = input.map(&:dup)
+    subject = harness(fleet: false, context: Object.new, raw_options: raw_options)
+
+    subject.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: input)
+
+    projected = subject.captured[:messages]
+    expect(projected).to all(be_a(canonical::Message))
+    expect(projected.count { |message| message.role == :system }).to eq(1)
+    expect(projected.first.content).to eq('authoritative system')
+    expect(input).to eq(original)
   end
 
   it 'preserves non-SSOT messages and options exactly and rejects malformed SSOT params' do

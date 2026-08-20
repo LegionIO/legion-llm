@@ -76,6 +76,30 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
       result = Legion::JSON.load(last_response.body)
       expect(result[:data][:providers]).to eq([])
     end
+
+    it 'includes an activated SSOT provider absent from the compatibility call registry', :ssot_v3 do
+      allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([])
+      activate(
+        provider_family: :vllm,
+        instance_id:     'h200',
+        drafts:           [
+          offering_draft(
+            model:        'test-model',
+            tier:         :local,
+            supported:    %i[chat stream_chat],
+            capabilities: { tools: :supported, streaming: :supported }
+          )
+        ]
+      )
+
+      get '/api/llm/providers'
+
+      expect(last_response.status).to eq(200)
+      result = Legion::JSON.load(last_response.body)
+      expect(result[:data][:providers]).to include(
+        hash_including(provider: 'vllm', instance: 'h200', tier: 'local', native: true)
+      )
+    end
   end
 
   describe 'GET /api/llm/providers/:name' do

@@ -26,6 +26,26 @@ module Legion
         # constraints. `routing` is retained only as compatibility metadata.
         :routing_context, :body_model_hint_decision, :routing_settings_snapshot, :trusted_constraints
       ) do
+        # N x N law: Inference::Request#messages is Array<Canonical::Message>.
+        # Every pipeline entry (client translators, native/inference APIs,
+        # daemon-internal chat) funnels through build; canonical objects pass
+        # through, plain strings and wire hashes are translated to canonical at
+        # this boundary, and anything else raises loudly. No hash-shaped
+        # messages survive past this point.
+        def self.canonicalize_messages(messages)
+          Array(messages).map { |message| canonicalize_inbound_message(message) }
+        end
+
+        def self.canonicalize_inbound_message(message)
+          canonical = Legion::Extensions::Llm::Canonical::Message
+          return message if message.is_a?(canonical)
+          return canonical.build(role: :user, content: message) if message.is_a?(String)
+          return canonical.from_hash(message) if message.is_a?(Hash)
+
+          raise ArgumentError,
+                "Inference::Request messages must be Canonical::Message, String, or Hash, got #{message.class}"
+        end
+
         # SSOT v3 §7.2 additive build order. `routing_context` is injected only by
         # build_for_test; otherwise a fresh server seed is created here. The new
         # trusted fields are always populated (derived from existing routing kwargs
@@ -53,7 +73,7 @@ module Legion
             idempotency_key:           kwargs[:idempotency_key],
             schema_version:            kwargs.fetch(:schema_version, '1.0.0'),
             system:                    kwargs[:system],
-            messages:                  kwargs.fetch(:messages, []),
+            messages:                  canonicalize_messages(kwargs.fetch(:messages, [])),
             tools:                     kwargs.key?(:tools) ? kwargs[:tools] : nil,
             tool_choice:               kwargs.fetch(:tool_choice, { mode: :auto }),
             routing:                   routing,
@@ -85,13 +105,9 @@ module Legion
 
         def self.from_chat_args(**kwargs)
           request_id = kwargs[:request_id] || kwargs[:id]
-          messages = []
-          if kwargs[:messages]
-            messages = kwargs[:messages]
-          elsif kwargs[:message]
-            msg = kwargs[:message]
-            messages = msg.is_a?(Array) ? msg : [{ role: :user, content: msg }]
-          end
+          # Plain strings, wire hashes, and canonical objects are all translated
+          # to Array<Canonical::Message> by build's canonicalize_messages.
+          messages = kwargs[:messages] || kwargs[:message] || []
 
           routing = {
             provider: kwargs[:provider],

@@ -91,7 +91,8 @@ module Legion
             routing_explicit = canonical_request.metadata[:routing_explicit]
             extra[:routing_explicit] = routing_explicit if routing_explicit
 
-            messages = inference_messages(canonical_request.messages)
+            # N x N law: the executor receives canonical messages end-to-end.
+            messages = canonical_request.messages
             request_kwargs = {
               id:              request_id,
               messages:        messages,
@@ -761,18 +762,6 @@ module Legion
               handle_exception(e, level: :warn, handled: true,
                                   operation: 'llm.client_translator.openai_responses.build_tool', tool_name: hash[:name])
               nil
-            end
-          end
-
-          def inference_messages(canonical_messages)
-            canonical_messages.map do |m|
-              hash = m.respond_to?(:to_h) ? m.to_h : m
-              {
-                role:         hash[:role],
-                content:      hash[:content],
-                tool_calls:   hash[:tool_calls],
-                tool_call_id: hash[:tool_call_id]
-              }.compact
             end
           end
 

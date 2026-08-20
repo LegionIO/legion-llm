@@ -75,17 +75,15 @@ module Legion
             return messages if estimate_message_tokens(messages) <= target_tokens
 
             filtered = messages.reject do |msg|
-              role = (msg[:role] || msg['role']).to_s
-              role == 'tool' && (msg[:content] || msg['content']).to_s.length >
+              msg.role.to_s == 'tool' && msg.text.to_s.length >
                 Legion::Settings[:llm][:tools][:context_compaction][:threshold_chars]
             end
             messages = filtered.map do |msg|
-              role = (msg[:role] || msg['role']).to_s
-              next msg unless role == 'tool'
+              next msg unless msg.role.to_s == 'tool'
 
-              content = (msg[:content] || msg['content']).to_s
+              content = msg.text.to_s
               result_chars = Legion::Settings[:llm][:tools][:context_compaction][:result_chars]
-              content.length > result_chars ? msg.merge(content: "#{content[0, result_chars]}\n[compacted]") : msg
+              content.length > result_chars ? msg.with(content: "#{content[0, result_chars]}\n[compacted]") : msg
             end
 
             return messages if estimate_message_tokens(messages) <= target_tokens
@@ -101,7 +99,7 @@ module Legion
           end
 
           def estimate_message_tokens(messages)
-            messages.sum { |m| ((m[:content] || m['content']).to_s.length / 4.0).ceil }
+            messages.sum { |m| (m.text.to_s.length / 4.0).ceil }
           end
 
           def estimate_tool_token_budget
@@ -133,15 +131,15 @@ module Legion
             preserve_after = last_user_message_index(messages)
             messages.each_with_index.map do |msg, idx|
               next msg if idx >= preserve_after
-              next msg unless (msg[:role] || msg['role']).to_s == 'assistant'
+              next msg unless msg.role.to_s == 'assistant'
 
-              content = msg[:content] || msg['content']
+              content = msg.content
               next msg unless content.is_a?(String)
 
               cleaned = strip_leading_thinking_block(content)
               next msg if cleaned == content
 
-              msg.merge(content: cleaned)
+              msg.with(content: cleaned)
             end
           end
 
@@ -193,10 +191,10 @@ module Legion
               next msg if idx >= preserve_after
               next msg unless tool_result_message?(msg)
 
-              content = msg[:content] || msg['content']
+              content = msg.content
               next msg unless content.is_a?(String) && content.length > max_chars
 
-              msg.merge(content: "#{content[0, max_chars]}\n\n[TRUNCATED: showing first #{max_chars} of #{content.length} chars. " \
+              msg.with(content: "#{content[0, max_chars]}\n\n[TRUNCATED: showing first #{max_chars} of #{content.length} chars. " \
                                  'If you need more content, make multiple smaller targeted requests ' \
                                  '(e.g. read specific line ranges, grep for specific patterns, or request smaller sections).]')
             end
@@ -213,25 +211,24 @@ module Legion
           end
 
           def last_user_message_index(messages)
-            messages.rindex { |m| (m[:role] || m['role']).to_s == 'user' } || messages.size
+            messages.rindex { |m| m.role.to_s == 'user' } || messages.size
           end
 
           def tool_result_message?(msg)
-            return false unless msg.is_a?(Hash)
+            return false unless msg.is_a?(Legion::Extensions::Llm::Canonical::Message)
 
-            role = (msg[:role] || msg['role']).to_s
-            role == 'tool' || msg.key?(:tool_call_id) || msg.key?('tool_call_id')
+            msg.role.to_s == 'tool' || !msg.tool_call_id.nil?
           end
 
           def empty_assistant_message?(msg)
-            return false unless msg.is_a?(Hash)
-            return false unless (msg[:role] || msg['role']).to_s == 'assistant'
+            return false unless msg.is_a?(Legion::Extensions::Llm::Canonical::Message)
+            return false unless msg.role.to_s == 'assistant'
 
-            content = msg[:content] || msg['content']
+            content = msg.content
             has_content = content.is_a?(String) ? !content.strip.empty? : !content.nil?
             return false if has_content
 
-            tool_calls = msg[:tool_calls] || msg['tool_calls']
+            tool_calls = msg.tool_calls
             return false if tool_calls.is_a?(Array) && tool_calls.any?
 
             true
