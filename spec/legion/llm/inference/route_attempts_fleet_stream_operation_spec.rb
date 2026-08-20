@@ -121,8 +121,10 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
       )
       { accepted: true }
     end
+    # Protocol v3 E3: the reply envelope carries the serialized
+    # Canonical::Response under :response (thinking excluded, E4).
     allow(Legion::LLM::Fleet::Dispatcher).to receive(:wait_for_response) do
-      { success: true, content: worker_result.text }
+      { success: true, response: worker_result.to_h.except(:thinking) }
     end
 
     subject.send(:dispatch_provider_request, capability: :stream, operation: :chat, messages: messages)

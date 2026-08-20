@@ -304,7 +304,8 @@ module Legion
             cache_read_tokens:  (hash[:cache_read_tokens] || hash['cache_read_tokens'] || 0).to_i,
             cache_write_tokens: (hash[:cache_write_tokens] || hash['cache_write_tokens'] || 0).to_i,
             thinking_tokens:    (hash[:thinking_tokens] || hash['thinking_tokens'] || 0).to_i,
-            units:              raw_units(hash[:units] || hash['units'])
+            units:              raw_units(hash[:units] || hash['units']),
+            metadata:           {}
           )
         end
 
@@ -376,7 +377,7 @@ module Legion
           signature = payload[:signature] || payload['signature']
           return nil if content.to_s.empty? && signature.to_s.empty?
 
-          Canonical::Thinking.new(content: content.to_s, signature: signature&.to_s)
+          Canonical::Thinking.new(content: content.to_s, signature: signature&.to_s, metadata: {})
         end
 
         # Convert raw tool_calls to Array<Canonical::ToolCall>.
@@ -448,13 +449,17 @@ module Legion
                                 (normalized[:arguments].is_a?(String) && normalized[:arguments].empty?)
           normalized[:arguments] = parse_arguments(normalized[:arguments]) unless args_already_parsed
 
-          Canonical::ToolCall.new(
+          # 0.8.0: source is a canonical enum symbol (the legacy
+          # { type: :client } Hash spelling is translated here at the edge).
+          source_value = normalized[:source]
+          source_value = source_value.is_a?(Hash) ? (source_value[:type] || source_value['type']) : source_value
+          Canonical::ToolCall.build(
             id:                           normalized[:id] || "tc_#{SecureRandom.hex(8)}",
             exchange_id:                  normalized[:exchange_id],
             name:                         normalized[:name].to_s,
             arguments:                    normalized[:arguments] || {},
-            source:                       normalized[:source] || { type: :client },
-            status:                       normalized[:status],
+            source:                       source_value&.to_sym,
+            status:                       normalized[:status]&.to_sym,
             duration_ms:                  normalized[:duration_ms],
             result:                       normalized[:result],
             error:                        normalized[:error],
@@ -472,7 +477,7 @@ module Legion
           return :end_turn if reason.nil?
 
           sym = reason.respond_to?(:to_sym) ? reason.to_sym : reason.to_s.to_sym
-          Canonical::STOP_REASONS.include?(sym) ? sym : :end_turn
+          Canonical::Response::STOP_REASONS.include?(sym) ? sym : :end_turn
         end
 
         def parse_arguments(arguments)

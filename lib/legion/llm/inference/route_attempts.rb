@@ -176,8 +176,8 @@ module Legion
             raise Legion::LLM::ProviderError, failure_reason.to_s
           end
 
-          normalized = normalize_fleet_result(result)
-          stream_block&.call(normalized[:result]) if stream_block && normalized[:result]
+          response = normalize_fleet_result(result)
+          stream_fleet_response(stream_block, response) if stream_block
           record_route_attempt(
             dispatch_path:   :fleet,
             operation:       operation,
@@ -185,7 +185,24 @@ module Legion
             idempotency_key: idempotency_key,
             selected_lane:   selected_lane
           )
-          normalized
+          response
+        end
+
+        # The v3 worker returns one collected Canonical::Response per fleet
+        # request (no per-chunk wire). Surface it to the client stream as the
+        # canonical chunk pair the assembler already consumes: a text delta
+        # (when there is text) followed by the done chunk with usage and
+        # stop_reason.
+        def stream_fleet_response(stream_block, response)
+          request_id = @request.id
+          unless response.text.to_s.empty?
+            stream_block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(
+                                delta: response.text, request_id: request_id, block_index: 0
+                              ))
+          end
+          stream_block.call(Legion::Extensions::Llm::Canonical::Chunk.done(
+                              request_id: request_id, usage: response.usage, stop_reason: response.stop_reason
+                            ))
         end
 
         def ssot_v3_fleet_operation(requested_operation)
@@ -249,7 +266,9 @@ module Legion
             provider_instance: @resolved_instance || :default,
             model:             @resolved_model,
             idempotency_key:   idempotency_key,
-            messages:          messages,
+            # The wire carries serialized Canonical::Message (the worker's
+            # rehydrate_wire_messages is the rehydration boundary).
+            messages:          Array(messages).map { |m| m.is_a?(Legion::Extensions::Llm::Canonical::Message) ? m.to_h : m },
             caller:            @request.caller,
             trace_context:     @tracing || {},
             timeout:           @request.ttl
@@ -269,10 +288,13 @@ module Legion
 
         def project_dispatch_arguments(messages:, options:)
           system_text = options[:system].to_s
+          # SSOT dispatch boundary: every SSOT message is canonical before it
+          # reaches either dispatch branch (direct callable or fleet wire).
+          canonical_messages = Legion::LLM::Inference::Request.canonicalize_messages(messages)
           folded = if system_text.strip.empty?
-                     messages
+                     canonical_messages
                    else
-                     fold_system_into_messages(messages: messages, system: system_text)
+                     fold_system_into_messages(messages: canonical_messages, system: system_text)
                    end
           projected = options.slice(*CONTRACT_OPTION_KEYS)
           params = projected[:params]
@@ -295,22 +317,24 @@ module Legion
           end
         end
 
+        # Fleet response rehydration (0.8.0 E3): the v3 response envelope
+        # carries the serialized Canonical::Response under :response — the
+        # requestor-side mirror of the worker's rehydrate_wire_messages.
+        # The v2 raw projection fields (content/tool_calls/usage/finish_reason)
+        # are gone; a wrong-shape payload raises, never a half-translated hash.
         def normalize_fleet_result(result)
           normalized = if result.respond_to?(:transform_keys)
                          result.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
                        else
                          {}
                        end
-          content = normalized[:content] || normalized[:result] || normalized[:data]
-          {
-            result:      content,
-            model:       normalized[:model] || @resolved_model,
-            usage:       normalized[:usage] || {},
-            tool_calls:  normalized[:tool_calls],
-            stop_reason: normalized[:finish_reason] || normalized[:stop_reason],
-            thinking:    normalized[:thinking],
-            metadata:    normalized[:metadata] || {}
-          }.compact
+          payload = normalized[:response]
+          unless payload.is_a?(Hash)
+            raise ArgumentError,
+                  'fleet response envelope missing the canonical response payload (protocol v3 E3)'
+          end
+
+          Legion::Extensions::Llm::Canonical::Response.from_hash(payload)
         end
 
         def fleet_selected_lane(operation)

@@ -6,12 +6,11 @@ require 'legion/llm/call/lex_llm_adapter'
 # Failing-test for the legionio-e2e claude/bedrock + codex/bedrock + claude/openai
 # legionio_tool_injection regression. The executor's native tool loop appends
 # an assistant message whose `tool_calls` is an Array of Canonical::ToolCall
-# (Data) objects. The LexLLMAdapter must normalize those into
-# Legion::Extensions::Llm::ToolCall objects so the downstream provider
-# (Bedrock invoke_model_chat / OpenAI chat completions) can render the
-# matching tool_use blocks. Without that, the assistant turn ships with NO
-# tool_calls — the next tool-role message becomes orphaned and the provider
-# rejects with:
+# (Data) objects. The LexLLMAdapter must normalize those into Canonical::Message
+# / Canonical::ToolCall objects (0.8.0 dispatch-boundary contract) so the
+# downstream provider can render the matching tool_use blocks. Without that,
+# the assistant turn ships with NO tool_calls — the next tool-role message
+# becomes orphaned and the provider rejects with:
 #   * Bedrock: "unexpected `tool_use_id` found in `tool_result` blocks: <id>.
 #     Each `tool_result` block must have a corresponding `tool_use` block in
 #     the previous message."
@@ -36,12 +35,14 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter, '#normalize_messages with Canon
 
       attr_reader :received_messages
 
-      define_method(:chat) do |messages:, **|
+      # 0.8.0 provider funnel: positional canonical messages; `**` absorbs
+      # the required model: kwarg the adapter passes.
+      define_method(:chat) do |messages, **|
         @received_messages = messages
         stub.new('ok', 'gpt-test', nil, { input_tokens: 1, output_tokens: 1 }, {}, nil)
       end
 
-      define_method(:stream_chat) do |messages:, **|
+      define_method(:stream_chat) do |messages, **|
         @received_messages = messages
         stub.new('ok', 'gpt-test', nil, { input_tokens: 1, output_tokens: 1 }, {}, nil)
       end
@@ -57,7 +58,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter, '#normalize_messages with Canon
       id:        'toolu_bdrk_001',
       name:      'legion_list_all_tools',
       arguments: { filter: 'all' },
-      source:    { type: :registry }
+      source:    :registry
     )
   end
 

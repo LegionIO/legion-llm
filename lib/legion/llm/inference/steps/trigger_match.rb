@@ -10,6 +10,7 @@ module Legion
         module TriggerMatch
           include Legion::Logging::Helper
           include Steps::Logging
+          include Steps::MessageAccessors
 
           def step_trigger_match
             start_time = nil
@@ -81,16 +82,17 @@ module Legion
             messages = @request.messages.last(depth)
 
             text = messages.filter_map do |msg|
-              next unless msg.is_a?(Hash)
-              next unless (msg[:role] || msg['role']).to_s == 'user'
+              next unless message_role_of(msg) == 'user'
 
-              content = msg[:content] || msg['content']
+              content = message_content_of(msg)
               raw = if content.is_a?(Array)
                       content.filter_map do |c|
                         if c.is_a?(String)
                           c
-                        else
-                          (c.is_a?(Hash) ? (c[:text] || c['text']) : nil)
+                        elsif c.is_a?(Hash)
+                          c[:text] || c['text']
+                        elsif c.respond_to?(:text)
+                          c.text
                         end
                       end.join(' ')
                     else

@@ -82,10 +82,6 @@ module Legion
           super.compact
         end
 
-        def to_provider_hash
-          { role: role.to_s, content: text }.compact
-        end
-
         private
 
         def text_from_block(block)

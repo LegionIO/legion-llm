@@ -2,23 +2,6 @@
 
 require 'spec_helper'
 
-unless defined?(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
-  module Legion
-    module Extensions
-      module Llm
-        module Transport
-          module Messages
-            class FleetRequest
-              def publish(**); end
-              def self.new(**); end
-            end
-          end
-        end
-      end
-    end
-  end
-end
-
 RSpec.describe Legion::LLM::Fleet::Dispatcher do
   let(:future) { instance_double(Concurrent::Promises::ResolvableFuture) }
 
@@ -66,7 +49,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       end.to raise_error(ArgumentError, /operation is required/)
     end
 
-    it 'publishes canonical protocol-v2 fleet request envelopes without legacy fields' do
+    it 'publishes protocol-v3 exact-execution fleet request envelopes without legacy fields' do
       order = []
       published_options = nil
       fleet_message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
@@ -79,7 +62,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
         order << :register
         expect(correlation_id).to match(/\Areq_/)
         expect(expected).to include(
-          protocol_version: 2,
+          protocol_version: 3,
           operation:        :chat,
           correlation_id:   correlation_id
         )
@@ -101,16 +84,18 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       expect(Legion::Extensions::Llm::Transport::Messages::FleetRequest).to receive(:new) do |options|
         published_options = options
         expect(options).to include(
-          operation:         :chat,
-          provider:          'ollama',
-          provider_instance: 'default',
-          model:             'qwen3.6:27b',
-          reply_to:          'llm.fleet.reply.test',
-          protocol_version:  2,
-          request_id:        a_string_matching(/\Areq_/),
-          correlation_id:    a_string_matching(/\Areq_/),
-          idempotency_key:   a_string_matching(/\Aidem_/),
-          signed_token:      'signed-token'
+          operation:          :chat,
+          provider:           'ollama',
+          provider_instance:  'default',
+          model:              'qwen3.6:27b',
+          reply_to:           'llm.fleet.reply.test',
+          protocol_version:   3,
+          execution_contract: 'exact_offering_v1',
+          offering_id:        'off:v1:test',
+          request_id:         a_string_matching(/\Areq_/),
+          correlation_id:     a_string_matching(/\Areq_/),
+          idempotency_key:    a_string_matching(/\Aidem_/),
+          signed_token:       'signed-token'
         )
         expect(options).not_to include(:request_type)
         expect(options).not_to include(:fleet_correlation_id)
@@ -120,10 +105,12 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       described_class.dispatch(
         operation:       :chat,
         request:         {
-          provider:          'ollama',
-          provider_instance: 'default',
-          model:             'qwen3.6:27b',
-          messages:          [{ role: 'user', content: 'hello' }]
+          provider:           'ollama',
+          provider_instance:  'default',
+          model:              'qwen3.6:27b',
+          messages:           [{ role: 'user', content: 'hello' }],
+          execution_contract: 'exact_offering_v1',
+          offering_id:        'off:v1:test'
         },
         message_context: { request_id: 'caller-req' },
         timeout:         1
@@ -152,7 +139,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
 
       expect(Legion::LLM::Fleet::TokenIssuer).not_to receive(:issue)
 
-      described_class.dispatch(operation: :chat, request: { provider: 'ollama', model: 'test' })
+      described_class.dispatch(operation: :chat, request: { provider: 'ollama', provider_instance: 'default', model: 'test', execution_contract: 'exact_offering_v1', offering_id: 'off:v1:test' })
 
       expect(published_options[:signed_token]).to eq('unsigned')
     end
@@ -175,7 +162,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
 
       expect(Legion::LLM::Fleet::TokenIssuer).not_to receive(:issue)
 
-      described_class.dispatch(operation: :chat, request: { provider: 'ollama', model: 'test' })
+      described_class.dispatch(operation: :chat, request: { provider: 'ollama', provider_instance: 'default', model: 'test', execution_contract: 'exact_offering_v1', offering_id: 'off:v1:test' })
 
       expect(published_options[:signed_token]).to eq('unsigned')
     end
@@ -206,7 +193,8 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
         fleet_message
       end
 
-      described_class.dispatch(operation: :chat, request: { provider: 'ollama', model: 'test' }, timeout: 7)
+      described_class.dispatch(operation: :chat,
+                               request: { provider: 'ollama', provider_instance: 'default', model: 'test', execution_contract: 'exact_offering_v1', offering_id: 'off:v1:test' }, timeout: 7)
 
       expect(published[:ttl]).to eq(7)
       expect(published[:timeout_seconds]).to eq(7)
@@ -216,10 +204,13 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       published = nil
       fleet_message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
       request = {
-        'provider' => 'ollama',
-        'model'    => 'qwen3.6:27b',
-        'limits'   => { 'context_window' => 65_536 },
-        'ttl'      => 9
+        'provider'           => 'ollama',
+        'provider_instance'  => 'default',
+        'model'              => 'qwen3.6:27b',
+        'execution_contract' => 'exact_offering_v1',
+        'offering_id'        => 'off:v1:test',
+        'limits'             => { 'context_window' => 65_536 },
+        'ttl'                => 9
       }
       allow(described_class).to receive(:fleet_available?).and_return(true)
       allow(future).to receive(:value!).and_return({ success: true })
@@ -249,7 +240,7 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
 
       result = described_class.dispatch(
         operation:       :chat,
-        request:         { provider: 'ollama', model: 'test' },
+        request:         { provider: 'ollama', provider_instance: 'default', model: 'test', execution_contract: 'exact_offering_v1', offering_id: 'off:v1:test' },
         message_context: { request_id: 'req-1' }
       )
 
@@ -380,19 +371,19 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
 
   it 'accepts versioned fleet responses' do
     future = described_class.register('corr-123', expected: {
-                                        protocol_version: 2,
+                                        protocol_version: 3,
                                         operation:        :chat,
                                         correlation_id:   'corr-123'
                                       })
 
     described_class.handle_delivery(
-      { protocol_version: 2, operation: :chat, correlation_id: 'corr-123', success: true, content: 'hello' },
+      { protocol_version: 3, operation: :chat, correlation_id: 'corr-123', success: true, content: 'hello' },
       { correlation_id: 'corr-123', type: 'llm.fleet.response' }
     )
 
     expect(future.value!).to eq(
       correlation_id:   'corr-123',
-      protocol_version: 2,
+      protocol_version: 3,
       operation:        :chat,
       success:          true,
       content:          'hello'
@@ -401,13 +392,13 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
 
   it 'accepts versioned fleet errors and normalizes them' do
     future = described_class.register('corr-456', expected: {
-                                        protocol_version: 2,
+                                        protocol_version: 3,
                                         operation:        :chat,
                                         correlation_id:   'corr-456'
                                       })
 
     described_class.handle_delivery(
-      { protocol_version: 2, operation: :chat, code: 'model_not_loaded', message: 'not available', correlation_id: 'corr-456',
+      { protocol_version: 3, operation: :chat, code: 'model_not_loaded', message: 'not available', correlation_id: 'corr-456',
         message_context: { conv: 'c1' } },
       { correlation_id: 'corr-456', type: 'llm.fleet.error' }
     )
@@ -421,7 +412,7 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
 
   it 'ignores unversioned responses' do
     described_class.register('corr-legacy', expected: {
-                               protocol_version: 2,
+                               protocol_version: 3,
                                operation:        :chat,
                                correlation_id:   'corr-legacy'
                              })
@@ -434,9 +425,9 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
     expect(described_class.pending_count).to eq(1)
   end
 
-  it 'ignores malformed protocol versions that coerce to v2' do
+  it 'ignores malformed protocol versions that do not match v3' do
     described_class.register('corr-malformed', expected: {
-                               protocol_version: 2,
+                               protocol_version: 3,
                                operation:        :chat,
                                correlation_id:   'corr-malformed'
                              })
@@ -451,13 +442,13 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
 
   it 'ignores no-type fallback responses' do
     described_class.register('corr-notype', expected: {
-                               protocol_version: 2,
+                               protocol_version: 3,
                                operation:        :chat,
                                correlation_id:   'corr-notype'
                              })
 
     described_class.handle_delivery(
-      { protocol_version: 2, operation: :chat, correlation_id: 'corr-notype', success: true }
+      { protocol_version: 3, operation: :chat, correlation_id: 'corr-notype', success: true }
     )
 
     expect(described_class.pending_count).to eq(1)
@@ -465,13 +456,13 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
 
   it 'ignores responses with the wrong correlation id' do
     described_class.register('corr-expected', expected: {
-                               protocol_version: 2,
+                               protocol_version: 3,
                                operation:        :chat,
                                correlation_id:   'corr-expected'
                              })
 
     described_class.handle_delivery(
-      { protocol_version: 2, operation: :chat, correlation_id: 'corr-other', success: true },
+      { protocol_version: 3, operation: :chat, correlation_id: 'corr-other', success: true },
       { correlation_id: 'corr-other', type: 'llm.fleet.response' }
     )
 
@@ -480,13 +471,13 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
 
   it 'ignores responses whose AMQP property matches but payload correlation_id is wrong' do
     described_class.register('corr-expected', expected: {
-                               protocol_version: 2,
+                               protocol_version: 3,
                                operation:        :chat,
                                correlation_id:   'corr-expected'
                              })
 
     described_class.handle_delivery(
-      { protocol_version: 2, operation: :chat, correlation_id: 'corr-other', success: true },
+      { protocol_version: 3, operation: :chat, correlation_id: 'corr-other', success: true },
       { correlation_id: 'corr-expected', type: 'llm.fleet.response' }
     )
 
@@ -495,14 +486,14 @@ RSpec.describe Legion::LLM::Fleet::ReplyDispatcher do
 
   it 'ignores late responses after deregister' do
     described_class.register('corr-late', expected: {
-                               protocol_version: 2,
+                               protocol_version: 3,
                                operation:        :chat,
                                correlation_id:   'corr-late'
                              })
     described_class.deregister('corr-late')
 
     described_class.handle_delivery(
-      { protocol_version: 2, operation: :chat, correlation_id: 'corr-late', success: true },
+      { protocol_version: 3, operation: :chat, correlation_id: 'corr-late', success: true },
       { correlation_id: 'corr-late', type: 'llm.fleet.response' }
     )
 

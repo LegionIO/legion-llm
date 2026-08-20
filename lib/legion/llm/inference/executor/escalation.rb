@@ -293,7 +293,7 @@ module Legion
           end
 
           def lane_type_for(operation)
-            Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: operation)
+            Legion::LLM::Router.lane_type_for(operation: operation)
           end
 
           # Map a raised streaming provider error to a Phase 1 ProviderOutcome for

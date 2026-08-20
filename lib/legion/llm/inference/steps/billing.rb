@@ -11,6 +11,7 @@ module Legion
         module Billing
           include Legion::Logging::Helper
           include Steps::Logging
+          include Steps::MessageAccessors
 
           def step_billing
             unless @request.billing

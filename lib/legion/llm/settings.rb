@@ -189,7 +189,7 @@ module Legion
             publisher_confirm:      true,
             spool:                  false,
             timeout_seconds:        30,
-            timeouts:               { chat: 30, stream: 30, embed: 10, image: 60, default: 30 },
+            timeouts:               { chat: 30, stream_chat: 30, embed: 10, image: 60, default: 30 },
             require_auth:           nil,
             token_ttl_seconds:      180,
             reply_queue_expires_ms: 60_000,
@@ -205,16 +205,10 @@ module Legion
             max_clock_skew_seconds: 30
           },
           responder: {
-            enabled:                    false,
-            require_auth:               nil,
-            require_policy:             false,
-            require_idempotency:        true,
-            idempotency_ttl_seconds:    600,
-            accepted_protocol_version:  2,
-            mandatory:                  false,
-            publisher_confirm:          false,
-            publish_confirm_timeout_ms: 500,
-            spool:                      false
+            require_auth:            nil,
+            require_policy:          false,
+            require_idempotency:     true,
+            idempotency_ttl_seconds: 600
           }
         }
       end

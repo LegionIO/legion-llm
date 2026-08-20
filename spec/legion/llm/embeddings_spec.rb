@@ -3,15 +3,6 @@
 require 'spec_helper'
 require 'legion/llm/call/embeddings'
 
-def native_embed_response(response = nil, vectors: nil, input_tokens: nil)
-  vectors ||= response.vectors if response.respond_to?(:vectors)
-  input_tokens ||= response.input_tokens if response.respond_to?(:input_tokens)
-  {
-    result: vectors || [Array.new(1024, 0.1)],
-    usage:  Legion::LLM::Usage.new(input_tokens: input_tokens || 5)
-  }
-end
-
 RSpec.describe 'Legion::LLM embedding capability' do
   before do
     Legion::LLM::Inventory::Discovery.instance_variable_set(:@can_embed, nil)
@@ -350,7 +341,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       @dispatched << kwargs
       texts = kwargs[:text]
       vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
-      { result: vectors, usage: Legion::LLM::Usage.new(input_tokens: input_tokens) }
+      { embedding: vectors, usage: { input_tokens: input_tokens } }
     end
     activate(
       provider_family: provider, instance_id: instance,
@@ -421,7 +412,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     it 'returns the provider vector as-is when no dimension is requested (no truncate/pad)' do
       publish_embed(model: 'raw-model', dims: [768]) do |_op, _a, kwargs, _b|
         vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(768, 0.2) } : [Array.new(768, 0.2)]
-        { result: vecs, usage: Legion::LLM::Usage.new(input_tokens: 4) }
+        { embedding: vecs, usage: { input_tokens: 4 } }
       end
       result = described_class.generate(text: 'test', model: 'raw-model', routing_seed: seed)
       expect(result[:vector].size).to eq(768)
@@ -439,7 +430,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     it 'extracts tokens from a Hash usage' do
       publish_embed(model: 'hash-usage') do |_op, _a, kwargs, _b|
         vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
-        { result: vecs, usage: { input_tokens: 7 } }
+        { embedding: vecs, usage: { input_tokens: 7 } }
       end
       result = described_class.generate(text: 'test', model: 'hash-usage', routing_seed: seed)
       expect(result[:tokens]).to eq(7)
@@ -448,7 +439,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     it 'defaults to 0 when no usage is present' do
       publish_embed(model: 'no-usage') do |_op, _a, kwargs, _b|
         vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
-        { result: vecs, usage: nil }
+        { embedding: vecs, usage: nil }
       end
       result = described_class.generate(text: 'test', model: 'no-usage', routing_seed: seed)
       expect(result[:tokens]).to eq(0)
@@ -479,7 +470,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
   describe '.generate returns a well-formed vector hash' do
     it 'unwraps a single flat vector from providers that do not nest' do
       publish_embed(model: 'flat') do |_op, _a, _kwargs, _b|
-        { result: Array.new(1024, 0.1), usage: Legion::LLM::Usage.new(input_tokens: 5) }
+        { embedding: Array.new(1024, 0.1), usage: { input_tokens: 5 } }
       end
       result = described_class.generate(text: 'test', model: 'flat', routing_seed: seed)
       expect(result[:vector].size).to eq(1024)
@@ -501,17 +492,16 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
   end
 
   # Production SSOT v3 callable contract: the lex-llm-* parse_embedding_response
-  # implementations return the provider-native Legion::Extensions::Llm::Embedding
-  # value object (NOT the legacy {result:, usage:} Hash). The embed consumer must
-  # unwrap it at the boundary, mirroring the chat path's normalize_response.
-  # Pre-fix this raised ProviderError 'embedding provider returned no usable
-  # vector' — every live embed 502'd.
-  describe '.generate SSOT v3 native Embedding value object' do
-    it 'unwraps the native object: vectors returned, input_tokens extracted' do
+  # 0.8.0 embed artifact (05 S3 / O07): the documented Hash
+  # { text:, model:, embedding: Array<Float>, usage: Canonical::Usage } — a flat
+  # numeric vector for a single input, an Array of them for a batch. The embed
+  # consumer unwraps it at the boundary (provider_vectors).
+  describe '.generate 0.8.0 documented embed artifact' do
+    it 'unwraps the artifact: vectors returned, input_tokens extracted' do
       publish_embed(model: 'native-embed') do |_op, _a, kwargs, _b|
         texts = kwargs[:text]
         vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.1) } : Array.new(1024, 0.1)
-        Legion::Extensions::Llm::Embedding.new(vectors: vectors, model: 'native-embed', input_tokens: 37)
+        { text: texts, model: 'native-embed', embedding: vectors, usage: { input_tokens: 37 } }
       end
       result = described_class.generate(text: 'test', model: 'native-embed', routing_seed: seed)
       expect(result[:vector].size).to eq(1024)
@@ -519,10 +509,10 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       expect(result[:tokens]).to eq(37)
     end
 
-    it 'unwraps a native object carrying one vector per batch entry' do
+    it 'unwraps an artifact carrying one vector per batch entry' do
       publish_embed(model: 'native-batch') do |_op, _a, kwargs, _b|
         vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
-        Legion::Extensions::Llm::Embedding.new(vectors: vectors, model: 'native-batch', input_tokens: 30)
+        { text: kwargs[:text], model: 'native-batch', embedding: vectors, usage: { input_tokens: 30 } }
       end
       results = described_class.generate_batch(texts: %w[hello world], model: 'native-batch', routing_seed: seed)
       expect(results.size).to eq(2)
@@ -538,7 +528,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       publish_embed(model: 'text-embedding-3-small', context: 200_000) do |_op, _a, kwargs, _b|
         captured = kwargs[:text]
         vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
-        { result: vectors, usage: Legion::LLM::Usage.new(input_tokens: 30) }
+        { embedding: vectors, usage: { input_tokens: 30 } }
       end
       # budget = min(200_000, 512) tokens * 4 chars = 2048 chars/chunk; 8192 / 2048 = 4 chunks.
       result = described_class.generate(text: 'a' * 8192, model: 'text-embedding-3-small', routing_seed: seed)
@@ -563,7 +553,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     it 'chunks an oversized batch entry and reassembles per-item vectors' do
       publish_embed(model: 'batch-chunk', context: 200_000) do |_op, _a, kwargs, _b|
         vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
-        { result: vectors, usage: Legion::LLM::Usage.new(input_tokens: 30) }
+        { embedding: vectors, usage: { input_tokens: 30 } }
       end
       results = described_class.generate_batch(texts: ['short', 'b' * 8192], model: 'batch-chunk', routing_seed: seed)
       expect(results.size).to eq(2)

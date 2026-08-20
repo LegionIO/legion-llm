@@ -77,6 +77,44 @@ module Legion
             log.debug('[llm][api][providers] provider routes registered')
           end
 
+          # 13 S2(6): SSOT-activated providers surface in the listing from the
+          # Registry snapshot even when they are absent from the compatibility
+          # call registry (deduped by provider+instance).
+          def self.union_ssot_providers(provider_list)
+            return provider_list unless defined?(Legion::Extensions::Llm::Inventory::Registry)
+
+            snapshot = begin
+              Legion::Extensions::Llm::Inventory::Registry.snapshot
+            rescue StandardError => e
+              handle_exception(e, level: :warn, handled: true, operation: 'llm.api.providers.ssot_snapshot_read')
+              nil
+            end
+            return provider_list if snapshot.nil?
+
+            seen = provider_list.to_set { |p| [p[:provider].to_sym, p[:instance].to_sym] }
+            snapshot.each_instance do |record|
+              family = record.instance_key.provider_family.to_sym
+              instance_id = record.instance_key.instance_id.to_sym
+              next if seen.include?([family, instance_id])
+
+              seen << [family, instance_id]
+              offerings = record.offerings_by_id.values
+              capabilities = offerings.first&.capability_evidence&.select do |_cap, evidence|
+                evidence.status == :supported
+              end&.keys&.map(&:to_s) || []
+              provider_list << {
+                provider:     family.to_s,
+                instance:     instance_id.to_s,
+                tier:         offerings.first&.tier&.to_s,
+                capabilities: capabilities,
+                health:       { state: record.availability.state.to_s },
+                native:       true,
+                source:       'ssot'
+              }
+            end
+            provider_list
+          end
+
           def self.instance_to_hash(entry)
             provider_key = entry[:provider].to_sym
             instance_key = entry[:instance].to_sym

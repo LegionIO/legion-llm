@@ -118,20 +118,30 @@ module Legion
             return false unless messages.is_a?(Array)
 
             messages.any? do |message|
-              next false unless message.is_a?(Hash)
-
-              content = message[:content]
+              content = message_content_of(message)
               next false unless content.is_a?(Array)
 
               content.any? do |block|
-                next false unless block.is_a?(Hash)
-
-                block_type = block[:type]
+                block_type = block_type_of(block)
                 next false if block_type.nil?
 
                 types.include?(block_type) || types.include?(block_type.to_sym)
               end
             end
+          end
+
+          # Canonical Message#content or Hash message content, defensively.
+          def message_content_of(message)
+            return message[:content] || message['content'] if message.is_a?(Hash)
+
+            message.respond_to?(:content) ? message.content : nil
+          end
+
+          # Canonical ContentBlock#type or Hash block :type, defensively.
+          def block_type_of(block)
+            return block.type if block.respond_to?(:type) && !block.is_a?(Hash)
+
+            block.is_a?(Hash) ? (block[:type] || block['type']) : nil
           end
 
           def nonempty_array?(value)

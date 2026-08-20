@@ -172,10 +172,10 @@ RSpec.describe Legion::LLM::Router::RequiredCapabilities do
         expect(described_class.call(request: req, operation: :chat)).to include(:vision)
       end
 
-      it 'triggered by an :image_url content block (OpenAI canonical shape)' do
+      it 'triggered by an :image content block with a url source (OpenAI image_url wire shape, canonicalized)' do
         messages = [
           { role: :user, content: [
-            { type: :image_url, image_url: { url: 'https://example.com/photo.png' } }
+            { type: :image, source_type: :url, data: 'https://example.com/photo.png', media_type: 'image/png' }
           ] }
         ]
         req = build_request(messages: messages)
@@ -292,7 +292,7 @@ RSpec.describe Legion::LLM::Router::RequiredCapabilities do
           thinking:        { enabled: true },
           response_format: { type: :json_schema },
           messages:        [
-            { role: :user, content: [{ type: :image_url, image_url: { url: 'https://example.com/img.png' } }] }
+            { role: :user, content: [{ type: :image, source_type: :url, data: 'https://example.com/img.png', media_type: 'image/png' }] }
           ]
         )
         result = described_class.call(request: all_caps_req, operation: :stream_chat)

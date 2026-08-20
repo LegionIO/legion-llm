@@ -201,7 +201,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
       executor.send(:step_metering)
 
       expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
-        expect(event[:messages]).to eq([{ role: :user, content: 'hello' }])
+        expect(event[:messages].size).to eq(1)
+        expect(event[:messages].first.role).to eq(:user)
+        expect(event[:messages].first.content).to eq('hello')
       end
     end
 

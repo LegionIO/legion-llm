@@ -15,11 +15,11 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
     end
   end
 
-  # Regression: a streamed legacy lex-llm Chunk carrying a legacy
-  # Legion::Extensions::Llm::Thinking object (attr_reader :text/:signature, NO
-  # .content) must surface its thinking TEXT on the wire — never the Ruby
-  # `#<...Thinking:0x...>` inspect string. (Claude-Code /v1/messages leak.)
-  it 'unwraps a legacy lex-llm Thinking object on a streamed chunk' do
+  # Regression: a streamed non-canonical chunk carrying a Canonical::Thinking
+  # object (value object with .content/.signature) must surface its thinking
+  # TEXT on the wire — never the Ruby `#<...Thinking:0x...>` inspect string.
+  # (Claude-Code /v1/messages leak.)
+  it 'unwraps a Canonical::Thinking object on a streamed chunk' do
     out = +''
     emitter = Legion::LLM::API::ClientTranslators::AnthropicMessages.new.events_emitter(
       out, request_id: 'msg_test', model: 'gemma-4-31b-it'
@@ -29,17 +29,17 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
       initial_lane: { id: 'test:pending' }
     )
 
-    legacy_thinking = Legion::Extensions::Llm::Thinking.new(text: 'the model reasoning', signature: nil)
+    thinking = Legion::Extensions::Llm::Canonical::Thinking.build(content: 'the model reasoning')
     legacy_chunk = Struct.new(:content, :thinking, :tool_calls, :model_id,
                               :input_tokens, :output_tokens, :raw, keyword_init: true).new(
-                                content: 'visible answer', thinking: legacy_thinking, tool_calls: nil,
+                                content: 'visible answer', thinking: thinking, tool_calls: nil,
                                 model_id: 'gemma-4-31b-it', input_tokens: nil, output_tokens: nil, raw: nil
                               )
 
     assembler.push(legacy_chunk)
 
     expect(out).to include('the model reasoning')
-    expect(out).not_to include('Legion::Extensions::Llm::Thinking')
+    expect(out).not_to include('Canonical::Thinking')
     expect(out).not_to include(':0x')
   end
 

@@ -9,41 +9,71 @@ rescue LoadError
   nil
 end
 
+# Shared by the fake provider's complete/embed overrides (defined via
+# define_method, so RSpec example-group helpers are not in scope there).
+module LexLLMAdapterSpecHelpers
+  def canonical_response(model:, text: 'hello', tool_calls: nil, usage: nil, stop_reason: :end_turn, thinking: nil)
+    ::Legion::Extensions::Llm::Canonical::Response.build(
+      text:        text,
+      tool_calls:  tool_calls,
+      usage:       usage || ::Legion::Extensions::Llm::Canonical::Usage.build(input_tokens: 7, output_tokens: 3),
+      stop_reason: stop_reason,
+      model:       model,
+      thinking:    thinking
+    )
+  end
+end
+
 RSpec.describe Legion::LLM::Call::LexLLMAdapter do
+  # Spec-local alias for every example; a top-level constant would pollute the
+  # shared suite process, so the in-block definition is intentional.
+  # rubocop:disable Lint/ConstantDefinitionInBlock
+  Canonical = Legion::Extensions::Llm::Canonical
+  # rubocop:enable Lint/ConstantDefinitionInBlock
+
   def lex_llm_test_namespace
     return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)
 
     raise NameError, 'lex-llm provider namespace is not loaded'
   end
 
+  def canonical_response(**)
+    LexLLMAdapterSpecHelpers.new.canonical_response(**)
+  end
+
   let(:provider_class) do
     namespace = lex_llm_test_namespace
     Class.new(namespace::Provider) do
+      include LexLLMAdapterSpecHelpers
+
       define_method(:llm_namespace) { namespace }
 
       def api_base = 'https://adapter.invalid'
 
       def complete(_messages, model:, **)
-        llm_namespace::Message.new(role: :assistant, content: "hello #{model.id}", model_id: model.id,
-                                   input_tokens: 7, output_tokens: 3)
+        canonical_response(model: model.id)
       end
 
       def embed(text:, model:, dimensions:, params: {}, headers: {})
         self.class.last_embed_call = { text: text, model: model, dimensions: dimensions, params: params, headers: headers }
-        llm_namespace::Embedding.new(vectors: Array.new(dimensions || 2, 0.5), model: model, input_tokens: 4)
+        {
+          text:      text,
+          model:     model.respond_to?(:id) ? model.id : model,
+          embedding: Array.new(dimensions || 2, 0.5),
+          usage:     ::Legion::Extensions::Llm::Canonical::Usage.build(input_tokens: 4)
+        }
       end
 
       def image(prompt:, model:, size:, with: nil, mask: nil, params: {}, headers: {})
         {
-          result:  [{ url: 'https://images.invalid/result.png' }],
           model:   model,
-          usage:   {},
-          headers: headers,
-          params:  params,
-          prompt:  prompt,
+          image:   'https://images.invalid/result.png',
           size:    size,
           with:    with,
-          mask:    mask
+          mask:    mask,
+          headers: headers,
+          params:  params,
+          prompt:  prompt
         }
       end
 
@@ -67,8 +97,10 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
   it 'maps chat dispatch to lex-llm provider completion' do
     result = adapter.chat(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
 
-    expect(result[:result]).to eq('hello model-a')
-    expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
+    expect(result).to be_a(Canonical::Response)
+    expect(result.text).to eq('hello')
+    expect(result.usage.input_tokens).to eq(7)
+    expect(result.usage.output_tokens).to eq(3)
   end
 
   it 'passes offering metadata through lex-llm model info when present' do
@@ -76,7 +108,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     provider_class.define_singleton_method(:last_model=) { |model| @last_model = model }
     provider_class.define_method(:complete) do |_messages, model:, **|
       self.class.last_model = model
-      llm_namespace::Message.new(role: :assistant, content: "hello #{model.id}", model_id: model.id)
+      canonical_response(model: model.id)
     end
 
     result = adapter.chat(
@@ -95,7 +127,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       model_family:          :openai,
       canonical_model_alias: 'gpt-4o'
     )
-    expect(result[:metadata]).to include(offering: hash_including(offering_id: 'azure:default:inference:gpt-4o'))
+    expect(result.metadata[:offering]).to include(offering_id: 'azure:default:inference:gpt-4o')
   end
 
   it 'prepends system instructions to native chat messages' do
@@ -103,16 +135,17 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     provider_class.define_singleton_method(:last_messages=) { |messages| @last_messages = messages }
     provider_class.define_method(:complete) do |messages, model:, **|
       self.class.last_messages = messages
-      llm_namespace::Message.new(role: :assistant, content: "hello #{model.id}", model_id: model.id)
+      canonical_response(model: model.id)
     end
 
     adapter.chat(model: 'model-a', messages: [{ role: 'user', content: 'hi' }], system: 'keep it short')
 
+    expect(provider_class.last_messages).to all(be_a(Canonical::Message))
     expect(provider_class.last_messages.map(&:role)).to eq(%i[system user])
     expect(provider_class.last_messages.first.content).to eq('keep it short')
   end
 
-  it 'maps embedding dispatch to lex-llm provider embeddings' do
+  it 'maps embedding dispatch to the documented lex-llm embed artifact' do
     result = adapter.embed(
       model:      'embed-a',
       text:       'hello',
@@ -132,7 +165,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(provider_class.last_embed_call[:model]).to be_a(lex_llm_test_namespace::Model::Info)
   end
 
-  it 'maps image dispatch to lex-llm provider image generation' do
+  it 'maps image dispatch to the documented lex-llm image artifact' do
     result = adapter.image(
       model:   'image-a',
       prompt:  'draw a clean interface',
@@ -143,33 +176,32 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       headers: { 'X-Test' => '1' }
     )
 
-    expect(result[:result]).to eq([{ url: 'https://images.invalid/result.png' }])
+    expect(result[:image]).to eq('https://images.invalid/result.png')
     expect(result[:model]).to be_a(lex_llm_test_namespace::Model::Info)
-    expect(result[:metadata]).to eq({})
   end
 
   it 'maps health checks to the lex-llm provider health contract' do
     expect(adapter.health(live: true)).to eq(status: 'healthy', ready: true)
   end
 
-  it 'streams provider chunks through the callback and response accumulator' do
+  it 'streams canonical provider chunks through the callback and returns the final response' do
     provider_class.define_method(:complete) do |_messages, model:, **, &block|
-      block.call(llm_namespace::Chunk.new(role: :assistant, content: 'hel', model_id: model.id))
-      block.call(llm_namespace::Chunk.new(role: :assistant, content: 'lo', model_id: model.id,
-                                          input_tokens: 7, output_tokens: 3))
-      llm_namespace::Message.new(role: :assistant, content: 'hello', model_id: model.id,
-                                 input_tokens: 7, output_tokens: 3)
+      block.call(Canonical::Chunk.text_delta(delta: 'hel', request_id: 'req-1'))
+      block.call(Canonical::Chunk.text_delta(delta: 'lo', request_id: 'req-1'))
+      canonical_response(model: model.id, text: 'hello')
     end
 
     yielded = []
     result = adapter.stream(model: 'model-a', messages: [{ role: 'user', content: 'hi' }]) do |chunk|
-      yielded << chunk.content
+      yielded << chunk.delta
     end
 
     expect(yielded).to eq(%w[hel lo])
-    expect(result[:result]).to eq('hello')
-    expect(result[:model]).to eq('model-a')
-    expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
+    expect(result).to be_a(Canonical::Response)
+    expect(result.text).to eq('hello')
+    expect(result.model).to eq('model-a')
+    expect(result.usage.input_tokens).to eq(7)
+    expect(result.usage.output_tokens).to eq(3)
   end
 
   it 'calls upstream Responses API for non-streaming responses' do
@@ -311,7 +343,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     end
   end
 
-  it 'streams upstream Responses API deltas and captures completed usage' do
+  it 'streams upstream Responses API deltas as canonical chunks and captures completed usage' do
     connection = Class.new do
       attr_reader :payload
 
@@ -339,10 +371,11 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       body:     { input: 'say hi', stream: true },
       stream:   true,
       messages: [{ role: 'user', content: 'say hi' }]
-    ) { |chunk| yielded << chunk.content }
+    ) { |chunk| yielded << chunk }
 
     expect(connection.payload).to include(model: 'gpt-5.4', stream: true)
-    expect(yielded).to eq(['hi'])
+    expect(yielded).to all(be_a(Canonical::Chunk))
+    expect(yielded.map(&:delta)).to eq(['hi'])
     expect(result[:result]).to eq('hi')
     expect(result[:model]).to eq('gpt-5.4')
     expect(result[:usage]).to include(input_tokens: 8, output_tokens: 5)
@@ -350,63 +383,39 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     provider_class.connection = nil
   end
 
-  it 'uses the final streamed provider message for accumulated tool calls' do
+  it 'uses the final streamed provider response for accumulated tool calls' do
     provider_class.define_method(:complete) do |_messages, model:, **, &block|
       block.call(
-        llm_namespace::Chunk.new(
-          role:       :assistant,
-          content:    nil,
-          model_id:   model.id,
-          tool_calls: {
-            'legion_tool' => llm_namespace::ToolCall.new(
-              id:        'call-1',
-              name:      'legion_tool',
-              arguments: ''
-            )
-          }
+        Canonical::Chunk.tool_call_delta(
+          tool_call:  { id: 'call-1', name: 'legion_tool', arguments: '{"chat_id":"chat-123"}' },
+          request_id: 'req-1'
         )
       )
 
-      llm_namespace::Message.new(
-        role:          :assistant,
-        content:       nil,
-        model_id:      model.id,
-        tool_calls:    {
-          legion_tool: llm_namespace::ToolCall.new(
-            id:        'call-1',
-            name:      'legion_tool',
-            arguments: { 'chat_id' => 'chat-123' }
-          )
-        },
-        input_tokens:  7,
-        output_tokens: 3
+      canonical_response(
+        model:       model.id,
+        text:        nil,
+        stop_reason: :tool_use,
+        tool_calls:  [
+          Canonical::ToolCall.build(id: 'call-1', name: 'legion_tool', arguments: { 'chat_id' => 'chat-123' })
+        ]
       )
     end
 
     result = adapter.stream(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
 
-    expect(result[:tool_calls].fetch(:legion_tool).arguments).to eq('chat_id' => 'chat-123')
-    expect(result[:stop_reason]).to eq(:tool_use)
+    expect(result.tool_calls.first.name).to eq('legion_tool')
+    expect(result.tool_calls.first.arguments).to eq('chat_id' => 'chat-123')
+    expect(result.stop_reason).to eq(:tool_use)
   end
 
-  it 'builds fallback streamed responses from accumulated chunk state' do
-    provider_class.define_method(:complete) do |_messages, model:, **, &block|
-      block.call(llm_namespace::Chunk.new(role: :assistant, content: 'run ', model_id: model.id,
-                                          input_tokens: 7, output_tokens: 1))
+  it 'builds fallback streamed responses from accumulated canonical chunk state' do
+    provider_class.define_method(:complete) do |_messages, **, &block|
+      block.call(Canonical::Chunk.text_delta(delta: 'run ', request_id: 'req-1'))
       block.call(
-        llm_namespace::Chunk.new(
-          role:          :assistant,
-          content:       'tool',
-          model_id:      model.id,
-          tool_calls:    {
-            legion_tool: llm_namespace::ToolCall.new(
-              id:        'call-1',
-              name:      'legion_tool',
-              arguments: { 'chat_id' => 'chat-123' }
-            )
-          },
-          input_tokens:  7,
-          output_tokens: 3
+        Canonical::Chunk.tool_call_delta(
+          tool_call:  { id: 'call-1', name: 'legion_tool', arguments: '{"chat_id":"chat-123"}' },
+          request_id: 'req-1'
         )
       )
       nil
@@ -414,16 +423,18 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
 
     result = adapter.stream(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
 
-    expect(result[:result]).to eq('run tool')
-    expect(result[:model]).to eq('model-a')
-    expect(result[:usage]).to include(input_tokens: 7, output_tokens: 3)
-    expect(result[:tool_calls].fetch(:legion_tool).arguments).to eq('chat_id' => 'chat-123')
-    expect(result[:stop_reason]).to eq(:tool_use)
+    expect(result).to be_a(Canonical::Response)
+    expect(result.text).to eq('run ')
+    expect(result.model).to eq('model-a')
+    expect(result.tool_calls.first.name).to eq('legion_tool')
+    # JSON-string arguments are parsed at the edge (03 O03a); Legion::JSON
+    # returns symbol keys.
+    expect(result.tool_calls.first.arguments).to eq(chat_id: 'chat-123')
+    expect(result.stop_reason).to eq(:tool_use)
   end
 
   it 'does not retain stream chunk objects in fallback state' do
-    chunk = lex_llm_test_namespace::Chunk.new(role: :assistant, content: 'hello', model_id: 'model-a',
-                                              input_tokens: 7, output_tokens: 3)
+    chunk = Canonical::Chunk.text_delta(delta: 'hello', request_id: 'req-1')
     accumulator = adapter.send(:build_stream_accumulator)
 
     adapter.send(:accumulate_stream_chunk, accumulator, chunk)
@@ -432,108 +443,29 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(accumulator.values).not_to include(chunk)
   end
 
-  it 'accumulates plain string streaming thinking chunks' do
-    chunk_class = Struct.new(:content, :model_id, :input_tokens, :output_tokens,
-                             :cached_tokens, :cache_creation_tokens, :thinking,
-                             keyword_init: true)
-    provider_class.define_method(:complete) do |_messages, model:, **, &block|
-      block.call(chunk_class.new(content: 'answer', model_id: model.id, input_tokens: 7, output_tokens: 3,
-                                 cached_tokens: 0, cache_creation_tokens: 0))
-      block.call(chunk_class.new(content: '', model_id: model.id, input_tokens: 7, output_tokens: 3,
-                                 cached_tokens: 0, cache_creation_tokens: 0, thinking: 'internal reasoning'))
+  it 'accumulates canonical thinking deltas into the fallback response' do
+    provider_class.define_method(:complete) do |_messages, **, &block|
+      block.call(Canonical::Chunk.text_delta(delta: 'answer', request_id: 'req-1'))
+      block.call(Canonical::Chunk.thinking_delta(delta: 'internal reasoning', request_id: 'req-1', signature: 'sig-1'))
+      nil
     end
 
     result = adapter.stream(model: 'model-a', messages: [{ role: 'user', content: 'hi' }])
 
-    expect(result[:result]).to eq('answer')
-    expect(result[:thinking]).to eq(content: 'internal reasoning', enabled: true)
+    expect(result.text).to eq('answer')
+    expect(result.thinking.content).to eq('internal reasoning')
+    expect(result.thinking.signature).to eq('sig-1')
   end
 
-  it 'extracts token usage from raw data when direct token readers are zero' do
-    response_class = Struct.new(
-      :input_tokens, :output_tokens, :cached_tokens, :cache_creation_tokens, :usage, :raw,
-      keyword_init: true
-    )
-    response = response_class.new(
-      input_tokens:          0,
-      output_tokens:         5,
-      cached_tokens:         0,
-      cache_creation_tokens: 0,
-      usage:                 nil,
-      raw:                   { data: { input_tokens: 9, output_tokens: 5 } }
-    )
+  it 'extracts token usage from a canonical usage object' do
+    usage = Canonical::Usage.build(input_tokens: 8, output_tokens: 6, cache_read_tokens: 2, cache_write_tokens: 1)
 
-    expect(adapter.send(:usage_hash, response)).to eq(
-      input_tokens:       9,
-      output_tokens:      5,
-      cache_read_tokens:  0,
-      cache_write_tokens: 0
-    )
-  end
-
-  it 'extracts token usage from gateway response usage hashes' do
-    response_class = Struct.new(
-      :input_tokens, :output_tokens, :cached_tokens, :cache_creation_tokens, :usage,
-      keyword_init: true
-    )
-    response = response_class.new(
-      input_tokens:          0,
-      output_tokens:         0,
-      cached_tokens:         0,
-      cache_creation_tokens: 0,
-      usage:                 {
-        input_tokens:          8,
-        input_tokens_details:  { cached_tokens: 0 },
-        output_tokens:         6,
-        output_tokens_details: { reasoning_tokens: 0 },
-        total_tokens:          14
-      }
-    )
-
-    expect(adapter.send(:usage_hash, response)).to eq(
+    expect(adapter.send(:usage_hash, usage)).to eq(
       input_tokens:       8,
       output_tokens:      6,
-      cache_read_tokens:  0,
-      cache_write_tokens: 0
+      cache_read_tokens:  2,
+      cache_write_tokens: 1
     )
-  end
-
-  it 'extracts token usage from prompt/completion token usage hashes' do
-    response_class = Struct.new(
-      :input_tokens, :output_tokens, :cached_tokens, :cache_creation_tokens, :usage,
-      keyword_init: true
-    )
-    response = response_class.new(
-      input_tokens:          0,
-      output_tokens:         0,
-      cached_tokens:         0,
-      cache_creation_tokens: 0,
-      usage:                 { prompt_tokens: 11, completion_tokens: 4 }
-    )
-
-    expect(adapter.send(:usage_hash, response)).to eq(
-      input_tokens:       11,
-      output_tokens:      4,
-      cache_read_tokens:  0,
-      cache_write_tokens: 0
-    )
-  end
-
-  it 'merges stream usage from raw fallback data even when chunks omit input_tokens readers' do
-    chunk_class = Struct.new(:content, :model_id, :usage, :raw, keyword_init: true)
-    accumulator = adapter.send(:build_stream_accumulator)
-    chunk = chunk_class.new(
-      content:  'hi',
-      model_id: 'model-a',
-      usage:    nil,
-      raw:      { response: { usage: { input_tokens: 8, output_tokens: 2 } } }
-    )
-
-    adapter.send(:accumulate_stream_usage, accumulator, chunk)
-
-    expect(accumulator[:usage]).to include(input_tokens: 8, output_tokens: 2)
-    expect(accumulator[:model]).to eq('model-a')
-    expect(accumulator[:raw]).to eq(response: { usage: { input_tokens: 8, output_tokens: 2 } })
   end
 
   it 'estimates token count for non-hash message inputs' do
@@ -586,9 +518,9 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
   context 'Anthropic-style structured content blocks in messages (#123)' do
     it 'flattens symbol-keyed text blocks to a plain string' do
       messages_seen = nil
-      provider_class.define_method(:complete) do |messages, **|
+      provider_class.define_method(:complete) do |messages, model:, **|
         messages_seen = messages
-        llm_namespace::Message.new(role: :assistant, content: 'ok', input_tokens: 1, output_tokens: 1)
+        canonical_response(model: model.id)
       end
 
       adapter.chat(
@@ -596,14 +528,15 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
         messages: [{ role: 'user', content: [{ type: 'text', text: 'tell me a dad joke' }] }]
       )
 
+      expect(messages_seen).to all(be_a(Canonical::Message))
       expect(messages_seen.first.content).to eq('tell me a dad joke')
     end
 
     it 'flattens string-keyed text blocks to a plain string' do
       messages_seen = nil
-      provider_class.define_method(:complete) do |messages, **|
+      provider_class.define_method(:complete) do |messages, model:, **|
         messages_seen = messages
-        llm_namespace::Message.new(role: :assistant, content: 'ok', input_tokens: 1, output_tokens: 1)
+        canonical_response(model: model.id)
       end
 
       adapter.chat(
@@ -616,9 +549,9 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
 
     it 'joins multiple text blocks' do
       messages_seen = nil
-      provider_class.define_method(:complete) do |messages, **|
+      provider_class.define_method(:complete) do |messages, model:, **|
         messages_seen = messages
-        llm_namespace::Message.new(role: :assistant, content: 'ok', input_tokens: 1, output_tokens: 1)
+        canonical_response(model: model.id)
       end
 
       adapter.chat(
@@ -631,9 +564,9 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
 
     it 'skips non-text blocks (tool_use) and returns remaining text' do
       messages_seen = nil
-      provider_class.define_method(:complete) do |messages, **|
+      provider_class.define_method(:complete) do |messages, model:, **|
         messages_seen = messages
-        llm_namespace::Message.new(role: :assistant, content: 'ok', input_tokens: 1, output_tokens: 1)
+        canonical_response(model: model.id)
       end
 
       adapter.chat(
@@ -669,7 +602,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     end.to raise_error(NameError, /lex-llm provider namespace/)
   end
 
-  it 'normalize_message_tool_calls returns Array of ToolCall objects, not a Hash' do
+  it 'normalize_message_tool_calls returns Array of Canonical::ToolCall objects, not a Hash' do
     tool_calls_input = [
       { id: 'call-1', name: 'legion_list_all_tools', arguments: {} },
       { id: 'call-2', name: 'ruby', arguments: { code: 'puts 1' } }
@@ -679,30 +612,34 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
 
     expect(result).to be_an(Array)
     expect(result.size).to eq(2)
-    expect(result.first).to be_a(lex_llm_test_namespace::ToolCall)
+    expect(result.first).to be_a(Canonical::ToolCall)
     expect(result.first.name).to eq('legion_list_all_tools')
     expect(result.first.id).to eq('call-1')
     expect(result.last.name).to eq('ruby')
     expect(result.last.arguments).to eq(code: 'puts 1')
   end
 
+  it 'normalizes JSON-string tool arguments to a Hash at the edge (03 O03a)' do
+    result = adapter.send(:normalize_message_tool_calls,
+                          [{ id: 'call-1', name: 'lookup', arguments: '{"query":"status"}' }])
+
+    expect(result.first.arguments).to eq(query: 'status')
+  end
+
   # Reproduction for ContentBlock#inspect leak (2026-06-25):
-  # When ContentBlock objects with type :output_text flow through
-  # normalize_message_content (e.g. replayed history from canonical messages),
-  # the Data struct branch must extract .text, not return nil and fall through
-  # to Array#to_s which dumps the raw #inspect.
-  it 'extracts text from ContentBlock objects with output_text type in message content' do
+  # When ContentBlock objects flow through normalize_message_content (replayed
+  # history from canonical messages), the block branch must extract .text, not
+  # return nil and fall through to Array#to_s which dumps the raw #inspect.
+  it 'extracts text from ContentBlock objects in message content' do
     canonical_ns = ::Legion::Extensions::Llm::Canonical
     content_blocks = [
-      canonical_ns::ContentBlock.from_hash(type: 'output_text', text: "The seat templates don't apply here.")
+      canonical_ns::ContentBlock.from_hash(type: 'text', text: "The seat templates don't apply here.")
     ]
 
     provider_class.define_method(:complete) do |messages, model:, **|
-      # Verify the content passed to the provider is a clean string, not inspect output
       assistant_msg = messages.find { |m| m.role == :assistant }
       content_text = assistant_msg&.content
-      llm_namespace::Message.new(role: :assistant, content: "got: #{content_text}", model_id: model.id,
-                                 input_tokens: 10, output_tokens: 5)
+      canonical_response(model: model.id, text: "got: #{content_text}")
     end
 
     messages = [
@@ -713,9 +650,8 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
 
     result = adapter.chat(model: 'model-a', messages: messages)
 
-    expect(result[:result]).not_to include('#<data')
-    expect(result[:result]).not_to include('ContentBlock')
-    expect(result[:result]).not_to include('source_type=nil')
-    expect(result[:result]).to include("The seat templates don't apply here.")
+    expect(result.text).not_to include('#<data')
+    expect(result.text).not_to include('ContentBlock')
+    expect(result.text).to include("The seat templates don't apply here.")
   end
 end

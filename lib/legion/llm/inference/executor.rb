@@ -24,6 +24,7 @@ module Legion
         include ContextWindow
         include ToolInjection
         include Steps::Logging
+        include Steps::MessageAccessors
         include Steps::Rbac
         include Steps::Classification
         include Steps::Billing
@@ -433,9 +434,9 @@ module Legion
         end
 
         def history_dedup_key(msg)
-          role = (msg[:role] || msg['role']).to_s
-          content = msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg
-          [role, ContextAccounting.content_text(content).to_s.strip]
+          role = msg.is_a?(Hash) ? (msg[:role] || msg['role']) : msg.role
+          content = msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg.content
+          [role.to_s, ContextAccounting.content_text(content).to_s.strip]
         end
 
         def maybe_compact_history(conv_id, history)
@@ -1012,17 +1013,17 @@ module Legion
 
           log.debug("[pipeline][context_store] action=store conversation_id=#{conv_id} message_count=#{@request.messages.size}")
 
+          # @request.messages is Array<Canonical::Message> (Inference::Request
+          # canonicalizes at the entry) — no hash-shape branch.
           @request.messages.each do |msg|
-            next unless msg.is_a?(Hash)
-
             typed_msg = Types::Message.build(
-              role:            msg[:role]&.to_sym || msg['role']&.to_sym || :user,
-              content:         msg[:content] || msg['content'],
+              role:            msg.role,
+              content:         msg.content,
               task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil,
               conversation_id: conv_id,
-              tool_calls:      msg[:tool_calls] || msg['tool_calls'],
-              tool_call_id:    msg[:tool_call_id] || msg['tool_call_id'],
-              name:            msg[:name] || msg['name']
+              tool_calls:      msg.tool_calls,
+              tool_call_id:    msg.tool_call_id,
+              name:            msg.name
             )
 
             attrs = {

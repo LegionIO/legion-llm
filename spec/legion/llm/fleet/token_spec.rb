@@ -5,20 +5,22 @@ require 'spec_helper'
 RSpec.describe Legion::LLM::Fleet::TokenIssuer do
   let(:payload) do
     {
-      request_id:        'req-1',
-      correlation_id:    'corr-1',
-      idempotency_key:   'idem-1',
-      operation:         :chat,
-      provider:          'ollama',
-      provider_instance: 'default',
-      model:             'llama3.2',
-      reply_to:          'llm.fleet.reply.test',
-      message_context:   { conversation_id: 'conv-1' },
-      params:            { messages: [{ role: 'user', content: 'hello' }] },
-      caller:            { source: 'test' },
-      trace_context:     { trace_id: 'trace-1' },
-      timeout_seconds:   30,
-      expires_at:        (Time.now.utc + 30).iso8601
+      request_id:         'req-1',
+      correlation_id:     'corr-1',
+      idempotency_key:    'idem-1',
+      operation:          :chat,
+      provider:           'ollama',
+      provider_instance:  'default',
+      model:              'llama3.2',
+      reply_to:           'llm.fleet.reply.test',
+      message_context:    { conversation_id: 'conv-1' },
+      params:             { messages: [{ role: 'user', content: 'hello' }] },
+      caller:             { source: 'test' },
+      trace_context:      { trace_id: 'trace-1' },
+      timeout_seconds:    30,
+      expires_at:         (Time.now.utc + 30).iso8601,
+      execution_contract: 'exact_offering_v1',
+      offering_id:        'off:v1:test'
     }
   end
 
@@ -84,45 +86,49 @@ end
 RSpec.describe Legion::LLM::Fleet::TokenValidator do
   let(:envelope) do
     {
-      request_id:        'req-1',
-      correlation_id:    'corr-1',
-      idempotency_key:   'idem-1',
-      operation:         :chat,
-      provider:          'ollama',
-      provider_instance: 'default',
-      model:             'llama3.2',
-      reply_to:          'llm.fleet.reply.test',
-      message_context:   { conversation_id: 'conv-1' },
-      params:            { messages: [{ role: 'user', content: 'hello' }] },
-      caller:            { source: 'test' },
-      trace_context:     { trace_id: 'trace-1' },
-      timeout_seconds:   30,
-      expires_at:        (Time.now.utc + 30).iso8601
+      request_id:         'req-1',
+      correlation_id:     'corr-1',
+      idempotency_key:    'idem-1',
+      operation:          :chat,
+      provider:           'ollama',
+      provider_instance:  'default',
+      model:              'llama3.2',
+      reply_to:           'llm.fleet.reply.test',
+      message_context:    { conversation_id: 'conv-1' },
+      params:             { messages: [{ role: 'user', content: 'hello' }] },
+      caller:             { source: 'test' },
+      trace_context:      { trace_id: 'trace-1' },
+      timeout_seconds:    30,
+      expires_at:         (Time.now.utc + 30).iso8601,
+      execution_contract: 'exact_offering_v1',
+      offering_id:        'off:v1:test'
     }
   end
 
   let(:claims) do
     now = Time.now.to_i
     {
-      iss:               'legion-llm',
-      aud:               'lex-llm-fleet-worker',
-      exp:               now + 30,
-      nbf:               now - 1,
-      jti:               'jti-1',
-      request_id:        'req-1',
-      correlation_id:    'corr-1',
-      idempotency_key:   'idem-1',
-      operation:         :chat,
-      provider:          'ollama',
-      provider_instance: 'default',
-      model:             'llama3.2',
-      reply_to:          'llm.fleet.reply.test',
-      message_context:   { conversation_id: 'conv-1' },
-      params:            { messages: [{ role: 'user', content: 'hello' }] },
-      caller:            { source: 'test' },
-      trace_context:     { trace_id: 'trace-1' },
-      timeout_seconds:   30,
-      expires_at:        envelope[:expires_at]
+      iss:                'legion-llm',
+      aud:                'lex-llm-fleet-worker',
+      exp:                now + 30,
+      nbf:                now - 1,
+      jti:                'jti-1',
+      request_id:         'req-1',
+      correlation_id:     'corr-1',
+      idempotency_key:    'idem-1',
+      operation:          :chat,
+      provider:           'ollama',
+      provider_instance:  'default',
+      model:              'llama3.2',
+      reply_to:           'llm.fleet.reply.test',
+      message_context:    { conversation_id: 'conv-1' },
+      params:             { messages: [{ role: 'user', content: 'hello' }] },
+      caller:             { source: 'test' },
+      trace_context:      { trace_id: 'trace-1' },
+      timeout_seconds:    30,
+      expires_at:         envelope[:expires_at],
+      execution_contract: 'exact_offering_v1',
+      offering_id:        'off:v1:test'
     }
   end
 

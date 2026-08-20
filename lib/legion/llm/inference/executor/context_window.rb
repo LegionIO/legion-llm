@@ -75,15 +75,15 @@ module Legion
             return messages if estimate_message_tokens(messages) <= target_tokens
 
             filtered = messages.reject do |msg|
-              msg.role.to_s == 'tool' && msg.text.to_s.length >
+              cw_role(msg) == 'tool' && cw_text(msg).length >
                 Legion::Settings[:llm][:tools][:context_compaction][:threshold_chars]
             end
             messages = filtered.map do |msg|
-              next msg unless msg.role.to_s == 'tool'
+              next msg unless cw_role(msg) == 'tool'
 
-              content = msg.text.to_s
+              content = cw_text(msg)
               result_chars = Legion::Settings[:llm][:tools][:context_compaction][:result_chars]
-              content.length > result_chars ? msg.with(content: "#{content[0, result_chars]}\n[compacted]") : msg
+              content.length > result_chars ? cw_with_content(msg, "#{content[0, result_chars]}\n[compacted]") : msg
             end
 
             return messages if estimate_message_tokens(messages) <= target_tokens
@@ -99,7 +99,7 @@ module Legion
           end
 
           def estimate_message_tokens(messages)
-            messages.sum { |m| (m.text.to_s.length / 4.0).ceil }
+            messages.sum { |m| (cw_text(m).length / 4.0).ceil }
           end
 
           def estimate_tool_token_budget
@@ -131,15 +131,15 @@ module Legion
             preserve_after = last_user_message_index(messages)
             messages.each_with_index.map do |msg, idx|
               next msg if idx >= preserve_after
-              next msg unless msg.role.to_s == 'assistant'
+              next msg unless cw_role(msg) == 'assistant'
 
-              content = msg.content
+              content = cw_content(msg)
               next msg unless content.is_a?(String)
 
               cleaned = strip_leading_thinking_block(content)
               next msg if cleaned == content
 
-              msg.with(content: cleaned)
+              cw_with_content(msg, cleaned)
             end
           end
 
@@ -191,12 +191,12 @@ module Legion
               next msg if idx >= preserve_after
               next msg unless tool_result_message?(msg)
 
-              content = msg.content
+              content = cw_content(msg)
               next msg unless content.is_a?(String) && content.length > max_chars
 
-              msg.with(content: "#{content[0, max_chars]}\n\n[TRUNCATED: showing first #{max_chars} of #{content.length} chars. " \
-                                 'If you need more content, make multiple smaller targeted requests ' \
-                                 '(e.g. read specific line ranges, grep for specific patterns, or request smaller sections).]')
+              cw_with_content(msg, "#{content[0, max_chars]}\n\n[TRUNCATED: showing first #{max_chars} of #{content.length} chars. " \
+                                   'If you need more content, make multiple smaller targeted requests ' \
+                                   '(e.g. read specific line ranges, grep for specific patterns, or request smaller sections).]')
             end
           end
 
@@ -211,27 +211,65 @@ module Legion
           end
 
           def last_user_message_index(messages)
-            messages.rindex { |m| m.role.to_s == 'user' } || messages.size
+            messages.rindex { |m| cw_role(m) == 'user' } || messages.size
           end
 
           def tool_result_message?(msg)
-            return false unless msg.is_a?(Legion::Extensions::Llm::Canonical::Message)
-
-            msg.role.to_s == 'tool' || !msg.tool_call_id.nil?
+            cw_role(msg) == 'tool' || !cw_tool_call_id(msg).nil?
           end
 
           def empty_assistant_message?(msg)
-            return false unless msg.is_a?(Legion::Extensions::Llm::Canonical::Message)
-            return false unless msg.role.to_s == 'assistant'
+            return false unless cw_role(msg) == 'assistant'
 
-            content = msg.content
+            content = cw_content(msg)
             has_content = content.is_a?(String) ? !content.strip.empty? : !content.nil?
             return false if has_content
 
-            tool_calls = msg.tool_calls
+            tool_calls = cw_tool_calls(msg)
             return false if tool_calls.is_a?(Array) && tool_calls.any?
 
             true
+          end
+
+          # -- Dual-shape message readers (Canonical::Message or Hash) -------
+
+          def cw_role(msg)
+            msg.is_a?(Hash) ? (msg[:role] || msg['role']).to_s : msg.role.to_s
+          end
+
+          def cw_content(msg)
+            msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg.content
+          end
+
+          def cw_text(msg)
+            return msg.text.to_s unless msg.is_a?(Hash)
+
+            content = cw_content(msg)
+            case content
+            when String then content
+            when Array  then content.map do |c|
+              if c.is_a?(Hash)
+                (c[:text] || c['text']).to_s
+              else
+                (c.respond_to?(:text) ? c.text.to_s : '')
+              end
+            end.join
+            else content.to_s
+            end
+          end
+
+          def cw_tool_call_id(msg)
+            msg.is_a?(Hash) ? (msg[:tool_call_id] || msg['tool_call_id']) : msg.tool_call_id
+          end
+
+          def cw_tool_calls(msg)
+            msg.is_a?(Hash) ? (msg[:tool_calls] || msg['tool_calls']) : msg.tool_calls
+          end
+
+          def cw_with_content(msg, content)
+            return msg.merge(content: content) if msg.is_a?(Hash)
+
+            msg.with(content: content)
           end
         end
       end

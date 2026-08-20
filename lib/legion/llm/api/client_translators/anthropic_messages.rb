@@ -372,7 +372,7 @@ module Legion
           # without buffering through the assembler.
           def format_tool_call_delta_chunk(canonical_chunk)
             tc = canonical_chunk.tool_call
-            args = tc.respond_to?(:arguments) ? tc.arguments : {}
+            args = tool_fragment_field(tc, :arguments) || {}
             block_index = canonical_chunk.block_index || 0
 
             if server_tool_chunk?(tc)
@@ -381,8 +381,8 @@ module Legion
                 index:         block_index,
                 content_block: {
                   type:  'server_tool_use',
-                  id:    tc.respond_to?(:id) ? tc.id : nil,
-                  name:  tc.respond_to?(:name) ? tc.name.to_s : '',
+                  id:    tool_fragment_field(tc, :id),
+                  name:  tool_fragment_field(tc, :name).to_s,
                   input: args_as_object(args)
                 }
               }
@@ -400,7 +400,7 @@ module Legion
           end
 
           def server_tool_chunk?(tool_call)
-            source = tool_call.respond_to?(:source) ? tool_call.source : nil
+            source = tool_fragment_field(tool_call, :source)
             return false if source.nil?
 
             type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
@@ -583,7 +583,7 @@ module Legion
 
           # Map an Anthropic-style thinking block ({type:, budget_tokens:}) to
           # the canonical {effort:, budget:} kwargs that
-          # Canonical::ThinkingConfig.new accepts. Anthropic doesn't carry an
+          # Canonical::Thinking::Config.new accepts. Anthropic doesn't carry an
           # effort spelling — only a budget — so effort stays nil.
           def extract_thinking(thinking)
             return nil if thinking.nil?
@@ -603,7 +603,7 @@ module Legion
             end
           end
 
-          # Canonical::ThinkingConfig#to_h is {effort:, budget:}. The Inference
+          # Canonical::Thinking::Config#to_h is {effort:, budget:}. The Inference
           # request and downstream provider translators expect the
           # Anthropic-style {type: 'enabled', budget_tokens:} shape; map back.
           def thinking_to_inference(thinking_obj)

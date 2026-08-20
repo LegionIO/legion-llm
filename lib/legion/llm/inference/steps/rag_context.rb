@@ -10,6 +10,7 @@ module Legion
         module RagContext
           include Legion::Logging::Helper
           include Steps::Logging
+          include Steps::MessageAccessors
 
           def step_rag_context
             unless rag_enabled?
@@ -148,7 +149,7 @@ module Legion
           def estimate_utilization
             return 0.0 if @request.tokens[:max].nil? || @request.tokens[:max].zero?
 
-            message_tokens = @request.messages.sum { |m| content_text(message_content(m)).length / 4 }
+            message_tokens = @request.messages.sum { |m| content_text(message_content_of(m)).length / 4 }
             message_tokens.to_f / @request.tokens[:max]
           end
 
@@ -285,12 +286,8 @@ module Legion
           end
 
           def extract_query
-            @request.messages.select { |m| m[:role].to_s == 'user' }
-                    .then { |messages| content_text(message_content(messages.last)) }
-          end
-
-          def message_content(message)
-            message[:content]
+            @request.messages.select { |m| message_role_of(m) == 'user' }
+                    .then { |messages| content_text(message_content_of(messages.last)) }
           end
 
           def content_text(content)

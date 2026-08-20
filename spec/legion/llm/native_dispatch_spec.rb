@@ -232,7 +232,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.normalize_response (canonical)' do
   it 'allows [:text] access on Canonical::Response' do
     response = canonical::Response.new(
       text: 'hello', thinking: nil, tool_calls: [],
-      usage: canonical::Usage.new(input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}),
+      usage: canonical::Usage.new(input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}, metadata: {}),
       stop_reason: :end_turn, model: 'test', routing: {}, metadata: {}
     )
     expect(response[:text]).to eq('hello')
@@ -245,7 +245,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.normalize_response (canonical)' do
       id: 'tc1', exchange_id: nil, name: 'write_file', arguments: { path: '/tmp/x' },
       source: { type: :registry }, status: :success, duration_ms: 50, result: 'ok',
       error: nil, started_at: nil, finished_at: nil, category: nil,
-      data_handling_classification: nil, policy_decision: nil
+      data_handling_classification: nil, policy_decision: nil, metadata: {}
     )
     expect(tc[:id]).to eq('tc1')
     expect(tc[:name]).to eq('write_file')
@@ -255,7 +255,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.normalize_response (canonical)' do
   it 'allows dig on Canonical::Response' do
     response = canonical::Response.new(
       text: 'hello', thinking: nil, tool_calls: [],
-      usage: canonical::Usage.new(input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}),
+      usage: canonical::Usage.new(input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}, metadata: {}),
       stop_reason: :end_turn, model: 'test', routing: {}, metadata: { deep: { nested: 'value' } }
     )
     expect(response[:metadata][:deep][:nested]).to eq('value')

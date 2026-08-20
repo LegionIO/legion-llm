@@ -21,7 +21,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       captured << kwargs
       texts = kwargs[:text]
       vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
-      { result: vectors, usage: { input_tokens: 5 } }
+      { embedding: vectors, usage: { input_tokens: 5 } }
     end)
     activate(
       provider_family: provider, instance_id: instance, callable: callable,

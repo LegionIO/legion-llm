@@ -76,17 +76,35 @@ module Legion
             prior   = messages[0..-2]
             current = messages.last
 
-            last_stable_idx = prior.rindex { |m| !m[:cache_control] }
+            # Pipeline messages are Canonical::Message (cache_control is a
+            # canonical member, kit T4); direct step-method specs may pass Hash
+            # messages. Both shapes are read/written here.
+            last_stable_idx = prior.rindex { |m| message_cache_control(m).nil? }
             unless last_stable_idx
               log.debug('[llm][prompt_cache] conversation_breakpoint skipped=no_stable_message')
               return messages
             end
 
             updated_prior = prior.dup
-            updated_prior[last_stable_idx] = prior[last_stable_idx].merge(cache_control: { type: scope })
+            updated_prior[last_stable_idx] = message_with_cache_control(prior[last_stable_idx], { type: scope })
             log.info("[llm][prompt_cache] conversation_breakpoint scope=#{scope} index=#{last_stable_idx}")
             updated_prior + [current]
           end
+
+          def message_cache_control(message)
+            return message[:cache_control] || message['cache_control'] if message.is_a?(Hash)
+
+            message.respond_to?(:cache_control) ? message.cache_control : nil
+          end
+          private_class_method :message_cache_control
+
+          def message_with_cache_control(message, cache_control)
+            return message.merge(cache_control: cache_control) if message.is_a?(Hash)
+            return message.with(cache_control: cache_control) if message.respond_to?(:with)
+
+            message
+          end
+          private_class_method :message_with_cache_control
 
           private
 

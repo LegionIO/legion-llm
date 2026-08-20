@@ -465,18 +465,13 @@ module Legion
 
           # Normalize the provider return into a flat Array of numeric vectors.
           #
-          # SSOT v3 callables return the provider-native
-          # Legion::Extensions::Llm::Embedding value object (the lex-llm
-          # parse_embedding_response contract). Like the chat path, which
-          # normalizes the native Message at the dispatch boundary
-          # (Inference::RouteAttempts -> Call::Dispatch.normalize_response),
-          # the native object is unwrapped HERE, at the embed consumer
-          # boundary — the callables stay raw. Its +vectors+ field is consumed
-          # exactly as the legacy Hash's +result:+ field: a flat numeric vector
-          # for a single input, an Array of them for a batch.
+          # 0.8.0 embed artifact (05 S3 / O07): the documented Hash
+          # { text:, model:, embedding: Array<Float>, usage: Canonical::Usage }
+          # is unwrapped HERE, at the embed consumer boundary — the callables
+          # stay raw. +embedding+ is a flat numeric vector for a single input,
+          # an Array of them for a batch.
           def provider_vectors(value)
-            value = value.vectors if value.respond_to?(:vectors)
-            raw = value.is_a?(Hash) ? value[:result] : value
+            raw = value.is_a?(Hash) ? value[:embedding] : value
             return [] if raw.nil?
             return [raw] if raw.is_a?(Array) && raw.first.is_a?(Numeric)
             return [value] if raw.is_a?(Array) == false
@@ -502,11 +497,9 @@ module Legion
             end
           end
 
+          # input_tokens from the documented embed artifact's +usage+
+          # (Canonical::Usage or a plain hash) — 0 when absent.
           def extract_tokens(value)
-            # The native Embedding value object carries input_tokens directly
-            # (no usage wrapper) — same duck guard as provider_vectors.
-            return value.input_tokens.to_i if value.respond_to?(:vectors) && value.respond_to?(:input_tokens)
-
             usage = value.is_a?(Hash) ? value[:usage] : nil
             return usage.input_tokens.to_i if usage.respond_to?(:input_tokens)
             return usage[:input_tokens].to_i if usage.is_a?(Hash) && usage.key?(:input_tokens)

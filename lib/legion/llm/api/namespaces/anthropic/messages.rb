@@ -159,7 +159,12 @@ module Legion
               end
 
               def estimate_input_tokens(messages)
-                chars = messages.sum { |m| (m[:content].is_a?(String) ? m[:content] : m[:content].to_s).length }
+                # @request.messages is Array<Canonical::Message>; legacy Hash
+                # entries (test doubles) still count by content.
+                chars = messages.sum do |m|
+                  content = m.is_a?(Hash) ? (m[:content] || m['content']) : m.text
+                  content.to_s.length
+                end
                 (chars / 4.0).ceil
               end
             end

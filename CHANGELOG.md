@@ -1,5 +1,18 @@
 # Legion LLM Changelog
 
+## [0.16.9] - 2026-08-20
+
+### Changed
+- **lex-llm 0.8.0 contract conformance.** Gemspec floor raised to `lex-llm >= 0.8.0`; the repo conforms to the 0.8.0 contract cut (Canonical-only internal language, fleet protocol v3, documented embed/image artifacts).
+- **Canonical messages end-to-end.** Client translators no longer de-canonicalize (`inference_messages` bridges deleted); `Inference::Request` canonicalizes inbound messages at the pipeline entry (plain strings, wire hashes, and Canonical objects are accepted; anything else raises). Executor `context_window`, `native_tool_loop`, `step_context_store`, and `prompt_cache` consume strict `Canonical::Message` accessors.
+- **Fleet requestor is protocol v3.** Dispatcher emits `protocol_version: 3` (explicit, no default fill), requires `execution_contract: exact_offering_v1` + a nonempty `offering_id` (no default provider/instance fill), signs both exact claims unconditionally (S3), and rejects legacy field names at the edge. The reply path rehydrates the serialized `Canonical::Response` under `response:` (E3) — the v2 `content`/`finish_reason` projection is gone.
+- **Client-edge dialect aliasing (O03a).** The three client translators translate client-wire spellings at the edge: params (`max_output_tokens`/`num_predict`/`max_completion_tokens` → `max_tokens`, `budget_tokens`/`thinking_budget` → `max_thinking_tokens`, `stop` → `stop_sequences`), content-type aliases (`input_text`/`output_text` → `text`, `image_url` → canonical `image` block), and JSON-string tool arguments → Hash. Canonical types accept canonical keys/types only.
+- **`/api/llm/providers` surfaces SSOT-activated instances.** The listing unions the Inventory Registry snapshot (deduped by provider+instance) with the compatibility call registry.
+- **`RULES.md` installed** (architecture law, byte-for-byte from the SSOT v4 reference).
+
+### Removed
+- **Legacy rip (0.8.0 cut).** The `Responses::StreamChunk` detection in `StreamAssembler` (type deleted upstream) and its tool-call accumulator; dead `Types::Message#to_provider_hash`; the legacy `Fleet::Handler` responder path (replaced by the lex-llm `ProviderResponder` registry topology); provider-native `Embedding` value-object handling in the embed consumer (replaced by the documented 0.8.0 embed artifact `{ text:, model:, embedding:, usage: }`).
+
 ## [0.16.8] - 2026-08-19
 
 ### Fixed

@@ -31,6 +31,7 @@ module Legion
                 provider_list = instances.map do |entry|
                   Legion::LLM::API::Native::Providers.instance_to_hash(entry)
                 end
+                provider_list = Legion::LLM::API::Native::Providers.union_ssot_providers(provider_list)
 
                 summary = {
                   total:           provider_list.size,

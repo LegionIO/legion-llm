@@ -751,11 +751,10 @@ module Legion
             end
           end
 
-          # Legacy lex-llm Responses::StreamChunk shape (.content, .thinking).
-          # NB: legacy chunks in Anthropic/Chat lanes are text-only — the
-          # executor tool loop accumulates tool calls into the final response,
-          # not per-chunk. The Responses lane uses canonical chunks already.
-          # Only probe tool_calls when the chunk is the concrete StreamChunk.
+          # Pre-canonical chunk shape (.content, .thinking) — test doubles and
+          # non-lex-llm callables only. Legacy chunks are text/thinking-only:
+          # tool calls arrive per-chunk exclusively via Canonical::Chunk
+          # (the deleted Responses::StreamChunk was the only legacy carrier).
           def from_legacy(chunk)
             text = chunk.respond_to?(:content) ? safe_call(chunk, :content).to_s : chunk.to_s
             thinking_text, thinking_signature = legacy_thinking(chunk)
@@ -763,15 +762,8 @@ module Legion
               text:               text,
               thinking_text:      thinking_text,
               thinking_signature: thinking_signature,
-              tool_calls:         legacy_tool_calls_if_real(chunk)
+              tool_calls:         []
             )
-          end
-
-          def legacy_tool_calls_if_real(chunk)
-            return [] unless defined?(::Legion::Extensions::Llm::Responses::StreamChunk) &&
-                             chunk.is_a?(::Legion::Extensions::Llm::Responses::StreamChunk)
-
-            legacy_tool_calls(chunk)
           end
 
           # respond_to? alone isn't sufficient for RSpec doubles that stub
@@ -803,36 +795,6 @@ module Legion
             else
               [thinking.is_a?(String) ? thinking : nil, nil]
             end
-          end
-
-          def legacy_tool_calls(chunk)
-            return [] unless chunk.respond_to?(:tool_calls)
-
-            calls = safe_call(chunk, :tool_calls)
-            return [] if calls.nil? || (calls.respond_to?(:empty?) && calls.empty?)
-
-            # Legacy yields tool_calls as { id => obj }. Canonical post-P3 yields arrays.
-            iterable = calls.is_a?(Hash) ? calls.values : Array(calls)
-            iterable.filter_map do |tc|
-              name = tc.respond_to?(:name) ? tc.name.to_s : ''
-              args = tc.respond_to?(:arguments) ? tc.arguments : {}
-              next if name.empty? && (args.nil? || (args.respond_to?(:empty?) && args.empty?))
-
-              {
-                id:          tc.respond_to?(:id) ? tc.id : nil,
-                name:        name,
-                arguments:   args.is_a?(String) ? safe_parse_args(args) : args,
-                server_tool: false
-              }
-            end
-          end
-
-          def safe_parse_args(str)
-            return {} if str.to_s.empty?
-
-            Legion::JSON.parse(str, symbolize_names: true)
-          rescue StandardError
-            str
           end
 
           def server_tool_source?(source)

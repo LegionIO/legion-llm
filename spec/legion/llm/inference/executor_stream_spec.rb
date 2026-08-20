@@ -117,7 +117,11 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
 
     executor.call_stream { |_chunk| nil }
 
-    expect(seen_messages).to include(hash_including(role: :assistant, cache_control: { type: 'ephemeral' }))
+    # The breakpoint is applied to the last stable (cache_control-free) message
+    # — here the assistant turn — carried on the canonical member (kit T4).
+    assistant = seen_messages.find { |m| m.role == :assistant }
+    expect(assistant).not_to be_nil
+    expect(assistant.cache_control).to eq(type: 'ephemeral')
   end
 
   it 'propagates provider errors as LLM errors when the callable raises during streaming' do

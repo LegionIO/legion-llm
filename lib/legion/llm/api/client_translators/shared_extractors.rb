@@ -8,6 +8,90 @@ module Legion
         # Single source of truth — replaces the 3-way duplicate that lived in
         # AnthropicMessages, OpenAIChat, and OpenAIResponses (P6 dedup).
         module SharedExtractors
+          # Client-wire params spellings per canonical member (03 O03a).
+          # Canonical::Params accepts canonical keys and types ONLY; the
+          # client-dialect spellings are translated at this edge, never in the
+          # shared owner.
+          PARAM_SPELLINGS = {
+            max_tokens:          %i[max_tokens max_output_tokens num_predict max_completion_tokens],
+            max_thinking_tokens: %i[max_thinking_tokens budget_tokens thinking_budget],
+            stop_sequences:      %i[stop_sequences stop]
+          }.freeze
+
+          # A canonical tool_call_delta fragment (R4) arrives as a Hash
+          # (string- or symbol-keyed — wire/kit fixtures) or a
+          # Canonical::ToolCall. Read one field shape-agnostically.
+          def tool_fragment_field(fragment, field)
+            return fragment.public_send(field) if fragment.is_a?(Hash) == false && fragment.respond_to?(field)
+
+            return fragment[field] if fragment.is_a?(Hash) && fragment.key?(field)
+            return fragment[field.to_s] if fragment.is_a?(Hash)
+
+            nil
+          end
+
+          # First non-nil client-wire spelling for a canonical member.
+          def param_spelling(body, member)
+            PARAM_SPELLINGS.fetch(member).each do |key|
+              value = body[key] || body[key.to_s]
+              return value unless value.nil?
+            end
+            nil
+          end
+
+          # Map client content parts to canonical content blocks (03 O03a).
+          # Canonical::ContentBlock accepts canonical types only; the dialect
+          # spellings are translated at the client edge. String parts (e.g.
+          # corrupted ContentBlock#inspect output replayed in history) are
+          # wrapped as text blocks; other non-Hash parts pass through
+          # untouched — canonical validation raises a typed error.
+          def canonicalize_content_parts(parts)
+            return parts unless parts.is_a?(Array)
+
+            parts.map do |part|
+              if part.is_a?(String)
+                canonical_content_block({ type: 'text', text: part })
+              elsif part.is_a?(Hash)
+                canonical_content_block(part.transform_keys(&:to_sym))
+              else
+                part
+              end
+            end
+          end
+
+          # One client content part → one canonical content block. Type
+          # aliases (input_text/output_text → text) and the OpenAI image_url
+          # envelope (→ image with data/media_type/source_type) are the two
+          # dialect shapes; anything else passes through and the canonical
+          # validation raises loudly on a wrong type.
+          def canonical_content_block(part)
+            case part[:type].to_s
+            when 'text', 'input_text', 'output_text'
+              { type: 'text', text: part[:text].to_s }
+            when 'image_url'
+              canonical_image_block(part)
+            else
+              part
+            end
+          end
+
+          def canonical_image_block(part)
+            image_url = part[:image_url]
+            image_url = image_url.is_a?(Hash) ? (image_url[:url] || image_url['url']) : image_url
+            url = image_url.to_s
+            if url.start_with?('data:')
+              media_type, data = url.sub('data:', '').split(',', 2)
+              {
+                type:        'image',
+                data:        data,
+                media_type:  (media_type || '').sub(/;.*$/, ''),
+                source_type: :base64
+              }
+            else
+              { type: 'image', data: url, source_type: 'url' }
+            end
+          end
+
           def token_value(tokens, *keys)
             return 0 if tokens.nil?
 

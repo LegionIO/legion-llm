@@ -8,7 +8,10 @@ RSpec.describe Legion::LLM::Inference::Request do
       req = described_class.build(messages: [{ role: :user, content: 'hello' }])
       expect(req.id).to start_with('req_')
       expect(req.schema_version).to eq('1.0.0')
-      expect(req.messages).to eq([{ role: :user, content: 'hello' }])
+      # 0.8.0: inbound messages are canonicalized to Canonical::Message at the entry.
+      expect(req.messages).to all(be_a(Legion::Extensions::Llm::Canonical::Message))
+      expect(req.messages.first.role).to eq(:user)
+      expect(req.messages.first.content).to eq('hello')
       expect(req.routing).to eq({ provider: nil, model: nil })
       expect(req.tokens).to eq({ max: 4096 })
       expect(req.priority).to eq(:normal)
@@ -102,7 +105,7 @@ RSpec.describe Legion::LLM::Inference::Request do
         provider: :anthropic,
         intent:   { privacy: :strict }
       )
-      expect(req.messages.last[:content]).to eq('hello')
+      expect(req.messages.last.content).to eq('hello')
       expect(req.routing[:model]).to eq('claude-opus-4-6')
       expect(req.routing[:provider]).to eq(:anthropic)
       expect(req.extra[:intent]).to eq({ privacy: :strict })

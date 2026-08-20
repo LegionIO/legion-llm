@@ -94,12 +94,14 @@ RSpec.describe Legion::LLM::Inference::Steps::Billing do
 
       it 'uses the shared context token estimator for input tokens' do
         messages = [{ role: :user, content: '{"records":["alpha","beta"]}' }]
-        allow(Legion::LLM::Context::Compressor).to receive(:estimate_tokens).with(messages).and_return(42)
+        allow(Legion::LLM::Context::Compressor).to receive(:estimate_tokens).and_return(42)
         allow(Legion::LLM::Metering::Pricing).to receive(:estimate).and_return(0.001)
 
         step = build_step(billing: { spending_cap: 1.0 }, messages: messages, model: 'qwen3.6-27b')
         step.step_billing
 
+        # The estimator receives the request's (canonical) messages.
+        expect(Legion::LLM::Context::Compressor).to have_received(:estimate_tokens).with(step.request.messages)
         expect(Legion::LLM::Metering::Pricing).to have_received(:estimate).with(
           model_id:      'qwen3.6-27b',
           input_tokens:  42,

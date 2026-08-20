@@ -204,14 +204,14 @@ module Legion
               chunk_envelope({ reasoning_content: canonical_chunk.delta.to_s })
             when :tool_call_delta
               tc = canonical_chunk.tool_call
-              args = tc.respond_to?(:arguments) ? tc.arguments : {}
+              args = tool_fragment_field(tc, :arguments) || {}
               chunk_envelope({
                                tool_calls: [{
                                  index:    canonical_chunk.block_index || 0,
-                                 id:       tc.respond_to?(:id) ? tc.id : nil,
+                                 id:       tool_fragment_field(tc, :id),
                                  type:     'function',
                                  function: {
-                                   name:      tc.respond_to?(:name) ? tc.name.to_s : '',
+                                   name:      tool_fragment_field(tc, :name).to_s,
                                    arguments: args_as_json_string(args)
                                  }
                                }]
@@ -441,9 +441,12 @@ module Legion
             return content if content.is_a?(String)
             return content unless content.is_a?(Array)
 
-            normalized = content.map { |b| symbolize(b) }
+            # String parts (corrupted ContentBlock#inspect output in history)
+            # wrap as text blocks so they never reach canonical_content_block
+            # or the [:type] lookup as bare strings.
+            normalized = content.map { |b| b.is_a?(String) ? { type: 'text', text: b } : symbolize(b) }
             has_non_text = normalized.any? { |b| b[:type].to_s != 'text' }
-            return normalized if has_non_text
+            return normalized.map { |b| canonical_content_block(b) } if has_non_text
 
             normalized.filter_map { |b| b[:text] if b[:type].to_s == 'text' }.join("\n\n")
           end
@@ -466,11 +469,14 @@ module Legion
 
           def extract_params(body)
             params = {
-              max_tokens:        body[:max_tokens],
+              # Canonical member keys only — client spellings (max_output_tokens,
+              # num_predict, max_completion_tokens, stop) are translated at this
+              # edge (03 O03a).
+              max_tokens:        param_spelling(body, :max_tokens),
               temperature:       body[:temperature],
               top_p:             body[:top_p],
               top_k:             body[:top_k],
-              stop_sequences:    body[:stop],
+              stop_sequences:    param_spelling(body, :stop_sequences),
               frequency_penalty: body[:frequency_penalty],
               presence_penalty:  body[:presence_penalty],
               response_format:   body[:response_format],

@@ -53,11 +53,12 @@ RSpec.describe Legion::LLM::Inference::Executor do
       canonical = Legion::Extensions::Llm::Canonical
       thinking_obj = canonical::Thinking.new(
         content:   'The user said "hello".',
-        signature: nil
+        signature: nil,
+        metadata:  {}
       )
       usage = canonical::Usage.new(
         input_tokens: 10, output_tokens: 5,
-        cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}
+        cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}, metadata: {}
       )
       provider_response = canonical::Response.new(
         text:        'Hello! How can I help you today?',

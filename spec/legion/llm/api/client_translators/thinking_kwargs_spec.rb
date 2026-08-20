@@ -25,7 +25,7 @@ RSpec.describe 'Client translator thinking/reasoning kwargs' do
       expect { translator.parse_request(body, {}) }.not_to raise_error
       req = translator.parse_request(body, {})
       expect(req).to be_a(canonical::Request)
-      expect(req.thinking).to be_a(canonical::ThinkingConfig)
+      expect(req.thinking).to be_a(canonical::Thinking::Config)
       expect(req.thinking.budget).to eq(1024)
     end
 
@@ -57,7 +57,7 @@ RSpec.describe 'Client translator thinking/reasoning kwargs' do
       body = { model: 'gpt-5.4', input: 'hi', reasoning: { effort: 'medium' } }
       expect { translator.parse_request(body, {}) }.not_to raise_error
       req = translator.parse_request(body, {})
-      expect(req.thinking).to be_a(canonical::ThinkingConfig)
+      expect(req.thinking).to be_a(canonical::Thinking::Config)
       expect(req.thinking.effort).to eq('medium')
       expect(req.thinking.budget).to eq(1024)
     end

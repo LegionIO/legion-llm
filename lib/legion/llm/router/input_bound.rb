@@ -93,42 +93,60 @@ module Legion
           def message_text_bytes(msg)
             return 0 if msg.nil?
 
-            content = msg.respond_to?(:[]) ? msg[:content] || msg['content'] : nil
+            content = msg_field(msg, :content)
             return 0 if content.nil?
 
             case content
             when String
               text_bytes(content)
             when Array
-              content.sum do |block|
-                next 0 unless block.respond_to?(:[])
-
-                type = block[:type] || block['type']
-                case type&.to_s
-                when 'text'
-                  text_bytes(block[:text] || block['text'])
-                when 'tool_use'
-                  # tool_use blocks carry a name and input; serialize input for byte accounting
-                  name_bytes = text_bytes(block[:name] || block['name'])
-                  input = block[:input] || block['input']
-                  input_bytes = nil_or_empty?(input) ? 0 : serialized_bytes(input)
-                  name_bytes + input_bytes
-                when 'tool_result'
-                  result_content = block[:content] || block['content']
-                  case result_content
-                  when String then text_bytes(result_content)
-                  when Array  then result_content.sum { |b| b.respond_to?(:[]) ? text_bytes(b[:text] || b['text']) : 0 }
-                  else 0
-                  end
-                when 'thinking', 'redacted_thinking'
-                  text_bytes(block[:thinking] || block['thinking'])
-                else
-                  0
-                end
-              end
+              content.sum { |block| content_block_bytes(block) }
             else
               0
             end
+          end
+
+          # Byte accounting for one content block. Dual-shape: Hash block
+          # (client-wire shape) or Canonical::ContentBlock (pipeline shape).
+          def content_block_bytes(block)
+            return 0 if block.nil?
+
+            type = block_field(block, :type)
+            case type&.to_s
+            when 'text'
+              text_bytes(block_field(block, :text))
+            when 'tool_use'
+              # tool_use blocks carry a name and input; serialize input for byte accounting
+              name_bytes = text_bytes(block_field(block, :name))
+              input = block_field(block, :input)
+              input_bytes = nil_or_empty?(input) ? 0 : serialized_bytes(input)
+              name_bytes + input_bytes
+            when 'tool_result'
+              result_content = block_field(block, :content) || block_field(block, :text)
+              case result_content
+              when String then text_bytes(result_content)
+              when Array  then result_content.sum { |b| text_bytes(block_field(b, :text)) }
+              else 0
+              end
+            when 'thinking', 'redacted_thinking'
+              text_bytes(block_field(block, :thinking) || block_field(block, :text))
+            else
+              0
+            end
+          end
+
+          # Dual-shape message field reader (Hash or Canonical::Message).
+          def msg_field(msg, field)
+            return msg[field] || msg[field.to_s] if msg.is_a?(Hash)
+
+            msg.respond_to?(field) ? msg.public_send(field) : nil
+          end
+
+          # Dual-shape content-block field reader (Hash or Canonical::ContentBlock).
+          def block_field(block, field)
+            return block[field] || block[field.to_s] if block.is_a?(Hash)
+
+            block.respond_to?(field) ? block.public_send(field) : nil
           end
 
           # Serialize any Ruby value to UTF-8 JSON bytes using Legion::JSON.

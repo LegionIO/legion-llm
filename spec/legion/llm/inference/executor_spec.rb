@@ -570,7 +570,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
       captured_request = nil
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch) do |request:, **|
         captured_request = request
-        { success: true, content: 'fleet answer', usage: { input_tokens: 1, output_tokens: 1 } }
+        # Protocol v3 (E3): the fleet reply carries the serialized Canonical::Response
+        # under :response.
+        { success: true, response: { text: 'fleet answer', stop_reason: :end_turn } }
       end
       tool_request = Legion::LLM::Inference::Request.build(
         id:              'req-route-fleet-tools',
@@ -594,7 +596,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
       expect(captured_request).to include(:messages, :tools, :execution_contract, :offering_id)
       expect(captured_request).not_to have_key(:options)
       expect(captured_request).not_to have_key(:system)
-      expect(captured_request[:messages].first).to have_attributes(role: :system, content: 'Use available tools.')
+      # Fleet wire carries serialized (Hash) messages.
+      expect(captured_request[:messages].first).to include(role: :system, content: 'Use available tools.')
       expect(captured_request[:execution_contract]).to eq('exact_offering_v1')
       expect(captured_request[:offering_id]).to match(/\Aoff:v1:/)
       expect(captured_request[:tools]).to include(

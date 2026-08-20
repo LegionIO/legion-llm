@@ -118,7 +118,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, 'embedding-function cache (§21.2)
   def publish_embed(model: 'text-embedding-3-small', provider: 'openai', instance: 'primary', tier: :frontier)
     callable = SsotV3SnapshotFactory::FactoryCallable.new(responder: lambda do |_op, _a, kwargs, _b|
       vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
-      { result: vecs, usage: Legion::LLM::Usage.new(input_tokens: 5) }
+      { embedding: vecs, usage: { input_tokens: 5 } }
     end)
     activate(
       provider_family: provider, instance_id: instance, callable: callable,

@@ -221,7 +221,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
         text = step.send(:extract_recent_text)
 
         expect(text).to eq(' hello who are you')
-        expect(request.messages.first[:content]).to include('<system-reminder>')
+        expect(request.messages.first.content).to include('<system-reminder>')
       end
     end
 
@@ -240,7 +240,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
 
         expect(text).to eq("\nhello who are you\n")
         expect(text).not_to include('Write the title')
-        expect(request.messages.first[:content]).to include('Write the title')
+        expect(request.messages.first.content).to include('Write the title')
       end
     end
 

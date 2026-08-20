@@ -82,7 +82,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
       activate(
         provider_family: :vllm,
         instance_id:     'h200',
-        drafts:           [
+        drafts:          [
           offering_draft(
             model:        'test-model',
             tier:         :local,

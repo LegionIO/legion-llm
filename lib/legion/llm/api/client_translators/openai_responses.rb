@@ -215,7 +215,7 @@ module Legion
           # function_call_arguments.delta events.
           def format_tool_call_delta_chunk(canonical_chunk)
             tc = canonical_chunk.tool_call
-            args = tc.respond_to?(:arguments) ? tc.arguments : {}
+            args = tool_fragment_field(tc, :arguments) || {}
             output_index = canonical_chunk.block_index || 0
 
             if server_tool_chunk?(tc)
@@ -225,8 +225,8 @@ module Legion
                 item:         {
                   type:      'function_call',
                   id:        "fc_#{SecureRandom.hex(12)}",
-                  call_id:   tc.respond_to?(:id) ? tc.id : nil,
-                  name:      tc.respond_to?(:name) ? tc.name.to_s : '',
+                  call_id:   tool_fragment_field(tc, :id),
+                  name:      tool_fragment_field(tc, :name).to_s,
                   arguments: args_as_json_string(args),
                   status:    'completed'
                 }
@@ -239,7 +239,7 @@ module Legion
           end
 
           def server_tool_chunk?(tool_call)
-            source = tool_call.respond_to?(:source) ? tool_call.source : nil
+            source = tool_fragment_field(tool_call, :source)
             return false if source.nil?
 
             type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
@@ -611,7 +611,7 @@ module Legion
                 # history that makes thinking-enabled models narrate instead of
                 # calling the next tool (the "dead stop").
                 if role == 'assistant' && !pending_tool_calls.empty?
-                  content = item[:content]
+                  content = canonicalize_content_parts(item[:content])
                   content = content.to_s if content && !content.is_a?(Array)
                   flush_pending_tool_calls(messages, pending_tool_calls, assistant_content: content)
                   next
@@ -622,7 +622,7 @@ module Legion
 
                 role = 'system' if role == 'developer'
 
-                content = item[:content]
+                content = canonicalize_content_parts(item[:content])
                 content = content.to_s if content && !content.is_a?(Array)
                 messages << { role: role, content: content }.compact
               end
@@ -698,7 +698,9 @@ module Legion
 
           def build_params(body)
             params = {
-              max_tokens:        body[:max_output_tokens] || body[:max_tokens],
+              # Canonical member keys only — the Responses dialect spelling
+              # (max_output_tokens) is translated at this edge (03 O03a).
+              max_tokens:        param_spelling(body, :max_tokens),
               temperature:       body[:temperature],
               top_p:             body[:top_p],
               frequency_penalty: body[:frequency_penalty],
@@ -708,7 +710,7 @@ module Legion
           end
 
           # /v1/responses uses `reasoning: { effort: low|medium|high }`.
-          # Canonical::ThinkingConfig accepts {effort:, budget:} — anything
+          # Canonical::Thinking::Config accepts {effort:, budget:} — anything
           # else raises ArgumentError downstream. The Anthropic-budget mapping
           # for cross-provider routing lives in the provider translator
           # (lex-llm-anthropic) where the budget translates to budget_tokens.
@@ -729,7 +731,7 @@ module Legion
             end
           end
 
-          # Canonical::ThinkingConfig#to_h is {effort:, budget:}. Downstream
+          # Canonical::Thinking::Config#to_h is {effort:, budget:}. Downstream
           # providers (anthropic native + lex-llm-openai responses) expect the
           # {type: 'enabled', budget_tokens:, effort:} shape originally
           # produced by extract_thinking_config in the legacy route.

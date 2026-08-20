@@ -10,6 +10,7 @@ module Legion
         module Debate
           include Legion::Logging::Helper
           include Steps::Logging
+          include Steps::MessageAccessors
 
           CHALLENGER_PROMPT = <<~PROMPT
             You are a critical analyst reviewing the following response. Your job is to identify
@@ -208,8 +209,8 @@ module Legion
           end
 
           def extract_question(request)
-            request.messages.select { |m| m[:role].to_s == 'user' }
-                   .last&.dig(:content) || ''
+            last_user = request.messages.select { |m| message_role_of(m) == 'user' }.last
+            last_user ? message_text_of(last_user) : ''
           end
 
           def extract_content(response)

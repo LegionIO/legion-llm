@@ -43,6 +43,22 @@ module Legion
 
       OLLAMA_MODEL_PATTERN = %r{[:/]}
 
+      # Lane-type label (the `type` part of the 5-part lane label used by the
+      # ranker and stream-failover diagnostics). lex-llm 0.8.0 deleted
+      # Taxonomies.lane_type_for with the legacy lane-identity vocabulary —
+      # lane identity is the digest (Inventory::Identity.lane_id) — so the
+      # display vocabulary belongs to the consumer. Values stay within
+      # Taxonomies::TYPES.
+      LANE_TYPE_BY_OPERATION = {
+        chat: :inference, stream_chat: :inference, embed: :embedding,
+        image: :image, transcribe: :audio, translate: :audio, speak: :audio,
+        moderate: :inference, count_tokens: :inference
+      }.freeze
+
+      def self.lane_type_for(operation:)
+        LANE_TYPE_BY_OPERATION.fetch(operation.to_sym)
+      end
+
       @auto_rules = []
       @auto_rules_populated = false
       @populate_auto_rules_warned = false
