@@ -223,6 +223,12 @@ module Legion
           def tool_call_with_execution_result(tool_call, entry)
             typed_call = entry[:typed_call]
             source = typed_call&.source || tool_call_value(tool_call, :source)
+            # 0.8.0 core: Canonical::ToolCall.source is the closed dispatch-type
+            # enum, not the legacy routing hash. The routing details
+            # (tool_class/lex/runner) were consumed at dispatch time; the
+            # canonical record keeps only the type (mirrors
+            # API::DebugFormats.canonical_tool_call).
+            source = canonical_source_symbol(source) if tool_call.is_a?(Legion::Extensions::Llm::Canonical::ToolCall)
             status = entry[:error] ? :error : :success
             duration_ms = typed_call&.duration_ms || tool_call_value(tool_call, :duration_ms)
 
@@ -254,6 +260,14 @@ module Legion
               duration_ms: duration_ms,
               error:       (entry[:result] if entry[:error])
             ).compact
+          end
+
+          # Legacy dispatch-routing source hash → canonical dispatch-type enum.
+          # Non-hash sources (already-canonical symbols, nil) pass through.
+          def canonical_source_symbol(source)
+            return source unless source.is_a?(Hash)
+
+            (source[:type] || source['type'])&.to_sym
           end
 
           def normalize_tool_arguments(arguments)

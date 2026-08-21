@@ -25,8 +25,57 @@ RSpec.describe 'Client translator thinking/reasoning kwargs' do
       expect { translator.parse_request(body, {}) }.not_to raise_error
       req = translator.parse_request(body, {})
       expect(req).to be_a(canonical::Request)
+      expect(req).to be_a(canonical::Request)
       expect(req.thinking).to be_a(canonical::Thinking::Config)
       expect(req.thinking.budget).to eq(1024)
+    end
+
+    # M4: effort is a closed enum (EFFORT_BUDGET keys), so the bare-flag edge
+    # may only map values that are themselves valid efforts — never fabricate.
+    it 'drops a bare true thinking flag (the dialect documents no default effort)' do
+      body = {
+        model:      'claude-haiku-4-5-20251001',
+        messages:   [{ role: 'user', content: 'hi' }],
+        max_tokens: 1024,
+        thinking:   true
+      }
+      expect { translator.parse_request(body, {}) }.not_to raise_error
+      expect(translator.parse_request(body, {}).thinking).to be_nil
+    end
+
+    it 'drops a bare "enabled" thinking flag' do
+      body = {
+        model:      'claude-haiku-4-5-20251001',
+        messages:   [{ role: 'user', content: 'hi' }],
+        max_tokens: 1024,
+        thinking:   'enabled'
+      }
+      expect { translator.parse_request(body, {}) }.not_to raise_error
+      expect(translator.parse_request(body, {}).thinking).to be_nil
+    end
+
+    it 'drops a bare false thinking flag' do
+      body = {
+        model:      'claude-haiku-4-5-20251001',
+        messages:   [{ role: 'user', content: 'hi' }],
+        max_tokens: 1024,
+        thinking:   false
+      }
+      req = translator.parse_request(body, {})
+      expect(req.thinking).to be_nil
+    end
+
+    it 'honors a bare closed-enum effort string 1:1' do
+      body = {
+        model:      'claude-haiku-4-5-20251001',
+        messages:   [{ role: 'user', content: 'hi' }],
+        max_tokens: 1024,
+        thinking:   'high'
+      }
+      req = translator.parse_request(body, {})
+      expect(req.thinking).to be_a(canonical::Thinking::Config)
+      expect(req.thinking.effort).to eq('high')
+      expect(req.thinking.budget).to be_nil
     end
 
     it 'forwards max_tokens and stop sequences into the inference request' do

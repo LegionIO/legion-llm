@@ -598,8 +598,20 @@ module Legion
 
               { effort: effort, budget: budget }.compact
             else
-              # Anything else is a "thinking is on" flag — no concrete budget.
-              { effort: thinking.to_s }
+              # Bare (non-Hash) flag: the dialect's formal spelling is the
+              # {type:, budget_tokens:} block. A bare value maps only when it
+              # is itself a closed-enum effort (the M4 EFFORT_BUDGET keys) —
+              # honored 1:1. Anything else (true, 'enabled', 'on', ...)
+              # expresses neither effort nor budget and this dialect documents
+              # no default — the config drops out, same treatment as
+              # {type: 'enabled'} with no budget above. Never fabricate.
+              value = thinking.is_a?(Symbol) ? thinking.to_s : thinking
+              return nil unless value.is_a?(String)
+
+              normalized = value.downcase
+              return { effort: normalized } if Canonical::Thinking::Config::EFFORT_BUDGET.key?(normalized)
+
+              nil
             end
           end
 

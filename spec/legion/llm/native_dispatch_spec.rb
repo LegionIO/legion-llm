@@ -243,7 +243,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.normalize_response (canonical)' do
   it 'allows hash-key access on Canonical::ToolCall' do
     tc = canonical::ToolCall.new(
       id: 'tc1', exchange_id: nil, name: 'write_file', arguments: { path: '/tmp/x' },
-      source: { type: :registry }, status: :success, duration_ms: 50, result: 'ok',
+      source: :registry, status: :success, duration_ms: 50, result: 'ok',
       error: nil, started_at: nil, finished_at: nil, category: nil,
       data_handling_classification: nil, policy_decision: nil, metadata: {}
     )
