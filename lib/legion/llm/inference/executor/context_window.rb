@@ -231,44 +231,30 @@ module Legion
             true
           end
 
-          # -- Dual-shape message readers (Canonical::Message or Hash) -------
-
+          # G3: the pipeline message world is Canonical::Message — these are
+          # plain member reads (the former Canonical-OR-Hash dual shape was
+          # the split-world seam).
           def cw_role(msg)
-            msg.is_a?(Hash) ? (msg[:role] || msg['role']).to_s : msg.role.to_s
+            msg.role.to_s
           end
 
           def cw_content(msg)
-            msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg.content
+            msg.content
           end
 
           def cw_text(msg)
-            return msg.text.to_s unless msg.is_a?(Hash)
-
-            content = cw_content(msg)
-            case content
-            when String then content
-            when Array  then content.map do |c|
-              if c.is_a?(Hash)
-                (c[:text] || c['text']).to_s
-              else
-                (c.respond_to?(:text) ? c.text.to_s : '')
-              end
-            end.join
-            else content.to_s
-            end
+            msg.text.to_s
           end
 
           def cw_tool_call_id(msg)
-            msg.is_a?(Hash) ? (msg[:tool_call_id] || msg['tool_call_id']) : msg.tool_call_id
+            msg.tool_call_id
           end
 
           def cw_tool_calls(msg)
-            msg.is_a?(Hash) ? (msg[:tool_calls] || msg['tool_calls']) : msg.tool_calls
+            msg.tool_calls
           end
 
           def cw_with_content(msg, content)
-            return msg.merge(content: content) if msg.is_a?(Hash)
-
             msg.with(content: content)
           end
         end

@@ -50,11 +50,12 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
     before do
       stub_process_identity
-      # Stub the raw_response with token data
-      raw = double('raw_response',
-                   content:       'hello',
-                   input_tokens:  50,
-                   output_tokens: 20)
+      # G3: the raw response is the canonical provider response — the double
+      # matches the real boundary shape (text + canonical usage).
+      raw = Legion::Extensions::Llm::Canonical::Response.build(
+        text:  'hello',
+        usage: { input_tokens: 50, output_tokens: 20 }
+      )
       executor.instance_variable_set(:@raw_response, raw)
       executor.instance_variable_set(:@resolved_provider, :anthropic)
       executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
@@ -111,10 +112,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
     it 'does not emit a zero-dollar cost estimate when provider usage is missing for a known model' do
       logger = instance_double('Logger', debug: nil, warn: nil, info: nil)
-      raw = double('raw_response',
-                   content:       'hello',
-                   input_tokens:  nil,
-                   output_tokens: nil)
+      # G3: canonical response with no usage (provider usage missing).
+      raw = Legion::Extensions::Llm::Canonical::Response.build(text: 'hello')
       executor.instance_variable_set(:@raw_response, raw)
       allow(executor).to receive(:log).and_return(logger)
       allow(Legion::LLM::Metering::Pricing).to receive(:estimate)
@@ -240,11 +239,13 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
       context 'with thinking in the raw response' do
         before do
-          raw = double('raw_response',
-                       content:       'the answer',
-                       input_tokens:  50,
-                       output_tokens: 20,
-                       thinking:      'reasoning steps')
+          # G3: canonical response — thinking is the canonical Thinking
+          # member (the metering event carries it as-is).
+          raw = Legion::Extensions::Llm::Canonical::Response.build(
+            text:     'the answer',
+            usage:    { input_tokens: 50, output_tokens: 20 },
+            thinking: { content: 'reasoning steps' }
+          )
           executor.instance_variable_set(:@raw_response, raw)
         end
 
@@ -254,8 +255,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
           executor.send(:step_metering)
 
           expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
-            expect(event[:response_thinking]).to be_a(Hash)
-            expect(event[:response_thinking][:content]).to eq('reasoning steps')
+            expect(event[:response_thinking]).to be_a(Legion::Extensions::Llm::Canonical::Thinking)
+            expect(event[:response_thinking].content).to eq('reasoning steps')
           end
         end
       end
@@ -278,10 +279,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
     context 'without thinking in the raw response' do
       before do
-        raw = double('raw_response',
-                     content:       'the answer',
-                     input_tokens:  50,
-                     output_tokens: 20)
+        # G3: canonical response without thinking.
+        raw = Legion::Extensions::Llm::Canonical::Response.build(
+          text:  'the answer',
+          usage: { input_tokens: 50, output_tokens: 20 }
+        )
         executor.instance_variable_set(:@raw_response, raw)
       end
 

@@ -83,20 +83,16 @@ module Legion
 
               tier = value(mapping, :tier)
               log.info("[llm][routing] tier_mapping identity=#{identity} tier=#{tier}")
-              result = { tier: tier&.to_sym, intent: value(mapping, :intent), source: :role_mapping }
-              result.merge!(gaia_preferred_lane) if identity.start_with?('gaia:')
-              return result
+              # L7: the assignment carries tier + intent only. The former
+              # gaia:* hard provider/model pins (llm.gaia.preferred_*) were a
+              # second selection domain — a settings pin that bypassed the
+              # router's hint-miss fallback and could reject all traffic from
+              # an identity class when the pinned model had no published lane.
+              # Routing choice is Router.next_lane's alone; a preference for a
+              # gaia: identity belongs in routing affinities, not here.
+              return { tier: tier&.to_sym, intent: value(mapping, :intent), source: :role_mapping }
             end
             nil
-          end
-
-          def gaia_preferred_lane
-            provider = Legion::Settings.dig(:llm, :gaia, :preferred_provider)
-            model    = Legion::Settings.dig(:llm, :gaia, :preferred_model)
-            extras   = {}
-            extras[:provider] = provider.to_sym if provider
-            extras[:model]    = model.to_s      if model
-            extras
           end
 
           def tier_mappings

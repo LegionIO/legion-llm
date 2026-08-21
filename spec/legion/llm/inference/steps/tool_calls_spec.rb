@@ -35,11 +35,16 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolCalls do
         { name: 'list_files', source: { type: :mcp, server: 'filesystem' } }
       ]
 
-      step.raw_response = double(
-        content:    nil,
-        tool_calls: [{ name: 'list_files', arguments: { path: '.' }, id: 'call_1' }]
+      # G3: the raw response is the canonical provider response carrying
+      # Canonical::ToolCall objects (the Hash tool-call double shape is gone;
+      # R15).
+      step.raw_response = Legion::Extensions::Llm::Canonical::Response.build(
+        tool_calls: [
+          Legion::Extensions::Llm::Canonical::ToolCall.build(
+            name: 'list_files', arguments: { path: '.' }, id: 'call_1'
+          )
+        ]
       )
-      allow(step.raw_response).to receive(:respond_to?).with(:tool_calls).and_return(true)
 
       dispatch_result = {
         status: :success, result: '["a.rb"]',
@@ -79,11 +84,14 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolCalls do
       step.instance_variable_set(:@native_tool_source_map, {
                                    'mcp_servers' => { type: :client, executable: false }
                                  })
-      step.raw_response = double(
-        content:    nil,
-        tool_calls: [{ name: 'mcp_servers', arguments: '', id: 'call_1' }]
+      # G3: canonical response with a canonical client tool call.
+      step.raw_response = Legion::Extensions::Llm::Canonical::Response.build(
+        tool_calls: [
+          Legion::Extensions::Llm::Canonical::ToolCall.build(
+            name: 'mcp_servers', arguments: {}, id: 'call_1', source: :client
+          )
+        ]
       )
-      allow(step.raw_response).to receive(:respond_to?).with(:tool_calls).and_return(true)
 
       expect(Legion::LLM::Inference::ToolDispatcher).not_to receive(:dispatch)
 

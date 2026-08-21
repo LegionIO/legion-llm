@@ -252,7 +252,9 @@ RSpec.describe 'Pipeline OTEL child spans' do
     before do
       Legion::Settings[:llm][:telemetry] = { pipeline_spans: false }
       allow(executor).to receive(:step_provider_call) do
-        executor.instance_variable_set(:@raw_response, double('resp', content: 'ok'))
+        # G3: the raw response is the canonical provider response (R15).
+        executor.instance_variable_set(:@raw_response,
+                                       Legion::Extensions::Llm::Canonical::Response.build(text: 'ok'))
       end
       allow(executor).to receive(:step_response_normalization)
     end
@@ -268,7 +270,9 @@ RSpec.describe 'Pipeline OTEL child spans' do
       hide_const('Legion::Telemetry') if defined?(Legion::Telemetry)
       Legion::Settings[:llm][:telemetry] = { pipeline_spans: true }
       allow(executor).to receive(:step_provider_call) do
-        executor.instance_variable_set(:@raw_response, double('resp', content: 'ok'))
+        # G3: the raw response is the canonical provider response (R15).
+        executor.instance_variable_set(:@raw_response,
+                                       Legion::Extensions::Llm::Canonical::Response.build(text: 'ok'))
       end
       allow(executor).to receive(:step_response_normalization)
     end

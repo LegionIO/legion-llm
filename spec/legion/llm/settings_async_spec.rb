@@ -18,12 +18,13 @@ RSpec.describe Legion::LLM::Settings do
   describe '.embedding_defaults' do
     subject(:embedding) { described_class.embedding_defaults }
 
-    it 'does not include azure in provider_fallback' do
-      expect(embedding[:provider_fallback]).not_to include('azure')
-    end
-
-    it 'includes ollama, bedrock, and openai in provider_fallback' do
-      expect(embedding[:provider_fallback]).to include('ollama', 'bedrock', 'openai')
+    # M4: the second selection domain (provider_fallback / provider_models /
+    # ollama_preferred / pin keys) is gone — SSOT :embed routing is the sole
+    # selection authority, so no provider-fallback order lives in settings.
+    it 'carries no provider_fallback (selection is the router alone)' do
+      expect(embedding).not_to have_key(:provider_fallback)
+      expect(embedding).not_to have_key(:provider_models)
+      expect(embedding).not_to have_key(:ollama_preferred)
     end
   end
 end

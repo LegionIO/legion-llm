@@ -76,7 +76,13 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
       allow(fake_executor).to receive(:stream_preflight!).and_return(nil)
       allow(fake_executor).to receive(:call_stream) do |&block|
-        ['Hello ', 'world!'].each { |text| block.call(text) }
+        # G3/L2: the stream carries Canonical::Chunk only — the legacy
+        # raw-text push shape is gone (the assembler raises on it).
+        ['Hello ', 'world!'].each do |text|
+          block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(
+                       delta: text, request_id: 'req_cc_stream'
+                     ))
+        end
         fake_pipeline_response
       end
 
@@ -237,20 +243,23 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
 
   describe 'POST /v1/messages with tool calls streaming' do
     let(:fake_executor) { instance_double(Legion::LLM::Inference::Executor) }
+    # G3: the envelope carries the real canonical tool-call type and the
+    # canonical rendering projection for message (R15: the double matches
+    # the real boundary shapes).
     let(:tool_call_obj) do
-      instance_double(Legion::LLM::Types::ToolCall,
-                      id:        'toolu_test_123',
-                      name:      'get_weather',
-                      arguments: { city: 'Boston' },
-                      source:    { type: :client },
-                      result:    nil)
+      Legion::Extensions::Llm::Canonical::ToolCall.build(
+        id:        'toolu_test_123',
+        name:      'get_weather',
+        arguments: { city: 'Boston' },
+        source:    :client
+      )
     end
     let(:fake_pipeline_response) do
       instance_double(
         Legion::LLM::Inference::Response,
         routing: { model: 'legionio' },
         tokens:  { input_tokens: 20, output_tokens: 10 },
-        message: 'I will check the weather.',
+        message: { role: :assistant, content: 'I will check the weather.' },
         tools:   [tool_call_obj],
         stop:    { reason: 'tool_use' }
       )
@@ -260,7 +269,12 @@ RSpec.describe 'Claude Code conformance', type: :conformance do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(fake_executor)
       allow(fake_executor).to receive(:stream_preflight!).and_return(nil)
       allow(fake_executor).to receive(:call_stream) do |&block|
-        block.call('I will check the weather.')
+        # G3/L2: Canonical::Chunk only (the legacy raw-text push shape is
+        # gone; the assembler raises on it).
+        block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(
+                     delta:      'I will check the weather.',
+                     request_id: 'req_cc_tools_stream'
+                   ))
         fake_pipeline_response
       end
 

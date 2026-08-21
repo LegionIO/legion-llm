@@ -18,30 +18,15 @@ module Legion
     module Router
       extend Legion::Logging::Helper
 
-      PROVIDER_TIER = { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
-                        gemini: :cloud, azure: :cloud, ollama: :local, vllm: :fleet }.freeze
-      PROVIDER_ORDER = %i[ollama vllm bedrock azure gemini anthropic openai].freeze
+      # L1: the legacy routing vocabularies (PROVIDER_TIER, PROVIDER_ORDER,
+      # CAPABILITY_ALIASES, the EFFORT_* family, OPERATIONS/OPERATION_ALIASES,
+      # DEFAULT_OPERATION/DEFAULT_EFFORT, OLLAMA_MODEL_PATTERN) are gone —
+      # second alias/rank tables duplicating the shared owners (lex-llm
+      # Capabilities::ALIASES, Thinking::Config effort vocabulary,
+      # Taxonomies.OPERATIONS) with zero live readers. The SSOT selector
+      # stack reads the shared owners directly.
       TIER_EXTERNAL = Set[:cloud, :frontier].freeze
       TIER_RANK = { local: 0, direct: 1, fleet: 2, cloud: 3, frontier: 4 }.freeze
-      CAPABILITY_ALIASES = {
-        function_calling: :tools,
-        functions:        :tools,
-        tool:             :tools,
-        tool_use:         :tools,
-        stream:           :streaming,
-        stream_chat:      :streaming
-      }.freeze
-
-      CANONICAL_EFFORT_LEVELS = %i[low moderate high reasoning].freeze
-      EFFORT_ALIASES = { medium: :moderate }.freeze
-      EFFORT_LEVELS = (CANONICAL_EFFORT_LEVELS + EFFORT_ALIASES.keys).freeze
-      EFFORT_RANK = { low: 0, moderate: 1, high: 2, reasoning: 3 }.freeze
-      OPERATIONS = %i[chat stream embed image structured_output].freeze
-      OPERATION_ALIASES = { completion: :chat, stream_chat: :stream, embedding: :embed }.freeze
-      DEFAULT_OPERATION = :chat
-      DEFAULT_EFFORT = :moderate
-
-      OLLAMA_MODEL_PATTERN = %r{[:/]}
 
       # Lane-type label (the `type` part of the 5-part lane label used by the
       # ranker and stream-failover diagnostics). lex-llm 0.8.0 deleted
@@ -59,9 +44,11 @@ module Legion
         LANE_TYPE_BY_OPERATION.fetch(operation.to_sym)
       end
 
-      @auto_rules = []
-      @auto_rules_populated = false
-      @populate_auto_rules_warned = false
+      # L1: the auto-rules era state (@auto_rules, @auto_rules_populated,
+      # @populate_auto_rules_warned) and the populate_auto_rules no-op stub
+      # are gone — RANKING v2 replaced auto-rules with lane weights, and the
+      # lex-llm-* call sites that the deprecation timeline was waiting on are
+      # gone with the 0.8.0 conformance.
 
       class << self
         # SSOT v3 §12: the single selection method. Pure function of
@@ -165,28 +152,6 @@ module Legion
                                                       .each_publication_status.any? { |ps| ps.state == :complete }
         end
 
-        def auto_rules_populated?
-          @auto_rules_populated == true
-        end
-
-        # DEPRECATED in v0.14.0; delete in v0.15.0.
-        # See GitHub issues:
-        #   #155 — remove this stub in v0.15.0 (blocked-by #154)
-        #   #154 — drop call sites from 9 lex-llm-* gems
-        def populate_auto_rules(_discovered_instances = nil, **)
-          return if @populate_auto_rules_warned
-
-          @populate_auto_rules_warned = true
-          log.warn '[llm][router] populate_auto_rules is deprecated and is a no-op as of v0.14.0; ' \
-                   'lex-llm-* gems should drop this call (RANKING v2 replaces auto-rules with lane weights)'
-        end
-
-        def reset!
-          @auto_rules = []
-          @auto_rules_populated = false
-          @populate_auto_rules_warned = false
-        end
-
         def tier_priority
           configured = Legion::Settings[:llm][:tier_order]
           configured = Legion::Settings[:llm][:routing][:tier_order] if configured.nil? || Array(configured).empty?
@@ -225,13 +190,13 @@ module Legion
         end
 
         # Public query for status endpoints (/api/llm/tiers). Reflects the
-        # enterprise-privacy setting (or LEGION_ENTERPRISE_PRIVACY env override).
+        # enterprise-privacy policy. L1: the consumer-side
+        # ENV['LEGION_ENTERPRISE_PRIVACY'] fallback is gone — the env/setting
+        # resolution lives in the shared owner (Legion::Settings
+        # .enterprise_privacy?), which this consumes directly (Legion::Settings
+        # is a hard dependency; no respond_to? guard).
         def privacy_mode?
-          if Legion::Settings.respond_to?(:enterprise_privacy?)
-            Legion::Settings.enterprise_privacy?
-          else
-            ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
-          end
+          Legion::Settings.enterprise_privacy?
         end
 
         private

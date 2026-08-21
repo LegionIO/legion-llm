@@ -169,12 +169,17 @@ module Legion
               }
             end
 
-            # Responses protocol: a turn is always status `completed`. Both
-            # client-callable calls (actionable_tool_calls) and LegionIO-run
-            # results ride in output[] — client-callable ones as function_call
-            # items the client executes and continues via function_call_output.
-            # requires_action / action_required are Assistants API concepts that
-            # real Responses clients (Codex) reject.
+            # M7: the response status is the stop state's dialect rendering —
+            # a provider-declared completion stop is 'completed', an explicit
+            # truncation (max_tokens) is 'incomplete', and an :error or an
+            # absent/unmapped stop state is 'failed'. Never a hardcoded
+            # 'completed': the client must be able to tell a clean turn from
+            # a turn the daemon could not confirm completed. (Output items
+            # that did complete keep their own 'completed' item status — the
+            # response-level status is the turn's state.) Client-callable
+            # calls and LegionIO-run results ride in output[]; requires_action
+            # / action_required are Assistants API concepts that real
+            # Responses clients (Codex) reject.
             {
               id:         request_id,
               object:     'response',
@@ -182,8 +187,24 @@ module Legion
               model:      resolved_model,
               output:     output,
               usage:      build_usage(tokens),
-              status:     'completed'
+              status:     format_response_status(pipeline_response)
             }
+          end
+
+          # One stop-state → Responses status policy (M7). The envelope's
+          # stop member is the { reason: } Hash (G3: one shape); the reason
+          # is the canonical stop enum or nil (absent).
+          def format_response_status(pipeline_response)
+            stop = pipeline_response.respond_to?(:stop) ? pipeline_response.stop : nil
+            reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : nil
+            case reason&.to_sym
+            when :max_tokens
+              'incomplete'
+            when :end_turn, :stop_sequence, :tool_use, :pause_turn, :content_filter
+              'completed'
+            else
+              'failed'
+            end
           end
 
           def format_error(error, status_code: 500, type: 'server_error')
@@ -242,11 +263,13 @@ module Legion
           end
 
           def server_tool_chunk?(tool_call)
+            # The chunk fragment's source is the closed dispatch-type enum
+            # (R4 fragment contract) — server-executed tools are the
+            # registry/special/extension/mcp set (G24).
             source = tool_fragment_field(tool_call, :source)
             return false if source.nil?
 
-            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
-            %i[special registry extension mcp].include?(type&.to_sym)
+            %i[special registry extension mcp].include?(source.to_sym)
           end
 
           # SSE Events emitter for /v1/responses. Emits sequence_number'd events
@@ -775,13 +798,15 @@ module Legion
             return [] unless tools.respond_to?(:any?) && tools.any?
 
             tools.filter_map do |tc|
-              name = tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'])
-              args = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
-              tc_id = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'] || "call_#{SecureRandom.hex(8)}")
+              # G3: the envelope carries Array<Canonical::ToolCall> — member
+              # reads only (the former respond_to?/Hash dual shape was the
+              # split-world seam).
+              name = tc.name
+              args = tc.arguments
               next if name.nil?
               next if server_tool_resolved?(tc)
 
-              { type: 'function_call', id: "fc_#{SecureRandom.hex(12)}", call_id: tc_id,
+              { type: 'function_call', id: "fc_#{SecureRandom.hex(12)}", call_id: tc.id,
                 name: name.to_s, arguments: args_as_json_string(args), status: 'completed' }
             end
           end
@@ -800,24 +825,22 @@ module Legion
             tools.flat_map do |tc|
               next [] unless server_tool_resolved?(tc)
 
-              name = tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'])
-              args = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
-              tc_id = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'] || "call_#{SecureRandom.hex(8)}")
-              result = tc.respond_to?(:result) ? tc.result : (tc[:result] || tc['result'])
-
+              # G3: the envelope carries Array<Canonical::ToolCall> — member
+              # reads only (the former respond_to?/Hash dual shape was the
+              # split-world seam).
               [
                 {
                   type:      'function_call',
                   id:        "fc_#{SecureRandom.hex(12)}",
-                  call_id:   tc_id,
-                  name:      name.to_s,
-                  arguments: args_as_json_string(args),
+                  call_id:   tc.id,
+                  name:      tc.name.to_s,
+                  arguments: args_as_json_string(tc.arguments),
                   status:    'completed'
                 },
                 {
                   type:    'function_call_output',
-                  call_id: tc_id,
-                  output:  serialize_server_tool_result(result),
+                  call_id: tc.id,
+                  output:  serialize_server_tool_result(tc.result),
                   status:  'completed'
                 }
               ]
@@ -834,21 +857,15 @@ module Legion
             result.to_s
           end
 
+          # The canonical ToolCall.source is the closed dispatch-type enum —
+          # a server-executed (G24) tool is registry/special/extension/mcp
+          # with a populated result.
           def server_tool_resolved?(tool_call)
-            source = read_tool_call_field(tool_call, :source)
+            source = tool_call.source
             return false if source.nil?
+            return false unless %i[special registry extension mcp].include?(source.to_sym)
 
-            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
-            return false unless %i[special registry extension mcp].include?(type&.to_sym)
-
-            !read_tool_call_field(tool_call, :result).nil?
-          end
-
-          def read_tool_call_field(tool_call, field)
-            return tool_call.public_send(field) if tool_call.respond_to?(field)
-            return tool_call[field] if tool_call.is_a?(Hash)
-
-            nil
+            !tool_call.result.nil?
           end
 
           # Surface provider thinking as a Responses-API reasoning item. Codex
@@ -876,13 +893,9 @@ module Legion
             i = token_value(tokens, :input_tokens, :input).to_i
             o = token_value(tokens, :output_tokens, :output).to_i
             result = { input_tokens: i, output_tokens: o, total_tokens: i + o }
-            # Dual-shape: legacy Types::Usage carries the member; a Hash may
-            # carry either key; Canonical::Usage has no such member (nil).
-            details = if tokens.is_a?(Hash)
-                        tokens[:output_tokens_details] || tokens['output_tokens_details']
-                      elsif tokens.respond_to?(:output_tokens_details)
-                        tokens.output_tokens_details
-                      end
+            # G3: the envelope's tokens member is a plain Hash (or {}) — one
+            # shape, no dual reader.
+            details = tokens.is_a?(Hash) ? (tokens[:output_tokens_details] || tokens['output_tokens_details']) : nil
             result[:output_tokens_details] = details if details.is_a?(Hash) && !details.empty?
             result
           end

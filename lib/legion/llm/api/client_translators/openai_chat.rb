@@ -24,13 +24,18 @@ module Legion
 
           Canonical = Legion::Extensions::Llm::Canonical
 
+          # M7/N8: a provider :error stop is an error state, not a clean
+          # completion — it renders as 'error', never 'stop'. An absent or
+          # unmapped stop state surfaces the same way (see on_done /
+          # map_finish_reason): the client must be able to tell a
+          # provider-declared stop from a stop the daemon did not observe.
           FINISH_REASON_MAP = {
             end_turn:       'stop',
             tool_use:       'tool_calls',
             max_tokens:     'length',
             stop_sequence:  'stop',
             content_filter: 'content_filter',
-            error:          'stop',
+            error:          'error',
             pause_turn:     'tool_calls'
           }.freeze
 
@@ -217,7 +222,11 @@ module Legion
                                }]
                              })
             when :done
-              { object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }
+              # M7/N8: the done chunk carries the provider's stop_reason —
+              # map it with the same policy as the streaming/sync edges
+              # (absent/unmapped → 'error', never a fabricated 'stop').
+              finish_reason = FINISH_REASON_MAP[canonical_chunk.stop_reason] || 'error'
+              { object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: finish_reason }] }
             end
           end
 
@@ -335,7 +344,9 @@ module Legion
             def on_done(stop_reason:, usage:, model:)
               return if @done_emitted
 
-              finish_reason = FINISH_REASON_MAP[stop_reason] || 'stop'
+              # M7/N8: an absent or unmapped stop state renders as 'error',
+              # never a fabricated 'stop'.
+              finish_reason = FINISH_REASON_MAP[stop_reason] || 'error'
               done_chunk = {
                 id:      "chatcmpl-#{@request_id.to_s.delete('-')}",
                 object:  'chat.completion.chunk',
@@ -531,14 +542,16 @@ module Legion
             return [] unless tools.respond_to?(:any?) && tools.any?
 
             tools.each_with_index.filter_map do |tc, idx|
-              name = tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'])
-              args = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
-              tc_id = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'] || "call_#{SecureRandom.hex(8)}")
+              # G3: the envelope carries Array<Canonical::ToolCall> — member
+              # reads only (the former respond_to?/Hash dual shape was the
+              # split-world seam).
+              name = tc.name
+              args = tc.arguments
               next if name.nil?
               next if server_tool_resolved?(tc)
 
               {
-                id:       tc_id,
+                id:       tc.id,
                 type:     'function',
                 index:    idx,
                 function: {
@@ -549,23 +562,15 @@ module Legion
             end
           end
 
+          # The canonical ToolCall.source is the closed dispatch-type enum —
+          # a server-executed (G24) tool is registry/special/extension/mcp
+          # with a populated result.
           def server_tool_resolved?(tool_call)
-            source = if tool_call.respond_to?(:source)
-                       tool_call.source
-                     elsif tool_call.is_a?(Hash)
-                       tool_call[:source] || tool_call['source']
-                     end
+            source = tool_call.source
             return false if source.nil?
+            return false unless %i[special registry extension mcp].include?(source.to_sym)
 
-            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
-            return false unless %i[special registry extension mcp].include?(type&.to_sym)
-
-            result = if tool_call.respond_to?(:result)
-                       tool_call.result
-                     elsif tool_call.is_a?(Hash)
-                       tool_call[:result] || tool_call['result']
-                     end
-            !result.nil?
+            !tool_call.result.nil?
           end
 
           def server_tool_results_text(pipeline_response)
@@ -575,12 +580,7 @@ module Legion
             tools.filter_map do |tool_call|
               next unless server_tool_resolved?(tool_call)
 
-              result = if tool_call.respond_to?(:result)
-                         tool_call.result
-                       elsif tool_call.is_a?(Hash)
-                         tool_call[:result] || tool_call['result']
-                       end
-              serialize_server_tool_result(result)
+              serialize_server_tool_result(tool_call.result)
             end.join("\n")
           end
 
@@ -594,14 +594,21 @@ module Legion
             extract_content_text(result)
           end
 
+          # M7/N8: one finish-reason policy. A provider-declared stop maps
+          # to its dialect spelling; an absent or unmapped stop state
+          # surfaces as 'error' — never a fabricated 'stop' (the client must
+          # be able to tell a provider-declared stop from a stop the daemon
+          # did not observe). The canonical stop vocabulary is the enum; the
+          # legacy 'stop'/'length' spellings are retained so a value that
+          # already arrived in dialect form still maps cleanly.
           def map_finish_reason(stop_reason)
-            return 'stop' if stop_reason.nil? || stop_reason.to_s.empty?
+            return 'error' if stop_reason.nil? || stop_reason.to_s.empty?
 
             mapping = { 'end_turn' => 'stop', 'stop' => 'stop', 'length' => 'length',
                         'max_tokens' => 'length', 'tool_use' => 'tool_calls',
                         'tool_calls' => 'tool_calls', 'content_filter' => 'content_filter',
-                        'stop_sequence' => 'stop' }
-            mapping.fetch(stop_reason.to_s, 'stop')
+                        'stop_sequence' => 'stop', 'error' => 'error' }
+            mapping.fetch(stop_reason.to_s, 'error')
           end
 
           def content_looks_like_tool_json?(content)

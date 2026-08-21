@@ -10,7 +10,6 @@ module Legion
         module TriggerMatch
           include Legion::Logging::Helper
           include Steps::Logging
-          include Steps::MessageAccessors
 
           def step_trigger_match
             start_time = nil
@@ -81,23 +80,12 @@ module Legion
             depth = trigger_scan_depth
             messages = @request.messages.last(depth)
 
+            # G3: pipeline messages are Canonical::Message — role/text are
+            # member reads (no dual-shape accessor).
             text = messages.filter_map do |msg|
-              next unless message_role_of(msg) == 'user'
+              next unless msg.role.to_s == 'user'
 
-              content = message_content_of(msg)
-              raw = if content.is_a?(Array)
-                      content.filter_map do |c|
-                        if c.is_a?(String)
-                          c
-                        elsif c.is_a?(Hash)
-                          c[:text] || c['text']
-                        elsif c.respond_to?(:text)
-                          c.text
-                        end
-                      end.join(' ')
-                    else
-                      content.to_s
-                    end
+              raw = msg.text.to_s
               next if harness_message?(raw)
 
               raw

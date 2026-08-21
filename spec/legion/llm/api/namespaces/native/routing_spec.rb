@@ -47,7 +47,6 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Routing' do
       expect(last_response.status).to eq(200)
       result = Legion::JSON.load(last_response.body)
       expect(result[:data][:routing_enabled]).to eq(false)
-      expect(result[:data][:auto_rules_populated]).to eq(false)
       expect(result[:data][:rules]).to eq([])
       expect(result[:data][:summary][:total]).to eq(0)
     end

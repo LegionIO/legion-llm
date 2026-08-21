@@ -371,25 +371,11 @@ module Legion
           ].reject(&:empty?).uniq
         end
 
-        # Dual-shape: pipeline messages are Canonical::Message; specs may pass
-        # Hash messages. Reads the last user message's text either way.
+        # G3: pipeline messages are Canonical::Message — the last user
+        # message's text is the canonical .text member (no dual-shape read).
         def latest_user_text
-          message = Array(@request.messages).reverse.find do |msg|
-            role = msg.is_a?(Hash) ? (msg[:role] || msg['role']).to_s : msg.role.to_s
-            role == 'user'
-          end
-          return '' unless message
-
-          content = message.is_a?(Hash) ? (message[:content] || message['content']) : message.content
-          return content.to_s unless content.is_a?(Array)
-
-          content.filter_map do |part|
-            next part if part.is_a?(String)
-            next part.text if part.respond_to?(:text)
-            next part[:text] || part['text'] if part.is_a?(Hash)
-
-            nil
-          end.compact.join(' ')
+          message = Array(@request.messages).reverse.find { |msg| msg.role.to_s == 'user' }
+          message&.text.to_s
         end
 
         # When the provider's response carries tool-call intent in plain text
@@ -573,20 +559,18 @@ module Legion
           end
         end
 
-        # Extract text from canonical or hash-shaped result for tool-call synthesis.
+        # G3: the loop's result is the canonical provider response — the
+        # synthesis text is the .text member (the Hash-index fallback was the
+        # split-world seam).
         def result_text_for_synthesis(result)
-          if result.respond_to?(:text)
-            result.text.to_s.strip
-          else
-            (result[:result] || result[:content] || result['result'] || result['content'] || '').to_s.strip
-          end
+          result.text.to_s.strip
         end
 
-        # Apply synthesized tool calls to a canonical response (using .with for immutability)
-        # or mutate a hash in place. Returns the updated response.
+        # Apply synthesized tool calls to the canonical response (immutably,
+        # via .with). Synthesized calls arrive as Hashes from the text
+        # synthesizers and canonicalize to Canonical::ToolCall here (Data#with
+        # does not normalize).
         def apply_synthesized_tool_calls(result, tool_calls)
-          # Synthesized calls arrive as Hashes; canonicalize so the response
-          # carries Canonical::ToolCall objects (Data#with does not normalize).
           canonical_calls = Array(tool_calls).map do |tc|
             if tc.is_a?(Legion::Extensions::Llm::Canonical::ToolCall)
               tc
@@ -598,7 +582,6 @@ module Legion
               )
             end
           end
-          return result.merge(tool_calls: canonical_calls, stop_reason: :tool_use) unless result.respond_to?(:with)
 
           result.with(
             text:        '',
@@ -631,12 +614,11 @@ module Legion
           "name=#{name}:args_hash=default"
         end
 
-        # Extract tool call array from canonical response or hash-shaped result.
+        # G3: the loop's result is the canonical provider response — tool
+        # calls are the .tool_calls member (nil → empty array). The Hash-index
+        # fallback was the split-world seam.
         def extract_tool_calls(result)
-          return result.tool_calls if result.respond_to?(:tool_calls) && result.respond_to?(:text)
-
-          # Fallback for hash-shaped results
-          (result[:tool_calls] || result['tool_calls'] || []).to_a
+          result.tool_calls.to_a
         end
 
         def normalize_native_tool_calls(tool_calls)

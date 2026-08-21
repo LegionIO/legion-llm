@@ -24,7 +24,10 @@ module Legion
               return
             end
 
-            response_text = @raw_response.respond_to?(:content) ? @raw_response.content : @raw_response.to_s
+            # G3/L4: @raw_response is the canonical provider response — .text
+            # is the client-visible content (a .to_s fallback would leak the
+            # Ruby inspect of the response object into the faithfulness check).
+            response_text = @raw_response.text.to_s
             log_step_debug(:rag_guard, :checking, context_count: context.size, response_chars: response_text.length)
 
             result = Hooks::RagGuard.check_rag_faithfulness(

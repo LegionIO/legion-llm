@@ -347,9 +347,11 @@ module Legion
 
       def self.gaia_defaults
         {
-          advisory_enabled:   true,
-          preferred_provider: nil,
-          preferred_model:    nil
+          # L7: preferred_provider/preferred_model are gone — the gaia:*
+          # hard pins were a second selection domain (settings pins that
+          # bypassed Router.next_lane's hint-miss fallback). Routing choice
+          # belongs to the router alone.
+          advisory_enabled: true
         }
       end
 
@@ -363,28 +365,15 @@ module Legion
 
       def self.embedding_defaults
         {
-          # G15: pinned embedding lane for strict-model-pin routing through Router.request_lane.
-          # All three keys nil = no embedding configured; ConfigError raised on generate attempt.
-          # `provider` and `instance` (when set) are passed as hard filters into request_lane —
-          # vector-comparability requires the *same* lane every call, not just the same model.
-          provider:                     nil,
-          instance:                     nil,
-          default_model:                nil,
-          # Deprecated alias for :default_model — read as a fallback so older configs keep working.
-          # New configs MUST use :default_model.
-          model:                        nil,
+          # M4: the settings-pin → tier-rank → default_model selection keys
+          # (provider/instance/default_model/model/provider_fallback/
+          # provider_models/ollama_preferred) are gone — SSOT :embed routing
+          # (Call::Embeddings → Router.next_lane) is the sole embedding
+          # selection authority; an operator pin belongs in the request
+          # (model/provider/instance constraints), not in a second selection
+          # domain.
           dimension:                    1024,
           enforce_dimension:            true,
-          provider_fallback:            %w[ollama bedrock openai],
-          provider_models:              {
-            bedrock:   'amazon.titan-embed-text-v2:0',
-            anthropic: nil,
-            openai:    'text-embedding-3-small',
-            gemini:    'text-embedding-004',
-            azure:     'text-embedding-3-small',
-            ollama:    'mxbai-embed-large'
-          },
-          ollama_preferred:             %w[mxbai-embed-large nomic-embed-text bge-large snowflake-arctic-embed],
           ollama_context_chars:         {
             'mxbai-embed-large'      => 1400,
             'bge-large'              => 1400,

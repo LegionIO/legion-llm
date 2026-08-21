@@ -4,6 +4,12 @@ require 'spec_helper'
 require 'legion/llm/router/input_bound'
 
 RSpec.describe Legion::LLM::Router::InputBound do
+  # G3: InputBound measures the canonical routing input — messages are
+  # Canonical::Message (the former Hash double shapes are gone; R15).
+  def canon_msg(content)
+    Legion::Extensions::Llm::Canonical::Message.build(content: content)
+  end
+
   describe '.call' do
     subject(:bound) { described_class.call(**kwargs) }
 
@@ -56,13 +62,13 @@ RSpec.describe Legion::LLM::Router::InputBound do
 
     context 'messages byte counting' do
       it 'sums string-content messages by byte length' do
-        msgs = [{ content: 'hello' }, { content: 'world' }]
+        msgs = [canon_msg('hello'), canon_msg('world')]
         result = described_class.call(messages: msgs, framing_overhead_tokens: 0)
         expect(result).to eq('hello'.bytesize + 'world'.bytesize)
       end
 
       it 'sums array-of-text-blocks messages by byte length' do
-        msgs = [{ content: [{ type: 'text', text: 'hi there' }] }]
+        msgs = [canon_msg([Legion::Extensions::Llm::Canonical::ContentBlock.text('hi there')])]
         result = described_class.call(messages: msgs, framing_overhead_tokens: 0)
         expect(result).to eq('hi there'.bytesize)
       end
@@ -70,7 +76,7 @@ RSpec.describe Legion::LLM::Router::InputBound do
       it 'counts multi-byte text blocks by bytes not chars' do
         # "日本語" — 3 chars, 9 bytes in UTF-8
         japanese = '日本語'
-        msgs = [{ content: japanese }]
+        msgs = [canon_msg(japanese)]
         result = described_class.call(messages: msgs, framing_overhead_tokens: 0)
         expect(result).to eq(9)
         expect(result).not_to eq(3)
@@ -88,10 +94,10 @@ RSpec.describe Legion::LLM::Router::InputBound do
 
       it 'handles mixed content-block types, counting only text/tool bytes' do
         msgs = [
-          { content: [
-            { type: 'text', text: 'hello' },
-            { type: 'image', source: { type: 'base64', data: 'abc' } }
-          ] }
+          canon_msg([
+                      Legion::Extensions::Llm::Canonical::ContentBlock.text('hello'),
+                      Legion::Extensions::Llm::Canonical::ContentBlock.image(data: 'abc', media_type: 'image/png')
+                    ])
         ]
         result = described_class.call(messages: msgs, framing_overhead_tokens: 0)
         # only text block contributes; image block contributes 0
@@ -100,9 +106,9 @@ RSpec.describe Legion::LLM::Router::InputBound do
 
       it 'handles tool_use content blocks using serialized input bytes' do
         msgs = [
-          { content: [
-            { type: 'tool_use', name: 'my_tool', input: { x: 1 } }
-          ] }
+          canon_msg([
+                      Legion::Extensions::Llm::Canonical::ContentBlock.tool_use(id: 'tu_1', name: 'my_tool', input: { x: 1 })
+                    ])
         ]
         result = described_class.call(messages: msgs, framing_overhead_tokens: 0)
         name_bytes = 'my_tool'.bytesize
@@ -112,9 +118,9 @@ RSpec.describe Legion::LLM::Router::InputBound do
 
       it 'handles tool_result content blocks' do
         msgs = [
-          { content: [
-            { type: 'tool_result', content: 'the result string' }
-          ] }
+          canon_msg([
+                      Legion::Extensions::Llm::Canonical::ContentBlock.tool_result(tool_use_id: 'tu_1', content: 'the result string')
+                    ])
         ]
         result = described_class.call(messages: msgs, framing_overhead_tokens: 0)
         expect(result).to eq('the result string'.bytesize)
@@ -176,7 +182,7 @@ RSpec.describe Legion::LLM::Router::InputBound do
     context 'summation correctness' do
       it 'adds system + messages + tools + overhead together' do
         system = 'You are helpful.'
-        msgs   = [{ content: 'What is 2+2?' }]
+        msgs   = [canon_msg('What is 2+2?')]
         tools  = [{ name: 'calc', description: 'calculate', input_schema: {} }]
         overhead = 128
 
@@ -206,7 +212,7 @@ RSpec.describe Legion::LLM::Router::InputBound do
     context 'chars/4 heuristic is NOT used' do
       it 'a 1000-character ASCII message contributes ~1000 not ~250' do
         long_ascii = 'a' * 1000
-        result = described_class.call(messages: [{ content: long_ascii }], framing_overhead_tokens: 0)
+        result = described_class.call(messages: [canon_msg(long_ascii)], framing_overhead_tokens: 0)
         # Exact byte match for ASCII: 1000 bytes
         expect(result).to eq(1000)
         # Explicitly not the chars/4 value
@@ -227,7 +233,7 @@ RSpec.describe Legion::LLM::Router::InputBound do
       it 'always returns an Integer regardless of input variety' do
         result = described_class.call(
           operation:               :chat,
-          messages:                [{ content: 'hello' }],
+          messages:                [canon_msg('hello')],
           system:                  'You are an assistant.',
           tools:                   [{ name: 'tool1', input_schema: {} }],
           tool_choice:             { type: 'auto' },

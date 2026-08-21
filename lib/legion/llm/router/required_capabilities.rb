@@ -130,18 +130,14 @@ module Legion
             end
           end
 
-          # Canonical Message#content or Hash message content, defensively.
+          # G3: the routing request is canonical — member reads only (the
+          # former Canonical-OR-Hash dual shape was the split-world seam).
           def message_content_of(message)
-            return message[:content] || message['content'] if message.is_a?(Hash)
-
-            message.respond_to?(:content) ? message.content : nil
+            message.content
           end
 
-          # Canonical ContentBlock#type or Hash block :type, defensively.
           def block_type_of(block)
-            return block.type if block.respond_to?(:type) && !block.is_a?(Hash)
-
-            block.is_a?(Hash) ? (block[:type] || block['type']) : nil
+            block.type
           end
 
           def nonempty_array?(value)

@@ -32,25 +32,12 @@ RSpec.describe Legion::LLM::Inventory::Discovery do
     expect(described_class.model_size('any-model', provider: :vllm)).to be_nil
   end
 
-  describe 'embedding instance selection from registry' do
-    def embedding_adapter(*model_names)
-      offerings = model_names.map do |name|
-        { model: name, capabilities: %i[embedding], size_bytes: 669_000_000 }
-      end
-      Class.new do
-        define_method(:offerings) { |live: false| live ? offerings : [] }
-      end.new
-    end
-
-    def register_embedding_instance(provider, instance, tier, *model_names, default_model: nil)
-      metadata = { tier: tier, capabilities: %i[embedding] }
-      metadata[:default_model] = default_model if default_model
-      Legion::LLM::Call::Registry.register(
-        provider, embedding_adapter(*model_names), instance: instance, metadata: metadata
-      )
-    end
-
-    def seed_embedding_lane(provider, instance, model, tier: :local)
+  # M4: discovery no longer SELECTS an embedding provider/instance/model —
+  # SSOT :embed routing (Call::Embeddings → Router.next_lane) is the sole
+  # selection authority. Discovery answers one capability fact: can_embed?
+  # reads the live Inventory lane store (the same lanes the router reads).
+  describe 'embedding capability detection (M4: no second selection domain)' do
+    def seed_embedding_lane(provider, instance, model, tier: :local, capabilities: %i[embedding])
       Legion::LLM::Inventory.write_lane(lane: {
                                           id:              "#{tier}:#{provider}:#{instance}:embed:#{model.tr(':', '_')}",
                                           tier:            tier,
@@ -58,76 +45,36 @@ RSpec.describe Legion::LLM::Inventory::Discovery do
                                           instance_id:     instance,
                                           model:           model,
                                           type:            :embed,
-                                          capabilities:    %i[embedding],
+                                          capabilities:    capabilities,
                                           limits:          {},
                                           enabled:         true,
                                           cost:            {}
                                         })
     end
 
-    after { Legion::Settings.reset! }
+    before { Legion::LLM::Inventory.reset_live_store! }
+    after  { Legion::LLM::Inventory.reset_live_store! }
 
-    it 'honors an explicitly configured embedding instance over a higher-tier-ranked empty instance' do
-      register_embedding_instance(:ollama, :local, :local)
-      register_embedding_instance(:ollama, :'apollo-embed', :direct, 'mxbai-embed-large:latest')
+    it 'is false when no embedding-capable lane is in the Inventory store' do
+      seed_embedding_lane(:ollama, :local, 'gemma-4-31b-it', capabilities: %i[chat streaming])
+      expect(described_class.can_embed?).to be false
+    end
+
+    it 'is true when an embedding-capable lane is in the Inventory store' do
       seed_embedding_lane(:ollama, :'apollo-embed', 'mxbai-embed-large:latest', tier: :direct)
-
-      Legion::Settings[:llm][:embedding] = {
-        provider: 'ollama', instance: 'apollo-embed', default_model: 'mxbai-embed-large:latest'
-      }
-
-      described_class.detect_embedding_capability
-
       expect(described_class.can_embed?).to be true
-      expect(described_class.embedding_instance).to eq(:'apollo-embed')
-      expect(described_class.embedding_provider).to eq(:ollama)
-      expect(described_class.embedding_model).to eq('mxbai-embed-large:latest')
     end
 
-    it 'honors an explicitly configured instance even with a symbol-keyed embedding settings hash' do
-      register_embedding_instance(:ollama, :local, :local)
-      register_embedding_instance(:ollama, :'apollo-embed', :direct, 'mxbai-embed-large:latest')
+    it 'records no provider/model/instance state (selection is the router alone)' do
       seed_embedding_lane(:ollama, :'apollo-embed', 'mxbai-embed-large:latest', tier: :direct)
-
-      Legion::Settings[:llm][:embedding] = {
-        instance: :'apollo-embed', default_model: 'mxbai-embed-large:latest'
-      }
-
-      described_class.detect_embedding_capability
-
-      expect(described_class.embedding_instance).to eq(:'apollo-embed')
-    end
-
-    it 'does not select a higher-ranked instance that lacks the model when another instance has it' do
-      register_embedding_instance(:ollama, :local, :local)
-      register_embedding_instance(:ollama, :'apollo-embed', :direct, 'mxbai-embed-large:latest',
-                                  default_model: 'mxbai-embed-large:latest')
-      seed_embedding_lane(:ollama, :'apollo-embed', 'mxbai-embed-large:latest', tier: :direct)
-
-      described_class.detect_embedding_capability
-
-      expect(described_class.can_embed?).to be true
-      expect(described_class.embedding_instance).to eq(:'apollo-embed')
-      expect(described_class.embedding_model).to eq('mxbai-embed-large:latest')
-    end
-
-    it 'still prefers a local instance when it genuinely has the model and no pin is configured' do
-      register_embedding_instance(:ollama, :local, :local, 'mxbai-embed-large:latest',
-                                  default_model: 'mxbai-embed-large:latest')
-      register_embedding_instance(:ollama, :'apollo-embed', :direct, 'mxbai-embed-large:latest',
-                                  default_model: 'mxbai-embed-large:latest')
-      seed_embedding_lane(:ollama, :local, 'mxbai-embed-large:latest', tier: :local)
-      seed_embedding_lane(:ollama, :'apollo-embed', 'mxbai-embed-large:latest', tier: :direct)
-
-      described_class.detect_embedding_capability
-
-      expect(described_class.embedding_instance).to eq(:local)
+      expect(described_class.respond_to?(:embedding_provider)).to be false
+      expect(described_class.respond_to?(:embedding_model)).to be false
+      expect(described_class.respond_to?(:embedding_instance)).to be false
+      expect(described_class.respond_to?(:embedding_fallback_chain)).to be false
     end
   end
 
   describe 'health and loaded field preservation' do
-    before { Legion::LLM::Router.reset! }
-
     it 'preserves health metadata from offerings' do
       adapter = instance_double('Adapter')
       allow(adapter).to receive(:offerings).with(live: true).and_return(

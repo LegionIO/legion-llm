@@ -32,9 +32,13 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
       # N×N: call_responses delegates to canonical paths (call / call_stream).
       # The API namespace translator converts Responses API format to canonical
       # before the executor receives it.
+      # M7/G3: the envelope carries the stop reason (a real completion has
+      # one) and a canonical/absent thinking — the double matches the real
+      # boundary (R15).
       allow(ex).to receive(:call).and_return(
         double('Response', routing: { model: 'legionio' }, tokens: { input_tokens: 5, output_tokens: 10 },
-                           message: { content: 'Hello' }, tools: [])
+                           message: { content: 'Hello' }, tools: [],
+                           stop: { reason: 'end_turn' }, thinking: nil)
       )
     end
   end
@@ -67,13 +71,18 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
       end
 
       it 'returns completed status with a function_call item when client tool calls are present' do
-        tool_call = double('ToolCall', name: 'get_weather', id: 'tc_1', arguments: { location: 'NYC' })
+        # G3: a canonical client tool call carries the closed source enum and
+        # a result member — the double matches the real boundary (R15).
+        tool_call = double('ToolCall', name: 'get_weather', id: 'tc_1', arguments: { location: 'NYC' },
+                                     source: :client, result: nil)
         allow(executor_double).to receive(:call).and_return(
           double('Response',
-                 routing: { model: 'legionio' },
-                 tokens:  { input_tokens: 5, output_tokens: 10 },
-                 message: { content: 'Let me check.' },
-                 tools:   [tool_call])
+                 routing:  { model: 'legionio' },
+                 tokens:   { input_tokens: 5, output_tokens: 10 },
+                 message:  { content: 'Let me check.' },
+                 tools:    [tool_call],
+                 stop:     { reason: 'end_turn' },
+                 thinking: nil)
         )
         post '/v1/responses',
              Legion::JSON.dump({ input: 'Weather?', model: 'legionio', stream: false }),
@@ -108,8 +117,10 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
                                    tools:   [])
         allow(executor_double).to receive(:stream_preflight!).and_return(nil)
         allow(executor_double).to receive(:call_stream) do |&block|
-          block.call(double('Chunk', content: 'Hello '))
-          block.call(double('Chunk', content: 'world'))
+          # G3/L2: Canonical::Chunk only (the legacy double('Chunk') shape is
+          # gone; R15).
+          block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'Hello ', request_id: 'req_orsp'))
+          block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'world', request_id: 'req_orsp'))
           pipeline_response
         end
         post '/v1/responses',

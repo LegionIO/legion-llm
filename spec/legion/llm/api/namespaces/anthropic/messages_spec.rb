@@ -146,8 +146,10 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
     before do
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
       allow(mock_executor).to receive(:stream_preflight!).and_return(nil)
+      # G3/L2: Canonical::Chunk only (the legacy double(content:) shape is
+      # gone; R15).
       allow(mock_executor).to receive(:call_stream).and_yield(
-        double(content: 'Hello', thinking: nil, respond_to?: true)
+        Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'Hello', request_id: 'req_msg')
       ).and_return(mock_response)
     end
 
@@ -195,8 +197,12 @@ RSpec.describe 'Namespaces::Anthropic::Messages' do
 
     it 'emits thinking blocks in streaming when emit_thinking_blocks is enabled (default)' do
       allow(mock_executor).to receive(:stream_preflight!).and_return(nil)
+      # G3/L2: a canonical thinking_delta chunk (the legacy
+      # double(thinking:) shape is gone; R15).
       allow(mock_executor).to receive(:call_stream).and_yield(
-        double(content: nil, thinking: 'internal reasoning', respond_to?: true)
+        Legion::Extensions::Llm::Canonical::Chunk.thinking_delta(
+          delta: 'internal reasoning', request_id: 'req_msg', signature: 'sig_think'
+        )
       ).and_return(mock_response)
 
       post '/v1/messages', Legion::JSON.dump(request_body),

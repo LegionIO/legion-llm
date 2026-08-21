@@ -260,47 +260,17 @@ module Legion
           end
         end
 
+        # G3: the envelope already carries canonical types — the debug
+        # projection is the identity for thinking and tool calls (the former
+        # Hash-OR-canonical reconstruction was the split-world seam).
         def self.canonical_thinking(value)
           return nil if value.nil?
 
-          if value.is_a?(Hash)
-            normalized = value.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
-            content = (normalized[:content] || normalized[:text] || normalized[:thinking]).to_s
-            signature = normalized[:signature].to_s
-          else
-            content = value.respond_to?(:content) ? value.content.to_s : value.to_s
-            signature = value.respond_to?(:signature) ? value.signature.to_s : ''
-          end
-          return nil if content.empty? && signature.empty?
-
-          Canonical::Thinking.from_hash(content: content, signature: signature)
+          value.is_a?(Canonical::Thinking) ? value : Canonical::Thinking.from_hash(value)
         end
 
         def self.canonical_tool_call(tool_call)
-          return tool_call if tool_call.is_a?(Canonical::ToolCall)
-
-          h = tool_call.respond_to?(:to_h) && !tool_call.is_a?(Hash) ? tool_call.to_h : tool_call
-          h = if h.is_a?(Hash)
-                h.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
-              else
-                {}
-              end
-
-          source = h[:source]
-          source_sym = if source.is_a?(Hash)
-                         (source[:type] || source['type'])&.to_sym
-                       else
-                         source&.to_sym
-                       end
-
-          Canonical::ToolCall.build(
-            id:        h[:id],
-            name:      h[:name].to_s,
-            arguments: h[:arguments] || {},
-            source:    source_sym,
-            status:    h[:status],
-            result:    h[:result]
-          )
+          tool_call.is_a?(Canonical::ToolCall) ? tool_call : Canonical::ToolCall.from_hash(tool_call)
         end
 
         def self.canonical_usage(tokens, _pipeline_response)
@@ -315,15 +285,19 @@ module Legion
           )
         end
 
+        # M7: the debug projection honors the one stop-reason policy — the
+        # provider-declared stop (or the tool-call-derived :tool_use) when it
+        # is a canonical enum value, nil when absent or unmapped. Never a
+        # fabricated :end_turn.
         def self.canonical_stop_reason(pipeline_response, tool_calls)
           return :tool_use if tool_calls.any? { |tc| tc.source != :special && tc.source != :registry && tc.source != :extension && tc.source != :mcp && tc.result.nil? }
 
           stop = pipeline_response.respond_to?(:stop) ? pipeline_response.stop : nil
-          reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : stop
+          reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : nil
           sym = reason&.to_sym
           return sym if Canonical::Response::STOP_REASONS.include?(sym)
 
-          :end_turn
+          nil
         end
 
         def self.sanitize_routing(routing)

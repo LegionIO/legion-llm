@@ -10,7 +10,6 @@ module Legion
         module Classification
           include Legion::Logging::Helper
           include Steps::Logging
-          include Steps::MessageAccessors
 
           LEVELS = %i[public internal confidential restricted].freeze
 
@@ -142,11 +141,12 @@ module Legion
             active_patterns = redaction_patterns_for(scan)
             redacted_messages = 0
 
-            # Pipeline messages are canonical (immutable) — redaction rebuilds
-            # each redacted message and writes it back into the (mutable) array.
+            # G3: pipeline messages are Canonical::Message (immutable) —
+            # redaction rebuilds each redacted message via .with and writes it
+            # back into the (mutable) array.
             @request.messages.each_index do |idx|
               message = @request.messages[idx]
-              content = message_content_of(message)
+              content = message.content
               next unless content.is_a?(String)
 
               active_patterns.each_value do |regex|
@@ -159,7 +159,7 @@ module Legion
                 end
               end
 
-              @request.messages[idx] = message_with_content(message, content)
+              @request.messages[idx] = message.with(content: content)
               redacted_messages += 1
             end
 
@@ -173,7 +173,7 @@ module Legion
           end
 
           def extract_text_content
-            @request.messages.map { |m| message_text_of(m) }.join(' ')
+            @request.messages.map { |m| m.text.to_s }.join(' ')
           end
 
           def upgrade_if_needed(declared_level, scan)

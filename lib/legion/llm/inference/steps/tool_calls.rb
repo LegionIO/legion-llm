@@ -24,8 +24,12 @@ module Legion
               "conversation_id=#{@request.conversation_id || 'none'} count=#{tool_calls.size}"
             )
             tool_calls.each do |tc|
-              tool_name = tc[:name] || tc['name']
-              tool_call_id = tc[:id] || tc['id']
+              # G3: @raw_response.tool_calls is Array<Canonical::ToolCall> —
+              # member reads only (the former tc[:name] Hash indexing raised
+              # NoMethodError on canonical objects and was swallowed by the
+              # step-level rescue, silently disabling this step).
+              tool_name = tc.name
+              tool_call_id = tc.id
               source = find_tool_source(tool_name)
               next unless source
 
@@ -53,9 +57,12 @@ module Legion
               end
 
               tool_exchange_id = Tracing.exchange_id
-              log_tool_call_dispatch(tool_call_id, tool_name, source, tc[:arguments] || tc['arguments'])
+              log_tool_call_dispatch(tool_call_id, tool_name, source, tc.arguments)
+              # The dispatcher is a daemon-internal Hash-consumer (registry/
+              # extension/mcp execution) — the canonical tool call projects to
+              # its wire shape at this boundary (member reads; G3).
               result = ToolDispatcher.dispatch(
-                tool_call:   tc,
+                tool_call:   { id: tool_call_id, name: tool_name, arguments: tc.arguments },
                 source:      source,
                 exchange_id: tool_exchange_id
               )
@@ -69,7 +76,7 @@ module Legion
                     tool_call_id:  tool_call_id,
                     pending_index: @pending_tool_history.size,
                     tool_name:     tool_name,
-                    args:          tc[:arguments] || tc['arguments'] || {},
+                    args:          tc.arguments,
                     result:        result_string,
                     error:         result[:status] == :error,
                     runner_key:    runner_key
@@ -77,25 +84,29 @@ module Legion
                 end
               end
 
+              # :source is the display string (native SSE surface);
+              # :source_type is the canonical dispatch-type enum consumed by
+              # the response-exit reconstruction (G3).
               @timeline.record(
-                category: :tool, key: "tool:execute:#{tc[:name] || tc['name']}",
+                category: :tool, key: "tool:execute:#{tool_name}",
                 exchange_id: tool_exchange_id, direction: :outbound,
                 detail: "#{result[:status]} via #{source[:type]}",
-                from: 'pipeline', to: "tool:#{tc[:name] || tc['name']}",
+                from: 'pipeline', to: "tool:#{tool_name}",
                 duration_ms: result[:duration_ms],
                 data: {
                   tool_call_id: tool_call_id,
-                  arguments:    tc[:arguments] || tc['arguments'] || {},
+                  arguments:    tc.arguments,
                   source:       describe_tool_source(source),
+                  source_type:  source[:type]&.to_sym,
                   status:       result[:status]
                 }
               )
 
               @timeline.record(
-                category: :tool, key: "tool:result:#{tc[:name] || tc['name']}",
+                category: :tool, key: "tool:result:#{tool_name}",
                 exchange_id: tool_exchange_id, direction: :inbound,
                 detail: result[:result].to_s[0, Legion::Settings[:llm][:tools][:result_detail_chars]].to_s,
-                from: "tool:#{tc[:name] || tc['name']}", to: 'pipeline',
+                from: "tool:#{tool_name}", to: 'pipeline',
                 data: {
                   tool_call_id: tool_call_id,
                   status:       result[:status],
@@ -204,20 +215,15 @@ module Legion
             result
           end
 
+          # G3: the tool loop operates on canonical objects only — member
+          # reads, no Hash-index fallback (the fallback branch was the
+          # split-world seam).
           def tool_call_value(tool_call, field)
-            return tool_call.public_send(field) if tool_call.respond_to?(field)
-
-            tool_call[field] || tool_call[field.to_s]
+            tool_call.public_send(field)
           end
 
           def response_with_tool_calls(result, tool_calls)
-            return result.with(tool_calls: tool_calls) if result.respond_to?(:with)
-
-            if result.respond_to?(:[]=)
-              result[:tool_calls] = tool_calls
-              result['tool_calls'] = tool_calls
-            end
-            result
+            result.with(tool_calls: tool_calls)
           end
 
           def tool_call_with_execution_result(tool_call, entry)
@@ -264,29 +270,16 @@ module Legion
 
           # Legacy dispatch-routing source hash → canonical dispatch-type enum.
           # Non-hash sources (already-canonical symbols, nil) pass through.
+          # :builtin (provider-owned passthrough — the daemon never executes
+          # it) maps to :client: the only enum bucket whose consumer semantics
+          # (non-server-executed, client-actionable) match a passthrough tool.
+          # Without the mapping the value would fail the canonical source enum
+          # validation at the response exit.
           def canonical_source_symbol(source)
-            return source unless source.is_a?(Hash)
+            sym = source.is_a?(Hash) ? (source[:type] || source['type'])&.to_sym : source
+            return :client if sym == :builtin
 
-            (source[:type] || source['type'])&.to_sym
-          end
-
-          def normalize_tool_arguments(arguments)
-            case arguments
-            when nil
-              {}
-            when Hash
-              arguments
-            when String
-              return {} if arguments.strip.empty?
-
-              parsed = Legion::JSON.parse(arguments)
-              parsed.is_a?(Hash) ? parsed : {}
-            else
-              arguments.respond_to?(:to_h) ? arguments.to_h : {}
-            end
-          rescue StandardError => e
-            handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.normalize_tool_arguments')
-            {}
+            sym
           end
 
           def registry_tool_sources_available?

@@ -141,6 +141,22 @@ RSpec.describe Legion::LLM::Inference::Steps::TierAssigner do
         expect(result[:source]).to eq(:role_mapping)
       end
 
+      # L7: the assignment carries tier + intent only — the former gaia:*
+      # hard provider/model pins (llm.gaia.preferred_*) were a second
+      # selection domain. A settings pin could not bypass the router's
+      # hint-miss fallback; routing choice is Router.next_lane's alone.
+      it 'never attaches provider/model pins to gaia: identity assignments' do
+        result = assigner.assign(
+          caller:          { requested_by: { identity: 'gaia:tick:phase_3', type: :system } },
+          classification:  nil,
+          priority:        :normal,
+          gaia_hint:       nil,
+          existing_tier:   nil,
+          existing_intent: nil
+        )
+        expect(result.keys).to eq(%i[tier intent source])
+      end
+
       it 'routes gaia:dream:* callers to local tier' do
         result = assigner.assign(
           caller:          { requested_by: { identity: 'gaia:dream:phase_17', type: :system } },

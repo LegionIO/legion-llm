@@ -20,7 +20,6 @@ RSpec.describe Legion::LLM do
   describe '.start and .shutdown' do
     before do
       Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
-      allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
       stub_request(:get, 'http://localhost:11434/api/tags')
         .to_return(status: 200, body: { 'models' => [] }.to_json)
       stub_request(:get, 'http://localhost:8000/v1/models')
@@ -47,14 +46,21 @@ RSpec.describe Legion::LLM do
       expect(Legion::Settings[:llm][:connected]).to be false
     end
 
-    it 'resets embedding state on shutdown' do
-      Legion::LLM.instance_variable_set(:@can_embed, true)
-      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
-      Legion::LLM.instance_variable_set(:@embedding_model, 'test')
-      Legion::LLM.shutdown
+    # M4: can_embed? is a live capability fact from the Inventory lane store
+    # (no boot-time detection state to reset on shutdown) — the second
+    # selection domain and its embedding_provider/model/instance projections
+    # are gone.
+    it 'answers can_embed? from the live Inventory store, not cached state' do
+      Legion::LLM::Inventory.reset_live_store!
       expect(Legion::LLM.can_embed?).to be false
-      expect(Legion::LLM.embedding_provider).to be_nil
-      expect(Legion::LLM.embedding_model).to be_nil
+      Legion::LLM::Inventory.write_lane(lane: {
+                                          id: 'local:ollama:gpu_box:embed:mxbai-embed-large', tier: :local,
+        provider_family: :ollama, instance_id: :gpu_box, model: 'mxbai-embed-large',
+        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
+                                        })
+      expect(Legion::LLM.can_embed?).to be true
+    ensure
+      Legion::LLM::Inventory.reset_live_store!
     end
 
     it 'gracefully shuts down the async thread pool on shutdown' do
@@ -80,7 +86,6 @@ RSpec.describe Legion::LLM do
 
   describe 'auto_configure_defaults' do
     before do
-      allow(Legion::LLM::Discovery).to receive(:verify_embedding).and_return(false)
       stub_request(:get, 'http://localhost:11434/api/tags')
         .to_return(status: 200, body: { 'models' => [] }.to_json)
       stub_request(:get, 'http://localhost:8000/v1/models')

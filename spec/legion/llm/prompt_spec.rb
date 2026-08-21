@@ -203,8 +203,6 @@ RSpec.describe Legion::LLM::Prompt do
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :cloud)
       end
 
-      after { Legion::LLM::Router.reset! }
-
       it 'does not raise ArgumentError when calling the real Router.resolve with intent' do
         result = described_class.dispatch('Hello', intent: { effort: :moderate })
         expect(result).to be_a(Legion::LLM::Inference::Response)

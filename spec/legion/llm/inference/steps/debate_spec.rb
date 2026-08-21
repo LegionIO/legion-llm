@@ -46,12 +46,21 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
     )
   end
 
+  # G3: the pipeline's raw response is the canonical provider response, and
+  # Legion::LLM.chat returns the Inference::Response envelope — the doubles
+  # match the real boundary shapes (R15).
   let(:raw_response) do
-    double('RawResponse', content: 'Microservices should be designed around business capabilities.')
+    Legion::Extensions::Llm::Canonical::Response.build(
+      text: 'Microservices should be designed around business capabilities.'
+    )
   end
 
   let(:chat_result) do
-    { content: 'A debate role response.' }
+    Legion::LLM::Inference::Response.build(
+      request_id:      'req_debate_role',
+      conversation_id: 'conv_debate_role',
+      message:         { role: :assistant, content: 'A debate role response.' }
+    )
   end
 
   before do
@@ -175,8 +184,8 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       it 'runs debate and replaces raw_response with judge synthesis' do
         step = host_class.new(debate_request, raw_response)
         step.step_debate
-        expect(step.raw_response).to respond_to(:content)
-        expect(step.raw_response.content).to eq('A debate role response.')
+        expect(step.raw_response).to be_a(Legion::Extensions::Llm::Canonical::Response)
+        expect(step.raw_response.text).to eq('A debate role response.')
       end
 
       it 'populates enrichments with debate result' do
@@ -352,12 +361,20 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
     end
   end
 
+  def role_envelope(text)
+    Legion::LLM::Inference::Response.build(
+      request_id:      'req_debate_role',
+      conversation_id: 'conv_debate_role',
+      message:         { role: :assistant, content: text }
+    )
+  end
+
   describe 'judge synthesis replaces response' do
-    it 'sets raw_response.content to the judge output' do
-      allow(Legion::LLM).to receive(:chat).and_return({ content: 'judge final answer' })
+    it 'sets raw_response.text to the judge output' do
+      allow(Legion::LLM).to receive(:chat).and_return(role_envelope('judge final answer'))
       step = host_class.new(debate_request, raw_response)
       step.step_debate
-      expect(step.raw_response.content).to eq('judge final answer')
+      expect(step.raw_response.text).to eq('judge final answer')
     end
 
     it 'debate metadata includes advocate_summary and challenger_summary' do
@@ -370,9 +387,9 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
 
     it 'separates judge evaluation metadata from the final answer when sections are present' do
       allow(Legion::LLM).to receive(:chat).and_return(
-        { content: 'role response' },
-        { content: 'role response' },
-        { content: "Evaluation: challenger was stronger because it found risk.\nFinal answer: ship the safer option." }
+        role_envelope('role response'),
+        role_envelope('role response'),
+        role_envelope("Evaluation: challenger was stronger because it found risk.\nFinal answer: ship the safer option.")
       )
 
       step = host_class.new(debate_request, raw_response)
@@ -380,7 +397,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
 
       metadata = step.enrichments['debate:result'][:data]
       expect(metadata[:judge_evaluation]).to include('challenger was stronger')
-      expect(step.raw_response.content).to eq('ship the safer option.')
+      expect(step.raw_response.text).to eq('ship the safer option.')
     end
   end
 

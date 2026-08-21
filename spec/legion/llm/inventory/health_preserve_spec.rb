@@ -12,7 +12,6 @@ RSpec.describe Legion::LLM::Inventory, 'health preservation on refresher write (
     Legion::Settings[:extensions][:llm][:bedrock][:weight]    ||= 100
     Legion::Settings[:extensions][:llm][:bedrock][:instances] ||= {}
     Legion::Settings[:extensions][:llm][:bedrock][:models]    ||= {}
-    Legion::LLM::Router.reset! if Legion::LLM::Router.respond_to?(:reset!)
   end
 
   def build_lane(provider: :bedrock, tier: :cloud, model: 'claude-sonnet-4-6')

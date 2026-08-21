@@ -7,7 +7,6 @@ RSpec.describe 'LLM startup discovery' do
   before do
     Legion::LLM::Inventory::Discovery.reset!
     Legion::LLM::Inventory::Discovery::System.reset!
-    allow(Legion::LLM::Inventory::Discovery).to receive(:verify_embedding).and_return(false)
   end
 
   context 'when providers are registered in the Registry' do
@@ -32,11 +31,7 @@ RSpec.describe 'LLM startup discovery' do
       Legion::LLM.start
     end
 
-    it 'does NOT call Router.populate_auto_rules from Legion::LLM.start' do
-      # G8 / cyber-Medium: internal caller deleted in P4; external lex-llm-* callers still
-      # go through the no-op stub via their own respond_to? guards.
-      expect(Legion::LLM::Router).not_to receive(:populate_auto_rules)
-      Legion::LLM.start
-    end
+    # L1: the auto-rules era surface (populate_auto_rules) is gone — boot
+    # wiring no longer has a rule-population step to guard against.
   end
 end

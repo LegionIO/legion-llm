@@ -22,10 +22,9 @@ module Legion
                 # SSOT has no routing toggle or rule list: routing is enabled
                 # whenever the Registry holds at least one complete publication.
                 json_response({
-                                routing_enabled:      Legion::LLM::Router.routing_enabled?,
-                                auto_rules_populated: Legion::LLM::Router.auto_rules_populated?,
-                                rules:                [],
-                                summary:              { total: 0, auto: 0, manual: 0 }
+                                routing_enabled: Legion::LLM::Router.routing_enabled?,
+                                rules:           [],
+                                summary:         { total: 0, auto: 0, manual: 0 }
                               })
               rescue StandardError => e
                 handle_exception(e, level: :error, handled: true, operation: 'llm.api.routing.list')

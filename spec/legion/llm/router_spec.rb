@@ -4,9 +4,8 @@ require 'spec_helper'
 require 'legion/llm/router'
 
 RSpec.describe Legion::LLM::Router do
-  before do
-    described_class.reset!
-  end
+  # L1: no rule-list state to reset — the SSOT selector reads the shared
+  # owners directly (the former reset! existed only for the auto-rules ivars).
 
   # ─── routing_enabled? is derived: true iff the Registry holds at least one
   # complete publication (SSOT has no operator routing toggle) ─────────────────
@@ -30,23 +29,9 @@ RSpec.describe Legion::LLM::Router do
     end
   end
 
-  # ─── 12a. auto_rules_populated? ─────────────────────────────────────────────
-
-  describe '.auto_rules_populated?' do
-    it 'returns false before populate_auto_rules is called' do
-      expect(described_class.auto_rules_populated?).to be false
-    end
-
-    it 'stays false after populate_auto_rules (no-op in P4 — rule engine removed)' do
-      described_class.populate_auto_rules({})
-      expect(described_class.auto_rules_populated?).to be false
-    end
-
-    it 'returns false after reset!' do
-      described_class.reset!
-      expect(described_class.auto_rules_populated?).to be false
-    end
-  end
+  # L1: the auto-rules era surface (auto_rules_populated?, populate_auto_rules,
+  # reset!) is gone with the second-selection-domain cleanup — the SSOT
+  # selector reads the shared owners directly and has no rule-list state.
 
   # ─── tier_available? for :direct tier ────────────────────────────────────────
 

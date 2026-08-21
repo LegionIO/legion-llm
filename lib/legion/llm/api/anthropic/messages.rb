@@ -58,6 +58,13 @@ module Legion
                   text_delta_lines = [] # buffer in-stream deltas until we know if tool calls exist
 
                   pipeline_response = executor.call_stream do |chunk|
+                    # ANNOTATE (G3/L4-family, legacy tree): the provider
+                    # boundary yields Canonical::Chunk — for a canonical
+                    # chunk the .to_s fallback leaks the chunk's Ruby
+                    # inspect string to the client as text. The flat legacy
+                    # API tree (register_legacy) is a coordinated-wave
+                    # deletion surface; this chunk read is fixed with the
+                    # tree, not inline.
                     text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
                     next if text.empty?
 

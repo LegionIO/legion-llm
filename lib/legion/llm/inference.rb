@@ -882,12 +882,12 @@ module Legion
         handle_exception(e, level: :warn, operation: 'llm.inference.non_pipeline_metering')
       end
 
+      # L1: the consumer-side ENV['LEGION_ENTERPRISE_PRIVACY'] fallback is
+      # gone — the env/setting resolution lives in the shared owner
+      # (Legion::Settings.enterprise_privacy?), consumed directly (hard
+      # dependency; no respond_to? guard). Same owner as Router.privacy_mode?.
       def enterprise_privacy?
-        if Legion::Settings.respond_to?(:enterprise_privacy?)
-          Legion::Settings.enterprise_privacy?
-        else
-          ENV['LEGION_ENTERPRISE_PRIVACY'] == 'true'
-        end
+        Legion::Settings.enterprise_privacy?
       end
 
       def emit_privacy_blocked_audit

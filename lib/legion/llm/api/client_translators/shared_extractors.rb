@@ -92,34 +92,25 @@ module Legion
             end
           end
 
+          # The pipeline envelope's tokens member is a plain Hash (or {} when
+          # no usage was observed) — one shape, no dual reader (G3).
           def token_value(tokens, *keys)
             return 0 if tokens.nil?
 
             keys.each do |key|
-              value = if tokens.is_a?(Hash)
-                        tokens[key] || tokens[key.to_s]
-                      elsif tokens.respond_to?(key)
-                        tokens.public_send(key)
-                      end
+              value = tokens.is_a?(Hash) ? (tokens[key] || tokens[key.to_s]) : nil
               return value.to_i unless value.nil?
             end
             0
           end
 
+          # G3: the envelope carries the provider's Canonical::Thinking — the
+          # thinking text is the .content member (the former String/Hash/
+          # duck-typed branches were the split-world seam).
           def extract_thinking_text(value)
             return '' if value.nil?
-            return value.to_s if value.is_a?(String)
 
-            if value.is_a?(Hash)
-              normalized = value.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
-              text = normalized[:content] || normalized[:text] || normalized[:thinking] || normalized[:reasoning]
-              return text.to_s if text
-            end
-
-            return value.content.to_s if value.respond_to?(:content) && value.content
-            return value.text.to_s if value.respond_to?(:text) && value.text
-
-            value.to_s
+            value.content.to_s
           end
 
           def extract_content_text(value)

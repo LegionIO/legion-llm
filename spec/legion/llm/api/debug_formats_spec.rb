@@ -46,8 +46,10 @@ RSpec.describe 'API::DebugFormats (G21)' do
     instance_double(Legion::LLM::Inference::Executor).tap do |ex|
       allow(ex).to receive(:call).and_return(mock_response)
       allow(ex).to receive(:stream_preflight!).and_return(nil)
+      # G3/L2: the stream carries Canonical::Chunk only — the legacy
+      # double(content:) chunk shape is gone (R15).
       allow(ex).to receive(:call_stream).and_yield(
-        double(content: 'Hello there!', thinking: nil)
+        Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'Hello there!', request_id: 'req_dbg')
       ).and_return(mock_response)
     end
   end

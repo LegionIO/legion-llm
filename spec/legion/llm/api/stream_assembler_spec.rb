@@ -15,11 +15,13 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
     end
   end
 
-  # Regression: a streamed non-canonical chunk carrying a Canonical::Thinking
-  # object (value object with .content/.signature) must surface its thinking
-  # TEXT on the wire — never the Ruby `#<...Thinking:0x...>` inspect string.
+  # Regression: a streamed thinking_delta chunk must surface its thinking
+  # TEXT on the wire — never a Ruby `#<...Thinking:0x...>` inspect string.
   # (Claude-Code /v1/messages leak.)
-  it 'unwraps a Canonical::Thinking object on a streamed chunk' do
+  # G3/L2: the stream carries Canonical::Chunk only — the legacy
+  # Struct(content:, thinking:) chunk shape is gone (R15); the thinking text
+  # rides the canonical thinking_delta's .delta member.
+  it 'surfaces thinking_delta text on the wire without an inspect leak' do
     out = +''
     emitter = Legion::LLM::API::ClientTranslators::AnthropicMessages.new.events_emitter(
       out, request_id: 'msg_test', model: 'gemma-4-31b-it'
@@ -29,14 +31,11 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
       initial_lane: { id: 'test:pending' }
     )
 
-    thinking = Legion::Extensions::Llm::Canonical::Thinking.build(content: 'the model reasoning')
-    legacy_chunk = Struct.new(:content, :thinking, :tool_calls, :model_id,
-                              :input_tokens, :output_tokens, :raw, keyword_init: true).new(
-                                content: 'visible answer', thinking: thinking, tool_calls: nil,
-                                model_id: 'gemma-4-31b-it', input_tokens: nil, output_tokens: nil, raw: nil
-                              )
+    chunk = Legion::Extensions::Llm::Canonical::Chunk.thinking_delta(
+      delta: 'the model reasoning', request_id: 'msg_test', signature: 'sig_think'
+    )
 
-    assembler.push(legacy_chunk)
+    assembler.push(chunk)
 
     expect(out).to include('the model reasoning')
     expect(out).not_to include('Canonical::Thinking')

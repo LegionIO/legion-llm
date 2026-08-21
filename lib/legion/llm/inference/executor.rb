@@ -24,7 +24,6 @@ module Legion
         include ContextWindow
         include ToolInjection
         include Steps::Logging
-        include Steps::MessageAccessors
         include Steps::Rbac
         include Steps::Classification
         include Steps::Billing
@@ -476,20 +475,24 @@ module Legion
           end
         end
 
+        # G3: the tool loop appends Canonical::Message, not Hash messages —
+        # shared execution carries canonical through the loop. The dispatch
+        # boundary (project_dispatch_arguments) re-canonicalizes as a no-op.
         def native_assistant_tool_message(result, tool_calls)
-          content = result.respond_to?(:text) ? result.text : result[:result]
-          { role: :assistant, content: content.to_s, tool_calls: tool_calls }
+          Legion::Extensions::Llm::Canonical::Message.build(
+            role:       :assistant,
+            content:    result.text.to_s,
+            tool_calls: tool_calls
+          )
         end
 
         def native_tool_result_message(tool_call, dispatch_result)
-          # Dual-shape tool loop intermediate: canonical ToolCall (member) or
-          # legacy Hash ([]). No Hash-compat [] on canonical objects (P6 gone).
-          {
+          Legion::Extensions::Llm::Canonical::Message.build(
             role:         :tool,
             content:      native_tool_result_content(dispatch_result),
-            tool_call_id: tool_call.respond_to?(:id) ? tool_call.id : tool_call[:id],
-            name:         tool_call.respond_to?(:name) ? tool_call.name : tool_call[:name]
-          }.compact
+            tool_call_id: tool_call.id,
+            name:         tool_call.name
+          )
         end
 
         def dispatch_native_tool_call(tool_call, round)
@@ -527,21 +530,16 @@ module Legion
           Thread.current[:legion_current_tool_history_index] = nil
         end
 
+        # G3: the tool loop carries Canonical::ToolCall — the dispatcher is a
+        # daemon-internal Hash consumer, so this projects the canonical call to
+        # its wire shape with member reads (id/name are strict members; no
+        # fabrication, no Hash-index fallback).
         def normalize_native_tool_call(tool_call)
-          normalized = if tool_call.respond_to?(:transform_keys)
-                         tool_call.transform_keys(&:to_sym)
-                       elsif tool_call.respond_to?(:name)
-                         {
-                           id:        tool_call.respond_to?(:id) ? tool_call.id : nil,
-                           name:      tool_call.name,
-                           arguments: tool_call.respond_to?(:arguments) ? tool_call.arguments : {}
-                         }
-                       else
-                         {}
-                       end
-          normalized[:arguments] = normalize_tool_arguments(normalized[:arguments])
-          normalized[:id] ||= "call_#{SecureRandom.hex(12)}"
-          normalized
+          {
+            id:        tool_call.id,
+            name:      tool_call.name,
+            arguments: tool_call.arguments
+          }
         end
 
         def native_tool_result_content(result)
@@ -652,9 +650,13 @@ module Legion
           tc_args = tool_call_field(tool_call, :arguments)
           started_at = Time.now
 
-          typed_call = Types::ToolCall.build(
-            id: tc_id, name: tc_name, arguments: tc_args,
-            source: source,
+          # G3: the pending tool history carries Canonical::ToolCall — the
+          # response exit and the client edge share one tool-call type. The
+          # daemon-internal routing source hash folds to the canonical
+          # dispatch-type enum at this boundary (canonical_source_symbol).
+          typed_call = Legion::Extensions::Llm::Canonical::ToolCall.build(
+            name: tc_name, id: tc_id, arguments: tc_args,
+            source: canonical_source_symbol(source),
             exchange_id: @exchange_id, started_at: started_at
           )
 
@@ -1053,29 +1055,20 @@ module Legion
 
           log.debug("[pipeline][context_store] action=store conversation_id=#{conv_id} message_count=#{@request.messages.size}")
 
-          # @request.messages is Array<Canonical::Message> (Inference::Request
-          # canonicalizes at the entry) — no hash-shape branch.
+          # G3: @request.messages is Array<Canonical::Message> (Inference::Request
+          # canonicalizes at the entry) — the conversation store takes the
+          # canonical members directly; no legacy Types re-wrap at this seam.
           @request.messages.each do |msg|
-            typed_msg = Types::Message.build(
-              role:            msg.role,
-              content:         msg.content,
-              task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil,
-              conversation_id: conv_id,
-              tool_calls:      msg.tool_calls,
-              tool_call_id:    msg.tool_call_id,
-              name:            msg.name
-            )
-
             attrs = {
-              role:            typed_msg.role,
-              content:         typed_msg.text,
+              role:            msg.role,
+              content:         msg.text,
               conversation_id: conv_id,
-              task_id:         typed_msg.task_id
+              task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil
             }
 
-            attrs[:tool_calls]   = typed_msg.tool_calls   if typed_msg.tool_calls
-            attrs[:tool_call_id] = typed_msg.tool_call_id if typed_msg.tool_call_id
-            attrs[:name]         = typed_msg.name if typed_msg.name
+            attrs[:tool_calls]   = msg.tool_calls   if msg.tool_calls
+            attrs[:tool_call_id] = msg.tool_call_id if msg.tool_call_id
+            attrs[:name]         = msg.name if msg.name
 
             Conversation.append(conv_id, **attrs)
           end
@@ -1091,23 +1084,15 @@ module Legion
             # Capture tool_calls from the tool loop's final assistant message
             final_tool_calls = tool_loop_final_tool_calls
 
-            typed_assistant = Types::Message.build(
-              role:            :assistant,
-              content:         response_text,
-              provider:        @resolved_provider,
-              model:           @resolved_model,
-              input_tokens:    tokens.respond_to?(:input_tokens) ? tokens.input_tokens : nil,
-              output_tokens:   tokens.respond_to?(:output_tokens) ? tokens.output_tokens : nil,
-              conversation_id: conv_id,
-              task_id:         @request.respond_to?(:task_id) ? @request.task_id : nil
-            )
+            # G3: the stored assistant turn is built from the canonical
+            # response members directly — no legacy Types re-wrap.
             conv_attrs = {
-              role:          typed_assistant.role,
-              content:       typed_assistant.content,
-              provider:      typed_assistant.provider,
-              model:         typed_assistant.model,
-              input_tokens:  typed_assistant.input_tokens,
-              output_tokens: typed_assistant.output_tokens
+              role:          :assistant,
+              content:       response_text,
+              provider:      @resolved_provider,
+              model:         @resolved_model,
+              input_tokens:  tokens.respond_to?(:input_tokens) ? tokens.input_tokens : nil,
+              output_tokens: tokens.respond_to?(:output_tokens) ? tokens.output_tokens : nil
             }
             conv_attrs[:tool_calls] = final_tool_calls if final_tool_calls && !final_tool_calls.empty?
 
@@ -1125,8 +1110,9 @@ module Legion
         end
 
         # Persist the intermediate assistant/tool messages generated during the native tool loop.
-        # The loop appends: { role: :assistant, tool_calls: [...] } then { role: :tool, tool_call_id: ..., content: ... }
-        # Skip the first N messages (original inputs) and the last message (final assistant — stored by @raw_response).
+        # The loop appends Canonical::Message assistant (tool_calls) then tool (tool_call_id)
+        # messages. Skip the first N messages (original inputs) and the last message
+        # (final assistant — stored by @raw_response).
         def persist_tool_loop_messages(conv_id)
           skip_count = @request.messages.size
           intermediate = @tool_loop_messages[skip_count...-1]
@@ -1134,13 +1120,10 @@ module Legion
 
           task_id = @request.respond_to?(:task_id) ? @request.task_id : nil
           intermediate.each do |msg|
-            role    = msg[:role]&.to_sym || :assistant
-            content = msg[:content]
-
-            attrs = { role: role, content: content, conversation_id: conv_id, task_id: task_id }
-            attrs[:tool_calls]   = msg[:tool_calls]   if msg[:tool_calls]
-            attrs[:tool_call_id] = msg[:tool_call_id] if msg[:tool_call_id]
-            attrs[:name]         = msg[:name]         if msg[:name]
+            attrs = { role: msg.role, content: msg.text, conversation_id: conv_id, task_id: task_id }
+            attrs[:tool_calls]   = msg.tool_calls   if msg.tool_calls
+            attrs[:tool_call_id] = msg.tool_call_id if msg.tool_call_id
+            attrs[:name]         = msg.name         if msg.name
 
             Conversation.append(conv_id, **attrs)
           end
@@ -1148,17 +1131,17 @@ module Legion
         end
 
         # Extract tool_calls from the tool loop's final assistant message (the last entry).
+        # The loop carries Canonical::Message; the stored shape is a plain hash.
         def tool_loop_final_tool_calls
           return nil if @tool_loop_messages.nil? || @tool_loop_messages.empty?
 
           last = @tool_loop_messages.last
-          return nil unless last.is_a?(Hash) && last[:role].to_s == 'assistant'
+          return nil unless last.is_a?(Legion::Extensions::Llm::Canonical::Message) && last.role.to_s == 'assistant'
 
-          tool_calls = last[:tool_calls]
+          tool_calls = last.tool_calls
           return nil unless tool_calls && !tool_calls.empty?
 
-          # Convert to plain hashes for storage
-          tool_calls.map { |tc| tc.is_a?(Hash) ? tc : tc.to_h }
+          tool_calls.map(&:to_h)
         end
 
         def trigger_async_curation(conv_id, turn_messages, assistant_response)
@@ -1306,9 +1289,17 @@ module Legion
         def build_response
           @extracted_tokens ||= extract_tokens
 
-          content = canonical_response_text(@raw_response) || @raw_response.to_s
+          # L4/G3: @raw_response is the canonical provider response — its
+          # .text is the client-visible content. There is no `.to_s`
+          # fallback: a value that cannot yield text is a contract fault
+          # (canonical_response_text raises), never a Ruby inspect string
+          # leaked to the client.
+          content = canonical_response_text(@raw_response).to_s
 
-          msg = Types::Message.build(
+          # G3: the envelope's message member is the canonical response's
+          # rendering projection — built directly from canonical members,
+          # no legacy Types::Message re-wrap at the exit.
+          msg = {
             role:            :assistant,
             content:         content,
             provider:        @resolved_provider,
@@ -1316,7 +1307,7 @@ module Legion
             input_tokens:    @extracted_tokens.respond_to?(:input_tokens) ? @extracted_tokens.input_tokens : nil,
             output_tokens:   @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : nil,
             conversation_id: @request.conversation_id
-          )
+          }.compact
 
           @timestamps[:returned] = Time.now
 
@@ -1333,7 +1324,7 @@ module Legion
           Response.build(
             request_id:      @request.id,
             conversation_id: @request.conversation_id || "conv_#{SecureRandom.hex(8)}",
-            message:         msg.to_h,
+            message:         msg,
             routing:         build_response_routing,
             tokens:          build_response_tokens,
             thinking:        extract_thinking,
@@ -1438,74 +1429,33 @@ module Legion
           @extracted_tokens
         end
 
+        # G3: the raw response is canonical — content and thinking are direct
+        # member reads (the former .content/Hash[] duck-typing branches were
+        # the split-world seam).
         def extract_response_content
-          return nil unless @raw_response
-
-          if @raw_response.respond_to?(:text)
-            @raw_response.text
-          elsif @raw_response.respond_to?(:content)
-            @raw_response.content
-          elsif @raw_response.is_a?(Hash) && @raw_response[:content]
-            @raw_response[:content]
-          end
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.extract_response_content')
-          nil
+          @raw_response&.text
         end
 
         def extract_thinking
-          return nil unless @raw_response
-
-          thinking = if @raw_response.respond_to?(:thinking) && @raw_response.thinking
-                       @raw_response.thinking
-                     elsif @raw_response.respond_to?(:metadata) && @raw_response.metadata.is_a?(Hash)
-                       @raw_response.metadata[:thinking] || @raw_response.metadata['thinking']
-                     end
-          return nil unless thinking
-
-          payload = normalize_thinking_payload(thinking)
-          return nil unless payload
-
-          payload[:config] = @request.thinking if @request.thinking
-          payload
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.pipeline.extract_thinking')
-          nil
+          # G3: the envelope carries the provider's Canonical::Thinking
+          # member directly — one thinking type from the provider boundary
+          # through the client edge. (The legacy metadata[:thinking] Hash
+          # fallback and the dead request-config attachment are gone.)
+          @raw_response&.thinking
         end
 
-        # Extract text content from a canonical response or hash-shaped legacy result.
-        # N4: branch on the canonical type, not respond_to?(:[]) — the P6
-        # Hash-compat patch (which made canonical objects Hash-lookalike) is
-        # gone, and the canonical read is the direct .text member.
+        # G3: shared execution carries Canonical::Response — the text read is
+        # the direct .text member. nil is "no response" (absent, not a
+        # type) and projects to no content; any other object is a
+        # split-world contract violation (a Hash raw response would leak its
+        # inspect to the client — the L4 defect), so it raises instead of
+        # duck-typing through Hash/.content branches.
         def canonical_response_text(response)
-          return response.text if response.is_a?(Legion::Extensions::Llm::Canonical::Response)
+          return nil if response.nil?
 
-          if response.respond_to?(:content)
-            response.content
-          else
-            (response.respond_to?(:[]) ? response[:content] || response[:result] || response[:text] : nil)
-          end
-        end
+          raise ArgumentError, "canonical_response_text expects Canonical::Response, got #{response.class}" unless response.is_a?(Legion::Extensions::Llm::Canonical::Response)
 
-        def normalize_thinking_payload(thinking)
-          if thinking.is_a?(Hash)
-            normalized = thinking.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-            content = normalized[:content] || normalized[:text]
-            signature = normalized[:signature]
-          elsif thinking.respond_to?(:content) && thinking.respond_to?(:signature)
-            content = thinking.content
-            signature = thinking.signature
-          elsif thinking.respond_to?(:text)
-            content = thinking.text
-            signature = thinking.respond_to?(:signature) ? thinking.signature : nil
-          else
-            content = thinking.is_a?(String) ? thinking : nil
-            signature = nil
-          end
-          content = content.to_s.strip unless content.nil?
-          return nil if content.to_s.empty? && signature.to_s.empty?
-
-          { content: content, signature: signature, enabled: true }.compact
+          response.text
         end
 
         def build_response_cache
@@ -1612,6 +1562,10 @@ module Legion
           []
         end
 
+        # G3: the response exit carries Canonical::ToolCall — one tool-call
+        # type from execution through the client edge. Every source fallback
+        # (response member, pending history, timeline) is the canonical
+        # dispatch-type enum, so the strict build validates clean.
         def build_response_tool_calls(tool_calls)
           tool_timeline = build_tool_timeline_index
 
@@ -1628,12 +1582,12 @@ module Legion
             timeline_data = tool_timeline[entry_key] || tool_timeline[tc_name] || {}
             pending_data = pending_tool_call_data(tc_id, tc_name)
 
-            Legion::LLM::Types::ToolCall.build(
-              id:          tc_id,
+            Legion::Extensions::Llm::Canonical::ToolCall.build(
               name:        tc_name,
+              id:          tc_id,
               arguments:   tc_args,
               exchange_id: tool_call_field(tool_call, :exchange_id) || pending_data[:exchange_id] || timeline_data[:exchange_id],
-              source:      tool_call_field(tool_call, :source) || pending_data[:source] || timeline_data[:source],
+              source:      canonical_source_symbol(tool_call_field(tool_call, :source) || pending_data[:source] || timeline_data[:source_type]),
               status:      tool_call_field(tool_call, :status) || pending_data[:status] || timeline_data[:status],
               duration_ms: tool_call_field(tool_call, :duration_ms) || pending_data[:duration_ms] || timeline_data[:duration_ms],
               result:      tool_call_field(tool_call, :result) || pending_data[:result] || timeline_data[:result],
@@ -1659,6 +1613,13 @@ module Legion
           }.compact
         end
 
+        # Reconstruct per-tool execution facts for the response exit. The
+        # timeline carries the canonical dispatch-type enum under :source_type
+        # (G3 — the response exit is canonical); the display string
+        # (describe_tool_source) stays under :source for the native SSE surface.
+        # A :passthrough dispatcher status means "not executed by the daemon"
+        # and maps to nil (no canonical execution state), never to a
+        # fabricated :success.
         def build_tool_timeline_index
           index = {}
           call_counts = Hash.new(0)
@@ -1673,8 +1634,8 @@ module Legion
               index[entry_key] = {
                 tool_name:   tool_name,
                 exchange_id: event[:exchange_id],
-                source:      data[:source],
-                status:      data[:status],
+                source_type: data[:source_type],
+                status:      data[:status] == :passthrough ? nil : data[:status],
                 duration_ms: event[:duration_ms]
               }
             elsif key&.start_with?('tool:result:')

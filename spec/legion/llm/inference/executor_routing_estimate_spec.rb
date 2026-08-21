@@ -30,11 +30,13 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
     # Structured content (array of content blocks), the shape Claude Code sends.
     # A naive m[:content].to_s estimator reads this near-zero; InputBound
     # walks the blocks and sees the real byte count.
+    # G3: canonical messages with canonical text content blocks (the former
+    # Hash double shape is gone; R15).
     Array.new(20) do |i|
-      {
+      Legion::Extensions::Llm::Canonical::Message.build(
         role:    (i.even? ? :user : :assistant),
-        content: [{ type: 'text', text: "turn #{i} " + ('word ' * 400) }]
-      }
+        content: [Legion::Extensions::Llm::Canonical::ContentBlock.text("turn #{i} " + ('word ' * 400))]
+      )
     end
   end
   let(:executor) { described_class.new(request) }

@@ -110,7 +110,6 @@ module Legion
         log.debug '[llm] start.enter'
         Call::Providers.setup
         Inventory::Discovery.run
-        Inventory::Discovery.detect_embedding_capability
         Legion::LLM::Inventory::SettingsObserver.attach!
         Config.set_defaults
         Hooks.install_defaults
@@ -139,12 +138,6 @@ module Legion
         Inventory::Discovery.reset!
         Call::Registry.disconnect_all!
         Call::Registry.reset!
-        # Clear LLM-level embedding ivars that may have been set via instance_variable_set for testing
-        @can_embed = nil
-        @embedding_provider = nil
-        @embedding_model = nil
-        @embedding_instance = nil
-        @embedding_fallback_chain = nil
         # Gracefully shut down the async thread pool (curation, reflection, knowledge capture)
         if (pool = Inference::Executor::ASYNC_THREAD_POOL).running?
           pool.shutdown
@@ -207,26 +200,13 @@ module Legion
       end
       # rubocop:enable Legion/Framework/NoDirectDispatch
 
-      # These methods check Discovery first, then fall back to instance ivars set directly on LLM
-      # (ivar fallback preserves backwards compat for specs that do Legion::LLM.instance_variable_set)
+      # M4: can_embed? is a live capability fact from the Inventory lane
+      # store (Discovery) — the second selection domain (and its
+      # embedding_provider/model/instance/fallback_chain projections) is
+      # gone; SSOT :embed routing (Call::Embeddings → Router.next_lane) is
+      # the sole embedding selection authority.
       def can_embed?
-        Inventory::Discovery.can_embed? || @can_embed == true
-      end
-
-      def embedding_provider
-        Inventory::Discovery.embedding_provider || @embedding_provider
-      end
-
-      def embedding_model
-        Inventory::Discovery.embedding_model || @embedding_model
-      end
-
-      def embedding_instance
-        Inventory::Discovery.embedding_instance || @embedding_instance
-      end
-
-      def embedding_fallback_chain
-        Inventory::Discovery.embedding_fallback_chain || @embedding_fallback_chain
+        Inventory::Discovery.can_embed?
       end
 
       def agent(agent_class, **) = agent_class.new(**)

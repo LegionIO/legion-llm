@@ -102,7 +102,10 @@ RSpec.describe Legion::LLM::Inference::Executor do
       response = described_class.new(request).call
 
       expect(response.message[:content]).to eq('Hello! How can I help you today?')
-      expect(response.thinking).to include(content: 'The user said "hello".')
+      # G3: the envelope's thinking is the canonical Thinking member (the
+      # former Hash {content:} shape is gone; R15).
+      expect(response.thinking).to be_a(Legion::Extensions::Llm::Canonical::Thinking)
+      expect(response.thinking.content).to eq('The user said "hello".')
     end
   end
 end

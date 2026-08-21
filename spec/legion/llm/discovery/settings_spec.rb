@@ -25,13 +25,17 @@ RSpec.describe 'Embedding settings defaults' do
     it 'includes embedding defaults' do
       expect(Legion::Settings[:llm][:embedding]).to be_a(Hash)
       expect(Legion::Settings[:llm][:embedding][:dimension]).to eq(1024)
-      expect(Legion::Settings[:llm][:embedding][:provider_fallback]).to eq(%w[ollama bedrock openai])
     end
 
-    it 'includes ollama preferred models' do
-      preferred = Legion::Settings[:llm][:embedding][:ollama_preferred]
-      expect(preferred).to include('nomic-embed-text', 'mxbai-embed-large')
-      expect(preferred.size).to eq(4)
+    # M4: the selection-domain keys (provider/instance/default_model/model/
+    # provider_fallback/provider_models/ollama_preferred) are gone — SSOT
+    # :embed routing is the sole embedding selection authority, and no
+    # operator pin lives in the settings tree.
+    it 'carries no second-selection-domain keys' do
+      keys = Legion::Settings[:llm][:embedding].keys
+      %i[provider instance default_model model provider_fallback provider_models ollama_preferred].each do |k|
+        expect(keys).not_to include(k), "expected embedding[:#{k}] to be removed (M4)"
+      end
     end
   end
 end
