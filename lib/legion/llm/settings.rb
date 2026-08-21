@@ -51,6 +51,7 @@ module Legion
           api:                       Legion::LLM::Settings::API.defaults,
           streaming:                 streaming_defaults,
           compliance:                compliance_defaults,
+          logging:                   logging_defaults,
           skills:                    skills_defaults,
           claude_cli:                claude_cli_defaults,
           fallback:                  fallback_defaults,
@@ -540,6 +541,18 @@ module Legion
         {
           retry_on_parse_failure: false,
           max_retries:            2
+        }
+      end
+
+      def self.logging_defaults
+        # M1: the INFO inference request/response log carries metadata only
+        # (lengths, tokens, stop reason) by default — the raw payload is a
+        # compliance sink outside the ledger capture-mode policy. An operator
+        # may enable a bounded inspect preview for diagnostics: values > 0
+        # cap the preview at that many characters (truncated, never unbounded);
+        # 0 = no payload in the log at all.
+        {
+          payload_preview_chars: 0
         }
       end
 

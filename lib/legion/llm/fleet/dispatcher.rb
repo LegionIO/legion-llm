@@ -225,7 +225,9 @@ module Legion
           op = operation.to_sym
           dispatch = Legion::Settings.dig(:llm, :fleet, :dispatch) || {}
           timeouts = dispatch[:timeouts] || {}
-          fetch_option(timeouts, op) || dispatch[:timeout_seconds] || 30
+          # N9: the fallback lives in settings (llm.fleet.dispatch.timeout_seconds,
+          # default 30) — no inline shadow default at the call site.
+          fetch_option(timeouts, op) || dispatch[:timeout_seconds]
         end
 
         def next_request_id

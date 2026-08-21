@@ -32,6 +32,13 @@ module Legion
       def self.registered(app)
         InventoryAdmin.registered(app)
         if Legion::Settings.dig(:llm, :api, :use_namespaces) == false
+          # L3 (R10 explicit compatibility edge, annotated): the flat legacy
+          # tree is a second HTTP surface for the same operations — dial-gated,
+          # deprecated, and warn-logged below. Its deletion is the coordinated
+          # legacy-surface cleanup wave (audit close order #4, with the sibling
+          # repos' P6 and #154): the tree consumes the legacy Dispatch.call and
+          # Types::* response world that wave removes, so the rip is
+          # multi-repo, not a unilateral deletion here.
           log.warn(
             '[llm][api] routing=legacy DEPRECATED — the flat api/{anthropic,openai,native}/ tree ' \
             'will be deleted next minor; flip llm.api.use_namespaces back to true (the default) ' \

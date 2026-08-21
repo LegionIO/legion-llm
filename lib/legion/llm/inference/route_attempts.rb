@@ -7,7 +7,10 @@ module Legion
     module Inference
       # Shared executor helpers for direct/fleet provider dispatch attempt metadata.
       module RouteAttempts
-        CONTRACT_OPTION_KEYS = %i[tools temperature params headers schema thinking tool_prefs].freeze
+        # N9: :headers was a dead contract key — nothing populates it in the
+        # SSOT dispatch path (native_dispatch_options), and per-request caller
+        # headers are a transport concern of the calling side, not fleet wire.
+        CONTRACT_OPTION_KEYS = %i[tools temperature params schema thinking tool_prefs].freeze
         NONCONTRACT_GENERATION_KEYS = %i[top_p top_k frequency_penalty presence_penalty seed].freeze
         private_constant :CONTRACT_OPTION_KEYS, :NONCONTRACT_GENERATION_KEYS
 
@@ -132,20 +135,23 @@ module Legion
             selected_lane:   nil,
             failure_reason:  sd_result.outcome.reason
           )
-          # Preserve the exact Phase 1 outcome for the streaming failover classifier
-          # (§19) — the raised Legion error alone would lose the normalized kind.
-          @last_ssot_dispatch_outcome = sd_result.outcome
+          # M3.3: the exact Phase 1 outcome rides ON the raised error (no
+          # side-channel ivar) — the streaming failover classifier (§19) and the
+          # sync rescue path both read the typed kind off the error itself.
           raise ssot_v3_provider_outcome_error(sd_result.outcome)
         end
 
+        # M3.3: one authoritative outcome. The Legion error preserves its class
+        # for the existing rescue logic AND carries the exact typed
+        # ProviderOutcome so no consumer loses the normalized kind.
         def ssot_v3_provider_outcome_error(outcome)
           case outcome.kind
           when :overloaded, :rate_limited
-            Legion::LLM::ProviderError.new("provider #{outcome.kind}: #{outcome.reason}")
+            Legion::LLM::ProviderError.new("provider #{outcome.kind}: #{outcome.reason}", outcome: outcome)
           when :authentication, :authorization
-            Legion::LLM::AuthError.new(outcome.reason)
+            Legion::LLM::AuthError.new(outcome.reason, outcome: outcome)
           else
-            Legion::LLM::ProviderError.new("provider error #{outcome.kind}: #{outcome.reason}")
+            Legion::LLM::ProviderError.new("provider error #{outcome.kind}: #{outcome.reason}", outcome: outcome)
           end
         end
 
@@ -263,12 +269,18 @@ module Legion
         def fleet_dispatch_request(messages, idempotency_key, dispatch_options:)
           {
             provider:          @resolved_provider,
-            provider_instance: @resolved_instance || :default,
+            # L10: no synthesized identity — the Selection-derived instance is
+            # authoritative. A missing instance is a routing fault: the
+            # dispatcher's exact-value check raises, it never executes as
+            # :default.
+            provider_instance: @resolved_instance,
             model:             @resolved_model,
             idempotency_key:   idempotency_key,
             # The wire carries serialized Canonical::Message (the worker's
-            # rehydrate_wire_messages is the rehydration boundary).
-            messages:          Array(messages).map { |m| m.is_a?(Legion::Extensions::Llm::Canonical::Message) ? m.to_h : m },
+            # rehydrate_wire_messages is the rehydration boundary). L10:
+            # canonicalize at the boundary exactly as the direct path does —
+            # no non-canonical element passes through unraised.
+            messages:          Legion::LLM::Inference::Request.canonicalize_messages(messages).map(&:to_h),
             caller:            @request.caller,
             trace_context:     @tracing || {},
             timeout:           @request.ttl

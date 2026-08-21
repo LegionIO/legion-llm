@@ -21,12 +21,10 @@ module Legion
                 log.debug('[llm][api][namespaces][providers] action=list_providers')
                 require_llm!
 
-                instances = begin
-                  Legion::LLM::Call::Registry.all_instances
-                rescue StandardError => e
-                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.providers.registry_read')
-                  []
-                end
+                # N7: a registry read FAULT must not masquerade as an empty
+                # registry (a 200 with []). The fault propagates to the route's
+                # 500 handler — logged there, error-shaped to the caller.
+                instances = Legion::LLM::Call::Registry.all_instances
 
                 provider_list = instances.map do |entry|
                   Legion::LLM::API::Native::Providers.instance_to_hash(entry)
@@ -53,12 +51,10 @@ module Legion
 
                 provider_sym = provider_name.to_sym
 
-                instances = begin
-                  Legion::LLM::Call::Registry.all_instances
-                rescue StandardError => e
-                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.providers.registry_read')
-                  []
-                end
+                # N7: a registry read FAULT must not masquerade as an empty
+                # registry (a 200 with []). The fault propagates to the route's
+                # 500 handler — logged there, error-shaped to the caller.
+                instances = Legion::LLM::Call::Registry.all_instances
 
                 family = instances.select { |entry| entry[:provider].to_sym == provider_sym }
 

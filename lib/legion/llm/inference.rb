@@ -43,9 +43,12 @@ module Legion
           kwargs:             kwargs
         )
 
+        # M2: the span label carries the REQUESTED model (nil when the request
+        # is unconstrained) — it must not assert a configured default the
+        # Selection may never pick.
         result = if defined?(Legion::Telemetry::OpenInference)
                    Legion::Telemetry::OpenInference.llm_span(
-                     model:    (model || Legion::Settings[:llm][:default_model]).to_s,
+                     model:    model&.to_s,
                      provider: provider&.to_s,
                      input:    message
                    ) do |_span|
@@ -90,6 +93,14 @@ module Legion
           kwargs:             { context: context, identity: identity }
         )
 
+        # L9 (annotated dual topology — a design call, not a defect fix): one
+        # ask() surface, two execution topologies. With a remote daemon
+        # configured the request goes over the wire and the daemon runs the
+        # governed pipeline there; without one the same governed pipeline runs
+        # in-process (ask_direct -> chat_direct). Both paths meter/audit where
+        # they execute; the historical ungoverned ask_direct gap is closed
+        # (0.12.16). The split is explicit and recorded here so the topology is
+        # a known edge; collapsing it is a design decision.
         if Call::DaemonClient.available?
           result = daemon_ask(message: message, model: model, provider: provider,
                               context: context, tier: tier, identity: identity)
@@ -160,8 +171,11 @@ module Legion
         kwargs.delete(:urgency)
 
         # SSOT v3 §20.1: select first, then probe the response cache by the exact
-        # Selection identity — before any callable acquisition. Legacy pre-routing
-        # cache remains as the fallback when the SSOT inventory path is inactive.
+        # Selection identity — before any callable acquisition. There is no
+        # pre-routing response cache (M2): a hit served without a Selection would
+        # outlive the lane that produced it — no inventory generation check, no
+        # metering/audit of the serving. When the SSOT inventory path is inactive
+        # the probe returns nil and the response is dispatched uncached.
         cache_key = nil
         ssot_cache = ssot_response_cache(message: message, model: model, provider: provider,
                                          tier: tier, temperature: temperature, cache_opt: cache_opt,
@@ -170,15 +184,6 @@ module Legion
           return ssot_cache[:response] if ssot_cache[:hit]
 
           cache_key = ssot_cache[:key]
-        elsif cacheable?(cache_opt, temperature, message)
-          cache_key = build_cache_key(model, provider, message, temperature)
-          cached = Cache.get(cache_key)
-          if cached
-            log.debug '[llm][inference] chat_direct_governed cache=hit path=legacy'
-            cached_response = cached.dup
-            cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
-            return cached_response
-          end
         end
 
         # SSOT v3: no default provider/model and no legacy fallback. An
@@ -214,8 +219,8 @@ module Legion
         escalate = escalation_enabled? if escalate.nil?
 
         # SSOT v3 §20.1: select first, then probe the response cache by the exact
-        # Selection identity — before any callable acquisition. Legacy pre-routing
-        # cache remains as the fallback when the SSOT inventory path is inactive.
+        # Selection identity — before any callable acquisition. There is no
+        # pre-routing response cache (M2) — see chat_direct_governed.
         cache_key = nil
         ssot_cache = ssot_response_cache(message: message, model: model, provider: provider,
                                          tier: tier, temperature: temperature, cache_opt: cache_opt,
@@ -224,15 +229,6 @@ module Legion
           return ssot_cache[:response] if ssot_cache[:hit]
 
           cache_key = ssot_cache[:key]
-        elsif cacheable?(cache_opt, temperature, message)
-          cache_key = build_cache_key(model, provider, message, temperature)
-          cached = Cache.get(cache_key)
-          if cached
-            log.debug '[llm][inference] chat_direct_raw cache=hit path=legacy'
-            cached_response = cached.dup
-            cached_response[:meta] = (cached_response[:meta] || {}).merge(cached: true)
-            return cached_response
-          end
         end
 
         urgency = kwargs.delete(:urgency) { :normal }
@@ -268,9 +264,12 @@ module Legion
         parts = [
           '[llm][inference] request',
           "type=#{request_type}",
-          "input_length=#{inference_text_length(input)}",
-          "input=#{input.inspect}"
+          "input_length=#{inference_text_length(input)}"
         ]
+        # M1: the raw payload is a compliance sink — it is not logged unless an
+        # operator enables llm.logging.payload_preview_chars (bounded preview).
+        preview = payload_preview(input)
+        parts << "input_preview=#{preview}" if preview
         parts << "requested_provider=#{requested_provider}" if requested_provider
         parts << "requested_model=#{requested_model}" if requested_model
         parts << "intent=#{intent}" if intent
@@ -293,9 +292,11 @@ module Legion
           'status=ok',
           "duration_ms=#{duration_ms}",
           "result_class=#{result.class}",
-          "output_length=#{inference_text_length(details[:output])}",
-          "output=#{details[:output].inspect}"
+          "output_length=#{inference_text_length(details[:output])}"
         ]
+        # M1: bounded, gated preview only — see log_inference_request.
+        preview = payload_preview(details[:output])
+        parts << "output_preview=#{preview}" if preview
         parts << "provider=#{details[:provider]}" if details[:provider]
         parts << "model=#{details[:model]}" if details[:model]
         parts << "input_tokens=#{details[:input_tokens]}" unless details[:input_tokens].nil?
@@ -415,6 +416,17 @@ module Legion
         nil
       end
 
+      # M1: bounded payload preview for the inference log. Returns nil when
+      # llm.logging.payload_preview_chars is unset/<= 0 (metadata-only log);
+      # otherwise the payload's inspect truncated at that many characters.
+      def payload_preview(payload)
+        preview_chars = Legion::Settings.dig(:llm, :logging, :payload_preview_chars).to_i
+        return nil if preview_chars <= 0
+
+        rendered = payload.inspect
+        rendered.length > preview_chars ? "#{rendered[0, preview_chars]}..." : rendered
+      end
+
       def caller_descriptor(caller_context)
         return caller_context unless caller_context.is_a?(Hash)
 
@@ -448,10 +460,11 @@ module Legion
         end
 
         messages = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
-        resolved_model = model || Legion::Settings[:llm][:default_model]
 
+        # M2: hooks see the requested model (nil when the request is
+        # unconstrained) — no configured default asserted pre-Selection.
         if defined?(Legion::LLM::Hooks)
-          blocked = Legion::LLM::Hooks.run_before(messages: messages, model: resolved_model)
+          blocked = Legion::LLM::Hooks.run_before(messages: messages, model: model)
           return blocked[:response] || blocked_hook_response(blocked) if blocked
         end
 
@@ -460,7 +473,7 @@ module Legion
                                  quality_check: quality_check, message: message, **kwargs)
 
         if defined?(Legion::LLM::Hooks)
-          blocked = Legion::LLM::Hooks.run_after(response: result, messages: messages, model: resolved_model)
+          blocked = Legion::LLM::Hooks.run_after(response: result, messages: messages, model: model)
           return blocked[:response] || blocked_hook_response(blocked) if blocked
         end
 
@@ -521,7 +534,9 @@ module Legion
         )
 
         return result if result.is_a?(Hash) && result[:deferred]
-        return normalize_ask_direct_hash(result, fallback_model: model || Legion::Settings[:llm][:default_model]) if result.is_a?(Hash)
+        # M2: the meta model is the Selection-reported model (meta[:model]) or
+        # the requested model — no configured default fabricated pre-Selection.
+        return normalize_ask_direct_hash(result, fallback_model: model) if result.is_a?(Hash)
 
         response, resolved_model = resolve_ask_direct_response(result, message, model, &)
 
@@ -548,10 +563,12 @@ module Legion
           return [response, result.model.to_s]
         end
 
+        # M2: known model identities only (the session's model_id or the
+        # requested model) — nil when neither exists, not a fabricated default.
         resolved_model = if result.respond_to?(:model_id) && result.model_id
                            result.model_id.to_s
                          else
-                           (requested_model || Legion::Settings[:llm][:default_model]).to_s
+                           requested_model&.to_s
                          end
         [result, resolved_model]
       end
@@ -674,18 +691,6 @@ module Legion
         cache_opt != false && effective_temp.to_f.zero? && message && Cache.enabled?
       end
 
-      def build_cache_key(model, provider, message, temperature)
-        # SSOT v3 §20.1: no provider/model default injection in the key builder.
-        # An omitted model/provider is an empty constraint, not a configured default.
-        messages_arr = message.is_a?(Array) ? message : [{ role: 'user', content: message.to_s }]
-        Cache.key(
-          model:       model,
-          provider:    provider,
-          messages:    messages_arr,
-          temperature: temperature
-        )
-      end
-
       # SSOT v3 §20.1 operation for the chat_direct response cache probe.
       RESPONSE_CACHE_OPERATION = :chat
 
@@ -698,7 +703,7 @@ module Legion
       #   { hit: true,  response: <hash>, key: <str> } on hit,
       #   { hit: false, response: nil,   key: <str> } on miss (caller dispatches + stores),
       #   nil when the SSOT inventory path is inactive or the request is not
-      #     cacheable (caller keeps the legacy pre-routing cache path).
+      #     cacheable (the call runs uncached — there is no pre-routing cache).
       def ssot_response_cache(message:, model:, provider:, tier:, temperature:, cache_opt:, shape: {})
         return nil unless cacheable?(cache_opt, temperature, message)
 

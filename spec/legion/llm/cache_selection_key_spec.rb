@@ -54,19 +54,13 @@ RSpec.describe Legion::LLM::Cache, '.selection_key (SSOT v3 §20.1)' do
   end
 end
 
-RSpec.describe Legion::LLM::Inference, '#build_cache_key (SSOT v3 §20.1 default removal)' do
-  before do
-    Legion::Settings[:llm][:default_model] = 'configured-default-model'
-    Legion::Settings[:llm][:default_provider] = :configured_default_provider
-  end
-
-  it 'does not inject configured model/provider defaults into the legacy key' do
-    with_default = described_class.build_cache_key('explicit-model', :explicit_provider, 'hi', 0)
-    without      = described_class.build_cache_key(nil, nil, 'hi', 0)
-    # The key with an explicit model/provider differs from the key with none, and
-    # the none-key is NOT equal to a key built from the configured defaults.
-    injected = described_class.build_cache_key('configured-default-model', :configured_default_provider, 'hi', 0)
-    expect(with_default).not_to eq(without)
-    expect(without).not_to eq(injected)
+# M2: the pre-routing legacy cache key (Legion::LLM::Cache.key +
+# Inference.build_cache_key) is deleted — the response cache is keyed by the
+# exact Selection identity (selection_key) or not used at all. A response may
+# never be served from a cache that no Selection backed.
+RSpec.describe Legion::LLM::Inference, 'M2: no pre-routing response cache' do
+  it 'has no legacy cache key builder' do
+    expect(described_class).not_to respond_to(:build_cache_key)
+    expect(Legion::LLM::Cache).not_to respond_to(:key)
   end
 end

@@ -125,7 +125,9 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       published_options = nil
       fleet_message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
 
-      Legion::Settings[:llm][:fleet] = { dispatch: { require_auth: false } }
+      # timeout_seconds mirrors the registered settings default (the real
+      # settings tree deep-merges llm.fleet.dispatch.timeout_seconds).
+      Legion::Settings[:llm][:fleet] = { dispatch: { require_auth: false, timeout_seconds: 30 } }
       allow(described_class).to receive(:fleet_available?).and_return(true)
       allow(future).to receive(:value!).and_return({ success: true })
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:agent_queue_name).and_return('llm.fleet.reply.test')
@@ -148,7 +150,9 @@ RSpec.describe Legion::LLM::Fleet::Dispatcher do
       published_options = nil
       fleet_message = instance_double(Legion::Extensions::Llm::Transport::Messages::FleetRequest)
 
-      Legion::Settings[:llm][:fleet] = { auth: { require_signed_token: false } }
+      # timeout_seconds mirrors the registered settings default (the real
+      # settings tree deep-merges llm.fleet.dispatch.timeout_seconds).
+      Legion::Settings[:llm][:fleet] = { dispatch: { timeout_seconds: 30 }, auth: { require_signed_token: false } }
       allow(described_class).to receive(:fleet_available?).and_return(true)
       allow(future).to receive(:value!).and_return({ success: true })
       allow(Legion::LLM::Fleet::ReplyDispatcher).to receive(:agent_queue_name).and_return('llm.fleet.reply.test')

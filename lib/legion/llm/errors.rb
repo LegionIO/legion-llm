@@ -6,7 +6,17 @@ module Legion
       def retryable? = false
     end
 
-    class AuthError < LLMError; end
+    class AuthError < LLMError
+      # M3.3: carries the exact Phase 1 ProviderOutcome so the typed failure
+      # kind survives the raise/rescue boundary on the error itself — the
+      # side-channel ivar is gone.
+      attr_reader :outcome
+
+      def initialize(message = nil, outcome: nil)
+        @outcome = outcome
+        super(message)
+      end
+    end
 
     class RateLimitError < LLMError
       attr_reader :retry_after
@@ -24,6 +34,14 @@ module Legion
     end
 
     class ProviderError < LLMError
+      # M3.3: carries the exact Phase 1 ProviderOutcome (see AuthError).
+      attr_reader :outcome
+
+      def initialize(message = nil, outcome: nil)
+        @outcome = outcome
+        super(message)
+      end
+
       def retryable? = true
     end
 

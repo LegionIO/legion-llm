@@ -40,10 +40,11 @@ RSpec.describe Legion::LLM do
           'requested_model=claude-sonnet-4-6',
           'caller=api:/api/llm/inference',
           'tools=1',
-          'input_length=5',
-          'input=[{role: :user, content: "hello"}]'
+          'input_length=5'
         )
       )
+      # M1: the raw payload is not logged unless a preview bound is enabled.
+      expect(logger).not_to have_received(:info).with(a_string_including('content: "hello"'))
 
       expect(logger).to have_received(:info).with(
         include(
@@ -57,10 +58,11 @@ RSpec.describe Legion::LLM do
           'output_tokens=7',
           'stop_reason=end_turn',
           'tool_calls=1',
-          'output_length=17',
-          'output="pipeline response"'
+          'output_length=17'
         )
       )
+      # M1: the raw response payload is not logged unless a preview bound is enabled.
+      expect(logger).not_to have_received(:info).with(a_string_including('"pipeline response"'))
     end
   end
 
@@ -88,10 +90,11 @@ RSpec.describe Legion::LLM do
           'type=ask',
           'requested_provider=openai',
           'requested_model=gpt-4o',
-          'input_length=2',
-          'input="hi"'
+          'input_length=2'
         )
       )
+      # M1: the raw payload is not logged unless a preview bound is enabled.
+      expect(logger).not_to have_received(:info).with(a_string_including('input="hi"'))
 
       expect(logger).to have_received(:info).with(
         include(
@@ -104,10 +107,43 @@ RSpec.describe Legion::LLM do
           'input_tokens=3',
           'output_tokens=2',
           'tool_calls=0',
-          'output_length=15',
-          'output="direct response"'
+          'output_length=15'
         )
       )
+      # M1: the raw response payload is not logged unless a preview bound is enabled.
+      expect(logger).not_to have_received(:info).with(a_string_including('"direct response"'))
+    end
+  end
+
+  # M1: the inference log never carries the unbounded payload. By default it is
+  # metadata-only (lengths/tokens); an operator may enable a BOUNDED inspect
+  # preview via llm.logging.payload_preview_chars (0 = off, >0 = truncated cap).
+  describe 'payload preview gate' do
+    it 'logs no payload by default (metadata only)' do
+      Legion::LLM::Inference.log_inference_request(
+        request_type: :chat, requested_model: nil, requested_provider: nil,
+        intent: nil, tier: nil, message: 'secret prompt', kwargs: {}
+      )
+
+      expect(logger).to have_received(:info).with(a_string_including('input_length=13'))
+      expect(logger).not_to have_received(:info).with(a_string_including('secret prompt'))
+    end
+
+    it 'logs a bounded preview when payload_preview_chars is enabled' do
+      previous = Legion::Settings[:llm][:logging]
+      Legion::Settings[:llm][:logging] = { payload_preview_chars: 10 }
+      begin
+        Legion::LLM::Inference.log_inference_request(
+          request_type: :chat, requested_model: nil, requested_provider: nil,
+          intent: nil, tier: nil, message: 'secret prompt', kwargs: {}
+        )
+
+        # "secret prompt".inspect = '"secret prompt"' (15 chars); capped at the
+        # first 10 chars + ellipsis (the closing quote is cut by the bound).
+        expect(logger).to have_received(:info).with(a_string_including('input_preview="secret pr...'))
+      ensure
+        Legion::Settings[:llm][:logging] = previous
+      end
     end
   end
 end

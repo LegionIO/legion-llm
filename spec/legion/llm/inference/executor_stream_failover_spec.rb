@@ -91,11 +91,11 @@ RSpec.describe Legion::LLM::Inference::Executor, 'SSOT v3 streaming failover', :
       calls += 1
       if calls == 1
         blk.call(text_chunk('one'))
-        executor.instance_variable_set(
-          :@last_ssot_dispatch_outcome,
-          routing::ProviderOutcome.new(kind: :overloaded, reason: 'busy')
+        # M3.3: the typed outcome rides on the raised error (no side-channel).
+        raise Legion::LLM::ProviderError.new(
+          'provider overloaded',
+          outcome: routing::ProviderOutcome.new(kind: :overloaded, reason: 'busy')
         )
-        raise Legion::LLM::ProviderError, 'provider overloaded'
       else
         blk.call(text_chunk('two'))
         executor.instance_variable_set(:@raw_response, :ok)
@@ -143,11 +143,11 @@ RSpec.describe Legion::LLM::Inference::Executor, 'SSOT v3 streaming failover', :
     executor.instance_variable_set(:@current_attempt_context, first_attempt)
 
     allow(executor).to receive(:execute_provider_request_stream) do |&_blk|
-      executor.instance_variable_set(
-        :@last_ssot_dispatch_outcome,
-        routing::ProviderOutcome.new(kind: :overloaded, reason: 'busy')
+      # M3.3: the typed outcome rides on the raised error (no side-channel).
+      raise Legion::LLM::ProviderError.new(
+        'provider overloaded',
+        outcome: routing::ProviderOutcome.new(kind: :overloaded, reason: 'busy')
       )
-      raise Legion::LLM::ProviderError, 'provider overloaded'
     end
 
     expect do

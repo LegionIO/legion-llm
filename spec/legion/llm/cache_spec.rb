@@ -25,18 +25,8 @@ RSpec.describe Legion::LLM::Cache do
     end
   end
 
-  describe '.key' do
-    it 'produces a deterministic SHA256 hex string' do
-      key = described_class.key(model: 'claude', provider: 'anthropic', messages: [{ role: :user, content: 'hi' }])
-      expect(key).to match(/\A[a-f0-9]{64}\z/)
-    end
-
-    it 'produces different keys for different inputs' do
-      key1 = described_class.key(model: 'a', provider: 'p', messages: [])
-      key2 = described_class.key(model: 'b', provider: 'p', messages: [])
-      expect(key1).not_to eq(key2)
-    end
-  end
+  # M2: the pre-routing legacy key (Cache.key) is deleted — the response
+  # cache is keyed by the exact Selection identity (.selection_key) only.
 
   describe '.get' do
     it 'returns nil on a cache miss' do
@@ -80,13 +70,15 @@ RSpec.describe Legion::LLM::Cache do
     end
 
     it 'includes the schema version in deterministic keys' do
-      key_v2 = described_class.key(model: 'claude', provider: 'anthropic',
-                                   messages: [{ role: :user, content: 'hi' }])
+      base = {
+        provider_family: :vllm, model: 'gemma4', revision: 'rev-1', operation: :chat,
+        system: 'be helpful', messages: [{ role: 'user', content: 'hi' }]
+      }
+      key_v2 = described_class.selection_key(**base)
 
       stub_const('Legion::LLM::Cache::RESPONSE_CACHE_SCHEMA_VERSION', 3)
 
-      key_v3 = described_class.key(model: 'claude', provider: 'anthropic',
-                                   messages: [{ role: :user, content: 'hi' }])
+      key_v3 = described_class.selection_key(**base)
       expect(key_v3).not_to eq(key_v2)
     end
   end

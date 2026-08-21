@@ -132,7 +132,6 @@ module Legion
           @pre_provider_steps_done = false
           @stream_session = nil
           @preflight_lease = nil
-          @last_ssot_dispatch_outcome = nil
           @proactive_tier_assignment = nil
           @tool_event_handler = nil
           @sticky_turn_snapshot = nil

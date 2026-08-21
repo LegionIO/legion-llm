@@ -99,8 +99,10 @@ module Legion
           rescue StandardError => e
             raise if non_provider_failure?(e)
 
-            outcome = @last_ssot_dispatch_outcome
-            @last_ssot_dispatch_outcome = nil
+            # M3.3: the typed outcome travels on the raised error — no
+            # side-channel. A provider error without one classifies
+            # conservatively.
+            outcome = e.respond_to?(:outcome) ? e.outcome : nil
             if outcome.nil?
               log.warn("[llm][executor] action=ssot_v3_unnormalized_error class=#{e.class.name} " \
                        "message=#{e.message.to_s[0, 200]}")
@@ -297,12 +299,11 @@ module Legion
           end
 
           # Map a raised streaming provider error to a Phase 1 ProviderOutcome for
-          # classification. The exact outcome from SelectionDispatch is preserved
-          # losslessly by ssot_v3_direct_dispatch (@last_ssot_dispatch_outcome);
-          # fall back to a conservative :provider_error when it is absent.
+          # classification. M3.3: the exact outcome from SelectionDispatch rides
+          # on the raised error (ssot_v3_provider_outcome_error); fall back to a
+          # conservative :provider_error when it is absent.
           def ssot_v3_stream_failover_outcome(error)
-            outcome = @last_ssot_dispatch_outcome
-            @last_ssot_dispatch_outcome = nil
+            outcome = error.respond_to?(:outcome) ? error.outcome : nil
             return outcome if outcome.is_a?(Legion::Extensions::Llm::Routing::ProviderOutcome)
 
             Legion::Extensions::Llm::Routing::ProviderOutcome.new(

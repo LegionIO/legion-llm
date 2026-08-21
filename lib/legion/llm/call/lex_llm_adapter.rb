@@ -911,7 +911,13 @@ module Legion
                          signature: accumulator[:thinking_signature]
                        )
                      end
-          stop_reason = accumulator[:stop_reason] || (tool_calls.any? ? :tool_use : :end_turn)
+          # G2 stop policy (mirrors Dispatch#to_canonical_stop_reason): the
+          # provider's value passes through; a nil reason with tool calls
+          # derives :tool_use (the response stopped to invoke them); a nil
+          # reason without tool calls stays nil — the absence, not a
+          # fabricated stop (N6).
+          stop_reason = accumulator[:stop_reason]
+          stop_reason = :tool_use if stop_reason.nil? && tool_calls.any?
           model_id = model.respond_to?(:id) ? model.id : model
 
           response = canonical::Response.build(

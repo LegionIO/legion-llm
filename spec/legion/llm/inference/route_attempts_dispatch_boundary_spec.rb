@@ -61,9 +61,12 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
       expect(captured[:messages].count { |message| message.role == :system }).to eq(1)
       expect(captured[:messages].first.content).to eq('authoritative system')
       options = captured[:dispatch_options]
-      expect(options.keys).to contain_exactly(:tools, :temperature, :params, :headers, :schema, :thinking, :tool_prefs)
+      # N9: :headers is no longer a contract option key — it is never
+      # projected onto the dispatch options (it is not populated in the SSOT
+      # dispatch path, and caller headers are not fleet wire).
+      expect(options.keys).to contain_exactly(:tools, :temperature, :params, :schema, :thinking, :tool_prefs)
       expect(options[:params]).to eq(provider_flag: true, top_p: 0.7, seed: 42)
-      expect(options).not_to include(:system, :offering_id, :offering_metadata, :top_p, :seed)
+      expect(options).not_to include(:system, :offering_id, :offering_metadata, :top_p, :seed, :headers)
     end
   end
 
