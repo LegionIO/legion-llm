@@ -144,7 +144,11 @@ module Legion
 
         def ssot_registry_active?
           Legion::Extensions::Llm::Inventory::Registry.snapshot.generation.positive?
-        rescue StandardError
+        rescue StandardError => e
+          # A registry read fault reports "inactive" (the request is
+          # rejected loudly by routing_resolvable?) — the fault itself must
+          # not be silent.
+          handle_exception(e, level: :warn, operation: 'llm.prompt.ssot_registry_active')
           false
         end
 

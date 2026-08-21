@@ -29,13 +29,15 @@ module Legion
 
           Canonical = Legion::Extensions::Llm::Canonical
 
+          # N8: a provider :error stop is an error state, not a clean
+          # completion — it renders as 'error', never 'end_turn'.
           STOP_REASON_MAP = {
             end_turn:       'end_turn',
             tool_use:       'tool_use',
             max_tokens:     'max_tokens',
             stop_sequence:  'stop_sequence',
             content_filter: 'content_filter',
-            error:          'end_turn',
+            error:          'error',
             pause_turn:     'pause_turn'
           }.freeze
 
@@ -114,7 +116,10 @@ module Legion
               conversation_id: canonical_request.conversation_id,
               stream:          canonical_request.stream == true,
               modality:        modality,
-              thinking:        thinking_to_inference(canonical_request.thinking),
+              # N2: shared execution carries the canonical Thinking::Config
+              # (or nil) — the Anthropic dialect is re-shaped by the PROVIDER
+              # translator at the provider edge, never in the pipeline.
+              thinking:        canonical_request.thinking,
               cache:           { strategy: :default, cacheable: true },
               extra:           extra,
               metadata:        canonical_request.metadata
@@ -615,21 +620,6 @@ module Legion
             end
           end
 
-          # Canonical::Thinking::Config#to_h is {effort:, budget:}. The Inference
-          # request and downstream provider translators expect the
-          # Anthropic-style {type: 'enabled', budget_tokens:} shape; map back.
-          def thinking_to_inference(thinking_obj)
-            return nil if thinking_obj.nil?
-
-            h = thinking_obj.respond_to?(:to_h) ? thinking_obj.to_h : thinking_obj
-            return nil unless h.is_a?(Hash) && !h.empty?
-
-            inference = { type: 'enabled' }
-            inference[:budget_tokens] = h[:budget] if h[:budget]
-            inference[:effort] = h[:effort] if h[:effort]
-            inference
-          end
-
           def build_tool_definitions(canonical_tools)
             return [] if canonical_tools.nil? || canonical_tools.empty?
 
@@ -740,14 +730,27 @@ module Legion
             return 'tool_use' if tool_calls.any? { |tc| !tc[:server_tool] && tc[:result].nil? }
 
             stop = pipeline_response.respond_to?(:stop) ? pipeline_response.stop : nil
-            reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : stop.to_s
-            case reason.to_s
-            when 'tool_use'       then 'tool_use'
-            when 'max_tokens'     then 'max_tokens'
-            when 'content_filter' then 'content_filter'
-            when 'stop'
+            reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : stop
+            # N8/M7: only known completion states render as completions.
+            # :error stays an error, and an absent or unmapped stop state
+            # surfaces as 'error' — the client must be able to tell a
+            # provider-declared end_turn from a stop the daemon did not
+            # observe. Never fabricate :end_turn.
+            case reason&.to_sym
+            when :end_turn
+              'end_turn'
+            when :stop_sequence
+              'stop_sequence'
+            when :stop
               pipeline_response.respond_to?(:stop_sequence) && pipeline_response.stop_sequence ? 'stop_sequence' : 'end_turn'
-            else 'end_turn'
+            when :tool_use
+              'tool_use'
+            when :max_tokens
+              'max_tokens'
+            when :content_filter
+              'content_filter'
+            else
+              'error'
             end
           end
 
@@ -755,7 +758,8 @@ module Legion
             return result if result.is_a?(String)
 
             Legion::JSON.dump(result)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.anthropic.serialize_result')
             result.to_s
           end
         end

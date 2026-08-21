@@ -679,7 +679,8 @@ module Legion
           return args.to_s if args.is_a?(String)
 
           Legion::JSON.dump(args || {})
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.stream_assembler.serialize_args')
           args.to_s
         end
 
@@ -687,7 +688,8 @@ module Legion
           return result if result.is_a?(String)
 
           Legion::JSON.dump(result)
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.stream_assembler.serialize_result')
           result.to_s
         end
 

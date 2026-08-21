@@ -204,7 +204,8 @@ module Legion
             return args if args.is_a?(String)
 
             Legion::JSON.dump(args || {})
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.args_as_json_string')
             args.to_s
           end
 
@@ -224,7 +225,8 @@ module Legion
             end
 
             {}
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.args_as_object')
             {}
           end
 

@@ -139,7 +139,11 @@ RSpec.describe 'Client translator thinking/reasoning kwargs' do
 
       expect(inference_request.tokens).to eq(max: 50)
       expect(inference_request.generation).to include(temperature: 0.1)
-      expect(inference_request.thinking).to include(type: 'enabled', effort: 'high', budget_tokens: 1024)
+      # N2: shared execution carries the canonical Thinking::Config, not a
+      # client-dialect {type:, budget_tokens:} shape.
+      expect(inference_request.thinking).to be_a(canonical::Thinking::Config)
+      expect(inference_request.thinking.effort).to eq('high')
+      expect(inference_request.thinking.budget).to eq(1024)
     end
   end
 

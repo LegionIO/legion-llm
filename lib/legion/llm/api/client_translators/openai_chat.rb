@@ -589,7 +589,8 @@ module Legion
             return result if result.is_a?(String)
 
             Legion::JSON.dump(result)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_chat.serialize_server_tool_result')
             extract_content_text(result)
           end
 
@@ -615,7 +616,8 @@ module Legion
 
           def safe_parse_args(str)
             Legion::JSON.parse(str, symbolize_names: false)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_chat.safe_parse_args')
             str
           end
         end

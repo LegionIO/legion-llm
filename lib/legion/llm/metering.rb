@@ -71,6 +71,8 @@ module Legion
             next if line.strip.empty?
 
             decrypted = decrypt_spool_line(line)
+            next if decrypted.nil?
+
             Legion::JSON.load(decrypted)
           end
           File.write(path, '')
@@ -204,11 +206,18 @@ module Legion
       end
 
       def encrypt_spool?
-        defined?(Legion::Crypt) &&
-          Legion::Crypt.respond_to?(:encrypt) &&
-          Legion::Settings.dig(:llm, :compliance, :encrypt_spool) == true
-      rescue StandardError
-        false
+        return false unless crypt_available?
+
+        Legion::Settings.dig(:llm, :compliance, :encrypt_spool) == true
+      rescue StandardError => e
+        # No-fail-open: a settings fault must never silently disable spool
+        # encryption. Fail closed: encrypt whenever Crypt is available.
+        handle_exception(e, level: :error, operation: 'llm.metering.encrypt_spool?')
+        crypt_available?
+      end
+
+      def crypt_available?
+        defined?(Legion::Crypt) && Legion::Crypt.respond_to?(:encrypt)
       end
 
       def decrypt_spool_line(line)
@@ -216,8 +225,12 @@ module Legion
         return line if line.start_with?('{')
 
         Legion::Crypt.decrypt(line)
-      rescue StandardError
-        line
+      rescue StandardError => e
+        # N5: a corrupt line must not wedge the flush silently — log the
+        # fault and drop just this line (nil) so the rest of the batch
+        # still drains.
+        handle_exception(e, level: :error, operation: 'llm.metering.decrypt_spool_line')
+        nil
       end
 
       def read_spool

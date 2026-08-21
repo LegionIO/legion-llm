@@ -120,14 +120,22 @@ module Legion
             Thread.current[:legion_log_exchange_id] = @exchange_id
           end
 
+          # M10: an honest dispatch gate. In SSOT mode the attempt context
+          # is set and dispatch executes the Selection's exact inventory
+          # callable — no legacy extension-registry entry is in the path
+          # (stale/disposed callables surface as typed inventory errors,
+          # never a registry miss). On the legacy Call::Dispatch path the
+          # extension is resolved by name, so the gate checks the registry
+          # exactly as Dispatch.available? does.
           def use_native_dispatch?(provider)
-            return false unless defined?(Call::Dispatch)
             return false unless provider
+            return true if @current_attempt_context
+            return false unless defined?(Call::Dispatch)
 
             layer_settings = Legion::Settings.dig(:llm, :provider_layer) || {}
             mode = (layer_settings[:mode] || 'auto').to_s
 
-            %w[native auto].include?(mode)
+            %w[native auto].include?(mode) && Call::Dispatch.available?(provider)
           end
 
           def merge_response_offering_metadata(metadata)
@@ -136,8 +144,11 @@ module Legion
             offering = normalize_offering_metadata(metadata[:offering] || metadata['offering'] || metadata)
             return if offering.empty?
 
+            # M6: response metadata is descriptive data (limits, context
+            # window) — it must never write routing identity. Offering
+            # identity is Selection-owned; a provider-asserted offering_id
+            # stays inert data in the metadata, not @resolved_offering_id.
             @resolved_offering_metadata = @resolved_offering_metadata.merge(offering)
-            @resolved_offering_id = @resolved_offering_metadata[:offering_id] if @resolved_offering_id.nil?
           end
         end
       end

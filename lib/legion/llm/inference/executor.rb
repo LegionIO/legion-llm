@@ -910,6 +910,7 @@ module Legion
           actual_cost = @audit.dig(:'provider:response', :data, :estimated_cost_usd)
           cost_usd = actual_cost || estimate_cost(input_tokens, output_tokens)
           log.debug("[pipeline][metering] action=build provider=#{@resolved_provider} model=#{@resolved_model} input=#{input_tokens} output=#{output_tokens}")
+          capture_content = metering_capture_content?
           event = Steps::Metering.build_event(
             provider:           @resolved_provider,
             model_id:           @resolved_model,
@@ -935,9 +936,9 @@ module Legion
             agent_id:           agent[:id],
             task_id:            agent[:task_id],
             routing_reason:     @audit.dig(:'routing:provider_selection', :data, :reason),
-            messages:           @request.messages,
-            response_content:   extract_response_content,
-            response_thinking:  extract_thinking,
+            messages:           capture_content ? @request.messages : nil,
+            response_content:   capture_content ? extract_response_content : nil,
+            response_thinking:  capture_content ? extract_thinking : nil,
             context_accounting: finalize_context_accounting
           )
           Steps::Metering.publish_or_spool(event)
@@ -952,6 +953,44 @@ module Legion
           rescue StandardError => spool_e
             handle_exception(spool_e, level: :error, operation: 'llm.pipeline.step_metering.spool_fallback')
           end
+        end
+
+        # M8: the metering stream (RMQ + JSONL spool) is a raw-content
+        # compliance sink. Request messages, response content, and response
+        # thinking flow into metering events only when the operator opts
+        # into raw capture (llm.metering.capture_mode: :raw) AND the request
+        # is not privacy-classified — a privacy-classified request never
+        # emits raw content, regardless of capture mode. Tokens, cost, and
+        # routing always flow.
+        def metering_capture_content?
+          return false unless metering_capture_mode? == :raw
+
+          !metering_capture_privacy_blocked?
+        end
+
+        def metering_capture_mode?
+          Legion::Settings.dig(:llm, :metering, :capture_mode)&.to_sym || :metadata_only
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.pipeline.metering_capture_mode')
+          :metadata_only
+        end
+
+        # Checks the declared classification and the post-scan effective
+        # state (the classification scan can upgrade the level above the
+        # declared one).
+        def metering_capture_privacy_blocked?
+          classification = @request.classification
+          scan = @audit.dig(:'classification:scan', :data)
+          return false unless classification.is_a?(Hash) || scan.is_a?(Hash)
+
+          declared_blocked = classification.is_a?(Hash) &&
+                             (classification[:privacy]&.to_sym == :strict ||
+                              classification[:level]&.to_sym == :restricted ||
+                              classification[:contains_phi] || classification[:contains_pii])
+          scan_blocked = scan.is_a?(Hash) &&
+                         (scan[:effective]&.to_sym == :restricted ||
+                          scan[:contains_phi] || scan[:contains_pii])
+          declared_blocked || scan_blocked
         end
 
         def estimate_cost(input_tokens, output_tokens)
@@ -1502,16 +1541,21 @@ module Legion
           nil
         end
 
+        # M7: the stop reason is exactly what the provider declared — a
+        # canonical enum symbol, a tool/pause stop derived from pending tool
+        # calls, or nil (absent). Nothing here fabricates :end_turn: an
+        # absent stop is nil (the client edge renders absence distinctly
+        # from a provider-declared completion), and a read fault is nil
+        # with a loud log, never a clean-completion stand-in.
         def extract_stop_reason
-          reason = if @raw_response.respond_to?(:stop_reason)
-                     @raw_response.stop_reason&.to_sym
-                   elsif @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
-                     stop_reason_for_tool_calls(response_tool_calls)
-                   end
-          { reason: reason || :end_turn }
+          raw_tool_calls = @raw_response.respond_to?(:tool_calls) ? @raw_response.tool_calls : nil
+          reason = @raw_response.stop_reason&.to_sym if @raw_response.respond_to?(:stop_reason)
+          reason = stop_reason_for_tool_calls(response_tool_calls) if reason.nil? && raw_tool_calls&.any?
+
+          { reason: reason }
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.pipeline.extract_stop_reason')
-          { reason: :end_turn }
+          { reason: nil }
         end
 
         def stop_reason_for_tool_calls(tool_calls)

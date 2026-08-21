@@ -76,7 +76,8 @@ module Legion
             return content unless thinking
 
             "#{content}#{extract_thinking_content(thinking)}"
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.quality.effective_content')
             content
           end
 
@@ -92,7 +93,8 @@ module Legion
                           thinking
                         end
             extracted.to_s.strip
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.quality.extract_thinking_content')
             ''
           end
 

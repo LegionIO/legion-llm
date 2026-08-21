@@ -330,7 +330,17 @@ module Legion
           choice.to_s
         end
 
+        # L8 behavior contract: for providers that declare the
+        # forced_tool_choice capability, a word-boundary mention of a known
+        # tool name in the latest user text (within
+        # explicit_choice_max_chars) deterministically forces tool_choice to
+        # that tool on round 0 — mentioning the word "bash" in prose forces
+        # the bash tool. This is a request-shaping workaround for providers
+        # that only emit structured tool calls when a tool choice is forced;
+        # it is not a routing decision. Gated by llm.tools.explicit_tool_choice.
         def explicit_native_tool_choice
+          return unless Legion::Settings[:llm][:tools][:explicit_tool_choice] == true
+
           ext = Call::Registry.for(@resolved_provider, instance: @resolved_instance)
           return unless ext.respond_to?(:translator) && ext.translator.respond_to?(:capabilities) &&
                         ext.translator.capabilities[:forced_tool_choice]
@@ -611,10 +621,13 @@ module Legion
           arg_value = if args.is_a?(String)
                         args
                       else
-                        (args ? ::JSON.dump(args) : '{}')
+                        (args ? Legion::JSON.dump(args) : '{}')
                       end
           "name=#{name}:args_hash=#{::Digest::MD5.hexdigest(arg_value)}"
-        rescue StandardError
+        rescue StandardError => e
+          # Unserializable arguments collapse to a shared key — the fault
+          # must be visible (a daemon programming error, not model output).
+          handle_exception(e, level: :warn, operation: 'llm.native_tool_loop.tool_call_key', tool: name)
           "name=#{name}:args_hash=default"
         end
 

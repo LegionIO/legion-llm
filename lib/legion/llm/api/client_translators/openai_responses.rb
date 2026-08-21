@@ -108,7 +108,10 @@ module Legion
               conversation_id: canonical_request.conversation_id,
               stream:          canonical_request.stream == true,
               modality:        modality,
-              thinking:        thinking_to_inference(canonical_request.thinking),
+              # N2: shared execution carries the canonical Thinking::Config
+              # (or nil) — the client dialect is re-shaped by the PROVIDER
+              # translator at the provider edge, never in the pipeline.
+              thinking:        canonical_request.thinking,
               cache:           { strategy: :default, cacheable: true },
               extra:           extra,
               metadata:        canonical_request.metadata
@@ -674,7 +677,8 @@ module Legion
             return {} if str.to_s.empty?
 
             Legion::JSON.load(str)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_responses.safe_parse_json')
             str
           end
 
@@ -729,22 +733,6 @@ module Legion
             when 'medium', 'high'
               { effort: effort.to_s, budget: 1024 }
             end
-          end
-
-          # Canonical::Thinking::Config#to_h is {effort:, budget:}. Downstream
-          # providers (anthropic native + lex-llm-openai responses) expect the
-          # {type: 'enabled', budget_tokens:, effort:} shape originally
-          # produced by extract_thinking_config in the legacy route.
-          def thinking_to_inference(thinking)
-            return nil if thinking.nil?
-
-            h = thinking.respond_to?(:to_h) ? thinking.to_h : thinking
-            return nil unless h.is_a?(Hash) && !h.empty?
-
-            inference = { type: 'enabled' }
-            inference[:budget_tokens] = h[:budget] if h[:budget]
-            inference[:effort] = h[:effort] if h[:effort]
-            inference
           end
 
           def build_tool_definitions(canonical_tools)
@@ -841,7 +829,8 @@ module Legion
             return result if result.is_a?(String)
 
             Legion::JSON.dump(result)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_responses.serialize_server_tool_result')
             result.to_s
           end
 

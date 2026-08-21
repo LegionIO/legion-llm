@@ -863,6 +863,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
                                     mode: 'native'
                                   }
                                 })
+      allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(tool_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end

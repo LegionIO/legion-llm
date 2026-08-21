@@ -72,7 +72,11 @@ module Legion
 
             begin
               parsed = Legion::JSON.load(str)
-            rescue StandardError
+            rescue StandardError => e
+              # Truncated large-JSON results are the expected case (see the
+              # large_json_threshold guard above) — a debug breadcrumb, not
+              # warn noise; the raw-prefix fallback is the summary.
+              log.debug "[llm][steps][tool_history] action=summary_parse_failed error=#{e.class} length=#{str.length}"
               return str[0, history[:summary_chars]]
             end
 

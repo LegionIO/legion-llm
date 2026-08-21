@@ -418,7 +418,13 @@ module Legion
 
       def self.metering_defaults
         {
-          spool: {
+          # M8: metering events are a raw-content compliance sink (RMQ +
+          # JSONL spool). :metadata_only (default) carries tokens, cost,
+          # routing, and status — never the request messages, response
+          # content, or response thinking. Set :raw to include them;
+          # privacy-classified requests are excluded regardless of mode.
+          capture_mode: :metadata_only,
+          spool:        {
             max_events:        10_000,
             flush_batch_sleep: 0.0
           }
