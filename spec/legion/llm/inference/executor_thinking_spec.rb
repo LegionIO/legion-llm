@@ -72,7 +72,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
       )
 
       callable = Class.new do
-        define_method(:chat) { |**| provider_response }
+        # 0.8.0 callable contract: positional messages (the real boundary shape).
+        define_method(:chat) do |messages, model:, **|
+          _ = [messages, model]
+          provider_response
+        end
         define_method(:normalize_dispatch_error) do |error:|
           Legion::Extensions::Llm::Routing::ProviderOutcome.new(kind: :provider_error, reason: error.message)
         end

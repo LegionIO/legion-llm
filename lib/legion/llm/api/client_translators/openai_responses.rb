@@ -887,7 +887,13 @@ module Legion
             i = token_value(tokens, :input_tokens, :input).to_i
             o = token_value(tokens, :output_tokens, :output).to_i
             result = { input_tokens: i, output_tokens: o, total_tokens: i + o }
-            details = tokens[:output_tokens_details] || tokens['output_tokens_details']
+            # Dual-shape: legacy Types::Usage carries the member; a Hash may
+            # carry either key; Canonical::Usage has no such member (nil).
+            details = if tokens.is_a?(Hash)
+                        tokens[:output_tokens_details] || tokens['output_tokens_details']
+                      elsif tokens.respond_to?(:output_tokens_details)
+                        tokens.output_tokens_details
+                      end
             result[:output_tokens_details] = details if details.is_a?(Hash) && !details.empty?
             result
           end

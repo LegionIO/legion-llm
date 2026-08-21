@@ -173,8 +173,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
         seen_system = nil
-        responder = lambda do |_op, _args, kwargs, _blk|
-          seen_system = kwargs.fetch(:messages).first.content
+        # 0.8.0 callable contract: messages arrive positionally, not in kwargs.
+        responder = lambda do |_op, args, _kwargs, _blk|
+          seen_system = args.first.first.content
           native_dispatch_result(content: 'test')
         end
         activate_anthropic(SsotV3SnapshotFactory::FactoryCallable.new(responder: responder))
@@ -710,7 +711,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
       result = executor.send(:execute_native_tool_loop)
 
-      expect(result[:tool_calls].first[:name]).to eq('mcp_servers')
+      expect(result.tool_calls.first.name).to eq('mcp_servers')
     end
 
     it 'adds continuation guidance after native tool result rounds' do

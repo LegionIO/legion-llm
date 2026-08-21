@@ -82,11 +82,14 @@ RSpec.describe Legion::LLM::Call::SelectionDispatch, :ssot_v3 do
   it 'rehydrates hash messages for every exact message operation without mutating the input' do
     calls = []
     callable = Class.new(SsotV3SnapshotFactory::FactoryCallable) do
-      define_method(:chat) do |messages:, model:, **|
+      # The 0.8.0 callable contract is positional messages (vllm/bedrock
+      # callable.rb, lex-llm WorkerExecution) — the double mirrors the real
+      # boundary, never a keyword shape (R15).
+      define_method(:chat) do |messages, model:, **|
         calls << { operation: :chat, messages: messages, model: model }
         { content: 'ok' }
       end
-      define_method(:stream_chat) do |messages:, model:, **, &block|
+      define_method(:stream_chat) do |messages, model:, **, &block|
         calls << { operation: :stream_chat, messages: messages, model: model, block: block }
         { content: 'ok' }
       end

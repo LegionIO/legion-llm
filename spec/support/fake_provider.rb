@@ -12,9 +12,10 @@ require 'legion/llm/errors'
 # inside Rack::Test specs, by including the marker `[fake:<scenario>]` anywhere
 # in a user message (last user message wins).
 #
-# The provider implements the same surface as a real lex-llm-* extension:
-#   * chat(model:, messages:, **)
-#   * stream(model:, messages:, **, &block)
+# The provider implements the same surface as a real lex-llm-* callable:
+#   * chat(messages, model:, **)            # 0.8.0 callable contract (positional)
+#   * stream_chat(messages, model:, **, &block)
+#   * stream(model:, messages:, **, &block) # legacy Dispatch capability surface
 #   * responses(body:, messages:, stream:, **, &block)
 #   * embed(model:, text:, **)
 #   * count_tokens(model:, messages:, **)
@@ -150,7 +151,9 @@ module FakeProvider
       mod.define_singleton_method(:supports?) do |capability|
         %i[chat stream responses embed count_tokens].include?(capability.to_sym)
       end
-      mod.define_singleton_method(:chat) do |model:, messages:, **opts|
+      # 0.8.0 callable contract: positional messages (the real boundary shape
+      # this adapter serves as the exact callable through SelectionDispatch).
+      mod.define_singleton_method(:chat) do |messages, model:, **opts|
         FakeProvider.record_call(kind: :chat, model: model, messages: messages,
                                  tool_prefs: opts[:tool_prefs], tools: opts[:tools],
                                  temperature: opts[:temperature])
@@ -164,8 +167,9 @@ module FakeProvider
         scenario = FakeProvider.resolve_scenario(messages)
         ext.stream_response(scenario, model: model, messages: messages, &block)
       end
-      # SSOT v3 §15.1: SelectionDispatch calls stream_chat for the :stream_chat operation.
-      mod.define_singleton_method(:stream_chat) do |model:, messages:, **opts, &block|
+      # SSOT v3 §15.1: SelectionDispatch calls stream_chat for the :stream_chat
+      # operation, positional messages per the 0.8.0 callable contract.
+      mod.define_singleton_method(:stream_chat) do |messages, model:, **opts, &block|
         FakeProvider.record_call(kind: :stream_chat, model: model, messages: messages,
                                  tool_prefs: opts[:tool_prefs], tools: opts[:tools],
                                  temperature: opts[:temperature])

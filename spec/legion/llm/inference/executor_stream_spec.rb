@@ -21,8 +21,9 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
     Legion::Extensions::Llm::Inventory::Registry.reset!
     captured = {}
     result = native_dispatch_result(content: content)
-    responder = proc do |_op, _args, kwargs, blk|
-      capture_hook&.call(captured, kwargs)
+    # 0.8.0 callable contract: messages arrive positionally (args), not in kwargs.
+    responder = proc do |_op, args, kwargs, blk|
+      capture_hook&.call(captured, args, kwargs)
       chunks.each { |c| blk&.call(c) }
       blk&.call(Struct.new(:content).new(content)) if chunks.empty?
       result
@@ -85,8 +86,8 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
     executor.enrichments['gaia:system_prompt'] = { content: 'Injected streaming guidance' }
 
     seen_system = nil
-    register_capturing_stream_callable do |captured, kwargs|
-      seen_system = kwargs.fetch(:messages).first.content
+    register_capturing_stream_callable do |captured, args, _kwargs|
+      seen_system = args.first.first.content
       captured[:system] = seen_system
     end
 
@@ -110,8 +111,8 @@ RSpec.describe Legion::LLM::Inference::Executor, '#call_stream' do
 
     executor = described_class.new(req)
     seen_messages = nil
-    register_capturing_stream_callable do |captured, kwargs|
-      seen_messages = kwargs[:messages]
+    register_capturing_stream_callable do |captured, args, _kwargs|
+      seen_messages = args.first
       captured[:messages] = seen_messages
     end
 

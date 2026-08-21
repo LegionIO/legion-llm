@@ -40,9 +40,9 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         provider: :ollama, capability: :chat, instance: :local,
         model: 'llama3', messages: [{ role: 'user', content: 'hi' }]
       )
-      expect(result[:result]).to eq('chat response')
-      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
-      expect(result[:usage].input_tokens).to eq(10)
+      expect(result.text).to eq('chat response')
+      expect(result.usage).to be_a(Legion::Extensions::Llm::Canonical::Usage)
+      expect(result.usage.input_tokens).to eq(10)
     end
 
     it 'dispatches embed capability — calls ext.embed' do
@@ -50,8 +50,8 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         provider: :ollama, capability: :embed, instance: :local,
         model: 'nomic-embed', text: 'hello world'
       )
-      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
-      expect(result[:usage].input_tokens).to eq(3)
+      expect(result.usage).to be_a(Legion::Extensions::Llm::Canonical::Usage)
+      expect(result.usage.input_tokens).to eq(3)
     end
 
     it 'dispatches stream capability with block — calls ext.stream' do
@@ -61,8 +61,8 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         model: 'llama3', messages: [{ role: 'user', content: 'hi' }]
       ) { |chunk| chunks << chunk }
 
-      expect(result[:result]).to eq('streamed response')
-      expect(result[:usage].output_tokens).to eq(4)
+      expect(result.text).to eq('streamed response')
+      expect(result.usage.output_tokens).to eq(4)
       expect(chunks).to eq(['chunk'])
     end
 
@@ -72,8 +72,8 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         model: 'llama3', body: { input: 'hi' }, messages: [{ role: 'user', content: 'hi' }], stream: false
       )
 
-      expect(result[:result]).to eq('responses response')
-      expect(result[:usage].input_tokens).to eq(11)
+      expect(result.text).to eq('responses response')
+      expect(result.usage.input_tokens).to eq(11)
     end
 
     it 'rejects responses capability when an adapter explicitly does not support it' do
@@ -100,8 +100,10 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         model: 'image-model', prompt: 'draw an icon', size: '1024x1024'
       )
 
-      expect(result[:result]).to eq([{ url: 'https://images.invalid/generated.png' }])
-      expect(result[:model]).to eq('image-model')
+      # Non-string payload rides in metadata[:raw_result] (the canonical
+      # location normalize_response preserves it at).
+      expect(result.metadata[:raw_result]).to eq([{ url: 'https://images.invalid/generated.png' }])
+      expect(result.model).to eq('image-model')
     end
 
     it 'accepts string capability and coerces to symbol' do
@@ -109,13 +111,16 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         provider: :ollama, capability: 'chat', instance: :local,
         model: 'llama3', messages: [{ role: 'user', content: 'hi' }]
       )
-      expect(result[:result]).to eq('chat response')
+      expect(result.text).to eq('chat response')
     end
   end
 
   describe '.map_lex_llm_error' do
-    it 'maps provider-wrapped maximum context length errors to ContextOverflow' do
-      error = Legion::Extensions::Llm::ServerError.new(
+    # Typed classification only (M5): context overflow arrives as the typed
+    # lex-llm error — the error-message regex re-derivation is gone, so a raw
+    # ServerError with overflow-shaped text maps by its class (ProviderDown).
+    it 'maps typed context-length errors to ContextOverflow' do
+      error = Legion::Extensions::Llm::ContextLengthExceededError.new(
         "This model's maximum context length is 262144 tokens. However, you requested 0 output tokens " \
         'and your prompt contains at least 262145 input tokens.'
       )
@@ -123,6 +128,17 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
       expect do
         described_class.send(:map_lex_llm_error, error, provider: :vllm, model: 'gemma-4-31b-it')
       end.to raise_error(Legion::LLM::ContextOverflow, /maximum context length/)
+    end
+
+    it 'classifies a raw ServerError with overflow-shaped text by its class, not its message' do
+      error = Legion::Extensions::Llm::ServerError.new(
+        "This model's maximum context length is 262144 tokens. However, you requested 0 output tokens " \
+        'and your prompt contains at least 262145 input tokens.'
+      )
+
+      expect do
+        described_class.send(:map_lex_llm_error, error, provider: :vllm, model: 'gemma-4-31b-it')
+      end.to raise_error(Legion::LLM::ProviderDown)
     end
   end
 
@@ -157,7 +173,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         provider: :ollama, capability: :chat, instance: :apollo,
         model: 'llama3', messages: []
       )
-      expect(result[:result]).to eq('named instance')
+      expect(result.text).to eq('named instance')
     end
 
     it 'resolves default instance when instance is not specified' do
@@ -165,7 +181,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         provider: :ollama, capability: :chat,
         model: 'llama3', messages: []
       )
-      expect(result[:result]).to eq('default instance')
+      expect(result.text).to eq('default instance')
     end
 
     it 'resolves default instance when instance is nil' do
@@ -173,7 +189,7 @@ RSpec.describe Legion::LLM::Call::Dispatch, '.call' do
         provider: :ollama, capability: :chat, instance: nil,
         model: 'llama3', messages: []
       )
-      expect(result[:result]).to eq('default instance')
+      expect(result.text).to eq('default instance')
     end
   end
 

@@ -119,10 +119,10 @@ module Legion
           case operation
           when :chat
             messages = canonical_messages!(args)
-            ->(c) { c.chat(messages: messages, model: model, **args) }
+            ->(c) { c.chat(messages, model: model, **args) }
           when :stream_chat
             messages = canonical_messages!(args)
-            ->(c) { c.stream_chat(messages: messages, model: model, **args, &block) }
+            ->(c) { c.stream_chat(messages, model: model, **args, &block) }
           when :embed
             text = require_key!(args, :text)
             ->(c) { c.embed(text: text, model: model, **args) }
@@ -144,7 +144,7 @@ module Legion
             ->(c) { c.speak(text, model: model, voice: voice, **args) }
           when :moderate
             input = require_positional!(args, :input)
-            ->(c) { c.moderate(input, model: model, **args) }
+            ->(c) { c.moderate(input: input, model: model, **args) }
           when :count_tokens
             messages = canonical_messages!(args)
             ->(c) { c.count_tokens(messages: messages, model: model, **args) }

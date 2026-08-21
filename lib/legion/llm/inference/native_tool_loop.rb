@@ -87,7 +87,7 @@ module Legion
             legion_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
 
             if client_calls.any?
-              passthrough_names = client_calls.map { |tc| tc[:name] }.join(',')
+              passthrough_names = client_calls.map(&:name).join(',')
               log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} " \
                        "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map(&:name).join(',')}"
             end
@@ -206,7 +206,7 @@ module Legion
             legion_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
 
             if client_calls.any?
-              passthrough_names = client_calls.map { |tc| tc[:name] }.join(',')
+              passthrough_names = client_calls.map(&:name).join(',')
               log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} " \
                        "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map(&:name).join(',')}"
             end

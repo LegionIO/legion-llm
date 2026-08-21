@@ -483,11 +483,13 @@ module Legion
         end
 
         def native_tool_result_message(tool_call, dispatch_result)
+          # Dual-shape tool loop intermediate: canonical ToolCall (member) or
+          # legacy Hash ([]). No Hash-compat [] on canonical objects (P6 gone).
           {
             role:         :tool,
             content:      native_tool_result_content(dispatch_result),
-            tool_call_id: tool_call[:id],
-            name:         tool_call[:name]
+            tool_call_id: tool_call.respond_to?(:id) ? tool_call.id : tool_call[:id],
+            name:         tool_call.respond_to?(:name) ? tool_call.name : tool_call[:name]
           }.compact
         end
 
@@ -1434,8 +1436,11 @@ module Legion
         end
 
         # Extract text content from a canonical response or hash-shaped legacy result.
+        # N4: branch on the canonical type, not respond_to?(:[]) — the P6
+        # Hash-compat patch (which made canonical objects Hash-lookalike) is
+        # gone, and the canonical read is the direct .text member.
         def canonical_response_text(response)
-          return response.text if response.respond_to?(:text) && !response.respond_to?(:[])
+          return response.text if response.is_a?(Legion::Extensions::Llm::Canonical::Response)
 
           if response.respond_to?(:content)
             response.content
@@ -1534,8 +1539,10 @@ module Legion
 
         def estimate_response_cost
           @extracted_tokens ||= extract_tokens
-          input  = @extracted_tokens.respond_to?(:input_tokens) ? @extracted_tokens.input_tokens : @extracted_tokens[:input].to_i
-          output = @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : @extracted_tokens[:output].to_i
+          # L5: no Hash-compat [] fallback — extract_tokens yields a typed
+          # Usage or {} (no usage observed); non-typed shapes estimate zero.
+          input  = @extracted_tokens.respond_to?(:input_tokens) ? @extracted_tokens.input_tokens : 0
+          output = @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : 0
           return {} unless @resolved_model && (input + output).positive?
 
           estimated = Metering::Pricing.estimate(

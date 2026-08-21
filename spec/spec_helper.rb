@@ -57,7 +57,8 @@ def native_dispatch_result(content: 'test response', input_tokens: 10, output_to
       tc
     else
       canonical::ToolCall.build(
-        id:        tc[:id] || "tc_#{SecureRandom.hex(4)}",
+        # nil id lets ToolCall.build mint the canonical id — no tc_ fabrication.
+        id:        tc[:id],
         name:      tc[:name].to_s,
         arguments: tc[:arguments] || {},
         source:    tc[:source]&.to_sym,
@@ -91,15 +92,16 @@ class SsotStubCallable
 
   def disconnect = (@disconnects += 1)
 
-  def chat(messages:, model:, **)
+  # 0.8.0 callable contract: positional messages (the real boundary shape).
+  def chat(messages, model:, **)
     _ = [messages, model]
     native_dispatch_result(content: @content, input_tokens: @input_tokens,
                            output_tokens: @output_tokens, tool_calls: @tool_calls)
   end
 
-  def stream_chat(messages:, model:, **, &block)
+  def stream_chat(messages, model:, **, &block)
     _ = [messages, model]
-    result = chat(messages: messages, model: model)
+    result = chat(messages, model: model)
     block&.call(Struct.new(:content).new(@content))
     result
   end
