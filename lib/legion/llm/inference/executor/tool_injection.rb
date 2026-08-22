@@ -78,9 +78,28 @@ module Legion
             nil
           end
 
+          # Dispatch-boundary contract: the provider funnel consumes canonical
+          # tools (Provider#enforce_canonical_tools! rejects Hash values). The
+          # executor's legion-owned Types::ToolDefinition is projected to
+          # Canonical::ToolDefinition here, at the boundary — the tool loop
+          # reads the projection's .name/.parameters, the legacy adapter
+          # passes non-Hash values through untouched, and the fleet wire
+          # serializes via as_json.
           def native_dispatch_tools
-            @native_dispatch_tools ||= native_tool_definitions.to_h { |tool| [tool.name.to_sym, tool.to_h] }
+            @native_dispatch_tools ||=
+              native_tool_definitions.to_h { |tool| [tool.name.to_sym, canonical_tool_definition_for_dispatch(tool)] }
           end
+
+          def canonical_tool_definition_for_dispatch(tool)
+            source = tool.source
+            Legion::Extensions::Llm::Canonical::ToolDefinition.build(
+              name:        tool.name,
+              description: tool.description,
+              parameters:  tool.parameters,
+              source:      source.is_a?(Hash) ? source : {}
+            )
+          end
+          private :canonical_tool_definition_for_dispatch
 
           def native_tool_definitions
             @native_tool_definitions ||= begin

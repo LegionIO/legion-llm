@@ -1,9 +1,8 @@
 # frozen_string_literal: true
 
-require 'legion/llm/inventory/capabilities'
 require_relative 'router/resolution'
-require 'legion/llm/inventory/discovery/system'
-require 'legion/llm/inventory/discovery/memory_gate'
+require 'legion/extensions/llm/capabilities'
+require 'legion/extensions/llm/taxonomies'
 require 'legion/extensions/llm/inventory/registry'
 
 # SSOT v3 next_lane selector stack.
@@ -28,12 +27,12 @@ module Legion
       TIER_EXTERNAL = Set[:cloud, :frontier].freeze
       TIER_RANK = { local: 0, direct: 1, fleet: 2, cloud: 3, frontier: 4 }.freeze
 
-      # Lane-type label (the `type` part of the 5-part lane label used by the
-      # ranker and stream-failover diagnostics). lex-llm 0.8.0 deleted
-      # Taxonomies.lane_type_for with the legacy lane-identity vocabulary —
-      # lane identity is the digest (Inventory::Identity.lane_id) — so the
-      # display vocabulary belongs to the consumer. Values stay within
-      # Taxonomies::TYPES.
+      # Lane-type label (the `type` part of the 5-tuple lane label used by the
+      # ranker and stream-failover diagnostics). Consumer-owned display
+      # vocabulary for this gem's log lines; the shared owner
+      # (Legion::Extensions::Llm::Taxonomies.lane_type_for) is the single
+      # mapping the identity composer and the selector stack consume.
+      # Values stay within Taxonomies::TYPES.
       LANE_TYPE_BY_OPERATION = {
         chat: :inference, stream_chat: :inference, embed: :embedding,
         image: :image, transcribe: :audio, translate: :audio, speak: :audio,
@@ -96,7 +95,7 @@ module Legion
             )
           end
 
-          build_selection(ranked: ranked, snapshot: snapshot)
+          build_selection(ranked: ranked, snapshot: snapshot, requirements: requirements)
         end
 
         def validate_exclusions!(exclusions)
@@ -116,25 +115,28 @@ module Legion
 
         # Construct the Phase 1 Selection from the chosen RankedCandidate and its
         # evaluation's same-generation records. Never re-reads the registry.
-        def build_selection(ranked:, snapshot:)
+        # The lane is the only inventory record (in the one bucket an offering
+        # IS a lane) — its 5-tuple lane_id is the selection identity. The
+        # selection freezes the REQUESTED fine operation (a request property
+        # matched against the lane's coarse type by the evaluator), never the
+        # lane's representative operation.
+        def build_selection(ranked:, snapshot:, requirements:)
           evaluation = ranked.evaluation
           lane = evaluation.lane
-          offering = evaluation.offering
           instance = evaluation.instance
 
           Legion::Extensions::Llm::Routing::Selection.new(
             inventory_generation: snapshot.generation,
             lane_id:              lane.lane_id,
             instance_key:         lane.instance_key,
-            offering_id:          lane.offering_id,
             provider_family:      lane.provider_family,
             instance_id:          lane.instance_id,
             model:                lane.model,
-            operation:            lane.operation,
+            operation:            requirements.operation,
             callable_handle:      lane.callable_handle,
             publisher_token_id:   instance.publisher_token_id,
-            capability_evidence:  offering.capability_evidence,
-            context_evidence:     offering.context_evidence,
+            capability_evidence:  lane.capability_evidence,
+            context_evidence:     lane.context_evidence,
             weight_inputs:        ranked.weight_inputs,
             base_weight:          ranked.base_weight,
             preference_ppm:       ranked.preference_ppm,
@@ -229,7 +231,7 @@ module Legion
         end
 
         def canonicalize_capabilities(caps)
-          aliases = Legion::LLM::Inventory::Capabilities::ALIASES
+          aliases = Legion::Extensions::Llm::Capabilities::ALIASES
           Array(caps).compact.filter_map do |c|
             next unless c.respond_to?(:to_s)
 

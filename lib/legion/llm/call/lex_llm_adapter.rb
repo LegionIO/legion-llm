@@ -33,7 +33,7 @@ module Legion
         def chat(model:, messages:, **opts)
           response = provider.chat(
             normalize_messages(messages, system: opts[:system]),
-            model:      model_info(model, offering_metadata: opts[:offering_metadata]),
+            model:      model,
             tools:      normalize_tools(opts[:tools]),
             params:     completion_params(opts),
             headers:    opts[:headers] || {},
@@ -49,7 +49,7 @@ module Legion
           accumulator = build_stream_accumulator
           response = provider.stream_chat(
             normalize_messages(messages, system: opts[:system]),
-            model:      model_info(model, offering_metadata: opts[:offering_metadata]),
+            model:      model,
             tools:      normalize_tools(opts[:tools]),
             params:     completion_params(opts),
             headers:    opts[:headers] || {},
@@ -105,10 +105,9 @@ module Legion
         # 0.8.0 embed artifact (05 §3 / O07): a documented Hash
         # `{ text:, model:, embedding: Array<Float>, usage: Canonical::Usage }`.
         def embed(model:, text:, dimensions: nil, **opts)
-          model_info = model_info(model, offering_metadata: opts[:offering_metadata])
           response = provider.embed(
             text:       text,
-            model:      model_info,
+            model:      model,
             dimensions: dimensions,
             params:     opts[:params] || {},
             headers:    opts[:headers] || {}
@@ -125,10 +124,9 @@ module Legion
         end
 
         def image(model:, prompt:, size:, with: nil, mask: nil, **opts)
-          model_info = model_info(model, offering_metadata: opts[:offering_metadata])
           response = call_image_provider(
             prompt:  prompt,
-            model:   model_info,
+            model:   model,
             size:    size,
             with:    with,
             mask:    mask,
@@ -136,7 +134,7 @@ module Legion
             headers: opts[:headers] || {}
           )
 
-          image_response(response, model: model_info, offering_metadata: opts[:offering_metadata])
+          image_response(response, model: model, offering_metadata: opts[:offering_metadata])
         end
 
         def health(live: false)
@@ -145,7 +143,7 @@ module Legion
 
         def count_tokens(model:, messages:, **)
           {
-            result: provider.count_tokens(messages: normalize_messages(messages), model: model_info(model)),
+            result: provider.count_tokens(messages: normalize_messages(messages), model: model),
             model:  model,
             usage:  {}
           }
@@ -161,11 +159,14 @@ module Legion
           provider.discover_offerings(live: live, **filters)
         end
 
-        # SSOT writer contract: every lex-llm-* actor's `lanes_from_instance` checks
-        # `adapter.respond_to?(:discover_offerings)` and calls it on the adapter. Forward
-        # to the per-instance Provider's catalog method (same body as #offerings). Without
-        # this, every gem actor's compute_lanes_for_scope silently returns [] → Inventory
-        # stays empty → all routing returns NoLaneAvailable.
+        # SSOT writer contract: every lex-llm-* provider actor discovers its
+        # catalog through `adapter.discover_offerings` (forwarded to the
+        # per-instance Provider's catalog method — same body as #offerings),
+        # then publishes the result into the shared inventory registry
+        # (lex-llm Inventory::Registry) on its own discovery cadence,
+        # reconciling write-time weights from current settings (lex-llm
+        # Inventory::WeightReconciler) before each publish. Without this
+        # funnel the actors have no catalog and the registry stays empty.
         def discover_offerings(live: false, **filters)
           offerings(live: live, **filters)
         end
@@ -571,20 +572,10 @@ module Legion
           result
         end
 
-        def model_info(model, offering_metadata: nil)
-          offering = normalize_offering_metadata(offering_metadata)
-          lex_llm_namespace::Model::Info.new(
-            id:             model,
-            name:           offering[:canonical_model_alias] || model,
-            provider:       provider_name,
-            family:         offering[:model_family],
-            context_length: offering.dig(:limits, :context_window),
-            capabilities:   Array(offering[:capabilities]).map(&:to_s),
-            metadata:       offering.merge(
-              max_output_tokens: offering.dig(:limits, :max_output_tokens)
-            ).compact
-          )
-        end
+        # 0.8.0: the provider funnel takes a plain model string (Provider#
+        # model_identity passes bare strings through unchanged); offering
+        # metadata is a response-side fact (response_with_metadata), never a
+        # request-side carrier.
 
         # 0.8.0: messages cross the dispatch boundary as Canonical::Message.
         # The adapter is the edge that turns wire hashes / plain strings into

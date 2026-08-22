@@ -174,23 +174,26 @@ module SsotV3SnapshotFactory
 
   # Build a real Phase 1 Routing::Selection for an activated lane in +snapshot+.
   # Test-only: normally the Router produces this. Supplies valid weight scalars.
+  # The lane is resolved by matching the instance's published lanes on model +
+  # the requested operation's coarse type (the 5-tuple id is the lane's own).
   def selection_for(snapshot:, provider_family:, instance_id:, model:, operation: :chat,
                     weight_inputs: { tier: 1, provider: 1, instance: 1, model_or_offering: 1 })
     key = instance_key(provider_family: provider_family, instance_id: instance_id)
-    offering = snapshot.offerings_for(instance_key: key).find { |o| o.model == model }
-    offering_id = offering.offering_id
-    lane_id = inventory::Identity.lane_id(
-      instance_key: key, operation: operation, model: model, offering_id: offering_id
-    )
-    lane = snapshot.lane(lane_id: lane_id)
+    type = Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: operation)
+    lane = snapshot.lanes_for(instance_key: key).find do |l|
+      l.model == model && Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: l.operation) == type
+    end
+    raise "no lane for #{provider_family}/#{instance_id}/#{model}/#{operation} in snapshot" if lane.nil?
+
     inst = snapshot.instance(instance_key: key)
     base = weight_inputs.values.reduce(1, :*)
     ppm = 1_000_000
     routing::Selection.new(
-      inventory_generation: snapshot.generation, lane_id: lane_id, instance_key: key,
-      offering_id: offering_id, provider_family: key.provider_family, instance_id: key.instance_id,
+      inventory_generation: snapshot.generation, lane_id: lane.lane_id, instance_key: key,
+      provider_family: key.provider_family, instance_id: key.instance_id,
       model: model, operation: operation, callable_handle: lane.callable_handle,
-      publisher_token_id: inst.publisher_token_id, capability_evidence: {}, context_evidence: unknown_value,
+      publisher_token_id: inst.publisher_token_id, capability_evidence: lane.capability_evidence,
+      context_evidence: lane.context_evidence,
       weight_inputs: weight_inputs, base_weight: base, preference_ppm: ppm,
       effective_weight: base * ppm, rendezvous_score: 1
     )

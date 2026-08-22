@@ -7,166 +7,105 @@ rescue LoadError
   nil
 end
 
-# P3 C3: Compliance-by-absence — policy enforcement at the single write_lane choke point.
-# After P3, write_lane is the only path into Inventory.
-# Denied models can never enter the catalog from any source.
-RSpec.describe 'Compliance by absence' do
-  def build_lane(provider:, model:, type: :inference, tier: nil, instance: :default, **opts)
-    resolved_tier = tier || { bedrock: :cloud, anthropic: :frontier, openai: :frontier,
-                               vllm: :direct, ollama: :local, mlx: :local,
-                               azure_foundry: :cloud, gemini: :cloud }[provider] || :cloud
-    {
-      id:              "#{resolved_tier}:#{provider}:#{instance}:#{type}:#{model}",
-      tier:            resolved_tier,
-      provider_family: provider,
-      instance_id:     instance,
-      model:           model,
-      type:            type,
-      capabilities:    opts.delete(:capabilities) || [],
-      limits:          opts.delete(:limits) || {},
-      enabled:         opts.fetch(:enabled, true),
-      cost:            opts.delete(:cost) || {}
-    }.merge(opts)
+# Compliance by absence — the registry publishes the FULL provider catalog;
+# the §9.5 fail-closed model policy (the SettingsSnapshot specificity
+# cascade) is applied at selection and at every display surface, so a
+# denied model never appears in the API surface. The A-store write-choke
+# policy engine is gone with the Pattern A lane store; these laws are
+# pinned against the policy cascade + the display projections.
+RSpec.describe 'Compliance by absence', :ssot_v3 do
+  before do
+    Legion::LLM::Router::SettingsState.reset!
   end
 
-  def write_lane(**)
-    Legion::LLM::Inventory.write_lane(lane: build_lane(**))
-  end
-
-  def invalidate_policy!(provider:)
-    Legion::LLM::Inventory.send(:invalidate_policy_sets!, provider: provider)
+  def policy_for(provider:, model:, instance: 'default')
+    activate(provider_family: provider, instance_id: instance,
+             drafts: [offering_draft(model: model, tier: :direct, supported: %i[chat])])
+    lane = snapshot.lanes_for(instance_key: instance_key(provider_family: provider, instance_id: instance)).first
+    Legion::LLM::Router::SettingsState.current.model_policy_for(offering: lane)
   end
 
   context 'model_blacklist' do
-    it 'rejects blacklisted model — denied model never enters Inventory' do
+    it 'denies a blacklisted model (substring, case-insensitive)' do
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_blacklist: ['claude-old'] }
-      invalidate_policy!(provider: :bedrock)
+      Legion::LLM::Router::SettingsState.reset!
 
-      write_lane(provider: :bedrock, model: 'claude-old')
+      policy = policy_for(provider: :bedrock, model: 'claude-old-2')
 
-      expect(Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-old')).to be_nil
+      expect(policy[:blacklist]).to eq(['claude-old'])
+      expect(policy[:whitelist]).to be_empty
     end
 
-    it 'allows non-blacklisted model through the choke point' do
-      Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_blacklist: ['claude-old'] }
-      invalidate_policy!(provider: :bedrock)
-
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6')
-
-      expect(Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-sonnet-4-6')).not_to be_nil
-    end
-
-    it 'blacklist is provider-scoped — does not block same model name on another provider' do
+    it 'denial is provider-scoped — same model name on another provider is clean' do
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_blacklist: ['claude-sonnet-4-6'] }
-      invalidate_policy!(provider: :bedrock)
+      Legion::LLM::Router::SettingsState.reset!
 
-      write_lane(provider: :openai, model: 'claude-sonnet-4-6')
+      policy = policy_for(provider: :openai, model: 'claude-sonnet-4-6')
 
-      expect(Legion::LLM::Inventory.lane(id: 'frontier:openai:default:inference:claude-sonnet-4-6')).not_to be_nil
+      expect(policy[:blacklist]).to be_empty
     end
   end
 
   context 'model_whitelist (allowlist mode)' do
-    it 'rejects a model not on the whitelist' do
+    it 'a nonempty whitelist admits only listed models' do
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_whitelist: ['claude-sonnet-4-6'] }
-      invalidate_policy!(provider: :bedrock)
+      Legion::LLM::Router::SettingsState.reset!
 
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6')
-      write_lane(provider: :bedrock, model: 'claude-old')
+      sonnet_policy = policy_for(provider: :bedrock, model: 'claude-sonnet-4-6')
+      old_policy    = policy_for(provider: :bedrock, model: 'claude-old')
 
-      models = Legion::LLM::Inventory.lanes_for(provider: :bedrock).map { it[:model] }
-      expect(models).to contain_exactly('claude-sonnet-4-6')
+      expect(sonnet_policy[:whitelist]).to eq(['claude-sonnet-4-6'])
+      expect(old_policy[:whitelist]).to eq(['claude-sonnet-4-6'])
     end
 
-    it 'allows the whitelisted model' do
-      Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_whitelist: ['claude-sonnet-4-6'] }
-      invalidate_policy!(provider: :bedrock)
-
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6')
-
-      expect(Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-sonnet-4-6')).not_to be_nil
-    end
-
-    # sonnet B5 / G-precedence: whitelist > blacklist
-    # If whitelist is set, blacklist is IGNORED — even a model on BOTH lists is admitted.
-    it 'whitelist takes precedence over blacklist: model on both lists is admitted' do
+    # §9.5 precedence (shared owner Provider.policy_allows? + every SSOT
+    # surface): a matching blacklist ALWAYS denies, even when the whitelist
+    # also matches. (The A-store's whitelist-precedence engine is gone.)
+    it 'a model on both lists is denied — blacklist always wins' do
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = {
         model_whitelist: ['claude-sonnet-4-6'],
         model_blacklist: ['claude-sonnet-4-6']
       }
-      invalidate_policy!(provider: :bedrock)
+      Legion::LLM::Router::SettingsState.reset!
+      activate(provider_family: :bedrock, instance_id: 'default',
+               drafts: [offering_draft(model: 'claude-sonnet-4-6', tier: :direct, supported: %i[chat])])
+      lane = snapshot.lanes_for(instance_key: instance_key(provider_family: :bedrock, instance_id: 'default')).first
 
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6')
-
-      expect(Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-sonnet-4-6')).not_to be_nil
-    end
-
-    it 'whitelist mode rejects a model on the blacklist that is NOT on the whitelist' do
-      Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = {
-        model_whitelist: ['claude-sonnet-4-6'],
-        model_blacklist: ['claude-old']
-      }
-      invalidate_policy!(provider: :bedrock)
-
-      write_lane(provider: :bedrock, model: 'claude-old')
-      write_lane(provider: :bedrock, model: 'claude-haiku')
-
-      expect(Legion::LLM::Inventory.lanes_for(provider: :bedrock)).to be_empty
+      expect(Legion::LLM::API::Native::Offerings.policy_permits?(lane)).to be(false)
     end
   end
 
-  context 'cross-provider isolation' do
-    it 'bedrock blacklist does not affect openai' do
-      Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_blacklist: ['claude-sonnet-4-6'] }
-      invalidate_policy!(provider: :bedrock)
-
-      write_lane(provider: :openai, model: 'claude-sonnet-4-6')
-
-      expect(Legion::LLM::Inventory.lane(id: 'frontier:openai:default:inference:claude-sonnet-4-6')).not_to be_nil
-    end
-
-    it 'openai whitelist does not affect bedrock' do
-      Legion::Settings.loader.settings[:extensions][:llm][:openai] = { model_whitelist: ['gpt-4o'] }
+  context 'settings reload picks up new policy' do
+    it 'adding a model to the blacklist after the first read takes effect on the next generation' do
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = {}
-      invalidate_policy!(provider: :openai)
-      invalidate_policy!(provider: :bedrock)
-
-      write_lane(provider: :bedrock, model: 'claude-sonnet-4-6')
-
-      expect(Legion::LLM::Inventory.lane(id: 'cloud:bedrock:default:inference:claude-sonnet-4-6')).not_to be_nil
-    end
-  end
-
-  context 'settings reload invalidates memoized policy sets' do
-    it 'adding a model to blacklist after first write takes effect on next write' do
-      Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = {}
-      invalidate_policy!(provider: :bedrock)
-      write_lane(provider: :bedrock, model: 'claude-old', instance: :a)
-      expect(Legion::LLM::Inventory.lanes_for(provider: :bedrock)).not_to be_empty
+      Legion::LLM::Router::SettingsState.reset!
+      before_policy = policy_for(provider: :bedrock, model: 'claude-old', instance: 'a')
+      expect(before_policy[:blacklist]).to be_empty
 
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_blacklist: ['claude-old'] }
-      invalidate_policy!(provider: :bedrock)
-      write_lane(provider: :bedrock, model: 'claude-old', instance: :b)
-
-      ids = Legion::LLM::Inventory.lanes_for(provider: :bedrock).map { it[:instance_id] }
-      expect(ids).to contain_exactly(:a)
+      Legion::LLM::Router::SettingsState.reload!(
+        llm_settings:       Legion::Settings[:llm],
+        extension_settings: Legion::Settings[:extensions]
+      )
+      after_policy = policy_for(provider: :bedrock, model: 'claude-old', instance: 'b')
+      expect(after_policy[:blacklist]).to eq(['claude-old'])
     end
   end
 
-  # NOTE: HealthTracker.deny_model is deleted in SSOT v3. Runtime IAM-deny is expressed
-  # as an explicit health: kwarg on write_lane (e.g. from a RoutingSession OutcomeClassifier
-  # :access_denied outcome dispatching via Registry). The invariant — denied lane has
-  # lane_weight <= 0 and health.denied — is re-expressed against the write_lane path.
-  context 'runtime IAM-deny writes health.denied' do
-    it 'a denied lane written with health.denied has lane_weight <= 0' do
-      Legion::LLM::Inventory.write_lane(
-        lane:   build_lane(provider: :bedrock, instance: :a, model: 'sonnet'),
-        health: { circuit_state: :closed, denied: true, available: false, adjustment: 0 }
-      )
+  context 'display surfaces — a denied model never appears' do
+    it 'is absent from the models-route projection (lane_entries)' do
+      Legion::Settings.loader.settings[:extensions][:llm][:vllm] = { model_blacklist: ['gemma-12b'] }
+      Legion::LLM::Router::SettingsState.reset!
+      activate(provider_family: :vllm, instance_id: 'gpu-01',
+               drafts: [
+                 offering_draft(model: 'gemma-12b', tier: :direct, supported: %i[chat]),
+                 offering_draft(model: 'gemma-31b', tier: :direct, supported: %i[chat])
+               ])
 
-      lane = Legion::LLM::Inventory.lane(id: 'cloud:bedrock:a:inference:sonnet')
-      expect(lane[:health][:denied]).to be true
-      expect(lane[:lane_weight]).to be <= 0
+      models = Legion::LLM::API::Native::Models.lane_entries.map { |e| e[:model] }
+
+      expect(models).to include('gemma-31b')
+      expect(models).not_to include('gemma-12b')
     end
   end
 
@@ -188,17 +127,17 @@ RSpec.describe 'Compliance by absence' do
       it 'a blacklisted model never appears in /api/llm/offerings' do
         allow(Legion::LLM).to receive(:started?).and_return(true)
         Legion::Settings.loader.settings[:extensions][:llm][:vllm] = { model_blacklist: ['gemma-12b'] }
-        # SSOT v3: the provider publishes the FULL catalog to the new Registry
-        # (the registry does not filter by model policy); the display surface
+        # The provider publishes the FULL catalog to the Registry (the
+        # registry does not filter by model policy); the display surface
         # applies the §9.5 fail-closed policy. Rebuild the SettingsState
         # snapshot after mutating settings.
         Legion::LLM::Router::SettingsState.reset!
-        SsotV3SnapshotFactory.activate(
+        activate(
           provider_family: :vllm,
           instance_id:     'gpu-01',
           drafts:          [
-            SsotV3SnapshotFactory.offering_draft(model: 'gemma-12b', tier: :direct, supported: %i[chat]),
-            SsotV3SnapshotFactory.offering_draft(model: 'gemma-31b', tier: :direct, supported: %i[chat])
+            offering_draft(model: 'gemma-12b', tier: :direct, supported: %i[chat]),
+            offering_draft(model: 'gemma-31b', tier: :direct, supported: %i[chat])
           ]
         )
 

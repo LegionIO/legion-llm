@@ -51,14 +51,14 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       def api_base = 'https://adapter.invalid'
 
       def complete(_messages, model:, **)
-        canonical_response(model: model.id)
+        canonical_response(model: model)
       end
 
       def embed(text:, model:, dimensions:, params: {}, headers: {})
         self.class.last_embed_call = { text: text, model: model, dimensions: dimensions, params: params, headers: headers }
         {
           text:      text,
-          model:     model.respond_to?(:id) ? model.id : model,
+          model:     model,
           embedding: Array.new(dimensions || 2, 0.5),
           usage:     ::Legion::Extensions::Llm::Canonical::Usage.build(input_tokens: 4)
         }
@@ -103,14 +103,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     expect(result.usage.output_tokens).to eq(3)
   end
 
-  it 'passes offering metadata through lex-llm model info when present' do
-    provider_class.define_singleton_method(:last_model) { @last_model }
-    provider_class.define_singleton_method(:last_model=) { |model| @last_model = model }
-    provider_class.define_method(:complete) do |_messages, model:, **|
-      self.class.last_model = model
-      canonical_response(model: model.id)
-    end
-
+  it 'merges offering metadata into the response metadata when present' do
     result = adapter.chat(
       model:             'deployment-a',
       messages:          [{ role: 'user', content: 'hi' }],
@@ -122,12 +115,11 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       }
     )
 
-    expect(provider_class.last_model.metadata).to include(
+    expect(result.metadata[:offering]).to include(
       offering_id:           'azure:default:inference:gpt-4o',
       model_family:          :openai,
       canonical_model_alias: 'gpt-4o'
     )
-    expect(result.metadata[:offering]).to include(offering_id: 'azure:default:inference:gpt-4o')
   end
 
   it 'prepends system instructions to native chat messages' do
@@ -135,7 +127,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     provider_class.define_singleton_method(:last_messages=) { |messages| @last_messages = messages }
     provider_class.define_method(:complete) do |messages, model:, **|
       self.class.last_messages = messages
-      canonical_response(model: model.id)
+      canonical_response(model: model)
     end
 
     adapter.chat(model: 'model-a', messages: [{ role: 'user', content: 'hi' }], system: 'keep it short')
@@ -162,7 +154,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       params:     { input_type: 'query' },
       headers:    { 'X-Test' => '1' }
     )
-    expect(provider_class.last_embed_call[:model]).to be_a(lex_llm_test_namespace::Model::Info)
+    expect(provider_class.last_embed_call[:model]).to eq('embed-a')
   end
 
   it 'maps image dispatch to the documented lex-llm image artifact' do
@@ -177,7 +169,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     )
 
     expect(result[:image]).to eq('https://images.invalid/result.png')
-    expect(result[:model]).to be_a(lex_llm_test_namespace::Model::Info)
+    expect(result[:model]).to eq('image-a')
   end
 
   it 'maps health checks to the lex-llm provider health contract' do
@@ -188,7 +180,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     provider_class.define_method(:complete) do |_messages, model:, **, &block|
       block.call(Canonical::Chunk.text_delta(delta: 'hel', request_id: 'req-1'))
       block.call(Canonical::Chunk.text_delta(delta: 'lo', request_id: 'req-1'))
-      canonical_response(model: model.id, text: 'hello')
+      canonical_response(model: model, text: 'hello')
     end
 
     yielded = []
@@ -393,7 +385,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       )
 
       canonical_response(
-        model:       model.id,
+        model:       model,
         text:        nil,
         stop_reason: :tool_use,
         tool_calls:  [
@@ -520,7 +512,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       messages_seen = nil
       provider_class.define_method(:complete) do |messages, model:, **|
         messages_seen = messages
-        canonical_response(model: model.id)
+        canonical_response(model: model)
       end
 
       adapter.chat(
@@ -536,7 +528,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       messages_seen = nil
       provider_class.define_method(:complete) do |messages, model:, **|
         messages_seen = messages
-        canonical_response(model: model.id)
+        canonical_response(model: model)
       end
 
       adapter.chat(
@@ -551,7 +543,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       messages_seen = nil
       provider_class.define_method(:complete) do |messages, model:, **|
         messages_seen = messages
-        canonical_response(model: model.id)
+        canonical_response(model: model)
       end
 
       adapter.chat(
@@ -566,7 +558,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
       messages_seen = nil
       provider_class.define_method(:complete) do |messages, model:, **|
         messages_seen = messages
-        canonical_response(model: model.id)
+        canonical_response(model: model)
       end
 
       adapter.chat(
@@ -639,7 +631,7 @@ RSpec.describe Legion::LLM::Call::LexLLMAdapter do
     provider_class.define_method(:complete) do |messages, model:, **|
       assistant_msg = messages.find { |m| m.role == :assistant }
       content_text = assistant_msg&.content
-      canonical_response(model: model.id, text: "got: #{content_text}")
+      canonical_response(model: model, text: "got: #{content_text}")
     end
 
     messages = [
