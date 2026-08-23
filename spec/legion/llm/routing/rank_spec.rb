@@ -5,6 +5,12 @@ require 'spec_helper'
 require 'legion/llm/routing/rank'
 
 RSpec.describe Legion::LLM::Routing::Rank do
+  subject(:ranker) do
+    Class.new do
+      include Legion::LLM::Routing::Rank
+    end.new
+  end
+
   # ------------------------------------------------------------------ #
   # Helpers: lane doubles carrying only the members Rank reads          #
   # ------------------------------------------------------------------ #
@@ -32,7 +38,7 @@ RSpec.describe Legion::LLM::Routing::Rank do
   def rank_call(lanes:, routing_seed: 'seed-0001', routing_affinities: [],
                 affinity_strength_bps: 10_000, context_budget: 0,
                 preferred_context_range_for: nil)
-    described_class.call(
+    subject.rank(
       lanes:                       lanes,
       routing_seed:                routing_seed,
       routing_affinities:          routing_affinities,
@@ -49,10 +55,10 @@ RSpec.describe Legion::LLM::Routing::Rank do
   end
 
   # ------------------------------------------------------------------ #
-  # .call — nil when there are no lanes                                  #
+  # #rank — nil when there are no lanes                                  #
   # ------------------------------------------------------------------ #
 
-  describe '.call' do
+  describe '#rank' do
     it 'returns nil when there are no lanes' do
       expect(rank_call(lanes: [])).to be_nil
     end
@@ -185,9 +191,9 @@ RSpec.describe Legion::LLM::Routing::Rank do
       )
 
       # Equal weight + equal score → ascending lane_id decides: 'a' < 'b' → ra.
-      expect(described_class.send(:rank_select_winner, ranked: [ra, rb])).to equal(ra)
+      expect(ranker.send(:rank_select_winner, ranked: [ra, rb])).to equal(ra)
       # Order-independent: reversing the input array still yields ra.
-      expect(described_class.send(:rank_select_winner, ranked: [rb, ra])).to equal(ra)
+      expect(ranker.send(:rank_select_winner, ranked: [rb, ra])).to equal(ra)
     end
   end
 end
