@@ -1,38 +1,10 @@
 plugins:
   - rubocop-legion
 
-# These rubocop-legion cops surface in the local-path 0.1.7 build but were not
-# in the published 0.1.7 gem the repo previously tracked. They flag broad
-# pre-existing patterns unrelated to the N×N enforcement pass; deferred to
-# their own cleanup task. NoUnderscorePrefixedKwargs / NoInlineSettingDefaults
-# / NoDirectDispatch / NoShapeDuckTyping (the B4 set Phase 6 adopts) remain
-# enabled.
-Legion/RescueLogging/NoCapture:
-  Enabled: false
-Legion/ConstantSafety/InheritParam:
-  Enabled: false
-
-# rubocop-legion 0.1.9 cops — enabled as of P0 but deferred enforcement:
-# these four cops flag broad pre-existing patterns in the codebase that
-# predate the SSOT refactor. They gate NEW code from P1 onward; existing
-# violations are cleaned up within each phase as the code they govern is
-# rewritten. Do not add new violations; do not suppress them with inline
-# rubocop:disable without a tracking comment.
-#
-# TODO(P1): enable Legion/Llm/TaxonomyEnum repo-wide after lane taxonomy
-#           is established and all :type/:tier/:circuit_state literals updated.
-# TODO(P1): enable Legion/Llm/RescueLogLevel repo-wide after back-compat
-#           :debug rescue handlers are audited and leveled up.
-# TODO(P1): enable Legion/Llm/NoLoopDo repo-wide after cache/drain loops
-#           are converted to bounded iteration.
 Legion/Llm/TaxonomyEnum:
   Enabled: false
 Legion/Llm/RescueLogLevel:
   Enabled: false
-Legion/Llm/NoLoopDo:
-  Enabled: false
-# SettingsAccessPath is enabled for lib/ only — specs legitimately write
-# settings via the loader path to set up test fixtures.
 Legion/Llm/SettingsAccessPath:
   Exclude:
     - 'spec/**/*'
@@ -41,38 +13,12 @@ AllCops:
   TargetRubyVersion: 3.4
   NewCops: enable
   SuggestExtensions: false
-
-# N×N routing guard cops (Phase 6 enforcement; defaults from rubocop-legion config/default.yml).
-#
-# - NoUnderscorePrefixedKwargs / NoInlineSettingDefaults / NoDirectDispatch are
-#   enabled repo-wide.
-# - NoShapeDuckTyping is enabled on the canonical-only surface where the shape
-#   contract is fully established by translators. Code at the HTTP/wire ingress
-#   (client_translator parse_request, StreamAssembler chunk adapter, DebugFormats
-#   request envelope reader, Response.from_provider_message bridge) legitimately
-#   inspects shape because that's the layer responsible for normalising into
-#   canonical. The cop's scope expands here as the executor's canonical
-#   migration (Phase 4 follow-up) lands.
 Legion/Framework/NoShapeDuckTyping:
   Enabled: true
   Include:
     - 'lib/legion/llm/api/**/*.rb'
     - 'lib/legion/llm/inference/**/*.rb'
   Exclude:
-    # Legacy tree deprecated this release (R11); deleted next minor.
-    - 'lib/legion/llm/api/translators/**/*.rb'
-    - 'lib/legion/llm/api/anthropic/**/*.rb'
-    - 'lib/legion/llm/api/openai/**/*.rb'
-    - 'lib/legion/llm/api/native/**/*.rb'
-    - 'lib/legion/llm/api/shared_helpers.rb'
-    # Boundary code that legitimately bridges wire ↔ canonical: parse_request
-    # at the HTTP ingress, the StreamAssembler chunk adapter (P5 explicitly
-    # accepts both Canonical::Chunk and the legacy StreamChunk shape during
-    # migration), DebugFormats (reads raw env / reflects request), and
-    # shared_extractors (normalises arbitrary thinking content shapes).
-    # Pre-canonical inference steps still navigate raw wire hashes; that
-    # scope tightens once the executor finishes the canonical migration
-    # (Phase 4 follow-up).
     - 'lib/legion/llm/api/client_translators/anthropic_messages.rb'
     - 'lib/legion/llm/api/client_translators/openai_chat.rb'
     - 'lib/legion/llm/api/client_translators/openai_responses.rb'
@@ -108,14 +54,15 @@ Metrics/BlockLength:
   Max: 150
   Exclude:
     - 'spec/**/*'
-
+Lint/EmptyBlock:
+  Exclude:
+    - 'spec/**/*'
 Metrics/AbcSize:
   Max: 110
 Metrics/BlockNesting:
   Max: 4
 Metrics/CyclomaticComplexity:
   Max: 50
-
 Metrics/PerceivedComplexity:
   Max: 50
 Style/Documentation:
@@ -125,8 +72,6 @@ Style/SymbolArray:
 Style/FrozenStringLiteralComment:
   Enabled: true
   EnforcedStyle: always
-Naming/FileName:
-  Enabled: false
 Naming/PredicateMethod:
   Enabled: false
 Metrics/ParameterLists:
