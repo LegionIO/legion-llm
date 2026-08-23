@@ -90,4 +90,76 @@ RSpec.describe Legion::LLM::Routing::Filter do
       expect(router.filter_type).to be_nil
     end
   end
+
+  describe '#filter_embedding_dimensions' do
+    it 'returns the dimensions when the request constrains it' do
+      expect(router.filter_embedding_dimensions(embedding_dimensions: 1536)).to eq(1536)
+    end
+
+    it 'returns nil when no dimensions are constrained' do
+      expect(router.filter_embedding_dimensions).to be_nil
+    end
+  end
+
+  describe '#filter_capability' do
+    it 'returns the capabilities when the request requires them' do
+      expect(router.filter_capability(capabilities: %i[vision tools])).to eq(%i[vision tools])
+    end
+
+    it 'returns nil when no capabilities are required' do
+      expect(router.filter_capability).to be_nil
+    end
+  end
+
+  describe '#filter_availability' do
+    it 'returns :available when the instance is available' do
+      expect(router.filter_availability(instance: double(availability: double(state: :available)))).to eq(:available)
+    end
+
+    it 'returns :unavailable when the instance is unavailable' do
+      expect(router.filter_availability(instance: double(availability: double(state: :unavailable)))).to eq(:unavailable)
+    end
+
+    it 'returns :unknown when the instance is nil' do
+      expect(router.filter_availability(instance: nil)).to eq(:unknown)
+    end
+  end
+
+  describe '#filter_weight' do
+    it 'returns :enabled when all weight inputs are positive' do
+      expect(router.filter_weight(lane: double(weight_inputs: { tier: 2, provider: 2 }))).to eq(:enabled)
+    end
+
+    it 'returns :disabled when any weight input is zero' do
+      expect(router.filter_weight(lane: double(weight_inputs: { tier: 2, provider: 0 }))).to eq(:disabled)
+    end
+  end
+
+  describe '#filter_fleet' do
+    it 'returns :not_applicable for a non-fleet tier' do
+      expect(router.filter_fleet(lane: double(tier: :direct, metadata: {}))).to eq(:not_applicable)
+    end
+
+    it 'returns :supported for a fleet lane with the exact contract' do
+      expect(router.filter_fleet(lane: double(tier: :fleet, metadata: { fleet_execution_contract: 'exact_offering_v1' }))).to eq(:supported)
+    end
+
+    it 'returns :legacy for a fleet lane with no contract' do
+      expect(router.filter_fleet(lane: double(tier: :fleet, metadata: {}))).to eq(:legacy)
+    end
+  end
+
+  describe '#filter_policy' do
+    it 'returns :allowed when the model passes empty whitelist and blacklist' do
+      expect(router.filter_policy(lane: double(model: 'anthropic/claude'), whitelist: [], blacklist: [])).to eq(:allowed)
+    end
+
+    it 'returns :denied when the model is blacklisted' do
+      expect(router.filter_policy(lane: double(model: 'anthropic/claude'), whitelist: [], blacklist: ['anthropic'])).to eq(:denied)
+    end
+
+    it 'returns :denied when the model is not in a non-empty whitelist' do
+      expect(router.filter_policy(lane: double(model: 'openai/gpt'), whitelist: ['anthropic'], blacklist: [])).to eq(:denied)
+    end
+  end
 end
