@@ -120,7 +120,12 @@ module Legion
           segments = (lex || '').delete_prefix('lex-').split('-')
           runner_path = (%w[Legion Extensions] + segments.map(&:capitalize) + ['Runners', source[:runner]]).join('::')
 
-          runner = Kernel.const_get(runner_path)
+          # Resolve from Object (top-level) with inherit=false: the runner path is
+          # absolute (Legion::Extensions::...), so the first segment must resolve
+          # against Object's own constants — Kernel.const_get(path, false) fails on
+          # it because top-level constants live on Object, not Kernel. Keeping
+          # inherit=false still refuses to resolve a runner via an ancestor chain.
+          runner = Object.const_get(runner_path, false)
           fn = source[:function].to_sym
           result = runner.send(fn, **symbolize_keys(tool_call[:arguments] || {}))
           { status: :success, result: result }
