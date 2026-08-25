@@ -18,9 +18,10 @@ module Legion
       #   openai    { error: { message:, type:, code: } }
       #   anthropic { type: 'error', error: { type:, message: } }
       #
-      # Retry-After semantics (D16): routing_too_early_retry_after setting,
-      # owned by Legion::LLM::Settings::API. Prefer SettingsState when loaded;
-      # fall back to direct bracket access on the configured path.
+      # Retry-After semantics (D16): routing_too_early_retry_after setting, owned
+      # by Legion::LLM::Settings::API. This is a static API-surface setting (not a
+      # per-request-frozen selection input), so it is read by direct bracket
+      # access on the registered default (see self.retry_after_value).
       module RoutingErrorMapper
         include Legion::Logging::Helper
         extend  Legion::Logging::Helper

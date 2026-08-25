@@ -99,7 +99,13 @@ module Legion
         private
 
         def initialize(generation:, llm_settings:, extension_settings:)
+          # SSOT v4: the migrated router tunables live under [:llm][:router]
+          # (defaults in settings/router.rb) — the SAME namespace the live Router
+          # and Filter read — so the snapshot sources them from :router, not the
+          # legacy :routing tree. tier_weights stays on :routing and
+          # routing_too_early_retry_after on :api (neither was migrated).
           routing = llm_settings[:routing] || {}
+          router  = llm_settings[:router] || {}
           api     = llm_settings[:api] || {}
           # Deep-copy the extension :llm subtree so we own it immutably.
           ext_llm = extension_settings[:llm] || {}
@@ -107,39 +113,39 @@ module Legion
 
           @generation                      = validate_generation!(generation)
           @tier_weights                    = validate_tier_weights!(routing[:tier_weights] || {})
-          @context_headroom_ppm            = resolve_context_headroom_ppm!(routing)
+          @context_headroom_ppm            = resolve_context_headroom_ppm!(router)
           @input_framing_overhead_tokens   = validate_nonneg_integer!(
             :input_framing_overhead_tokens,
-            routing.fetch(:input_framing_overhead_tokens, 1_024)
+            router.fetch(:input_framing_overhead_tokens, 1_024)
           )
           @affinity_strength_bps = validate_affinity_strength_bps!(
-            routing.fetch(:affinity_strength_bps, 10_000)
+            router.fetch(:affinity_strength_bps, 10_000)
           )
           @maximum_attempts = validate_positive_integer!(
             :maximum_attempts,
-            routing.fetch(:max_attempts, 3)
+            router.fetch(:max_attempts, 3)
           )
           @routing_too_early_retry_after = validate_retry_after!(
             api.fetch(:routing_too_early_retry_after, 1)
           )
           @allow_body_routing_hints = validate_boolean!(
             :allow_body_routing_hints,
-            routing.fetch(:allow_body_routing_hints, false)
+            router.fetch(:allow_body_routing_hints, false)
           )
           @body_model_hint_whitelist = validate_string_list!(
             :body_model_hint_whitelist,
-            routing.fetch(:body_model_hint_whitelist, [])
+            router.fetch(:body_model_hint_whitelist, [])
           )
           @body_model_hint_blacklist = validate_string_list!(
             :body_model_hint_blacklist,
-            routing.fetch(:body_model_hint_blacklist, [])
+            router.fetch(:body_model_hint_blacklist, [])
           )
           @auto_routing_model_aliases = validate_string_list!(
             :auto_routing_model_aliases,
-            routing.fetch(:auto_routing_model_aliases, [])
+            router.fetch(:auto_routing_model_aliases, [])
           )
           @auto_routing_model_alias_metadata = validate_alias_metadata!(
-            routing.fetch(:auto_routing_model_alias_metadata, {}),
+            router.fetch(:auto_routing_model_alias_metadata, {}),
             @auto_routing_model_aliases
           )
         end
@@ -207,9 +213,9 @@ module Legion
           end.freeze
         end
 
-        def resolve_context_headroom_ppm!(routing)
-          if routing.key?(:context_headroom)
-            val = routing[:context_headroom]
+        def resolve_context_headroom_ppm!(router)
+          if router.key?(:context_headroom)
+            val = router[:context_headroom]
             unless val.is_a?(Numeric) && !val.nan? && !val.infinite? && val.positive? && val <= 1
               raise ArgumentError,
                     "context_headroom must be a finite Numeric in (0, 1], got #{val.inspect}"
@@ -223,7 +229,7 @@ module Legion
             return ppm
           end
 
-          validate_context_headroom_ppm!(routing.fetch(:context_headroom_ppm, 900_000))
+          validate_context_headroom_ppm!(router.fetch(:context_headroom_ppm, 900_000))
         end
 
         def validate_context_headroom_ppm!(raw)

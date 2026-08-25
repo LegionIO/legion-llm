@@ -109,7 +109,7 @@ module Legion
           # ----------------------------------------------------------------
 
           def run_single(router:, text:, dimensions:, task:)
-            (router.maximum_attempts + 1).times do
+            router.maximum_attempts.times do
               attempt = router.next_attempt!
               chunks = prepare_chunks(text, attempt_context: attempt, task: task)
 
@@ -151,7 +151,7 @@ module Legion
           # ----------------------------------------------------------------
 
           def run_batch(router:, texts:, dimensions:, task:)
-            (router.maximum_attempts + 1).times do
+            router.maximum_attempts.times do
               attempt = router.next_attempt!
               per_item_chunks = texts.map { |t| prepare_chunks(t, attempt_context: attempt, task: task) }
               flat = per_item_chunks.flatten(1)

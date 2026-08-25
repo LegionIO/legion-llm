@@ -844,11 +844,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'honors native provider layer settings' do
-      Legion::Settings.set_prop(:llm, {
-                                  provider_layer: {
-                                    mode: 'auto'
-                                  }
-                                })
+      merge_llm_settings({
+                           provider_layer: {
+                             mode: 'auto'
+                           }
+                         })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
@@ -861,11 +861,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
         tools:    [Class.new]
       )
       tool_executor = described_class.new(tool_request)
-      Legion::Settings.set_prop(:llm, {
-                                  provider_layer: {
-                                    mode: 'native'
-                                  }
-                                })
+      merge_llm_settings({
+                           provider_layer: {
+                             mode: 'native'
+                           }
+                         })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(tool_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
@@ -881,11 +881,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
         end
       end
       stub_const('Legion::Settings::Extensions', extensions_mod)
-      Legion::Settings.set_prop(:llm, {
-                                  'provider_layer' => {
-                                    'mode' => 'auto'
-                                  }
-                                })
+      merge_llm_settings({
+                           'provider_layer' => {
+                             'mode' => 'auto'
+                           }
+                         })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
@@ -907,11 +907,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
         tools:    []
       )
       toolless_executor = described_class.new(toolless_request)
-      Legion::Settings.set_prop(:llm, {
-                                  'provider_layer' => {
-                                    'mode' => 'auto'
-                                  }
-                                })
+      merge_llm_settings({
+                           'provider_layer' => {
+                             'mode' => 'auto'
+                           }
+                         })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(toolless_executor.send(:use_native_dispatch?, :bedrock)).to be(true)

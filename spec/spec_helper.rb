@@ -201,6 +201,16 @@ def seed_discovered_models(models)
   Legion::LLM::Inventory::Discovery.instance_variable_set(:@discovered_models, map)
 end
 
+# Apply [:llm] settings overrides WITHOUT wiping the rest of the tree. A plain
+# Legion::Settings.set_prop(:llm, {...}) REPLACES the whole [:llm] subtree, which
+# drops [:llm][:router] (and other defaults) and then breaks Request.build's
+# auto_routing_model? read. Shallow-merge the overrides onto the current tree so
+# the specified top-level keys are force-replaced (matching set_prop's intent)
+# while sibling keys such as [:llm][:router] survive.
+def merge_llm_settings(overrides)
+  Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(overrides))
+end
+
 RSpec.configure do |config|
   config.before(:each) do
     Legion::Settings.reset!

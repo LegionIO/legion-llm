@@ -433,11 +433,11 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
           ] }
         ]
         router = build_router(
-          operation: :stream_chat,
-          tools: [{ name: 'search', description: 'Search' }],
-          thinking: { enabled: true, budget_tokens: 1024 },
+          operation:       :stream_chat,
+          tools:           [{ name: 'search', description: 'Search' }],
+          thinking:        { enabled: true, budget_tokens: 1024 },
           response_format: { type: :json_schema, schema: { type: 'object' } },
-          messages: messages
+          messages:        messages
         )
         router.required_capabilities.each do |cap|
           expect(canonical).to include(cap), "#{cap.inspect} is not a canonical capability"
@@ -486,7 +486,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
       it 'counts euro sign (U+20AC) as 3 bytes, not 1 char' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
-        router = build_router(system: "€", messages: [])
+        router = build_router(system: '€', messages: [])
         expect(router.input_bound).to eq(3)
         expect(router.input_bound).not_to eq(1)
       end
@@ -1705,9 +1705,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
         expect(result.kind).to eq(:invalid_request)
         expect(result.http_status).to eq(400)
         # The pin must be normalized to UTF-8 in the rejection record
-        if result.respond_to?(:explicit_pins) && result.explicit_pins[:model]
-          expect(result.explicit_pins[:model].encoding).to eq(Encoding::UTF_8)
-        end
+        expect(result.explicit_pins[:model].encoding).to eq(Encoding::UTF_8) if result.respond_to?(:explicit_pins) && result.explicit_pins[:model]
       end
     end
   end
@@ -1800,12 +1798,12 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
         router = build_router
         exclusion = Legion::Extensions::Llm::Routing::Exclusion.new(
           target_kind: :attempt_target,
-          target: Legion::Extensions::Llm::Routing::AttemptTargetKey.new(
+          target:      Legion::Extensions::Llm::Routing::AttemptTargetKey.new(
             provider_family: :vllm, instance_id: 'helios1', model: 'gemma-12b'
           ),
-          reason: 'attempt_consumed',
-          evidence: { attempt_number: 1 },
-          lifetime: :request
+          reason:      'attempt_consumed',
+          evidence:    { attempt_number: 1 },
+          lifetime:    :request
         )
         router.add_exclusion(exclusion: exclusion)
 
@@ -1902,7 +1900,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
         fleet_contract_state: :not_applicable,
         weight_state:         :enabled
       }
-      Legion::LLM::Routing::CandidateEvaluation.new(**defaults.merge(axes))
+      Legion::LLM::Routing::CandidateEvaluation.new(**defaults, **axes)
     end
 
     # Minimal lane stub — reject_no_candidates never reads lane methods.
@@ -2008,6 +2006,31 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
         expect(result).to be_a(Legion::Extensions::Llm::Routing::Rejection)
         expect(result.kind).to eq(:too_early)
         expect(result.http_status).to eq(425)
+      end
+    end
+
+    # --------------------------------------------------------------------- #
+    # Step 4b: pinned scope conclusively unsupported → :failed_dependency    #
+    # (a terminal 424, NOT a retryable 503 — guards the 529 fail-forward     #
+    # regression when a capable pin-MISMATCHED sibling exists)               #
+    # --------------------------------------------------------------------- #
+
+    context 'pinned scope all operation-unsupported with a capable pin-mismatched sibling (step 4b)' do
+      it 'returns :failed_dependency 424, not a retryable :service_unavailable 503' do
+        router = build_router
+        cands  = [
+          # The pinned target: matches the pin but cannot perform the operation.
+          synth_candidate(pin_state: :match, operation_state: :unsupported),
+          # A fully capable lane under a DIFFERENT provider (pin mismatch) — it must
+          # NOT downgrade the terminal pinned failure to a retryable 503.
+          synth_candidate(pin_state: :mismatch, operation_state: :supported, capability_state: :supported)
+        ]
+        result = reject(router, candidates: cands,
+                                statuses:   [synth_pub_status(state: :complete)],
+                                model_pin:  'nomic-embed')
+        expect(result).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+        expect(result.kind).to eq(:failed_dependency)
+        expect(result.http_status).to eq(424)
       end
     end
 

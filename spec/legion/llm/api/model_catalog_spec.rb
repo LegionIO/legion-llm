@@ -21,10 +21,12 @@ RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
     ext_llm = Legion::Settings.loader.settings.dig(:extensions, :llm) || {}
     ext_llm.delete(:model_whitelist)
     ext_llm.delete(:model_blacklist)
-    Legion::Settings.loader.settings[:llm][:routing][:auto_routing_model_aliases] =
-      Legion::LLM::Settings.routing_defaults[:auto_routing_model_aliases]
-    Legion::Settings.loader.settings[:llm][:routing][:auto_routing_model_alias_metadata] =
-      Legion::LLM::Settings.routing_defaults[:auto_routing_model_alias_metadata]
+    # SSOT v4: auto_routing_model_aliases/_metadata live under [:llm][:router]
+    # (the snapshot sources them there), so restore the canonical home.
+    Legion::Settings.loader.settings[:llm][:router][:auto_routing_model_aliases] =
+      Legion::LLM::Settings::Router.defaults[:auto_routing_model_aliases]
+    Legion::Settings.loader.settings[:llm][:router][:auto_routing_model_alias_metadata] =
+      Legion::LLM::Settings::Router.defaults[:auto_routing_model_alias_metadata]
     Legion::LLM::Routing::SettingsState.reset!
   end
 
@@ -448,7 +450,7 @@ RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
     end
 
     it 'alias metadata context_window takes precedence over registered settings' do
-      Legion::Settings.loader.settings[:llm][:routing][:auto_routing_model_alias_metadata] = {
+      Legion::Settings.loader.settings[:llm][:router][:auto_routing_model_alias_metadata] = {
         'copilot-utility-small' => { owned_by: 'legionio', context_window: 32_768 }
       }
       Legion::LLM::Routing::SettingsState.reset!

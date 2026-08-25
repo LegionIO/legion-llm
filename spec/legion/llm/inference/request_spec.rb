@@ -84,8 +84,11 @@ RSpec.describe Legion::LLM::Inference::Request do
       expect(req.extra[:requested_model_alias]).to eq('legionio')
     end
 
-    it 'honors overridden routing auto model aliases from settings' do
-      Legion::Settings[:llm][:routing][:auto_routing_model_aliases] = %w[legionio autobot]
+    it 'honors overridden auto model aliases from the canonical [:llm][:router] settings' do
+      # SSOT v4: ingress normalization reads auto_routing_model_aliases from the
+      # SAME [:llm][:router] home the Router/Filter read — not the legacy
+      # [:llm][:routing] tree. A custom alias configured there is recognized here.
+      Legion::Settings[:llm][:router][:auto_routing_model_aliases] = %w[legionio autobot]
       req = described_class.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { model: 'autobot' }

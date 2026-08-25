@@ -277,14 +277,14 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
     end
 
     it 'reads from settings via set_prop' do
-      Legion::Settings.set_prop(:llm, {
-                                  tools: {
-                                    trigger: {
-                                      scan_depth: 3,
-                                      tool_limit: 8
-                                    }
-                                  }
-                                })
+      merge_llm_settings({
+                           tools: {
+                             trigger: {
+                               scan_depth: 3,
+                               tool_limit: 8
+                             }
+                           }
+                         })
       expect(step.send(:trigger_scan_depth)).to eq(3)
     end
   end
@@ -301,14 +301,14 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
     end
 
     it 'reads from settings via set_prop' do
-      Legion::Settings.set_prop(:llm, {
-                                  tools: {
-                                    trigger: {
-                                      scan_depth: 3,
-                                      tool_limit: 8
-                                    }
-                                  }
-                                })
+      merge_llm_settings({
+                           tools: {
+                             trigger: {
+                               scan_depth: 3,
+                               tool_limit: 8
+                             }
+                           }
+                         })
       expect(step.send(:trigger_tool_limit)).to eq(8)
     end
   end

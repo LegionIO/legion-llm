@@ -327,8 +327,10 @@ module Legion
 
           def self.auto_routing_model?(model)
             m = model.to_s.strip.downcase
-            routing_settings = Legion::Settings.dig(:llm, :routing) || {}
-            configured = routing_settings[:auto_routing_model_aliases]
+            # SSOT v4: read auto_routing_model_aliases from the canonical
+            # [:llm][:router] home (default in settings/router.rb) so the catalog
+            # view agrees with ingress (request.rb) and the Router (filter.rb).
+            configured = Legion::Settings[:llm][:router][:auto_routing_model_aliases]
             aliases = Array(configured).map { |entry| entry.to_s.strip.downcase }.reject(&:empty?)
             aliases = [AUTO_ROUTING_MODEL_ID] if aliases.empty?
             aliases.include?(m)

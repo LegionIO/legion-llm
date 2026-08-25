@@ -184,8 +184,11 @@ module Legion
         end
 
         def self.auto_routing_model?(model)
-          routing_settings = Legion::Settings.dig(:llm, :routing) || {}
-          configured = routing_settings[:auto_routing_model_aliases]
+          # SSOT v4: auto_routing_model_aliases is a router tunable — read it from
+          # the canonical [:llm][:router] home (default in settings/router.rb) so
+          # ingress normalization agrees with the Router's body-model-hint ladder
+          # (filter.rb). No .dig / no || shadow-default: the default guarantees the key.
+          configured = Legion::Settings[:llm][:router][:auto_routing_model_aliases]
           aliases = Array(configured).map { |entry| entry.to_s.strip.downcase }.reject(&:empty?)
           aliases = [AUTO_ROUTING_MODEL_KEY] if aliases.empty?
           aliases.include?(model.to_s.strip.downcase)

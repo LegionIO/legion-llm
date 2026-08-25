@@ -117,11 +117,11 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       end
 
       it 'returns true when debate.enabled is set via set_prop' do
-        Legion::Settings.set_prop(:llm, {
-                                    debate: {
-                                      enabled: true
-                                    }
-                                  })
+        merge_llm_settings({
+                             debate: {
+                               enabled: true
+                             }
+                           })
         step = host_class.new(base_request)
         expect(step.debate_enabled?(base_request)).to be true
       end
@@ -316,17 +316,17 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
     it 'derives the advocate from the resolved lane (not a configured default) via set_prop' do
       # SSOT v3: the advocate is the provider/model the router actually resolved for
       # this request, never Settings default_provider/default_model.
-      Legion::Settings.set_prop(:llm, {
-                                  default_provider: :vllm,
-                                  default_model:    'should-not-be-used',
-                                  debate:           {
-                                    enabled:          true,
-                                    default_rounds:   1,
-                                    max_rounds:       2,
-                                    challenger_model: 'openai:gpt-4o',
-                                    judge_model:      'anthropic:claude-sonnet-4-5'
-                                  }
-                                })
+      merge_llm_settings({
+                           default_provider: :vllm,
+                           default_model:    'should-not-be-used',
+                           debate:           {
+                             enabled:          true,
+                             default_rounds:   1,
+                             max_rounds:       2,
+                             challenger_model: 'openai:gpt-4o',
+                             judge_model:      'anthropic:claude-sonnet-4-5'
+                           }
+                         })
       Legion::Settings[:extensions][:llm] = {
         anthropic: {
           enabled:       true,

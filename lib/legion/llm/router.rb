@@ -485,6 +485,14 @@ module Legion
                               gen, counts, pins)
         end
 
+        # Step 4b — failed_dependency 424 within the PINNED scope (extracted to
+        # keep this ladder under the complexity budget).
+        pin_dependency = pin_scope_dependency_rejection(
+          policy_eligible: policy_eligible, all_scopes_complete: all_scopes_complete,
+          gen: gen, counts: counts, pins: pins
+        )
+        return pin_dependency if pin_dependency
+
         has_tripped   = policy_eligible.any? { |c| c.availability_state == :unavailable }
         fit_available = policy_eligible.any? do |c|
           conclusively_fit?(c) && c.availability_state == :available && c.pin_state == :match
@@ -537,6 +545,28 @@ module Legion
         # Step 9 — service_unavailable 503 (all eligible consumed or unavailable).
         rejection_of(:service_unavailable, 503,
                      'all eligible candidates are consumed or unavailable for this request',
+                     gen, counts, pins)
+      end
+
+      # Step 4b — failed_dependency 424 within the PINNED scope. When explicit
+      # pins are present and EVERY pin-MATCHED eligible lane conclusively lacks the
+      # requested operation or capability, the pinned target cannot serve this
+      # request and explicit pins never fall back to another provider. A capable
+      # pin-MISMATCHED sibling must NOT downgrade this to the retryable 503 at
+      # step 9 (that reintroduces the 529 fail-forward regression bar 6 guards
+      # against). Pin-matched lanes that are merely :unknown (not conclusively
+      # unsupported) are not counted, so they still fall through to the
+      # settled-unknown 400 (step 6) or the transient too_early (step 7). Returns
+      # the Rejection or nil (no pinned-scope dependency failure).
+      def pin_scope_dependency_rejection(policy_eligible:, all_scopes_complete:, gen:, counts:, pins:, **)
+        return nil unless pins.any? && all_scopes_complete
+
+        pin_matched = policy_eligible.select { |c| c.pin_state == :match }
+        return nil unless pin_matched.any? &&
+                          pin_matched.all? { |c| c.operation_state == :unsupported || c.capability_state == :unsupported }
+
+        rejection_of(:failed_dependency, 424,
+                     'pinned target conclusively lacks the required operation or capability',
                      gen, counts, pins)
       end
 

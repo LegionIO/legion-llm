@@ -752,12 +752,15 @@ module Legion
       end
 
       # Mirror the executor's build_ssot_router so the probe selection uses
-      # the exact same routing derivation the dispatch will.
+      # the exact same routing derivation the dispatch will — including the raw
+      # body model source (metadata[:client_model], byte-for-byte with
+      # inference/executor/routing.rb). An explicit routing[:model] pin still
+      # reaches the Router as a trusted constraint, so no fallback is needed here.
       def ssot_cache_router(request)
         Legion::LLM::Router.new(
           request:    request,
           operation:  RESPONSE_CACHE_OPERATION,
-          body_model: request.metadata[:client_model] || request.routing&.[](:model)
+          body_model: request.metadata[:client_model]
         )
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.ssot_cache_router')
