@@ -299,7 +299,8 @@ module Legion
 
         def strip_thinking_tags(text)
           result = text
-          loop do
+          stripped = true
+          while stripped
             stripped = false
             THINKING_TAG_PAIRS.each do |open_tag, close_tag|
               next unless result.start_with?(open_tag)
@@ -309,7 +310,6 @@ module Legion
               stripped = true
               break
             end
-            break unless stripped
           end
           result
         end

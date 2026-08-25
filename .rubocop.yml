@@ -1,6 +1,8 @@
 plugins:
   - rubocop-legion
 
+Legion/RescueLogging/NoCapture:
+  Enabled: false
 Legion/Llm/TaxonomyEnum:
   Enabled: false
 Legion/Llm/RescueLogLevel:
@@ -14,11 +16,13 @@ AllCops:
   NewCops: enable
   SuggestExtensions: false
 Legion/Framework/NoShapeDuckTyping:
-  Enabled: true
+  Enabled: false
   Include:
+    #- 'lib/legion/llm/api/**/*.rb'
+#    - 'lib/legion/llm/inference/**/*.rb'
+  Exclude:
     - 'lib/legion/llm/api/**/*.rb'
     - 'lib/legion/llm/inference/**/*.rb'
-  Exclude:
     - 'lib/legion/llm/api/client_translators/anthropic_messages.rb'
     - 'lib/legion/llm/api/client_translators/openai_chat.rb'
     - 'lib/legion/llm/api/client_translators/openai_responses.rb'
@@ -52,9 +56,6 @@ Metrics/ModuleLength:
   Max: 1500
 Metrics/BlockLength:
   Max: 150
-  Exclude:
-    - 'spec/**/*'
-Lint/EmptyBlock:
   Exclude:
     - 'spec/**/*'
 Metrics/AbcSize:

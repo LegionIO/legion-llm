@@ -47,7 +47,7 @@ module Legion
 
           log.debug "[llm][executor] action=native_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
 
-          loop do
+          while round <= max_rounds
             @native_tool_loop_round = round
             result = dispatch_provider_request(capability: :chat, operation: :chat, messages: messages)
             tool_calls = extract_tool_calls(result)
@@ -168,7 +168,7 @@ module Legion
 
           log.debug "[llm][executor] action=native_streaming_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
 
-          loop do
+          while round <= max_rounds
             @native_tool_loop_round = round
             result = dispatch_provider_request(
               capability:   :stream,

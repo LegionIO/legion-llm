@@ -29,9 +29,10 @@ module Legion
         CompatWarning.warn_once('Legion::LLM::Discovery', 'Legion::LLM::Inventory::Discovery')
         Inventory::Discovery
       when :Capabilities
-        # Moved to Legion::LLM::Inventory::Capabilities in v0.14.0
-        CompatWarning.warn_once('Legion::LLM::Capabilities', 'Legion::LLM::Inventory::Capabilities')
-        Inventory::Capabilities
+        # The A-side alias table was deleted with the Pattern A lane store;
+        # the single table is the shared owner in lex-llm.
+        CompatWarning.warn_once('Legion::LLM::Capabilities', 'Legion::Extensions::Llm::Capabilities')
+        Legion::Extensions::Llm::Capabilities
       when :Pipeline
         CompatWarning.warn_once('Legion::LLM::Pipeline', 'Legion::LLM::Inference')
         Inference
@@ -104,7 +105,7 @@ module Legion
         PipelineError
       when :Routes, :API
         require_relative '../llm/api'
-        const_get(name)
+        const_get(name, false)
       else
         super
       end
@@ -112,16 +113,8 @@ module Legion
 
     # Discovery moved to Legion::LLM::Inventory::Discovery in v0.14.0.
     # rule_generator.rb defines Legion::LLM::Discovery as a real module (not via const_missing).
-    # Add System/MemoryGate const aliases and method_missing delegation so callers keep working.
+    # Add method_missing delegation so legacy callers keep working.
     if defined?(Legion::LLM::Discovery) && defined?(Legion::LLM::Inventory::Discovery)
-      # Mirror nested constants used by callers
-      %i[System MemoryGate].each do |cname|
-        Legion::LLM::Discovery.const_set(cname, Legion::LLM::Inventory::Discovery.const_get(cname)) unless Legion::LLM::Discovery.const_defined?(cname, false)
-      end
-      # Mirror module-level constants used in specs
-      %i[EMBEDDING_TIER_ORDER MODEL_FAMILY_DELIMITERS MODEL_DIVERGENCE_SAMPLE_SIZE].each do |cname|
-        Legion::LLM::Discovery.const_set(cname, Legion::LLM::Inventory::Discovery.const_get(cname)) unless Legion::LLM::Discovery.const_defined?(cname, false)
-      end
       # Forward all method calls (incl private, for .send) to Inventory::Discovery
       Legion::LLM::Discovery.singleton_class.define_method(:method_missing) do |name, *args, **kwargs, &block|
         target = Legion::LLM::Inventory::Discovery
@@ -129,14 +122,6 @@ module Legion
       end
       Legion::LLM::Discovery.singleton_class.define_method(:respond_to_missing?) do |name, include_private = false|
         Legion::LLM::Inventory::Discovery.respond_to?(name, include_private) || super(name, include_private)
-      end
-      # Forward instance_variable_set/get to Inventory::Discovery so test setup that
-      # sets @discovered_models etc. on Discovery actually affects the real module.
-      Legion::LLM::Discovery.singleton_class.define_method(:instance_variable_set) do |name, value|
-        Legion::LLM::Inventory::Discovery.instance_variable_set(name, value)
-      end
-      Legion::LLM::Discovery.singleton_class.define_method(:instance_variable_get) do |name|
-        Legion::LLM::Inventory::Discovery.instance_variable_get(name)
       end
     end
   end
