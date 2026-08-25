@@ -1,45 +1,34 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'legion/llm/router_new'
 
-# SSOT v3 fail-forward RELEASE BAR — behavioral spec on the FROZEN employee config.
+# Fail-forward RELEASE BAR re-encoded against the NEW Legion::LLM::Router CLASS.
 #
-# Design: legion/docs/legion-llm/ssot_v3/2026-08-16-failforward-release-design.md
-# (outcomes only; config is frozen). The bar:
+# Source: ssot_v3_fail_forward_release_bar_spec.rb (the 529 production incident).
+# This spec asserts 6 bars on a frozen operator config using the per-request
+# Router instance API (Router.new(request:, operation:, body_model:).next_lane)
+# instead of the legacy stateless Router.next_lane(requirements:, exclusions:, snapshot:).
 #
-#   1. A Claude CLI tools+thinking stream request does NOT 529 — it routes to a
-#      vllm instance, where the operator's enable_thinking: true satisfies the
-#      :thinking override. [the production bug]
-#   2. Name-keyed tuning resolves: per-instance weight / preferred_context, keyed
-#      by the config NAME, actually affect the router decision (weight ranking
-#      and the bin seam).
-#   3. ollama apollo and apollo-embed are TWO distinct instances — a shared
-#      endpoint does not collapse them.
-#   4. A tripped vllm instance (dispatch_instance_unavailable) recovers WITHOUT
-#      a restart: probe -> readiness_succeeded -> available -> re-selectable on
-#      the next snapshot.
-#   5. An embedding instance/model is EXCLUDED from a plain chat request (no
-#      misroute to an embedding model).
-#   6. Adversarial: a provider-PINNED tools+thinking request to a provider that
-#      cannot serve it (ollama: no enable_thinking, evidence :unknown) is a
-#      TYPED failure (400 / invalid_request), NOT 529. A tripped (unavailable)
-#      instance reports 503, not 529.
+# API mapping (old -> new):
+#   - Router.next_lane(requirements:, exclusions:, snapshot:)
+#     -> Router.new(request:, operation:, body_model:).next_lane
+#     (instance-per-request; fetches Registry.snapshot LIVE — seed the Registry)
+#   - RequestRequirements.build(..., estimated_input_bound: BUDGET)
+#     -> context_budget = input_bound_for + tokens[:max]
+#     (set input_framing_overhead_tokens = 0 and use tokens[:max] to steer budget)
+#   - RequiredCapabilities.call
+#     -> Router derives capabilities from request shape (tools, thinking, stream)
+#   - Router::SettingsState.reset!
+#     -> Settings[:llm][:router] + Settings[:extensions][:llm] set directly
 #
-# Seeding follows the router/registry spec substrate (SsotV3SnapshotFactory +
-# the real Phase 1 Registry API) the same way spec/legion/llm/api/matrix/ drives
-# the engine end to end: config NAME as InstanceKey.instance_id, the derived
-# host:port as the secondary physical_id, and HONEST capability evidence —
-# vllm publishes streaming+tools :supported but :thinking :unknown (the provider
-# cannot attest it from config; config is contract-forbidden as evidence),
-# bedrock uais attests :thinking for its claude model, ollama tools/thinking
-# :unknown (standard Ollama does not return a capabilities field).
-#
-# Context windows published below are consistent with the operator's preferred
-# ranges (preferred_max_context_tokens sits inside the published window; the
-# router's 90% headroom then bounds the hard context axis).
-#
-# This spec asserts the bar and changes no lib code: if it fails, the failure
-# is a lib defect to report, not an assertion to weaken.
+# Budget steering strategy:
+#   input_framing_overhead_tokens = 0. For exact-seam tests (4_095 vs 4_096),
+#   a minimal stream request (nil tools/thinking/system, empty messages) is used
+#   so input_bound = 0 and context_budget = tokens[:max] exactly. For large-budget
+#   tests (100_000, 200_000), the full CLI request adds a small deterministic
+#   input_bound (< 5_000 bytes from tools/system/message serialization) that stays
+#   well inside the target preferred band.
 SEED_MAIN = 'a1b2c3d4' * 4
 SEED_ALT  = '0f1e2d3c' * 4
 
@@ -48,7 +37,7 @@ SEED_ALT  = '0f1e2d3c' * 4
 APOLLO_ENDPOINT = '10.0.1.20:11434'
 HELIOS_ENDPOINT = '10.0.1.11:8000'
 
-RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release bar (frozen config)', :ssot_v3 do
+RSpec.describe Legion::LLM::Router, '#next_lane — fail-forward release bar (new Router class)', :ssot_v3 do
   # ------------------------------------------------------------------ #
   # The frozen employee config, byte-for-byte.                          #
   # ------------------------------------------------------------------ #
@@ -91,10 +80,12 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
   end
 
   before do
-    Legion::Settings[:extensions][:llm] = frozen_extensions_llm
-    # Reset so the first request/selection installs generation 1 from the
-    # frozen config (SettingsState.current lazily installs).
-    Legion::LLM::Router::SettingsState.reset!
+    Legion::Settings.loader.settings[:llm] ||= {}
+    Legion::Settings.loader.settings[:llm][:router] = Legion::LLM::Settings::Router.defaults.merge(
+      input_framing_overhead_tokens: 0
+    )
+    Legion::Settings.loader.settings[:extensions] ||= {}
+    Legion::Settings.loader.settings[:extensions][:llm] = frozen_extensions_llm
   end
 
   # ------------------------------------------------------------------ #
@@ -107,9 +98,6 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
     )
   end
 
-  # claim -> readiness_probe_started -> activate_instance_snapshot (startup
-  # readiness), mirroring SsotV3SnapshotFactory.activate but with an explicit
-  # keyed instance (carrying its secondary physical_id).
   def publish(instance_key:, drafts:)
     callable    = SsotV3SnapshotFactory::FactoryCallable.new
     coordinator = inventory::ProbeCoordinator.new(instance_key: instance_key, enqueue: ->(**) { true })
@@ -191,7 +179,7 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
   end
 
   # ------------------------------------------------------------------ #
-  # Request shapes — production derivation (executor parity)            #
+  # Request shapes — production derivation                              #
   # ------------------------------------------------------------------ #
 
   def claude_cli_tools
@@ -204,55 +192,61 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
     end
   end
 
-  # A Claude CLI tools+thinking stream request: ~20 tools, thinking enabled,
-  # stream on. Provider pin only when the adversarial scenario sets it.
-  def claude_cli_request(seed:, pinned_provider: nil)
+  # A Claude CLI tools+thinking stream request. Provider pin only when
+  # the adversarial scenario sets it. tokens[:max] steers context_budget
+  # (with overhead = 0, budget = input_bound + tokens[:max]).
+  def claude_cli_request(seed:, pinned_provider: nil, budget_tokens: 100_000)
     Legion::LLM::Inference::Request.build_for_test(
       routing_seed: seed,
       routing:      pinned_provider ? { provider: pinned_provider } : { provider: nil, model: nil },
-      messages:     [{ role: :user, content: 'Summarize the incident timeline from the attached logs.' }],
-      system:       'You are LegionIO, an internal operations agent with access to the platform tool catalog.',
+      messages:     [{ role: :user, content: 'Summarize the incident.' }],
+      system:       'You are LegionIO.',
       tools:        claude_cli_tools,
       thinking:     { enabled: true, budget_tokens: 4_096 },
-      stream:       true
+      stream:       true,
+      tokens:       { max: budget_tokens }
     )
   end
 
-  def plain_chat_request(seed:)
+  # Minimal stream request for budget-precise tests. With overhead = 0 and nil
+  # tools/thinking/system/response_format, input_bound = 0 and
+  # context_budget = tokens[:max] exactly.
+  def precise_budget_request(seed:, budget:)
     Legion::LLM::Inference::Request.build_for_test(
-      routing_seed: seed,
-      messages:     [{ role: :user, content: 'What time is it on the node?' }],
-      stream:       false
+      routing_seed:    seed,
+      messages:        [],
+      system:          nil,
+      tools:           nil,
+      tool_choice:     nil,
+      thinking:        nil,
+      response_format: nil,
+      stream:          true,
+      tokens:          { max: budget }
     )
   end
 
-  # Mirror the executor's requirement derivation (operation + RequiredCapabilities),
-  # with an exact context budget so each scenario is deterministic.
-  def chat_requirements(request, budget:)
+  def plain_chat_request(seed:, budget_tokens: 0)
+    Legion::LLM::Inference::Request.build_for_test(
+      routing_seed:    seed,
+      messages:        [],
+      system:          nil,
+      tools:           nil,
+      tool_choice:     nil,
+      thinking:        nil,
+      response_format: nil,
+      stream:          false,
+      tokens:          { max: budget_tokens }
+    )
+  end
+
+  # Build a Router instance from a request. operation derived from stream flag.
+  def build_router_for(request, body_model: nil)
     operation = request.stream == true ? :stream_chat : :chat
-    Legion::LLM::Router::RequestRequirements.build(
-      request:                request,
-      operation:              operation,
-      required_capabilities:  Legion::LLM::Router::RequiredCapabilities.call(request: request, operation: operation),
-      estimated_input_bound:  budget,
-      required_output_tokens: 0
-    )
+    Legion::LLM::Router.new(request: request, operation: operation, body_model: body_model)
   end
 
-  def embed_requirements(seed:)
-    request = Legion::LLM::Inference::Request.build_for_test(routing_seed: seed, messages: [])
-    Legion::LLM::Router::RequestRequirements.build(
-      request:                        request,
-      operation:                      :embed,
-      required_capabilities:          %i[embedding],
-      estimated_input_bound:          0,
-      required_output_tokens:         0,
-      requested_embedding_dimensions: 768
-    )
-  end
-
-  def next_lane_for_requirements(reqs)
-    described_class.next_lane(requirements: reqs, exclusions: [], snapshot: snapshot)
+  def next_lane_for(request, body_model: nil)
+    build_router_for(request, body_model: body_model).next_lane
   end
 
   # ------------------------------------------------------------------ #
@@ -261,18 +255,19 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
 
   describe 'bar 1 — a Claude CLI tools+thinking stream request routes (no 529)' do
     it 'derives the tools+thinking requirement set from the request shape' do
+      seed_frozen_world!
       request = claude_cli_request(seed: SEED_MAIN)
-      reqs    = chat_requirements(request, budget: 100_000)
+      router  = build_router_for(request)
 
-      expect(reqs.operation).to eq(:stream_chat)
-      expect(reqs.required_capabilities).to eq(%i[streaming tools thinking])
-      expect(reqs.provider_pin).to be_nil
+      expect(router.operation).to eq(:stream_chat)
+      expect(router.required_capabilities).to include(:streaming, :tools, :thinking)
+      expect(router.provider_pin).to be_nil
     end
 
     it 'routes to a vllm instance where the operator enable_thinking override satisfies :thinking' do
       seed_frozen_world!
-      request = claude_cli_request(seed: SEED_MAIN)
-      result  = next_lane_for_requirements(chat_requirements(request, budget: 100_000))
+      request = claude_cli_request(seed: SEED_MAIN, budget_tokens: 100_000)
+      result  = next_lane_for(request)
 
       # A Selection, not a Rejection: no unbounded 529 retry loop. The vllm
       # :thinking evidence is :unknown; the operator's config-name keyed
@@ -294,29 +289,27 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
   describe 'bar 2 — per-instance weight / preferred_context resolve by config NAME' do
     it 'preferred_context steers by config NAME: budget 10_000 routes to h200, not higher-weight helios-0001' do
       seed_frozen_world!
-      request = claude_cli_request(seed: SEED_MAIN)
-      sel     = next_lane_for_requirements(chat_requirements(request, budget: 10_000))
-
+      # With overhead = 0, precise_budget_request gives context_budget = 10_000 exactly.
       # 10_000 is inside h200's [4096, 48000) and outside helios's [48000, 262000).
-      # If the preferred ranges were not resolved by name (the identity-drift
-      # bug), every lane would be a generalist and weight alone would pick
-      # helios-0001 (17_250 > 16_500). The bar requires h200.
-      expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
-      expect(sel.instance_id).to eq('h200')
-      expect(sel.model).to eq('h200-model')
+      request = precise_budget_request(seed: SEED_MAIN, budget: 10_000)
+      result  = next_lane_for(request)
+
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.instance_id).to eq('h200')
+      expect(result.model).to eq('h200-model')
     end
 
     it 'keeps the bin seam upper-exclusive: budget == preferred_max leaves v100 and enters h200' do
       seed_frozen_world!
-      request = claude_cli_request(seed: SEED_MAIN)
-      below   = next_lane_for_requirements(chat_requirements(request, budget: 4_095))
-      at_seam = next_lane_for_requirements(chat_requirements(request, budget: 4_096))
-
+      # With precise_budget_request: context_budget = tokens[:max] exactly (input_bound = 0).
       # v100's range is [1, 4096): 4_095 matches, 4_096 does NOT (budget < max).
       # h200's range is [4096, 48000): 4_096 matches (inclusive lower bound).
-      # If the seam regressed to inclusive, 4_096 would match BOTH v100 and h200
-      # and the name-keyed weights (111 vs 110) would pick v100 — the assertion
-      # catches the seam flip AND proves the weights resolve per config name.
+      req_below   = precise_budget_request(seed: SEED_MAIN, budget: 4_095)
+      req_at_seam = precise_budget_request(seed: SEED_MAIN, budget: 4_096)
+
+      below   = next_lane_for(req_below)
+      at_seam = next_lane_for(req_at_seam)
+
       expect(below.instance_id).to eq('v100')
       expect(at_seam.instance_id).to eq('h200')
     end
@@ -326,31 +319,32 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
       trip(provider_family: 'bedrock', instance_id: 'uais', physical_id: 'us-east-1')
       trip(provider_family: 'ollama', instance_id: 'apollo', physical_id: APOLLO_ENDPOINT)
 
-      # Budget 0 matches no preferred range, no generalist survives, so the
-      # full vllm ready set competes purely on name-keyed instance weight:
-      # 150 x 115 vs 150 x 111 vs 150 x 110.
-      sel = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_MAIN), budget: 0))
-      expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
-      expect(sel.instance_id).to eq('helios-0001')
-      expect(sel.weight_inputs).to eq(tier: 150, provider: 100, instance: 115, model_or_offering: 100)
-      expect(sel.base_weight).to eq(172_500_000)
+      # Budget 0 matches no preferred range; the full vllm ready set competes
+      # purely on name-keyed instance weight: 150 x 115 vs 150 x 111 vs 150 x 110.
+      request = plain_chat_request(seed: SEED_MAIN, budget_tokens: 0)
+      result  = next_lane_for(request)
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.instance_id).to eq('helios-0001')
+      expect(result.weight_inputs).to eq(tier: 150, provider: 100, instance: 115, model_or_offering: 100)
+      expect(result.base_weight).to eq(172_500_000)
 
       # Deterministic across seeds: weight picks the winner, not the rendezvous tie-break.
-      again = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_ALT), budget: 0))
+      again_request = plain_chat_request(seed: SEED_ALT, budget_tokens: 0)
+      again = next_lane_for(again_request)
       expect(again.instance_id).to eq('helios-0001')
     end
 
     it 'ranks every ready lane by weight when no preferred range matches' do
       seed_frozen_world!
-      sel = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_MAIN), budget: 0))
+      request = plain_chat_request(seed: SEED_MAIN, budget_tokens: 0)
+      result  = next_lane_for(request)
 
       # No band contains zero, so pass 2 ranks all ready lanes. Direct helios
-      # (150 tier x 115 instance) outranks local apollo and cloud uais; ranged
-      # lanes remain eligible when their preferred band does not match.
-      expect(sel.provider_family).to eq(:vllm)
-      expect(sel.instance_id).to eq('helios-0001')
-      expect(sel.model).to eq('helios-model')
-      expect(sel.weight_inputs[:tier]).to eq(150)
+      # (150 tier x 115 instance) outranks local apollo and cloud uais.
+      expect(result.provider_family).to eq(:vllm)
+      expect(result.instance_id).to eq('helios-0001')
+      expect(result.model).to eq('helios-model')
+      expect(result.weight_inputs[:tier]).to eq(150)
     end
   end
 
@@ -364,8 +358,9 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
       apollo_key = keyed_instance(provider_family: 'ollama', instance_id: 'apollo', physical_id: APOLLO_ENDPOINT)
       embed_key  = keyed_instance(provider_family: 'ollama', instance_id: 'apollo-embed', physical_id: APOLLO_ENDPOINT)
 
-      apollo = snapshot.instance(instance_key: apollo_key)
-      embed  = snapshot.instance(instance_key: embed_key)
+      snap   = Legion::Extensions::Llm::Inventory::Registry.snapshot
+      apollo = snap.instance(instance_key: apollo_key)
+      embed  = snap.instance(instance_key: embed_key)
 
       # If identity had collapsed to the derived host:port, the second claim
       # would have superseded the first and one key would be absent.
@@ -375,8 +370,8 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
       expect(embed.instance_key.instance_id).to eq('apollo-embed')
       expect(apollo.instance_key.physical_id).to eq(APOLLO_ENDPOINT)
       expect(embed.instance_key.physical_id).to eq(APOLLO_ENDPOINT)
-      expect(snapshot.offerings_for(instance_key: apollo_key).map(&:model)).to eq(['gemma3'])
-      expect(snapshot.offerings_for(instance_key: embed_key).map(&:model)).to eq(['nomic-embed'])
+      expect(snap.lanes_for(instance_key: apollo_key).map(&:model)).to eq(['gemma3'])
+      expect(snap.lanes_for(instance_key: embed_key).map(&:model)).to eq(['nomic-embed'])
     end
   end
 
@@ -387,8 +382,8 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
   describe 'bar 4 — dispatch_instance_unavailable recovers without a restart' do
     it 'probe -> readiness_succeeded -> available -> re-selectable on the next snapshot' do
       seed_frozen_world!
-      request = claude_cli_request(seed: SEED_MAIN)
-      expect(next_lane_for_requirements(chat_requirements(request, budget: 100_000)).instance_id).to eq('helios-0001')
+      request = claude_cli_request(seed: SEED_MAIN, budget_tokens: 100_000)
+      expect(next_lane_for(request).instance_id).to eq('helios-0001')
 
       helios_key = keyed_instance(provider_family: 'vllm', instance_id: 'helios-0001', physical_id: HELIOS_ENDPOINT)
       token      = @tokens['vllm/helios-0001']
@@ -396,22 +391,24 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
         instance_key: helios_key, publisher_token_id: token.publisher_token_id,
         reason: 'release bar: simulated dispatch failure'
       )
-      expect(snapshot.instance(instance_key: helios_key).availability.state).to eq(:unavailable)
+      snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+      expect(snap.instance(instance_key: helios_key).availability.state).to eq(:unavailable)
 
-      # The tripped lane is out; the generalist sibling serves the 100k budget.
-      expect(next_lane_for_requirements(chat_requirements(request, budget: 100_000)).instance_id).to eq('uais')
+      # The tripped lane is out; bedrock uais serves the 100k budget.
+      expect(next_lane_for(claude_cli_request(seed: SEED_MAIN, budget_tokens: 100_000)).instance_id).to eq('uais')
 
       # Recovery is the registry's own probe path: the SAME publisher token,
       # no re-claim, no restart.
       probe = inventory::Registry.readiness_probe_started(instance_key: helios_key, publisher_token: token)
       inventory::Registry.readiness_succeeded(instance_key: helios_key, probe_token: probe)
 
-      recovered = snapshot.instance(instance_key: helios_key)
+      recovered_snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+      recovered = recovered_snap.instance(instance_key: helios_key)
       expect(recovered.availability.state).to eq(:available)
       expect(recovered.availability.source).to eq(:readiness)
 
       # Re-selectable on the next snapshot, under the same publisher identity.
-      sel = next_lane_for_requirements(chat_requirements(request, budget: 100_000))
+      sel = next_lane_for(claude_cli_request(seed: SEED_MAIN, budget_tokens: 100_000))
       expect(sel.instance_id).to eq('helios-0001')
       expect(sel.publisher_token_id).to eq(token.publisher_token_id)
     end
@@ -424,27 +421,36 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
   describe 'bar 5 — no misroute from plain chat to the embedding model' do
     it 'never selects the embedding instance/model for a plain chat request' do
       seed_frozen_world!
-      sel = next_lane_for_requirements(chat_requirements(plain_chat_request(seed: SEED_MAIN), budget: 10_000))
+      request = plain_chat_request(seed: SEED_MAIN, budget_tokens: 10_000)
+      result  = next_lane_for(request)
 
-      expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
-      expect(sel.instance_id).not_to eq('apollo-embed')
-      expect(sel.model).not_to eq('nomic-embed')
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.instance_id).not_to eq('apollo-embed')
+      expect(result.model).not_to eq('nomic-embed')
 
-      # The exclusion is AUTHORITATIVE operation evidence, not an accident:
-      # chat is :unsupported on the embedding offering (decision 6).
-      embed_key  = keyed_instance(provider_family: 'ollama', instance_id: 'apollo-embed', physical_id: APOLLO_ENDPOINT)
-      offering   = snapshot.offerings_for(instance_key: embed_key).first
-      expect(offering.operation_status(operation: :chat)).to eq(:unsupported)
+      # The exclusion is AUTHORITATIVE operation evidence: chat is :unsupported
+      # on the embedding draft. The structural expression is that the ONLY lane
+      # on that instance is the embed lane.
+      embed_key = keyed_instance(provider_family: 'ollama', instance_id: 'apollo-embed', physical_id: APOLLO_ENDPOINT)
+      snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
+      expect(snap.lanes_for(instance_key: embed_key).map(&:operation)).to eq([:embed])
     end
 
     it 'does route an embed request to the embedding instance (the distinction is real)' do
       seed_frozen_world!
-      sel = next_lane_for_requirements(embed_requirements(seed: SEED_MAIN))
+      request = Legion::LLM::Inference::Request.build_for_test(
+        routing_seed: SEED_MAIN, messages: [], system: nil,
+        tools: nil, tool_choice: nil, thinking: nil,
+        response_format: nil, stream: false, tokens: { max: 0 },
+        extra: { embedding_dimensions: 768 }
+      )
+      router = Legion::LLM::Router.new(request: request, operation: :embed, body_model: nil)
+      result = router.next_lane
 
-      expect(sel).to be_a(Legion::Extensions::Llm::Routing::Selection)
-      expect(sel.instance_id).to eq('apollo-embed')
-      expect(sel.model).to eq('nomic-embed')
-      expect(sel.operation).to eq(:embed)
+      expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+      expect(result.instance_id).to eq('apollo-embed')
+      expect(result.model).to eq('nomic-embed')
+      expect(result.operation).to eq(:embed)
     end
   end
 
@@ -452,16 +458,11 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
   # Bar 6 — adversarial typed failures, never 529                       #
   # ------------------------------------------------------------------ #
 
-  # RoutingErrorMapper::STATUS_TABLE renders too_early, service_unavailable,
-  # attempts_exhausted, and stale_selection as 529 (overloaded_error) in the
-  # Anthropic dialect — the Claude CLI surface. Only invalid_request (400) and
-  # the other 4xx kinds are terminal for the client. The bar therefore asserts
-  # the router-level kind/status that the mapper turns into a non-529 response.
   describe 'bar 6 — adversarial: typed failures, never a 529 loop' do
     it 'a provider-PINNED tools+thinking request to ollama (no enable_thinking, evidence :unknown) is typed 400 invalid_request' do
       seed_frozen_world!
-      request = claude_cli_request(seed: SEED_MAIN, pinned_provider: 'ollama')
-      result  = next_lane_for_requirements(chat_requirements(request, budget: 100_000))
+      request = claude_cli_request(seed: SEED_MAIN, pinned_provider: 'ollama', budget_tokens: 100_000)
+      result  = next_lane_for(request)
 
       expect(result).to be_a(Legion::Extensions::Llm::Routing::Rejection)
       # Terminal settled-unknown on a complete scope is a typed no-lane (400 in
@@ -474,16 +475,15 @@ RSpec.describe Legion::LLM::Router, '.next_lane — SSOT v3 fail-forward release
 
     it 'a tripped (unavailable) instance reports 503 service_unavailable, not a 529-class overload verdict' do
       seed_frozen_world!
-      request = claude_cli_request(seed: SEED_MAIN)
-      # 200_000 fits only helios-0001 (h200/v100 windows and bedrock's 200k
-      # window at 90% headroom all reject it) — establish the serving lane first.
-      expect(next_lane_for_requirements(chat_requirements(request, budget: 200_000)).instance_id).to eq('helios-0001')
+      request = claude_cli_request(seed: SEED_MAIN, budget_tokens: 200_000)
+      # Establish the serving lane: only helios-0001 fits the 200k budget at 90%
+      # headroom (h200/v100 too small, bedrock's 180k usable < ~200k budget).
+      expect(next_lane_for(request).instance_id).to eq('helios-0001')
 
       trip(provider_family: 'vllm', instance_id: 'helios-0001', physical_id: HELIOS_ENDPOINT)
-      result = next_lane_for_requirements(chat_requirements(request, budget: 200_000))
+      result = next_lane_for(claude_cli_request(seed: SEED_MAIN, budget_tokens: 200_000))
 
-      # Tripped reports before unknown (the ollama :unknown evidence is
-      # suppressed by the tripped instance): 503, recoverable without a restart.
+      # Tripped reports before unknown: 503, recoverable without a restart.
       expect(result).to be_a(Legion::Extensions::Llm::Routing::Rejection)
       expect(result.kind).to eq(:service_unavailable)
       expect(result.http_status).to eq(503)

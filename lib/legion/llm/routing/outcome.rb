@@ -1,13 +1,18 @@
 # frozen_string_literal: true
 
+require 'legion/logging/helper'
+require 'legion/extensions/llm/routing/records'
+
 module Legion
   module LLM
-    module Router
-      # Provider-neutral outcome classification (SSOT v3 §16). Consumes ONLY a
-      # Phase 1 normalized ProviderOutcome plus the exact AttemptContext; it never
-      # sees a provider name, HTTP status, or response body for branching.
-      module OutcomeClassifier
-        extend Legion::Logging::Helper
+    module Routing
+      # Outcome classification mixin — consumes a Phase 1 normalized
+      # ProviderOutcome plus the AttemptContext and classifies into
+      # success/retry/terminal. Shaped like Rank (mixin + records in one file).
+      #
+      # Included into the Router class; all methods are INSTANCE methods.
+      module Outcome
+        include Legion::Logging::Helper
 
         # Immutable global-availability transition. The only accepted kind is
         # :instance_unavailable; identity/token/reason come from the AttemptContext
@@ -15,7 +20,7 @@ module Legion
         class GlobalTransition
           attr_reader :kind, :instance_key, :publisher_token_id, :reason
 
-          def initialize(instance_key:, publisher_token_id:, reason:, kind: :instance_unavailable)
+          def initialize(instance_key:, publisher_token_id:, reason:, kind: :instance_unavailable, **)
             raise ArgumentError, "unsupported global transition kind: #{kind.inspect}" unless kind == :instance_unavailable
 
             @kind = kind
@@ -31,19 +36,19 @@ module Legion
         class Action
           attr_reader :disposition, :global_transition, :exclusions, :rejection, :outcome
 
-          def self.success(outcome:)
+          def self.success(outcome:, **)
             new(disposition: :success, outcome: outcome)
           end
 
-          def self.retry(exclusions:, outcome:, global_transition: nil)
+          def self.retry(exclusions:, outcome:, global_transition: nil, **)
             new(disposition: :retry, exclusions: exclusions, global_transition: global_transition, outcome: outcome)
           end
 
-          def self.terminal(rejection:, outcome:)
+          def self.terminal(rejection:, outcome:, **)
             new(disposition: :terminal, rejection: rejection, outcome: outcome)
           end
 
-          def initialize(disposition:, outcome:, exclusions: [], global_transition: nil, rejection: nil)
+          def initialize(disposition:, outcome:, exclusions: [], global_transition: nil, rejection: nil, **)
             case disposition
             when :success
               raise ArgumentError, 'success carries no rejection/transition' if rejection || global_transition
@@ -64,9 +69,9 @@ module Legion
             freeze
           end
 
-          def success? = @disposition == :success
-          def retry? = @disposition == :retry
-          def terminal? = @disposition == :terminal
+          def success?(**) = @disposition == :success
+          def retry?(**) = @disposition == :retry
+          def terminal?(**) = @disposition == :terminal
         end
 
         # Outcomes that retry against a different eligible target when attempts remain.
@@ -76,7 +81,7 @@ module Legion
           authentication authorization billing model_missing context_rejected
         ].freeze
 
-        # Terminal provider outcomes → best-fit Rejection kind. cancelled/client_disconnect
+        # Terminal provider outcomes -> best-fit Rejection kind. cancelled/client_disconnect
         # preserve the outcome so the owner can skip HTTP rendering for a gone client.
         TERMINAL_REJECTION_KIND = {
           policy:            :policy_denied,
@@ -86,14 +91,19 @@ module Legion
           client_disconnect: :invalid_request
         }.freeze
 
-        def self.call(outcome:, attempt_context:, attempts_remaining:)
+        # Classify a dispatch outcome into success/retry/terminal.
+        # Pure classification — returns an Action; does NOT apply exclusions
+        # or transitions (the Router's stateful #classify does that).
+        #
+        # @param outcome [ProviderOutcome] the normalized outcome from dispatch
+        # @param attempt_context [AttemptContext] the attempt's routing context (selection, etc.)
+        # @param attempts_remaining [Integer] how many attempts remain after this one
+        # @return [Action]
+        def classify_outcome(outcome:, attempt_context:, attempts_remaining:, **)
           kind = outcome.kind
           return Action.success(outcome: outcome) if kind == :success
 
           if kind == :instance_unavailable
-            # The exact instance MUST be marked unavailable regardless of attempts;
-            # attempts_exhausted (if any) is produced by RoutingSession#next_attempt's
-            # counter guard on the following selection.
             return Action.retry(
               exclusions: [], outcome: outcome,
               global_transition: GlobalTransition.new(
@@ -105,7 +115,7 @@ module Legion
           end
 
           if RETRYABLE.include?(kind)
-            return attempts_exhausted(outcome) unless attempts_remaining.positive?
+            return attempts_exhausted_rejection(outcome) unless attempts_remaining.positive?
 
             return Action.retry(exclusions: quota_exclusions(outcome), outcome: outcome)
           end
@@ -116,20 +126,22 @@ module Legion
           Action.terminal(outcome: outcome, rejection: terminal_rejection(rejection_kind, outcome))
         end
 
-        def self.quota_exclusions(outcome)
+        private
+
+        # Build request-lifetime exclusions from the outcome's quota domain.
+        # Returns an empty array when the domain is not a QuotaDomainKey.
+        def quota_exclusions(outcome, **)
           domain = outcome.quota_domain
           return [] unless domain.is_a?(Legion::Extensions::Llm::Routing::QuotaDomainKey)
 
-          # Authoritative provider-declared domain. A domain no other lane publishes
-          # excludes nothing (harmless), so we never broaden past the consumed target.
           [Legion::Extensions::Llm::Routing::Exclusion.new(
             target_kind: :quota_domain, target: domain, reason: 'rate_limited',
             evidence: { retry_after: outcome.retry_after }, lifetime: :request
           )]
         end
-        private_class_method :quota_exclusions
 
-        def self.attempts_exhausted(outcome)
+        # Terminal action for attempts-exhausted: 503 rejection.
+        def attempts_exhausted_rejection(outcome, **)
           Action.terminal(
             outcome:   outcome,
             rejection: Legion::Extensions::Llm::Routing::Rejection.new(
@@ -138,16 +150,15 @@ module Legion
             )
           )
         end
-        private_class_method :attempts_exhausted
 
-        def self.terminal_rejection(kind, outcome)
+        # Build a terminal rejection for policy/invalid/safety/cancelled outcomes.
+        def terminal_rejection(kind, outcome, **)
           http = kind == :policy_denied ? 403 : 400
           Legion::Extensions::Llm::Routing::Rejection.new(
             kind: kind, reason: "terminal outcome=#{outcome.kind}: #{outcome.reason}",
             inventory_generation: 0, candidate_counts: {}, http_status: http
           )
         end
-        private_class_method :terminal_rejection
       end
     end
   end

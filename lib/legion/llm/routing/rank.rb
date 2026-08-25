@@ -33,7 +33,7 @@ module Legion
                       :effective_weight, :rendezvous_score
 
           def initialize(lane:, weight_inputs:, base_weight:, preference_ppm:,
-                         effective_weight:, rendezvous_score:)
+                         effective_weight:, rendezvous_score:, **)
             @lane             = lane
             @weight_inputs    = weight_inputs&.freeze
             @base_weight      = base_weight
@@ -63,7 +63,7 @@ module Legion
         #   { min:, max: } range (nil-open bounds) or nil when unconfigured.
         # @return [RankedLane, nil]
         def rank(lanes:, routing_seed:, routing_affinities:, affinity_strength_bps:,
-                 context_budget:, preferred_context_range_for:)
+                 context_budget:, preferred_context_range_for:, **)
           lanes = Array(lanes)
           return nil if lanes.empty?
 
@@ -105,7 +105,7 @@ module Legion
         # Partition lanes by preferred-band containment. A lane with no
         # configured range is out_of_band (generalist). A lane whose range does
         # not contain the budget is also out_of_band — never excluded.
-        def rank_band_partition(lanes:, context_budget:, preferred_context_range_for:)
+        def rank_band_partition(lanes:, context_budget:, preferred_context_range_for:, **)
           in_band     = []
           out_of_band = []
           lanes.each do |lane|
@@ -121,14 +121,14 @@ module Legion
 
         # True when +budget+ falls within the (nil-open) range [min, max) —
         # the range seam is upper-exclusive (budget < max).
-        def rank_range_contains?(range:, budget:)
+        def rank_range_contains?(range:, budget:, **)
           (range[:min].nil? || budget >= range[:min]) &&
             (range[:max].nil? || budget < range[:max])
         end
 
         # Compute the base weight, preference ppm, effective weight, and
         # rendezvous score for each lane, returning a frozen RankedLane each.
-        def rank_compute_ranked(lanes:, routing_seed:, routing_affinities:, affinity_strength_bps:)
+        def rank_compute_ranked(lanes:, routing_seed:, routing_affinities:, affinity_strength_bps:, **)
           lanes.map do |lane|
             base  = lane.base_weight
             ppm   = rank_preference_ppm(
@@ -155,7 +155,7 @@ module Legion
 
         # preference_ppm = 1_000_000 + (lane_affinity * strength) / 200, with
         # Ruby integer floor division, clamped to 500_000..1_500_000.
-        def rank_preference_ppm(lane:, routing_affinities:, affinity_strength_bps:)
+        def rank_preference_ppm(lane:, routing_affinities:, affinity_strength_bps:, **)
           lane_aff = rank_lane_affinity(lane:, routing_affinities:)
           raw      = 1_000_000 + ((lane_aff * affinity_strength_bps) / AFFINITY_PPM_DIVISOR)
           raw.clamp(MIN_PREFERENCE_PPM, MAX_PREFERENCE_PPM)
@@ -163,7 +163,7 @@ module Legion
 
         # Sum every matching affinity score_bps for this lane, then clamp to
         # [-10_000, 10_000] (one clamp, after summation).
-        def rank_lane_affinity(lane:, routing_affinities:)
+        def rank_lane_affinity(lane:, routing_affinities:, **)
           return 0 if routing_affinities.empty?
 
           raw_sum = routing_affinities.sum { |entry| rank_affinity_score(entry:, lane:) }
@@ -172,7 +172,7 @@ module Legion
 
         # Returns +entry[:score_bps]+ when the entry matches this lane, else 0.
         # Matching target kinds: tier, provider, instance, model, offering.
-        def rank_affinity_score(entry:, lane:)
+        def rank_affinity_score(entry:, lane:, **)
           target = entry[:target].to_s
           score  = entry[:score_bps]
           case entry[:target_kind]
@@ -187,7 +187,7 @@ module Legion
 
         # SHA256("ssot-tie-v1\0" + routing_seed + "\0" + lane_id) read as an
         # unsigned 256-bit big-endian Integer.
-        def rank_rendezvous_score(lane:, routing_seed:)
+        def rank_rendezvous_score(lane:, routing_seed:, **)
           frame = "#{RENDEZVOUS_PREFIX}#{routing_seed}\0#{lane.lane_id}"
           Digest::SHA256.digest(frame).unpack1('H*').to_i(16)
         end
@@ -196,7 +196,7 @@ module Legion
         # 2. Within the bucket: greatest rendezvous_score.
         # 3. Tie-break (cryptographically improbable SHA256 collision):
         #    ascending lane_id.
-        def rank_select_winner(ranked:)
+        def rank_select_winner(ranked:, **)
           max_ew = ranked.map(&:effective_weight).max
           bucket = ranked.select { |rc| rc.effective_weight == max_ew }
           winner = bucket.min_by { |rc| [-rc.rendezvous_score, rc.lane.lane_id] }

@@ -171,6 +171,195 @@ RSpec.describe Legion::LLM::Routing::Rank do
         expect(counts[lane_b].zero?).to be(false)
       end
     end
+
+    # ---------------------------------------------------------------- #
+    # Affinity PPM math                                                 #
+    # ---------------------------------------------------------------- #
+
+    describe 'affinity PPM math' do
+      it 'D17 floor fixture: negative affinity uses Ruby integer floor division, not truncation' do
+        # lane_affinity_bps = -1, affinity_strength_bps = 100
+        # ppm = 1_000_000 + ((-1 * 100) / 200)
+        # Ruby: (-100 / 200) = -1 (floor toward -infinity)
+        # Truncation toward zero would yield 0 -> ppm = 1_000_000
+        # Floor yields -1 -> ppm = 999_999
+        lane = make_lane(lane_id: 'local:vllm:h200:inference:gemma4', provider_family: :vllm)
+        affinities = [{ target_kind: :provider, target: 'vllm', score_bps: -1 }]
+        result = rank_call(lanes: [lane], routing_affinities: affinities, affinity_strength_bps: 100)
+        expect(result.preference_ppm).to eq(999_999)
+      end
+
+      it 'clamps preference_ppm to MIN_PREFERENCE_PPM (500_000) for extreme negative affinity' do
+        # lane_affinity clamped to -10_000, strength 10_000:
+        # raw = 1_000_000 + ((-10_000 * 10_000) / 200) = 1_000_000 + (-500_000) = 500_000
+        # At extreme: score_bps=-10_000 is already clamped at -10_000, so:
+        # raw = 1_000_000 + (-10_000 * 10_000 / 200) = 500_000 → exactly at clamp.
+        # Push past: summation of two -6_000 scores → raw_sum = -12_000 → clamped to -10_000.
+        lane = make_lane(lane_id: 'local:vllm:h200:inference:gemma4', provider_family: :vllm)
+        affinities = [
+          { target_kind: :provider, target: 'vllm', score_bps: -6_000 },
+          { target_kind: :provider, target: 'vllm', score_bps: -6_000 }
+        ]
+        result = rank_call(lanes: [lane], routing_affinities: affinities, affinity_strength_bps: 10_000)
+        expect(result.preference_ppm).to eq(500_000)
+      end
+
+      it 'clamps preference_ppm to MAX_PREFERENCE_PPM (1_500_000) for extreme positive affinity' do
+        lane = make_lane(lane_id: 'local:vllm:h200:inference:gemma4', provider_family: :vllm)
+        affinities = [
+          { target_kind: :provider, target: 'vllm', score_bps: 6_000 },
+          { target_kind: :provider, target: 'vllm', score_bps: 6_000 }
+        ]
+        result = rank_call(lanes: [lane], routing_affinities: affinities, affinity_strength_bps: 10_000)
+        expect(result.preference_ppm).to eq(1_500_000)
+      end
+
+      it 'instance-specific affinity deterministically selects one lane across all seeds' do
+        # h200 gets score_bps=1 for :instance match; helios1 gets 0.
+        # ppm_h200   = 1_000_000 + (1 * 10_000 / 200) = 1_000_050
+        # ppm_helios = 1_000_000
+        # eff_h200 > eff_helios → different bucket → h200 always wins.
+        lane_h200   = make_lane(lane_id: 'local:vllm:h200:inference:gemma4', instance_id: 'h200')
+        lane_helios = make_lane(lane_id: 'local:vllm:helios1:inference:gemma4', instance_id: 'helios1')
+        affinities  = [{ target_kind: :instance, target: 'h200', score_bps: 1 }]
+
+        winners = (0..99).map do |i|
+          seed = format('%032x', i)
+          rank_call(lanes: [lane_h200, lane_helios], routing_seed: seed,
+                    routing_affinities: affinities).lane
+        end
+        expect(winners.uniq).to eq([lane_h200])
+      end
+
+      it 'shared provider affinity preserves rendezvous distribution (both lanes same ppm)' do
+        lane_a = make_lane(lane_id: 'local:vllm:h200:inference:gemma4', provider_family: :vllm)
+        lane_b = make_lane(lane_id: 'local:vllm:helios1:inference:gemma4', provider_family: :vllm)
+        affinities = [{ target_kind: :provider, target: 'vllm', score_bps: 3_000 }]
+
+        counts = Hash.new(0)
+        200.times do |i|
+          seed = format('%032x', i + 20_000)
+          counts[rank_call(lanes: [lane_a, lane_b], routing_seed: seed,
+                           routing_affinities: affinities).lane] += 1
+        end
+        expect(counts[lane_a]).to be > 0
+        expect(counts[lane_b]).to be > 0
+      end
+
+      it 'offering-specific affinity deterministically selects the targeted lane across all seeds' do
+        # :offering matches on lane.lane_id — the full 5-tuple identifies one offering.
+        # lane_h200 gets score_bps=1 for :offering match; lane_helios gets 0.
+        # ppm_h200   = 1_000_000 + (1 * 10_000 / 200) = 1_000_050
+        # ppm_helios = 1_000_000
+        # eff_h200 > eff_helios → different bucket → h200 always wins.
+        lane_h200   = make_lane(lane_id: 'local:vllm:h200:inference:gemma4', instance_id: 'h200')
+        lane_helios = make_lane(lane_id: 'local:vllm:helios1:inference:gemma4', instance_id: 'helios1')
+        affinities  = [{ target_kind: :offering, target: 'local:vllm:h200:inference:gemma4', score_bps: 1 }]
+
+        winners = (0..99).map do |i|
+          seed = format('%032x', i + 50_000)
+          rank_call(lanes: [lane_h200, lane_helios], routing_seed: seed,
+                    routing_affinities: affinities).lane
+        end
+        expect(winners.uniq).to eq([lane_h200])
+      end
+    end
+
+    # ---------------------------------------------------------------- #
+    # Integer-only formulas                                             #
+    # ---------------------------------------------------------------- #
+
+    describe 'integer-only formulas' do
+      let(:lane) { make_lane(lane_id: 'local:anthropic:primary:inference:model-x', base_weight: 3) }
+      let(:result) { rank_call(lanes: [lane]) }
+
+      it 'base_weight is an Integer' do
+        expect(result.base_weight).to be_a(Integer)
+      end
+
+      it 'preference_ppm is an Integer' do
+        expect(result.preference_ppm).to be_a(Integer)
+      end
+
+      it 'effective_weight is an Integer' do
+        expect(result.effective_weight).to be_a(Integer)
+      end
+
+      it 'rendezvous_score is an Integer' do
+        expect(result.rendezvous_score).to be_a(Integer)
+      end
+
+      it 'effective_weight equals base_weight * preference_ppm exactly' do
+        expect(result.effective_weight).to eq(result.base_weight * result.preference_ppm)
+      end
+
+      it 'rendezvous_score is in the unsigned 256-bit range' do
+        expect(result.rendezvous_score).to be >= 0
+        expect(result.rendezvous_score).to be < 2**256
+      end
+    end
+
+    # ---------------------------------------------------------------- #
+    # Nil-open range bounds in band partition                            #
+    # ---------------------------------------------------------------- #
+
+    describe 'nil-open range bounds' do
+      let(:lane_ranged) { make_lane(lane_id: 'local:vllm:h200:inference:gemma4') }
+      let(:lane_gen)    { make_lane(lane_id: 'local:vllm:helios1:inference:gemma4') }
+
+      it 'nil min means open lower bound — any budget below max is in-band' do
+        ranges = { lane_ranged.lane_id => { min: nil, max: 10_000 } }
+        result = rank_call(lanes: [lane_ranged, lane_gen], context_budget: 0,
+                           preferred_context_range_for: range_for(ranges))
+        expect(result.lane).to equal(lane_ranged)
+      end
+
+      it 'nil max means open upper bound — any budget above min is in-band' do
+        ranges = { lane_ranged.lane_id => { min: 100, max: nil } }
+        result = rank_call(lanes: [lane_ranged, lane_gen], context_budget: 999_999,
+                           preferred_context_range_for: range_for(ranges))
+        expect(result.lane).to equal(lane_ranged)
+      end
+
+      it 'budget exactly at min is inside the range (lower-inclusive)' do
+        ranges = { lane_ranged.lane_id => { min: 5_000, max: 10_000 } }
+        result = rank_call(lanes: [lane_ranged, lane_gen], context_budget: 5_000,
+                           preferred_context_range_for: range_for(ranges))
+        expect(result.lane).to equal(lane_ranged)
+      end
+
+      it 'budget one below min is outside the range' do
+        ranges = { lane_ranged.lane_id => { min: 5_000, max: 10_000 } }
+        result = rank_call(lanes: [lane_ranged, lane_gen], context_budget: 4_999,
+                           preferred_context_range_for: range_for(ranges))
+        # lane_ranged is out-of-band; both in pass 2 — winner depends on rendezvous
+        expect([lane_ranged, lane_gen]).to include(result.lane)
+      end
+    end
+
+    # ---------------------------------------------------------------- #
+    # Log identity: five-tuple lane format in debug lines               #
+    # ---------------------------------------------------------------- #
+
+    describe 'log identity (five-tuple lane format)' do
+      let(:logger) { instance_double('Logger', debug: nil, info: nil, warn: nil) }
+      let(:log_messages) { [] }
+
+      before do
+        allow(logger).to receive(:debug) { |message| log_messages << message }
+        allow(subject).to receive(:log).and_return(logger)
+      end
+
+      it 'emits the five-tuple lane_id in ranked and selected log lines, not an opaque lane:v1: form' do
+        lane = make_lane(lane_id: 'direct:testprovider:testinst:inference:test-model')
+        rank_call(lanes: [lane])
+
+        decision_lines = log_messages.grep(/action=(?:ranked|selected)/)
+        expect(decision_lines.size).to eq(2)
+        expect(decision_lines).to all(include('lane=direct:testprovider:testinst:inference:test-model'))
+        expect(decision_lines.join).not_to include('lane:v1:')
+      end
+    end
   end
 
   # ------------------------------------------------------------------ #
