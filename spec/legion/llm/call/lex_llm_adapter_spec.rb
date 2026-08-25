@@ -27,9 +27,7 @@ end
 RSpec.describe Legion::LLM::Call::LexLLMAdapter do
   # Spec-local alias for every example; a top-level constant would pollute the
   # shared suite process, so the in-block definition is intentional.
-  # rubocop:disable Lint/ConstantDefinitionInBlock
-  Canonical = Legion::Extensions::Llm::Canonical
-  # rubocop:enable Lint/ConstantDefinitionInBlock
+  Canonical = Legion::Extensions::Llm::Canonical # rubocop:disable Lint/ConstantDefinitionInBlock
 
   def lex_llm_test_namespace
     return ::Legion::Extensions::Llm if defined?(::Legion::Extensions::Llm::Provider)

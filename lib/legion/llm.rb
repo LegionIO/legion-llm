@@ -141,9 +141,8 @@ module Legion
 
       def chat(...) = Inference.chat(...)
       def ask(...) = Inference.ask(...)
-      # rubocop:disable Legion/Framework/NoDirectDispatch -- deprecated shim per CHANGELOG 0.12.16; routes through governed pipeline.
-      def chat_direct(...) = Inference.chat_direct(...)
-      # rubocop:enable Legion/Framework/NoDirectDispatch
+      # Deprecated shim per CHANGELOG 0.12.16; routes through the governed pipeline.
+      def chat_direct(...) = Inference.chat_direct(...) # rubocop:disable Legion/Framework/NoDirectDispatch
 
       def embed(text, **)
         if defined?(Legion::Telemetry::OpenInference)
@@ -155,14 +154,13 @@ module Legion
         end
       end
 
-      # rubocop:disable Legion/Framework/NoDirectDispatch -- deprecated shim per CHANGELOG 0.12.16.
-      def embed_direct(text, **)
+      # Deprecated shim per CHANGELOG 0.12.16.
+      def embed_direct(text, **) # rubocop:disable Legion/Framework/NoDirectDispatch
         Deprecation.warn_once(:embed_direct, replacement: 'Legion::LLM.embed')
         result = Call::Embeddings.generate(text: text, **)
         emit_embed_metering(result)
         result
       end
-      # rubocop:enable Legion/Framework/NoDirectDispatch
 
       def embed_batch(texts, **) = Call::Embeddings.generate_batch(texts: texts, **)
 
@@ -176,14 +174,13 @@ module Legion
         end
       end
 
-      # rubocop:disable Legion/Framework/NoDirectDispatch -- deprecated shim per CHANGELOG 0.12.16.
-      def structured_direct(messages:, schema:, **)
+      # Deprecated shim per CHANGELOG 0.12.16.
+      def structured_direct(messages:, schema:, **) # rubocop:disable Legion/Framework/NoDirectDispatch
         Deprecation.warn_once(:structured_direct, replacement: 'Legion::LLM.structured')
         result = Call::StructuredOutput.generate(messages: messages, schema: schema, **)
         emit_structured_metering(result)
         result
       end
-      # rubocop:enable Legion/Framework/NoDirectDispatch
 
       # M4: can_embed? is a live capability fact from the inventory registry
       # (Discovery reads the same lanes the router reads) — the second
