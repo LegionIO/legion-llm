@@ -747,6 +747,62 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
     end
 
     # ------------------------------------------------------------------- #
+    # Embed imposes NO context budget (regression: too_early from flat      #
+    # framing budget). An embedding request carries no framed body — the    #
+    # text is chunked POST-selection against the selected lane's own        #
+    # context contract — so embed must route WITHOUT pre-proving a context  #
+    # window. Before the fix @context_budget was input_framing_overhead +   #
+    # tokens[:max] (nonzero), so an embed lane with UNKNOWN context evidence #
+    # (vLLM max_model_len nil / Ollama num_ctx not yet enriched) evaluated   #
+    # context_state :unknown and was rejected :too_early. Chat is unchanged: #
+    # it still frames a body and requires KNOWN context evidence.            #
+    # ------------------------------------------------------------------- #
+
+    describe 'embed context budget (regression: too_early from flat framing budget)' do
+      it 'evaluates context_state :not_applicable for an embed lane with UNKNOWN context evidence' do
+        # context: nil → the offering publishes UNKNOWN context evidence.
+        activate_lane(provider: :vllm, instance_id: 'primary', model: 'nomic-embed',
+                      supported: %i[embed], capabilities: { embedding: :supported }, context: nil)
+        router = build_router(operation: :embed)
+        snap   = Legion::Extensions::Llm::Inventory::Registry.snapshot
+        result = router.send(:evaluate_snapshot, snapshot: snap, model_pin: nil)
+
+        embed_cand = result.candidates.first
+        expect(embed_cand.context_state).to eq(:not_applicable)
+        expect(embed_cand).to be_ready
+        expect(result.ready_candidates.size).to eq(1)
+      end
+
+      it 'SELECTS the embed lane (not a :too_early Rejection) despite unknown context evidence' do
+        activate_lane(provider: :vllm, instance_id: 'primary', model: 'nomic-embed',
+                      supported: %i[embed], capabilities: { embedding: :supported }, context: nil)
+        router = build_router(operation: :embed)
+        result = router.next_lane
+        expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
+        expect(result.provider_family).to eq(:vllm)
+        expect(result.model).to eq('nomic-embed')
+      end
+
+      it 'still requires KNOWN context evidence for :chat (unchanged) — unknown → context_state :unknown, :too_early' do
+        # Same UNKNOWN context evidence, but a chat lane + chat request: chat
+        # frames a body so the budget stays nonzero and context must be known.
+        activate_lane(provider: :vllm, instance_id: 'primary', model: 'gemma-12b', context: nil)
+        router = build_router(operation: :chat)
+        snap   = Legion::Extensions::Llm::Inventory::Registry.snapshot
+        result = router.send(:evaluate_snapshot, snapshot: snap, model_pin: nil)
+
+        chat_cand = result.candidates.first
+        expect(chat_cand.context_state).to eq(:unknown)
+        expect(chat_cand).not_to be_ready
+
+        rejection = router.next_lane
+        expect(rejection).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+        expect(rejection.kind).to eq(:too_early)
+        expect(rejection.http_status).to eq(425)
+      end
+    end
+
+    # ------------------------------------------------------------------- #
     # Honored body-model hint fallback (v2 parity)                         #
     # ------------------------------------------------------------------- #
 

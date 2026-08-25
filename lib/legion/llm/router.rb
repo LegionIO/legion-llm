@@ -117,7 +117,7 @@ module Legion
         @requested_embedding_dimensions = requested_embedding_dimensions_for
         @input_bound                    = input_bound_for
         @required_output_tokens         = required_output_tokens_for
-        @context_budget                 = @input_bound + @required_output_tokens
+        @context_budget                 = context_budget_for
 
         @routing_seed          = validate_seed!(@request.routing_context.routing_seed)
         @maximum_attempts      = positive_int!(trusted&.maximum_attempts || Legion::Settings[:llm][:router][:max_attempts],
@@ -786,6 +786,26 @@ module Legion
         tokens = @request.tokens
         raw = tokens.is_a?(Hash) ? tokens[:max] : nil
         raw.nil? ? 0 : nonneg_int!(raw, :required_output_tokens)
+      end
+
+      # The routing-time context budget the context filter compares against each
+      # lane's window. For :embed this is deliberately ZERO: an embedding request
+      # carries no framed body — the input text is passed separately to
+      # Call::Embeddings and re-chunked POST-selection against the SELECTED lane's
+      # own authoritative context contract (Call::Embeddings#chunk_char_budget) —
+      # so pre-proving a context window at routing time is wrong. The empty body
+      # still yields @input_bound == input_framing_overhead_tokens and the default
+      # tokens[:max] still yields a nonzero @required_output_tokens, so without
+      # this short-circuit every embed lane whose context evidence is unknown
+      # (vLLM max_model_len nil, Ollama num_ctx not yet enriched) evaluates
+      # context_state :unknown and is rejected :too_early. A zero budget makes
+      # evaluate_context return :not_applicable. Every other operation frames a
+      # request body whose size the lane's window must admit, so its budget stays
+      # the byte-bound input plus the required output allowance.
+      def context_budget_for(**)
+        return 0 if @operation == :embed
+
+        @input_bound + @required_output_tokens
       end
 
       # The requested embedding dimensionality, for :embed only. Sourced from the
