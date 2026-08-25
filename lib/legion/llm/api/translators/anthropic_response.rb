@@ -238,7 +238,7 @@ module Legion
 
             thinking_data = begin
               pipeline_response.thinking
-            rescue Exception # rubocop:disable Style/RescueException
+            rescue StandardError
               nil
             end
             normalize_thinking_payload(thinking_data)

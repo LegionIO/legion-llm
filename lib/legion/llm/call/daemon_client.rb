@@ -158,7 +158,7 @@ module Legion
           when 200
             { status: :immediate, body: parsed.fetch(:data, parsed) }
           when 201
-            { status: :created,   body: parsed.fetch(:data, parsed) }
+            { status: :created, body: parsed.fetch(:data, parsed) }
           when 202
             data = parsed.fetch(:data, {})
             { status: :accepted, request_id: data[:request_id], poll_key: data[:poll_key] }
