@@ -84,7 +84,10 @@ module Legion
               {
                 type:        'image',
                 data:        data,
-                media_type:  (media_type || '').sub(/;.*$/, ''),
+                # Strip any ;parameters (e.g. ";base64") from the media type. Uses a
+                # plain string split rather than /;.*$/ — the latter is a polynomial
+                # ReDoS (rb/polynomial-redos) on attacker-controlled data URLs.
+                media_type:  (media_type || '').split(';', 2).first.to_s,
                 source_type: :base64
               }
             else
