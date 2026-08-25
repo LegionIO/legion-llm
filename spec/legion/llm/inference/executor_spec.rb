@@ -600,10 +600,14 @@ RSpec.describe Legion::LLM::Inference::Executor do
       # Fleet wire carries serialized (Hash) messages.
       expect(captured_request[:messages].first).to include(role: :system, content: 'Use available tools.')
       expect(captured_request[:execution_contract]).to eq('exact_offering_v1')
-      expect(captured_request[:offering_id]).to match(/\Aoff:v1:/)
-      expect(captured_request[:tools]).to include(
-        legion_lookup: hash_including(name: 'legion_lookup', description: 'Lookup data')
-      )
+      # D2: the fleet envelope's offering_id IS the 5-tuple lane id.
+      expect(captured_request[:offering_id]).to eq('fleet:vllm:primary:inference:qwen3.6-27b')
+      # Dispatch-boundary contract: tools cross the boundary as canonical
+      # ToolDefinitions (Hash values would be rejected by the provider funnel).
+      tool = captured_request[:tools][:legion_lookup]
+      expect(tool).to be_a(Legion::Extensions::Llm::Canonical::ToolDefinition)
+      expect(tool.name).to eq('legion_lookup')
+      expect(tool.description).to eq('Lookup data')
     end
   end
 
@@ -826,18 +830,17 @@ RSpec.describe Legion::LLM::Inference::Executor do
   describe 'routing settings' do
     subject(:executor) { described_class.new(request) }
 
-    # SSOT v3: pipeline_escalation_enabled?/max_attempts are deleted. The equivalent
-    # contract is @routing_requirements.maximum_attempts honoring the settings value.
+    # SSOT v4: pipeline_escalation_enabled?/max_attempts are deleted. The equivalent
+    # contract is @router.maximum_attempts honoring the settings value.
     it 'honors maximum_attempts routing setting' do
-      Legion::Settings[:llm][:routing][:max_attempts] = 7
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::Settings[:llm][:router][:max_attempts] = 7
       req = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
       )
       ex = described_class.new(req)
       ex.send(:step_routing)
-      expect(ex.instance_variable_get(:@routing_requirements).maximum_attempts).to eq(7)
+      expect(ex.instance_variable_get(:@router).maximum_attempts).to eq(7)
     end
 
     it 'honors native provider layer settings' do

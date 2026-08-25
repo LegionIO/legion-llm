@@ -16,7 +16,7 @@ module Legion
               log.debug('[llm][api][providers] action=list_providers')
               require_llm!
 
-              # N7: a registry read FAULT must not masquerade as an empty
+              # A registry read FAULT must not masquerade as an empty
               # registry (a 200 with []). The fault propagates to the route's
               # 500 handler — logged there, error-shaped to the caller.
               instances = Legion::LLM::Call::Registry.all_instances
@@ -45,7 +45,7 @@ module Legion
               provider_name = params[:name].to_s
               provider_sym = provider_name.to_sym
 
-              # N7: a registry read FAULT must not masquerade as an empty
+              # A registry read FAULT must not masquerade as an empty
               # registry (a 200 with []). The fault propagates to the route's
               # 500 handler — logged there, error-shaped to the caller.
               instances = Legion::LLM::Call::Registry.all_instances
@@ -73,9 +73,9 @@ module Legion
             log.debug('[llm][api][providers] provider routes registered')
           end
 
-          # 13 S2(6): SSOT-activated providers surface in the listing from the
-          # Registry snapshot even when they are absent from the compatibility
-          # call registry (deduped by provider+instance).
+          # Providers surface in the listing from the Registry snapshot even
+          # when they are absent from the call registry (deduped by
+          # provider+instance).
           def self.union_ssot_providers(provider_list)
             return provider_list unless defined?(Legion::Extensions::Llm::Inventory::Registry)
 
@@ -94,14 +94,14 @@ module Legion
               next if seen.include?([family, instance_id])
 
               seen << [family, instance_id]
-              offerings = record.offerings_by_id.values
-              capabilities = offerings.first&.capability_evidence&.select do |_cap, evidence|
+              lanes = record.lanes_by_id.values
+              capabilities = lanes.first&.capability_evidence&.select do |_cap, evidence|
                 evidence.status == :supported
               end&.keys&.map(&:to_s) || []
               provider_list << {
                 provider:     family.to_s,
                 instance:     instance_id.to_s,
-                tier:         offerings.first&.tier&.to_s,
+                tier:         lanes.first&.tier&.to_s,
                 capabilities: capabilities,
                 health:       { state: record.availability.state.to_s },
                 native:       true,
@@ -115,7 +115,7 @@ module Legion
             provider_key = entry[:provider].to_sym
             instance_key = entry[:instance].to_sym
 
-            # D14: display health/capabilities live in the per-instance settings
+            # Display health/capabilities live in the per-instance settings
             # hash the provider's discovery actor writes after each registry
             # commit (the visibility surface). The Registry AvailabilityFact
             # remains the routing authority. entry[:instance] is the config name

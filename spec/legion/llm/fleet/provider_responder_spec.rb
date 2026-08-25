@@ -40,11 +40,13 @@ RSpec.describe Legion::LLM::Fleet::ProviderResponder, :ssot_v3 do
       drafts: [offering_draft(model: 'llama3.2', tier: :local, supported: %i[chat])]
     )
     snap = snapshot
-    @offering_id = snap.offerings_for(
+    # The fleet claim's offering_id is the 5-tuple lane id (D4: the field
+    # name stays, the value is the composed 5 tuple).
+    @offering_id = snap.lanes_for(
       instance_key: Legion::Extensions::Llm::Inventory::Identity::InstanceKey.new(
         provider_family: 'vllm', instance_id: 'local'
       )
-    ).first.offering_id
+    ).first.lane_id
   end
 
   before do

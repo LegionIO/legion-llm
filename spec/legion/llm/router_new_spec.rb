@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/router_new'
+require 'legion/llm/router'
 
 # Per-request Router CLASS spec (SSOT v4). Exercises the Router instance lifecycle:
 # construction validation, next_lane selection/rejection, next_attempt state
@@ -137,19 +137,21 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
       it 'maximum_attempts uses trusted override when present' do
         activate_lane(provider: :vllm, model: 'gemma-12b')
-        Legion::Settings[:llm][:router][:max_attempts] = 3
-        # When trusted_constraints carries a maximum_attempts the Router
-        # derives from that, overriding the setting.
+        # The router max_attempts setting default (3) is the per-request ceiling;
+        # a trusted X-Legion-Max-Attempts within that ceiling overrides the
+        # setting for this one request. reset! rebuilds the snapshot from the live
+        # defaults so the ceiling is deterministic regardless of test order.
+        Legion::LLM::Routing::SettingsState.reset!
         req = Legion::LLM::Inference::Request.build_for_test(
           routing_seed: 'ab' * 16, messages: [],
-          routing: {}, trusted_constraints: Legion::LLM::Router::HeaderConstraints.from_internal(
+          routing: {}, trusted_constraints: Legion::LLM::Routing::HeaderConstraints.from_internal(
             provider: nil, instance_id: nil, model: nil, tier: nil,
-            maximum_attempts: 7,
-            settings_snapshot: Legion::LLM::Router::SettingsState.current
+            maximum_attempts: 2,
+            settings_snapshot: Legion::LLM::Routing::SettingsState.current
           )
         )
         router = build_router(request: req)
-        expect(router.maximum_attempts).to eq(7)
+        expect(router.maximum_attempts).to eq(2)
       end
     end
 
@@ -1481,7 +1483,10 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
             model: 'gemma-12b', tier: :local, context: 200_000,
             supported: %i[chat stream_chat count_tokens],
             capabilities: { streaming: :supported },
-            base_weight: 0
+            # A zeroed weight: base_weight must equal the product of weight_inputs
+            # (records.rb validates the pair together), so one input is 0.
+            weight_inputs: { tier: 0, provider: 1, instance: 1, model_or_offering: 1 },
+            base_weight:   0
           )]
         )
         router = build_router

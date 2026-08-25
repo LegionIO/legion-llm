@@ -125,9 +125,11 @@ RSpec.describe 'Inference endpoint pipeline routing' do
           tools:    [tool_class]
         )
 
-        expect(captured_tools).to include(
-          test_tool: hash_including(name: 'test_tool')
-        )
+        # Dispatch-boundary contract: the compiled tool definition crosses the
+        # boundary as a canonical ToolDefinition (Hash values would be
+        # rejected by the provider funnel).
+        expect(captured_tools[:test_tool]).to be_a(Legion::Extensions::Llm::Canonical::ToolDefinition)
+        expect(captured_tools[:test_tool].name).to eq('test_tool')
       end
     end
   end

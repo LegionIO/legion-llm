@@ -43,7 +43,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Offerings' do
 
   def activated_offering_id
     key = SsotV3SnapshotFactory.instance_key(provider_family: :ollama, instance_id: 'local')
-    SsotV3SnapshotFactory.snapshot.offerings_for(instance_key: key).first.offering_id
+    SsotV3SnapshotFactory.snapshot.lanes_for(instance_key: key).first.lane_id
   end
 
   describe 'GET /api/llm/offerings' do

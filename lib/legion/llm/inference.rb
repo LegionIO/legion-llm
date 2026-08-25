@@ -712,11 +712,10 @@ module Legion
 
         request = ssot_cache_request(message: message, model: model, provider: provider,
                                      tier: tier, temperature: temperature, shape: shape)
-        requirements = ssot_cache_requirements(request)
-        return nil unless requirements
+        router = ssot_cache_router(request)
+        return nil unless router
 
-        session = Legion::LLM::Inference::RoutingSession.new(request: request, requirements: requirements)
-        attempt = session.next_attempt(snapshot: snapshot)
+        attempt = router.next_attempt
         return nil if attempt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
 
         key = ssot_cache_key_for(selection: attempt.selection, request: request, snapshot: snapshot)
@@ -752,38 +751,22 @@ module Legion
         Inference::Request.from_chat_args(**args)
       end
 
-      # Mirror the executor's build_ssot_v3_routing_requirements so the probe
-      # selection uses the exact same requirement inputs the dispatch will.
-      def ssot_cache_requirements(request)
-        required_caps = Legion::LLM::Router::RequiredCapabilities.call(
-          request: request, operation: RESPONSE_CACHE_OPERATION
-        )
-        framing = request.routing_settings_snapshot&.input_framing_overhead_tokens || 0
-        input_bound = Legion::LLM::Router::InputBound.call(
-          operation:               RESPONSE_CACHE_OPERATION,
-          messages:                request.messages,
-          system:                  request.system,
-          tools:                   request.tools,
-          tool_choice:             request.tool_choice,
-          thinking:                request.thinking,
-          response_format:         request.response_format,
-          framing_overhead_tokens: framing
-        )
-        Legion::LLM::Router::RequestRequirements.build(
-          request:                request,
-          operation:              RESPONSE_CACHE_OPERATION,
-          required_capabilities:  required_caps,
-          estimated_input_bound:  input_bound,
-          required_output_tokens: 0
+      # Mirror the executor's build_ssot_router so the probe selection uses
+      # the exact same routing derivation the dispatch will.
+      def ssot_cache_router(request)
+        Legion::LLM::Router.new(
+          request:    request,
+          operation:  RESPONSE_CACHE_OPERATION,
+          body_model: request.metadata[:client_model] || request.routing&.[](:model)
         )
       rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.ssot_cache_requirements')
+        handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.ssot_cache_router')
         nil
       end
 
       def ssot_cache_key_for(selection:, request:, snapshot:)
-        offering = snapshot.offering(offering_id: selection.offering_id)
-        revision_evidence = offering.respond_to?(:model_revision_evidence) ? offering.model_revision_evidence : nil
+        lane = snapshot.lane(lane_id: selection.lane_id)
+        revision_evidence = lane&.model_revision_evidence
         revision = if revision_evidence.respond_to?(:known?) && revision_evidence.known?
                      revision_evidence.value.to_s
                    else

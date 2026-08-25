@@ -6,17 +6,17 @@ require 'spec_helper'
 # "final payload estimate NNNNN tokens exceeds dispatch threshold" ContextOverflow
 # on small-context local lanes. See docs/work/planning/nxn-debugging-method.md.
 #
-# SSOT v3 rewrite: the deleted estimate_request_tokens / routing_request_state /
+# SSOT v4 rewrite: the deleted estimate_request_tokens / routing_request_state /
 # routing_resolution_for methods are replaced by:
-#   - InputBound.call(...)          → conservative byte-based input bound
-#   - build_ssot_v3_routing_requirements → sets @routing_requirements
-#   - Router.next_lane(...)          → selects the winning lane from a snapshot
+#   - Router#input_bound            → conservative byte-based input bound
+#   - build_ssot_router             → sets @router
+#   - Router#next_lane              → selects the winning lane from live inventory
 #
 # Three invariants survive:
-#   1. InputBound counts structured content blocks correctly (not near-zero).
+#   1. Router#input_bound counts structured content blocks correctly (not near-zero).
 #   2. Routing input bound is never materially below dispatch token estimate
 #      (byte count >= token count by InputBound contract).
-#   3. Router.next_lane skips lanes whose context window the estimated payload
+#   3. Router#next_lane skips lanes whose context window the estimated payload
 #      would overflow (CandidateEvaluator §9.7 step 5).
 RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity' do
   let(:request) do
@@ -50,24 +50,24 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
     executor.instance_variable_set(:@resolved_instance, :default)
   end
 
-  describe 'InputBound (replaces estimate_request_tokens — Part 1 + Part 4)' do
+  describe 'Router#input_bound (replaces estimate_request_tokens — Part 1 + Part 4)' do
     it 'counts structured content blocks, not a near-zero shadow estimate' do
-      # InputBound.call counts UTF-8 bytes of all textual content blocks.
+      # Router#input_bound counts UTF-8 bytes of all textual content blocks.
       # 20 messages × ~400 words × ~5 bytes/word is tens of thousands of bytes;
       # a naive [:content].to_s estimator on an Array returns near-zero.
-      bound = Legion::LLM::Router::InputBound.call(
-        messages: messages, system: 'You are a helpful assistant.'
+      router = Legion::LLM::Router.new(
+        request: request, operation: :chat, body_model: request.metadata[:client_model]
       )
-      expect(bound).to be > 5_000
+      expect(router.input_bound).to be > 5_000
     end
 
     it 'routing input bound is never materially below dispatch token estimate' do
-      # InputBound counts bytes (1 byte >= 1 token by contract) so the
+      # Router#input_bound counts bytes (1 byte >= 1 token by contract) so the
       # bound is always >= a token-based dispatch estimate.
       # This guards against any regression that would make routing UNDER-count
       # the payload (the original bug that shipped ContextOverflow at dispatch).
-      executor.send(:build_ssot_v3_routing_requirements)
-      routing_bound = executor.instance_variable_get(:@routing_requirements).estimated_input_bound
+      executor.send(:build_ssot_router)
+      routing_bound = executor.instance_variable_get(:@router).input_bound
 
       dispatch_messages = executor.send(:native_dispatch_messages)
       dispatch_options  = executor.send(:native_dispatch_options)
@@ -112,16 +112,13 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
       write_lane_with_context(model: 'gemma-12b-it',   context: 8_192)
       write_lane_with_context(model: 'gemma-4-31b-it', context: 131_072)
 
-      executor.send(:build_ssot_v3_routing_requirements)
-      reqs = executor.instance_variable_get(:@routing_requirements)
+      executor.send(:build_ssot_router)
+      router = executor.instance_variable_get(:@router)
 
       # Routing bound must exceed the small lane's effective headroom.
-      expect(reqs.estimated_input_bound).to be > (8_192 * 0.9)
+      expect(router.input_bound).to be > (8_192 * 0.9)
 
-      snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
-      result = Legion::LLM::Router.next_lane(
-        requirements: reqs, exclusions: [], snapshot: snap
-      )
+      result = router.next_lane
       expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)
       expect(result.model).to eq('gemma-4-31b-it')
     end

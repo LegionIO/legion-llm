@@ -8,38 +8,29 @@ require 'legion/llm/call/embeddings'
 # provider/instance/model (the settings-pin → tier-rank → default_model chain
 # and its @embedding_* state are gone); can_embed? is a live capability fact
 # against the same Inventory lane store the router reads.
-RSpec.describe 'Legion::LLM embedding capability' do
+RSpec.describe 'Legion::LLM embedding capability', :ssot_v3 do
   before do
-    Legion::LLM::Inventory.reset_live_store!
+    Legion::Extensions::Llm::Inventory::Registry.reset!
   end
 
   after do
-    Legion::LLM::Inventory.reset_live_store!
+    Legion::Extensions::Llm::Inventory::Registry.reset!
   end
 
   def publish_embed_lane(model, provider: :ollama, instance: :gpu_box, tier: :local, capabilities: %i[embedding])
-    Legion::LLM::Inventory.write_lane(lane: {
-                                        id:              "#{tier}:#{provider}:#{instance}:embed:#{model.tr(':', '_')}",
-                                        tier:            tier,
-                                        provider_family: provider,
-                                        instance_id:     instance,
-                                        model:           model,
-                                        type:            :embed,
-                                        capabilities:    capabilities,
-                                        limits:          {},
-                                        enabled:         true,
-                                        cost:            {}
-                                      })
+    write_test_lane(provider: provider, instance: instance, model: model, tier: tier,
+                    type: capabilities.include?(:embedding) ? :embedding : :inference,
+                    capabilities: capabilities)
   end
 
   describe '.can_embed?' do
-    it 'is false when no embedding-capable lane is published' do
+    it 'is false when no embedding-type lane is published' do
       publish_embed_lane('gemma-4-31b-it', capabilities: %i[chat streaming])
       expect(Legion::LLM::Inventory::Discovery.can_embed?).to be false
       expect(Legion::LLM.can_embed?).to be false
     end
 
-    it 'is true when an embedding-capable lane is published (live Inventory fact)' do
+    it 'is true when an embedding-type lane is published (live registry fact)' do
       publish_embed_lane('mxbai-embed-large')
       expect(Legion::LLM::Inventory::Discovery.can_embed?).to be true
       expect(Legion::LLM.can_embed?).to be true

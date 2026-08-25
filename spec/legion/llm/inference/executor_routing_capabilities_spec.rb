@@ -14,11 +14,12 @@ RSpec.describe Legion::LLM::Inference::Executor do
                                                                                     ])
     end
 
-    # Helper: build routing requirements from a request via the SSOT v3 path.
+    # Helper: build the per-request Router and return it (carries operation,
+    # required_capabilities, input_bound, etc.).
     def build_reqs(request)
       executor = described_class.new(request)
-      executor.send(:build_ssot_v3_routing_requirements)
-      executor.instance_variable_get(:@routing_requirements)
+      executor.send(:build_ssot_router)
+      executor.instance_variable_get(:@router)
     end
 
     it 'does not require :tools for plain non-streaming requests just because pinned tools exist' do
@@ -86,10 +87,12 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'ignores payload client_model as a routing pin when body routing hints are disabled' do
+      # The raw client body model reaches the Router via metadata[:client_model]
+      # (set by the translator in production); build_ssot_router reads it there.
       request = Legion::LLM::Inference::Request.build(
-        messages:     [{ role: :user, content: 'hello' }],
-        routing:      {},
-        client_model: 'gpt-5.5'
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  {},
+        metadata: { client_model: 'gpt-5.5' }
       )
 
       reqs = build_reqs(request)
@@ -98,20 +101,20 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'honors payload client_model only when body routing hints are enabled' do
-      Legion::Settings[:llm][:routing][:allow_body_routing_hints] = true
-      Legion::LLM::Router::SettingsState.reload!(
-        llm_settings:       Legion::Settings[:llm],
-        extension_settings: Legion::Settings[:extensions]
-      )
+      # allow_body_routing_hints is read live from [:llm][:router] by the Router's
+      # body-model-hint ladder — no SettingsState snapshot rebuild needed.
+      Legion::Settings[:llm][:router][:allow_body_routing_hints] = true
       request = Legion::LLM::Inference::Request.build(
-        messages:     [{ role: :user, content: 'hello' }],
-        routing:      {},
-        client_model: 'gpt-5.5'
+        messages: [{ role: :user, content: 'hello' }],
+        routing:  {},
+        metadata: { client_model: 'gpt-5.5' }
       )
 
       reqs = build_reqs(request)
 
       expect(reqs.model_pin).to eq('gpt-5.5')
+    ensure
+      Legion::Settings[:llm][:router][:allow_body_routing_hints] = false
     end
 
     it 'still honors an explicit Legion routing model over payload auto aliases' do

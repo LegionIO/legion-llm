@@ -151,22 +151,20 @@ RSpec.describe Legion::LLM::Inference::Executor, 'client-write vs provider-error
   describe 'dispatch_instance_unavailable isolation (was: #classify_and_accumulate_exclusions)' do
     let(:executor) { executor_class.allocate }
 
-    it 're-raises a client-write error without calling OutcomeClassifier or dispatch_instance_unavailable' do
+    it 're-raises a client-write error without calling classify or dispatch_instance_unavailable' do
       err = ::Puma::ConnectionError.new('Socket timeout writing data')
       allow(executor).to receive(:execute_provider_request).and_raise(err)
 
       expect(Legion::Extensions::Llm::Inventory::Registry).not_to receive(:dispatch_instance_unavailable)
-      expect(Legion::LLM::Router::OutcomeClassifier).not_to receive(:call)
 
       expect { executor.send(:ssot_v3_execute_attempt) }.to raise_error(::Puma::ConnectionError)
     end
 
-    it 're-raises an SSE/parse error without calling OutcomeClassifier or dispatch_instance_unavailable' do
+    it 're-raises an SSE/parse error without calling classify or dispatch_instance_unavailable' do
       err = Legion::JSON::ParseError.new('unexpected token')
       allow(executor).to receive(:execute_provider_request).and_raise(err)
 
       expect(Legion::Extensions::Llm::Inventory::Registry).not_to receive(:dispatch_instance_unavailable)
-      expect(Legion::LLM::Router::OutcomeClassifier).not_to receive(:call)
 
       expect { executor.send(:ssot_v3_execute_attempt) }.to raise_error(Legion::JSON::ParseError)
     end

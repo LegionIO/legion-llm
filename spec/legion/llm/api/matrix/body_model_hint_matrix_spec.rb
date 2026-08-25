@@ -46,12 +46,14 @@ RSpec.describe '[matrix] /v1/chat/completions x body-model hint', type: :request
   end
 
   def with_body_hints(allow:)
-    Legion::Settings[:llm][:routing][:allow_body_routing_hints] = allow
-    Legion::LLM::Router::SettingsState.reset!
+    # allow_body_routing_hints lives under [:llm][:router] (settings/router.rb)
+    # and is read live by the Router's body-model-hint ladder.
+    Legion::Settings[:llm][:router][:allow_body_routing_hints] = allow
+    Legion::LLM::Routing::SettingsState.reset!
     yield
   ensure
-    Legion::Settings[:llm][:routing][:allow_body_routing_hints] = false
-    Legion::LLM::Router::SettingsState.reset!
+    Legion::Settings[:llm][:router][:allow_body_routing_hints] = false
+    Legion::LLM::Routing::SettingsState.reset!
   end
 
   describe 'scenario: hint honored (flag on, two eligible lanes)' do

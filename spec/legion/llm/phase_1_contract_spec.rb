@@ -60,18 +60,32 @@ RSpec.describe 'Phase 1 lex-llm SSOT v3 contract' do
       expect(key.instance_id).to eq('h200')
     end
 
-    it 'reproduces the binding offering_id and lane_id identity vectors' do
-      key = inventory::Identity::InstanceKey.new(provider_family: 'vllm', instance_id: 'h200')
-      offering_id = inventory::Identity.offering_id(instance_key: key, provider_native_key: 'gemma4')
-      lane_id = inventory::Identity.lane_id(
-        instance_key: key, operation: :chat, model: 'gemma4', offering_id: offering_id
+    it 'reproduces the binding 5-tuple lane_id composition vector' do
+      lane_id = inventory::Identity.compose_lane_id(
+        tier: :local, provider_family: :vllm, instance_id: 'h200', type: :inference, model: 'gemma4'
       )
-      expect(offering_id).to eq(
-        'off:v1:c966772d7f8f428c24a77be96f94e111ba1052bf093098f0413b562c1059dcd1'
+      expect(lane_id).to eq('local:vllm:h200:inference:gemma4')
+    end
+
+    it 'round-trips a 5-tuple through parse_lane_id, keeping model colons intact' do
+      lane_id = inventory::Identity.compose_lane_id(
+        tier: :direct, provider_family: :ollama, instance_id: 'local', type: :inference, model: 'llama3:8b'
       )
-      expect(lane_id).to eq(
-        'lane:v1:430444bb58975ab56329c7c3a6c483a1b9cb49d1c089a56f3c93c6aa27d5f9b3'
+      tier, provider_family, instance_id, type, model = inventory::Identity.parse_lane_id(lane_id)
+      expect([tier, provider_family, instance_id, type, model]).to eq(
+        %w[direct ollama local inference llama3:8b]
       )
+    end
+
+    it 'rejects non-5-tuple and digest-shaped lane ids (no digest passes shape validation)' do
+      expect { inventory::Identity.validate_lane_id!(value: 'not-a-lane') }
+        .to raise_error(Legion::Extensions::Llm::Inventory::Errors::ValidationError, /5 parts/)
+      # The deleted off:v1:/lane:v1:<sha> shape is 3 parts — it fails the
+      # 5-part shape check on its own (there is no digest special case).
+      expect { inventory::Identity.validate_lane_id!(value: 'lane:v1:430444bb58975ab56329c7c3a6c483a1b9cb49d1c089a56f3c93c6aa27d5f9b3') }
+        .to raise_error(Legion::Extensions::Llm::Inventory::Errors::ValidationError, /5 parts/)
+      expect { inventory::Identity.validate_lane_id!(value: 'off:v1:c966772d7f8f428c24a77be96f94e111ba1052bf093098f0413b562c1059dcd1') }
+        .to raise_error(Legion::Extensions::Llm::Inventory::Errors::ValidationError, /5 parts/)
     end
 
     it 'constructs AttemptTargetKey with (provider_family:, instance_id:, model:)' do
@@ -134,8 +148,8 @@ RSpec.describe 'Phase 1 lex-llm SSOT v3 contract' do
 
   describe 'snapshot and registry API' do
     it 'exposes the allowed snapshot reads' do
-      %i[instance offering lane lanes_for offerings_for publication_status
-         each_instance each_lane each_offering each_publication_status].each do |m|
+      %i[instance lane lanes_for publication_status
+         each_instance each_lane each_publication_status].each do |m|
         expect(inventory::Snapshot.instance_methods).to include(m), "Snapshot##{m} missing"
       end
     end
@@ -154,7 +168,6 @@ RSpec.describe 'Phase 1 lex-llm SSOT v3 contract' do
       expect(snapshot.each_instance).to be_a(Enumerator)
       expect(snapshot.each_publication_status).to be_a(Enumerator)
       expect(snapshot.each_lane).to be_a(Enumerator)
-      expect(snapshot.each_offering).to be_a(Enumerator)
     end
   end
 

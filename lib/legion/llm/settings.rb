@@ -3,6 +3,7 @@
 require 'legion/logging/helper'
 require 'legion/llm/settings/tools'
 require 'legion/llm/settings/api'
+require 'legion/llm/settings/router'
 require 'legion/settings'
 
 module Legion
@@ -27,6 +28,7 @@ module Legion
           system_baseline:           system_baseline_default,
           fleet:                     fleet_defaults,
           routing:                   routing_defaults,
+          router:                    Legion::LLM::Settings::Router.defaults,
           budget:                    budget_defaults,
           confidence:                confidence_defaults,
           discovery:                 discovery_defaults,

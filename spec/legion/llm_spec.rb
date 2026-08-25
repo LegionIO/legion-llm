@@ -26,7 +26,6 @@ RSpec.describe Legion::LLM do
         .to_return(status: 200, body: { 'data' => [] }.to_json)
       stub_request(:get, 'http://localhost:8000/health')
         .to_return(status: 200, body: '{}')
-      allow(Legion::LLM::Discovery::System).to receive(:platform).and_return(:unknown)
     end
 
     after do
@@ -46,21 +45,17 @@ RSpec.describe Legion::LLM do
       expect(Legion::Settings[:llm][:connected]).to be false
     end
 
-    # M4: can_embed? is a live capability fact from the Inventory lane store
+    # M4: can_embed? is a live capability fact from the inventory registry
     # (no boot-time detection state to reset on shutdown) — the second
     # selection domain and its embedding_provider/model/instance projections
     # are gone.
-    it 'answers can_embed? from the live Inventory store, not cached state' do
-      Legion::LLM::Inventory.reset_live_store!
+    it 'answers can_embed? from the live inventory registry, not cached state' do
+      Legion::Extensions::Llm::Inventory::Registry.reset!
       expect(Legion::LLM.can_embed?).to be false
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'local:ollama:gpu_box:embed:mxbai-embed-large', tier: :local,
-        provider_family: :ollama, instance_id: :gpu_box, model: 'mxbai-embed-large',
-        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
-                                        })
+      write_test_lane(provider: :ollama, instance: :gpu_box, model: 'mxbai-embed-large', type: :embedding)
       expect(Legion::LLM.can_embed?).to be true
     ensure
-      Legion::LLM::Inventory.reset_live_store!
+      Legion::Extensions::Llm::Inventory::Registry.reset!
     end
 
     it 'gracefully shuts down the async thread pool on shutdown' do

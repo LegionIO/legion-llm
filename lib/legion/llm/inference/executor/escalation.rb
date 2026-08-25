@@ -12,9 +12,9 @@ module Legion
         # Owns the provider-call lifecycle (single + escalating, sync + stream + responses-API),
         # error/retry classification, and the corresponding audit/metering emission.
         module Escalation
-          # SSOT v3 single engine (sync). There is exactly one selector+executor
-          # path: the request-scoped RoutingSession loop. No gate, no legacy
-          # selector, no fallback.
+          # SSOT v4 single engine (sync). There is exactly one selector+executor
+          # path: the request-scoped Router loop. No gate, no legacy selector,
+          # no fallback.
           def step_provider_call
             run_provider_call_engine
           end
@@ -28,19 +28,16 @@ module Legion
             @resolved_instance     = sel.instance_id.to_sym
             @resolved_model        = sel.model
             @resolved_tier         = attempt_context.lane.tier
-            @resolved_offering_id  = sel.offering_id
+            @resolved_offering_id  = sel.lane_id
             @resolved_offering_metadata = {}
             @current_attempt_context = attempt_context
             log.debug "[llm][executor] action=ssot_v3_resolved provider=#{@resolved_provider} " \
                       "instance=#{@resolved_instance} model=#{@resolved_model}"
           end
 
-          # SSOT v3 single-attempt sync path. Selects via RoutingSession, delegates
-          # dispatch+error-handling to run_provider_call_single (preserves existing
-          # ProviderError → 529/502 behavior), classifies success.
-          # SSOT v3 single engine (sync). One request-scoped RoutingSession owns
-          # selection, one-and-done consumed-attempt identity, and retry. Each
-          # attempt selects the exact provider+instance+model via Router.next_lane,
+          # SSOT v4 single engine (sync). The per-request Router owns selection,
+          # one-and-done consumed-attempt identity, and retry. Each attempt
+          # selects the exact provider+instance+model via Router#next_lane,
           # dispatches that EXACT callable (SelectionDispatch, via
           # ssot_v3_direct_dispatch), and classifies. A retriable outcome selects
           # the next eligible lane (the failed identity can never reappear); a
@@ -50,16 +47,11 @@ module Legion
           # the maintained route maps to the dialect HTTP status. No legacy
           # fallback, no HealthTracker mutation.
           def run_provider_call_engine
-            @routing_session = Legion::LLM::Inference::RoutingSession.new(
-              request: @request, requirements: @routing_requirements
-            )
-            @routing_requirements.maximum_attempts.times do
-              attempt = @routing_session.next_attempt!(
-                snapshot: Legion::Extensions::Llm::Inventory::Registry.snapshot
-              )
+            @router.maximum_attempts.times do
+              attempt = @router.next_attempt!
               populate_ssot_v3_resolved_state(attempt)
               result = ssot_v3_execute_attempt
-              action = @routing_session.classify(dispatch_result: result, attempt_context: attempt)
+              action = @router.classify(dispatch_result: result, attempt_context: attempt)
               unless action.disposition == :success
                 lane = attempt.lane
                 log.warn("[llm][executor] action=ssot_v3_attempt_failed attempt=#{attempt.attempt_number} " \
@@ -73,7 +65,7 @@ module Legion
               raise Legion::LLM::Errors::RoutingRejected.new(rejection: action.rejection) if action.disposition == :terminal
             end
             log.warn('[llm][executor] action=ssot_v3_attempts_exhausted kind=attempts_exhausted ' \
-                     "reason=maximum attempts (#{@routing_requirements.maximum_attempts}) reached " \
+                     "reason=maximum attempts (#{@router.maximum_attempts}) reached " \
                      "http_status=503 generation=#{Legion::Extensions::Llm::Inventory::Registry.snapshot.generation}")
             raise Legion::LLM::Errors::RoutingRejected.new(rejection: attempts_exhausted_rejection)
           ensure
@@ -116,31 +108,24 @@ module Legion
           def attempts_exhausted_rejection
             Legion::Extensions::Llm::Routing::Rejection.new(
               kind:                 :attempts_exhausted,
-              reason:               "maximum attempts (#{@routing_requirements.maximum_attempts}) reached",
+              reason:               "maximum attempts (#{@router.maximum_attempts}) reached",
               inventory_generation: Legion::Extensions::Llm::Inventory::Registry.snapshot.generation,
               candidate_counts:     {},
               http_status:          503
             )
           end
 
-          # SSOT v3 §19 streaming preflight body. Called from Executor#stream_preflight!
-          # (before the route opens SSE) once pre-provider steps have built
-          # @routing_requirements. When the SSOT inventory path is active it selects
-          # the exact lane through a per-request RoutingSession and acquires that
+          # SSOT v4 §19 streaming preflight body. Called from Executor#stream_preflight!
+          # (before the route opens SSE) once step_routing has built @router. It
+          # selects the exact lane through the per-request Router and acquires that
           # lane's DispatchLease, retaining both on the executor for the subsequent
           # call_stream. A rejection propagates as Errors::RoutingRejected (via
           # next_attempt!) so the route maps it to an HTTP status BEFORE headers —
           # never an SSE server_error. Always selects (single engine) — an empty
           # Registry yields a typed Rejection, never a legacy fallback.
           def ssot_v3_stream_preflight
-            @stream_session = Legion::LLM::Inference::RoutingSession.new(
-              request: @request, requirements: @routing_requirements
-            )
-            remaining = @routing_requirements.maximum_attempts
-            while remaining.positive?
-              remaining -= 1
-              snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
-              attempt_context = @stream_session.next_attempt!(snapshot: snap)
+            @router.maximum_attempts.times do
+              attempt_context = @router.next_attempt!
               begin
                 @preflight_lease = Legion::Extensions::Llm::Inventory::Registry.acquire(
                   callable_handle: attempt_context.selection.callable_handle
@@ -149,7 +134,7 @@ module Legion
                      Legion::Extensions::Llm::Inventory::Errors::CallableDisposedError => e
                 log.warn('[llm][executor] action=ssot_v3_stream_preflight_stale_callable ' \
                          "class=#{e.class.name} message=#{e.message.to_s[0, 200]}")
-                @stream_session.classify(
+                @router.classify(
                   dispatch_result: Legion::LLM::Call::SelectionDispatch::Result.failure(
                     outcome: Legion::Extensions::Llm::Routing::ProviderOutcome.new(
                       kind: :instance_unavailable, reason: e.class.name
@@ -187,16 +172,16 @@ module Legion
             }
           end
 
-          # SSOT v3 §19 streaming dispatch + post-first-byte failover. Reuses the
-          # preflight RoutingSession/AttemptContext when present; otherwise selects
-          # inline (direct call_stream callers that did not preflight). On a
-          # retriable provider failure it preserves the existing StreamAssembler
-          # failover sequence: classify → retain consumed target + add justified
-          # exclusions → provider_failover_pending!(from:) → strip cross-provider
-          # thinking → next_attempt with a fresh snapshot → begin_dispatch_on(lane:)
-          # → continue the SAME client SSE session (no replay, no custom switch
-          # event). Terminal outcomes and exhaustion re-raise so the route emits the
-          # dialect terminal SSE error (headers are already committed).
+          # SSOT v4 §19 streaming dispatch + post-first-byte failover. Reuses the
+          # preflight Router/AttemptContext when present; otherwise selects inline
+          # (direct call_stream callers that did not preflight). On a retriable
+          # provider failure it preserves the existing StreamAssembler failover
+          # sequence: classify → retain consumed target + add justified exclusions →
+          # provider_failover_pending!(from:) → strip cross-provider thinking →
+          # next_attempt → begin_dispatch_on(lane:) → continue the SAME client SSE
+          # session (no replay, no custom switch event). Terminal outcomes and
+          # exhaustion re-raise so the route emits the dialect terminal SSE error
+          # (headers are already committed).
           def run_provider_call_ssot_v3_stream(&)
             session, attempt_context = ssot_v3_stream_session_and_attempt
             run_provider_call_ssot_v3_stream_loop(session: session, attempt_context: attempt_context, &)
@@ -204,24 +189,20 @@ module Legion
             @current_attempt_context = nil
           end
 
-          # Resolve the (session, attempt_context) pair for streaming dispatch.
+          # Resolve the (router, attempt_context) pair for streaming dispatch.
           # Preflight (§19) already selected + acquired before SSE opened: reuse it.
-          # Otherwise select inline here (raises RoutingRejected → old-path fallback).
+          # Otherwise select inline here (raises RoutingRejected).
           def ssot_v3_stream_session_and_attempt
-            return [@stream_session, @current_attempt_context] if @stream_session && @current_attempt_context
+            return [@router, @current_attempt_context] if @current_attempt_context
 
-            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
-            session = Legion::LLM::Inference::RoutingSession.new(
-              request: @request, requirements: @routing_requirements
-            )
-            attempt_context = session.next_attempt!(snapshot: snap)
+            attempt_context = @router.next_attempt!
             populate_ssot_v3_resolved_state(attempt_context)
-            [session, attempt_context]
+            [@router, attempt_context]
           end
 
-          # Bounded failover loop (no `loop do`/`retry`). RoutingSession bounds the
-          # attempt count: next_attempt returns an attempts_exhausted Rejection once
-          # requirements.maximum_attempts distinct targets are consumed.
+          # Bounded failover loop (no `loop do`/`retry`). Router bounds the
+          # attempt count: next_attempt returns an attempts_exhausted Rejection
+          # once maximum_attempts distinct targets are consumed.
           def run_provider_call_ssot_v3_stream_loop(session:, attempt_context:, &)
             current = attempt_context
             while current
@@ -275,8 +256,7 @@ module Legion
             # a different callable acquires its own lease inside SelectionDispatch.
             release_preflight_lease
 
-            snap = Legion::Extensions::Llm::Inventory::Registry.snapshot
-            nxt = session.next_attempt(snapshot: snap)
+            nxt = session.next_attempt
             if nxt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
               log.warn("[llm][executor] action=ssot_v3_stream_exhausted kind=#{nxt.kind} reason=#{nxt.reason.to_s[0, 200]} " \
                        "class=#{error.class.name} message=#{error.message.to_s[0, 200]}")
@@ -295,7 +275,7 @@ module Legion
           end
 
           def lane_type_for(operation)
-            Legion::LLM::Router.lane_type_for(operation: operation)
+            Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: operation)
           end
 
           # Map a raised streaming provider error to a Phase 1 ProviderOutcome for
@@ -396,10 +376,10 @@ module Legion
             client_stream_error?(err) || sse_translation_error?(err) || internal_error?(err)
           end
 
-          # SSOT v3 single engine (streaming). Preflight (Executor#stream_preflight!)
+          # SSOT v4 single engine (streaming). Preflight (Executor#stream_preflight!)
           # already selected + acquired the exact lane before SSE opened; this runs
-          # the dispatch + post-first-byte failover through the same RoutingSession
-          # and consumed-attempt set. Provider failures are classified inside the
+          # the dispatch + post-first-byte failover through the same Router and
+          # consumed-attempt set. Provider failures are classified inside the
           # failover loop (no HealthTracker mutation); terminal/exhausted outcomes
           # re-raise so the route emits the dialect terminal SSE error.
           def step_provider_call_stream(&)

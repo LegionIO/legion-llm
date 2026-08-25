@@ -2,9 +2,8 @@
 
 require 'securerandom'
 require 'legion/llm/routing_context'
-require 'legion/llm/router/settings_state'
-require 'legion/llm/router/header_constraints'
-require 'legion/llm/router/body_model_hint_policy'
+require 'legion/llm/routing/settings_state'
+require 'legion/llm/routing/header_constraints'
 
 module Legion
   module LLM
@@ -57,17 +56,22 @@ module Legion
           )
 
           ctx = routing_context || Legion::LLM::RoutingContext.build
-          settings_snapshot = kwargs[:routing_settings_snapshot] || Legion::LLM::Router::SettingsState.current
+          settings_snapshot = kwargs[:routing_settings_snapshot] || Legion::LLM::Routing::SettingsState.current
           trusted = kwargs[:trusted_constraints] || trusted_from_routing(routing, settings_snapshot)
-          body_decision = Legion::LLM::Router::BodyModelHintPolicy.call(
-            body_model: kwargs[:client_model], trusted_model: trusted.model, settings_snapshot: settings_snapshot
-          )
+
+          # SSOT v4: the raw client body model is the sole input to the Router's
+          # body-model-hint ladder, which reads it from metadata[:client_model].
+          # Client translators pass it as the top-level client_model: kwarg, so
+          # fold that into metadata here (the single bridge point) — the Request
+          # no longer carries a precomputed body_model_hint_decision.
+          metadata = kwargs.fetch(:metadata, {})
+          metadata = metadata.merge(client_model: kwargs[:client_model]) unless kwargs[:client_model].nil?
 
           new(
             routing_context:           ctx,
             routing_settings_snapshot: settings_snapshot,
             trusted_constraints:       trusted,
-            body_model_hint_decision:  body_decision,
+            body_model_hint_decision:  nil,
             id:                        kwargs[:id] || "req_#{SecureRandom.hex(12)}",
             conversation_id:           kwargs[:conversation_id],
             idempotency_key:           kwargs[:idempotency_key],
@@ -89,7 +93,7 @@ module Legion
             priority:                  kwargs.fetch(:priority, :normal),
             ttl:                       kwargs[:ttl],
             extra:                     extra,
-            metadata:                  kwargs.fetch(:metadata, {}),
+            metadata:                  metadata,
             enrichments:               kwargs.fetch(:enrichments, {}),
             predictions:               kwargs.fetch(:predictions, {}),
             tracing:                   kwargs[:tracing],
@@ -173,7 +177,7 @@ module Legion
         def self.trusted_from_routing(routing, settings_snapshot)
           routing ||= {}
           instance = routing[:instance] || routing[:instance_id] || routing[:provider_instance]
-          Legion::LLM::Router::HeaderConstraints.from_internal(
+          Legion::LLM::Routing::HeaderConstraints.from_internal(
             provider: routing[:provider], instance_id: instance, model: routing[:model],
             tier: routing[:tier], maximum_attempts: nil, settings_snapshot: settings_snapshot
           )

@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 require 'legion/llm/api/model_catalog'
-require 'legion/llm/router/settings_state'
+require 'legion/llm/routing/settings_state'
 
 RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
   subject(:catalog) { described_class }
@@ -11,7 +11,7 @@ RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
   # Ensure extensions settings are seeded (not nil) so SettingsState.current
   # can call SettingsSnapshot.build successfully.
   before do
-    Legion::LLM::Router::SettingsState.reset!
+    Legion::LLM::Routing::SettingsState.reset!
     Legion::Settings.loader.settings[:extensions] ||= {}
     Legion::Settings.loader.settings[:extensions][:llm] ||= {}
   end
@@ -25,10 +25,10 @@ RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
       Legion::LLM::Settings.routing_defaults[:auto_routing_model_aliases]
     Legion::Settings.loader.settings[:llm][:routing][:auto_routing_model_alias_metadata] =
       Legion::LLM::Settings.routing_defaults[:auto_routing_model_alias_metadata]
-    Legion::LLM::Router::SettingsState.reset!
+    Legion::LLM::Routing::SettingsState.reset!
   end
 
-  let(:settings_snapshot) { Legion::LLM::Router::SettingsState.current }
+  let(:settings_snapshot) { Legion::LLM::Routing::SettingsState.current }
 
   # ------------------------------------------------------------------ #
   # Helpers                                                              #
@@ -254,16 +254,16 @@ RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
 
     it 'excludes gemma4 when a nonempty whitelist does not match it' do
       Legion::Settings.loader.settings[:extensions][:llm][:model_whitelist] = ['allowed-model']
-      Legion::LLM::Router::SettingsState.reset!
-      ss   = Legion::LLM::Router::SettingsState.current
+      Legion::LLM::Routing::SettingsState.reset!
+      ss   = Legion::LLM::Routing::SettingsState.current
       list = catalog.list(snapshot: snap, settings_snapshot: ss, dialect: :openai)
       expect(list.map { |m| m[:id] }).not_to include('gemma4')
     end
 
     it 'includes gemma4 when the whitelist matches (substring)' do
       Legion::Settings.loader.settings[:extensions][:llm][:model_whitelist] = ['gemma']
-      Legion::LLM::Router::SettingsState.reset!
-      ss   = Legion::LLM::Router::SettingsState.current
+      Legion::LLM::Routing::SettingsState.reset!
+      ss   = Legion::LLM::Routing::SettingsState.current
       list = catalog.list(snapshot: snap, settings_snapshot: ss, dialect: :openai)
       expect(list.map { |m| m[:id] }).to include('gemma4')
     end
@@ -274,8 +274,8 @@ RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
 
     it 'excludes gemma4 when the blacklist contains a matching substring' do
       Legion::Settings.loader.settings[:extensions][:llm][:model_blacklist] = ['gemma']
-      Legion::LLM::Router::SettingsState.reset!
-      ss   = Legion::LLM::Router::SettingsState.current
+      Legion::LLM::Routing::SettingsState.reset!
+      ss   = Legion::LLM::Routing::SettingsState.current
       list = catalog.list(snapshot: snap, settings_snapshot: ss, dialect: :openai)
       expect(list.map { |m| m[:id] }).not_to include('gemma4')
     end
@@ -283,8 +283,8 @@ RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
     it 'blacklist denies even when whitelist also matches' do
       Legion::Settings.loader.settings[:extensions][:llm][:model_whitelist] = ['gemma']
       Legion::Settings.loader.settings[:extensions][:llm][:model_blacklist] = ['gemma4']
-      Legion::LLM::Router::SettingsState.reset!
-      ss   = Legion::LLM::Router::SettingsState.current
+      Legion::LLM::Routing::SettingsState.reset!
+      ss   = Legion::LLM::Routing::SettingsState.current
       list = catalog.list(snapshot: snap, settings_snapshot: ss, dialect: :openai)
       expect(list.map { |m| m[:id] }).not_to include('gemma4')
     end
@@ -408,16 +408,18 @@ RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
       it 'includes required diagnostic fields in each entry' do
         list  = catalog.list(snapshot: snap, settings_snapshot: settings_snapshot, dialect: :native)
         entry = list.find { |m| m[:id] == 'gemma4' }
+        # 0.8.0: the published lane owns exactly one operation (the
+        # representative of its coarse type) — native_list projects :operation.
         expect(entry).to include(
           :offering_id, :provider_family, :instance_id,
-          :tier, :supported_operations, :publication_state
+          :tier, :operation, :publication_state
         )
       end
 
       it 'includes offerings regardless of policy (native is a raw diagnostic view)' do
         Legion::Settings.loader.settings[:extensions][:llm][:model_blacklist] = ['gemma']
-        Legion::LLM::Router::SettingsState.reset!
-        ss   = Legion::LLM::Router::SettingsState.current
+        Legion::LLM::Routing::SettingsState.reset!
+        ss   = Legion::LLM::Routing::SettingsState.current
         list = catalog.list(snapshot: snap, settings_snapshot: ss, dialect: :native)
         # native list never applies policy — all offerings appear
         expect(list.map { |m| m[:id] }).to include('gemma4')
@@ -449,8 +451,8 @@ RSpec.describe Legion::LLM::API::ModelCatalog, :ssot_v3 do
       Legion::Settings.loader.settings[:llm][:routing][:auto_routing_model_alias_metadata] = {
         'copilot-utility-small' => { owned_by: 'legionio', context_window: 32_768 }
       }
-      Legion::LLM::Router::SettingsState.reset!
-      ss    = Legion::LLM::Router::SettingsState.current
+      Legion::LLM::Routing::SettingsState.reset!
+      ss    = Legion::LLM::Routing::SettingsState.current
       list  = catalog.list(snapshot: snap, settings_snapshot: ss, dialect: :openai)
       entry = list.find { |m| m[:id] == 'copilot-utility-small' }
       expect(entry[:context_window]).to eq(32_768)

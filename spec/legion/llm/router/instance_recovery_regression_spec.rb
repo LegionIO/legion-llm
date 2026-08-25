@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/router_new'
+require 'legion/llm/router'
 
 # Instance-recovery regression re-encoded against the NEW Router CLASS (SSOT v4).
 #

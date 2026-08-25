@@ -22,21 +22,11 @@ require_relative 'llm/call/daemon_client'
 # settings generation, body-hint/header policy, requirement/candidate/rank/
 # rejection, then the next_lane facade, session, exact dispatch, and HTTP views.
 require 'legion/llm/routing_context'
-require 'legion/llm/router/settings_snapshot'
-require 'legion/llm/router/settings_state'
-require 'legion/llm/router/body_model_hint_policy'
-require 'legion/llm/router/header_constraints'
-require 'legion/llm/router/input_bound'
-require 'legion/llm/router/required_capabilities'
-require 'legion/llm/router/request_requirements'
-require 'legion/llm/router/candidate_evaluation'
-require 'legion/llm/router/candidate_evaluator'
-require 'legion/llm/router/ranker'
-require 'legion/llm/router/rejection_diagnostics'
-require 'legion/llm/router/outcome_classifier'
+require 'legion/llm/routing/settings_state'
+require 'legion/llm/routing/settings_snapshot'
+require 'legion/llm/routing/header_constraints'
 require_relative 'llm/router'
 require 'legion/llm/inference/attempt_context'
-require 'legion/llm/inference/routing_session'
 require 'legion/llm/call/selection_dispatch'
 require 'legion/llm/api/routing_error_mapper'
 require 'legion/llm/api/model_catalog'
@@ -52,7 +42,6 @@ require_relative 'llm/quality/confidence/scorer'
 require_relative 'llm/quality/shadow_eval'
 require_relative 'llm/types'
 require_relative 'llm/inference/conversation'
-require_relative 'llm/router/escalation/history'
 require_relative 'llm/hooks'
 require_relative 'llm/cache'
 require_relative 'llm/cache/response'
@@ -61,7 +50,6 @@ require_relative 'llm/inference'
 require_relative 'llm/inference/embed_pipeline'
 require_relative 'llm/fleet'
 require_relative 'llm/inventory'
-require 'legion/llm/inventory/settings_observer'
 require_relative 'llm/metering'
 require_relative 'llm/audit'
 require_relative 'llm/scheduling'
@@ -109,8 +97,6 @@ module Legion
       def start
         log.debug '[llm] start.enter'
         Call::Providers.setup
-        Inventory::Discovery.run
-        Legion::LLM::Inventory::SettingsObserver.attach!
         Config.set_defaults
         Hooks.install_defaults
         Tools::Interceptor.load_defaults
@@ -135,7 +121,6 @@ module Legion
         log.debug '[llm] shutdown.enter'
         Legion::Settings[:llm][:connected] = false
         @started = false
-        Inventory::Discovery.reset!
         Call::Registry.disconnect_all!
         Call::Registry.reset!
         # Gracefully shut down the async thread pool (curation, reflection, knowledge capture)
@@ -200,8 +185,9 @@ module Legion
       end
       # rubocop:enable Legion/Framework/NoDirectDispatch
 
-      # M4: can_embed? is a live capability fact from the Inventory lane
-      # store (Discovery) — the second selection domain (and its
+      # M4: can_embed? is a live capability fact from the inventory registry
+      # (Discovery reads the same lanes the router reads) — the second
+      # selection domain (and its
       # embedding_provider/model/instance/fallback_chain projections) is
       # gone; SSOT :embed routing (Call::Embeddings → Router.next_lane) is
       # the sole embedding selection authority.

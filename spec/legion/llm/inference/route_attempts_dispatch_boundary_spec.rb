@@ -118,14 +118,17 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
     end.to raise_error(ArgumentError, /dispatch params must be a Hash/)
   end
 
-  it 'rejects a fleet selection/lane operation mismatch and preserves legacy fleet operation' do
-    selection = Struct.new(:operation).new(:stream_chat)
+  it 'rejects a fleet selection/lane operation TYPE mismatch and preserves legacy fleet operation' do
+    # The coarse lane type is the fleet contract: the operation is a request
+    # property (a stream selection on a chat-representative lane MATCHES),
+    # but an embed selection on an inference lane does not.
+    selection = Struct.new(:operation).new(:embed)
     lane = Struct.new(:operation).new(:chat)
     mismatch = Struct.new(:selection, :lane).new(selection, lane)
     malformed = harness(fleet: true, context: mismatch, raw_options: raw_options)
 
     expect do
-      malformed.send(:dispatch_provider_request, capability: :stream, operation: :chat, messages: messages)
+      malformed.send(:dispatch_provider_request, capability: :stream, operation: :embed, messages: messages)
     end.to raise_error(ArgumentError, %r{selection/lane operation mismatch})
 
     legacy = harness(fleet: true, context: nil, raw_options: raw_options)

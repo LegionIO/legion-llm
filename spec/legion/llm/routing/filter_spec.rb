@@ -921,7 +921,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
   # body_model_hint_decision — the 7 dispositions
   # ---------------------------------------------------------------------------
 
-  describe '#body_model_hint_decision' do
+  describe '#body_model_hint_decision_for' do
     before do
       Legion::Settings.loader.settings[:llm] ||= {}
       Legion::Settings.loader.settings[:llm][:router] ||= {}
@@ -936,7 +936,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
     # Disposition 1: absent
     context 'when body_model is nil' do
       it 'returns disposition :absent with nil requested_model' do
-        d = filter.body_model_hint_decision(body_model: nil, trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: nil, trusted_model: nil)
         expect(d.disposition).to eq(:absent)
         expect(d.requested_model).to be_nil
         expect(d.model_constraint).to be_nil
@@ -945,7 +945,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
 
     context 'when body_model is blank' do
       it 'returns disposition :absent' do
-        d = filter.body_model_hint_decision(body_model: '   ', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: '   ', trusted_model: nil)
         expect(d.disposition).to eq(:absent)
         expect(d.requested_model).to be_nil
       end
@@ -953,7 +953,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
 
     context 'when body_model is an empty string' do
       it 'returns disposition :absent' do
-        d = filter.body_model_hint_decision(body_model: '', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: '', trusted_model: nil)
         expect(d.disposition).to eq(:absent)
       end
     end
@@ -961,7 +961,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
     # Disposition 2: superseded_by_explicit_model
     context 'when both body_model and trusted_model are present' do
       it 'returns disposition :superseded_by_explicit_model' do
-        d = filter.body_model_hint_decision(body_model: 'claude-haiku', trusted_model: 'gpt-5')
+        d = filter.body_model_hint_decision_for(body_model: 'claude-haiku', trusted_model: 'gpt-5')
         expect(d.disposition).to eq(:superseded_by_explicit_model)
         expect(d.model_constraint).to be_nil
         expect(d.requested_model).to eq('claude-haiku')
@@ -971,23 +971,23 @@ RSpec.describe Legion::LLM::Routing::Filter do
     # Disposition 3: auto (auto-routing alias)
     context 'when body_model is an auto-routing alias' do
       it 'returns disposition :auto for "legionio"' do
-        d = filter.body_model_hint_decision(body_model: 'legionio', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'legionio', trusted_model: nil)
         expect(d.disposition).to eq(:auto)
         expect(d.model_constraint).to be_nil
       end
 
       it 'returns disposition :auto for "auto"' do
-        d = filter.body_model_hint_decision(body_model: 'auto', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'auto', trusted_model: nil)
         expect(d.disposition).to eq(:auto)
       end
 
       it 'returns disposition :auto for "copilot-utility-small"' do
-        d = filter.body_model_hint_decision(body_model: 'copilot-utility-small', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'copilot-utility-small', trusted_model: nil)
         expect(d.disposition).to eq(:auto)
       end
 
       it 'is case-insensitive' do
-        d = filter.body_model_hint_decision(body_model: 'LEGIONIO', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'LEGIONIO', trusted_model: nil)
         expect(d.disposition).to eq(:auto)
       end
     end
@@ -999,7 +999,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
       end
 
       it 'returns disposition :ignored_disabled' do
-        d = filter.body_model_hint_decision(body_model: 'claude-haiku', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'claude-haiku', trusted_model: nil)
         expect(d.disposition).to eq(:ignored_disabled)
         expect(d.model_constraint).to be_nil
       end
@@ -1012,7 +1012,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
       end
 
       it 'returns disposition :ignored_not_whitelisted' do
-        d = filter.body_model_hint_decision(body_model: 'claude-haiku', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'claude-haiku', trusted_model: nil)
         expect(d.disposition).to eq(:ignored_not_whitelisted)
       end
     end
@@ -1023,7 +1023,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
       end
 
       it 'returns disposition :honored' do
-        d = filter.body_model_hint_decision(body_model: 'QWEN-32B', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'QWEN-32B', trusted_model: nil)
         expect(d.disposition).to eq(:honored)
         expect(d.matched_whitelist).to eq('qwen')
       end
@@ -1036,7 +1036,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
       end
 
       it 'returns disposition :ignored_blacklisted' do
-        d = filter.body_model_hint_decision(body_model: 'claude-3-5-haiku-20241022', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'claude-3-5-haiku-20241022', trusted_model: nil)
         expect(d.disposition).to eq(:ignored_blacklisted)
         expect(d.matched_blacklist).to eq('haiku')
       end
@@ -1049,7 +1049,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
       end
 
       it 'returns disposition :ignored_blacklisted' do
-        d = filter.body_model_hint_decision(body_model: 'claude-haiku', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'claude-haiku', trusted_model: nil)
         expect(d.disposition).to eq(:ignored_blacklisted)
         expect(d.matched_blacklist).to eq('haiku')
         expect(d.matched_whitelist).to eq('claude')
@@ -1059,7 +1059,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
     # Disposition 7: honored
     context 'when body_model passes all checks' do
       it 'returns disposition :honored with model_constraint set' do
-        d = filter.body_model_hint_decision(body_model: 'gemma4', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'gemma4', trusted_model: nil)
         expect(d.disposition).to eq(:honored)
         expect(d.model_constraint).to eq('gemma4')
       end
@@ -1067,7 +1067,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
 
     context 'when whitelist is empty and blacklist is empty' do
       it 'honors any non-auto model' do
-        d = filter.body_model_hint_decision(body_model: 'gpt-5-turbo', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'gpt-5-turbo', trusted_model: nil)
         expect(d.disposition).to eq(:honored)
         expect(d.model_constraint).to eq('gpt-5-turbo')
       end
@@ -1075,13 +1075,13 @@ RSpec.describe Legion::LLM::Routing::Filter do
 
     # settings_generation is always 0 (the mixin passes a literal 0)
     it 'always returns settings_generation 0' do
-      d = filter.body_model_hint_decision(body_model: 'gemma4', trusted_model: nil)
+      d = filter.body_model_hint_decision_for(body_model: 'gemma4', trusted_model: nil)
       expect(d.settings_generation).to eq(0)
     end
 
     # Normalization: whitespace trimming
     it 'trims whitespace from body_model' do
-      d = filter.body_model_hint_decision(body_model: '  gemma4  ', trusted_model: nil)
+      d = filter.body_model_hint_decision_for(body_model: '  gemma4  ', trusted_model: nil)
       expect(d.disposition).to eq(:honored)
       expect(d.model_constraint).to eq('gemma4')
     end
@@ -1093,7 +1093,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
       end
 
       it 'still returns :auto (alias check precedes disabled check)' do
-        d = filter.body_model_hint_decision(body_model: 'legionio', trusted_model: nil)
+        d = filter.body_model_hint_decision_for(body_model: 'legionio', trusted_model: nil)
         expect(d.disposition).to eq(:auto)
       end
     end
@@ -1101,7 +1101,7 @@ RSpec.describe Legion::LLM::Routing::Filter do
     # Ladder order: trusted_model supersedes even when model is an alias
     context 'auto alias with trusted_model present' do
       it 'returns :superseded_by_explicit_model (trusted wins over alias)' do
-        d = filter.body_model_hint_decision(body_model: 'legionio', trusted_model: 'claude-3')
+        d = filter.body_model_hint_decision_for(body_model: 'legionio', trusted_model: 'claude-3')
         expect(d.disposition).to eq(:superseded_by_explicit_model)
       end
     end

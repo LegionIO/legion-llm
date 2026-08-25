@@ -31,7 +31,9 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
         @resolved_instance = selection.instance_id
         @resolved_model = selection.model
         @resolved_tier = :fleet
-        @resolved_offering_id = selection.offering_id
+        # D2: the resolved offering id is the 5-tuple lane id (matches
+        # production populate_ssot_v3_resolved_state).
+        @resolved_offering_id = selection.lane_id
         @resolved_offering_metadata = {}
         @tracing = {}
       end

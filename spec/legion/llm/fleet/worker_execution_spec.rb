@@ -37,11 +37,13 @@ RSpec.describe Legion::LLM::Fleet::WorkerExecution, :ssot_v3 do
       provider_family: 'vllm', instance_id: 'local', callable: callable,
       drafts: [offering_draft(model: 'llama3.2', tier: :local, supported: supported)]
     )
-    snapshot.offerings_for(
+    # The fleet claim's offering_id is the 5-tuple lane id (D4: the field
+    # name stays, the value is the composed 5 tuple).
+    snapshot.lanes_for(
       instance_key: Legion::Extensions::Llm::Inventory::Identity::InstanceKey.new(
         provider_family: 'vllm', instance_id: 'local'
       )
-    ).first.offering_id
+    ).first.lane_id
   end
 
   def signed_envelope(env)

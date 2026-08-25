@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/router_new'
+require 'legion/llm/router'
 
 # Fail-forward RELEASE BAR re-encoded against the NEW Legion::LLM::Router CLASS.
 #

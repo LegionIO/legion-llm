@@ -55,12 +55,9 @@ RSpec.describe 'SSOT v3 daemon and lease fault classification', :ssot_v3 do
     request = Legion::LLM::Inference::Request.build_for_test(
       messages: [], stream: true, routing: { model: 'gemma4' }, routing_seed: 'ab' * 16
     )
-    requirements = Legion::LLM::Router::RequestRequirements.build(
-      request: request, operation: :stream_chat, required_capabilities: %i[streaming],
-      estimated_input_bound: 1, required_output_tokens: 0
-    )
+    router = Legion::LLM::Router.new(request: request, operation: :stream_chat, body_model: 'gemma4')
     executor = Legion::LLM::Inference::Executor.new(request)
-    executor.instance_variable_set(:@routing_requirements, requirements)
+    executor.instance_variable_set(:@router, router)
     calls = 0
     allow(Legion::Extensions::Llm::Inventory::Registry).to receive(:acquire).and_wrap_original do |original, **kwargs|
       calls += 1
@@ -79,19 +76,15 @@ RSpec.describe 'SSOT v3 daemon and lease fault classification', :ssot_v3 do
   end
 
   it 'raises a typed pre-header rejection when every bounded preflight lease is stale' do
-    Legion::Settings.loader.settings[:llm][:routing][:max_attempts] = 2
-    Legion::LLM::Router::SettingsState.reset!
+    Legion::Settings.loader.settings[:llm][:router][:max_attempts] = 2
     context_for(instance_id: 'dead-one', operation: :stream_chat)
     context_for(instance_id: 'dead-two', operation: :stream_chat)
     request = Legion::LLM::Inference::Request.build_for_test(
       messages: [], stream: true, routing: { model: 'gemma4' }, routing_seed: 'cd' * 16
     )
-    requirements = Legion::LLM::Router::RequestRequirements.build(
-      request: request, operation: :stream_chat, required_capabilities: %i[streaming],
-      estimated_input_bound: 1, required_output_tokens: 0
-    )
+    router = Legion::LLM::Router.new(request: request, operation: :stream_chat, body_model: 'gemma4')
     executor = Legion::LLM::Inference::Executor.new(request)
-    executor.instance_variable_set(:@routing_requirements, requirements)
+    executor.instance_variable_set(:@router, router)
     allow(Legion::Extensions::Llm::Inventory::Registry).to receive(:acquire)
       .and_raise(errors::CallableDisposedError, 'disposed')
 
@@ -100,8 +93,7 @@ RSpec.describe 'SSOT v3 daemon and lease fault classification', :ssot_v3 do
         expect(error.rejection.kind).to eq(:attempts_exhausted)
       end
   ensure
-    Legion::Settings.loader.settings[:llm][:routing][:max_attempts] = 3
-    Legion::LLM::Router::SettingsState.reset!
+    Legion::Settings.loader.settings[:llm][:router][:max_attempts] = 3
   end
 
   it 'classifies a streaming lease failure as instance_unavailable before failover' do
@@ -116,16 +108,16 @@ RSpec.describe 'SSOT v3 daemon and lease fault classification', :ssot_v3 do
       kind: :service_unavailable, reason: 'none', inventory_generation: snapshot.generation,
       candidate_counts: {}, http_status: 503
     )
-    session = instance_double('RoutingSession')
-    allow(session).to receive(:classify) do |dispatch_result:, **|
+    router_double = instance_double('Legion::LLM::Router')
+    allow(router_double).to receive(:classify) do |dispatch_result:, **|
       captured = dispatch_result.outcome
       action
     end
-    allow(session).to receive(:next_attempt).and_return(rejection)
+    allow(router_double).to receive(:next_attempt).and_return(rejection)
     error = errors::StaleCallableError.new('retired')
 
     expect do
-      executor.send(:ssot_v3_stream_handle_failure, error: error, session: session, attempt_context: context)
+      executor.send(:ssot_v3_stream_handle_failure, error: error, session: router_double, attempt_context: context)
     end.to raise_error(error)
     expect(captured.kind).to eq(:instance_unavailable)
   end

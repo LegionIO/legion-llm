@@ -126,10 +126,9 @@ module Legion
           @escalation_history = []
           @route_attempts = []
           @current_escalation_context = nil
-          @routing_requirements = nil
+          @router = nil
           @current_attempt_context = nil
           @pre_provider_steps_done = false
-          @stream_session = nil
           @preflight_lease = nil
           @proactive_tier_assignment = nil
           @tool_event_handler = nil
@@ -163,10 +162,10 @@ module Legion
           clear_log_context
         end
 
-        # SSOT v3 §19 streaming preflight. Runs the pre-provider steps and, when
+        # SSOT v4 §19 streaming preflight. Runs the pre-provider steps and, when
         # the SSOT inventory path is active, selects AND acquires the exact lane
-        # (RoutingSession#next_attempt! + a DispatchLease) BEFORE the route opens
-        # the SSE event-stream. A routing rejection therefore surfaces as
+        # (Router#next_attempt! + a DispatchLease) BEFORE the route opens the SSE
+        # event-stream. A routing rejection therefore surfaces as
         # Errors::RoutingRejected here — mapped to a proper HTTP status by the
         # route's RoutingErrorMapper rescue — instead of an SSE server_error
         # emitted after the response headers are already committed.
@@ -174,8 +173,8 @@ module Legion
         # Returns the selected lane Hash (for StreamAssembler#initial_lane) when
         # SSOT selection ran, or nil when the SSOT path is not active (fallback
         # preserves the prior behavior: the route opens SSE and call_stream selects
-        # inline). The selected AttemptContext, RoutingSession, and lease are
-        # retained on the executor and reused by the subsequent call_stream.
+        # inline). The selected AttemptContext, Router, and lease are retained on
+        # the executor and reused by the subsequent call_stream.
         def stream_preflight!
           set_log_context
           Thread.current[:legion_llm_in_pipeline] = true

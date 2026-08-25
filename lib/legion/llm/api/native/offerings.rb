@@ -2,7 +2,8 @@
 
 require 'legion/logging/helper'
 require 'legion/llm/api/native/tiers'
-require 'legion/llm/router/settings_state'
+require 'legion/llm/routing/settings_state'
+require 'legion/extensions/llm/taxonomies'
 
 module Legion
   module LLM
@@ -62,45 +63,45 @@ module Legion
             }
           end
 
-          # D14: offerings are projected from the NEW Registry snapshot — the
-          # old Concurrent::Map lane store is no longer populated at runtime on
-          # the SSOT branch. Display only; selection reads the
+          # Offerings are projected from the registry snapshot — the single
+          # bucket of 5-tuple lanes. Display only; selection reads the
           # AvailabilityFact itself, never these projections.
           def self.snapshot_offerings(filters)
             snapshot = Legion::LLM::Inventory.snapshot
             inst_by_key = {}
             snapshot.each_instance { |inst| inst_by_key[inst.instance_key] = inst }
 
-            snapshot.each_offering.filter_map do |offering|
-              instance = inst_by_key[offering.instance_key]
-              next unless policy_permits?(offering)
-              next unless offering_matches_filters?(offering, instance, filters)
+            snapshot.each_lane.filter_map do |lane|
+              instance = inst_by_key[lane.instance_key]
+              next unless policy_permits?(lane)
+              next unless lane_matches_filters?(lane, instance, filters)
 
-              offering_entry(offering, instance&.availability)
+              offering_entry(lane, instance&.availability)
             end
           end
 
+          # Resolves the 5-tuple id at /api/llm/offerings/:id.
           def self.snapshot_offering(offering_id)
             snapshot = Legion::LLM::Inventory.snapshot
-            offering = snapshot.offering(offering_id: offering_id.to_s)
-            return nil unless offering && policy_permits?(offering)
+            lane = snapshot.lane(lane_id: offering_id.to_s)
+            return nil unless lane && policy_permits?(lane)
 
-            availability = snapshot.instance(instance_key: offering.instance_key)&.availability
-            offering_entry(offering, availability)
+            availability = snapshot.instance(instance_key: lane.instance_key)&.availability
+            offering_entry(lane, availability)
           end
 
-          # §9.5 fail-closed model policy — same semantics as
+          # Fail-closed model policy — same semantics as
           # ModelCatalog.policy_permits?: a nonempty effective whitelist requires
           # a case-insensitive substring match; a blacklist match always denies.
-          # The SSOT registry publishes the full provider catalog (policy is
+          # The registry publishes the full provider catalog (policy is
           # applied at selection time via SettingsState); the display surfaces
           # apply it here so a denied model never appears in the API surface
           # (compliance-by-absence invariant).
-          def self.policy_permits?(offering)
-            policy = Legion::LLM::Router::SettingsState.current.model_policy_for(offering: offering)
+          def self.policy_permits?(lane)
+            policy = Legion::LLM::Routing::SettingsState.current.model_policy_for(offering: lane)
             whitelist = policy[:whitelist]
             blacklist = policy[:blacklist]
-            model_lc = offering.model.to_s.downcase
+            model_lc = lane.model.to_s.downcase
 
             return false if whitelist.any? && whitelist.none? { |e| model_lc.include?(e.to_s.downcase) }
             return false if blacklist.any? { |e| model_lc.include?(e.to_s.downcase) }
@@ -108,19 +109,19 @@ module Legion
             true
           end
 
-          def self.offering_matches_filters?(offering, instance, filters)
-            ik = offering.instance_key
+          def self.lane_matches_filters?(lane, instance, filters)
+            ik = lane.instance_key
             return false if filters[:provider] && ik.provider_family.to_s != filters[:provider].to_s
             return false if filters[:instance_id] && ik.instance_id.to_s != filters[:instance_id].to_s
-            return false if filters[:model] && offering.model.to_s != filters[:model].to_s
-            return false if filters[:tier] && offering.tier.to_s != filters[:tier].to_s
-            return false if filters[:offering_id] && offering.offering_id.to_s != filters[:offering_id].to_s
-            return false if filters[:model_family] && offering.metadata[:model_family].to_s != filters[:model_family].to_s
+            return false if filters[:model] && lane.model.to_s != filters[:model].to_s
+            return false if filters[:tier] && lane.tier.to_s != filters[:tier].to_s
+            return false if filters[:offering_id] && lane.lane_id != filters[:offering_id].to_s
+            return false if filters[:model_family] && lane.metadata[:model_family].to_s != filters[:model_family].to_s
 
-            return false if filters[:type] && normalize_offering_type(filters[:type]) != offering_type(offering)
+            return false if filters[:type] && normalize_offering_type(filters[:type]) != lane_type(lane)
 
             if filters[:capability]
-              caps = Legion::LLM::API::Native::Tiers.offering_capabilities(offering)
+              caps = Legion::LLM::API::Native::Tiers.lane_capabilities(lane)
               return false unless caps.include?(filters[:capability].to_s)
             end
             if filters[:healthy]
@@ -132,50 +133,43 @@ module Legion
             true
           end
 
-          # Registry offerings are always published (enabled) — the old
-          # store's disabled-lane filter has no SSOT equivalent.
-          def self.offering_entry(offering, availability)
+          # The offering shape: same field names as v0.15.2, with
+          # offering_id/id set to the 5-tuple lane id. Registry lanes are
+          # always published (enabled).
+          def self.offering_entry(lane, availability)
             {
-              offering_id:       offering.offering_id.to_s,
-              id:                offering.offering_id.to_s,
-              model:             offering.model.to_s,
-              provider_family:   offering.instance_key.provider_family.to_s,
-              provider_instance: offering.instance_key.instance_id.to_s,
-              instance_id:       offering.instance_key.instance_id.to_s,
-              tier:              offering.tier.to_s,
-              type:              offering_type(offering).to_s,
-              model_family:      offering.metadata[:model_family],
-              capabilities:      Legion::LLM::API::Native::Tiers.offering_capabilities(offering),
-              limits:            Legion::LLM::API::Native::Tiers.offering_limits(offering),
+              offering_id:       lane.lane_id,
+              id:                lane.lane_id,
+              model:             lane.model.to_s,
+              provider_family:   lane.instance_key.provider_family.to_s,
+              provider_instance: lane.instance_key.instance_id.to_s,
+              instance_id:       lane.instance_key.instance_id.to_s,
+              tier:              lane.tier.to_s,
+              type:              lane_type(lane).to_s,
+              model_family:      lane.metadata[:model_family],
+              capabilities:      Legion::LLM::API::Native::Tiers.lane_capabilities(lane),
+              limits:            Legion::LLM::API::Native::Tiers.lane_limits(lane),
               enabled:           true,
               cost:              {},
-              health:            health_display(availability),
-              metadata:          offering.metadata
+              health:            Legion::LLM::API::Native::Models.health_display(availability),
+              metadata:          lane.metadata
             }
           end
 
-          def self.offering_type(offering)
-            offering.operation_status(operation: :embed) == :supported ? :embedding : :inference
+          def self.lane_type(lane)
+            Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: lane.operation)
           end
 
+          # Request filter spellings for the coarse lane type: the embedding
+          # spellings collapse to :embedding, 'chat' to :inference (the
+          # v0.15.2 request vocabulary), everything else passes through as a
+          # Taxonomies::TYPES symbol.
           def self.normalize_offering_type(value)
-            %w[embedding embeddings embed].include?(value.to_s) ? :embedding : :inference
-          end
-
-          # Same 4-key legacy display shape the provider actors write to the
-          # settings health hash, derived from the snapshot AvailabilityFact.
-          def self.health_display(availability)
-            available = availability&.state == :available
-            {
-              circuit_state: if available
-                               :closed
-                             else
-                               (availability ? :open : :half_open)
-                             end,
-              denied:        false,
-              available:     available,
-              adjustment:    available ? 0 : -50
-            }
+            case value.to_s
+            when 'embedding', 'embeddings', 'embed' then :embedding
+            when 'chat' then :inference
+            else value.to_sym
+            end
           end
 
           def self.group_offerings(offerings)

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/extensions/llm/fleet/protocol'
+require 'legion/extensions/llm/taxonomies'
 
 module Legion
   module LLM
@@ -211,12 +212,17 @@ module Legion
                             ))
         end
 
+        # Coarse-lane-type comparison, mirroring the lex-llm fleet worker's
+        # require_matching_operation!: the operation is a request property, the
+        # lane constrains type/model/instance — the lane's operation member is
+        # its type's representative, not the identity.
         def ssot_v3_fleet_operation(requested_operation)
           return requested_operation unless @current_attempt_context
 
           selection_operation = @current_attempt_context.selection.operation
           lane_operation = @current_attempt_context.lane.operation
-          unless selection_operation == lane_operation
+          unless Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: selection_operation) ==
+                 Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: lane_operation)
             raise ArgumentError,
                   "SSOT fleet selection/lane operation mismatch: #{selection_operation.inspect} != #{lane_operation.inspect}"
           end
@@ -226,11 +232,14 @@ module Legion
 
         def validate_ssot_v3_fleet_operation!(operation)
           return unless @current_attempt_context
-          return if operation == @current_attempt_context.selection.operation
+
+          selection_operation = @current_attempt_context.selection.operation
+          return if Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: operation) ==
+                    Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: selection_operation)
 
           raise ArgumentError,
                 "SSOT fleet envelope operation mismatch: #{operation.inspect} != " \
-                "#{@current_attempt_context.selection.operation.inspect}"
+                "#{selection_operation.inspect}"
         end
 
         def enforce_final_context_budget!(messages, dispatch_options)

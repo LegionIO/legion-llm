@@ -236,7 +236,7 @@ module Legion
         # §9.5 specificity cascade: exact provider+instance → provider → global.
         # "First scope whose key EXISTS, including explicit empty Array."
         def model_policy_for(lane:, **)
-          ext_llm = Legion::Settings[:extensions][:llm]
+          ext_llm = Legion::Settings[:extensions][:llm] || {}
           ik  = lane.instance_key
           pf  = ik.provider_family
           iid = ik.instance_id
@@ -256,7 +256,7 @@ module Legion
         # cascade (provider -> instance -> model, most-specific-first) keyed
         # by the config name.
         def preferred_context_range_for(lane:, **)
-          ext_llm = Legion::Settings[:extensions][:llm]
+          ext_llm = Legion::Settings[:extensions][:llm] || {}
           pf  = lane.instance_key.provider_family
           iid = lane.instance_key.instance_id
 
@@ -282,7 +282,7 @@ module Legion
         # returns one immutable BodyModelHintDecision. It never returns a lane,
         # substitute model, or alias; only a :honored decision carries a model
         # constraint. The Router calls this ONCE in initialize.
-        def body_model_hint_decision(body_model:, trusted_model:, **)
+        def body_model_hint_decision_for(body_model:, trusted_model:, **)
           requested = normalize(body_model)
           router_cfg = Legion::Settings[:llm][:router]
 
@@ -347,7 +347,7 @@ module Legion
           return status unless status == :unknown
 
           override = CASCADE.resolve_from(
-            llm_conf:        Legion::Settings[:extensions][:llm],
+            llm_conf:        Legion::Settings[:extensions][:llm] || {},
             provider_family: lane.instance_key.provider_family,
             instance:        lane.instance_key.instance_id,
             key:             :"enable_#{capability}",

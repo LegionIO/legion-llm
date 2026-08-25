@@ -15,20 +15,20 @@ end
 # pinned against the policy cascade + the display projections.
 RSpec.describe 'Compliance by absence', :ssot_v3 do
   before do
-    Legion::LLM::Router::SettingsState.reset!
+    Legion::LLM::Routing::SettingsState.reset!
   end
 
   def policy_for(provider:, model:, instance: 'default')
     activate(provider_family: provider, instance_id: instance,
              drafts: [offering_draft(model: model, tier: :direct, supported: %i[chat])])
     lane = snapshot.lanes_for(instance_key: instance_key(provider_family: provider, instance_id: instance)).first
-    Legion::LLM::Router::SettingsState.current.model_policy_for(offering: lane)
+    Legion::LLM::Routing::SettingsState.current.model_policy_for(offering: lane)
   end
 
   context 'model_blacklist' do
     it 'denies a blacklisted model (substring, case-insensitive)' do
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_blacklist: ['claude-old'] }
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::LLM::Routing::SettingsState.reset!
 
       policy = policy_for(provider: :bedrock, model: 'claude-old-2')
 
@@ -38,7 +38,7 @@ RSpec.describe 'Compliance by absence', :ssot_v3 do
 
     it 'denial is provider-scoped — same model name on another provider is clean' do
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_blacklist: ['claude-sonnet-4-6'] }
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::LLM::Routing::SettingsState.reset!
 
       policy = policy_for(provider: :openai, model: 'claude-sonnet-4-6')
 
@@ -49,7 +49,7 @@ RSpec.describe 'Compliance by absence', :ssot_v3 do
   context 'model_whitelist (allowlist mode)' do
     it 'a nonempty whitelist admits only listed models' do
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_whitelist: ['claude-sonnet-4-6'] }
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::LLM::Routing::SettingsState.reset!
 
       sonnet_policy = policy_for(provider: :bedrock, model: 'claude-sonnet-4-6')
       old_policy    = policy_for(provider: :bedrock, model: 'claude-old')
@@ -66,7 +66,7 @@ RSpec.describe 'Compliance by absence', :ssot_v3 do
         model_whitelist: ['claude-sonnet-4-6'],
         model_blacklist: ['claude-sonnet-4-6']
       }
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::LLM::Routing::SettingsState.reset!
       activate(provider_family: :bedrock, instance_id: 'default',
                drafts: [offering_draft(model: 'claude-sonnet-4-6', tier: :direct, supported: %i[chat])])
       lane = snapshot.lanes_for(instance_key: instance_key(provider_family: :bedrock, instance_id: 'default')).first
@@ -78,12 +78,12 @@ RSpec.describe 'Compliance by absence', :ssot_v3 do
   context 'settings reload picks up new policy' do
     it 'adding a model to the blacklist after the first read takes effect on the next generation' do
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = {}
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::LLM::Routing::SettingsState.reset!
       before_policy = policy_for(provider: :bedrock, model: 'claude-old', instance: 'a')
       expect(before_policy[:blacklist]).to be_empty
 
       Legion::Settings.loader.settings[:extensions][:llm][:bedrock] = { model_blacklist: ['claude-old'] }
-      Legion::LLM::Router::SettingsState.reload!(
+      Legion::LLM::Routing::SettingsState.reload!(
         llm_settings:       Legion::Settings[:llm],
         extension_settings: Legion::Settings[:extensions]
       )
@@ -95,7 +95,7 @@ RSpec.describe 'Compliance by absence', :ssot_v3 do
   context 'display surfaces — a denied model never appears' do
     it 'is absent from the models-route projection (lane_entries)' do
       Legion::Settings.loader.settings[:extensions][:llm][:vllm] = { model_blacklist: ['gemma-12b'] }
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::LLM::Routing::SettingsState.reset!
       activate(provider_family: :vllm, instance_id: 'gpu-01',
                drafts: [
                  offering_draft(model: 'gemma-12b', tier: :direct, supported: %i[chat]),
@@ -131,7 +131,7 @@ RSpec.describe 'Compliance by absence', :ssot_v3 do
         # registry does not filter by model policy); the display surface
         # applies the §9.5 fail-closed policy. Rebuild the SettingsState
         # snapshot after mutating settings.
-        Legion::LLM::Router::SettingsState.reset!
+        Legion::LLM::Routing::SettingsState.reset!
         activate(
           provider_family: :vllm,
           instance_id:     'gpu-01',
