@@ -61,18 +61,23 @@ module Legion
 
             claims[key] = value
           end
+          # S3: every request is exact (06 P2) — the exact signed scalar
+          # claims are verified unconditionally on the worker, so they are
+          # issued unconditionally. The marker-absence branch is deleted.
           execution_contract = payload[:execution_contract]
-          unless execution_contract.nil?
-            unless execution_contract == ::Legion::Extensions::Llm::Fleet::Protocol::EXACT_EXECUTION_CONTRACT
-              raise TokenError, "unknown fleet execution_contract marker: #{execution_contract.inspect}"
-            end
-
-            offering_id = payload[:offering_id]
-            raise TokenError, 'missing token claim source: nonempty String offering_id (exact execution marker present)' unless offering_id.is_a?(String) && !offering_id.strip.empty?
-
-            claims[:execution_contract] = execution_contract
-            claims[:offering_id] = offering_id
+          if execution_contract.nil?
+            raise TokenError,
+                  'missing token claim source: execution_contract (fleet protocol v3 is exact-execution only)'
           end
+          unless execution_contract == ::Legion::Extensions::Llm::Fleet::Protocol::EXACT_EXECUTION_CONTRACT
+            raise TokenError, "unknown fleet execution_contract marker: #{execution_contract.inspect}"
+          end
+
+          offering_id = payload[:offering_id]
+          raise TokenError, 'missing token claim source: nonempty String offering_id (exact execution)' unless offering_id.is_a?(String) && !offering_id.strip.empty?
+
+          claims[:execution_contract] = execution_contract
+          claims[:offering_id] = offering_id
           claims
         end
 

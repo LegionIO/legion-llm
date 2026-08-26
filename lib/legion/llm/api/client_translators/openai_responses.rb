@@ -91,7 +91,8 @@ module Legion
             routing_explicit = canonical_request.metadata[:routing_explicit]
             extra[:routing_explicit] = routing_explicit if routing_explicit
 
-            messages = inference_messages(canonical_request.messages)
+            # N x N law: the executor receives canonical messages end-to-end.
+            messages = canonical_request.messages
             request_kwargs = {
               id:              request_id,
               messages:        messages,
@@ -107,7 +108,10 @@ module Legion
               conversation_id: canonical_request.conversation_id,
               stream:          canonical_request.stream == true,
               modality:        modality,
-              thinking:        thinking_to_inference(canonical_request.thinking),
+              # N2: shared execution carries the canonical Thinking::Config
+              # (or nil) — the client dialect is re-shaped by the PROVIDER
+              # translator at the provider edge, never in the pipeline.
+              thinking:        canonical_request.thinking,
               cache:           { strategy: :default, cacheable: true },
               extra:           extra,
               metadata:        canonical_request.metadata
@@ -165,12 +169,17 @@ module Legion
               }
             end
 
-            # Responses protocol: a turn is always status `completed`. Both
-            # client-callable calls (actionable_tool_calls) and LegionIO-run
-            # results ride in output[] — client-callable ones as function_call
-            # items the client executes and continues via function_call_output.
-            # requires_action / action_required are Assistants API concepts that
-            # real Responses clients (Codex) reject.
+            # M7: the response status is the stop state's dialect rendering —
+            # a provider-declared completion stop is 'completed', an explicit
+            # truncation (max_tokens) is 'incomplete', and an :error or an
+            # absent/unmapped stop state is 'failed'. Never a hardcoded
+            # 'completed': the client must be able to tell a clean turn from
+            # a turn the daemon could not confirm completed. (Output items
+            # that did complete keep their own 'completed' item status — the
+            # response-level status is the turn's state.) Client-callable
+            # calls and LegionIO-run results ride in output[]; requires_action
+            # / action_required are Assistants API concepts that real
+            # Responses clients (Codex) reject.
             {
               id:         request_id,
               object:     'response',
@@ -178,8 +187,24 @@ module Legion
               model:      resolved_model,
               output:     output,
               usage:      build_usage(tokens),
-              status:     'completed'
+              status:     format_response_status(pipeline_response)
             }
+          end
+
+          # One stop-state → Responses status policy (M7). The envelope's
+          # stop member is the { reason: } Hash (G3: one shape); the reason
+          # is the canonical stop enum or nil (absent).
+          def format_response_status(pipeline_response)
+            stop = pipeline_response.respond_to?(:stop) ? pipeline_response.stop : nil
+            reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : nil
+            case reason&.to_sym
+            when :max_tokens
+              'incomplete'
+            when :end_turn, :stop_sequence, :tool_use, :pause_turn, :content_filter
+              'completed'
+            else
+              'failed'
+            end
           end
 
           def format_error(error, status_code: 500, type: 'server_error')
@@ -214,7 +239,7 @@ module Legion
           # function_call_arguments.delta events.
           def format_tool_call_delta_chunk(canonical_chunk)
             tc = canonical_chunk.tool_call
-            args = tc.respond_to?(:arguments) ? tc.arguments : {}
+            args = tool_fragment_field(tc, :arguments) || {}
             output_index = canonical_chunk.block_index || 0
 
             if server_tool_chunk?(tc)
@@ -224,8 +249,8 @@ module Legion
                 item:         {
                   type:      'function_call',
                   id:        "fc_#{SecureRandom.hex(12)}",
-                  call_id:   tc.respond_to?(:id) ? tc.id : nil,
-                  name:      tc.respond_to?(:name) ? tc.name.to_s : '',
+                  call_id:   tool_fragment_field(tc, :id),
+                  name:      tool_fragment_field(tc, :name).to_s,
                   arguments: args_as_json_string(args),
                   status:    'completed'
                 }
@@ -238,11 +263,13 @@ module Legion
           end
 
           def server_tool_chunk?(tool_call)
-            source = tool_call.respond_to?(:source) ? tool_call.source : nil
+            # The chunk fragment's source is the closed dispatch-type enum
+            # (R4 fragment contract) — server-executed tools are the
+            # registry/special/extension/mcp set (G24).
+            source = tool_fragment_field(tool_call, :source)
             return false if source.nil?
 
-            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
-            %i[special registry extension mcp].include?(type&.to_sym)
+            %i[special registry extension mcp].include?(source.to_sym)
           end
 
           # SSE Events emitter for /v1/responses. Emits sequence_number'd events
@@ -610,7 +637,7 @@ module Legion
                 # history that makes thinking-enabled models narrate instead of
                 # calling the next tool (the "dead stop").
                 if role == 'assistant' && !pending_tool_calls.empty?
-                  content = item[:content]
+                  content = canonicalize_content_parts(item[:content])
                   content = content.to_s if content && !content.is_a?(Array)
                   flush_pending_tool_calls(messages, pending_tool_calls, assistant_content: content)
                   next
@@ -621,7 +648,7 @@ module Legion
 
                 role = 'system' if role == 'developer'
 
-                content = item[:content]
+                content = canonicalize_content_parts(item[:content])
                 content = content.to_s if content && !content.is_a?(Array)
                 messages << { role: role, content: content }.compact
               end
@@ -673,7 +700,8 @@ module Legion
             return {} if str.to_s.empty?
 
             Legion::JSON.load(str)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_responses.safe_parse_json')
             str
           end
 
@@ -686,18 +714,23 @@ module Legion
               fn = symbolize(fn)
               next if fn[:name].to_s.empty?
 
+              # M5/H1: a client-declared tool carries NO source — source is
+              # explicit-or-absent, never fabricated. The dispatch-side source
+              # (:client) is stamped by build_tool_definitions (the OUTBOUND
+              # tool-definition builder), not on the canonical request tools.
               {
                 name:        fn[:name].to_s,
                 description: fn[:description].to_s,
-                parameters:  fn[:parameters] || {},
-                source:      { type: :client, executable: true }
+                parameters:  fn[:parameters] || {}
               }
             end
           end
 
           def build_params(body)
             params = {
-              max_tokens:        body[:max_output_tokens] || body[:max_tokens],
+              # Canonical member keys only — the Responses dialect spelling
+              # (max_output_tokens) is translated at this edge (03 O03a).
+              max_tokens:        param_spelling(body, :max_tokens),
               temperature:       body[:temperature],
               top_p:             body[:top_p],
               frequency_penalty: body[:frequency_penalty],
@@ -707,41 +740,24 @@ module Legion
           end
 
           # /v1/responses uses `reasoning: { effort: low|medium|high }`.
-          # Canonical::ThinkingConfig accepts {effort:, budget:} — anything
+          # Canonical::Thinking::Config accepts {effort:, budget:} — anything
           # else raises ArgumentError downstream. The Anthropic-budget mapping
           # for cross-provider routing lives in the provider translator
           # (lex-llm-anthropic) where the budget translates to budget_tokens.
           def build_thinking(reasoning)
             return nil if reasoning.nil?
 
-            effort = if reasoning.is_a?(Hash)
-                       reasoning[:effort] || reasoning['effort']
-                     else
-                       reasoning
-                     end
+            # /v1/responses supplies ONLY the effort axis. The canonical
+            # Thinking::Config carries effort as a closed enum (the
+            # EFFORT_BUDGET keys); the effort→budget resolution belongs to the
+            # provider edge (Config#resolved_budget), NEVER a fabricated budget
+            # here. Preserve the drop-unknown-effort → nil behavior: an
+            # unrecognized effort would raise at Config construction, so it is
+            # dropped rather than forwarded.
+            effort = reasoning.is_a?(Hash) ? (reasoning[:effort] || reasoning['effort']) : reasoning
+            return nil unless Canonical::Thinking::Config::EFFORT_BUDGET.key?(effort.to_s)
 
-            case effort.to_s
-            when 'low'
-              { effort: effort.to_s, budget: 512 }
-            when 'medium', 'high'
-              { effort: effort.to_s, budget: 1024 }
-            end
-          end
-
-          # Canonical::ThinkingConfig#to_h is {effort:, budget:}. Downstream
-          # providers (anthropic native + lex-llm-openai responses) expect the
-          # {type: 'enabled', budget_tokens:, effort:} shape originally
-          # produced by extract_thinking_config in the legacy route.
-          def thinking_to_inference(thinking)
-            return nil if thinking.nil?
-
-            h = thinking.respond_to?(:to_h) ? thinking.to_h : thinking
-            return nil unless h.is_a?(Hash) && !h.empty?
-
-            inference = { type: 'enabled' }
-            inference[:budget_tokens] = h[:budget] if h[:budget]
-            inference[:effort] = h[:effort] if h[:effort]
-            inference
+            { effort: effort.to_s }
           end
 
           def build_tool_definitions(canonical_tools)
@@ -761,18 +777,6 @@ module Legion
               handle_exception(e, level: :warn, handled: true,
                                   operation: 'llm.client_translator.openai_responses.build_tool', tool_name: hash[:name])
               nil
-            end
-          end
-
-          def inference_messages(canonical_messages)
-            canonical_messages.map do |m|
-              hash = m.respond_to?(:to_h) ? m.to_h : m
-              {
-                role:         hash[:role],
-                content:      hash[:content],
-                tool_calls:   hash[:tool_calls],
-                tool_call_id: hash[:tool_call_id]
-              }.compact
             end
           end
 
@@ -796,13 +800,15 @@ module Legion
             return [] unless tools.respond_to?(:any?) && tools.any?
 
             tools.filter_map do |tc|
-              name = tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'])
-              args = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
-              tc_id = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'] || "call_#{SecureRandom.hex(8)}")
+              # G3: the envelope carries Array<Canonical::ToolCall> — member
+              # reads only (the former respond_to?/Hash dual shape was the
+              # split-world seam).
+              name = tc.name
+              args = tc.arguments
               next if name.nil?
               next if server_tool_resolved?(tc)
 
-              { type: 'function_call', id: "fc_#{SecureRandom.hex(12)}", call_id: tc_id,
+              { type: 'function_call', id: "fc_#{SecureRandom.hex(12)}", call_id: tc.id,
                 name: name.to_s, arguments: args_as_json_string(args), status: 'completed' }
             end
           end
@@ -821,24 +827,22 @@ module Legion
             tools.flat_map do |tc|
               next [] unless server_tool_resolved?(tc)
 
-              name = tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'])
-              args = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
-              tc_id = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'] || "call_#{SecureRandom.hex(8)}")
-              result = tc.respond_to?(:result) ? tc.result : (tc[:result] || tc['result'])
-
+              # G3: the envelope carries Array<Canonical::ToolCall> — member
+              # reads only (the former respond_to?/Hash dual shape was the
+              # split-world seam).
               [
                 {
                   type:      'function_call',
                   id:        "fc_#{SecureRandom.hex(12)}",
-                  call_id:   tc_id,
-                  name:      name.to_s,
-                  arguments: args_as_json_string(args),
+                  call_id:   tc.id,
+                  name:      tc.name.to_s,
+                  arguments: args_as_json_string(tc.arguments),
                   status:    'completed'
                 },
                 {
                   type:    'function_call_output',
-                  call_id: tc_id,
-                  output:  serialize_server_tool_result(result),
+                  call_id: tc.id,
+                  output:  serialize_server_tool_result(tc.result),
                   status:  'completed'
                 }
               ]
@@ -850,25 +854,20 @@ module Legion
             return result if result.is_a?(String)
 
             Legion::JSON.dump(result)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_responses.serialize_server_tool_result')
             result.to_s
           end
 
+          # The canonical ToolCall.source is the closed dispatch-type enum —
+          # a server-executed (G24) tool is registry/special/extension/mcp
+          # with a populated result.
           def server_tool_resolved?(tool_call)
-            source = read_tool_call_field(tool_call, :source)
+            source = tool_call.source
             return false if source.nil?
+            return false unless %i[special registry extension mcp].include?(source.to_sym)
 
-            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
-            return false unless %i[special registry extension mcp].include?(type&.to_sym)
-
-            !read_tool_call_field(tool_call, :result).nil?
-          end
-
-          def read_tool_call_field(tool_call, field)
-            return tool_call.public_send(field) if tool_call.respond_to?(field)
-            return tool_call[field] if tool_call.is_a?(Hash)
-
-            nil
+            !tool_call.result.nil?
           end
 
           # Surface provider thinking as a Responses-API reasoning item. Codex
@@ -896,7 +895,9 @@ module Legion
             i = token_value(tokens, :input_tokens, :input).to_i
             o = token_value(tokens, :output_tokens, :output).to_i
             result = { input_tokens: i, output_tokens: o, total_tokens: i + o }
-            details = tokens[:output_tokens_details] || tokens['output_tokens_details']
+            # G3: the envelope's tokens member is a plain Hash (or {}) — one
+            # shape, no dual reader.
+            details = tokens.is_a?(Hash) ? (tokens[:output_tokens_details] || tokens['output_tokens_details']) : nil
             result[:output_tokens_details] = details if details.is_a?(Hash) && !details.empty?
             result
           end

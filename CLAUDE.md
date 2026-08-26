@@ -1,8 +1,8 @@
-# legion-llm (v0.14.0)
+# legion-llm
 
 Core LegionIO gem: LLM routing, provider dispatch, the inference pipeline, and the
-OpenAI/Anthropic-compatible API surface. This file is loaded into **every** session — it is
-intentionally short. Detailed reference lives in `README.md`; deep history lives in git.
+OpenAI/Anthropic-compatible API surface. Detailed reference lives in `README.md`; deep history
+lives in git.
 
 ## What it is (the one-paragraph model)
 
@@ -13,11 +13,6 @@ direction. Every request parses **once** into a canonical form (`Canonical::Requ
 gems. The daemon is an **execution proxy**, not a passthrough (see Invariants).
 
 ## Build & Test
-
-```bash
-bundle exec rspec      # ~3200 examples, must be 0 failures before any commit
-bundle exec rubocop    # 0 offenses required (rubocop-legion plugin)
-```
 
 The **in-process matrix harness** (`spec/legion/llm/api/matrix/`) is the **commit gate**. It boots
 the real Sinatra app, mounts `/v1/messages` `/v1/responses` `/v1/chat/completions`, and replays the

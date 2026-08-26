@@ -56,7 +56,7 @@ module Legion
               require_llm!
 
               filters = Legion::LLM::API::Native::Models.request_filters(params).merge(provider: provider)
-              offerings = Legion::LLM::Inventory.offerings(filters)
+              offerings = Legion::LLM::API::Native::Models.lane_entries(filters)
 
               json_response({
                               provider:  provider,
@@ -171,7 +171,7 @@ module Legion
             require_relative 'anthropic/messages/batches'
             require_relative 'anthropic/files'
             # NOTE: anthropic/models.rb is a format helper only — no routes to register.
-            # The /v1/models namespace is owned by OpenAI::Models (Phase 2A) which branches
+            # The /v1/models namespace is owned by OpenAI::Models, which branches
             # on anthropic_client?(env) to emit Anthropic-format responses.
 
             app.namespace '/v1/messages' do

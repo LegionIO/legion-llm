@@ -46,9 +46,12 @@ RSpec.describe Legion::LLM::Inference::Executor, 'context window enforcement' do
         # Messages need to fit in (262,144 * 0.90) - tool_budget
         executor.instance_variable_set(:@resolved_offering_metadata, { limits: { context_window: 262_144 } })
 
-        # Large message payload that fits alone but NOT with 235 tools
+        # G3: the context window operates on canonical messages — the former
+        # Hash message doubles are gone (R15).
         large_messages = Array.new(500) do |i|
-          { role: (i.even? ? :user : :assistant), content: 'x' * 1800 }
+          Legion::Extensions::Llm::Canonical::Message.build(
+            role: (i.even? ? :user : :assistant), content: 'x' * 1800
+          )
         end
 
         result = executor.send(:enforce_context_window, large_messages)
@@ -73,8 +76,11 @@ RSpec.describe Legion::LLM::Inference::Executor, 'context window enforcement' do
         # - But 235 tools add ~17.5k tokens
         # - Plus the actual client messages are 250k tokens
         # The old code only saw the messages and said "5.48% — fine!"
+        # G3: canonical messages (the former Hash double shape is gone).
         messages = Array.new(10) do |i|
-          { role: (i.even? ? :user : :assistant), content: 'x' * 5600 }
+          Legion::Extensions::Llm::Canonical::Message.build(
+            role: (i.even? ? :user : :assistant), content: 'x' * 5600
+          )
         end
 
         # With tool awareness, this should still pass (10 small messages + tools < threshold)

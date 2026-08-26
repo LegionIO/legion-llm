@@ -24,13 +24,18 @@ module Legion
 
           Canonical = Legion::Extensions::Llm::Canonical
 
+          # M7/N8: a provider :error stop is an error state, not a clean
+          # completion — it renders as 'error', never 'stop'. An absent or
+          # unmapped stop state surfaces the same way (see on_done /
+          # map_finish_reason): the client must be able to tell a
+          # provider-declared stop from a stop the daemon did not observe.
           FINISH_REASON_MAP = {
             end_turn:       'stop',
             tool_use:       'tool_calls',
             max_tokens:     'length',
             stop_sequence:  'stop',
             content_filter: 'content_filter',
-            error:          'stop',
+            error:          'error',
             pause_turn:     'tool_calls'
           }.freeze
 
@@ -89,7 +94,8 @@ module Legion
             metadata[:client_tool_passthrough] = canonical_request.metadata[:client_tool_passthrough] unless canonical_request.metadata[:client_tool_passthrough].nil?
             metadata[:client_tool_request_count] = canonical_request.tools&.size if canonical_request.tools&.any?
 
-            messages = inference_messages(canonical_request.messages)
+            # N x N law: the executor receives canonical messages end-to-end.
+            messages = canonical_request.messages
             request_kwargs = {
               id:              request_id,
               messages:        messages,
@@ -203,20 +209,24 @@ module Legion
               chunk_envelope({ reasoning_content: canonical_chunk.delta.to_s })
             when :tool_call_delta
               tc = canonical_chunk.tool_call
-              args = tc.respond_to?(:arguments) ? tc.arguments : {}
+              args = tool_fragment_field(tc, :arguments) || {}
               chunk_envelope({
                                tool_calls: [{
                                  index:    canonical_chunk.block_index || 0,
-                                 id:       tc.respond_to?(:id) ? tc.id : nil,
+                                 id:       tool_fragment_field(tc, :id),
                                  type:     'function',
                                  function: {
-                                   name:      tc.respond_to?(:name) ? tc.name.to_s : '',
+                                   name:      tool_fragment_field(tc, :name).to_s,
                                    arguments: args_as_json_string(args)
                                  }
                                }]
                              })
             when :done
-              { object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }
+              # M7/N8: the done chunk carries the provider's stop_reason —
+              # map it with the same policy as the streaming/sync edges
+              # (absent/unmapped → 'error', never a fabricated 'stop').
+              finish_reason = FINISH_REASON_MAP[canonical_chunk.stop_reason] || 'error'
+              { object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: finish_reason }] }
             end
           end
 
@@ -334,7 +344,9 @@ module Legion
             def on_done(stop_reason:, usage:, model:)
               return if @done_emitted
 
-              finish_reason = FINISH_REASON_MAP[stop_reason] || 'stop'
+              # M7/N8: an absent or unmapped stop state renders as 'error',
+              # never a fabricated 'stop'.
+              finish_reason = FINISH_REASON_MAP[stop_reason] || 'error'
               done_chunk = {
                 id:      "chatcmpl-#{@request_id.to_s.delete('-')}",
                 object:  'chat.completion.chunk',
@@ -440,9 +452,12 @@ module Legion
             return content if content.is_a?(String)
             return content unless content.is_a?(Array)
 
-            normalized = content.map { |b| symbolize(b) }
+            # String parts (corrupted ContentBlock#inspect output in history)
+            # wrap as text blocks so they never reach canonical_content_block
+            # or the [:type] lookup as bare strings.
+            normalized = content.map { |b| b.is_a?(String) ? { type: 'text', text: b } : symbolize(b) }
             has_non_text = normalized.any? { |b| b[:type].to_s != 'text' }
-            return normalized if has_non_text
+            return normalized.map { |b| canonical_content_block(b) } if has_non_text
 
             normalized.filter_map { |b| b[:text] if b[:type].to_s == 'text' }.join("\n\n")
           end
@@ -450,26 +465,33 @@ module Legion
           def build_tools(raw)
             return nil unless raw.is_a?(Array) && !raw.empty?
 
+            # M5/H1: a client-declared tool carries NO source — source is
+            # explicit-or-absent, never fabricated. The dispatch-side source
+            # (:client) is stamped by build_tool_definitions (the OUTBOUND
+            # tool-definition builder), not on the canonical request tools.
             raw.filter_map do |tool|
               t = symbolize(tool)
               if t[:type].to_s == 'function'
                 fn = symbolize(t[:function])
                 next unless fn.is_a?(Hash) && fn[:name].to_s.length.positive?
 
-                { name: fn[:name].to_s, description: fn[:description].to_s, parameters: fn[:parameters] || {}, source: { type: :client, executable: true } }
+                { name: fn[:name].to_s, description: fn[:description].to_s, parameters: fn[:parameters] || {} }
               elsif t[:name].to_s.length.positive?
-                { name: t[:name].to_s, description: t[:description].to_s, parameters: t[:parameters] || {}, source: { type: :client, executable: true } }
+                { name: t[:name].to_s, description: t[:description].to_s, parameters: t[:parameters] || {} }
               end
             end
           end
 
           def extract_params(body)
             params = {
-              max_tokens:        body[:max_tokens],
+              # Canonical member keys only — client spellings (max_output_tokens,
+              # num_predict, max_completion_tokens, stop) are translated at this
+              # edge (03 O03a).
+              max_tokens:        param_spelling(body, :max_tokens),
               temperature:       body[:temperature],
               top_p:             body[:top_p],
               top_k:             body[:top_k],
-              stop_sequences:    body[:stop],
+              stop_sequences:    param_spelling(body, :stop_sequences),
               frequency_penalty: body[:frequency_penalty],
               presence_penalty:  body[:presence_penalty],
               response_format:   body[:response_format],
@@ -515,18 +537,6 @@ module Legion
             end
           end
 
-          def inference_messages(canonical_messages)
-            canonical_messages.map do |m|
-              hash = m.respond_to?(:to_h) ? m.to_h : m
-              {
-                role:         hash[:role],
-                content:      hash[:content],
-                tool_calls:   hash[:tool_calls],
-                tool_call_id: hash[:tool_call_id]
-              }.compact
-            end
-          end
-
           # Actionable tool_calls only — server-executed (resolved) LegionIO
           # tools are filtered out per G24. The server-side exchange landed
           # in the conversation history via the executor's tool loop; the
@@ -536,14 +546,16 @@ module Legion
             return [] unless tools.respond_to?(:any?) && tools.any?
 
             tools.each_with_index.filter_map do |tc, idx|
-              name = tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'])
-              args = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
-              tc_id = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'] || "call_#{SecureRandom.hex(8)}")
+              # G3: the envelope carries Array<Canonical::ToolCall> — member
+              # reads only (the former respond_to?/Hash dual shape was the
+              # split-world seam).
+              name = tc.name
+              args = tc.arguments
               next if name.nil?
               next if server_tool_resolved?(tc)
 
               {
-                id:       tc_id,
+                id:       tc.id,
                 type:     'function',
                 index:    idx,
                 function: {
@@ -554,23 +566,15 @@ module Legion
             end
           end
 
+          # The canonical ToolCall.source is the closed dispatch-type enum —
+          # a server-executed (G24) tool is registry/special/extension/mcp
+          # with a populated result.
           def server_tool_resolved?(tool_call)
-            source = if tool_call.respond_to?(:source)
-                       tool_call.source
-                     elsif tool_call.is_a?(Hash)
-                       tool_call[:source] || tool_call['source']
-                     end
+            source = tool_call.source
             return false if source.nil?
+            return false unless %i[special registry extension mcp].include?(source.to_sym)
 
-            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
-            return false unless %i[special registry extension mcp].include?(type&.to_sym)
-
-            result = if tool_call.respond_to?(:result)
-                       tool_call.result
-                     elsif tool_call.is_a?(Hash)
-                       tool_call[:result] || tool_call['result']
-                     end
-            !result.nil?
+            !tool_call.result.nil?
           end
 
           def server_tool_results_text(pipeline_response)
@@ -580,12 +584,7 @@ module Legion
             tools.filter_map do |tool_call|
               next unless server_tool_resolved?(tool_call)
 
-              result = if tool_call.respond_to?(:result)
-                         tool_call.result
-                       elsif tool_call.is_a?(Hash)
-                         tool_call[:result] || tool_call['result']
-                       end
-              serialize_server_tool_result(result)
+              serialize_server_tool_result(tool_call.result)
             end.join("\n")
           end
 
@@ -594,18 +593,26 @@ module Legion
             return result if result.is_a?(String)
 
             Legion::JSON.dump(result)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_chat.serialize_server_tool_result')
             extract_content_text(result)
           end
 
+          # M7/N8: one finish-reason policy. A provider-declared stop maps
+          # to its dialect spelling; an absent or unmapped stop state
+          # surfaces as 'error' — never a fabricated 'stop' (the client must
+          # be able to tell a provider-declared stop from a stop the daemon
+          # did not observe). The canonical stop vocabulary is the enum; the
+          # legacy 'stop'/'length' spellings are retained so a value that
+          # already arrived in dialect form still maps cleanly.
           def map_finish_reason(stop_reason)
-            return 'stop' if stop_reason.nil? || stop_reason.to_s.empty?
+            return 'error' if stop_reason.nil? || stop_reason.to_s.empty?
 
             mapping = { 'end_turn' => 'stop', 'stop' => 'stop', 'length' => 'length',
                         'max_tokens' => 'length', 'tool_use' => 'tool_calls',
                         'tool_calls' => 'tool_calls', 'content_filter' => 'content_filter',
-                        'stop_sequence' => 'stop' }
-            mapping.fetch(stop_reason.to_s, 'stop')
+                        'stop_sequence' => 'stop', 'error' => 'error' }
+            mapping.fetch(stop_reason.to_s, 'error')
           end
 
           def content_looks_like_tool_json?(content)
@@ -620,7 +627,8 @@ module Legion
 
           def safe_parse_args(str)
             Legion::JSON.parse(str, symbolize_names: false)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_chat.safe_parse_args')
             str
           end
         end

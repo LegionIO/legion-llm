@@ -48,14 +48,13 @@ RSpec.describe 'Internal error is terminal — no retry (SSOT v3)' do
 
   it 'ssot_v3_execute_attempt does NOT invoke OutcomeClassifier or dispatch_instance_unavailable for internal_error' do
     # Internal errors re-raise from ssot_v3_execute_attempt before classify is reached,
-    # so OutcomeClassifier.call is never invoked and Registry.dispatch_instance_unavailable
+    # so Router#classify is never invoked and Registry.dispatch_instance_unavailable
     # is never called.
     executor = executor_class.allocate
     error = NoMethodError.new('typo')
     allow(executor).to receive(:execute_provider_request).and_raise(error)
 
     expect(Legion::Extensions::Llm::Inventory::Registry).not_to receive(:dispatch_instance_unavailable)
-    expect(Legion::LLM::Router::OutcomeClassifier).not_to receive(:call)
 
     expect { executor.send(:ssot_v3_execute_attempt) }.to raise_error(NoMethodError)
   end

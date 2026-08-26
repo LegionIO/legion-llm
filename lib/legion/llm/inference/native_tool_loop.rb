@@ -47,7 +47,7 @@ module Legion
 
           log.debug "[llm][executor] action=native_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
 
-          loop do
+          while round <= max_rounds
             @native_tool_loop_round = round
             result = dispatch_provider_request(capability: :chat, operation: :chat, messages: messages)
             tool_calls = extract_tool_calls(result)
@@ -56,10 +56,16 @@ module Legion
               # (common with vLLM/qwen when a tool choice is forced).
               # Try to synthesize a structured tool call from the text.
               tool_calls = maybe_synthesize_tool_call_from_content(result, round)
-              result = apply_synthesized_tool_calls(result, tool_calls) if tool_calls.any?
+              if tool_calls.any?
+                result = apply_synthesized_tool_calls(result, tool_calls)
+                # apply_synthesized_tool_calls canonicalizes into result; re-read
+                # the loop-local from the canonical result so the strict-accessor
+                # loop never sees the synthesizers' plain Hashes.
+                tool_calls = extract_tool_calls(result)
+              end
             end
             if tool_calls.empty?
-              result_text = result.respond_to?(:text) ? result.text : (result[:result] || result[:content])
+              result_text = result.text.to_s
               result_thinking = if result.respond_to?(:thinking)
                                   t = result.thinking
                                   t.respond_to?(:content) ? t.content : t.to_s
@@ -81,15 +87,15 @@ module Legion
             legion_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
 
             if client_calls.any?
-              passthrough_names = client_calls.map { |tc| tc[:name] }.join(',')
+              passthrough_names = client_calls.map(&:name).join(',')
               log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} " \
-                       "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map { |tc| tc[:name] }.join(',')}"
+                       "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map(&:name).join(',')}"
             end
 
             # Execute all LegionIO tools.
             unless legion_calls.empty?
               round += 1
-              tool_names = legion_calls.map { |tc| tc[:name] }.join(',')
+              tool_names = legion_calls.map(&:name).join(',')
               log.debug "[llm][executor] action=native_tool_loop.round round=#{round} tool_count=#{legion_calls.size} tools=#{tool_names}"
               if round > max_rounds
                 log.warn "[llm][native_tool_loop] action=max_rounds_exceeded max_rounds=#{max_rounds} last_tools=#{tool_names}"
@@ -100,7 +106,7 @@ module Legion
               repeated = detect_repeated_tool_calls(legion_calls, executed_calls)
               if repeated.any?
                 log.warn "[llm][native_tool_loop] action=repeated_tool_calls detected round=#{round} " \
-                         "repeated=#{repeated.map { |tc| tc[:name] }.join(',')} total_calls=#{executed_calls.size}"
+                         "repeated=#{repeated.map(&:name).join(',')} total_calls=#{executed_calls.size}"
                 # Return failures + any client tools so the client can adapt.
                 return client_passthrough_tool_loop_result(result, client_calls, round)
               end
@@ -123,7 +129,7 @@ module Legion
               # Record which calls were executed this round for repeat detection.
               round_results.each do |entry|
                 tc = entry[:tool_call]
-                call_key = tool_call_key(tc[:name], tc[:arguments] || tc['arguments'])
+                call_key = tool_call_key(tc.name, tc.arguments)
                 executed_calls[call_key] = (executed_calls[call_key] || 0) + 1
               end
 
@@ -131,7 +137,7 @@ module Legion
               all_failed = round_results.all? { |entry| entry[:result][:status] == :error }
               if all_failed
                 consecutive_failures += 1
-                failed_names = round_results.map { |e| e[:tool_call][:name] }.join(',')
+                failed_names = round_results.map { |e| e[:tool_call].name }.join(',')
                 log.warn "[llm][native_tool_loop] action=all_legion_executed_tools_failed round=#{round} " \
                          "consecutive_failures=#{consecutive_failures} tools=#{failed_names}"
                 if consecutive_failures >= Legion::Settings[:llm][:tools][:consecutive_failure_limit]
@@ -162,7 +168,7 @@ module Legion
 
           log.debug "[llm][executor] action=native_streaming_tool_loop.enter max_rounds=#{max_rounds} messages=#{messages.size}"
 
-          loop do
+          while round <= max_rounds
             @native_tool_loop_round = round
             result = dispatch_provider_request(
               capability:   :stream,
@@ -173,10 +179,16 @@ module Legion
             tool_calls = extract_tool_calls(result)
             if tool_calls.empty?
               tool_calls = maybe_synthesize_tool_call_from_content(result, round)
-              result = apply_synthesized_tool_calls(result, tool_calls) if tool_calls.any?
+              if tool_calls.any?
+                result = apply_synthesized_tool_calls(result, tool_calls)
+                # apply_synthesized_tool_calls canonicalizes into result; re-read
+                # the loop-local from the canonical result so the strict-accessor
+                # loop never sees the synthesizers' plain Hashes.
+                tool_calls = extract_tool_calls(result)
+              end
             end
             if tool_calls.empty?
-              result_text = result.respond_to?(:text) ? result.text : (result[:result] || result[:content])
+              result_text = result.text.to_s
               result_thinking = if result.respond_to?(:thinking)
                                   t = result.thinking
                                   t.respond_to?(:content) ? t.content : t.to_s
@@ -194,14 +206,14 @@ module Legion
             legion_calls, client_calls = tool_calls.partition { |tc| !client_passthrough_tool_call?(tc) }
 
             if client_calls.any?
-              passthrough_names = client_calls.map { |tc| tc[:name] }.join(',')
+              passthrough_names = client_calls.map(&:name).join(',')
               log.info "[llm][native_tool_loop] action=client_passthrough_detected round=#{round} " \
-                       "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map { |tc| tc[:name] }.join(',')}"
+                       "client_tools=#{passthrough_names} legion_executed_tools=#{legion_calls.map(&:name).join(',')}"
             end
 
             unless legion_calls.empty?
               round += 1
-              tool_names = legion_calls.map { |tc| tc[:name] }.join(',')
+              tool_names = legion_calls.map(&:name).join(',')
               log.debug "[llm][native_tool_loop] action=native_streaming_tool_loop.round round=#{round} tool_count=#{legion_calls.size} tools=#{tool_names}"
               if round > max_rounds
                 log.warn "[llm][native_tool_loop] action=max_rounds_exceeded max_rounds=#{max_rounds} last_tools=#{tool_names}"
@@ -211,7 +223,7 @@ module Legion
               repeated = detect_repeated_tool_calls(legion_calls, executed_calls)
               if repeated.any?
                 log.warn "[llm][native_tool_loop] action=repeated_tool_calls detected round=#{round} " \
-                         "repeated=#{repeated.map { |tc| tc[:name] }.join(',')} total_calls=#{executed_calls.size}"
+                         "repeated=#{repeated.map(&:name).join(',')} total_calls=#{executed_calls.size}"
                 return client_passthrough_tool_loop_result(result, client_calls, round)
               end
 
@@ -232,14 +244,14 @@ module Legion
 
               round_results.each do |entry|
                 tc = entry[:tool_call]
-                call_key = tool_call_key(tc[:name], tc[:arguments] || tc['arguments'])
+                call_key = tool_call_key(tc.name, tc.arguments)
                 executed_calls[call_key] = (executed_calls[call_key] || 0) + 1
               end
 
               all_failed = round_results.all? { |entry| entry[:result][:status] == :error }
               if all_failed
                 consecutive_failures += 1
-                failed_names = round_results.map { |e| e[:tool_call][:name] }.join(',')
+                failed_names = round_results.map { |e| e[:tool_call].name }.join(',')
                 log.warn "[llm][native_tool_loop] action=all_legion_executed_tools_failed round=#{round} " \
                          "consecutive_failures=#{consecutive_failures} tools=#{failed_names}"
                 if consecutive_failures >= Legion::Settings[:llm][:tools][:consecutive_failure_limit]
@@ -276,7 +288,7 @@ module Legion
         def deferred_tool_call_result(tool_call)
           {
             status:      :error,
-            result:      "Tool call deferred: too many concurrent tool calls this turn. Please retry #{tool_call[:name]} on your next turn.",
+            result:      "Tool call deferred: too many concurrent tool calls this turn. Please retry #{tool_call.name} on your next turn.",
             duration_ms: 0
           }
         end
@@ -318,7 +330,17 @@ module Legion
           choice.to_s
         end
 
+        # L8 behavior contract: for providers that declare the
+        # forced_tool_choice capability, a word-boundary mention of a known
+        # tool name in the latest user text (within
+        # explicit_choice_max_chars) deterministically forces tool_choice to
+        # that tool on round 0 — mentioning the word "bash" in prose forces
+        # the bash tool. This is a request-shaping workaround for providers
+        # that only emit structured tool calls when a tool choice is forced;
+        # it is not a routing decision. Gated by llm.tools.explicit_tool_choice.
         def explicit_native_tool_choice
+          return unless Legion::Settings[:llm][:tools][:explicit_tool_choice] == true
+
           ext = Call::Registry.for(@resolved_provider, instance: @resolved_instance)
           return unless ext.respond_to?(:translator) && ext.translator.respond_to?(:capabilities) &&
                         ext.translator.capabilities[:forced_tool_choice]
@@ -349,21 +371,11 @@ module Legion
           ].reject(&:empty?).uniq
         end
 
+        # G3: pipeline messages are Canonical::Message — the last user
+        # message's text is the canonical .text member (no dual-shape read).
         def latest_user_text
-          message = Array(@request.messages).reverse.find do |msg|
-            msg.is_a?(Hash) && (msg[:role] || msg['role']).to_s == 'user'
-          end
-          return '' unless message
-
-          content = message[:content] || message['content']
-          return content.to_s unless content.is_a?(Array)
-
-          content.filter_map do |part|
-            next part if part.is_a?(String)
-            next unless part.is_a?(Hash)
-
-            part[:text] || part['text']
-          end.join(' ')
+          message = Array(@request.messages).reverse.find { |msg| msg.role.to_s == 'user' }
+          message&.text.to_s
         end
 
         # When the provider's response carries tool-call intent in plain text
@@ -547,23 +559,33 @@ module Legion
           end
         end
 
-        # Extract text from canonical or hash-shaped result for tool-call synthesis.
+        # G3: the loop's result is the canonical provider response — the
+        # synthesis text is the .text member (the Hash-index fallback was the
+        # split-world seam).
         def result_text_for_synthesis(result)
-          if result.respond_to?(:text)
-            result.text.to_s.strip
-          else
-            (result[:result] || result[:content] || result['result'] || result['content'] || '').to_s.strip
-          end
+          result.text.to_s.strip
         end
 
-        # Apply synthesized tool calls to a canonical response (using .with for immutability)
-        # or mutate a hash in place. Returns the updated response.
+        # Apply synthesized tool calls to the canonical response (immutably,
+        # via .with). Synthesized calls arrive as Hashes from the text
+        # synthesizers and canonicalize to Canonical::ToolCall here (Data#with
+        # does not normalize).
         def apply_synthesized_tool_calls(result, tool_calls)
-          return result.merge(tool_calls: tool_calls, stop_reason: :tool_use) unless result.respond_to?(:with)
+          canonical_calls = Array(tool_calls).map do |tc|
+            if tc.is_a?(Legion::Extensions::Llm::Canonical::ToolCall)
+              tc
+            else
+              Legion::Extensions::Llm::Canonical::ToolCall.build(
+                id:        tc[:id],
+                name:      tc[:name].to_s,
+                arguments: tc[:arguments] || {}
+              )
+            end
+          end
 
           result.with(
             text:        '',
-            tool_calls:  tool_calls,
+            tool_calls:  canonical_calls,
             stop_reason: :tool_use
           )
         end
@@ -572,7 +594,7 @@ module Legion
         # of this loop. Returns the subset of tool_calls that are repeats.
         def detect_repeated_tool_calls(tool_calls, executed_calls)
           tool_calls.select do |tc|
-            call_key = tool_call_key(tc[:name], tc[:arguments] || tc['arguments'])
+            call_key = tool_call_key(tc.name, tc.arguments)
             executed_calls.key?(call_key)
           end
         end
@@ -582,19 +604,21 @@ module Legion
           arg_value = if args.is_a?(String)
                         args
                       else
-                        (args ? ::JSON.dump(args) : '{}')
+                        (args ? Legion::JSON.dump(args) : '{}')
                       end
           "name=#{name}:args_hash=#{::Digest::MD5.hexdigest(arg_value)}"
-        rescue StandardError
+        rescue StandardError => e
+          # Unserializable arguments collapse to a shared key — the fault
+          # must be visible (a daemon programming error, not model output).
+          handle_exception(e, level: :warn, operation: 'llm.native_tool_loop.tool_call_key', tool: name)
           "name=#{name}:args_hash=default"
         end
 
-        # Extract tool call array from canonical response or hash-shaped result.
+        # G3: the loop's result is the canonical provider response — tool
+        # calls are the .tool_calls member (nil → empty array). The Hash-index
+        # fallback was the split-world seam.
         def extract_tool_calls(result)
-          return result.tool_calls if result.respond_to?(:tool_calls) && result.respond_to?(:text)
-
-          # Fallback for hash-shaped results
-          (result[:tool_calls] || result['tool_calls'] || []).to_a
+          result.tool_calls.to_a
         end
 
         def normalize_native_tool_calls(tool_calls)

@@ -66,15 +66,12 @@ module Legion
                   routing:  { model: model },
                   tools:    tools || []
                 )
-                requirements = Legion::LLM::Router::RequestRequirements.build(
-                  request:                request,
-                  operation:              :count_tokens,
-                  required_capabilities:  Legion::LLM::Router::RequiredCapabilities.call(request: request, operation: :count_tokens),
-                  estimated_input_bound:  0,
-                  required_output_tokens: 0
+                router = Legion::LLM::Router.new(
+                  request:    request,
+                  operation:  :count_tokens,
+                  body_model: model
                 )
-                session = Legion::LLM::Inference::RoutingSession.new(request: request, requirements: requirements)
-                attempt = session.next_attempt(snapshot: snapshot)
+                attempt = router.next_attempt
                 return nil if attempt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
 
                 dispatch = Legion::LLM::Call::SelectionDispatch.call(

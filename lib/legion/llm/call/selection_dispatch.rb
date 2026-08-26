@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/llm/errors'
+require 'legion/llm/inference/request'
 
 module Legion
   module LLM
@@ -117,11 +118,11 @@ module Legion
 
           case operation
           when :chat
-            messages = require_key!(args, :messages)
-            ->(c) { c.chat(messages: messages, model: model, **args) }
+            messages = canonical_messages!(args)
+            ->(c) { c.chat(messages, model: model, **args) }
           when :stream_chat
-            messages = require_key!(args, :messages)
-            ->(c) { c.stream_chat(messages: messages, model: model, **args, &block) }
+            messages = canonical_messages!(args)
+            ->(c) { c.stream_chat(messages, model: model, **args, &block) }
           when :embed
             text = require_key!(args, :text)
             ->(c) { c.embed(text: text, model: model, **args) }
@@ -143,15 +144,26 @@ module Legion
             ->(c) { c.speak(text, model: model, voice: voice, **args) }
           when :moderate
             input = require_positional!(args, :input)
-            ->(c) { c.moderate(input, model: model, **args) }
+            ->(c) { c.moderate(input: input, model: model, **args) }
           when :count_tokens
-            messages = require_key!(args, :messages)
+            messages = canonical_messages!(args)
             ->(c) { c.count_tokens(messages: messages, model: model, **args) }
           else
             raise ArgumentError, "unsupported operation for dispatch: #{operation.inspect}"
           end
         end
         private_class_method :plan_invocation
+
+        # Dispatch-boundary rehydration (0.8.0): the callable receives
+        # Array<Canonical::Message> for every exact message operation. Wire
+        # hashes and plain strings are translated through the single
+        # canonicalization shared with Inference::Request; anything else
+        # raises before the lease is acquired.
+        def self.canonical_messages!(args)
+          messages = require_key!(args, :messages)
+          Legion::LLM::Inference::Request.canonicalize_messages(messages)
+        end
+        private_class_method :canonical_messages!
 
         def self.reject_model!(args)
           return unless args.key?(:model)

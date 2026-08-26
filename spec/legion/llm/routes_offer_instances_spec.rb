@@ -39,7 +39,11 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
         instance_id:     'vllm-gpu-01',
         drafts:          [
           SsotV3SnapshotFactory.offering_draft(
-            model: 'qwen3.6-27b', tier: :fleet, supported: %i[chat stream_chat], context: 32_768
+            model: 'qwen3.6-27b', tier: :fleet, supported: %i[chat stream_chat], context: 32_768,
+            # The tier tree is a registry projection (D14): instance
+            # capabilities come from the lane's capability evidence, not the
+            # settings hash — publish the streaming fact where the tree reads it.
+            capabilities: { streaming: :supported }
           )
         ]
       )
@@ -64,7 +68,7 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
 
     it 'returns offering details by offering id' do
       key = SsotV3SnapshotFactory.instance_key(provider_family: :vllm, instance_id: 'vllm-gpu-01')
-      offering_id = SsotV3SnapshotFactory.snapshot.offerings_for(instance_key: key).first.offering_id
+      offering_id = SsotV3SnapshotFactory.snapshot.lanes_for(instance_key: key).first.lane_id
 
       response = get_json("/api/llm/offerings/#{Rack::Utils.escape_path(offering_id)}")
       body = Legion::JSON.load(response.body)

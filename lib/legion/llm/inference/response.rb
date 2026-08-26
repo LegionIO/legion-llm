@@ -51,28 +51,10 @@ module Legion
           )
         end
 
-        def self.from_provider_message(msg, request_id:, conversation_id:, provider: nil, model: nil, **extra)
-          input  = msg.respond_to?(:input_tokens) ? msg.input_tokens.to_i : 0
-          output = msg.respond_to?(:output_tokens) ? msg.output_tokens.to_i : 0
-
-          stop_reason = if msg.respond_to?(:stop_reason)
-                          msg.stop_reason&.to_sym || :end_turn
-                        elsif msg.respond_to?(:tool_calls) && msg.tool_calls&.any?
-                          :tool_use
-                        else
-                          :end_turn
-                        end
-
-          build(
-            request_id:      request_id,
-            conversation_id: conversation_id,
-            message:         { role: :assistant, content: msg.content },
-            routing:         { provider: provider, model: model || (msg.respond_to?(:model_id) ? msg.model_id : nil) },
-            tokens:          { input: input, output: output, total: input + output },
-            stop:            { reason: stop_reason },
-            **extra
-          )
-        end
+        # G3: the legacy from_provider_message constructor is gone — the
+        # envelope is built by the executor's build_response from the
+        # canonical provider response, and that legacy path fabricated
+        # :end_turn for an absent stop (M7 family).
 
         def with(**updates)
           self.class.build(**to_h, **updates)

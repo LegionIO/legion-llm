@@ -139,8 +139,19 @@ module Legion
           def estimate_tokens(messages)
             return 0 if messages.nil? || messages.empty?
 
-            total_chars = messages.sum { |m| m[:content].to_s.length }
+            # Stored history entries are Hashes; @request.messages are
+            # Canonical::Message — count content chars from either shape.
+            total_chars = messages.sum { |m| content_chars(m) }
             total_chars / 4
+          end
+
+          def content_chars(message)
+            content = if message.is_a?(Hash)
+                        message[:content] || message['content']
+                      elsif message.respond_to?(:text)
+                        message.text
+                      end
+            content.to_s.length
           end
 
           def stopwords_for_level(level)

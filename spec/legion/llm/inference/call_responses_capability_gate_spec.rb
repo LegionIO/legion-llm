@@ -23,12 +23,12 @@ RSpec.describe 'Executor#call_responses delegates to canonical' do
   let(:executor) { Legion::LLM::Inference::Executor.new(request) }
   let(:fake_response) { double('Inference::Response') }
 
-  # SSOT v3: mock at step_provider_call / step_provider_call_stream — the
+  # SSOT v4: mock at step_provider_call / step_provider_call_stream — the
   # canonical seam below execute_pre_provider_steps. Mocking execute_pre_provider_steps
-  # alone leaves @routing_requirements nil, which causes RoutingSession to blow
-  # up on maximum_attempts. Asserting at the step_* level is the correct SSOT v3
-  # boundary: it tests that call_responses routes to the right canonical path
-  # without needing the full routing-session machinery.
+  # alone leaves @router nil, which causes the attempt loop to blow up.
+  # Asserting at the step_* level is the correct boundary: it tests that
+  # call_responses routes to the right canonical path without needing the full
+  # Router machinery.
   context 'non-streaming' do
     before do
       allow(executor).to receive(:execute_pre_provider_steps)

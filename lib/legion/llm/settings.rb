@@ -3,6 +3,7 @@
 require 'legion/logging/helper'
 require 'legion/llm/settings/tools'
 require 'legion/llm/settings/api'
+require 'legion/llm/settings/router'
 require 'legion/settings'
 
 module Legion
@@ -27,6 +28,7 @@ module Legion
           system_baseline:           system_baseline_default,
           fleet:                     fleet_defaults,
           routing:                   routing_defaults,
+          router:                    Legion::LLM::Settings::Router.defaults,
           budget:                    budget_defaults,
           confidence:                confidence_defaults,
           discovery:                 discovery_defaults,
@@ -51,6 +53,7 @@ module Legion
           api:                       Legion::LLM::Settings::API.defaults,
           streaming:                 streaming_defaults,
           compliance:                compliance_defaults,
+          logging:                   logging_defaults,
           skills:                    skills_defaults,
           claude_cli:                claude_cli_defaults,
           fallback:                  fallback_defaults,
@@ -189,7 +192,7 @@ module Legion
             publisher_confirm:      true,
             spool:                  false,
             timeout_seconds:        30,
-            timeouts:               { chat: 30, stream: 30, embed: 10, image: 60, default: 30 },
+            timeouts:               { chat: 30, stream_chat: 30, embed: 10, image: 60, default: 30 },
             require_auth:           nil,
             token_ttl_seconds:      180,
             reply_queue_expires_ms: 60_000,
@@ -205,16 +208,10 @@ module Legion
             max_clock_skew_seconds: 30
           },
           responder: {
-            enabled:                    false,
-            require_auth:               nil,
-            require_policy:             false,
-            require_idempotency:        true,
-            idempotency_ttl_seconds:    600,
-            accepted_protocol_version:  2,
-            mandatory:                  false,
-            publisher_confirm:          false,
-            publish_confirm_timeout_ms: 500,
-            spool:                      false
+            require_auth:            nil,
+            require_policy:          false,
+            require_idempotency:     true,
+            idempotency_ttl_seconds: 600
           }
         }
       end
@@ -352,9 +349,11 @@ module Legion
 
       def self.gaia_defaults
         {
-          advisory_enabled:   true,
-          preferred_provider: nil,
-          preferred_model:    nil
+          # L7: preferred_provider/preferred_model are gone — the gaia:*
+          # hard pins were a second selection domain (settings pins that
+          # bypassed Router.next_lane's hint-miss fallback). Routing choice
+          # belongs to the router alone.
+          advisory_enabled: true
         }
       end
 
@@ -368,28 +367,15 @@ module Legion
 
       def self.embedding_defaults
         {
-          # G15: pinned embedding lane for strict-model-pin routing through Router.request_lane.
-          # All three keys nil = no embedding configured; ConfigError raised on generate attempt.
-          # `provider` and `instance` (when set) are passed as hard filters into request_lane —
-          # vector-comparability requires the *same* lane every call, not just the same model.
-          provider:                     nil,
-          instance:                     nil,
-          default_model:                nil,
-          # Deprecated alias for :default_model — read as a fallback so older configs keep working.
-          # New configs MUST use :default_model.
-          model:                        nil,
+          # M4: the settings-pin → tier-rank → default_model selection keys
+          # (provider/instance/default_model/model/provider_fallback/
+          # provider_models/ollama_preferred) are gone — SSOT :embed routing
+          # (Call::Embeddings → Router.next_lane) is the sole embedding
+          # selection authority; an operator pin belongs in the request
+          # (model/provider/instance constraints), not in a second selection
+          # domain.
           dimension:                    1024,
           enforce_dimension:            true,
-          provider_fallback:            %w[ollama bedrock openai],
-          provider_models:              {
-            bedrock:   'amazon.titan-embed-text-v2:0',
-            anthropic: nil,
-            openai:    'text-embedding-3-small',
-            gemini:    'text-embedding-004',
-            azure:     'text-embedding-3-small',
-            ollama:    'mxbai-embed-large'
-          },
-          ollama_preferred:             %w[mxbai-embed-large nomic-embed-text bge-large snowflake-arctic-embed],
           ollama_context_chars:         {
             'mxbai-embed-large'      => 1400,
             'bge-large'              => 1400,
@@ -423,7 +409,13 @@ module Legion
 
       def self.metering_defaults
         {
-          spool: {
+          # M8: metering events are a raw-content compliance sink (RMQ +
+          # JSONL spool). :metadata_only (default) carries tokens, cost,
+          # routing, and status — never the request messages, response
+          # content, or response thinking. Set :raw to include them;
+          # privacy-classified requests are excluded regardless of mode.
+          capture_mode: :metadata_only,
+          spool:        {
             max_events:        10_000,
             flush_batch_sleep: 0.0
           }
@@ -546,6 +538,18 @@ module Legion
         {
           retry_on_parse_failure: false,
           max_retries:            2
+        }
+      end
+
+      def self.logging_defaults
+        # M1: the INFO inference request/response log carries metadata only
+        # (lengths, tokens, stop reason) by default — the raw payload is a
+        # compliance sink outside the ledger capture-mode policy. An operator
+        # may enable a bounded inspect preview for diagnostics: values > 0
+        # cap the preview at that many characters (truncated, never unbounded);
+        # 0 = no payload in the log at all.
+        {
+          payload_preview_chars: 0
         }
       end
 

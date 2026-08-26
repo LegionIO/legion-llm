@@ -16,7 +16,13 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
       schema: nil, thinking: nil, tool_prefs: nil, top_p: 0.7, seed: 42
     }
   end
-  let(:messages) { [canonical::Message.build(role: :user, content: 'hello')] }
+  let(:messages) do
+    [
+      { role: :assistant, content: '', tool_calls: [{ id: 'call-1', name: 'lookup', arguments: { query: 'status' } }] },
+      { role: :tool, tool_call_id: 'call-1', content: 'clean' },
+      { role: :user, content: 'hello' }
+    ]
+  end
 
   def harness(fleet:, context:, raw_options:)
     Class.new do
@@ -51,12 +57,16 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
     [direct, fleet].each do |subject|
       subject.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: messages)
       captured = subject.captured
+      expect(captured[:messages]).to all(be_a(canonical::Message))
       expect(captured[:messages].count { |message| message.role == :system }).to eq(1)
       expect(captured[:messages].first.content).to eq('authoritative system')
       options = captured[:dispatch_options]
-      expect(options.keys).to contain_exactly(:tools, :temperature, :params, :headers, :schema, :thinking, :tool_prefs)
+      # N9: :headers is no longer a contract option key — it is never
+      # projected onto the dispatch options (it is not populated in the SSOT
+      # dispatch path, and caller headers are not fleet wire).
+      expect(options.keys).to contain_exactly(:tools, :temperature, :params, :schema, :thinking, :tool_prefs)
       expect(options[:params]).to eq(provider_flag: true, top_p: 0.7, seed: 42)
-      expect(options).not_to include(:system, :offering_id, :offering_metadata, :top_p, :seed)
+      expect(options).not_to include(:system, :offering_id, :offering_metadata, :top_p, :seed, :headers)
     end
   end
 
@@ -72,6 +82,30 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
     expect(subject.captured[:messages].first.content).to eq('round two continuation')
   end
 
+  it 'canonicalizes every SSOT message even when no system text is present' do
+    subject = harness(fleet: false, context: Object.new, raw_options: raw_options.merge(system: nil))
+
+    subject.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: messages)
+
+    expect(subject.captured[:messages]).to all(be_a(canonical::Message))
+    expect(subject.captured[:messages].map(&:role)).to eq(%i[assistant tool user])
+    expect(subject.captured[:messages].first.tool_calls.first.name).to eq('lookup')
+  end
+
+  it 'replaces a leading hash system message exactly once without mutating the input' do
+    input = [{ role: :system, content: 'stale system' }, *messages]
+    original = input.map(&:dup)
+    subject = harness(fleet: false, context: Object.new, raw_options: raw_options)
+
+    subject.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: input)
+
+    projected = subject.captured[:messages]
+    expect(projected).to all(be_a(canonical::Message))
+    expect(projected.count { |message| message.role == :system }).to eq(1)
+    expect(projected.first.content).to eq('authoritative system')
+    expect(input).to eq(original)
+  end
+
   it 'preserves non-SSOT messages and options exactly and rejects malformed SSOT params' do
     legacy = harness(fleet: false, context: nil, raw_options: raw_options)
     legacy.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: messages)
@@ -84,14 +118,17 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
     end.to raise_error(ArgumentError, /dispatch params must be a Hash/)
   end
 
-  it 'rejects a fleet selection/lane operation mismatch and preserves legacy fleet operation' do
-    selection = Struct.new(:operation).new(:stream_chat)
+  it 'rejects a fleet selection/lane operation TYPE mismatch and preserves legacy fleet operation' do
+    # The coarse lane type is the fleet contract: the operation is a request
+    # property (a stream selection on a chat-representative lane MATCHES),
+    # but an embed selection on an inference lane does not.
+    selection = Struct.new(:operation).new(:embed)
     lane = Struct.new(:operation).new(:chat)
     mismatch = Struct.new(:selection, :lane).new(selection, lane)
     malformed = harness(fleet: true, context: mismatch, raw_options: raw_options)
 
     expect do
-      malformed.send(:dispatch_provider_request, capability: :stream, operation: :chat, messages: messages)
+      malformed.send(:dispatch_provider_request, capability: :stream, operation: :embed, messages: messages)
     end.to raise_error(ArgumentError, %r{selection/lane operation mismatch})
 
     legacy = harness(fleet: true, context: nil, raw_options: raw_options)

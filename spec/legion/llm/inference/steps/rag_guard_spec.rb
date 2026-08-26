@@ -18,7 +18,12 @@ RSpec.describe Legion::LLM::Inference::Steps::RagGuard do
         }
         @warnings = []
         @timeline = Legion::LLM::Inference::Timeline.new
-        @raw_response = Struct.new(:content).new('pgvector uses cosine distance for similarity')
+        # G3: the raw response is the canonical provider response — the
+        # faithfulness check reads the .text member (a Struct with a bare
+        # .content was the split-world seam).
+        @raw_response = Legion::Extensions::Llm::Canonical::Response.build(
+          text: 'pgvector uses cosine distance for similarity'
+        )
       end
     end
   end

@@ -6,7 +6,17 @@ module Legion
       def retryable? = false
     end
 
-    class AuthError < LLMError; end
+    class AuthError < LLMError
+      # M3.3: carries the exact Phase 1 ProviderOutcome so the typed failure
+      # kind survives the raise/rescue boundary on the error itself — the
+      # side-channel ivar is gone.
+      attr_reader :outcome
+
+      def initialize(message = nil, outcome: nil)
+        @outcome = outcome
+        super(message)
+      end
+    end
 
     class RateLimitError < LLMError
       attr_reader :retry_after
@@ -24,6 +34,14 @@ module Legion
     end
 
     class ProviderError < LLMError
+      # M3.3: carries the exact Phase 1 ProviderOutcome (see AuthError).
+      attr_reader :outcome
+
+      def initialize(message = nil, outcome: nil)
+        @outcome = outcome
+        super(message)
+      end
+
       def retryable? = true
     end
 
@@ -36,11 +54,6 @@ module Legion
     # provider failure: it is non-retryable (inherited) and must not be escalated,
     # must not trip a circuit breaker, and must not deny-record the model — the
     # escalation loop re-raises it immediately rather than trying the next model.
-    # Raised when a write_lane call fails validation: missing :id, malformed :id, or
-    # field values outside the Taxonomies enums (tier/type). Non-retryable — the lane
-    # writer has a programming error that must be fixed.
-    class InvalidLane < LLMError; end
-
     class ModelNotAllowed < LLMError
       attr_reader :provider, :model
 

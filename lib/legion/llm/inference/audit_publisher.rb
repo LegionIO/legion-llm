@@ -15,14 +15,15 @@ module Legion
         def build_event(request:, response:)
           log.debug("[audit_publisher][build_event] action=build request_id=#{response.request_id} conversation_id=#{response.conversation_id}")
 
+          # G3: the envelope's message member is the canonical rendering
+          # projection (a plain Hash) and its tools are
+          # Array<Canonical::ToolCall> — the audit event serializes the
+          # canonical shapes directly (no legacy Types re-wrap at the exit).
           resp_message = response.message
-          msg_content = resp_message.is_a?(Types::Message) ? resp_message.text : hash_value(resp_message, :content)
-          msg_id = resp_message.is_a?(Types::Message) ? resp_message.id : nil
-          msg_task_id = resp_message.is_a?(Types::Message) ? resp_message.task_id : nil
-          msg_conversation_id = resp_message.is_a?(Types::Message) ? resp_message.conversation_id : nil
+          msg_content = hash_value(resp_message, :content)
 
           tools_data = Array(response.tools).map do |tc|
-            tc.is_a?(Types::ToolCall) ? tc.to_audit_hash : tc
+            tc.is_a?(Legion::Extensions::Llm::Canonical::ToolCall) ? tc.to_h : tc
           end
 
           audit_data = response.audit || {}
@@ -52,9 +53,9 @@ module Legion
             tier:              hash_value(response.routing, :tier),
             message_context:   build_message_context(request: request, response: response)
           }
-          event[:message_id] = msg_id if msg_id
-          event[:task_id] = msg_task_id || (request.respond_to?(:task_id) ? request.task_id : nil)
-          event[:message_conversation_id] = msg_conversation_id if msg_conversation_id
+          # task_id rides on the request (the envelope message carries no
+          # task identity of its own).
+          event[:task_id] = request.respond_to?(:task_id) ? request.task_id : nil
 
           # Ledger column sources (official_record_writer reads these keys directly).
           routing = response.routing.is_a?(Hash) ? response.routing : {}

@@ -6,7 +6,7 @@ require 'legion/llm/api/namespaces/helpers'
 require 'legion/llm/api/native/models'
 require 'legion/llm/api/translators/openai_response'
 require 'legion/llm/api/model_catalog'
-require 'legion/llm/router/settings_state'
+require 'legion/llm/routing/settings_state'
 
 module Legion
   module LLM
@@ -21,18 +21,18 @@ module Legion
             def self.registered(app)
               log.debug('[llm][api][namespaces][openai][models] registering routes')
 
-              # SSOT v3 Task 16: the maintained /v1/models tree is projected from a
-              # single Registry snapshot + SettingsState generation captured per
-              # request and rendered by ModelCatalog in the caller's dialect. The
-              # snapshot-only catalog never calls the router — availability and lane
-              # weight do not decide which models appear in the compat view.
+              # The maintained /v1/models tree is projected from a single Registry
+              # snapshot + SettingsState generation captured per request and rendered
+              # by ModelCatalog in the caller's dialect. The snapshot-only catalog
+              # never calls the router — availability and lane weight do not decide
+              # which models appear in the compat view.
               app.get '/v1/models' do
                 require_llm!
                 dialect = detect_client(env) == :anthropic ? :anthropic : :openai
                 log.debug("[llm][api][namespaces][openai][models] action=list dialect=#{dialect}")
 
                 snapshot          = Legion::Extensions::Llm::Inventory::Registry.snapshot
-                settings_snapshot = Legion::LLM::Router::SettingsState.current
+                settings_snapshot = Legion::LLM::Routing::SettingsState.current
                 entries = Legion::LLM::API::ModelCatalog.list(
                   snapshot: snapshot, settings_snapshot: settings_snapshot, dialect: dialect
                 )
@@ -61,7 +61,7 @@ module Legion
                   log.debug("[llm][api][namespaces][openai][models] action=passthrough_model id=#{passthrough_id} dialect=#{dialect}")
 
                   snapshot          = Legion::Extensions::Llm::Inventory::Registry.snapshot
-                  settings_snapshot = Legion::LLM::Router::SettingsState.current
+                  settings_snapshot = Legion::LLM::Routing::SettingsState.current
                   found = Legion::LLM::API::ModelCatalog.fetch(
                     id: passthrough_id, snapshot: snapshot, settings_snapshot: settings_snapshot, dialect: dialect
                   )
@@ -87,7 +87,7 @@ module Legion
                 log.debug("[llm][api][namespaces][openai][models] action=get id=#{model_id} dialect=#{dialect}")
 
                 snapshot          = Legion::Extensions::Llm::Inventory::Registry.snapshot
-                settings_snapshot = Legion::LLM::Router::SettingsState.current
+                settings_snapshot = Legion::LLM::Routing::SettingsState.current
                 found = Legion::LLM::API::ModelCatalog.fetch(
                   id: model_id, snapshot: snapshot, settings_snapshot: settings_snapshot, dialect: dialect
                 )
@@ -116,39 +116,8 @@ module Legion
               handle_exception(e, level: :error, handled: false, operation: 'llm.api.namespaces.openai.models.register')
             end
 
-            def self.build_openai_model_list
-              offerings = Legion::LLM::Inventory.offerings(type: :inference)
-              offerings = Legion::LLM::API::Native::Models.with_auto_routing_offering(offerings, {})
-
-              models = offerings.map do |offering|
-                Legion::LLM::API::Translators::OpenAIResponse.format_model_object(
-                  offering[:model],
-                  owned_by: offering[:provider_family],
-                  limits:   offering[:limits]
-                )
-              end
-              seen = {}
-              models.select { |m| seen[m[:id]] ? false : (seen[m[:id]] = true) }
-            rescue StandardError => e
-              log.warn("[llm][api][namespaces][openai][models] inventory_error=#{e.message}")
-              []
-            end
-
             def self.passthrough_model_ids
               Legion::Settings[:llm][:routing][:model_passthrough_ids]
-            end
-
-            def self.synthetic_model_for_auto_route(model_id)
-              return nil unless Legion::LLM::Inventory.lanes.any?
-
-              best_lane = Legion::LLM::Inventory.lanes.max_by { |l| l[:lane_weight].to_i }
-              return nil unless best_lane
-
-              Legion::LLM::API::Translators::OpenAIResponse.format_model_object(
-                model_id,
-                owned_by: 'legionio',
-                limits:   best_lane[:limits]
-              )
             end
 
             def self.to_anthropic_model_list(openai_list)

@@ -32,11 +32,8 @@ RSpec.describe Legion::LLM::Prompt do
   describe '.dispatch' do
     context 'when Router resolves via inventory' do
       before do
-        Legion::LLM::Inventory.write_lane(lane: {
-                                            id: 'cloud:bedrock:default:inference:us.anthropic.claude-sonnet-4-6-v1',
-                                            tier: :cloud, provider_family: :bedrock, instance_id: :default,
-                                            model: 'us.anthropic.claude-sonnet-4-6-v1', type: :inference
-                                          })
+        Legion::Extensions::Llm::Inventory::Registry.reset!
+        write_test_lane(provider: :bedrock, model: 'us.anthropic.claude-sonnet-4-6-v1', tier: :cloud)
       end
 
       it 'uses the resolved provider and model from inventory' do
@@ -47,9 +44,7 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'when no inventory lane is available' do
       before do
-        # SSOT v3: reset both stores so only the written lane is selectable.
         Legion::Extensions::Llm::Inventory::Registry.reset!
-        Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
       end
 
@@ -87,7 +82,6 @@ RSpec.describe Legion::LLM::Prompt do
         # auto-routing (legionio) performs unconstrained selection, so determinism
         # requires a single available lane.
         Legion::Extensions::Llm::Inventory::Registry.reset!
-        Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
       end
 
@@ -101,11 +95,8 @@ RSpec.describe Legion::LLM::Prompt do
 
     context 'when defaults are configured' do
       before do
-        # SSOT v3: routing_enabled? is always false (deleted gate); the governed
-        # pipeline always runs. Reset registry before writing the target lane so
-        # multi-lane non-determinism cannot cause a wrong-provider pick.
+        # Reset registry before writing the target lane so\n        # multi-lane non-determinism cannot cause a wrong-provider pick.
         Legion::Extensions::Llm::Inventory::Registry.reset!
-        Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :frontier)
         Legion::Settings[:llm][:default_provider] = 'anthropic'
         Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
@@ -124,7 +115,6 @@ RSpec.describe Legion::LLM::Prompt do
         # SSOT v3: routing_enabled? is always false; clearing the SSOT Registry
         # and all legacy lanes ensures routing_resolvable? returns false → LLMError.
         Legion::Extensions::Llm::Inventory::Registry.reset!
-        Legion::LLM::Inventory.reset_live_store!
         Legion::Settings[:llm][:default_provider] = nil
         Legion::Settings[:llm][:default_model] = nil
       end
@@ -199,11 +189,8 @@ RSpec.describe Legion::LLM::Prompt do
         # routes successfully — is preserved by publishing a single lane so the
         # result is deterministic.
         Legion::Extensions::Llm::Inventory::Registry.reset!
-        Legion::LLM::Inventory.reset_live_store!
         write_test_lane(provider: :anthropic, model: 'claude-sonnet-4-6', tier: :cloud)
       end
-
-      after { Legion::LLM::Router.reset! }
 
       it 'does not raise ArgumentError when calling the real Router.resolve with intent' do
         result = described_class.dispatch('Hello', intent: { effort: :moderate })
@@ -251,7 +238,7 @@ RSpec.describe Legion::LLM::Prompt do
     # that the router/executor resolves. When no lane can satisfy it the failure is
     # surfaced by routing (an LLMError family error) rather than a pre-routing guard.
     context 'with nil provider and no lane satisfying the model pin' do
-      before { Legion::LLM::Inventory.reset_live_store! }
+      before { Legion::Extensions::Llm::Inventory::Registry.reset! }
 
       it 'fails through routing when no lane matches the model pin' do
         expect { described_class.request('Hello', provider: nil, model: 'claude-sonnet-4-6') }
@@ -263,7 +250,6 @@ RSpec.describe Legion::LLM::Prompt do
       before do
         # SSOT v3: reset SSOT Registry too, otherwise gemma-12b lanes written by
         # the outer before block satisfy the request and no error is raised.
-        Legion::LLM::Inventory.reset_live_store!
         Legion::Extensions::Llm::Inventory::Registry.reset!
       end
 

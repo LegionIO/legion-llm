@@ -29,13 +29,15 @@ module Legion
 
           Canonical = Legion::Extensions::Llm::Canonical
 
+          # N8: a provider :error stop is an error state, not a clean
+          # completion — it renders as 'error', never 'end_turn'.
           STOP_REASON_MAP = {
             end_turn:       'end_turn',
             tool_use:       'tool_use',
             max_tokens:     'max_tokens',
             stop_sequence:  'stop_sequence',
             content_filter: 'content_filter',
-            error:          'end_turn',
+            error:          'error',
             pause_turn:     'pause_turn'
           }.freeze
 
@@ -95,7 +97,10 @@ module Legion
             routing_explicit = canonical_request.metadata[:routing_explicit]
             extra[:routing_explicit] = routing_explicit if routing_explicit
 
-            messages = inference_messages(canonical_request.messages)
+            # N x N law: the executor receives canonical messages end-to-end.
+            # No canonical-to-hash de-canonicalization (the former
+            # inference_messages bridge is deleted).
+            messages = canonical_request.messages
             request_kwargs = {
               id:              request_id,
               messages:        messages,
@@ -111,7 +116,10 @@ module Legion
               conversation_id: canonical_request.conversation_id,
               stream:          canonical_request.stream == true,
               modality:        modality,
-              thinking:        thinking_to_inference(canonical_request.thinking),
+              # N2: shared execution carries the canonical Thinking::Config
+              # (or nil) — the Anthropic dialect is re-shaped by the PROVIDER
+              # translator at the provider edge, never in the pipeline.
+              thinking:        canonical_request.thinking,
               cache:           { strategy: :default, cacheable: true },
               extra:           extra,
               metadata:        canonical_request.metadata
@@ -307,9 +315,13 @@ module Legion
             end
 
             def on_message_delta(stop_reason:, output_tokens:)
+              # N8/M7: an absent or unmapped stop state renders as 'error',
+              # never a fabricated 'end_turn' — the client must be able to
+              # tell a provider-declared completion from a stop the daemon
+              # did not observe (matches the sync edge policy).
               emit('message_delta', {
                      type:  'message_delta',
-                     delta: { stop_reason: STOP_REASON_MAP[stop_reason] || 'end_turn', stop_sequence: nil },
+                     delta: { stop_reason: STOP_REASON_MAP[stop_reason] || 'error', stop_sequence: nil },
                      usage: { output_tokens: output_tokens.to_i }
                    })
             end
@@ -369,7 +381,7 @@ module Legion
           # without buffering through the assembler.
           def format_tool_call_delta_chunk(canonical_chunk)
             tc = canonical_chunk.tool_call
-            args = tc.respond_to?(:arguments) ? tc.arguments : {}
+            args = tool_fragment_field(tc, :arguments) || {}
             block_index = canonical_chunk.block_index || 0
 
             if server_tool_chunk?(tc)
@@ -378,8 +390,8 @@ module Legion
                 index:         block_index,
                 content_block: {
                   type:  'server_tool_use',
-                  id:    tc.respond_to?(:id) ? tc.id : nil,
-                  name:  tc.respond_to?(:name) ? tc.name.to_s : '',
+                  id:    tool_fragment_field(tc, :id),
+                  name:  tool_fragment_field(tc, :name).to_s,
                   input: args_as_object(args)
                 }
               }
@@ -397,11 +409,13 @@ module Legion
           end
 
           def server_tool_chunk?(tool_call)
-            source = tool_call.respond_to?(:source) ? tool_call.source : nil
+            # The chunk fragment's source is the closed dispatch-type enum
+            # (R4 fragment contract) — server-executed tools are the
+            # registry/special/extension/mcp set (G24).
+            source = tool_fragment_field(tool_call, :source)
             return false if source.nil?
 
-            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
-            %i[special registry extension mcp].include?(type&.to_sym)
+            %i[special registry extension mcp].include?(source.to_sym)
           end
 
           private
@@ -558,11 +572,14 @@ module Legion
 
             raw.map do |t|
               ts = symbolize(t)
+              # M5/H1: a client-declared tool carries NO source — source is
+              # explicit-or-absent, never fabricated. The dispatch-side source
+              # (:client) is stamped by build_tool_definitions (the OUTBOUND
+              # tool-definition builder), not on the canonical request tools.
               {
                 name:        ts[:name].to_s,
                 description: ts[:description].to_s,
-                parameters:  ts[:input_schema] || ts[:parameters] || {},
-                source:      { type: :client, executable: false }
+                parameters:  ts[:input_schema] || ts[:parameters] || {}
               }
             end
           end
@@ -580,7 +597,7 @@ module Legion
 
           # Map an Anthropic-style thinking block ({type:, budget_tokens:}) to
           # the canonical {effort:, budget:} kwargs that
-          # Canonical::ThinkingConfig.new accepts. Anthropic doesn't carry an
+          # Canonical::Thinking::Config.new accepts. Anthropic doesn't carry an
           # effort spelling — only a budget — so effort stays nil.
           def extract_thinking(thinking)
             return nil if thinking.nil?
@@ -595,24 +612,21 @@ module Legion
 
               { effort: effort, budget: budget }.compact
             else
-              # Anything else is a "thinking is on" flag — no concrete budget.
-              { effort: thinking.to_s }
+              # Bare (non-Hash) flag: the dialect's formal spelling is the
+              # {type:, budget_tokens:} block. A bare value maps only when it
+              # is itself a closed-enum effort (the M4 EFFORT_BUDGET keys) —
+              # honored 1:1. Anything else (true, 'enabled', 'on', ...)
+              # expresses neither effort nor budget and this dialect documents
+              # no default — the config drops out, same treatment as
+              # {type: 'enabled'} with no budget above. Never fabricate.
+              value = thinking.is_a?(Symbol) ? thinking.to_s : thinking
+              return nil unless value.is_a?(String)
+
+              normalized = value.downcase
+              return { effort: normalized } if Canonical::Thinking::Config::EFFORT_BUDGET.key?(normalized)
+
+              nil
             end
-          end
-
-          # Canonical::ThinkingConfig#to_h is {effort:, budget:}. The Inference
-          # request and downstream provider translators expect the
-          # Anthropic-style {type: 'enabled', budget_tokens:} shape; map back.
-          def thinking_to_inference(thinking_obj)
-            return nil if thinking_obj.nil?
-
-            h = thinking_obj.respond_to?(:to_h) ? thinking_obj.to_h : thinking_obj
-            return nil unless h.is_a?(Hash) && !h.empty?
-
-            inference = { type: 'enabled' }
-            inference[:budget_tokens] = h[:budget] if h[:budget]
-            inference[:effort] = h[:effort] if h[:effort]
-            inference
           end
 
           def build_tool_definitions(canonical_tools)
@@ -632,20 +646,6 @@ module Legion
               handle_exception(e, level: :warn, handled: true,
                                   operation: 'llm.client_translator.anthropic.build_tool', tool_name: hash[:name])
               nil
-            end
-          end
-
-          # Canonical messages → plain hashes the executor's Inference::Request
-          # currently expects. Round-trips text/tool_calls/tool_call_id.
-          def inference_messages(canonical_messages)
-            canonical_messages.map do |m|
-              hash = m.respond_to?(:to_h) ? m.to_h : m
-              {
-                role:         hash[:role],
-                content:      hash[:content],
-                tool_calls:   hash[:tool_calls],
-                tool_call_id: hash[:tool_call_id]
-              }.compact
             end
           end
 
@@ -684,18 +684,15 @@ module Legion
             blocks.empty? ? [{ type: 'text', text: '' }] : blocks
           end
 
+          # G3: the envelope carries the provider's Canonical::Thinking —
+          # member reads only (the former Hash-OR-member dual shape was the
+          # split-world seam).
           def thinking_content_block(pipeline_response)
             thinking = pipeline_response.respond_to?(:thinking) ? pipeline_response.thinking : nil
             return nil if thinking.nil?
 
-            normalized = if thinking.is_a?(Hash)
-                           thinking.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
-                         else
-                           { content: thinking.respond_to?(:content) ? thinking.content : thinking.to_s }
-                         end
-
-            content = normalized[:content].to_s
-            signature = normalized[:signature].to_s
+            content = thinking.content.to_s
+            signature = thinking.signature.to_s
 
             return nil if content.empty? && signature.empty?
 
@@ -704,31 +701,31 @@ module Legion
             block
           end
 
+          # G3: the envelope carries Array<Canonical::ToolCall> — member
+          # reads only (the former respond_to?/Hash dual shape was the
+          # split-world seam).
           def extract_tool_calls(pipeline_response)
             tools = pipeline_response.respond_to?(:tools) ? pipeline_response.tools : nil
             return [] if tools.nil?
 
             Array(tools).map do |tc|
-              source = if tc.respond_to?(:source)
-                         tc.source
-                       else
-                         (tc.is_a?(Hash) ? tc[:source] : nil)
-                       end
               {
-                id:          tc.respond_to?(:id) ? tc.id : (tc[:id] if tc.is_a?(Hash)),
-                name:        tc.respond_to?(:name) ? tc.name : (tc[:name] if tc.is_a?(Hash)),
-                arguments:   tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] if tc.is_a?(Hash)),
-                result:      tc.respond_to?(:result) ? tc.result : (tc[:result] if tc.is_a?(Hash)),
-                server_tool: server_tool_source?(source)
+                id:          tc.id,
+                name:        tc.name,
+                arguments:   tc.arguments,
+                result:      tc.result,
+                server_tool: server_tool_source?(tc.source)
               }
             end
           end
 
+          # The canonical ToolCall.source is the closed dispatch-type enum —
+          # server-executed tools are the registry/special/extension/mcp set
+          # (G24).
           def server_tool_source?(source)
             return false if source.nil?
 
-            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
-            %i[special registry extension mcp].include?(type&.to_sym)
+            %i[special registry extension mcp].include?(source.to_sym)
           end
 
           def format_stop_reason(pipeline_response)
@@ -739,14 +736,29 @@ module Legion
             return 'tool_use' if tool_calls.any? { |tc| !tc[:server_tool] && tc[:result].nil? }
 
             stop = pipeline_response.respond_to?(:stop) ? pipeline_response.stop : nil
-            reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : stop.to_s
-            case reason.to_s
-            when 'tool_use'       then 'tool_use'
-            when 'max_tokens'     then 'max_tokens'
-            when 'content_filter' then 'content_filter'
-            when 'stop'
-              pipeline_response.respond_to?(:stop_sequence) && pipeline_response.stop_sequence ? 'stop_sequence' : 'end_turn'
-            else 'end_turn'
+            # The envelope's stop member is the { reason: } Hash — one shape
+            # (G3).
+            reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : nil
+            # N8/M7: only known completion states render as completions.
+            # :error stays an error, and an absent or unmapped stop state
+            # surfaces as 'error' — the client must be able to tell a
+            # provider-declared end_turn from a stop the daemon did not
+            # observe. Never fabricate :end_turn. (The legacy :stop dialect
+            # value is not in the canonical stop vocabulary — it falls
+            # through to the error surface like any unmapped state.)
+            case reason&.to_sym
+            when :end_turn
+              'end_turn'
+            when :stop_sequence
+              'stop_sequence'
+            when :tool_use
+              'tool_use'
+            when :max_tokens
+              'max_tokens'
+            when :content_filter
+              'content_filter'
+            else
+              'error'
             end
           end
 
@@ -754,7 +766,8 @@ module Legion
             return result if result.is_a?(String)
 
             Legion::JSON.dump(result)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'llm.client_translator.anthropic.serialize_result')
             result.to_s
           end
         end

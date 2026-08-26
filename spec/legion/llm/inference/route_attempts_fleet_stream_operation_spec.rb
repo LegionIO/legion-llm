@@ -31,7 +31,9 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
         @resolved_instance = selection.instance_id
         @resolved_model = selection.model
         @resolved_tier = :fleet
-        @resolved_offering_id = selection.offering_id
+        # D2: the resolved offering id is the 5-tuple lane id (matches
+        # production populate_ssot_v3_resolved_state).
+        @resolved_offering_id = selection.lane_id
         @resolved_offering_metadata = {}
         @tracing = {}
       end
@@ -121,8 +123,10 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
       )
       { accepted: true }
     end
+    # Protocol v3 E3: the reply envelope carries the serialized
+    # Canonical::Response under :response (thinking excluded, E4).
     allow(Legion::LLM::Fleet::Dispatcher).to receive(:wait_for_response) do
-      { success: true, content: worker_result.text }
+      { success: true, response: worker_result.to_h.except(:thinking) }
     end
 
     subject.send(:dispatch_provider_request, capability: :stream, operation: :chat, messages: messages)

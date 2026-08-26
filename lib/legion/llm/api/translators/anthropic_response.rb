@@ -238,7 +238,7 @@ module Legion
 
             thinking_data = begin
               pipeline_response.thinking
-            rescue Exception # rubocop:disable Style/RescueException
+            rescue StandardError
               nil
             end
             normalize_thinking_payload(thinking_data)
@@ -294,10 +294,13 @@ module Legion
             end
           end
 
+          # G3: the envelope's tools are Canonical::ToolCall — source is the
+          # closed dispatch-type enum (the legacy { type: } Hash spelling is
+          # translated at the boundary, never carried). This recognizer
+          # accepts the enum; the Hash branch remains for the legacy API
+          # tree's own doubles.
           def self.legionio_tool_source?(source)
-            return false unless source.is_a?(Hash)
-
-            type = source[:type] || source['type']
+            type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
             %i[special registry extension].include?(type&.to_sym)
           end
 
@@ -326,6 +329,12 @@ module Legion
             when 'content_filter' then 'content_filter'
             when 'stop'
               pipeline_response.respond_to?(:stop_sequence) && pipeline_response.stop_sequence ? 'stop_sequence' : 'end_turn'
+            # ANNOTATE (L3, M7-family): the legacy tree's else branch
+            # fabricates 'end_turn' for an absent or unmapped stop state —
+            # the same fail-open the client-translator edges close as
+            # 'error'. The flat legacy API tree (register_legacy) is a
+            # coordinated-wave deletion surface; this branch is fixed with
+            # the tree, not inline.
             else 'end_turn'
             end
           end

@@ -16,12 +16,10 @@ module Legion
               log.debug('[llm][api][providers] action=list_providers')
               require_llm!
 
-              instances = begin
-                Legion::LLM::Call::Registry.all_instances
-              rescue StandardError => e
-                handle_exception(e, level: :warn, handled: true, operation: 'llm.api.providers.registry_read')
-                []
-              end
+              # A registry read FAULT must not masquerade as an empty
+              # registry (a 200 with []). The fault propagates to the route's
+              # 500 handler — logged there, error-shaped to the caller.
+              instances = Legion::LLM::Call::Registry.all_instances
 
               provider_list = instances.map do |entry|
                 Legion::LLM::API::Native::Providers.instance_to_hash(entry)
@@ -47,12 +45,10 @@ module Legion
               provider_name = params[:name].to_s
               provider_sym = provider_name.to_sym
 
-              instances = begin
-                Legion::LLM::Call::Registry.all_instances
-              rescue StandardError => e
-                handle_exception(e, level: :warn, handled: true, operation: 'llm.api.providers.registry_read')
-                []
-              end
+              # A registry read FAULT must not masquerade as an empty
+              # registry (a 200 with []). The fault propagates to the route's
+              # 500 handler — logged there, error-shaped to the caller.
+              instances = Legion::LLM::Call::Registry.all_instances
 
               family = instances.select { |entry| entry[:provider].to_sym == provider_sym }
 
@@ -77,11 +73,49 @@ module Legion
             log.debug('[llm][api][providers] provider routes registered')
           end
 
+          # Providers surface in the listing from the Registry snapshot even
+          # when they are absent from the call registry (deduped by
+          # provider+instance).
+          def self.union_ssot_providers(provider_list)
+            return provider_list unless defined?(Legion::Extensions::Llm::Inventory::Registry)
+
+            snapshot = begin
+              Legion::Extensions::Llm::Inventory::Registry.snapshot
+            rescue StandardError => e
+              handle_exception(e, level: :warn, handled: true, operation: 'llm.api.providers.ssot_snapshot_read')
+              nil
+            end
+            return provider_list if snapshot.nil?
+
+            seen = provider_list.to_set { |p| [p[:provider].to_sym, p[:instance].to_sym] }
+            snapshot.each_instance do |record|
+              family = record.instance_key.provider_family.to_sym
+              instance_id = record.instance_key.instance_id.to_sym
+              next if seen.include?([family, instance_id])
+
+              seen << [family, instance_id]
+              lanes = record.lanes_by_id.values
+              capabilities = lanes.first&.capability_evidence&.select do |_cap, evidence|
+                evidence.status == :supported
+              end&.keys&.map(&:to_s) || []
+              provider_list << {
+                provider:     family.to_s,
+                instance:     instance_id.to_s,
+                tier:         lanes.first&.tier&.to_s,
+                capabilities: capabilities,
+                health:       { state: record.availability.state.to_s },
+                native:       true,
+                source:       'ssot'
+              }
+            end
+            provider_list
+          end
+
           def self.instance_to_hash(entry)
             provider_key = entry[:provider].to_sym
             instance_key = entry[:instance].to_sym
 
-            # D14: display health/capabilities live in the per-instance settings
+            # Display health/capabilities live in the per-instance settings
             # hash the provider's discovery actor writes after each registry
             # commit (the visibility surface). The Registry AvailabilityFact
             # remains the routing authority. entry[:instance] is the config name

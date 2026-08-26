@@ -11,6 +11,11 @@ module Legion
             max_rounds:                200,
             max_calls_per_turn:        100,
             consecutive_failure_limit: 2,
+            # L8: word-boundary mention of a known tool name in the latest
+            # user text forces tool_choice to that tool on round 0 for
+            # forced_tool_choice providers (a request-shaping workaround,
+            # not a routing decision). Set false to disable the heuristic.
+            explicit_tool_choice:      true,
             explicit_choice_max_chars: 500,
             error_log_chars:           500,
             result_detail_chars:       100,

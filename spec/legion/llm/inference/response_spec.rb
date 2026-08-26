@@ -22,29 +22,9 @@ RSpec.describe Legion::LLM::Inference::Response do
     end
   end
 
-  describe '.from_provider_message' do
-    it 'converts a provider message-like object to Response' do
-      provider_msg = double(
-        content:       'Hello world',
-        role:          'assistant',
-        input_tokens:  100,
-        output_tokens: 20,
-        model_id:      'claude-opus-4-6'
-      )
-      resp = described_class.from_provider_message(
-        provider_msg,
-        request_id:      'req_abc',
-        conversation_id: 'conv_xyz',
-        provider:        :anthropic,
-        model:           'claude-opus-4-6'
-      )
-      expect(resp.message[:content]).to eq('Hello world')
-      expect(resp.tokens[:input]).to eq(100)
-      expect(resp.tokens[:output]).to eq(20)
-      expect(resp.tokens[:total]).to eq(120)
-      expect(resp.routing[:provider]).to eq(:anthropic)
-    end
-  end
+  # G3: the legacy .from_provider_message constructor is gone — the envelope
+  # is built by the executor's build_response from the canonical provider
+  # response (that legacy path fabricated :end_turn for an absent stop).
 
   describe '#with' do
     it 'returns a new response with updated fields' do

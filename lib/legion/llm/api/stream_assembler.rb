@@ -24,11 +24,11 @@ module Legion
       #     mid-tool-call (the assembler tracks the current phase so the
       #     escalation chain knows what to replay)
       #
-      # Chunk shape: the assembler accepts canonical chunks
-      # (Legion::Extensions::Llm::Canonical::Chunk, post P3 translators) and the
-      # legacy provider StreamChunk (lex-llm Responses::StreamChunk). The
-      # ChunkAdapter normalizes both to a tiny internal struct so the state
-      # machine has one shape to reason about.
+      # Chunk shape: the assembler consumes Canonical::Chunk only (the
+      # provider boundary yields canonical chunks; G3/L2 removed the legacy
+      # StreamChunk bridge). The ChunkAdapter projects canonical chunks to a
+      # tiny internal struct so the state machine has one shape to reason
+      # about.
       class StreamAssembler
         extend Legion::Logging::Helper
         include Legion::Logging::Helper
@@ -596,25 +596,31 @@ module Legion
           end
         end
 
+        # G3: the envelope carries Array<Canonical::ToolCall> — member reads
+        # only (the former respond_to?/Hash dual shape was the split-world
+        # seam).
         def extract_tool_calls(final_response)
           tools = final_response.respond_to?(:tools) ? final_response.tools : nil
           return [] unless tools.respond_to?(:any?) && tools.any?
 
           tools.map do |tc|
-            id        = tc.respond_to?(:id) ? tc.id : (tc[:id] || tc['id'])
-            name      = tc.respond_to?(:name) ? tc.name : (tc[:name] || tc['name'])
-            arguments = tc.respond_to?(:arguments) ? tc.arguments : (tc[:arguments] || tc['arguments'] || {})
-            result    = tc.respond_to?(:result) ? tc.result : (tc[:result] || tc['result'])
-            source    = tc.respond_to?(:source) ? tc.source : (tc[:source] || tc['source'])
-            { id: id, name: name, arguments: arguments, result: result, server_tool: server_tool_source?(source) }
+            {
+              id:          tc.id,
+              name:        tc.name,
+              arguments:   tc.arguments,
+              result:      tc.result,
+              server_tool: server_tool_source?(tc.source)
+            }
           end
         end
 
+        # The canonical ToolCall.source is the closed dispatch-type enum —
+        # server-executed tools are the registry/special/extension/mcp set
+        # (G24).
         def server_tool_source?(source)
           return false if source.nil?
 
-          type = source.is_a?(Hash) ? (source[:type] || source['type']) : source
-          %i[special registry extension mcp].include?(type&.to_sym)
+          %i[special registry extension mcp].include?(source.to_sym)
         end
 
         def extract_fallback_text(final_response)
@@ -622,32 +628,31 @@ module Legion
           extract_content_text(msg).strip
         end
 
+        # G3: the envelope carries the provider's Canonical::Thinking —
+        # member reads only (the former Hash-OR-member dual shape was the
+        # split-world seam).
         def extract_thinking_payload(final_response)
           thinking = final_response.respond_to?(:thinking) ? final_response.thinking : nil
           return nil if thinking.nil?
 
-          if thinking.is_a?(Hash)
-            content = thinking[:content] || thinking['content'] || thinking[:text] || thinking['text']
-            signature = thinking[:signature] || thinking['signature']
-          elsif thinking.respond_to?(:content)
-            content = thinking.content
-            signature = thinking.respond_to?(:signature) ? thinking.signature : nil
-          else
-            content = thinking.to_s
-            signature = nil
-          end
-          { content: content.to_s, signature: signature.to_s }
+          { content: thinking.content.to_s, signature: thinking.signature.to_s }
         end
 
         def final_response_stop_reason(final_response, tool_calls)
           return :tool_use if tool_calls.any? { |tc| !tc[:server_tool] && tc[:result].nil? }
           return :pause_turn if tool_calls.any? { |tc| tc[:server_tool] && tc[:result].nil? }
 
+          # M7: the stop reason is exactly what the provider declared — an
+          # enum symbol or nil (absent). Nothing here fabricates :end_turn:
+          # the client edge renders absence distinctly from a
+          # provider-declared completion.
           stop = final_response.respond_to?(:stop) ? final_response.stop : nil
           reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : nil
-          reason ? reason.to_sym : :end_turn
+          reason&.to_sym
         end
 
+        # G3: the envelope's tokens member is a plain Hash (or {}) — one
+        # shape, no dual reader.
         def final_response_usage(final_response)
           tokens = final_response.respond_to?(:tokens) ? final_response.tokens : nil
           {
@@ -660,11 +665,7 @@ module Legion
           return nil if tokens.nil?
 
           keys.each do |key|
-            value = if tokens.is_a?(Hash)
-                      tokens[key] || tokens[key.to_s]
-                    elsif tokens.respond_to?(key)
-                      tokens.public_send(key)
-                    end
+            value = tokens.is_a?(Hash) ? (tokens[key] || tokens[key.to_s]) : nil
             return value.to_i unless value.nil?
           end
           nil
@@ -679,7 +680,8 @@ module Legion
           return args.to_s if args.is_a?(String)
 
           Legion::JSON.dump(args || {})
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.stream_assembler.serialize_args')
           args.to_s
         end
 
@@ -687,12 +689,16 @@ module Legion
           return result if result.is_a?(String)
 
           Legion::JSON.dump(result)
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'llm.stream_assembler.serialize_result')
           result.to_s
         end
 
-        # Tiny per-chunk normalizer so the assembler doesn't branch on
-        # canonical-vs-legacy chunk shapes.
+        # Per-chunk projection of Canonical::Chunk into the assembler's
+        # internal shape. G3/L2: the provider boundary yields canonical
+        # chunks only (the legacy .content/.thinking StreamChunk bridge is
+        # gone — a non-canonical chunk is a contract fault, not a shape to
+        # duck-type).
         AdaptedChunk = ::Struct.new(:text, :thinking_text, :thinking_signature, :tool_calls, keyword_init: true) do
           def initialize(**kwargs)
             kwargs[:tool_calls] ||= []
@@ -707,10 +713,9 @@ module Legion
           def normalize(chunk)
             return nil if chunk.nil?
 
-            return from_canonical(chunk) if defined?(::Legion::Extensions::Llm::Canonical::Chunk) &&
-                                            chunk.is_a?(::Legion::Extensions::Llm::Canonical::Chunk)
+            raise ArgumentError, "ChunkAdapter expects Canonical::Chunk, got #{chunk.class}" unless chunk.is_a?(::Legion::Extensions::Llm::Canonical::Chunk)
 
-            from_legacy(chunk)
+            from_canonical(chunk)
           end
 
           # A canonical chunk delta is normally a String, but a non-incremental
@@ -751,90 +756,10 @@ module Legion
             end
           end
 
-          # Legacy lex-llm Responses::StreamChunk shape (.content, .thinking).
-          # NB: legacy chunks in Anthropic/Chat lanes are text-only — the
-          # executor tool loop accumulates tool calls into the final response,
-          # not per-chunk. The Responses lane uses canonical chunks already.
-          # Only probe tool_calls when the chunk is the concrete StreamChunk.
-          def from_legacy(chunk)
-            text = chunk.respond_to?(:content) ? safe_call(chunk, :content).to_s : chunk.to_s
-            thinking_text, thinking_signature = legacy_thinking(chunk)
-            AdaptedChunk.new(
-              text:               text,
-              thinking_text:      thinking_text,
-              thinking_signature: thinking_signature,
-              tool_calls:         legacy_tool_calls_if_real(chunk)
-            )
-          end
-
-          def legacy_tool_calls_if_real(chunk)
-            return [] unless defined?(::Legion::Extensions::Llm::Responses::StreamChunk) &&
-                             chunk.is_a?(::Legion::Extensions::Llm::Responses::StreamChunk)
-
-            legacy_tool_calls(chunk)
-          end
-
-          # respond_to? alone isn't sufficient for RSpec doubles that stub
-          # respond_to? to true but don't actually implement every getter.
-          # RSpec::Mocks::MockExpectationError descends from Exception (not
-          # StandardError), so we widen the rescue here just for the adapter
-          # entry point.
-          def safe_call(obj, method)
-            obj.public_send(method)
-          rescue Exception # rubocop:disable Lint/RescueException -- isolating provider chunk shape probing
-            nil
-          end
-
-          def legacy_thinking(chunk)
-            return [nil, nil] unless chunk.respond_to?(:thinking)
-
-            thinking = safe_call(chunk, :thinking)
-            return [nil, nil] if thinking.nil?
-
-            if thinking.is_a?(Hash)
-              normalized = thinking.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k }
-              [normalized[:content] || normalized[:text] || normalized[:thinking], normalized[:signature]]
-            elsif thinking.respond_to?(:content) && thinking.content
-              [thinking.content, thinking.respond_to?(:signature) ? thinking.signature : nil]
-            elsif thinking.respond_to?(:text)
-              # Legacy lex-llm Thinking exposes #text/#signature (no #content) —
-              # extract the text, never the Ruby `#<...Thinking:0x...>` inspect.
-              [thinking.text, thinking.respond_to?(:signature) ? thinking.signature : nil]
-            else
-              [thinking.is_a?(String) ? thinking : nil, nil]
-            end
-          end
-
-          def legacy_tool_calls(chunk)
-            return [] unless chunk.respond_to?(:tool_calls)
-
-            calls = safe_call(chunk, :tool_calls)
-            return [] if calls.nil? || (calls.respond_to?(:empty?) && calls.empty?)
-
-            # Legacy yields tool_calls as { id => obj }. Canonical post-P3 yields arrays.
-            iterable = calls.is_a?(Hash) ? calls.values : Array(calls)
-            iterable.filter_map do |tc|
-              name = tc.respond_to?(:name) ? tc.name.to_s : ''
-              args = tc.respond_to?(:arguments) ? tc.arguments : {}
-              next if name.empty? && (args.nil? || (args.respond_to?(:empty?) && args.empty?))
-
-              {
-                id:          tc.respond_to?(:id) ? tc.id : nil,
-                name:        name,
-                arguments:   args.is_a?(String) ? safe_parse_args(args) : args,
-                server_tool: false
-              }
-            end
-          end
-
-          def safe_parse_args(str)
-            return {} if str.to_s.empty?
-
-            Legion::JSON.parse(str, symbolize_names: true)
-          rescue StandardError
-            str
-          end
-
+          # R4: the chunk's tool_call member is the delta fragment (Hash) or
+          # a full Canonical::ToolCall; the source, when present, is the
+          # closed dispatch-type enum — server-executed tools are the
+          # registry/special/extension/mcp set (G24).
           def server_tool_source?(source)
             return false if source.nil?
 

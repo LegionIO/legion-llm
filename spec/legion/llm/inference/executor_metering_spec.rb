@@ -50,11 +50,12 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
     before do
       stub_process_identity
-      # Stub the raw_response with token data
-      raw = double('raw_response',
-                   content:       'hello',
-                   input_tokens:  50,
-                   output_tokens: 20)
+      # G3: the raw response is the canonical provider response — the double
+      # matches the real boundary shape (text + canonical usage).
+      raw = Legion::Extensions::Llm::Canonical::Response.build(
+        text:  'hello',
+        usage: { input_tokens: 50, output_tokens: 20 }
+      )
       executor.instance_variable_set(:@raw_response, raw)
       executor.instance_variable_set(:@resolved_provider, :anthropic)
       executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
@@ -111,10 +112,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
     it 'does not emit a zero-dollar cost estimate when provider usage is missing for a known model' do
       logger = instance_double('Logger', debug: nil, warn: nil, info: nil)
-      raw = double('raw_response',
-                   content:       'hello',
-                   input_tokens:  nil,
-                   output_tokens: nil)
+      # G3: canonical response with no usage (provider usage missing).
+      raw = Legion::Extensions::Llm::Canonical::Response.build(text: 'hello')
       executor.instance_variable_set(:@raw_response, raw)
       allow(executor).to receive(:log).and_return(logger)
       allow(Legion::LLM::Metering::Pricing).to receive(:estimate)
@@ -195,54 +194,96 @@ RSpec.describe Legion::LLM::Inference::Executor do
       expect { executor.send(:step_metering) }.not_to raise_error
     end
 
-    it 'includes messages from the request in the metering event' do
+    # M8: the metering stream is a raw-content compliance sink. The
+    # default capture mode is metadata-only — raw content members are
+    # excluded unless the operator opts into :raw AND the request is not
+    # privacy-classified.
+    it 'excludes raw content members by default (metadata-only capture)' do
       allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
 
       executor.send(:step_metering)
 
       expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
-        expect(event[:messages]).to eq([{ role: :user, content: 'hello' }])
+        expect(event[:messages]).to be_nil
+        expect(event[:response_content]).to be_nil
+        expect(event[:response_thinking]).to be_nil
       end
     end
 
-    it 'includes response_content from the raw response' do
-      allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
-
-      executor.send(:step_metering)
-
-      expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
-        expect(event[:response_content]).to eq('hello')
-      end
-    end
-
-    context 'with thinking in the raw response' do
+    context 'with raw metering capture enabled' do
       before do
-        raw = double('raw_response',
-                     content:       'the answer',
-                     input_tokens:  50,
-                     output_tokens: 20,
-                     thinking:      'reasoning steps')
-        executor.instance_variable_set(:@raw_response, raw)
+        Legion::Settings[:llm][:metering][:capture_mode] = :raw
       end
 
-      it 'includes response_thinking in the metering event' do
+      it 'includes messages from the request in the metering event' do
         allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
 
         executor.send(:step_metering)
 
         expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
-          expect(event[:response_thinking]).to be_a(Hash)
-          expect(event[:response_thinking][:content]).to eq('reasoning steps')
+          expect(event[:messages].size).to eq(1)
+          expect(event[:messages].first.role).to eq(:user)
+          expect(event[:messages].first.content).to eq('hello')
+        end
+      end
+
+      it 'includes response_content from the raw response' do
+        allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+        executor.send(:step_metering)
+
+        expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+          expect(event[:response_content]).to eq('hello')
+        end
+      end
+
+      context 'with thinking in the raw response' do
+        before do
+          # G3: canonical response — thinking is the canonical Thinking
+          # member (the metering event carries it as-is).
+          raw = Legion::Extensions::Llm::Canonical::Response.build(
+            text:     'the answer',
+            usage:    { input_tokens: 50, output_tokens: 20 },
+            thinking: { content: 'reasoning steps' }
+          )
+          executor.instance_variable_set(:@raw_response, raw)
+        end
+
+        it 'includes response_thinking in the metering event' do
+          allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+          executor.send(:step_metering)
+
+          expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+            expect(event[:response_thinking]).to be_a(Legion::Extensions::Llm::Canonical::Thinking)
+            expect(event[:response_thinking].content).to eq('reasoning steps')
+          end
+        end
+      end
+
+      context 'with a privacy-classified request' do
+        it 'excludes raw content members regardless of capture mode' do
+          executor.instance_variable_set(:@request, request.with(classification: { level: :restricted }))
+          allow(Legion::LLM::Inference::Steps::Metering).to receive(:publish_or_spool)
+
+          executor.send(:step_metering)
+
+          expect(Legion::LLM::Inference::Steps::Metering).to have_received(:publish_or_spool) do |event|
+            expect(event[:messages]).to be_nil
+            expect(event[:response_content]).to be_nil
+            expect(event[:response_thinking]).to be_nil
+          end
         end
       end
     end
 
     context 'without thinking in the raw response' do
       before do
-        raw = double('raw_response',
-                     content:       'the answer',
-                     input_tokens:  50,
-                     output_tokens: 20)
+        # G3: canonical response without thinking.
+        raw = Legion::Extensions::Llm::Canonical::Response.build(
+          text:  'the answer',
+          usage: { input_tokens: 50, output_tokens: 20 }
+        )
         executor.instance_variable_set(:@raw_response, raw)
       end
 

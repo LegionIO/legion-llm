@@ -1,13 +1,17 @@
 # frozen_string_literal: true
 
 require 'legion/extensions/llm/fleet/protocol'
+require 'legion/extensions/llm/taxonomies'
 
 module Legion
   module LLM
     module Inference
       # Shared executor helpers for direct/fleet provider dispatch attempt metadata.
       module RouteAttempts
-        CONTRACT_OPTION_KEYS = %i[tools temperature params headers schema thinking tool_prefs].freeze
+        # N9: :headers was a dead contract key — nothing populates it in the
+        # SSOT dispatch path (native_dispatch_options), and per-request caller
+        # headers are a transport concern of the calling side, not fleet wire.
+        CONTRACT_OPTION_KEYS = %i[tools temperature params schema thinking tool_prefs].freeze
         NONCONTRACT_GENERATION_KEYS = %i[top_p top_k frequency_penalty presence_penalty seed].freeze
         private_constant :CONTRACT_OPTION_KEYS, :NONCONTRACT_GENERATION_KEYS
 
@@ -132,20 +136,23 @@ module Legion
             selected_lane:   nil,
             failure_reason:  sd_result.outcome.reason
           )
-          # Preserve the exact Phase 1 outcome for the streaming failover classifier
-          # (§19) — the raised Legion error alone would lose the normalized kind.
-          @last_ssot_dispatch_outcome = sd_result.outcome
+          # M3.3: the exact Phase 1 outcome rides ON the raised error (no
+          # side-channel ivar) — the streaming failover classifier (§19) and the
+          # sync rescue path both read the typed kind off the error itself.
           raise ssot_v3_provider_outcome_error(sd_result.outcome)
         end
 
+        # M3.3: one authoritative outcome. The Legion error preserves its class
+        # for the existing rescue logic AND carries the exact typed
+        # ProviderOutcome so no consumer loses the normalized kind.
         def ssot_v3_provider_outcome_error(outcome)
           case outcome.kind
           when :overloaded, :rate_limited
-            Legion::LLM::ProviderError.new("provider #{outcome.kind}: #{outcome.reason}")
+            Legion::LLM::ProviderError.new("provider #{outcome.kind}: #{outcome.reason}", outcome: outcome)
           when :authentication, :authorization
-            Legion::LLM::AuthError.new(outcome.reason)
+            Legion::LLM::AuthError.new(outcome.reason, outcome: outcome)
           else
-            Legion::LLM::ProviderError.new("provider error #{outcome.kind}: #{outcome.reason}")
+            Legion::LLM::ProviderError.new("provider error #{outcome.kind}: #{outcome.reason}", outcome: outcome)
           end
         end
 
@@ -176,8 +183,8 @@ module Legion
             raise Legion::LLM::ProviderError, failure_reason.to_s
           end
 
-          normalized = normalize_fleet_result(result)
-          stream_block&.call(normalized[:result]) if stream_block && normalized[:result]
+          response = normalize_fleet_result(result)
+          stream_fleet_response(stream_block, response) if stream_block
           record_route_attempt(
             dispatch_path:   :fleet,
             operation:       operation,
@@ -185,15 +192,37 @@ module Legion
             idempotency_key: idempotency_key,
             selected_lane:   selected_lane
           )
-          normalized
+          response
         end
 
+        # The v3 worker returns one collected Canonical::Response per fleet
+        # request (no per-chunk wire). Surface it to the client stream as the
+        # canonical chunk pair the assembler already consumes: a text delta
+        # (when there is text) followed by the done chunk with usage and
+        # stop_reason.
+        def stream_fleet_response(stream_block, response)
+          request_id = @request.id
+          unless response.text.to_s.empty?
+            stream_block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(
+                                delta: response.text, request_id: request_id, block_index: 0
+                              ))
+          end
+          stream_block.call(Legion::Extensions::Llm::Canonical::Chunk.done(
+                              request_id: request_id, usage: response.usage, stop_reason: response.stop_reason
+                            ))
+        end
+
+        # Coarse-lane-type comparison, mirroring the lex-llm fleet worker's
+        # require_matching_operation!: the operation is a request property, the
+        # lane constrains type/model/instance — the lane's operation member is
+        # its type's representative, not the identity.
         def ssot_v3_fleet_operation(requested_operation)
           return requested_operation unless @current_attempt_context
 
           selection_operation = @current_attempt_context.selection.operation
           lane_operation = @current_attempt_context.lane.operation
-          unless selection_operation == lane_operation
+          unless Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: selection_operation) ==
+                 Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: lane_operation)
             raise ArgumentError,
                   "SSOT fleet selection/lane operation mismatch: #{selection_operation.inspect} != #{lane_operation.inspect}"
           end
@@ -203,11 +232,14 @@ module Legion
 
         def validate_ssot_v3_fleet_operation!(operation)
           return unless @current_attempt_context
-          return if operation == @current_attempt_context.selection.operation
+
+          selection_operation = @current_attempt_context.selection.operation
+          return if Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: operation) ==
+                    Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: selection_operation)
 
           raise ArgumentError,
                 "SSOT fleet envelope operation mismatch: #{operation.inspect} != " \
-                "#{@current_attempt_context.selection.operation.inspect}"
+                "#{selection_operation.inspect}"
         end
 
         def enforce_final_context_budget!(messages, dispatch_options)
@@ -246,10 +278,18 @@ module Legion
         def fleet_dispatch_request(messages, idempotency_key, dispatch_options:)
           {
             provider:          @resolved_provider,
-            provider_instance: @resolved_instance || :default,
+            # L10: no synthesized identity — the Selection-derived instance is
+            # authoritative. A missing instance is a routing fault: the
+            # dispatcher's exact-value check raises, it never executes as
+            # :default.
+            provider_instance: @resolved_instance,
             model:             @resolved_model,
             idempotency_key:   idempotency_key,
-            messages:          messages,
+            # The wire carries serialized Canonical::Message (the worker's
+            # rehydrate_wire_messages is the rehydration boundary). L10:
+            # canonicalize at the boundary exactly as the direct path does —
+            # no non-canonical element passes through unraised.
+            messages:          Legion::LLM::Inference::Request.canonicalize_messages(messages).map(&:to_h),
             caller:            @request.caller,
             trace_context:     @tracing || {},
             timeout:           @request.ttl
@@ -269,10 +309,13 @@ module Legion
 
         def project_dispatch_arguments(messages:, options:)
           system_text = options[:system].to_s
+          # SSOT dispatch boundary: every SSOT message is canonical before it
+          # reaches either dispatch branch (direct callable or fleet wire).
+          canonical_messages = Legion::LLM::Inference::Request.canonicalize_messages(messages)
           folded = if system_text.strip.empty?
-                     messages
+                     canonical_messages
                    else
-                     fold_system_into_messages(messages: messages, system: system_text)
+                     fold_system_into_messages(messages: canonical_messages, system: system_text)
                    end
           projected = options.slice(*CONTRACT_OPTION_KEYS)
           params = projected[:params]
@@ -295,22 +338,24 @@ module Legion
           end
         end
 
+        # Fleet response rehydration (0.8.0 E3): the v3 response envelope
+        # carries the serialized Canonical::Response under :response — the
+        # requestor-side mirror of the worker's rehydrate_wire_messages.
+        # The v2 raw projection fields (content/tool_calls/usage/finish_reason)
+        # are gone; a wrong-shape payload raises, never a half-translated hash.
         def normalize_fleet_result(result)
           normalized = if result.respond_to?(:transform_keys)
                          result.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
                        else
                          {}
                        end
-          content = normalized[:content] || normalized[:result] || normalized[:data]
-          {
-            result:      content,
-            model:       normalized[:model] || @resolved_model,
-            usage:       normalized[:usage] || {},
-            tool_calls:  normalized[:tool_calls],
-            stop_reason: normalized[:finish_reason] || normalized[:stop_reason],
-            thinking:    normalized[:thinking],
-            metadata:    normalized[:metadata] || {}
-          }.compact
+          payload = normalized[:response]
+          unless payload.is_a?(Hash)
+            raise ArgumentError,
+                  'fleet response envelope missing the canonical response payload (protocol v3 E3)'
+          end
+
+          Legion::Extensions::Llm::Canonical::Response.from_hash(payload)
         end
 
         def fleet_selected_lane(operation)

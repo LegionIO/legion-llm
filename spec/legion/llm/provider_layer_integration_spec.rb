@@ -91,7 +91,7 @@ RSpec.describe 'Provider layer mode switching' do
         model:    'claude-sonnet-4-6',
         messages: [{ role: 'user', content: 'hi' }]
       )
-      expect(result[:result]).to eq('native response')
+      expect(result.text).to eq('native response')
     end
 
     it 'raises ProviderError when provider is not registered and fallback disabled' do

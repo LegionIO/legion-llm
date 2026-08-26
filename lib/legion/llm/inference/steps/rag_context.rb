@@ -148,12 +148,12 @@ module Legion
           def estimate_utilization
             return 0.0 if @request.tokens[:max].nil? || @request.tokens[:max].zero?
 
-            message_tokens = @request.messages.sum { |m| content_text(message_content(m)).length / 4 }
+            # G3: canonical messages — .text is the content projection.
+            message_tokens = @request.messages.sum { |m| m.text.to_s.length / 4 }
             message_tokens.to_f / @request.tokens[:max]
           end
 
           def trivial_query?(query)
-            query = content_text(query)
             max_chars = Legion::Settings[:llm][:rag][:trivial_max_chars]
             patterns = Legion::Settings[:llm][:rag][:trivial_patterns]
 
@@ -284,36 +284,11 @@ module Legion
             { success: true, entries: [], count: 0 }
           end
 
+          # G3: pipeline messages are Canonical::Message — the query is the
+          # last user message's canonical .text (a String).
           def extract_query
-            @request.messages.select { |m| m[:role].to_s == 'user' }
-                    .then { |messages| content_text(message_content(messages.last)) }
-          end
-
-          def message_content(message)
-            message[:content]
-          end
-
-          def content_text(content)
-            case content
-            when nil
-              ''
-            when String
-              content
-            when Array
-              content.filter_map { |entry| content_text(entry) }.join
-            when Hash
-              type = content[:type] || content['type']
-              return '' unless type.nil? || type.to_s == 'text'
-
-              text = if content.key?(:text) || content.key?('text')
-                       content[:text] || content['text']
-                     else
-                       content[:content] || content['content']
-                     end
-              content_text(text)
-            else
-              content.respond_to?(:text) ? content.text.to_s : content.to_s
-            end
+            @request.messages.select { |m| m.role.to_s == 'user' }
+                    .then { |messages| messages.last&.text.to_s }
           end
 
           def apply_gaia_context_limit(limit, strategy:)

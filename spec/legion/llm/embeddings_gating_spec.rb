@@ -19,7 +19,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     responder ||= lambda do |_op, _args, kwargs, _block|
       texts = kwargs[:text]
       vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.5) } : [Array.new(1024, 0.5)]
-      { result: vectors, usage: { input_tokens: 7 } }
+      { embedding: vectors, usage: { input_tokens: 7 } }
     end
     activate(
       provider_family: provider, instance_id: instance,

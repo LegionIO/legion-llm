@@ -24,7 +24,11 @@ RSpec.describe Legion::LLM::API::ClientTranslators::OpenAIResponses do
 
   let(:pipeline_response) do
     fake_response_class.new(
-      thinking: { content: 'Let me work through 2 + 2 step by step.' },
+      # G3: the envelope's thinking is the canonical Thinking member (the
+      # former Hash {content:} shape is gone; R15).
+      thinking: Legion::Extensions::Llm::Canonical::Thinking.build(
+        content: 'Let me work through 2 + 2 step by step.'
+      ),
       routing:  { model: 'qwen3.6-27b' },
       tokens:   { input_tokens: 10, output_tokens: 20 },
       message:  { content: '2 + 2 = 4.' },

@@ -173,8 +173,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
         seen_system = nil
-        responder = lambda do |_op, _args, kwargs, _blk|
-          seen_system = kwargs.fetch(:messages).first.content
+        # 0.8.0 callable contract: messages arrive positionally, not in kwargs.
+        responder = lambda do |_op, args, _kwargs, _blk|
+          seen_system = args.first.first.content
           native_dispatch_result(content: 'test')
         end
         activate_anthropic(SsotV3SnapshotFactory::FactoryCallable.new(responder: responder))
@@ -570,7 +571,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
       captured_request = nil
       allow(Legion::LLM::Fleet::Dispatcher).to receive(:dispatch) do |request:, **|
         captured_request = request
-        { success: true, content: 'fleet answer', usage: { input_tokens: 1, output_tokens: 1 } }
+        # Protocol v3 (E3): the fleet reply carries the serialized Canonical::Response
+        # under :response.
+        { success: true, response: { text: 'fleet answer', stop_reason: :end_turn } }
       end
       tool_request = Legion::LLM::Inference::Request.build(
         id:              'req-route-fleet-tools',
@@ -594,12 +597,17 @@ RSpec.describe Legion::LLM::Inference::Executor do
       expect(captured_request).to include(:messages, :tools, :execution_contract, :offering_id)
       expect(captured_request).not_to have_key(:options)
       expect(captured_request).not_to have_key(:system)
-      expect(captured_request[:messages].first).to have_attributes(role: :system, content: 'Use available tools.')
+      # Fleet wire carries serialized (Hash) messages.
+      expect(captured_request[:messages].first).to include(role: :system, content: 'Use available tools.')
       expect(captured_request[:execution_contract]).to eq('exact_offering_v1')
-      expect(captured_request[:offering_id]).to match(/\Aoff:v1:/)
-      expect(captured_request[:tools]).to include(
-        legion_lookup: hash_including(name: 'legion_lookup', description: 'Lookup data')
-      )
+      # D2: the fleet envelope's offering_id IS the 5-tuple lane id.
+      expect(captured_request[:offering_id]).to eq('fleet:vllm:primary:inference:qwen3.6-27b')
+      # Dispatch-boundary contract: tools cross the boundary as canonical
+      # ToolDefinitions (Hash values would be rejected by the provider funnel).
+      tool = captured_request[:tools][:legion_lookup]
+      expect(tool).to be_a(Legion::Extensions::Llm::Canonical::ToolDefinition)
+      expect(tool.name).to eq('legion_lookup')
+      expect(tool.description).to eq('Lookup data')
     end
   end
 
@@ -707,7 +715,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
       result = executor.send(:execute_native_tool_loop)
 
-      expect(result[:tool_calls].first[:name]).to eq('mcp_servers')
+      expect(result.tool_calls.first.name).to eq('mcp_servers')
     end
 
     it 'adds continuation guidance after native tool result rounds' do
@@ -822,26 +830,25 @@ RSpec.describe Legion::LLM::Inference::Executor do
   describe 'routing settings' do
     subject(:executor) { described_class.new(request) }
 
-    # SSOT v3: pipeline_escalation_enabled?/max_attempts are deleted. The equivalent
-    # contract is @routing_requirements.maximum_attempts honoring the settings value.
+    # SSOT v4: pipeline_escalation_enabled?/max_attempts are deleted. The equivalent
+    # contract is @router.maximum_attempts honoring the settings value.
     it 'honors maximum_attempts routing setting' do
-      Legion::Settings[:llm][:routing][:max_attempts] = 7
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::Settings[:llm][:router][:max_attempts] = 7
       req = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { provider: :anthropic, model: 'claude-opus-4-6' }
       )
       ex = described_class.new(req)
       ex.send(:step_routing)
-      expect(ex.instance_variable_get(:@routing_requirements).maximum_attempts).to eq(7)
+      expect(ex.instance_variable_get(:@router).maximum_attempts).to eq(7)
     end
 
     it 'honors native provider layer settings' do
-      Legion::Settings.set_prop(:llm, {
-                                  provider_layer: {
-                                    mode: 'auto'
-                                  }
-                                })
+      merge_llm_settings({
+                           provider_layer: {
+                             mode: 'auto'
+                           }
+                         })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
@@ -854,11 +861,12 @@ RSpec.describe Legion::LLM::Inference::Executor do
         tools:    [Class.new]
       )
       tool_executor = described_class.new(tool_request)
-      Legion::Settings.set_prop(:llm, {
-                                  provider_layer: {
-                                    mode: 'native'
-                                  }
-                                })
+      merge_llm_settings({
+                           provider_layer: {
+                             mode: 'native'
+                           }
+                         })
+      allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(tool_executor.send(:use_native_dispatch?, :bedrock)).to be(true)
     end
@@ -873,11 +881,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
         end
       end
       stub_const('Legion::Settings::Extensions', extensions_mod)
-      Legion::Settings.set_prop(:llm, {
-                                  'provider_layer' => {
-                                    'mode' => 'auto'
-                                  }
-                                })
+      merge_llm_settings({
+                           'provider_layer' => {
+                             'mode' => 'auto'
+                           }
+                         })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(executor.send(:use_native_dispatch?, :bedrock)).to be(true)
@@ -899,11 +907,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
         tools:    []
       )
       toolless_executor = described_class.new(toolless_request)
-      Legion::Settings.set_prop(:llm, {
-                                  'provider_layer' => {
-                                    'mode' => 'auto'
-                                  }
-                                })
+      merge_llm_settings({
+                           'provider_layer' => {
+                             'mode' => 'auto'
+                           }
+                         })
       allow(Legion::LLM::Call::Dispatch).to receive(:available?).with(:bedrock).and_return(true)
 
       expect(toolless_executor.send(:use_native_dispatch?, :bedrock)).to be(true)

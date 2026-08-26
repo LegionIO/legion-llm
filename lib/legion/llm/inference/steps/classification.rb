@@ -141,8 +141,12 @@ module Legion
             active_patterns = redaction_patterns_for(scan)
             redacted_messages = 0
 
-            @request.messages.each do |message|
-              content = message_content(message)
+            # G3: pipeline messages are Canonical::Message (immutable) —
+            # redaction rebuilds each redacted message via .with and writes it
+            # back into the (mutable) array.
+            @request.messages.each_index do |idx|
+              message = @request.messages[idx]
+              content = message.content
               next unless content.is_a?(String)
 
               active_patterns.each_value do |regex|
@@ -155,7 +159,7 @@ module Legion
                 end
               end
 
-              write_message_content(message, content)
+              @request.messages[idx] = message.with(content: content)
               redacted_messages += 1
             end
 
@@ -169,7 +173,7 @@ module Legion
           end
 
           def extract_text_content
-            @request.messages.map { |m| message_content(m).to_s }.join(' ')
+            @request.messages.map { |m| m.text.to_s }.join(' ')
           end
 
           def upgrade_if_needed(declared_level, scan)
@@ -336,17 +340,6 @@ module Legion
 
               current[key]
             end
-          end
-
-          def message_content(message)
-            return nil unless message.is_a?(Hash)
-
-            message[:content]
-          end
-
-          def write_message_content(message, content)
-            key = message.key?('content') ? 'content' : :content
-            message[key] = content
           end
         end
       end

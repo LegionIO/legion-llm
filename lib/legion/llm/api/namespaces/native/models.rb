@@ -21,7 +21,7 @@ module Legion
                 require_llm!
 
                 filters = Legion::LLM::API::Native::Models.request_filters(params)
-                offerings = Legion::LLM::Inventory.offerings(filters)
+                offerings = Legion::LLM::API::Native::Models.lane_entries(filters)
                 offerings = Legion::LLM::API::Native::Models.with_auto_routing_offering(offerings, filters)
 
                 json_response({
@@ -40,7 +40,7 @@ module Legion
                 require_llm!
 
                 filters = { model: model_id }
-                offerings = Legion::LLM::Inventory.offerings(filters)
+                offerings = Legion::LLM::API::Native::Models.lane_entries(filters)
                 offerings = Legion::LLM::API::Native::Models.with_auto_routing_offering(offerings, filters)
                 halt json_error('model_not_found', "Model '#{model_id}' not found", status_code: 404) unless offerings.any?
 

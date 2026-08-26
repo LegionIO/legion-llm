@@ -1,14 +1,13 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/router/request_requirements'
-require 'legion/llm/inference/routing_session'
+require 'legion/llm/router'
 
-# Executor circuit-guard tests — SSOT v3 rewrite.
+# Executor circuit-guard tests — SSOT v4 rewrite.
 #
-# In SSOT v3 there is no HealthTracker / circuit concept. The equivalent is:
-#   • dispatch_instance_unavailable marks an exact Phase 1 instance unavailable globally,
-#     so next_lane's CandidateEvaluator filters it from all subsequent snapshots.
+# In SSOT v4 there is no HealthTracker / circuit concept. The equivalent is:
+#   • dispatch_instance_unavailable marks an exact instance unavailable globally,
+#     so Router#next_lane filters it from all subsequent live inventory reads.
 #   • Provider errors that are NOT :instance_unavailable are request-local (consumed-target
 #     exclusion only). The instance remains available to other requests.
 #
@@ -21,18 +20,15 @@ require 'legion/llm/inference/routing_session'
 RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ssot_v3 do
   let(:model) { 'circuit-test-model' }
 
-  # Build a request + RequestRequirements pair for the shared model name.
+  # Build a request + Router pair for the shared model name.
   def build_engine_setup(routing_seed: 'ab' * 16)
     request = Legion::LLM::Inference::Request.build_for_test(
       routing_seed: routing_seed,
       messages:     [{ role: :user, content: 'hello' }],
       routing:      { model: model }
     )
-    reqs = Legion::LLM::Router::RequestRequirements.build(
-      request: request, operation: :chat, required_capabilities: [],
-      estimated_input_bound: 10, required_output_tokens: 0
-    )
-    [request, reqs]
+    router = Legion::LLM::Router.new(request: request, operation: :chat, body_model: model)
+    [request, router]
   end
 
   # Activate a chat instance in the Phase 1 Registry with the shared model.
@@ -53,11 +49,11 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ss
     )
   end
 
-  # Run the provider-call engine for an executor with pre-set routing requirements.
+  # Run the provider-call engine for an executor with a pre-built Router.
   # Yields the executor before dispatch so the caller can stub execute_provider_request.
-  def run_engine(request, reqs, &setup_executor)
+  def run_engine(request, router, &setup_executor)
     executor = described_class.new(request)
-    executor.instance_variable_set(:@routing_requirements, reqs)
+    executor.instance_variable_set(:@router, router)
     setup_executor&.call(executor)
     executor.send(:run_provider_call_engine)
     executor
@@ -71,8 +67,8 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ss
       # Mark vllm/h200 as unavailable — equivalent to "open circuit" in the old model.
       mark_unavailable(provider_family: 'vllm', instance_id: 'h200')
 
-      request, reqs = build_engine_setup
-      executor = run_engine(request, reqs) do |ex|
+      request, router = build_engine_setup
+      executor = run_engine(request, router) do |ex|
         allow(ex).to receive(:execute_provider_request)
       end
 
@@ -85,17 +81,17 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ss
       mark_unavailable(provider_family: 'vllm', instance_id: 'primary')
 
       # Without re-activation, the only available lane is gone → RoutingRejected.
-      request1, reqs1 = build_engine_setup(routing_seed: 'aa' * 16)
+      request1, router1 = build_engine_setup(routing_seed: 'aa' * 16)
       expect do
-        run_engine(request1, reqs1) { |ex| allow(ex).to receive(:execute_provider_request) }
+        run_engine(request1, router1) { |ex| allow(ex).to receive(:execute_provider_request) }
       end.to raise_error(Legion::LLM::Errors::RoutingRejected)
 
       # Re-activate (simulate probe success republishing the instance snapshot).
       activate_chat(provider_family: 'vllm', instance_id: 'primary')
 
       # After re-activation the instance must be selectable again.
-      request2, reqs2 = build_engine_setup(routing_seed: 'bb' * 16)
-      executor = run_engine(request2, reqs2) do |ex|
+      request2, router2 = build_engine_setup(routing_seed: 'bb' * 16)
+      executor = run_engine(request2, router2) do |ex|
         allow(ex).to receive(:execute_provider_request)
       end
       expect(executor.instance_variable_get(:@resolved_provider)).to eq(:vllm)
@@ -119,17 +115,17 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ss
         )
       end
 
-      request, reqs = build_engine_setup
+      request, router = build_engine_setup
       expect do
-        run_engine(request, reqs) { |ex| allow(ex).to receive(:execute_provider_request) }
+        run_engine(request, router) { |ex| allow(ex).to receive(:execute_provider_request) }
       end.to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
 
     it 'raises RoutingRejected when the registry is empty (no instances published)' do
       # Registry.reset! is called by :ssot_v3 before hook — no instances activated here.
-      request, reqs = build_engine_setup
+      request, router = build_engine_setup
       expect do
-        run_engine(request, reqs) { |ex| allow(ex).to receive(:execute_provider_request) }
+        run_engine(request, router) { |ex| allow(ex).to receive(:execute_provider_request) }
       end.to raise_error(Legion::LLM::Errors::RoutingRejected)
     end
   end
@@ -143,10 +139,10 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ss
                drafts: [offering_draft(model: model, supported: %i[chat], context: 200_000)],
                sequence: 0)
 
-      request, reqs = build_engine_setup
+      request, router = build_engine_setup
       call_count = 0
       first_instance = nil
-      executor = run_engine(request, reqs) do |ex|
+      executor = run_engine(request, router) do |ex|
         allow(ex).to receive(:execute_provider_request) do
           call_count += 1
           if call_count == 1
@@ -174,9 +170,9 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ss
                drafts: [offering_draft(model: model, supported: %i[chat], context: 200_000)],
                sequence: 0)
 
-      request, reqs = build_engine_setup
+      request, router = build_engine_setup
       call_count = 0
-      run_engine(request, reqs) do |ex|
+      run_engine(request, router) do |ex|
         allow(ex).to receive(:execute_provider_request) do
           call_count += 1
           raise Legion::LLM::ProviderError, 'credit balance too low' if call_count == 1

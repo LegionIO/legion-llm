@@ -53,11 +53,12 @@ RSpec.describe Legion::LLM::Inference::Executor do
       canonical = Legion::Extensions::Llm::Canonical
       thinking_obj = canonical::Thinking.new(
         content:   'The user said "hello".',
-        signature: nil
+        signature: nil,
+        metadata:  {}
       )
       usage = canonical::Usage.new(
         input_tokens: 10, output_tokens: 5,
-        cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}
+        cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}, metadata: {}
       )
       provider_response = canonical::Response.new(
         text:        'Hello! How can I help you today?',
@@ -71,7 +72,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
       )
 
       callable = Class.new do
-        define_method(:chat) { |**| provider_response }
+        # 0.8.0 callable contract: positional messages (the real boundary shape).
+        define_method(:chat) do |messages, model:, **|
+          _ = [messages, model]
+          provider_response
+        end
         define_method(:normalize_dispatch_error) do |error:|
           Legion::Extensions::Llm::Routing::ProviderOutcome.new(kind: :provider_error, reason: error.message)
         end
@@ -97,7 +102,10 @@ RSpec.describe Legion::LLM::Inference::Executor do
       response = described_class.new(request).call
 
       expect(response.message[:content]).to eq('Hello! How can I help you today?')
-      expect(response.thinking).to include(content: 'The user said "hello".')
+      # G3: the envelope's thinking is the canonical Thinking member (the
+      # former Hash {content:} shape is gone; R15).
+      expect(response.thinking).to be_a(Legion::Extensions::Llm::Canonical::Thinking)
+      expect(response.thinking.content).to eq('The user said "hello".')
     end
   end
 end

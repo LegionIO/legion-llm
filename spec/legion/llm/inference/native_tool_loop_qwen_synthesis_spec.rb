@@ -71,7 +71,7 @@ RSpec.describe 'NativeToolLoop qwen markup tool synthesis' do
     canonical::Response.build(
       text:        text,
       usage:       canonical::Usage.new(input_tokens: 1, output_tokens: 1, cache_read_tokens: 0,
-                                        cache_write_tokens: 0, thinking_tokens: 0, units: {}),
+                                        cache_write_tokens: 0, thinking_tokens: 0, units: {}, metadata: {}),
       stop_reason: :end_turn,
       model:       'qwen3.6-27b',
       metadata:    {}

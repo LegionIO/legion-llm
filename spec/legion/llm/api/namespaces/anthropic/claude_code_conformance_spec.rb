@@ -128,8 +128,10 @@ input_schema: { type: 'object', properties: { file_path: { type: 'string' } }, r
                                       request_id:      nil)
       allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(mock_executor)
       allow(mock_executor).to receive(:stream_preflight!).and_return(nil)
+      # G3/L2: Canonical::Chunk only (the legacy double(content:) shape is
+      # gone; R15).
       allow(mock_executor).to receive(:call_stream).and_yield(
-        double(content: 'Done.', thinking: nil, respond_to?: true)
+        Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'Done.', request_id: 'req_cc')
       ).and_return(mock_response)
     end
 

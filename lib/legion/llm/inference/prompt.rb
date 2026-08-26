@@ -132,11 +132,10 @@ module Legion
         # --- Private helpers ---
 
         # True when the pipeline can resolve a provider/model for the request:
-        # an explicit pin, an auto-routing placeholder, a published inventory lane,
-        # a configured default, or an active SSOT (Phase 1) registry generation.
+        # an explicit pin, an auto-routing placeholder, a configured default,
+        # or an active SSOT (Phase 1) registry generation.
         def routing_resolvable?(provider, model, auto_route)
           return true if provider || model || auto_route
-          return true if Legion::LLM::Inventory.lanes.any?
           return true if Legion::Settings[:llm][:default_provider] || Legion::Settings[:llm][:default_model]
 
           ssot_registry_active?
@@ -144,7 +143,11 @@ module Legion
 
         def ssot_registry_active?
           Legion::Extensions::Llm::Inventory::Registry.snapshot.generation.positive?
-        rescue StandardError
+        rescue StandardError => e
+          # A registry read fault reports "inactive" (the request is
+          # rejected loudly by routing_resolvable?) — the fault itself must
+          # not be silent.
+          handle_exception(e, level: :warn, operation: 'llm.prompt.ssot_registry_active')
           false
         end
 

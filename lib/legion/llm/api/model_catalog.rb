@@ -6,7 +6,7 @@ require 'legion/logging/helper'
 module Legion
   module LLM
     module API
-      # Snapshot-only model catalog — §17.3 / D19 Copilot compatibility.
+      # Snapshot-only model catalog — Copilot compatibility.
       #
       # .list  → frozen Array<Hash>  all models in the requested dialect
       # .fetch → frozen Hash or nil  single-model lookup; nil if not catalog-visible
@@ -15,11 +15,11 @@ module Legion
       # Router.next_lane, Ranker, or any callable.  Selection, lane weight,
       # and availability do not determine which models appear in the compat
       # view — only publication completion, supported-operation evidence, and
-      # the §9.5 model policy (from settings_snapshot.model_policy_for) do.
+      # the model policy (from settings_snapshot.model_policy_for) do.
       #
       # X-Legion-Model is intentionally exempt from the body-hint policy
       # evaluated here. This module handles only compat-view construction;
-      # it does NOT re-apply D19 body-hint logic during GET /v1/models listing.
+      # it does NOT re-apply body-hint logic during GET /v1/models listing.
       module ModelCatalog
         include Legion::Logging::Helper
         extend  Legion::Logging::Helper
@@ -77,7 +77,7 @@ module Legion
         # Every offering is included regardless of availability or policy so
         # operators can see exactly what the registry holds for diagnostics.
         # Enriched with the exact instance availability state and the publication
-        # state from the three Phase 1 snapshot enumerators.
+        # state from the three snapshot enumerators.
         def self.native_list(snapshot:)
           pub_by_key  = {}
           inst_by_key = {}
@@ -85,21 +85,19 @@ module Legion
           snapshot.each_instance           { |inst| inst_by_key[inst.instance_key] = inst }
 
           entries = []
-          snapshot.each_offering do |offering|
-            ik = offering.instance_key
+          snapshot.each_lane do |lane|
+            ik = lane.instance_key
             entries << {
-              id:                     offering.model.to_s,
-              offering_id:            offering.offering_id.to_s,
-              provider_family:        ik.provider_family.to_s,
-              instance_id:            ik.instance_id.to_s,
-              tier:                   offering.tier.to_s,
-              supported_operations:   offering.supported_operations.map(&:to_s).freeze,
-              unsupported_operations: offering.unsupported_operations.map(&:to_s).freeze,
-              unknown_operations:     offering.unknown_operations.map(&:to_s).freeze,
-              publication_state:      pub_by_key[ik]&.state&.to_s,
-              availability_state:     inst_by_key[ik]&.availability&.state&.to_s, # rubocop:disable Style/SafeNavigationChainLength
-              publication_source:     offering.publication_source.to_s,
-              metadata:               offering.metadata
+              id:                 lane.model.to_s,
+              offering_id:        lane.lane_id,
+              provider_family:    ik.provider_family.to_s,
+              instance_id:        ik.instance_id.to_s,
+              tier:               lane.tier.to_s,
+              operation:          lane.operation.to_s,
+              publication_state:  pub_by_key[ik]&.state&.to_s,
+              availability_state: inst_by_key[ik]&.availability&.state&.to_s, # rubocop:disable Style/SafeNavigationChainLength
+              publication_source: lane.publication_source.to_s,
+              metadata:           lane.metadata
             }.freeze
           end
           entries.freeze
@@ -109,7 +107,7 @@ module Legion
         # Compat: one entry per unique model that has at least one COMPLETE,
         # policy-permitted offering with a SUPPORTED operation.
         # Availability does NOT remove a model; an initializing claim with no
-        # offering does NOT manufacture one (§17.3 behavioural rule).
+        # offering does NOT manufacture one.
         # Auto-routing aliases are appended only when the compat set is non-empty.
         def self.compat_list(snapshot:, settings_snapshot:, dialect:)
           # One-pass publication-status index (keyed by InstanceKey).
@@ -119,21 +117,20 @@ module Legion
           # Collect eligible unique model identifiers; first-seen provider wins
           # for the owned_by field when the same model appears on multiple providers.
           seen = {} # model_id (String) => provider_family (String)
-          snapshot.each_offering do |offering|
-            model_id = offering.model.to_s
+          snapshot.each_lane do |lane|
+            model_id = lane.model.to_s
             next if seen.key?(model_id)
 
-            ik = offering.instance_key
+            ik = lane.instance_key
             ps = pub_by_key[ik]
 
             # Publication must be complete (not initializing).
             next unless ps&.state == :complete
 
-            # Must advertise at least one supported operation.
-            next if offering.supported_operations.empty?
-
-            # §9.5 fail-closed whitelist-AND-blacklist model policy.
-            next unless policy_permits?(offering: offering, settings_snapshot: settings_snapshot)
+            # A lane exists only for a supported operation (the registry
+            # publishes lanes for supported operations only) — no separate
+            # supported-operations check is needed.
+            next unless policy_permits?(offering: lane, settings_snapshot: settings_snapshot) # fail-closed model policy
 
             seen[model_id] = ik.provider_family.to_s
           end
@@ -160,7 +157,7 @@ module Legion
         end
         private_class_method :compat_list
 
-        # §9.5 fail-closed primitive: case-insensitive literal substring matching.
+        # Fail-closed primitive: case-insensitive literal substring matching.
         # A nonempty effective whitelist must match the offering model.
         # A matching blacklist always denies, including when the whitelist matched.
         def self.policy_permits?(offering:, settings_snapshot:)

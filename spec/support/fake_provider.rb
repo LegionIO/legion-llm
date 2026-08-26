@@ -12,18 +12,18 @@ require 'legion/llm/errors'
 # inside Rack::Test specs, by including the marker `[fake:<scenario>]` anywhere
 # in a user message (last user message wins).
 #
-# The provider implements the same surface as a real lex-llm-* extension:
-#   * chat(model:, messages:, **)
-#   * stream(model:, messages:, **, &block)
+# The provider implements the same surface as a real lex-llm-* callable:
+#   * chat(messages, model:, **)            # 0.8.0 callable contract (positional)
+#   * stream_chat(messages, model:, **, &block)
+#   * stream(model:, messages:, **, &block) # legacy Dispatch capability surface
 #   * responses(body:, messages:, stream:, **, &block)
 #   * embed(model:, text:, **)
 #   * count_tokens(model:, messages:, **)
 #   * supports?(capability)
 #
 # Each call returns a Canonical::Response or yields Canonical::Chunks built
-# from the named fixture, with no I/O of any kind. embed returns the
-# provider-native Legion::Extensions::Llm::Embedding value object (the
-# production SSOT v3 callable contract).
+# from the named fixture, with no I/O of any kind. embed returns the 0.8.0
+# documented embed artifact Hash (the production callable contract).
 module FakeProvider
   Canonical = Legion::Extensions::Llm::Canonical
 
@@ -38,6 +38,8 @@ module FakeProvider
     stream_tool
     server_tool_legion
     server_tool_failure_with_client_passthrough
+    client_tool_passthrough_pending
+    client_tool_passthrough_pending_source_nil
     tool_degraded_args
     tool_leaked_token
     error
@@ -151,7 +153,9 @@ module FakeProvider
       mod.define_singleton_method(:supports?) do |capability|
         %i[chat stream responses embed count_tokens].include?(capability.to_sym)
       end
-      mod.define_singleton_method(:chat) do |model:, messages:, **opts|
+      # 0.8.0 callable contract: positional messages (the real boundary shape
+      # this adapter serves as the exact callable through SelectionDispatch).
+      mod.define_singleton_method(:chat) do |messages, model:, **opts|
         FakeProvider.record_call(kind: :chat, model: model, messages: messages,
                                  tool_prefs: opts[:tool_prefs], tools: opts[:tools],
                                  temperature: opts[:temperature])
@@ -165,8 +169,9 @@ module FakeProvider
         scenario = FakeProvider.resolve_scenario(messages)
         ext.stream_response(scenario, model: model, messages: messages, &block)
       end
-      # SSOT v3 §15.1: SelectionDispatch calls stream_chat for the :stream_chat operation.
-      mod.define_singleton_method(:stream_chat) do |model:, messages:, **opts, &block|
+      # SSOT v3 §15.1: SelectionDispatch calls stream_chat for the :stream_chat
+      # operation, positional messages per the 0.8.0 callable contract.
+      mod.define_singleton_method(:stream_chat) do |messages, model:, **opts, &block|
         FakeProvider.record_call(kind: :stream_chat, model: model, messages: messages,
                                  tool_prefs: opts[:tool_prefs], tools: opts[:tools],
                                  temperature: opts[:temperature])
@@ -234,6 +239,10 @@ module FakeProvider
       when :server_tool_legion      then server_tool_legion_response(model)
       when :server_tool_failure_with_client_passthrough
         server_tool_failure_with_client_passthrough_response(model)
+      when :client_tool_passthrough_pending
+        client_tool_passthrough_pending_response(model)
+      when :client_tool_passthrough_pending_source_nil
+        client_tool_passthrough_pending_source_nil_response(model)
       when :tool_degraded_args then tool_degraded_args_response(model)
       when :tool_leaked_token  then tool_leaked_token_response(model)
       else text_response(model)
@@ -253,13 +262,11 @@ module FakeProvider
       end
     end
 
-    # Production shape: SSOT v3 callables return the provider-native
-    # Legion::Extensions::Llm::Embedding value object (the lex-llm
-    # parse_embedding_response contract), NOT the legacy {result:, usage:}
-    # Hash — the chat path's equivalent is the canonical Message the same way.
-    # Single text -> flat vectors array; array text -> one vectors array per
-    # entry (exactly what every lex-llm-* provider produces). The embed
-    # consumer must normalize at its boundary —
+    # Production shape: the 0.8.0 embed artifact is the documented Hash
+    # { text:, model:, embedding: Array<Float>, usage: Canonical::Usage }
+    # (05 S3 / O07) — the chat path's equivalent is the canonical Response the
+    # same way. Single text -> flat vectors array; array text -> one vectors
+    # array per entry. The embed consumer must normalize at its boundary —
     # spec/legion/llm/api/matrix/embeddings_matrix_spec.rb guards this end
     # to end.
     def embed_response(model:, text:)
@@ -268,11 +275,12 @@ module FakeProvider
                 else
                   Array.new(8) { |i| ((text.to_s.bytes.sum + i) % 7) / 7.0 }
                 end
-      Legion::Extensions::Llm::Embedding.new(
-        vectors:      vectors,
-        model:        model,
-        input_tokens: (text.to_s.length / 4) + 1
-      )
+      {
+        text:      text,
+        model:     model.to_s,
+        embedding: vectors,
+        usage:     usage(input: (text.to_s.length / 4) + 1, output: 0)
+      }
     end
 
     def text_response(model)
@@ -288,7 +296,7 @@ module FakeProvider
     def thinking_response(model)
       Canonical::Response.build(
         text:        'Two plus two is four.',
-        thinking:    Canonical::Thinking.new(
+        thinking:    Canonical::Thinking.build(
           content:   'Add 2 and 2. The sum is 4.',
           signature: 'sig_fake_abc123'
         ),
@@ -310,15 +318,16 @@ module FakeProvider
       )
     end
 
-    # Degraded-args scenario: a non-Hash arguments value (e.g. a numeric or a
-    # raw string) — the shape live qwen3.6-27b emits when its tool-use markup
-    # falls back to plain content. Anthropic tool_use.input MUST still be an
+    # Degraded-args scenario: the provider's canonical output carries a tool
+    # call whose arguments degraded to the empty object (0.8.0 canonical law:
+    # arguments is a Hash; a non-Hash provider payload is coerced at the
+    # provider parse boundary). Anthropic tool_use.input MUST still be an
     # object; OpenAI function_call.arguments MUST still be a JSON string. The
     # matrix oracle (P6F2) asserts both.
     def tool_degraded_args_response(model)
       Canonical::Response.build(
         text:        '',
-        tool_calls:  [tool_call(name: 'bash', args: 1.01, id: 'call_fake_degraded')],
+        tool_calls:  [tool_call(name: 'bash', args: {}, id: 'call_fake_degraded')],
         usage:       usage(input: 5, output: 4),
         stop_reason: :tool_use,
         model:       model.to_s,
@@ -373,7 +382,8 @@ module FakeProvider
     end
 
     def multi_turn_response(model, messages)
-      tool_messages = Array(messages).count { |m| (m[:role] || m['role']).to_s == 'tool' }
+      # Dual-shape: messages are canonical Messages on the pipeline (Hash in legacy tests).
+      tool_messages = Array(messages).count { |m| (m.is_a?(Hash) ? (m[:role] || m['role']) : m.role).to_s == 'tool' }
       text = tool_messages.positive? ? 'Files listed.' : 'Hello there.'
       Canonical::Response.build(
         text:        text,
@@ -430,6 +440,56 @@ module FakeProvider
       )
     end
 
+    # Execution-proxy regression (G24 / TOOLS ROOT-2): a single client-declared
+    # (passthrough) tool call, and the provider reports stop_reason :end_turn —
+    # the exact vLLM/qwen capture where the model emits a tool call but the
+    # finish_reason canonicalizes to :end_turn, not :tool_use. A client-
+    # actionable call must exit the daemon PENDING (result nil) so the client
+    # dialect renders it as a pending tool_use with stop_reason 'tool_use',
+    # NEVER inheriting a fabricated passthrough result that would let the
+    # provider's :end_turn leak through. Before FIX 3 the daemon stamps a
+    # "Passthrough to client: <name>" result on the exit ToolCall, so
+    # format_stop_reason can no longer see a result-nil client call and falls
+    # through to the provider stop (end_turn). This scenario is the offline
+    # oracle for that regression.
+    def client_tool_passthrough_pending_response(model)
+      Canonical::Response.build(
+        text:        '',
+        tool_calls:  [tool_call(name: 'exec_command', args: { cmd: 'pwd' }, id: 'call_fake_client_only')],
+        usage:       usage(input: 5, output: 4),
+        stop_reason: :end_turn,
+        model:       model.to_s,
+        metadata:    { fake: true, scenario: :client_tool_passthrough_pending }
+      )
+    end
+
+    # Faithful vLLM reproduction: the provider translator does NOT stamp
+    # source on response tool calls. This is IDENTICAL to
+    # client_tool_passthrough_pending except the ToolCall carries NO source
+    # (source: nil) — the exact shape real vLLM/qwen returns. The executor
+    # must resolve source BY NAME via find_tool_source to detect the tool is
+    # client-actionable. Without the name-based fallback,
+    # canonical_source_symbol(nil) → nil, client_pending = false, and the
+    # tool inherits the "Passthrough to client: <name>" placeholder result
+    # from pending history → format_stop_reason never returns :tool_use.
+    def client_tool_passthrough_pending_source_nil_response(model)
+      Canonical::Response.build(
+        text:        '',
+        tool_calls:  [
+          Canonical::ToolCall.build(
+            id:         'call_fake_client_nosrc',
+            name:       'exec_command',
+            arguments:  { cmd: 'pwd' },
+            started_at: FROZEN_TIME
+          )
+        ],
+        usage:       usage(input: 5, output: 4),
+        stop_reason: :end_turn,
+        model:       model.to_s,
+        metadata:    { fake: true, scenario: :client_tool_passthrough_pending_source_nil }
+      )
+    end
+
     def stream_text(model, prefix: '')
       request_id = "fake_#{SecureRandom.hex(4)}"
       yield Canonical::Chunk.text_delta(delta: "#{prefix}Hello", request_id: request_id, block_index: 0, item_id: 'msg_fake')
@@ -460,7 +520,7 @@ module FakeProvider
       )
       Canonical::Response.build(
         text:        'The answer is 4.',
-        thinking:    Canonical::Thinking.new(content: 'Add 2 and 2.', signature: 'sig_fake'),
+        thinking:    Canonical::Thinking.build(content: 'Add 2 and 2.', signature: 'sig_fake'),
         usage:       usage(input: 6, output: 8, thinking: 5),
         stop_reason: :end_turn,
         model:       model.to_s,
@@ -471,21 +531,12 @@ module FakeProvider
     def stream_tool(model)
       request_id = "fake_#{SecureRandom.hex(4)}"
       tc = tool_call(name: 'bash', args: { command: 'ls -la' }, id: 'call_fake_stream')
-      partial = Canonical::ToolCall.new(
-        id:                           tc.id,
-        exchange_id:                  nil,
-        name:                         'bash',
-        arguments:                    { command: 'ls' },
-        source:                       { type: :client },
-        status:                       :in_progress,
-        duration_ms:                  nil,
-        result:                       nil,
-        error:                        nil,
-        started_at:                   nil,
-        finished_at:                  nil,
-        category:                     nil,
-        data_handling_classification: nil,
-        policy_decision:              nil
+      partial = Canonical::ToolCall.build(
+        id:        tc.id,
+        name:      'bash',
+        arguments: { command: 'ls' },
+        source:    :client,
+        status:    :running
       )
       yield Canonical::Chunk.tool_call_delta(tool_call: partial, request_id: request_id, block_index: 0, item_id: tc.id)
       yield Canonical::Chunk.tool_call_delta(tool_call: tc, request_id: request_id, block_index: 0, item_id: tc.id)
@@ -505,32 +556,22 @@ module FakeProvider
     end
 
     def tool_call(name:, args:, id:)
-      Canonical::ToolCall.new(
-        id:                           id,
-        exchange_id:                  nil,
-        name:                         name,
-        arguments:                    args,
-        source:                       { type: :client },
-        status:                       nil,
-        duration_ms:                  nil,
-        result:                       nil,
-        error:                        nil,
-        started_at:                   FROZEN_TIME,
-        finished_at:                  nil,
-        category:                     nil,
-        data_handling_classification: nil,
-        policy_decision:              nil
+      Canonical::ToolCall.build(
+        id:         id,
+        name:       name,
+        arguments:  args,
+        source:     :client,
+        started_at: FROZEN_TIME
       )
     end
 
     def usage(input:, output:, thinking: 0)
-      Canonical::Usage.new(
+      Canonical::Usage.build(
         input_tokens:       input,
         output_tokens:      output,
         cache_read_tokens:  0,
         cache_write_tokens: 0,
-        thinking_tokens:    thinking,
-        units:              {}
+        thinking_tokens:    thinking
       )
     end
   end

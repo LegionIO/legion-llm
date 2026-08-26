@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'securerandom'
-
 require 'legion/logging/helper'
 require 'legion/extensions/llm'
 
@@ -10,83 +8,6 @@ module Legion
     module Call
       # Canonical module convenience aliases (lex-llm 0.5.0+).
       Canonical = Legion::Extensions::Llm::Canonical
-
-      # DEPRECATED(P6): Hash-key compatibility adapters for Canonical types.
-      # These exist ONLY to avoid wholesale rewrites in the P4a batch. They are
-      # deleted in Phase 6 — do NOT build new code against hash-key access on
-      # Canonical::Response, Canonical::ToolCall, or Canonical::Usage.
-      # Each access logs a deprecation breadcrumb so P6 can find survivors.
-      module CanonicalResponseCompat
-        KEY_MAP = { content: :text, result: :text, text: :text }.freeze
-
-        def [](key)
-          Legion::Logging.log.debug do
-            "[llm][DEPRECATED(P6)] canonical_hash_access key=#{key} caller=#{caller_locations(1, 1)&.first}"
-          end
-          sym = key.to_sym
-          sym = KEY_MAP[sym] || sym
-          public_send(sym) if respond_to?(sym)
-        end
-
-        def has_key?(key) # rubocop:disable Naming/PredicatePrefix -- Hash API compat requires this name
-          Legion::Logging.log.debug do
-            "[llm][DEPRECATED(P6)] canonical_has_key? key=#{key} caller=#{caller_locations(1, 1)&.first}"
-          end
-          sym = key.respond_to?(:to_sym) ? key.to_sym : key.to_s.to_sym
-          sym = KEY_MAP[sym] || sym
-          respond_to?(sym)
-        end
-
-        def dig(key, *rest)
-          Legion::Logging.log.debug do
-            "[llm][DEPRECATED(P6)] canonical_dig key=#{key} caller=#{caller_locations(1, 1)&.first}"
-          end
-          val = self[key]
-          return val if rest.empty?
-          return nil unless val.respond_to?(:dig)
-
-          val.dig(*rest)
-        end
-      end
-
-      # DEPRECATED(P6): Hash-key compatibility adapter for Canonical::ToolCall.
-      # Deleted in Phase 6.
-      module CanonicalToolCallCompat
-        def [](key)
-          Legion::Logging.log.debug do
-            "[llm][DEPRECATED(P6)] tool_call_hash_access key=#{key} caller=#{caller_locations(1, 1)&.first}"
-          end
-          sym = key.to_sym
-          public_send(sym) if respond_to?(sym)
-        end
-      end
-
-      # DEPRECATED(P6): Monkey-patch canonical types for Hash-like access.
-      # These adapters exist ONLY to avoid wholesale rewrites in the P4a batch.
-      # They are deleted in Phase 6 — do not build new code against hash-key access.
-      if defined?(Canonical::Response)
-        Canonical::Response.include(CanonicalResponseCompat)
-        Canonical::Response.class_eval do
-          def [](key)
-            Legion::Logging.log.debug do
-              "[llm][DEPRECATED(P6)] response_hash_access key=#{key} caller=#{caller_locations(1, 1)&.first}"
-            end
-            sym = key.respond_to?(:to_sym) ? key.to_sym : key.to_s.to_sym
-            if %i[result content].include?(sym)
-              txt = text
-              return txt unless txt.to_s.empty?
-
-              metadata[:raw_result] if respond_to?(:metadata) && metadata.is_a?(Hash) && metadata[:raw_result]
-            elsif sym == :text
-              text
-            else
-              super
-            end
-          end
-        end
-      end
-      Canonical::ToolCall.include(CanonicalToolCallCompat) if defined?(Canonical::ToolCall)
-      Canonical::Usage.include(CanonicalResponseCompat) if defined?(Canonical::Usage)
 
       module Dispatch
         extend self
@@ -223,7 +144,7 @@ module Legion
           )
           stop_reason = to_canonical_stop_reason(raw[:stop_reason] || raw['stop_reason'], tool_calls)
 
-          Canonical::Response.new(
+          Canonical::Response.build(
             text:        text.to_s,
             thinking:    thinking,
             tool_calls:  tool_calls,
@@ -237,17 +158,11 @@ module Legion
 
         private
 
+        # Exact instance or error (M5): a named instance that is not registered
+        # is a routing fault — no silent substitution of the :default instance.
         def fetch_extension!(provider, instance: nil)
           ext = Registry.for(provider, instance: instance)
           return ext if ext
-
-          if instance && instance.to_s != 'default'
-            ext = Registry.for(provider, instance: :default)
-            if ext
-              log.warn("[llm][native] instance_fallback provider=#{provider} requested=#{instance} using=default")
-              return ext
-            end
-          end
 
           instance_suffix = instance ? "/#{instance}" : ''
           log.error("[llm][native] provider_not_registered provider=#{provider}#{instance_suffix}")
@@ -298,13 +213,14 @@ module Legion
                  else
                    {}
                  end
-          Canonical::Usage.new(
+          Canonical::Usage.build(
             input_tokens:       (hash[:input_tokens] || hash['input_tokens'] || 0).to_i,
             output_tokens:      (hash[:output_tokens] || hash['output_tokens'] || 0).to_i,
             cache_read_tokens:  (hash[:cache_read_tokens] || hash['cache_read_tokens'] || 0).to_i,
             cache_write_tokens: (hash[:cache_write_tokens] || hash['cache_write_tokens'] || 0).to_i,
             thinking_tokens:    (hash[:thinking_tokens] || hash['thinking_tokens'] || 0).to_i,
-            units:              raw_units(hash[:units] || hash['units'])
+            units:              raw_units(hash[:units] || hash['units']),
+            metadata:           {}
           )
         end
 
@@ -376,7 +292,7 @@ module Legion
           signature = payload[:signature] || payload['signature']
           return nil if content.to_s.empty? && signature.to_s.empty?
 
-          Canonical::Thinking.new(content: content.to_s, signature: signature&.to_s)
+          Canonical::Thinking.build(content: content.to_s, signature: signature&.to_s, metadata: {})
         end
 
         # Convert raw tool_calls to Array<Canonical::ToolCall>.
@@ -448,13 +364,19 @@ module Legion
                                 (normalized[:arguments].is_a?(String) && normalized[:arguments].empty?)
           normalized[:arguments] = parse_arguments(normalized[:arguments]) unless args_already_parsed
 
-          Canonical::ToolCall.new(
-            id:                           normalized[:id] || "tc_#{SecureRandom.hex(8)}",
+          # 0.8.0: source is a canonical enum symbol (the legacy
+          # { type: :client } Hash spelling is translated here at the edge).
+          source_value = normalized[:source]
+          source_value = source_value.is_a?(Hash) ? (source_value[:type] || source_value['type']) : source_value
+          Canonical::ToolCall.build(
+            # id: nil lets ToolCall.build mint the canonical id (call_<hex12>) —
+            # the daemon never fabricates a tc_-prefixed id of its own.
+            id:                           normalized[:id],
             exchange_id:                  normalized[:exchange_id],
             name:                         normalized[:name].to_s,
             arguments:                    normalized[:arguments] || {},
-            source:                       normalized[:source] || { type: :client },
-            status:                       normalized[:status],
+            source:                       source_value&.to_sym,
+            status:                       normalized[:status]&.to_sym,
             duration_ms:                  normalized[:duration_ms],
             result:                       normalized[:result],
             error:                        normalized[:error],
@@ -466,24 +388,30 @@ module Legion
           )
         end
 
-        # Map stop reason to canonical stop_reason enum.
+        # Explicit stop policy (G2): no fail-open default. The provider's value
+        # passes through to the strict STOP_REASONS enum — Response.build
+        # normalizes (to_sym) and raises on out-of-enum, so an unknown stop
+        # reason fails the call instead of fabricating :end_turn. A nil reason
+        # with tool calls derives :tool_use (the response stopped to invoke
+        # them); a nil reason without tool calls stays nil — the absence, not
+        # a fabricated stop.
         def to_canonical_stop_reason(reason, tool_calls)
           return :tool_use if reason.nil? && tool_calls.any?
-          return :end_turn if reason.nil?
 
-          sym = reason.respond_to?(:to_sym) ? reason.to_sym : reason.to_s.to_sym
-          Canonical::STOP_REASONS.include?(sym) ? sym : :end_turn
+          reason
         end
 
+        # Strict arguments policy (G2): tool call arguments are a JSON object.
+        # Malformed JSON propagates the parser error; a parsed non-object fails
+        # the call. No rescue-to-{} fabrication of empty arguments.
         def parse_arguments(arguments)
           return arguments unless arguments.is_a?(String)
           return {} if arguments.strip.empty?
 
           parsed = Legion::JSON.parse(arguments)
-          parsed.is_a?(Hash) ? parsed : {}
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.dispatch.parse_arguments')
-          {}
+          raise ArgumentError, "tool call arguments must parse to a JSON object, got #{parsed.class}" unless parsed.is_a?(Hash)
+
+          parsed
         end
 
         # Fail-fast daemon-side compliance guard: reject a denied model before the
@@ -499,9 +427,10 @@ module Legion
           raise Legion::LLM::ModelNotAllowed.new(provider: provider, model: model)
         end
 
+        # Typed classification only (M5): lex-llm raises typed errors
+        # (ContextLengthExceededError included) — the message-regex
+        # re-derivation of context overflow from error text is gone.
         def map_lex_llm_error(error, provider:, model:)
-          raise Legion::LLM::ContextOverflow, "#{provider}:#{model} — #{error.message}" if context_length_error_message?(error.message)
-
           case error
           when Legion::Extensions::Llm::ModelNotAllowedError
             raise Legion::LLM::ModelNotAllowed.new("#{provider}:#{model} — #{error.message}", provider: provider, model: model)
@@ -519,13 +448,6 @@ module Legion
           else
             raise
           end
-        end
-
-        def context_length_error_message?(message)
-          text = message.to_s
-          text.match?(/maximum context length/i) ||
-            text.match?(/context length.*input_tokens/i) ||
-            text.match?(/prompt contains at least \d+ input tokens/i)
         end
       end
     end

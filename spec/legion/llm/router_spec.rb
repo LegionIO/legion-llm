@@ -4,9 +4,8 @@ require 'spec_helper'
 require 'legion/llm/router'
 
 RSpec.describe Legion::LLM::Router do
-  before do
-    described_class.reset!
-  end
+  # L1: no rule-list state to reset — the SSOT selector reads the shared
+  # owners directly (the former reset! existed only for the auto-rules ivars).
 
   # ─── routing_enabled? is derived: true iff the Registry holds at least one
   # complete publication (SSOT has no operator routing toggle) ─────────────────
@@ -30,23 +29,9 @@ RSpec.describe Legion::LLM::Router do
     end
   end
 
-  # ─── 12a. auto_rules_populated? ─────────────────────────────────────────────
-
-  describe '.auto_rules_populated?' do
-    it 'returns false before populate_auto_rules is called' do
-      expect(described_class.auto_rules_populated?).to be false
-    end
-
-    it 'stays false after populate_auto_rules (no-op in P4 — rule engine removed)' do
-      described_class.populate_auto_rules({})
-      expect(described_class.auto_rules_populated?).to be false
-    end
-
-    it 'returns false after reset!' do
-      described_class.reset!
-      expect(described_class.auto_rules_populated?).to be false
-    end
-  end
+  # L1: the auto-rules era surface (auto_rules_populated?, populate_auto_rules,
+  # reset!) is gone with the second-selection-domain cleanup — the SSOT
+  # selector reads the shared owners directly and has no rule-list state.
 
   # ─── tier_available? for :direct tier ────────────────────────────────────────
 
@@ -66,37 +51,49 @@ RSpec.describe Legion::LLM::Router do
     end
   end
 
-  # ─── external_tier? via TIER_EXTERNAL constant ───────────────────────────────
+  # ─── external (privacy-gated) tiers ──────────────────────────────────────────
+  # SSOT v4 folds the former private external_tier? helper into tier_available?:
+  # the external tiers (cloud/frontier) are blocked under enterprise privacy mode
+  # and available otherwise. This asserts that observable contract rather than the
+  # retired private predicate.
 
-  describe '.external_tier? (via TIER_EXTERNAL)' do
-    it 'returns false for :direct' do
-      expect(described_class.send(:external_tier?, :direct)).to be false
+  describe 'external tier privacy gating (via .tier_available?)' do
+    context 'when privacy mode is off' do
+      before { allow(described_class).to receive(:privacy_mode?).and_return(false) }
+
+      it 'permits :cloud' do
+        expect(described_class.tier_available?(:cloud)).to be true
+      end
+
+      it 'permits :frontier' do
+        expect(described_class.tier_available?(:frontier)).to be true
+      end
     end
 
-    it 'returns false for :local' do
-      expect(described_class.send(:external_tier?, :local)).to be false
-    end
+    context 'when privacy mode is on' do
+      before { allow(described_class).to receive(:privacy_mode?).and_return(true) }
 
-    it 'returns true for :cloud' do
-      expect(described_class.send(:external_tier?, :cloud)).to be true
-    end
+      it 'blocks :cloud' do
+        expect(described_class.tier_available?(:cloud)).to be false
+      end
 
-    it 'returns true for :frontier' do
-      expect(described_class.send(:external_tier?, :frontier)).to be true
-    end
+      it 'blocks :frontier' do
+        expect(described_class.tier_available?(:frontier)).to be false
+      end
 
-    it 'returns false for :local' do
-      expect(described_class.send(:external_tier?, :local)).to be false
+      it 'still permits the non-external :direct and :local tiers' do
+        expect(described_class.tier_available?(:direct)).to be true
+        expect(described_class.tier_available?(:local)).to be true
+      end
     end
   end
 
   # ─── TIER_EXTERNAL constant ─────────────────────────────────────────────────
 
   describe 'TIER_EXTERNAL' do
-    it 'is a frozen Set of external tiers' do
-      expect(described_class::TIER_EXTERNAL).to be_a(Set)
+    it 'is a frozen collection naming exactly the external tiers' do
       expect(described_class::TIER_EXTERNAL).to be_frozen
-      expect(described_class::TIER_EXTERNAL).to eq(Set[:cloud, :frontier])
+      expect(described_class::TIER_EXTERNAL).to contain_exactly(:cloud, :frontier)
     end
   end
 end

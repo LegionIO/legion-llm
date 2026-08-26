@@ -8,7 +8,10 @@ RSpec.describe Legion::LLM::Inference::Request do
       req = described_class.build(messages: [{ role: :user, content: 'hello' }])
       expect(req.id).to start_with('req_')
       expect(req.schema_version).to eq('1.0.0')
-      expect(req.messages).to eq([{ role: :user, content: 'hello' }])
+      # 0.8.0: inbound messages are canonicalized to Canonical::Message at the entry.
+      expect(req.messages).to all(be_a(Legion::Extensions::Llm::Canonical::Message))
+      expect(req.messages.first.role).to eq(:user)
+      expect(req.messages.first.content).to eq('hello')
       expect(req.routing).to eq({ provider: nil, model: nil })
       expect(req.tokens).to eq({ max: 4096 })
       expect(req.priority).to eq(:normal)
@@ -81,8 +84,11 @@ RSpec.describe Legion::LLM::Inference::Request do
       expect(req.extra[:requested_model_alias]).to eq('legionio')
     end
 
-    it 'honors overridden routing auto model aliases from settings' do
-      Legion::Settings[:llm][:routing][:auto_routing_model_aliases] = %w[legionio autobot]
+    it 'honors overridden auto model aliases from the canonical [:llm][:router] settings' do
+      # SSOT v4: ingress normalization reads auto_routing_model_aliases from the
+      # SAME [:llm][:router] home the Router/Filter read — not the legacy
+      # [:llm][:routing] tree. A custom alias configured there is recognized here.
+      Legion::Settings[:llm][:router][:auto_routing_model_aliases] = %w[legionio autobot]
       req = described_class.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { model: 'autobot' }
@@ -102,7 +108,7 @@ RSpec.describe Legion::LLM::Inference::Request do
         provider: :anthropic,
         intent:   { privacy: :strict }
       )
-      expect(req.messages.last[:content]).to eq('hello')
+      expect(req.messages.last.content).to eq('hello')
       expect(req.routing[:model]).to eq('claude-opus-4-6')
       expect(req.routing[:provider]).to eq(:anthropic)
       expect(req.extra[:intent]).to eq({ privacy: :strict })

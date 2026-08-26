@@ -67,7 +67,7 @@ module Legion
         def poll(request_id, timeout: default_ttl, interval: 0.1)
           deadline = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) + timeout
 
-          loop do
+          while ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) < deadline
             current = status(request_id)
             log.debug("ResponseCache poll request_id=#{request_id} status=#{current}")
 
@@ -78,10 +78,10 @@ module Legion
               return { status: :error, error: error(request_id) }
             end
 
-            return { status: :timeout } if ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) >= deadline
-
             sleep interval
           end
+
+          { status: :timeout }
         end
 
         # Removes all cache keys for a request (and any spool file).

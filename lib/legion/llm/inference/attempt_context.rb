@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/llm/errors'
+require 'legion/extensions/llm/taxonomies'
 
 module Legion
   module LLM
@@ -60,9 +61,15 @@ module Legion
           mismatches = []
           mismatches << 'provider_family' unless @lane.provider_family == @selection.provider_family
           mismatches << 'instance_id' unless @lane.instance_id == @selection.instance_id
-          mismatches << 'offering_id' unless @lane.offering_id == @selection.offering_id
+          mismatches << 'lane_id' unless @lane.lane_id == @selection.lane_id
           mismatches << 'model' unless @lane.model == @selection.model
-          mismatches << 'operation' unless @lane.operation == @selection.operation
+          # The selection freezes the REQUESTED fine operation (a request
+          # property); the lane's operation member is the representative of its
+          # coarse type. Compare the coarse lane types — the Selection record
+          # already guarantees the fine op maps to the lane's type.
+          mismatches << 'operation' unless
+            Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: @lane.operation) ==
+            Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: @selection.operation)
           mismatches << 'callable_handle' unless @lane.callable_handle.equal?(@selection.callable_handle)
           stale!("lane/selection mismatch: #{mismatches.join(',')}") unless mismatches.empty?
         end

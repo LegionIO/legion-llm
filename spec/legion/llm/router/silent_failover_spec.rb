@@ -86,6 +86,45 @@ RSpec.describe 'Mid-stream failover is silent (P5)' do
     end
   end
 
+  describe 'malformed lane redaction' do
+    let(:logger) { instance_double('Logger', debug: nil, info: nil, warn: nil) }
+    let(:log_messages) { [] }
+
+    before do
+      allow(logger).to receive(:debug) { |message| log_messages << message }
+      allow(logger).to receive(:info) { |message| log_messages << message }
+      allow(logger).to receive(:warn) { |message| log_messages << message }
+    end
+
+    it 'redacts every historically accepted malformed public lane value without changing state' do
+      assembler = Legion::LLM::API::StreamAssembler.new(
+        emitter: emitter, request_id: 'r1', model: 'test', initial_lane: lane_a
+      )
+      allow(assembler).to receive(:log).and_return(logger)
+
+      invalid_utf8 = "bad\xFF".dup.force_encoding(Encoding::UTF_8)
+      malformed = [
+        'lane:v1:secret', nil, {}, { tier: :direct },
+        lane_a.merge(model: ''), lane_a.merge(model: "line\nbreak"),
+        lane_a.merge(model: invalid_utf8), lane_a.merge(type: :unknown)
+      ]
+
+      expect do
+        malformed.each do |lane|
+          assembler.provider_failover_pending!(from: lane)
+          assembler.begin_dispatch_on(lane: lane)
+        end
+      end.not_to raise_error
+
+      lines = log_messages.join("\n")
+      expect(lines.scan('lane_identity_missing=true').size).to eq(malformed.size * 2)
+      expect(lines).not_to include('lane:v1:secret', "line\nbreak", 'bad')
+      expect(assembler.instance_variable_get(:@failover_chain)).to eq(
+        [lane_a[:id], *malformed.flat_map { |lane| [:failover_marker, lane.is_a?(Hash) ? lane[:id] : lane.to_s] }]
+      )
+    end
+  end
+
   describe 'finalize with failover' do
     it 'emits debug trailers when failover happened' do
       assembler = Legion::LLM::API::StreamAssembler.new(

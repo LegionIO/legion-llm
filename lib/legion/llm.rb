@@ -22,21 +22,11 @@ require_relative 'llm/call/daemon_client'
 # settings generation, body-hint/header policy, requirement/candidate/rank/
 # rejection, then the next_lane facade, session, exact dispatch, and HTTP views.
 require 'legion/llm/routing_context'
-require 'legion/llm/router/settings_snapshot'
-require 'legion/llm/router/settings_state'
-require 'legion/llm/router/body_model_hint_policy'
-require 'legion/llm/router/header_constraints'
-require 'legion/llm/router/input_bound'
-require 'legion/llm/router/required_capabilities'
-require 'legion/llm/router/request_requirements'
-require 'legion/llm/router/candidate_evaluation'
-require 'legion/llm/router/candidate_evaluator'
-require 'legion/llm/router/ranker'
-require 'legion/llm/router/rejection_diagnostics'
-require 'legion/llm/router/outcome_classifier'
+require 'legion/llm/routing/settings_state'
+require 'legion/llm/routing/settings_snapshot'
+require 'legion/llm/routing/header_constraints'
 require_relative 'llm/router'
 require 'legion/llm/inference/attempt_context'
-require 'legion/llm/inference/routing_session'
 require 'legion/llm/call/selection_dispatch'
 require 'legion/llm/api/routing_error_mapper'
 require 'legion/llm/api/model_catalog'
@@ -52,7 +42,6 @@ require_relative 'llm/quality/confidence/scorer'
 require_relative 'llm/quality/shadow_eval'
 require_relative 'llm/types'
 require_relative 'llm/inference/conversation'
-require_relative 'llm/router/escalation/history'
 require_relative 'llm/hooks'
 require_relative 'llm/cache'
 require_relative 'llm/cache/response'
@@ -61,7 +50,6 @@ require_relative 'llm/inference'
 require_relative 'llm/inference/embed_pipeline'
 require_relative 'llm/fleet'
 require_relative 'llm/inventory'
-require 'legion/llm/inventory/settings_observer'
 require_relative 'llm/metering'
 require_relative 'llm/audit'
 require_relative 'llm/scheduling'
@@ -109,9 +97,6 @@ module Legion
       def start
         log.debug '[llm] start.enter'
         Call::Providers.setup
-        Inventory::Discovery.run
-        Inventory::Discovery.detect_embedding_capability
-        Legion::LLM::Inventory::SettingsObserver.attach!
         Config.set_defaults
         Hooks.install_defaults
         Tools::Interceptor.load_defaults
@@ -136,15 +121,8 @@ module Legion
         log.debug '[llm] shutdown.enter'
         Legion::Settings[:llm][:connected] = false
         @started = false
-        Inventory::Discovery.reset!
         Call::Registry.disconnect_all!
         Call::Registry.reset!
-        # Clear LLM-level embedding ivars that may have been set via instance_variable_set for testing
-        @can_embed = nil
-        @embedding_provider = nil
-        @embedding_model = nil
-        @embedding_instance = nil
-        @embedding_fallback_chain = nil
         # Gracefully shut down the async thread pool (curation, reflection, knowledge capture)
         if (pool = Inference::Executor::ASYNC_THREAD_POOL).running?
           pool.shutdown
@@ -163,9 +141,8 @@ module Legion
 
       def chat(...) = Inference.chat(...)
       def ask(...) = Inference.ask(...)
-      # rubocop:disable Legion/Framework/NoDirectDispatch -- deprecated shim per CHANGELOG 0.12.16; routes through governed pipeline.
-      def chat_direct(...) = Inference.chat_direct(...)
-      # rubocop:enable Legion/Framework/NoDirectDispatch
+      # Deprecated shim per CHANGELOG 0.12.16; routes through the governed pipeline.
+      def chat_direct(...) = Inference.chat_direct(...) # rubocop:disable Legion/Framework/NoDirectDispatch
 
       def embed(text, **)
         if defined?(Legion::Telemetry::OpenInference)
@@ -177,14 +154,13 @@ module Legion
         end
       end
 
-      # rubocop:disable Legion/Framework/NoDirectDispatch -- deprecated shim per CHANGELOG 0.12.16.
-      def embed_direct(text, **)
+      # Deprecated shim per CHANGELOG 0.12.16.
+      def embed_direct(text, **) # rubocop:disable Legion/Framework/NoDirectDispatch
         Deprecation.warn_once(:embed_direct, replacement: 'Legion::LLM.embed')
         result = Call::Embeddings.generate(text: text, **)
         emit_embed_metering(result)
         result
       end
-      # rubocop:enable Legion/Framework/NoDirectDispatch
 
       def embed_batch(texts, **) = Call::Embeddings.generate_batch(texts: texts, **)
 
@@ -198,35 +174,22 @@ module Legion
         end
       end
 
-      # rubocop:disable Legion/Framework/NoDirectDispatch -- deprecated shim per CHANGELOG 0.12.16.
-      def structured_direct(messages:, schema:, **)
+      # Deprecated shim per CHANGELOG 0.12.16.
+      def structured_direct(messages:, schema:, **) # rubocop:disable Legion/Framework/NoDirectDispatch
         Deprecation.warn_once(:structured_direct, replacement: 'Legion::LLM.structured')
         result = Call::StructuredOutput.generate(messages: messages, schema: schema, **)
         emit_structured_metering(result)
         result
       end
-      # rubocop:enable Legion/Framework/NoDirectDispatch
 
-      # These methods check Discovery first, then fall back to instance ivars set directly on LLM
-      # (ivar fallback preserves backwards compat for specs that do Legion::LLM.instance_variable_set)
+      # M4: can_embed? is a live capability fact from the inventory registry
+      # (Discovery reads the same lanes the router reads) — the second
+      # selection domain (and its
+      # embedding_provider/model/instance/fallback_chain projections) is
+      # gone; SSOT :embed routing (Call::Embeddings → Router.next_lane) is
+      # the sole embedding selection authority.
       def can_embed?
-        Inventory::Discovery.can_embed? || @can_embed == true
-      end
-
-      def embedding_provider
-        Inventory::Discovery.embedding_provider || @embedding_provider
-      end
-
-      def embedding_model
-        Inventory::Discovery.embedding_model || @embedding_model
-      end
-
-      def embedding_instance
-        Inventory::Discovery.embedding_instance || @embedding_instance
-      end
-
-      def embedding_fallback_chain
-        Inventory::Discovery.embedding_fallback_chain || @embedding_fallback_chain
+        Inventory::Discovery.can_embed?
       end
 
       def agent(agent_class, **) = agent_class.new(**)

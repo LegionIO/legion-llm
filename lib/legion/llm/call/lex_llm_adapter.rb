@@ -15,6 +15,9 @@ module Legion
         # All other providers (vLLM, Ollama, MLX, Anthropic, Bedrock, Gemini, Vertex, Azure Foundry)
         # use /v1/chat/completions and must declare :responses in their instance capabilities explicitly.
         RESPONSES_PROVIDER_FAMILIES = %i[openai].freeze
+        # Canonical roles are exactly system/user/assistant/tool. Dialect roles
+        # (developer/critic/discriminator) fold to :system at this edge.
+        CANONICAL_ROLES = %i[system user assistant tool].freeze
 
         def initialize(provider_name, provider_class, instance_config: {})
           @provider_name = provider_name.to_sym
@@ -24,44 +27,53 @@ module Legion
           @lex_llm_namespace = resolve_lex_llm_namespace
         end
 
+        # 0.8.0 provider funnel (08): positional canonical messages, and the
+        # return value is a Canonical::Response — the adapter returns it
+        # directly (with offering metadata merged), never a re-projected hash.
         def chat(model:, messages:, **opts)
           response = provider.chat(
-            messages:    normalize_messages(messages, system: opts[:system]),
-            tools:       normalize_tools(opts[:tools]),
-            temperature: opts[:temperature],
-            params:      opts[:params] || {},
-            headers:     opts[:headers] || {},
-            schema:      opts[:schema],
-            thinking:    opts[:thinking],
-            tool_prefs:  opts[:tool_prefs],
-            model:       model_info(model, offering_metadata: opts[:offering_metadata])
+            normalize_messages(messages, system: opts[:system]),
+            model:      model,
+            tools:      normalize_tools(opts[:tools]),
+            params:     completion_params(opts),
+            headers:    opts[:headers] || {},
+            schema:     opts[:schema],
+            thinking:   opts[:thinking],
+            tool_prefs: opts[:tool_prefs]
           )
 
-          message_response(response, offering_metadata: opts[:offering_metadata])
+          response_with_metadata(response, offering_metadata: opts[:offering_metadata])
         end
 
         def stream(model:, messages:, **opts, &block)
           accumulator = build_stream_accumulator
           response = provider.stream_chat(
-            messages:    normalize_messages(messages, system: opts[:system]),
-            tools:       normalize_tools(opts[:tools]),
-            temperature: opts[:temperature],
-            params:      opts[:params] || {},
-            headers:     opts[:headers] || {},
-            schema:      opts[:schema],
-            thinking:    opts[:thinking],
-            tool_prefs:  opts[:tool_prefs],
-            model:       model_info(model, offering_metadata: opts[:offering_metadata])
+            normalize_messages(messages, system: opts[:system]),
+            model:      model,
+            tools:      normalize_tools(opts[:tools]),
+            params:     completion_params(opts),
+            headers:    opts[:headers] || {},
+            schema:     opts[:schema],
+            thinking:   opts[:thinking],
+            tool_prefs: opts[:tool_prefs]
           ) do |chunk|
             accumulate_stream_chunk(accumulator, chunk)
             block&.call(chunk)
           end
 
           if response
-            message_response(response, offering_metadata: opts[:offering_metadata])
+            response_with_metadata(response, offering_metadata: opts[:offering_metadata])
           else
-            chunk_response(accumulator, offering_metadata: opts[:offering_metadata])
+            stream_fallback_response(accumulator, model: model, offering_metadata: opts[:offering_metadata])
           end
+        end
+
+        # Canonical Params keys only (03 O03a): temperature folds into params
+        # at the adapter edge; the 0.8.0 funnel has no temperature kwarg.
+        def completion_params(opts)
+          params = (opts[:params] || {}).dup
+          params[:temperature] = opts[:temperature] if opts.key?(:temperature) && !opts[:temperature].nil?
+          params.empty? ? nil : params
         end
 
         def responses(model:, body:, messages:, stream: false, **opts, &)
@@ -90,29 +102,31 @@ module Legion
           @capabilities.include?(:responses) || RESPONSES_PROVIDER_FAMILIES.include?(provider_name)
         end
 
+        # 0.8.0 embed artifact (05 §3 / O07): a documented Hash
+        # `{ text:, model:, embedding: Array<Float>, usage: Canonical::Usage }`.
         def embed(model:, text:, dimensions: nil, **opts)
-          model_info = model_info(model, offering_metadata: opts[:offering_metadata])
           response = provider.embed(
             text:       text,
-            model:      model_info,
+            model:      model,
             dimensions: dimensions,
             params:     opts[:params] || {},
             headers:    opts[:headers] || {}
           )
+          usage = response[:usage]
+          input_tokens = usage.respond_to?(:input_tokens) ? usage.input_tokens.to_i : 0
 
           {
-            result:   response.vectors,
-            model:    response.model,
-            usage:    { input_tokens: response.input_tokens.to_i, output_tokens: 0 },
+            result:   response[:embedding],
+            model:    response[:model],
+            usage:    { input_tokens: input_tokens, output_tokens: 0 },
             metadata: response_metadata(offering_metadata: opts[:offering_metadata])
           }
         end
 
         def image(model:, prompt:, size:, with: nil, mask: nil, **opts)
-          model_info = model_info(model, offering_metadata: opts[:offering_metadata])
           response = call_image_provider(
             prompt:  prompt,
-            model:   model_info,
+            model:   model,
             size:    size,
             with:    with,
             mask:    mask,
@@ -120,7 +134,7 @@ module Legion
             headers: opts[:headers] || {}
           )
 
-          image_response(response, model: model_info, offering_metadata: opts[:offering_metadata])
+          image_response(response, model: model, offering_metadata: opts[:offering_metadata])
         end
 
         def health(live: false)
@@ -129,7 +143,7 @@ module Legion
 
         def count_tokens(model:, messages:, **)
           {
-            result: provider.count_tokens(messages: normalize_messages(messages), model: model_info(model)),
+            result: provider.count_tokens(messages: normalize_messages(messages), model: model),
             model:  model,
             usage:  {}
           }
@@ -145,16 +159,17 @@ module Legion
           provider.discover_offerings(live: live, **filters)
         end
 
-        # SSOT writer contract: every lex-llm-* actor's `lanes_from_instance` checks
-        # `adapter.respond_to?(:discover_offerings)` and calls it on the adapter. Forward
-        # to the per-instance Provider's catalog method (same body as #offerings). Without
-        # this, every gem actor's compute_lanes_for_scope silently returns [] → Inventory
-        # stays empty → all routing returns NoLaneAvailable.
+        # SSOT writer contract: every lex-llm-* provider actor discovers its
+        # catalog through `adapter.discover_offerings` (forwarded to the
+        # per-instance Provider's catalog method — same body as #offerings),
+        # then publishes the result into the shared inventory registry
+        # (lex-llm Inventory::Registry) on its own discovery cadence,
+        # reconciling write-time weights from current settings (lex-llm
+        # Inventory::WeightReconciler) before each publish. Without this
+        # funnel the actors have no catalog and the registry stays empty.
         def discover_offerings(live: false, **filters)
           offerings(live: live, **filters)
         end
-
-        ToolShim = Struct.new(:name, :description, :params_schema, keyword_init: true)
 
         private
 
@@ -320,10 +335,11 @@ module Legion
         def stream_responses_payload(payload, offering_metadata: nil, &block)
           accumulator = build_responses_stream_accumulator
           parser = EventStreamParser::Parser.new
+          request_id = "resp_#{SecureRandom.hex(8)}"
 
           response = provider.connection.post(responses_url, payload) do |req|
             req.headers['Accept'] = 'text/event-stream'
-            attach_responses_stream_handler(req, parser, accumulator, block)
+            attach_responses_stream_handler(req, parser, accumulator, block, request_id)
           end
 
           responses_stream_response(accumulator, response.body, offering_metadata: offering_metadata)
@@ -341,10 +357,10 @@ module Legion
           }
         end
 
-        def attach_responses_stream_handler(req, parser, accumulator, block)
+        def attach_responses_stream_handler(req, parser, accumulator, block, request_id)
           handler = proc do |chunk, *_args|
             parser.feed(chunk) do |_event, data|
-              handle_responses_stream_data(data, accumulator, block)
+              handle_responses_stream_data(data, accumulator, block, request_id)
             end
           end
 
@@ -355,7 +371,9 @@ module Legion
           end
         end
 
-        def handle_responses_stream_data(data, accumulator, block)
+        # The raw Responses SSE stream is surfaced as Canonical::Chunk objects —
+        # the 0.8.0 stream contract (R4) is canonical chunks on the wire.
+        def handle_responses_stream_data(data, accumulator, block, request_id)
           return if data == '[DONE]'
 
           parsed = Legion::JSON.parse(data, symbolize_names: false)
@@ -364,9 +382,9 @@ module Legion
           accumulator[:raw] = parsed
           case parsed['type']
           when 'response.output_text.delta'
-            accumulate_responses_text_delta(parsed, accumulator, block)
+            accumulate_responses_text_delta(parsed, accumulator, block, request_id)
           when 'response.reasoning_summary_text.delta', 'response.reasoning_text.delta'
-            accumulate_responses_thinking_delta(parsed, accumulator, block)
+            accumulate_responses_thinking_delta(parsed, accumulator, block, request_id)
           when 'response.function_call_arguments.delta'
             call_id = parsed['item_id'].to_s
             delta = parsed['delta'].to_s
@@ -375,16 +393,11 @@ module Legion
             accumulator[:tool_calls][call_id] ||= +''
             accumulator[:tool_calls][call_id] << delta
 
-            block&.call(
-              lex_llm_namespace::Chunk.new(
-                role:       :assistant,
-                content:    '',
-                tool_calls: { call_id.to_sym => lex_llm_namespace::ToolCall.new(id: call_id, name: '', arguments: delta) },
-                model_id:   parsed['model'],
-                raw:        parsed,
-                tokens:     nil
-              )
-            )
+            chunk_class = lex_llm_namespace::Canonical::Chunk
+            block&.call(chunk_class.tool_call_delta(
+              tool_call:  { id: call_id, name: '', arguments: delta },
+              request_id: request_id
+            ))
           when 'response.completed'
             response = parsed['response'] || {}
             accumulator[:completed] = response
@@ -395,57 +408,22 @@ module Legion
           end
         end
 
-        def accumulate_responses_text_delta(parsed, accumulator, block)
+        def accumulate_responses_text_delta(parsed, accumulator, block, request_id)
           delta = parsed['delta'].to_s
           return if delta.empty?
 
           accumulator[:content] << delta
-          block&.call(
-            lex_llm_namespace::Chunk.new(
-              role:     :assistant,
-              content:  delta,
-              model_id: parsed['model'],
-              raw:      parsed,
-              tokens:   nil
-            )
-          )
+          chunk_class = lex_llm_namespace::Canonical::Chunk
+          block&.call(chunk_class.text_delta(delta: delta, request_id: request_id))
         end
 
-        def accumulate_responses_thinking_delta(parsed, accumulator, block)
+        def accumulate_responses_thinking_delta(parsed, accumulator, block, request_id)
           delta = parsed['delta'].to_s
           return if delta.empty?
 
           accumulator[:thinking] << delta
-          block&.call(
-            lex_llm_namespace::Chunk.new(
-              role:     :assistant,
-              content:  '',
-              thinking: { content: delta, enabled: true },
-              model_id: parsed['model'],
-              raw:      parsed,
-              tokens:   nil
-            )
-          )
-        end
-
-        def accumulate_responses_tool_call_delta(parsed, accumulator, block)
-          call_id = parsed['item_id']
-          delta = parsed['delta'].to_s
-          return if delta.empty?
-
-          accumulator[:tool_calls][call_id] ||= { id: call_id, name: '', arguments: '' }
-          accumulator[:tool_calls][call_id][:arguments] << delta
-
-          block&.call(
-            lex_llm_namespace::Chunk.new(
-              role:       :assistant,
-              content:    '',
-              tool_calls: { call_id.to_sym => lex_llm_namespace::ToolCall.new(id: call_id, name: '', arguments: delta) },
-              model_id:   parsed['model'],
-              raw:        parsed,
-              tokens:     nil
-            )
-          )
+          chunk_class = lex_llm_namespace::Canonical::Chunk
+          block&.call(chunk_class.thinking_delta(delta: delta, request_id: request_id))
         end
 
         def responses_stream_response(accumulator, response_body, offering_metadata: nil)
@@ -594,24 +572,21 @@ module Legion
           result
         end
 
-        def model_info(model, offering_metadata: nil)
-          offering = normalize_offering_metadata(offering_metadata)
-          lex_llm_namespace::Model::Info.new(
-            id:             model,
-            name:           offering[:canonical_model_alias] || model,
-            provider:       provider_name,
-            family:         offering[:model_family],
-            context_length: offering.dig(:limits, :context_window),
-            capabilities:   Array(offering[:capabilities]).map(&:to_s),
-            metadata:       offering.merge(
-              max_output_tokens: offering.dig(:limits, :max_output_tokens)
-            ).compact
-          )
-        end
+        # 0.8.0: the provider funnel takes a plain model string (Provider#
+        # model_identity passes bare strings through unchanged); offering
+        # metadata is a response-side fact (response_with_metadata), never a
+        # request-side carrier.
 
+        # 0.8.0: messages cross the dispatch boundary as Canonical::Message.
+        # The adapter is the edge that turns wire hashes / plain strings into
+        # canonical messages; canonical objects pass through untouched.
         def normalize_messages(messages, system: nil)
-          message_class = lex_llm_namespace::Message
-          raw_messages = Array(messages)
+          message_class = lex_llm_namespace::Canonical::Message
+          raw_messages = Array(messages).map do |message|
+            next message if message.is_a?(message_class)
+
+            message.is_a?(Hash) ? message : { role: :user, content: message.to_s }
+          end
           raw_messages = prepend_or_merge_system(raw_messages, system) if present_system?(system)
           raw_messages = consolidate_system_messages(raw_messages)
 
@@ -619,7 +594,7 @@ module Legion
             next message if message.is_a?(message_class)
 
             message_hash = normalize_hash(message)
-            message_class.new(
+            message_class.build(
               role:         normalize_role(message_hash[:role] || :user),
               content:      normalize_message_content(message_hash[:content]),
               tool_calls:   normalize_message_tool_calls(message_hash[:tool_calls]),
@@ -630,11 +605,7 @@ module Legion
 
         def normalize_role(role)
           normalized = role.to_sym
-          return normalized unless %i[developer critic discriminator].include?(normalized)
-
-          # Only providers that understand these roles need them preserved.
-          # OpenAI is the only provider that supports :developer/:critic/:discriminator natively.
-          return normalized if @provider_name == :openai
+          return normalized if CANONICAL_ROLES.include?(normalized)
 
           :system
         end
@@ -696,6 +667,9 @@ module Legion
           raise NameError, 'lex-llm provider namespace is not loaded'
         end
 
+        # 0.8.0: the provider funnel consumes canonical tools — the edge builds
+        # Canonical::ToolDefinition from wire hashes (the `input_schema`
+        # spelling is an Anthropic dialect key translated here, O03a).
         def normalize_tools(tools)
           hash = case tools
                  when Hash then tools
@@ -703,18 +677,20 @@ module Legion
                  else {}
                  end
 
-          hash.transform_values { |tool| tool.is_a?(Hash) ? shim_tool(tool) : tool }
+          hash.transform_values { |tool| tool.is_a?(Hash) ? canonical_tool_definition(tool) : tool }
         end
 
         def tool_key(tool)
           (tool.respond_to?(:name) ? tool.name : tool[:name])&.to_sym
         end
 
-        def shim_tool(hash)
-          ToolShim.new(
-            name:          hash[:name] || hash['name'],
-            description:   hash[:description] || hash['description'],
-            params_schema: hash[:parameters] || hash['parameters'] || hash[:input_schema] || hash['input_schema']
+        def canonical_tool_definition(hash)
+          canonical = lex_llm_namespace::Canonical
+          canonical::ToolDefinition.build(
+            name:        hash[:name] || hash['name'],
+            description: (hash[:description] || hash['description'] || '').to_s,
+            parameters:  hash[:parameters] || hash['parameters'] || hash[:input_schema] || hash['input_schema'] || {},
+            source:      { type: :client, executable: true }
           )
         end
 
@@ -726,7 +702,6 @@ module Legion
 
         def normalize_message_content(content)
           return content if content.nil? || content.is_a?(String)
-          return content if content.respond_to?(:attachments)
 
           if content.is_a?(Array)
             flat = content.flatten
@@ -785,6 +760,8 @@ module Legion
           end
         end
 
+        # Canonical tool calls — arguments is a Hash by law (03 O03a): the
+        # JSON-string spelling (OpenAI chat wire) is parsed at this edge.
         def normalize_message_tool_calls(tool_calls)
           return tool_calls unless tool_calls.is_a?(Array)
 
@@ -792,12 +769,27 @@ module Legion
             id, name, arguments = read_tool_call_fields(tool_call)
             next if name.to_s.empty?
 
-            lex_llm_namespace::ToolCall.new(
-              id:        id,
-              name:      name.to_s,
-              arguments: arguments || {}
-            )
+            canonical_tool_call(id, name, arguments)
           end
+        end
+
+        def canonical_tool_call(id, name, arguments)
+          canonical = lex_llm_namespace::Canonical
+          canonical::ToolCall.build(
+            id:        id,
+            name:      name.to_s,
+            arguments: canonical_tool_arguments(arguments)
+          )
+        end
+
+        def canonical_tool_arguments(arguments)
+          return arguments if arguments.is_a?(Hash)
+          return {} if arguments.nil? || arguments.to_s.strip.empty?
+
+          parsed = Legion::JSON.load(arguments.to_s)
+          raise ArgumentError, "tool call arguments must be a Hash or a JSON object string, got #{arguments.class}" unless parsed.is_a?(Hash)
+
+          parsed
         end
 
         # Read id/name/arguments from a tool call regardless of shape:
@@ -819,130 +811,151 @@ module Legion
           end
         end
 
-        def message_response(response, offering_metadata: nil)
-          thinking_val = thinking_hash(response)
-          log.info "[llm][adapter] message_response thinking=#{thinking_val ? 'present' : 'nil'}"
-          {
-            result:      response.content,
-            model:       response.model_id,
-            tool_calls:  response.respond_to?(:tool_calls) ? response.tool_calls : nil,
-            stop_reason: extract_stop_reason_from_message(response),
-            thinking:    thinking_val,
-            usage:       usage_hash(response),
-            metadata:    response_metadata(response, offering_metadata: offering_metadata)
-          }.compact
+        # The 0.8.0 funnel guarantees a Canonical::Response; a non-canonical
+        # return value is a provider contract violation and fails loud.
+        # Offering metadata merges into the response's canonical metadata.
+        def response_with_metadata(response, offering_metadata:)
+          return nil if response.nil?
+
+          canonical = lex_llm_namespace::Canonical
+          raise ArgumentError, "provider returned #{response.class} instead of Canonical::Response" unless response.is_a?(canonical::Response)
+
+          metadata = normalize_offering_metadata(offering_metadata)
+          return response if metadata.empty?
+
+          response.with(metadata: response.metadata.merge(offering: metadata))
         end
 
-        def extract_stop_reason_from_message(response)
-          return :tool_use if response.respond_to?(:tool_call?) && response.tool_call?
-
-          raw = response.respond_to?(:raw) ? response.raw : nil
-          return nil unless raw.is_a?(Hash)
-
-          reason = raw.dig('choices', 0, 'finish_reason') || raw['finish_reason'] || raw[:finish_reason]
-          reason&.to_sym
-        end
-
+        # Canonical chunk accumulation for the stream fallback (the provider
+        # stream_chat may return nil and leave only chunks on the wire).
         def build_stream_accumulator
           {
             content:            +'',
-            model:              nil,
             usage:              {},
-            raw:                nil,
             tool_calls:         {},
             thinking_text:      +'',
-            thinking_signature: nil
+            thinking_signature: nil,
+            stop_reason:        nil
           }
         end
 
         def accumulate_stream_chunk(accumulator, chunk)
-          accumulator[:content] << chunk.content.to_s if chunk.respond_to?(:content) && !chunk.content.nil?
-          accumulate_stream_usage(accumulator, chunk)
-          accumulator[:tool_calls].merge!(chunk.tool_calls || {}) if chunk.respond_to?(:tool_calls)
-          accumulate_stream_thinking(accumulator, chunk)
+          case chunk.type
+          when :text_delta
+            accumulator[:content] << chunk.delta.to_s
+          when :thinking_delta
+            accumulator[:thinking_text] << chunk.delta.to_s
+            accumulator[:thinking_signature] ||= chunk.signature
+          when :tool_call_delta
+            accumulate_stream_tool_call(accumulator, chunk.tool_call)
+          when :done
+            accumulate_stream_usage(accumulator, chunk.usage)
+            accumulator[:stop_reason] ||= chunk.stop_reason
+          end
+          accumulator
         end
 
-        def accumulate_stream_usage(accumulator, chunk)
-          usage = usage_hash(chunk)
-          return unless token_usage_signal?(chunk, usage)
+        def accumulate_stream_tool_call(accumulator, fragment)
+          return if fragment.nil?
 
-          accumulator[:model] = chunk.model_id if chunk.respond_to?(:model_id)
-          accumulator[:usage] = merge_usage_hash(accumulator[:usage], usage)
-          accumulator[:raw] = chunk.raw if chunk.respond_to?(:raw)
+          fields = if fragment.is_a?(Hash)
+                     fragment.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+                   else
+                     { id: fragment.id, name: fragment.name, arguments: fragment.arguments }
+                   end
+          id = fields[:id].to_s
+          return if id.empty?
+
+          entry = accumulator[:tool_calls][id] ||= { name: nil, arguments: +'' }
+          entry[:name] = fields[:name].to_s unless fields[:name].to_s.empty?
+          entry[:arguments] << fields[:arguments].to_s if fields[:arguments]
         end
 
-        def accumulate_stream_thinking(accumulator, chunk)
-          return unless chunk.respond_to?(:thinking)
+        def accumulate_stream_usage(accumulator, usage)
+          return if usage.nil?
 
-          thinking = normalize_thinking_value(chunk.thinking)
-          content = thinking[:content]
-          accumulator[:thinking_text] << content.to_s unless content.nil?
-          accumulator[:thinking_signature] ||= thinking[:signature]
+          accumulator[:usage] = merge_usage_hash(accumulator[:usage], usage_hash(usage))
         end
 
-        def chunk_response(accumulator, offering_metadata: nil)
-          tool_calls = accumulator[:tool_calls]
-          {
-            result:      accumulator[:content],
-            model:       accumulator[:model],
+        # Fallback response for a stream whose provider returned no final
+        # value — assembled from the canonical chunks seen on the wire.
+        # Canonical chunks carry no model identity, so the requested model
+        # is the fallback identity.
+        def stream_fallback_response(accumulator, model:, offering_metadata:)
+          canonical = lex_llm_namespace::Canonical
+          tool_calls = accumulator[:tool_calls].map do |id, entry|
+            arguments = entry[:arguments].to_s
+            arguments = Legion::JSON.load(arguments) unless arguments.empty?
+            canonical::ToolCall.build(
+              id:        id,
+              name:      entry[:name].to_s,
+              arguments: arguments.is_a?(Hash) ? arguments : {}
+            )
+          end
+
+          thinking_text = accumulator[:thinking_text]
+          thinking = if thinking_text.empty? && accumulator[:thinking_signature].nil?
+                       nil
+                     else
+                       canonical::Thinking.build(
+                         content:   thinking_text.empty? ? nil : thinking_text,
+                         signature: accumulator[:thinking_signature]
+                       )
+                     end
+          # G2 stop policy (mirrors Dispatch#to_canonical_stop_reason): the
+          # provider's value passes through; a nil reason with tool calls
+          # derives :tool_use (the response stopped to invoke them); a nil
+          # reason without tool calls stays nil — the absence, not a
+          # fabricated stop (N6).
+          stop_reason = accumulator[:stop_reason]
+          stop_reason = :tool_use if stop_reason.nil? && tool_calls.any?
+          model_id = model.respond_to?(:id) ? model.id : model
+
+          response = canonical::Response.build(
+            text:        accumulator[:content],
+            thinking:    thinking,
             tool_calls:  tool_calls.empty? ? nil : tool_calls,
-            stop_reason: extract_stream_stop_reason(accumulator, tool_calls),
-            thinking:    stream_thinking_hash(accumulator),
-            usage:       accumulator[:usage],
-            metadata:    response_metadata(accumulator[:raw], offering_metadata: offering_metadata)
-          }.compact
+            usage:       canonical::Usage.build(**accumulator[:usage]),
+            stop_reason: stop_reason,
+            model:       model_id
+          )
+          response_with_metadata(response, offering_metadata: offering_metadata)
         end
 
-        def extract_stream_stop_reason(accumulator, tool_calls)
-          return :tool_use unless tool_calls.empty?
+        # 0.8.0 image artifact (05 S3 / O07): a documented Hash
+        # { model:, image: <bytes|data-uri>, size: } — pass-through with the
+        # offering metadata merged.
+        def image_response(response, model:, offering_metadata:)
+          raise ArgumentError, "provider image must return the documented Hash artifact, got #{response.class}" unless response.is_a?(Hash)
 
-          raw = accumulator[:raw]
-          return nil unless raw.is_a?(Hash)
-
-          reason = raw.dig('choices', 0, 'finish_reason') || raw['finish_reason'] || raw[:finish_reason]
-          reason&.to_sym
-        end
-
-        def image_response(response, model:, offering_metadata: nil)
-          return hash_image_response(response, model: model, offering_metadata: offering_metadata) if response.is_a?(Hash)
-
-          {
-            result:   [
-              {
-                url:            response.url,
-                b64_json:       response.data,
-                mime_type:      response.mime_type,
-                revised_prompt: response.revised_prompt
-              }.compact
-            ],
-            model:    response.model_id || model,
-            usage:    response.usage || {},
-            metadata: response_metadata(response, offering_metadata: offering_metadata)
-          }
-        end
-
-        def hash_image_response(response, model:, offering_metadata: nil)
           normalized = response.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
           normalized[:model] ||= model
           normalized[:metadata] ||= response_metadata(offering_metadata: offering_metadata)
           normalized
         end
 
-        def usage_hash(response)
-          {
-            input_tokens:       extract_token_metric(response, :input_tokens, :prompt_tokens),
-            output_tokens:      extract_token_metric(response, :output_tokens, :completion_tokens),
-            cache_read_tokens:  extract_token_metric(response, :cache_read_tokens, :cached_tokens),
-            cache_write_tokens: extract_token_metric(response, :cache_write_tokens, :cache_creation_tokens)
-          }
-        end
+        def usage_hash(usage)
+          canonical = lex_llm_namespace::Canonical
+          return {} if usage.nil?
+          if usage.is_a?(canonical::Usage)
+            return {
+              input_tokens:       usage.input_tokens.to_i,
+              output_tokens:      usage.output_tokens.to_i,
+              cache_read_tokens:  usage.cache_read_tokens.to_i,
+              cache_write_tokens: usage.cache_write_tokens.to_i
+            }
+          end
 
-        def token_usage_signal?(response, usage)
-          usage.values.any?(&:positive?) ||
-            response.respond_to?(:usage) ||
-            response.respond_to?(:raw) ||
-            response.respond_to?(:input_tokens) ||
-            response.respond_to?(:output_tokens)
+          hash = usage.respond_to?(:to_h) ? usage.to_h : usage
+          hash = hash.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key } if hash.is_a?(Hash)
+          return {} unless hash.is_a?(Hash)
+
+          {
+            input_tokens:       (hash[:input_tokens] || 0).to_i,
+            output_tokens:      (hash[:output_tokens] || 0).to_i,
+            cache_read_tokens:  (hash[:cache_read_tokens] || 0).to_i,
+            cache_write_tokens: (hash[:cache_write_tokens] || 0).to_i
+          }
         end
 
         def merge_usage_hash(existing, incoming)
@@ -957,101 +970,9 @@ module Legion
           }
         end
 
-        def extract_token_metric(response, canonical_key, legacy_key = nil)
-          values = token_metric_candidates(response, canonical_key, legacy_key)
-          positive = values.find(&:positive?)
-          positive || values.first || 0
-        end
-
-        def token_metric_candidates(response, canonical_key, legacy_key = nil)
-          keys = [canonical_key, legacy_key].compact
-          token_metric_sources(response).flat_map do |source|
-            keys.filter_map { |key| extract_metric_value(source, key) }
-          end
-        end
-
-        def token_metric_sources(response)
-          sources = [response]
-          sources << response.usage if response.respond_to?(:usage)
-          sources << response.raw if response.respond_to?(:raw)
-
-          sources.compact.flat_map { |source| expand_token_metric_source(source) }.compact.uniq
-        end
-
-        def expand_token_metric_source(source, depth = 0)
-          return [] if source.nil?
-          return [source] unless source.respond_to?(:key?) && depth < 3
-
-          nested = [source]
-          nested << hash_value(source, :usage)
-          nested << hash_value(source, :data)
-          nested << hash_value(source, :response)
-          nested.compact.flat_map { |entry| [entry, *expand_token_metric_source(entry, depth + 1)] }
-        end
-
-        def extract_metric_value(source, key)
-          if source.respond_to?(key)
-            value = source.public_send(key)
-            return value.to_i unless value.nil?
-          end
-
-          return nil unless source.respond_to?(:key?)
-
-          value = hash_value(source, key)
-          value&.to_i
-        rescue StandardError => e
-          log.warn "[llm][adapter] action=extract_metric_value key=#{key} class=#{source.class} error=#{e.class}: #{e.message}"
-          nil
-        end
-
-        def hash_value(hash, key)
-          return hash[key] if hash.key?(key)
-
-          string_key = key.to_s
-          return hash[string_key] if hash.key?(string_key)
-
-          nil
-        end
-
-        def stream_thinking_hash(accumulator)
-          thinking_text = accumulator[:thinking_text]
-          return nil if thinking_text.empty?
-
-          { content: thinking_text, signature: accumulator[:thinking_signature], enabled: true }.compact
-        end
-
-        def thinking_hash(response)
-          return nil unless response.respond_to?(:thinking) && response.thinking
-
-          normalize_thinking_value(response.thinking)
-        end
-
-        def normalize_thinking_value(thinking)
-          case thinking
-          when Hash
-            normalized = thinking.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
-            {
-              content:   normalized[:content] || normalized[:text],
-              signature: normalized[:signature],
-              enabled:   true
-            }.compact
-          else
-            {
-              content:   thinking.respond_to?(:text) ? thinking.text : thinking,
-              signature: thinking.respond_to?(:signature) ? thinking.signature : nil,
-              enabled:   true
-            }.compact
-          end
-        end
-
-        def estimate_tokens(messages)
-          normalize_messages(messages).sum { |message| (message.content.to_s.length / 4.0).ceil }
-        end
-
         def response_metadata(response = nil, offering_metadata: nil)
           metadata = normalize_offering_metadata(offering_metadata)
           raw = response.is_a?(Hash) ? response : nil
-          raw ||= response.raw if response.respond_to?(:raw)
           metadata[:raw_model] = raw['model'] if raw.is_a?(Hash) && raw['model']
           metadata.empty? ? {} : { offering: metadata }
         end

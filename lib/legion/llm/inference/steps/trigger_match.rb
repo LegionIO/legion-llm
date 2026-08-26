@@ -80,22 +80,12 @@ module Legion
             depth = trigger_scan_depth
             messages = @request.messages.last(depth)
 
+            # G3: pipeline messages are Canonical::Message — role/text are
+            # member reads (no dual-shape accessor).
             text = messages.filter_map do |msg|
-              next unless msg.is_a?(Hash)
-              next unless (msg[:role] || msg['role']).to_s == 'user'
+              next unless msg.role.to_s == 'user'
 
-              content = msg[:content] || msg['content']
-              raw = if content.is_a?(Array)
-                      content.filter_map do |c|
-                        if c.is_a?(String)
-                          c
-                        else
-                          (c.is_a?(Hash) ? (c[:text] || c['text']) : nil)
-                        end
-                      end.join(' ')
-                    else
-                      content.to_s
-                    end
+              raw = msg.text.to_s
               next if harness_message?(raw)
 
               raw

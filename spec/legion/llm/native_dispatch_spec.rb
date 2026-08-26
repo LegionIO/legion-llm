@@ -31,23 +31,24 @@ RSpec.describe Legion::LLM::Call::Dispatch do
     context 'when provider is registered' do
       before { Legion::LLM::Call::Registry.register(:claude, fake_ext) }
 
-      it 'returns a normalized hash with :result and :usage keys' do
+      it 'returns a normalized response with text and usage' do
         result = described_class.dispatch_chat(
           provider: :claude,
           model:    'claude-sonnet-4-6',
           messages: [{ role: 'user', content: 'hi' }]
         )
-        expect(result).to have_key(:result)
-        expect(result).to have_key(:usage)
+        expect(result).to be_a(Legion::Extensions::Llm::Canonical::Response)
+        expect(result.text).to eq('hello from native')
+        expect(result.usage).to be_a(Legion::Extensions::Llm::Canonical::Usage)
       end
 
-      it 'sets :result to the extension content' do
+      it 'sets the response text to the extension content' do
         result = described_class.dispatch_chat(
           provider: :claude,
           model:    'claude-sonnet-4-6',
           messages: [{ role: 'user', content: 'hi' }]
         )
-        expect(result[:result]).to eq('hello from native')
+        expect(result.text).to eq('hello from native')
       end
 
       it 'wraps usage in a Usage struct' do
@@ -56,9 +57,9 @@ RSpec.describe Legion::LLM::Call::Dispatch do
           model:    'claude-sonnet-4-6',
           messages: [{ role: 'user', content: 'hi' }]
         )
-        expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
-        expect(result[:usage].input_tokens).to eq(10)
-        expect(result[:usage].output_tokens).to eq(5)
+        expect(result.usage).to be_a(Legion::Extensions::Llm::Canonical::Usage)
+        expect(result.usage.input_tokens).to eq(10)
+        expect(result.usage.output_tokens).to eq(5)
       end
 
       it 'passes offering metadata through registered native providers' do
@@ -83,7 +84,7 @@ RSpec.describe Legion::LLM::Call::Dispatch do
           offering_id:       'azure:default:inference:gpt-4o',
           offering_metadata: { offering_id: 'azure:default:inference:gpt-4o', provider_instance: :eastus }
         )
-        expect(result[:metadata]).to include(
+        expect(result.metadata).to include(
           offering: { offering_id: 'azure:default:inference:gpt-4o', provider_instance: :eastus }
         )
       end
@@ -94,7 +95,7 @@ RSpec.describe Legion::LLM::Call::Dispatch do
           model:    nil,
           messages: []
         )
-        expect(result[:result]).to eq('hello from native')
+        expect(result.text).to eq('hello from native')
       end
     end
 
@@ -116,8 +117,8 @@ RSpec.describe Legion::LLM::Call::Dispatch do
 
     it 'returns normalized hash' do
       result = described_class.dispatch_embed(provider: :bedrock, model: 'titan', text: 'hello')
-      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
-      expect(result[:usage].input_tokens).to eq(3)
+      expect(result.usage).to be_a(Legion::Extensions::Llm::Canonical::Usage)
+      expect(result.usage.input_tokens).to eq(3)
     end
 
     it 'raises ProviderError when not registered' do
@@ -136,8 +137,8 @@ RSpec.describe Legion::LLM::Call::Dispatch do
         model:    'claude-sonnet-4-6',
         messages: [{ role: 'user', content: 'hi' }]
       )
-      expect(result[:result]).to eq('streamed')
-      expect(result[:usage].output_tokens).to eq(4)
+      expect(result.text).to eq('streamed')
+      expect(result.usage.output_tokens).to eq(4)
     end
 
     it 'raises ProviderError when not registered' do
@@ -156,8 +157,9 @@ RSpec.describe Legion::LLM::Call::Dispatch do
         model:    'claude-sonnet-4-6',
         messages: []
       )
-      expect(result[:result]).to eq(42)
-      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
+      # Non-string count payload rides in metadata[:raw_result]; text is empty.
+      expect(result.metadata[:raw_result]).to eq(42)
+      expect(result.usage).to be_a(Legion::Extensions::Llm::Canonical::Usage)
     end
 
     it 'raises ProviderError when not registered' do
@@ -188,8 +190,8 @@ RSpec.describe Legion::LLM::Call::Dispatch do
         end
       end)
       result = described_class.dispatch_chat(provider: :openai, model: nil, messages: [])
-      expect(result[:result]).to eq('plain string')
-      expect(result[:usage]).to be_a(Legion::Extensions::Llm::Canonical::Usage)
+      expect(result.text).to eq('plain string')
+      expect(result.usage).to be_a(Legion::Extensions::Llm::Canonical::Usage)
     end
 
     it 'passes through a Usage struct when already wrapped' do
@@ -202,7 +204,7 @@ RSpec.describe Legion::LLM::Call::Dispatch do
       end
       Legion::LLM::Call::Registry.register(:passthru, ext)
       result = described_class.dispatch_chat(provider: :passthru, model: nil, messages: [])
-      expect(result[:usage].input_tokens).to eq(99)
+      expect(result.usage.input_tokens).to eq(99)
     end
 
     it 'normalizes empty string tool-call arguments to an empty hash' do
@@ -218,49 +220,15 @@ RSpec.describe Legion::LLM::Call::Dispatch do
 
       result = described_class.dispatch_chat(provider: :openai, model: nil, messages: [])
 
-      expect(result[:tool_calls].first[:arguments]).to eq({})
+      expect(result.tool_calls.first.arguments).to eq({})
     end
   end
 end
 
-# P4a: NativeResponseAdapter was deleted; Dispatch now returns Canonical::Response.
-# These specs verify the canonical adapter provides backward-compatible hash-key access.
+# Dispatch returns Canonical::Response; consumers use member access. The P6
+# Hash-compat monkey-patch (response[:text], tool_call[:id], ...) was deleted
+# (M5/R16) — canonical objects are not Hash-lookalike.
 RSpec.describe Legion::LLM::Call::Dispatch, '.normalize_response (canonical)' do
-  let(:canonical) { Legion::Extensions::Llm::Canonical }
-
-  # Test the hash-key adapter on Canonical::Response
-  it 'allows [:text] access on Canonical::Response' do
-    response = canonical::Response.new(
-      text: 'hello', thinking: nil, tool_calls: [],
-      usage: canonical::Usage.new(input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}),
-      stop_reason: :end_turn, model: 'test', routing: {}, metadata: {}
-    )
-    expect(response[:text]).to eq('hello')
-    expect(response[:content]).to eq('hello')   # backward-compatible alias
-    expect(response[:result]).to eq('hello')    # backward-compatible alias
-  end
-
-  it 'allows hash-key access on Canonical::ToolCall' do
-    tc = canonical::ToolCall.new(
-      id: 'tc1', exchange_id: nil, name: 'write_file', arguments: { path: '/tmp/x' },
-      source: { type: :registry }, status: :success, duration_ms: 50, result: 'ok',
-      error: nil, started_at: nil, finished_at: nil, category: nil,
-      data_handling_classification: nil, policy_decision: nil
-    )
-    expect(tc[:id]).to eq('tc1')
-    expect(tc[:name]).to eq('write_file')
-    expect(tc[:arguments]).to eq({ path: '/tmp/x' })
-  end
-
-  it 'allows dig on Canonical::Response' do
-    response = canonical::Response.new(
-      text: 'hello', thinking: nil, tool_calls: [],
-      usage: canonical::Usage.new(input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}),
-      stop_reason: :end_turn, model: 'test', routing: {}, metadata: { deep: { nested: 'value' } }
-    )
-    expect(response[:metadata][:deep][:nested]).to eq('value')
-  end
-
   describe 'model policy enforcement (fail-closed, terminal)' do
     let(:guarded_ext) do
       Module.new do

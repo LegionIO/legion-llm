@@ -2,6 +2,7 @@
 
 require 'time'
 require 'legion/logging/helper'
+require 'legion/llm/api/native/models'
 
 module Legion
   module LLM
@@ -61,7 +62,7 @@ module Legion
           end
 
           def self.build_model_list
-            models = Legion::LLM::Inventory.offerings(type: :inference).map do |offering|
+            models = Legion::LLM::API::Native::Models.lane_entries(type: :inference).map do |offering|
               Legion::LLM::API::Translators::OpenAIResponse.format_model_object(
                 offering[:model],
                 owned_by: offering[:provider_family]

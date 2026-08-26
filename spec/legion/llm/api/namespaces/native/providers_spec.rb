@@ -69,12 +69,40 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
       expect(last_response.status).to eq(503)
     end
 
-    it 'returns empty list when registry raises' do
+    # N7: a registry read FAULT must not masquerade as an empty registry
+    # (200 with []). The fault surfaces error-shaped (500), logged by the
+    # route handler.
+    it 'returns 500 when the registry read faults' do
       allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_raise(StandardError, 'registry down')
       get '/api/llm/providers'
+      expect(last_response.status).to eq(500)
+      result = Legion::JSON.load(last_response.body)
+      expect(result[:error][:code]).to eq('provider_error')
+      expect(result[:error][:message]).to eq('registry down')
+    end
+
+    it 'includes an activated SSOT provider absent from the compatibility call registry', :ssot_v3 do
+      allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return([])
+      activate(
+        provider_family: :vllm,
+        instance_id:     'h200',
+        drafts:          [
+          offering_draft(
+            model:        'test-model',
+            tier:         :local,
+            supported:    %i[chat stream_chat],
+            capabilities: { tools: :supported, streaming: :supported }
+          )
+        ]
+      )
+
+      get '/api/llm/providers'
+
       expect(last_response.status).to eq(200)
       result = Legion::JSON.load(last_response.body)
-      expect(result[:data][:providers]).to eq([])
+      expect(result[:data][:providers]).to include(
+        hash_including(provider: 'vllm', instance: 'h200', tier: 'local', native: true)
+      )
     end
   end
 

@@ -56,54 +56,39 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.step_tier_assignment')
           end
 
-          # SSOT v3 single-engine: step_routing derives the immutable
-          # RequestRequirements ONCE. It performs NO selection — no request_lane,
-          # no infer_provider, no default model/provider, no tier fabrication.
-          # The exact provider+instance+model is chosen only by Router.next_lane
-          # inside the RoutingSession loop at dispatch time, and @resolved_* are
-          # populated from that Selection. Failure raises (never nil-fail-open to
-          # a legacy path — there is no legacy path).
+          # SSOT v4 single-engine: step_routing builds the per-request Router
+          # ONCE. It performs NO selection — no request_lane, no infer_provider,
+          # no default model/provider, no tier fabrication. The exact
+          # provider+instance+model is chosen only by Router#next_lane inside the
+          # attempt loop at dispatch time, and @resolved_* are populated from
+          # that Selection. Failure raises (never nil-fail-open to a legacy path
+          # — there is no legacy path).
           def step_routing
             @timestamps[:routing_start] = Time.now
-            build_ssot_v3_routing_requirements
+            build_ssot_router
             @timeline.record(
               category: :audit, key: 'routing:requirements',
               direction: :internal,
-              detail: "operation=#{@routing_requirements.operation} caps=#{@routing_requirements.required_capabilities.inspect}",
+              detail: "operation=#{@router.operation} caps=#{@router.required_capabilities.inspect}",
               from: 'router', to: 'pipeline'
             )
           end
 
-          # SSOT v3 §9/§14 — build the immutable RequestRequirements once per
-          # request. Required output size participates in context eligibility
-          # (directive: never exclude it). No inventory-generation gate: an empty
-          # Registry yields a typed too_early/service_unavailable Rejection from
-          # next_lane, never a fabricated lane or a legacy fallback.
-          def build_ssot_v3_routing_requirements
+          # SSOT v4 — build the per-request Router once. The Router derives
+          # required capabilities, input bound, context budget, and output tokens
+          # internally from the request and operation. No inventory-generation
+          # gate: an empty Registry yields a typed too_early/service_unavailable
+          # Rejection from next_lane, never a fabricated lane or a legacy fallback.
+          def build_ssot_router
             operation = @request.stream == true ? :stream_chat : :chat
-            required_caps = Legion::LLM::Router::RequiredCapabilities.call(
-              request: @request, operation: operation
+            body_model = @request.metadata[:client_model]
+            @router = Legion::LLM::Router.new(
+              request:    @request,
+              operation:  operation,
+              body_model: body_model
             )
-            framing = @request.routing_settings_snapshot.input_framing_overhead_tokens
-            input_bound = Legion::LLM::Router::InputBound.call(
-              operation:               operation,
-              messages:                @request.messages,
-              system:                  @request.system,
-              tools:                   @request.tools,
-              tool_choice:             @request.tool_choice,
-              thinking:                @request.thinking,
-              response_format:         @request.response_format,
-              framing_overhead_tokens: framing
-            )
-            @routing_requirements = Legion::LLM::Router::RequestRequirements.build(
-              request:                @request,
-              operation:              operation,
-              required_capabilities:  required_caps,
-              estimated_input_bound:  input_bound,
-              required_output_tokens: required_output_tokens_for_request
-            )
-            log.debug "[llm][executor] action=ssot_v3_requirements_built operation=#{operation} " \
-                      "output_tokens=#{@routing_requirements.required_output_tokens}"
+            log.debug "[llm][executor] action=ssot_router_built operation=#{operation} " \
+                      "output_tokens=#{@router.required_output_tokens}"
           end
 
           # Requested max output tokens — sourced from the canonical request token
@@ -120,14 +105,22 @@ module Legion
             Thread.current[:legion_log_exchange_id] = @exchange_id
           end
 
+          # M10: an honest dispatch gate. In SSOT mode the attempt context
+          # is set and dispatch executes the Selection's exact inventory
+          # callable — no legacy extension-registry entry is in the path
+          # (stale/disposed callables surface as typed inventory errors,
+          # never a registry miss). On the legacy Call::Dispatch path the
+          # extension is resolved by name, so the gate checks the registry
+          # exactly as Dispatch.available? does.
           def use_native_dispatch?(provider)
-            return false unless defined?(Call::Dispatch)
             return false unless provider
+            return true if @current_attempt_context
+            return false unless defined?(Call::Dispatch)
 
             layer_settings = Legion::Settings.dig(:llm, :provider_layer) || {}
             mode = (layer_settings[:mode] || 'auto').to_s
 
-            %w[native auto].include?(mode)
+            %w[native auto].include?(mode) && Call::Dispatch.available?(provider)
           end
 
           def merge_response_offering_metadata(metadata)
@@ -136,8 +129,11 @@ module Legion
             offering = normalize_offering_metadata(metadata[:offering] || metadata['offering'] || metadata)
             return if offering.empty?
 
+            # M6: response metadata is descriptive data (limits, context
+            # window) — it must never write routing identity. Offering
+            # identity is Selection-owned; a provider-asserted offering_id
+            # stays inert data in the metadata, not @resolved_offering_id.
             @resolved_offering_metadata = @resolved_offering_metadata.merge(offering)
-            @resolved_offering_id = @resolved_offering_metadata[:offering_id] if @resolved_offering_id.nil?
           end
         end
       end

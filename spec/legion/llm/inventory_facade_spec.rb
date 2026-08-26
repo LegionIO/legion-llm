@@ -15,7 +15,6 @@ RSpec.describe Legion::LLM::Inventory, :ssot_v3 do
     it 'delegates to the Phase 1 Registry and returns a Snapshot' do
       snap = described_class.snapshot
       expect(snap).to respond_to(:each_instance)
-      expect(snap).to respond_to(:each_offering)
       expect(snap).to respond_to(:each_lane)
       expect(snap).to respond_to(:generation)
     end

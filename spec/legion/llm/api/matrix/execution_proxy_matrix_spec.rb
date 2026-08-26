@@ -163,6 +163,184 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
     include_examples 'mixed failed LegionIO tool result plus client passthrough tool', :openai_chat
   end
 
+  # TOOLS ROOT-2 / G24 execution-proxy invariant (offline oracle for the
+  # spec/claude/vllm/{tool_call, tool_call_multi_turn, thinking_not_empty_response}
+  # regressions and the codex siblings). A PURE client-declared tool call, and
+  # the provider reports stop_reason :end_turn (the captured vLLM/qwen shape).
+  # A client-actionable call must exit PENDING: it renders as a pending tool_use
+  # with stop_reason 'tool_use' (/v1/messages) and as an actionable function_call
+  # with NO function_call_output sibling (/v1/responses) — the daemon must NOT
+  # stamp a fabricated "Passthrough to client" result on it and must NOT let the
+  # provider's :end_turn leak through. Before FIX 3 the /v1/messages cell renders
+  # stop_reason 'end_turn' (the fabricated result defeats format_stop_reason).
+  shared_examples 'pending client passthrough tool call with provider end_turn' do |client_format|
+    it "renders a pending tool_use (never a fabricated result) for #{client_format}" do
+      FakeProvider.with_scenario(:client_tool_passthrough_pending) do
+        case client_format
+        when :anthropic_messages
+          post '/v1/messages',
+               Legion::JSON.dump({
+                                   model:      'fake-default',
+                                   max_tokens: 1024,
+                                   messages:   [{ role: 'user', content: 'run a client tool' }],
+                                   tools:      [
+                                     {
+                                       name:         'exec_command',
+                                       description:  'Run a local command in the client.',
+                                       input_schema: {
+                                         type:       'object',
+                                         properties: { cmd: { type: 'string' } },
+                                         required:   %w[cmd]
+                                       }
+                                     }
+                                   ]
+                                 }),
+               'CONTENT_TYPE' => 'application/json'
+        when :openai_responses
+          post '/v1/responses',
+               Legion::JSON.dump({
+                                   model: 'fake-default',
+                                   input: 'run a client tool',
+                                   tools: [
+                                     {
+                                       type:        'function',
+                                       name:        'exec_command',
+                                       description: 'Run a local command in the client.',
+                                       parameters:  {
+                                         type:       'object',
+                                         properties: { cmd: { type: 'string' } },
+                                         required:   %w[cmd]
+                                       }
+                                     }
+                                   ]
+                                 }),
+               'CONTENT_TYPE' => 'application/json'
+        else
+          raise "unknown client_format=#{client_format.inspect}"
+        end
+      end
+
+      expect(last_response.status).to eq(200), -> { "got #{last_response.status}: #{last_response.body[0, 500]}" }
+      body = Legion::JSON.load(last_response.body)
+
+      case client_format
+      when :anthropic_messages
+        content = body[:content]
+        client_use = content.find { |item| item[:type] == 'tool_use' && item[:name] == 'exec_command' }
+
+        # A client-actionable call is a PENDING plain tool_use — never a
+        # server_tool_use, and never accompanied by a (fabricated) server_tool_result.
+        expect(client_use).not_to be_nil
+        expect(content.map { |item| item[:type] }).not_to include('server_tool_use')
+        expect(content.map { |item| item[:type] }).not_to include('server_tool_result')
+        # The invariant: the pending client call wins the stop reason over the
+        # provider's :end_turn. Before FIX 3 this is 'end_turn'.
+        expect(body[:stop_reason]).to eq('tool_use')
+      when :openai_responses
+        output = body[:output]
+        client_call = output.find { |item| item[:type] == 'function_call' && item[:name] == 'exec_command' }
+
+        # Actionable client call rides in output[]; it must NOT be paired with a
+        # function_call_output (that pairing is reserved for server-executed
+        # tools — a fabricated passthrough result must never surface as one).
+        expect(client_call).not_to be_nil
+        expect(output.map { |item| item[:type] }).not_to include('function_call_output')
+        expect(body[:status]).to eq('completed')
+      end
+    end
+  end
+
+  describe 'pending client passthrough tool call with provider end_turn' do
+    include_examples 'pending client passthrough tool call with provider end_turn', :anthropic_messages
+    include_examples 'pending client passthrough tool call with provider end_turn', :openai_responses
+  end
+
+  # Faithful vLLM reproduction: the provider translator does NOT stamp source
+  # on response tool calls (source arrives nil). The executor must resolve
+  # execution authority BY NAME (find_tool_source fallback) so a client tool
+  # still surfaces as PENDING. Without the fallback, canonical_source_symbol(nil)
+  # → nil → client_pending false → the tool inherits the "Passthrough to client"
+  # placeholder result → format_stop_reason returns end_turn instead of tool_use.
+  shared_examples 'pending client passthrough tool call (source nil from provider)' do |client_format|
+    it "resolves source by name and renders pending tool_use for #{client_format}" do
+      FakeProvider.with_scenario(:client_tool_passthrough_pending_source_nil) do
+        case client_format
+        when :anthropic_messages
+          post '/v1/messages',
+               Legion::JSON.dump({
+                                   model:      'fake-default',
+                                   max_tokens: 1024,
+                                   messages:   [{ role: 'user', content: 'run a client tool [fake:client_tool_passthrough_pending_source_nil]' }],
+                                   tools:      [
+                                     {
+                                       name:         'exec_command',
+                                       description:  'Run a local command in the client.',
+                                       input_schema: {
+                                         type:       'object',
+                                         properties: { cmd: { type: 'string' } },
+                                         required:   %w[cmd]
+                                       }
+                                     }
+                                   ]
+                                 }),
+               'CONTENT_TYPE' => 'application/json'
+        when :openai_responses
+          post '/v1/responses',
+               Legion::JSON.dump({
+                                   model: 'fake-default',
+                                   input: 'run a client tool [fake:client_tool_passthrough_pending_source_nil]',
+                                   tools: [
+                                     {
+                                       type:        'function',
+                                       name:        'exec_command',
+                                       description: 'Run a local command in the client.',
+                                       parameters:  {
+                                         type:       'object',
+                                         properties: { cmd: { type: 'string' } },
+                                         required:   %w[cmd]
+                                       }
+                                     }
+                                   ]
+                                 }),
+               'CONTENT_TYPE' => 'application/json'
+        else
+          raise "unknown client_format=#{client_format.inspect}"
+        end
+      end
+
+      expect(last_response.status).to eq(200), -> { "got #{last_response.status}: #{last_response.body[0, 500]}" }
+      body = Legion::JSON.load(last_response.body)
+
+      case client_format
+      when :anthropic_messages
+        content = body[:content]
+        client_use = content.find { |item| item[:type] == 'tool_use' && item[:name] == 'exec_command' }
+
+        # A client-actionable call is PENDING plain tool_use — no server shapes,
+        # no fabricated result.
+        expect(client_use).not_to be_nil
+        expect(content.map { |item| item[:type] }).not_to include('server_tool_use')
+        expect(content.map { |item| item[:type] }).not_to include('server_tool_result')
+        # The invariant: the pending client call wins the stop reason.
+        expect(body[:stop_reason]).to eq('tool_use')
+      when :openai_responses
+        output = body[:output]
+        client_call = output.find { |item| item[:type] == 'function_call' && item[:name] == 'exec_command' }
+
+        # Actionable client call rides in output[]; no function_call_output
+        # (fabricated passthrough result must never surface as one).
+        expect(client_call).not_to be_nil
+        expect(output.map { |item| item[:type] }).not_to include('function_call_output')
+        expect(body[:status]).to eq('completed')
+      end
+    end
+  end
+
+  describe 'pending client passthrough tool call (source nil from provider)' do
+    include_examples 'pending client passthrough tool call (source nil from provider)', :anthropic_messages
+    include_examples 'pending client passthrough tool call (source nil from provider)', :openai_responses
+  end
+
   describe '/v1/messages — server-side LegionIO tool execution' do
     it 'surfaces server_tool_use+server_tool_result and provider sees the tool result on next turn' do
       received_args = nil

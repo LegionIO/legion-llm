@@ -221,7 +221,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
         text = step.send(:extract_recent_text)
 
         expect(text).to eq(' hello who are you')
-        expect(request.messages.first[:content]).to include('<system-reminder>')
+        expect(request.messages.first.content).to include('<system-reminder>')
       end
     end
 
@@ -240,7 +240,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
 
         expect(text).to eq("\nhello who are you\n")
         expect(text).not_to include('Write the title')
-        expect(request.messages.first[:content]).to include('Write the title')
+        expect(request.messages.first.content).to include('Write the title')
       end
     end
 
@@ -277,14 +277,14 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
     end
 
     it 'reads from settings via set_prop' do
-      Legion::Settings.set_prop(:llm, {
-                                  tools: {
-                                    trigger: {
-                                      scan_depth: 3,
-                                      tool_limit: 8
-                                    }
-                                  }
-                                })
+      merge_llm_settings({
+                           tools: {
+                             trigger: {
+                               scan_depth: 3,
+                               tool_limit: 8
+                             }
+                           }
+                         })
       expect(step.send(:trigger_scan_depth)).to eq(3)
     end
   end
@@ -301,14 +301,14 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
     end
 
     it 'reads from settings via set_prop' do
-      Legion::Settings.set_prop(:llm, {
-                                  tools: {
-                                    trigger: {
-                                      scan_depth: 3,
-                                      tool_limit: 8
-                                    }
-                                  }
-                                })
+      merge_llm_settings({
+                           tools: {
+                             trigger: {
+                               scan_depth: 3,
+                               tool_limit: 8
+                             }
+                           }
+                         })
       expect(step.send(:trigger_tool_limit)).to eq(8)
     end
   end

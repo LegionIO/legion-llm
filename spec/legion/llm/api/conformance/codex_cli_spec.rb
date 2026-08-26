@@ -95,22 +95,27 @@ RSpec.describe 'Codex CLI conformance', :ssot_v3, type: :conformance do
         Legion::LLM::Inference::Response,
         routing: { model: 'legionio' },
         tokens:  { input_tokens: 5, output_tokens: 2 },
-        message: 'Hello world!',
+        # G3: the envelope's message member is the canonical rendering
+        # projection (a Hash), matching the real boundary shape (R15).
+        message: { role: :assistant, content: 'Hello world!' },
         tools:   []
       )
     end
 
+    # G3/L2: the stream carries Canonical::Chunk only — the legacy
+    # Types::Chunk double shape is gone (the provider boundary yields
+    # canonical chunks; the assembler raises on any other shape).
     let(:fake_chunks) do
       [
-        Legion::LLM::Types::Chunk.content_delta(
-          delta:      { text: 'Hello ' },
+        Legion::Extensions::Llm::Canonical::Chunk.text_delta(
+          delta:      'Hello ',
           request_id: 'req_test_123'
         ),
-        Legion::LLM::Types::Chunk.content_delta(
-          delta:      { text: 'world!' },
+        Legion::Extensions::Llm::Canonical::Chunk.text_delta(
+          delta:      'world!',
           request_id: 'req_test_123'
         ),
-        Legion::LLM::Types::Chunk.done(
+        Legion::Extensions::Llm::Canonical::Chunk.done(
           request_id:  'req_test_123',
           usage:       { input_tokens: 5, output_tokens: 2 },
           stop_reason: 'end_turn'
@@ -274,8 +279,12 @@ RSpec.describe 'Codex CLI conformance', :ssot_v3, type: :conformance do
         Legion::LLM::Inference::Response,
         routing: { model: 'legionio' },
         tokens:  { input_tokens: 5, output_tokens: 2 },
-        message: 'Hello!',
-        tools:   []
+        message: { role: :assistant, content: 'Hello!' },
+        tools:   [],
+        # M7: a real successful completion carries the provider's stop
+        # reason — the double matches the real boundary (an absent stop is
+        # not rendered as a fabricated completion).
+        stop:    { reason: 'end_turn' }
       )
     end
 

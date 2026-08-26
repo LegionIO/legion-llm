@@ -1,22 +1,22 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/router/outcome_classifier'
+require 'legion/llm/routing/outcome'
 require 'legion/llm/inference/attempt_context'
 
-# Escalation error classification — SSOT v3 rewrite.
+# Escalation error classification — SSOT v4 rewrite.
 #
 # INVARIANTS (all survive):
 #   • Request-payload validation errors (ValidationException) → :invalid_request →
-#     OutcomeClassifier terminal, NO global_transition → dispatch_instance_unavailable never called.
-#   • Auth / authorization errors → :authentication/:authorization → OutcomeClassifier retry,
+#     Routing::Outcome terminal, NO global_transition → dispatch_instance_unavailable never called.
+#   • Auth / authorization errors → :authentication/:authorization → Routing::Outcome retry,
 #     NO global_transition → instance stays available for future requests.
-#   • Transport/connection errors → :provider_error → OutcomeClassifier retry, NO global_transition.
-#   • Context overflow → :provider_error → OutcomeClassifier retry, NO global_transition.
+#   • Transport/connection errors → :provider_error → Routing::Outcome retry, NO global_transition.
+#   • Context overflow → :provider_error → Routing::Outcome retry, NO global_transition.
 #   • Only :instance_unavailable triggers a GlobalTransition → dispatch_instance_unavailable.
 #
 # What changed vs legacy: health_tracker.deny_model / health_tracker.trip_circuit no longer exist.
-# The equivalent in SSOT v3 is OutcomeClassifier.Action#global_transition — only
+# The equivalent in SSOT v4 is Routing::Outcome::Action#global_transition — only
 # :instance_unavailable produces one. All other outcomes are request-local.
 RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classification', :ssot_v3 do
   let(:routing) { Legion::Extensions::Llm::Routing }
@@ -37,18 +37,19 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
 
   def classify_outcome(kind, attempt_context:, attempts_remaining: 2, reason: kind.to_s)
     outcome = make_outcome(kind, reason: reason)
-    Legion::LLM::Router::OutcomeClassifier.call(
+    classifier = Object.new.extend(Legion::LLM::Routing::Outcome)
+    classifier.classify_outcome(
       outcome: outcome, attempt_context: attempt_context,
       attempts_remaining: attempts_remaining
     )
   end
 
-  describe 'OutcomeClassifier disposition — request-payload validation errors' do
+  describe 'Routing::Outcome disposition — request-payload validation errors' do
     let(:attempt_context) { build_attempt_context }
 
     it 'invalid_request (ValidationException) → terminal action, no global_transition' do
       # ValidationException errors are normalized to :invalid_request by the provider.
-      # OutcomeClassifier marks them terminal — they never waste additional attempt slots.
+      # Routing::Outcome marks them terminal — they never waste additional attempt slots.
       action = classify_outcome(:invalid_request, attempt_context: attempt_context,
                                                   reason:          'ValidationException: tools.16.custom.input_schema.type: Field required')
       expect(action).to be_terminal
@@ -63,7 +64,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
     end
   end
 
-  describe 'OutcomeClassifier disposition — auth / authorization errors' do
+  describe 'Routing::Outcome disposition — auth / authorization errors' do
     let(:attempt_context) { build_attempt_context }
 
     it 'authorization → retry action, no global_transition (model not permanently denied)' do
@@ -84,7 +85,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
     end
   end
 
-  describe 'OutcomeClassifier disposition — transport / connection errors' do
+  describe 'Routing::Outcome disposition — transport / connection errors' do
     let(:attempt_context) { build_attempt_context }
 
     it 'provider_error (connection refused to provider) → retry action, no global_transition' do
@@ -104,7 +105,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation error classificatio
     end
   end
 
-  describe 'OutcomeClassifier disposition — context overflow' do
+  describe 'Routing::Outcome disposition — context overflow' do
     let(:attempt_context) { build_attempt_context }
 
     it 'provider_error (context too long) → retry action, no global_transition' do

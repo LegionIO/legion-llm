@@ -106,9 +106,16 @@ module Legion
 
           def derive_thinking(request:, **)
             thinking = request.respond_to?(:thinking) ? request.thinking : nil
-            return :any unless thinking.is_a?(Hash) && thinking.any?
+            return :any if thinking.nil?
+            return thinking.any? ? :require : :any if thinking.is_a?(Hash)
 
-            thinking[:type]&.to_sym == :enabled ? :require : :any
+            # N2: shared execution carries canonical thinking — a
+            # Thinking::Config (or a canonical {effort:, budget:} Hash from
+            # the Prompt API), never a client-dialect shape. An explicit
+            # effort or budget is a thinking requirement.
+            effort = thinking.respond_to?(:effort) ? thinking.effort : nil
+            budget = thinking.respond_to?(:budget) ? thinking.budget : nil
+            effort || budget ? :require : :any
           end
 
           def derive_privacy(request:, **)
@@ -116,8 +123,12 @@ module Legion
             return :normal unless classification.is_a?(Hash)
 
             classification[:privacy]&.to_sym == :strict ? :strict : :normal
-          rescue StandardError
-            :normal
+          rescue StandardError => e
+            # No-fail-open: a classification fault must never silently downgrade
+            # the request's privacy. Fail closed to :strict so routing is
+            # constrained, not opened.
+            handle_exception(e, level: :error, operation: 'llm.inference.derive_privacy')
+            :strict
           end
         end
       end

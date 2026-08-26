@@ -46,12 +46,14 @@ RSpec.describe 'Codex CLI conformance', :integration do
     allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(
       double('Executor').tap do |ex|
         allow(ex).to receive(:stream_preflight!).and_return(nil)
+        # G3/L2: Canonical::Chunk only (the legacy double('Chunk') shape is
+        # gone; R15).
         allow(ex).to receive(:call_stream) do |&block|
-          block.call(double('Chunk', content: 'def hello; end'))
+          block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'def hello; end', request_id: 'req_codex'))
           pipeline_response
         end
         allow(ex).to receive(:call_responses) do |**, &block|
-          block.call(double('Chunk', content: 'def hello; end'))
+          block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'def hello; end', request_id: 'req_codex'))
           pipeline_response
         end
         allow(ex).to receive(:respond_to?).with(:call_responses).and_return(true)

@@ -27,12 +27,12 @@ RSpec.describe 'Namespaces::OpenAI::Models', :ssot_v3 do
 
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
-    Legion::LLM::Router::SettingsState.reset!
+    Legion::LLM::Routing::SettingsState.reset!
     Legion::Settings.loader.settings[:extensions] ||= {}
     Legion::Settings.loader.settings[:extensions][:llm] ||= {}
   end
 
-  after { Legion::LLM::Router::SettingsState.reset! }
+  after { Legion::LLM::Routing::SettingsState.reset! }
 
   # Activate one chat-capable offering so the compat set is non-empty and the
   # auto-routing aliases (legionio/auto/copilot-utility-small) are appended.

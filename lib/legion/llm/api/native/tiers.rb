@@ -2,6 +2,7 @@
 
 require 'legion/logging/helper'
 require 'legion/llm/router'
+require 'legion/extensions/llm/taxonomies'
 
 module Legion
   module LLM
@@ -160,16 +161,15 @@ module Legion
             log.debug('[llm][api][tiers] tier routes registered')
           end
 
-          # Legacy display names for supported operations (same mapping the
-          # LegacyCoordinatorAdapter and provider actors use for the
-          # capabilities display surface).
+          # Legacy display names for operations (the v0.15.2 capabilities
+          # display vocabulary used by the tier/offerings surfaces).
           CAPABILITY_NAMES_BY_OPERATION = {
             chat: :completion, stream_chat: :streaming, embed: :embedding, image: :image,
             transcribe: :audio_transcription, translate: :audio_transcription, speak: :audio_speech,
             moderate: :moderation
           }.freeze
 
-          # D14: the tier tree is projected from the NEW Registry snapshot
+          # The tier tree is projected from the Registry snapshot
           # (model_catalog.rb is the in-repo precedent). Instance-level health
           # display derives from the instance's AvailabilityFact — the same
           # fact the provider actors copy into the settings health hash —
@@ -182,13 +182,13 @@ module Legion
             snapshot.each_instance { |inst| inst_by_key[inst.instance_key] = inst }
 
             grouped = {}
-            snapshot.each_offering do |offering|
+            snapshot.each_lane do |lane|
               # Compliance-by-absence: denied models never appear in the tier
-              # view (same §9.5 policy as the offerings surface).
-              next unless Legion::LLM::API::Native::Offerings.policy_permits?(offering)
+              # view (same policy as the offerings surface).
+              next unless Legion::LLM::API::Native::Offerings.policy_permits?(lane)
 
-              ik = offering.instance_key
-              tier_name = offering.tier.to_s
+              ik = lane.instance_key
+              tier_name = lane.tier.to_s
               provider_name = ik.provider_family.to_s
               instance_name = ik.instance_id.to_s
 
@@ -201,8 +201,8 @@ module Legion
               }
 
               inst = grouped[tier_name][:providers][provider_name][:instances][instance_name]
-              inst[:capabilities] = (inst[:capabilities] + offering_capabilities(offering)).uniq.sort
-              inst[:models] << build_model_entry(offering)
+              inst[:capabilities] = (inst[:capabilities] + lane_capabilities(lane)).uniq.sort
+              inst[:models] << build_model_entry(lane)
             end
 
             # Sort tiers by priority order. Router.tier_priority yields symbols;
@@ -221,16 +221,16 @@ module Legion
             sorted
           end
 
-          def self.build_model_entry(offering)
+          def self.build_model_entry(lane)
             {
-              id:           offering.model.to_s,
-              offering_id:  offering.offering_id.to_s,
-              type:         offering.operation_status(operation: :embed) == :supported ? 'embedding' : 'inference',
-              capabilities: offering_capabilities(offering),
-              limits:       offering_limits(offering),
+              id:           lane.model.to_s,
+              offering_id:  lane.lane_id,
+              type:         lane_type(lane).to_s,
+              capabilities: lane_capabilities(lane),
+              limits:       lane_limits(lane),
               enabled:      true,
               cost:         {},
-              model_family: offering.metadata[:model_family]&.to_s
+              model_family: lane.metadata[:model_family]&.to_s
             }.compact
           end
 
@@ -243,19 +243,26 @@ module Legion
             end
           end
 
-          def self.offering_capabilities(offering)
-            caps = offering.supported_operations.map { |op| CAPABILITY_NAMES_BY_OPERATION.fetch(op, op) }
-            offering.capability_evidence.each do |capability, evidence|
+          # The lane's display capabilities: the representative operation's
+          # legacy display name plus every supported capability the provider
+          # published as evidence.
+          def self.lane_capabilities(lane)
+            caps = [CAPABILITY_NAMES_BY_OPERATION.fetch(lane.operation, lane.operation)]
+            lane.capability_evidence.each do |capability, evidence|
               caps << capability if evidence.status == :supported
             end
             caps.map(&:to_s)
           end
 
-          def self.offering_limits(offering)
+          def self.lane_limits(lane)
             limits = {}
-            limits[:context_window] = offering.context_evidence.value if offering.context_evidence.known?
-            limits[:max_output_tokens] = offering.max_output_evidence.value if offering.max_output_evidence.known?
+            limits[:context_window] = lane.context_evidence.value if lane.context_evidence.known?
+            limits[:max_output_tokens] = lane.max_output_evidence.value if lane.max_output_evidence.known?
             limits
+          end
+
+          def self.lane_type(lane)
+            Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: lane.operation)
           end
         end
       end

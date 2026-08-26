@@ -2,9 +2,8 @@
 
 require 'securerandom'
 require 'legion/llm/routing_context'
-require 'legion/llm/router/settings_state'
-require 'legion/llm/router/header_constraints'
-require 'legion/llm/router/body_model_hint_policy'
+require 'legion/llm/routing/settings_state'
+require 'legion/llm/routing/header_constraints'
 
 module Legion
   module LLM
@@ -26,6 +25,26 @@ module Legion
         # constraints. `routing` is retained only as compatibility metadata.
         :routing_context, :body_model_hint_decision, :routing_settings_snapshot, :trusted_constraints
       ) do
+        # N x N law: Inference::Request#messages is Array<Canonical::Message>.
+        # Every pipeline entry (client translators, native/inference APIs,
+        # daemon-internal chat) funnels through build; canonical objects pass
+        # through, plain strings and wire hashes are translated to canonical at
+        # this boundary, and anything else raises loudly. No hash-shaped
+        # messages survive past this point.
+        def self.canonicalize_messages(messages)
+          Array(messages).map { |message| canonicalize_inbound_message(message) }
+        end
+
+        def self.canonicalize_inbound_message(message)
+          canonical = Legion::Extensions::Llm::Canonical::Message
+          return message if message.is_a?(canonical)
+          return canonical.build(role: :user, content: message) if message.is_a?(String)
+          return canonical.from_hash(message) if message.is_a?(Hash)
+
+          raise ArgumentError,
+                "Inference::Request messages must be Canonical::Message, String, or Hash, got #{message.class}"
+        end
+
         # SSOT v3 §7.2 additive build order. `routing_context` is injected only by
         # build_for_test; otherwise a fresh server seed is created here. The new
         # trusted fields are always populated (derived from existing routing kwargs
@@ -37,23 +56,28 @@ module Legion
           )
 
           ctx = routing_context || Legion::LLM::RoutingContext.build
-          settings_snapshot = kwargs[:routing_settings_snapshot] || Legion::LLM::Router::SettingsState.current
+          settings_snapshot = kwargs[:routing_settings_snapshot] || Legion::LLM::Routing::SettingsState.current
           trusted = kwargs[:trusted_constraints] || trusted_from_routing(routing, settings_snapshot)
-          body_decision = Legion::LLM::Router::BodyModelHintPolicy.call(
-            body_model: kwargs[:client_model], trusted_model: trusted.model, settings_snapshot: settings_snapshot
-          )
+
+          # SSOT v4: the raw client body model is the sole input to the Router's
+          # body-model-hint ladder, which reads it from metadata[:client_model].
+          # Client translators pass it as the top-level client_model: kwarg, so
+          # fold that into metadata here (the single bridge point) — the Request
+          # no longer carries a precomputed body_model_hint_decision.
+          metadata = kwargs.fetch(:metadata, {})
+          metadata = metadata.merge(client_model: kwargs[:client_model]) unless kwargs[:client_model].nil?
 
           new(
             routing_context:           ctx,
             routing_settings_snapshot: settings_snapshot,
             trusted_constraints:       trusted,
-            body_model_hint_decision:  body_decision,
+            body_model_hint_decision:  nil,
             id:                        kwargs[:id] || "req_#{SecureRandom.hex(12)}",
             conversation_id:           kwargs[:conversation_id],
             idempotency_key:           kwargs[:idempotency_key],
             schema_version:            kwargs.fetch(:schema_version, '1.0.0'),
             system:                    kwargs[:system],
-            messages:                  kwargs.fetch(:messages, []),
+            messages:                  canonicalize_messages(kwargs.fetch(:messages, [])),
             tools:                     kwargs.key?(:tools) ? kwargs[:tools] : nil,
             tool_choice:               kwargs.fetch(:tool_choice, { mode: :auto }),
             routing:                   routing,
@@ -69,7 +93,7 @@ module Legion
             priority:                  kwargs.fetch(:priority, :normal),
             ttl:                       kwargs[:ttl],
             extra:                     extra,
-            metadata:                  kwargs.fetch(:metadata, {}),
+            metadata:                  metadata,
             enrichments:               kwargs.fetch(:enrichments, {}),
             predictions:               kwargs.fetch(:predictions, {}),
             tracing:                   kwargs[:tracing],
@@ -85,13 +109,9 @@ module Legion
 
         def self.from_chat_args(**kwargs)
           request_id = kwargs[:request_id] || kwargs[:id]
-          messages = []
-          if kwargs[:messages]
-            messages = kwargs[:messages]
-          elsif kwargs[:message]
-            msg = kwargs[:message]
-            messages = msg.is_a?(Array) ? msg : [{ role: :user, content: msg }]
-          end
+          # Plain strings, wire hashes, and canonical objects are all translated
+          # to Array<Canonical::Message> by build's canonicalize_messages.
+          messages = kwargs[:messages] || kwargs[:message] || []
 
           routing = {
             provider: kwargs[:provider],
@@ -157,15 +177,18 @@ module Legion
         def self.trusted_from_routing(routing, settings_snapshot)
           routing ||= {}
           instance = routing[:instance] || routing[:instance_id] || routing[:provider_instance]
-          Legion::LLM::Router::HeaderConstraints.from_internal(
+          Legion::LLM::Routing::HeaderConstraints.from_internal(
             provider: routing[:provider], instance_id: instance, model: routing[:model],
             tier: routing[:tier], maximum_attempts: nil, settings_snapshot: settings_snapshot
           )
         end
 
         def self.auto_routing_model?(model)
-          routing_settings = Legion::Settings.dig(:llm, :routing) || {}
-          configured = routing_settings[:auto_routing_model_aliases]
+          # SSOT v4: auto_routing_model_aliases is a router tunable — read it from
+          # the canonical [:llm][:router] home (default in settings/router.rb) so
+          # ingress normalization agrees with the Router's body-model-hint ladder
+          # (filter.rb). No .dig / no || shadow-default: the default guarantees the key.
+          configured = Legion::Settings[:llm][:router][:auto_routing_model_aliases]
           aliases = Array(configured).map { |entry| entry.to_s.strip.downcase }.reject(&:empty?)
           aliases = [AUTO_ROUTING_MODEL_KEY] if aliases.empty?
           aliases.include?(model.to_s.strip.downcase)

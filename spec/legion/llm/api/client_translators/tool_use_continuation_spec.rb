@@ -74,10 +74,10 @@ RSpec.describe 'Client translator multi-turn tool_use continuation' do
         request_id:    'req_test',
         server_caller: { source: 'test' }
       )
-      assistant = inf.messages.find { |m| m[:role] == :assistant }
+      assistant = inf.messages.find { |m| m.role == :assistant }
       expect(assistant).not_to be_nil
-      expect(assistant[:tool_calls]).to be_an(Array)
-      expect(assistant[:tool_calls].first[:name].to_s).to eq('legion_list_all_tools')
+      expect(assistant.tool_calls).to be_an(Array)
+      expect(assistant.tool_calls.first.name).to eq('legion_list_all_tools')
     end
   end
 

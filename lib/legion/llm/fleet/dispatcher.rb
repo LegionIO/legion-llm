@@ -57,11 +57,14 @@ module Legion
         end
 
         def build_envelope(operation:, request_opts:, message_context:, routing_key: nil, reply_to: nil)
-          provider = fetch_option(request_opts, :provider) || 'ollama'
           reject_legacy_fields!(request_opts)
-          provider_instance = fetch_option(request_opts, :provider_instance) ||
-                              fetch_option(request_opts, :instance) || 'default'
-          model = fetch_option(request_opts, :model)
+          # Protocol v3 is exact-execution only (06 P2): provider, instance,
+          # model, and the exact pair are required — no default fill, no
+          # routing decision smuggled into the envelope.
+          provider = require_exact_value!(request_opts, :provider)
+          provider_instance = require_exact_value!(request_opts, :provider_instance)
+          model = require_exact_value!(request_opts, :model)
+          execution_contract, offering_id = require_exact_execution!(request_opts)
           timeout = resolve_timeout(operation: operation, override: fetch_option(request_opts, :timeout))
           request_id = next_request_id
           correlation_id = next_request_id
@@ -78,39 +81,53 @@ module Legion
           )
 
           envelope = {
-            protocol_version:  ::Legion::Extensions::Llm::Fleet::Protocol::VERSION,
-            request_id:        request_id,
-            correlation_id:    correlation_id,
-            idempotency_key:   fetch_option(request_opts, :idempotency_key) || "idem_#{SecureRandom.uuid}",
-            operation:         operation,
-            provider:          provider,
-            provider_instance: provider_instance,
-            model:             model,
-            params:            request_params(request_opts),
-            routing_key:       routing_key,
-            reply_to:          reply_to,
-            message_context:   message_context || {},
-            caller:            fetch_option(request_opts, :caller) || default_caller,
-            identity:          Legion::LLM::PublisherIdentity.current,
-            trace_context:     fetch_option(request_opts, :trace_context) || {},
-            timeout_seconds:   timeout,
-            expires_at:        (Time.now.utc + timeout).iso8601,
-            ttl:               effective_ttl(request_opts, timeout)
+            protocol_version:   ::Legion::Extensions::Llm::Fleet::Protocol::VERSION,
+            request_id:         request_id,
+            correlation_id:     correlation_id,
+            idempotency_key:    fetch_option(request_opts, :idempotency_key) || "idem_#{SecureRandom.uuid}",
+            operation:          operation,
+            provider:           provider,
+            provider_instance:  provider_instance,
+            model:              model,
+            params:             request_params(request_opts),
+            routing_key:        routing_key,
+            reply_to:           reply_to,
+            message_context:    message_context || {},
+            caller:             fetch_option(request_opts, :caller) || default_caller,
+            trace_context:      fetch_option(request_opts, :trace_context) || {},
+            timeout_seconds:    timeout,
+            expires_at:         (Time.now.utc + timeout).iso8601,
+            ttl:                effective_ttl(request_opts, timeout),
+            execution_contract: execution_contract,
+            offering_id:        offering_id
           }
-          execution_contract = fetch_option(request_opts, :execution_contract)
-          unless execution_contract.nil?
-            unless execution_contract == ::Legion::Extensions::Llm::Fleet::Protocol::EXACT_EXECUTION_CONTRACT
-              raise ArgumentError, "unknown fleet execution_contract marker: #{execution_contract.inspect}"
-            end
-
-            offering_id = fetch_option(request_opts, :offering_id)
-            raise ArgumentError, 'exact execution contract requires a nonempty String offering_id' unless offering_id.is_a?(String) && !offering_id.strip.empty?
-
-            envelope[:execution_contract] = execution_contract
-            envelope[:offering_id] = offering_id
-          end
           envelope[:signed_token] = dispatch_auth_required? ? TokenIssuer.issue(envelope) : 'unsigned'
           envelope
+        end
+
+        def require_exact_value!(request_opts, key)
+          value = fetch_option(request_opts, key)
+          raise ArgumentError, "#{key} is required for fleet protocol v3" if value.nil?
+
+          value
+        end
+
+        # P2: the marker is required and must equal the exact marker; the
+        # offering_id must be a nonempty String. Both are signed claims (S2/S3).
+        def require_exact_execution!(request_opts)
+          execution_contract = fetch_option(request_opts, :execution_contract)
+          if execution_contract.nil?
+            raise ArgumentError,
+                  "execution_contract must be #{::Legion::Extensions::Llm::Fleet::Protocol::EXACT_EXECUTION_CONTRACT} (fleet protocol v3)"
+          end
+          unless execution_contract == ::Legion::Extensions::Llm::Fleet::Protocol::EXACT_EXECUTION_CONTRACT
+            raise ArgumentError, "unknown fleet execution_contract marker: #{execution_contract.inspect}"
+          end
+
+          offering_id = fetch_option(request_opts, :offering_id)
+          raise ArgumentError, 'exact execution contract requires a nonempty String offering_id' unless offering_id.is_a?(String) && !offering_id.strip.empty?
+
+          [execution_contract, offering_id]
         end
 
         def expected_delivery(envelope)
@@ -155,7 +172,7 @@ module Legion
 
         def reject_legacy_fields!(request_opts)
           LEGACY_FIELDS.each do |field|
-            raise ArgumentError, "#{field} is not supported by fleet protocol v2" if legacy_field_present?(request_opts, field)
+            raise ArgumentError, "#{field} is not supported by fleet protocol v3" if legacy_field_present?(request_opts, field)
           end
         end
 
@@ -202,13 +219,15 @@ module Legion
           Legion::Settings[:llm][:fleet][:dispatch][:enabled] != false
         end
 
-        def resolve_timeout(operation: :default, request_type: nil, override: nil)
+        def resolve_timeout(operation: :default, override: nil)
           return override if override
 
-          op = (operation || request_type || :default).to_sym
+          op = operation.to_sym
           dispatch = Legion::Settings.dig(:llm, :fleet, :dispatch) || {}
           timeouts = dispatch[:timeouts] || {}
-          fetch_option(timeouts, op) || dispatch[:timeout_seconds] || 30
+          # N9: the fallback lives in settings (llm.fleet.dispatch.timeout_seconds,
+          # default 30) — no inline shadow default at the call site.
+          fetch_option(timeouts, op) || dispatch[:timeout_seconds]
         end
 
         def next_request_id

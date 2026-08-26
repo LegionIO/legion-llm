@@ -2,11 +2,11 @@
 
 # Permanent guard for the SSOT v3 embed contract (matrix had NO embed scenario).
 #
-# The harness FakeProvider callable returns the provider-native
-# Legion::Extensions::Llm::Embedding value object — the production shape every
-# lex-llm-* parse_embedding_response produces, mirroring how the chat path
-# returns the canonical Message. POST /v1/embeddings must normalize it at the
-# embed consumer boundary (Call::Embeddings.provider_vectors) and answer with
+# The harness FakeProvider callable returns the 0.8.0 documented embed
+# artifact Hash — the production shape every lex-llm-* parse_embedding_response
+# produces, mirroring how the chat path returns the canonical Response. POST
+# /v1/embeddings must normalize it at the embed consumer boundary
+# (Call::Embeddings.provider_vectors) and answer with
 # OpenAI-shaped vectors.
 #
 # Scenarios (each was a live e2e red, 2026-08-17):

@@ -3,329 +3,43 @@
 require 'spec_helper'
 require 'legion/llm/call/embeddings'
 
-def native_embed_response(response = nil, vectors: nil, input_tokens: nil)
-  vectors ||= response.vectors if response.respond_to?(:vectors)
-  input_tokens ||= response.input_tokens if response.respond_to?(:input_tokens)
-  {
-    result: vectors || [Array.new(1024, 0.1)],
-    usage:  Legion::LLM::Usage.new(input_tokens: input_tokens || 5)
-  }
-end
-
-RSpec.describe 'Legion::LLM embedding capability' do
+# M4: SSOT :embed routing (Call::Embeddings → Router.next_lane) is the SOLE
+# selection authority for embeddings. Discovery no longer selects a
+# provider/instance/model (the settings-pin → tier-rank → default_model chain
+# and its @embedding_* state are gone); can_embed? is a live capability fact
+# against the same Inventory lane store the router reads.
+RSpec.describe 'Legion::LLM embedding capability', :ssot_v3 do
   before do
-    Legion::LLM::Inventory::Discovery.instance_variable_set(:@can_embed, nil)
-    Legion::LLM::Inventory::Discovery.instance_variable_set(:@embedding_provider, nil)
-    Legion::LLM::Inventory::Discovery.instance_variable_set(:@embedding_model, nil)
-    Legion::LLM.instance_variable_set(:@can_embed, nil)
-    Legion::LLM.instance_variable_set(:@embedding_provider, nil)
-    Legion::LLM.instance_variable_set(:@embedding_model, nil)
+    Legion::Extensions::Llm::Inventory::Registry.reset!
+  end
+
+  after do
+    Legion::Extensions::Llm::Inventory::Registry.reset!
+  end
+
+  def publish_embed_lane(model, provider: :ollama, instance: :gpu_box, tier: :local, capabilities: %i[embedding])
+    write_test_lane(provider: provider, instance: instance, model: model, tier: tier,
+                    type: capabilities.include?(:embedding) ? :embedding : :inference,
+                    capabilities: capabilities)
   end
 
   describe '.can_embed?' do
-    it 'returns false before detection' do
-      Legion::LLM.instance_variable_set(:@can_embed, nil)
+    it 'is false when no embedding-type lane is published' do
+      publish_embed_lane('gemma-4-31b-it', capabilities: %i[chat streaming])
+      expect(Legion::LLM::Inventory::Discovery.can_embed?).to be false
       expect(Legion::LLM.can_embed?).to be false
     end
 
-    it 'returns true after successful detection' do
-      Legion::LLM.instance_variable_set(:@can_embed, true)
-      expect(Legion::LLM.can_embed?).to be true
-    end
-  end
-
-  describe '.embedding_provider' do
-    it 'returns the detected provider symbol' do
-      Legion::LLM.instance_variable_set(:@embedding_provider, :ollama)
-      expect(Legion::LLM.embedding_provider).to eq(:ollama)
-    end
-  end
-
-  describe '.embedding_model' do
-    it 'returns the detected model string' do
-      Legion::LLM.instance_variable_set(:@embedding_model, 'mxbai-embed-large')
-      expect(Legion::LLM.embedding_model).to eq('mxbai-embed-large')
-    end
-  end
-end
-
-RSpec.describe '.detect_embedding_capability' do
-  before do
-    Legion::LLM::Inventory::Discovery.instance_variable_set(:@can_embed, nil)
-    Legion::LLM::Inventory::Discovery.instance_variable_set(:@embedding_provider, nil)
-    Legion::LLM::Inventory::Discovery.instance_variable_set(:@embedding_model, nil)
-    Legion::LLM::Inventory::Discovery.instance_variable_set(:@embedding_instance, nil)
-    Legion::LLM.instance_variable_set(:@can_embed, nil)
-    Legion::LLM.instance_variable_set(:@embedding_provider, nil)
-    Legion::LLM.instance_variable_set(:@embedding_model, nil)
-    Legion::LLM.instance_variable_set(:@embedding_instance, nil)
-  end
-
-  context 'when Registry has instances with embedding capability' do
-    before do
-      Legion::LLM::Call::Registry.register(
-        :ollama,
-        Module.new { define_singleton_method(:embed) { |**| nil } },
-        instance: :gpu_box,
-        metadata: { capabilities: [:embedding], tier: 'local', default_model: 'mxbai-embed-large' }
-      )
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'local:ollama:gpu_box:embed:mxbai-embed-large', tier: :local,
-        provider_family: :ollama, instance_id: :gpu_box, model: 'mxbai-embed-large',
-        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
-                                        })
-    end
-
-    it 'selects the registry instance as primary embedding provider' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
+    it 'is true when an embedding-type lane is published (live registry fact)' do
+      publish_embed_lane('mxbai-embed-large')
       expect(Legion::LLM::Inventory::Discovery.can_embed?).to be true
-      expect(Legion::LLM::Inventory::Discovery.embedding_provider).to eq(:ollama)
-      expect(Legion::LLM::Inventory::Discovery.embedding_model).to eq('mxbai-embed-large')
-      expect(Legion::LLM::Inventory::Discovery.embedding_instance).to eq(:gpu_box)
-    end
-
-    it 'exposes embedding_instance through the LLM facade' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      expect(Legion::LLM.embedding_instance).to eq(:gpu_box)
-    end
-
-    it 'builds a fallback chain from registry instances' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      chain = Legion::LLM::Inventory::Discovery.embedding_fallback_chain
-      expect(chain).to be_an(Array)
-      expect(chain.first[:provider]).to eq(:ollama)
-      expect(chain.first[:instance]).to eq(:gpu_box)
-    end
-
-    it 'does not fall through to ollama model scanning' do
-      expect(Legion::LLM::Inventory::Discovery).not_to receive(:find_embedding_provider)
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-    end
-  end
-
-  context 'when Registry has multiple embedding instances across tiers' do
-    before do
-      Legion::LLM::Call::Registry.register(
-        :bedrock,
-        Module.new { define_singleton_method(:embed) { |**| nil } },
-        instance: :default,
-        metadata: { capabilities: [:embedding], tier: 'cloud', default_model: 'amazon.titan-embed-text-v2:0' }
-      )
-      Legion::LLM::Call::Registry.register(
-        :ollama,
-        Module.new { define_singleton_method(:embed) { |**| nil } },
-        instance: :local_box,
-        metadata: { capabilities: [:embedding], tier: 'local', default_model: 'mxbai-embed-large' }
-      )
-      Legion::LLM::Call::Registry.register(
-        :vllm,
-        Module.new { define_singleton_method(:embed) { |**| nil } },
-        instance: :fleet_gpu,
-        metadata: { capabilities: [:embedding], tier: 'fleet', default_model: 'bge-large' }
-      )
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'local:ollama:local_box:embed:mxbai-embed-large', tier: :local,
-        provider_family: :ollama, instance_id: :local_box, model: 'mxbai-embed-large',
-        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
-                                        })
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'fleet:vllm:fleet_gpu:embed:bge-large', tier: :fleet,
-        provider_family: :vllm, instance_id: :fleet_gpu, model: 'bge-large',
-        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
-                                        })
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'cloud:bedrock:default:embed:amazon.titan-embed-text-v2_0', tier: :cloud,
-        provider_family: :bedrock, instance_id: :default, model: 'amazon.titan-embed-text-v2:0',
-        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
-                                        })
-    end
-
-    it 'picks the best tier (local) over cloud and fleet' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      expect(Legion::LLM::Inventory::Discovery.embedding_provider).to eq(:ollama)
-      expect(Legion::LLM::Inventory::Discovery.embedding_instance).to eq(:local_box)
-      expect(Legion::LLM::Inventory::Discovery.embedding_model).to eq('mxbai-embed-large')
-    end
-
-    it 'orders the fallback chain by tier priority' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      tiers = Legion::LLM::Inventory::Discovery.embedding_fallback_chain.map { |e| e[:provider] }
-      expect(tiers).to eq(%i[ollama vllm bedrock])
-    end
-  end
-
-  context 'when Registry has embedding instances but no default_model in metadata' do
-    before do
-      Legion::LLM::Call::Registry.register(
-        :openai,
-        Module.new { define_singleton_method(:embed) { |**| nil } },
-        instance: :default,
-        metadata: { capabilities: [:embedding], tier: 'frontier' }
-      )
-    end
-
-    it 'falls back to Settings embedding default_model' do
-      Legion::Settings[:llm][:embedding][:default_model] = 'text-embedding-3-small'
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'frontier:openai:default:embed:text-embedding-3-small', tier: :frontier,
-        provider_family: :openai, instance_id: :default, model: 'text-embedding-3-small',
-        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
-                                        })
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      expect(Legion::LLM::Inventory::Discovery.embedding_model).to eq('text-embedding-3-small')
-    end
-
-    it 'falls back to discovered model catalog when Settings has no default_model (#121)' do
-      Legion::LLM::Inventory.write_lane(lane: {
-                                          id: 'frontier:openai:default:embed:text-embedding-ada-002', tier: :frontier,
-        provider_family: :openai, instance_id: :default, model: 'text-embedding-ada-002',
-        type: :embed, capabilities: %i[embedding], limits: {}, enabled: true, cost: {}
-                                        })
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      expect(Legion::LLM::Inventory::Discovery.can_embed?).to be true
-      expect(Legion::LLM::Inventory::Discovery.embedding_model).to eq('text-embedding-ada-002')
-    end
-
-    it 'returns false and does not set can_embed when no model is resolvable (#121)' do
-      # No lanes written — model_available? returns false → can_embed? = false
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      # No model in metadata, settings, or catalog → falls through to legacy probe
-      expect(Legion::LLM::Inventory::Discovery.can_embed?).to be false
-    end
-  end
-
-  context 'when Registry has no embedding-capable instances' do
-    before do
-      Legion::LLM::Call::Registry.register(
-        :anthropic,
-        Module.new { define_singleton_method(:chat) { |**| nil } },
-        instance: :default,
-        metadata: { capabilities: [:chat], tier: 'frontier' }
-      )
-    end
-
-    it 'falls through to the legacy provider fallback detection' do
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?).and_return(false)
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      # No embedding instances in registry, no ollama models => can_embed? is false
-      expect(Legion::LLM::Inventory::Discovery.can_embed?).to be false
-      expect(Legion::LLM::Inventory::Discovery.embedding_instance).to be_nil
-    end
-  end
-
-  context 'when Registry.with_capability raises an error' do
-    before do
-      allow(Legion::LLM::Call::Registry).to receive(:with_capability)
-        .and_raise(StandardError.new('registry broken'))
-    end
-
-    it 'falls through to legacy detection without raising' do
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?).and_return(false)
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      expect(Legion::LLM::Inventory::Discovery.can_embed?).to be false
-    end
-  end
-
-  context 'when Ollama has a preferred model' do
-    before do
-      Legion::Settings[:extensions][:llm][:ollama] = { enabled: true, base_url: 'http://localhost:11434' }
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?)
-        .and_return(false)
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?)
-        .with('mxbai-embed-large', provider: :ollama).and_return(true)
-    end
-
-    it 'selects Ollama with that model' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
       expect(Legion::LLM.can_embed?).to be true
-      expect(Legion::LLM.embedding_provider).to eq(:ollama)
-      expect(Legion::LLM.embedding_model).to eq('mxbai-embed-large')
-    end
-  end
-
-  context 'when embedding discovery settings were loaded from JSON string keys' do
-    before do
-      Legion::Settings[:extensions][:llm] = {
-        'ollama' => { 'enabled' => true }
-      }
-      Legion::Settings[:llm]['embedding'] = {
-        'provider_fallback' => %w[ollama],
-        'ollama_preferred'  => %w[nomic-embed-text]
-      }
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?)
-        .and_return(false)
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?)
-        .with('nomic-embed-text', provider: :ollama).and_return(true)
     end
 
-    it 'uses string-keyed embedding fallback and model preference settings' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      expect(Legion::LLM.can_embed?).to be true
-      expect(Legion::LLM.embedding_provider).to eq(:ollama)
-      expect(Legion::LLM.embedding_model).to eq('nomic-embed-text')
-    end
-  end
-
-  context 'when Ollama has no models and bedrock health check fails, falls back to openai' do
-    before do
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?)
-        .and_return(false)
-      Legion::Settings[:extensions][:llm][:bedrock] = { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
-      Legion::Settings[:extensions][:llm][:openai] = { enabled: true, default_model: 'gpt-4o' }
-      allow(Legion::LLM::Inventory::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(false)
-      allow(Legion::LLM::Inventory::Discovery).to receive(:verify_embedding).with(:openai, 'text-embedding-3-small').and_return(true)
-    end
-
-    it 'skips bedrock on health-check failure and falls back to openai' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      expect(Legion::LLM.can_embed?).to be true
-      expect(Legion::LLM.embedding_provider).to eq(:openai)
-      expect(Legion::LLM.embedding_model).to eq('text-embedding-3-small')
-    end
-  end
-
-  context 'when only bedrock is configured and its health check passes' do
-    before do
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?)
-        .and_return(false)
-      Legion::Settings[:extensions][:llm][:bedrock] = { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
-      allow(Legion::LLM::Inventory::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(true)
-    end
-
-    it 'selects bedrock with the Titan v2 model' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      expect(Legion::LLM.can_embed?).to be true
-      expect(Legion::LLM.embedding_provider).to eq(:bedrock)
-      expect(Legion::LLM.embedding_model).to eq('amazon.titan-embed-text-v2:0')
-    end
-  end
-
-  context 'when only bedrock is configured and its health check fails' do
-    before do
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?)
-        .and_return(false)
-      Legion::Settings[:extensions][:llm][:bedrock] = { enabled: true, default_model: 'us.anthropic.claude-sonnet-4-6-v1' }
-      allow(Legion::LLM::Inventory::Discovery).to receive(:verify_embedding).with(:bedrock, anything).and_return(false)
-    end
-
-    it 'leaves embeddings unavailable' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
+    it 'tracks lane publication without boot-time detection state' do
       expect(Legion::LLM.can_embed?).to be false
-      expect(Legion::LLM.embedding_provider).to be_nil
-    end
-  end
-
-  context 'when no provider is available' do
-    before do
-      allow(Legion::LLM::Inventory::Discovery).to receive(:model_available?)
-        .and_return(false)
-      Legion::Settings[:extensions][:llm].each_value { |v| v[:enabled] = false }
-    end
-
-    it 'sets can_embed? to false' do
-      Legion::LLM::Inventory::Discovery.detect_embedding_capability
-      expect(Legion::LLM.can_embed?).to be false
-      expect(Legion::LLM.embedding_provider).to be_nil
+      publish_embed_lane('mxbai-embed-large')
+      expect(Legion::LLM.can_embed?).to be true
     end
   end
 end
@@ -350,7 +64,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       @dispatched << kwargs
       texts = kwargs[:text]
       vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
-      { result: vectors, usage: Legion::LLM::Usage.new(input_tokens: input_tokens) }
+      { embedding: vectors, usage: { input_tokens: input_tokens } }
     end
     activate(
       provider_family: provider, instance_id: instance,
@@ -421,7 +135,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     it 'returns the provider vector as-is when no dimension is requested (no truncate/pad)' do
       publish_embed(model: 'raw-model', dims: [768]) do |_op, _a, kwargs, _b|
         vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(768, 0.2) } : [Array.new(768, 0.2)]
-        { result: vecs, usage: Legion::LLM::Usage.new(input_tokens: 4) }
+        { embedding: vecs, usage: { input_tokens: 4 } }
       end
       result = described_class.generate(text: 'test', model: 'raw-model', routing_seed: seed)
       expect(result[:vector].size).to eq(768)
@@ -439,7 +153,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     it 'extracts tokens from a Hash usage' do
       publish_embed(model: 'hash-usage') do |_op, _a, kwargs, _b|
         vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
-        { result: vecs, usage: { input_tokens: 7 } }
+        { embedding: vecs, usage: { input_tokens: 7 } }
       end
       result = described_class.generate(text: 'test', model: 'hash-usage', routing_seed: seed)
       expect(result[:tokens]).to eq(7)
@@ -448,7 +162,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     it 'defaults to 0 when no usage is present' do
       publish_embed(model: 'no-usage') do |_op, _a, kwargs, _b|
         vecs = kwargs[:text].is_a?(Array) ? kwargs[:text].map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
-        { result: vecs, usage: nil }
+        { embedding: vecs, usage: nil }
       end
       result = described_class.generate(text: 'test', model: 'no-usage', routing_seed: seed)
       expect(result[:tokens]).to eq(0)
@@ -479,7 +193,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
   describe '.generate returns a well-formed vector hash' do
     it 'unwraps a single flat vector from providers that do not nest' do
       publish_embed(model: 'flat') do |_op, _a, _kwargs, _b|
-        { result: Array.new(1024, 0.1), usage: Legion::LLM::Usage.new(input_tokens: 5) }
+        { embedding: Array.new(1024, 0.1), usage: { input_tokens: 5 } }
       end
       result = described_class.generate(text: 'test', model: 'flat', routing_seed: seed)
       expect(result[:vector].size).to eq(1024)
@@ -501,17 +215,16 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
   end
 
   # Production SSOT v3 callable contract: the lex-llm-* parse_embedding_response
-  # implementations return the provider-native Legion::Extensions::Llm::Embedding
-  # value object (NOT the legacy {result:, usage:} Hash). The embed consumer must
-  # unwrap it at the boundary, mirroring the chat path's normalize_response.
-  # Pre-fix this raised ProviderError 'embedding provider returned no usable
-  # vector' — every live embed 502'd.
-  describe '.generate SSOT v3 native Embedding value object' do
-    it 'unwraps the native object: vectors returned, input_tokens extracted' do
+  # 0.8.0 embed artifact (05 S3 / O07): the documented Hash
+  # { text:, model:, embedding: Array<Float>, usage: Canonical::Usage } — a flat
+  # numeric vector for a single input, an Array of them for a batch. The embed
+  # consumer unwraps it at the boundary (provider_vectors).
+  describe '.generate 0.8.0 documented embed artifact' do
+    it 'unwraps the artifact: vectors returned, input_tokens extracted' do
       publish_embed(model: 'native-embed') do |_op, _a, kwargs, _b|
         texts = kwargs[:text]
         vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.1) } : Array.new(1024, 0.1)
-        Legion::Extensions::Llm::Embedding.new(vectors: vectors, model: 'native-embed', input_tokens: 37)
+        { text: texts, model: 'native-embed', embedding: vectors, usage: { input_tokens: 37 } }
       end
       result = described_class.generate(text: 'test', model: 'native-embed', routing_seed: seed)
       expect(result[:vector].size).to eq(1024)
@@ -519,10 +232,10 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       expect(result[:tokens]).to eq(37)
     end
 
-    it 'unwraps a native object carrying one vector per batch entry' do
+    it 'unwraps an artifact carrying one vector per batch entry' do
       publish_embed(model: 'native-batch') do |_op, _a, kwargs, _b|
         vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
-        Legion::Extensions::Llm::Embedding.new(vectors: vectors, model: 'native-batch', input_tokens: 30)
+        { text: kwargs[:text], model: 'native-batch', embedding: vectors, usage: { input_tokens: 30 } }
       end
       results = described_class.generate_batch(texts: %w[hello world], model: 'native-batch', routing_seed: seed)
       expect(results.size).to eq(2)
@@ -538,7 +251,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       publish_embed(model: 'text-embedding-3-small', context: 200_000) do |_op, _a, kwargs, _b|
         captured = kwargs[:text]
         vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
-        { result: vectors, usage: Legion::LLM::Usage.new(input_tokens: 30) }
+        { embedding: vectors, usage: { input_tokens: 30 } }
       end
       # budget = min(200_000, 512) tokens * 4 chars = 2048 chars/chunk; 8192 / 2048 = 4 chunks.
       result = described_class.generate(text: 'a' * 8192, model: 'text-embedding-3-small', routing_seed: seed)
@@ -563,7 +276,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     it 'chunks an oversized batch entry and reassembles per-item vectors' do
       publish_embed(model: 'batch-chunk', context: 200_000) do |_op, _a, kwargs, _b|
         vectors = kwargs[:text].each_index.map { |i| Array.new(1024, (i + 1).to_f) }
-        { result: vectors, usage: Legion::LLM::Usage.new(input_tokens: 30) }
+        { embedding: vectors, usage: { input_tokens: 30 } }
       end
       results = described_class.generate_batch(texts: ['short', 'b' * 8192], model: 'batch-chunk', routing_seed: seed)
       expect(results.size).to eq(2)

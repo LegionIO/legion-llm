@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/api/native/tiers'
+require 'legion/extensions/llm/capabilities'
+require 'legion/extensions/llm/taxonomies'
 
 module Legion
   module LLM
@@ -22,7 +25,7 @@ module Legion
               require_llm!
 
               filters = Legion::LLM::API::Native::Models.request_filters(params)
-              offerings = Legion::LLM::Inventory.offerings(filters)
+              offerings = Legion::LLM::API::Native::Models.lane_entries(filters)
               offerings = Legion::LLM::API::Native::Models.with_auto_routing_offering(offerings, filters)
 
               json_response({
@@ -41,7 +44,7 @@ module Legion
               require_llm!
 
               filters = { model: model_id }
-              offerings = Legion::LLM::Inventory.offerings(filters)
+              offerings = Legion::LLM::API::Native::Models.lane_entries(filters)
               offerings = Legion::LLM::API::Native::Models.with_auto_routing_offering(offerings, filters)
               halt json_error('model_not_found', "Model '#{model_id}' not found", status_code: 404) unless offerings.any?
 
@@ -60,7 +63,7 @@ module Legion
               require_llm!
 
               filters = Legion::LLM::API::Native::Models.request_filters(params).merge(provider: provider)
-              offerings = Legion::LLM::Inventory.offerings(filters)
+              offerings = Legion::LLM::API::Native::Models.lane_entries(filters)
 
               json_response({
                               provider:  provider,
@@ -74,6 +77,135 @@ module Legion
             end
 
             log.debug('[llm][api][models] model inventory routes registered')
+          end
+
+          # ── v0.15.2 lane-hash projection (the single shared shaping) ──────────
+          #
+          # Projects registry lanes onto the v0.15.2 lane-hash shape the models
+          # routes have always returned:
+          #   id, tier, provider_family, instance_id, model, canonical_model_alias,
+          #   type, capabilities, limits, enabled, cost, lane_weight,
+          #   health{circuit_state,denied,available,adjustment}
+          # `id`/`offering_id` are the 5-tuple lane id (tier:provider_family:
+          # instance_id:type:model — composed only by
+          # Inventory::Identity.compose_lane_id at the writer). Every models
+          # route (native tree, namespaced tree, cross-namespace
+          # /api/llm/providers/:name/models, flat /v1/models tree) reads through
+          # lane_entries — there is no second projection.
+          def self.lane_entries(filters = {})
+            snapshot = Legion::LLM::Inventory.snapshot
+            normalized = normalize_filter_hash(filters)
+            inst_by_key = {}
+            snapshot.each_instance { |inst| inst_by_key[inst.instance_key] = inst }
+
+            snapshot.each_lane.filter_map do |lane|
+              next unless lane_matches_filters?(lane, normalized)
+              # Compliance-by-absence: a policy-denied model never
+              # appears in the API surface (the registry publishes the full
+              # catalog; the display applies the same policy the router does).
+              next unless Legion::LLM::API::Native::Offerings.policy_permits?(lane)
+
+              lane_entry(lane, inst_by_key[lane.instance_key]&.availability)
+            end
+          end
+
+          def self.lane_entry(lane, availability)
+            {
+              id:                    lane.lane_id,
+              offering_id:           lane.lane_id,
+              model:                 lane.model,
+              provider_family:       lane.provider_family.to_s,
+              provider_instance:     lane.instance_id.to_s,
+              instance_id:           lane.instance_id.to_s,
+              tier:                  lane.tier.to_s,
+              type:                  lane_type(lane).to_s,
+              canonical_model_alias: lane.metadata[:canonical_model_alias],
+              model_family:          lane.metadata[:model_family],
+              capabilities:          Legion::LLM::API::Native::Tiers.lane_capabilities(lane),
+              limits:                Legion::LLM::API::Native::Tiers.lane_limits(lane),
+              enabled:               true,
+              cost:                  {},
+              lane_weight:           lane_weight_for(lane, availability),
+              health:                health_display(availability),
+              metadata:              lane.metadata
+            }
+          end
+
+          # The 4-key legacy display shape (the same shape the provider actors
+          # write to the settings health hash), derived from the snapshot
+          # AvailabilityFact. Display only — selection reads the
+          # AvailabilityFact itself, never this projection.
+          def self.health_display(availability)
+            available = availability&.state == :available
+            {
+              circuit_state: if available
+                               :closed
+                             else
+                               (availability ? :open : :half_open)
+                             end,
+              denied:        false,
+              available:     available,
+              adjustment:    available ? 0 : -50
+            }
+          end
+
+          # v0.15.2 display law: lane_weight = tier_w × provider_w ×
+          # instance_w × model_w (the write-time base_weight stored on the
+          # lane) × health multiplier. Available → ×1; unavailable (open
+          # circuit) → ×−1. Display only — the router reads the stored scalar
+          # and the AvailabilityFact, never this value.
+          def self.lane_weight_for(lane, availability)
+            multiplier = availability&.state == :available ? 1 : -1
+            lane.base_weight * multiplier
+          end
+
+          def self.lane_type(lane)
+            Legion::Extensions::Llm::Taxonomies.lane_type_for(operation: lane.operation)
+          end
+
+          def self.lane_matches_filters?(lane, filters)
+            provider = filters[:provider]
+            return false if provider && !provider.to_s.empty? && lane.provider_family.to_s != provider.to_s
+
+            instance = filters[:instance_id]
+            return false if instance && !instance.to_s.empty? && lane.instance_id.to_s != instance.to_s
+
+            type = filters[:type]
+            return false if type && !type.to_s.empty? && normalized_type(type) != lane_type(lane)
+
+            model = filters[:model]
+            return false if model && !model.to_s.empty? && lane.model.to_s != model.to_s
+
+            offering_id = filters[:offering_id]
+            return false if offering_id && !offering_id.to_s.empty? && lane.lane_id != offering_id.to_s
+
+            family = filters[:model_family]
+            return false if family && !family.to_s.empty? && lane.metadata[:model_family].to_s != family.to_s
+
+            capability = filters[:capability]
+            if capability && !capability.to_s.empty?
+              caps = Legion::LLM::API::Native::Tiers.lane_capabilities(lane)
+                                                    .map { |c| Legion::Extensions::Llm::Capabilities.canonical(c) }
+              return false unless caps.include?(Legion::Extensions::Llm::Capabilities.canonical(capability.to_s))
+            end
+
+            true
+          end
+
+          # Request filter spellings for the coarse lane type: the embedding
+          # spellings collapse to :embedding, 'chat' to :inference (the
+          # v0.15.2 request vocabulary), everything else passes through as a
+          # Taxonomies::TYPES symbol.
+          def self.normalized_type(value)
+            case value.to_s
+            when 'embedding', 'embeddings', 'embed' then :embedding
+            when 'chat' then :inference
+            else value.to_sym
+            end
+          end
+
+          def self.normalize_filter_hash(filters)
+            filters.transform_keys(&:to_sym).compact
           end
 
           def self.request_filters(params)
@@ -195,8 +327,10 @@ module Legion
 
           def self.auto_routing_model?(model)
             m = model.to_s.strip.downcase
-            routing_settings = Legion::Settings.dig(:llm, :routing) || {}
-            configured = routing_settings[:auto_routing_model_aliases]
+            # SSOT v4: read auto_routing_model_aliases from the canonical
+            # [:llm][:router] home (default in settings/router.rb) so the catalog
+            # view agrees with ingress (request.rb) and the Router (filter.rb).
+            configured = Legion::Settings[:llm][:router][:auto_routing_model_aliases]
             aliases = Array(configured).map { |entry| entry.to_s.strip.downcase }.reject(&:empty?)
             aliases = [AUTO_ROUTING_MODEL_ID] if aliases.empty?
             aliases.include?(m)

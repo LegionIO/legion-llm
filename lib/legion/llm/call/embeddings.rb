@@ -6,9 +6,7 @@ require 'legion/logging/helper'
 require 'legion/llm/errors'
 require 'legion/llm/cache'
 require 'legion/llm/router'
-require 'legion/llm/router/request_requirements'
 require 'legion/llm/inference/request'
-require 'legion/llm/inference/routing_session'
 require 'legion/llm/call/selection_dispatch'
 
 module Legion
@@ -16,11 +14,10 @@ module Legion
     class EmbeddingUnavailableError < LLMError; end
 
     module Call
-      # SSOT v3 §21 — embeddings on the single execution engine.
+      # SSOT v4 §21 — embeddings on the single execution engine.
       #
-      # `generate`/`generate_batch` build a per-call RoutingSession from
-      # `RequestRequirements(operation: :embed, required_capabilities: [:embedding])`,
-      # select ONE exact lane via `Router.next_lane` (through the session), then
+      # `generate`/`generate_batch` build a per-call Router
+      # (operation: :embed), select ONE exact lane via `Router#next_lane`, then
       # dispatch the lane's EXACT callable via `Call::SelectionDispatch` — no
       # `request_lane`, no configured default model/provider/instance, no
       # `Call::Dispatch`. An omitted model is an UNCONSTRAINED selection, never a
@@ -57,78 +54,63 @@ module Legion
           # @return [Hash] { vector:, model:, provider:, instance:, dimensions:, tokens:, chunks:, tier:, cache_hit: }
           # @raise [Legion::LLM::Errors::RoutingRejected] when no eligible embedding function / attempts exhausted.
           def generate(text:, model: nil, dimensions: nil, task: :document,
-                       provider: nil, instance: nil, request: nil, routing_session: nil, routing_seed: nil, **)
+                       provider: nil, instance: nil, request: nil, router: nil, routing_seed: nil, **)
             return not_started_result(model) unless LLM.started?
 
             coerced = coerce_text(text)
-            session = routing_session || build_session(
-              texts: [coerced], model: model, provider: provider, instance: instance,
+            rtr = router || build_router(
+              model: model, provider: provider, instance: instance,
               dimensions: dimensions, request: request, routing_seed: routing_seed
             )
-            run_single(session: session, text: coerced, dimensions: dimensions, task: task)
+            run_single(router: rtr, text: coerced, dimensions: dimensions, task: task)
           end
 
           # @return [Array<Hash>] one entry per input, original order preserved (N -> N).
           # @raise [Legion::LLM::Errors::RoutingRejected] on exhaustion / no eligible function.
           def generate_batch(texts:, model: nil, dimensions: nil, task: :document,
-                             provider: nil, instance: nil, request: nil, routing_session: nil, routing_seed: nil, **)
+                             provider: nil, instance: nil, request: nil, router: nil, routing_seed: nil, **)
             return texts.map { not_started_result(model) } unless LLM.started?
 
             coerced = texts.map { |t| coerce_text(t) }
-            session = routing_session || build_session(
-              texts: coerced, model: model, provider: provider, instance: instance,
+            rtr = router || build_router(
+              model: model, provider: provider, instance: instance,
               dimensions: dimensions, request: request, routing_seed: routing_seed
             )
-            run_batch(session: session, texts: coerced, dimensions: dimensions, task: task)
+            run_batch(router: rtr, texts: coerced, dimensions: dimensions, task: task)
           end
 
           private
 
           # ----------------------------------------------------------------
-          # Session construction (§21.1)
+          # Router construction (§21.1)
           # ----------------------------------------------------------------
 
-          def build_session(texts:, model:, provider:, instance:, dimensions:, request:, routing_seed:)
-            req = request || build_request(model: model, provider: provider, instance: instance, routing_seed: routing_seed)
-            requirements = Legion::LLM::Router::RequestRequirements.build(
-              request:                        req,
-              operation:                      :embed,
-              required_capabilities:          [:embedding],
-              requested_embedding_dimensions: dimensions,
-              estimated_input_bound:          preselection_bound(texts),
-              required_output_tokens:         0
-            )
-            Legion::LLM::Inference::RoutingSession.new(request: req, requirements: requirements)
+          def build_router(model:, provider:, instance:, dimensions:, request:, routing_seed:)
+            req = request || build_request(model: model, provider: provider, instance: instance,
+                                           dimensions: dimensions, routing_seed: routing_seed)
+            Legion::LLM::Router.new(request: req, operation: :embed, body_model: model)
           end
 
           # A canonical Request carrying a trusted routing context. Prod uses a
           # fresh server seed; specs inject a deterministic seed via routing_seed.
-          def build_request(model:, provider:, instance:, routing_seed:)
+          def build_request(model:, provider:, instance:, dimensions:, routing_seed:)
             routing = { model: model, provider: provider, instance: instance }.compact
+            extra = dimensions ? { embedding_dimensions: dimensions } : {}
             if routing_seed
-              Legion::LLM::Inference::Request.build_for_test(routing_seed: routing_seed, messages: [], routing: routing)
+              Legion::LLM::Inference::Request.build_for_test(routing_seed: routing_seed, messages: [],
+                                                             routing: routing, extra: extra)
             else
-              Legion::LLM::Inference::Request.build(messages: [], routing: routing)
+              Legion::LLM::Inference::Request.build(messages: [], routing: routing, extra: extra)
             end
-          end
-
-          def preselection_bound(texts)
-            max_estimate = texts.map { |t| estimate_tokens(t) }.max.to_i
-            [max_estimate, EMBED_CHUNK_TARGET_TOKENS].min
-          end
-
-          def estimate_tokens(text)
-            length = text.to_s.length
-            length.zero? ? 0 : (length + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN
           end
 
           # ----------------------------------------------------------------
           # Single-input path (select -> cache -> dispatch -> chunk aggregate)
           # ----------------------------------------------------------------
 
-          def run_single(session:, text:, dimensions:, task:)
-            (session.requirements.maximum_attempts + 1).times do
-              attempt = session.next_attempt!(snapshot: registry_snapshot)
+          def run_single(router:, text:, dimensions:, task:)
+            router.maximum_attempts.times do
+              attempt = router.next_attempt!
               chunks = prepare_chunks(text, attempt_context: attempt, task: task)
 
               key = cache_key(attempt_context: attempt, dimensions: dimensions, task: task, digest_source: text)
@@ -139,14 +121,14 @@ module Legion
                 attempt_context: attempt, arguments: embed_arguments(chunks, dimensions)
               )
               unless result.success?
-                terminal = classify_failure(session: session, result: result, attempt: attempt)
+                terminal = classify_failure(router: router, result: result, attempt: attempt)
                 raise terminal if terminal
 
                 next
               end
 
               vectors = provider_vectors(result.value)
-              retry_signal = malformed_retry(session: session, attempt: attempt,
+              retry_signal = malformed_retry(router: router, attempt: attempt,
                                              expected: chunks.size, actual: vectors.size)
               if retry_signal
                 raise retry_signal unless retry_signal == :retry
@@ -161,16 +143,16 @@ module Legion
               return payload.merge(cache_hit: false)
             end
 
-            raise routing_rejected(exhausted_rejection(session))
+            raise routing_rejected(exhausted_rejection(router))
           end
 
           # ----------------------------------------------------------------
           # Batch path — one exact lane for all N inputs (§21.1/§21.3)
           # ----------------------------------------------------------------
 
-          def run_batch(session:, texts:, dimensions:, task:)
-            (session.requirements.maximum_attempts + 1).times do
-              attempt = session.next_attempt!(snapshot: registry_snapshot)
+          def run_batch(router:, texts:, dimensions:, task:)
+            router.maximum_attempts.times do
+              attempt = router.next_attempt!
               per_item_chunks = texts.map { |t| prepare_chunks(t, attempt_context: attempt, task: task) }
               flat = per_item_chunks.flatten(1)
 
@@ -178,14 +160,14 @@ module Legion
                 attempt_context: attempt, arguments: embed_arguments(flat, dimensions)
               )
               unless result.success?
-                terminal = classify_failure(session: session, result: result, attempt: attempt)
+                terminal = classify_failure(router: router, result: result, attempt: attempt)
                 raise terminal if terminal
 
                 next
               end
 
               vectors = provider_vectors(result.value)
-              retry_signal = malformed_retry(session: session, attempt: attempt,
+              retry_signal = malformed_retry(router: router, attempt: attempt,
                                              expected: flat.size, actual: vectors.size)
               if retry_signal
                 raise retry_signal unless retry_signal == :retry
@@ -197,7 +179,7 @@ module Legion
                                       attempt: attempt, dimensions: dimensions)
             end
 
-            raise routing_rejected(exhausted_rejection(session))
+            raise routing_rejected(exhausted_rejection(router))
           end
 
           def reassemble_batch(per_item_chunks:, flat_vectors:, attempt:, dimensions:)
@@ -216,25 +198,25 @@ module Legion
           # ----------------------------------------------------------------
 
           # Returns a RoutingRejected to raise (terminal) or nil (retry on the
-          # SAME session — the failed provider+instance+model stays consumed).
-          def classify_failure(session:, result:, attempt:)
-            action = session.classify(dispatch_result: result, attempt_context: attempt)
+          # SAME router — the failed provider+instance+model stays consumed).
+          def classify_failure(router:, result:, attempt:)
+            action = router.classify(dispatch_result: result, attempt_context: attempt)
             return routing_rejected(action.rejection) if action.terminal?
 
             nil
           end
 
           # Discard every partial vector from a malformed attempt and retry the
-          # whole request on the same session. Returns :retry to continue, a
+          # whole request on the same router. Returns :retry to continue, a
           # RoutingRejected to raise, or nil when the count is correct.
-          def malformed_retry(session:, attempt:, expected:, actual:)
+          def malformed_retry(router:, attempt:, expected:, actual:)
             return nil if actual == expected
 
             outcome = Legion::Extensions::Llm::Routing::ProviderOutcome.new(
               kind: :malformed_output, reason: "expected #{expected} vectors, got #{actual}"
             )
             failure = Legion::LLM::Call::SelectionDispatch::Result.failure(outcome: outcome)
-            terminal = classify_failure(session: session, result: failure, attempt: attempt)
+            terminal = classify_failure(router: router, result: failure, attempt: attempt)
             terminal || :retry
           end
 
@@ -253,10 +235,11 @@ module Legion
             Legion::LLM::Errors::RoutingRejected.new(rejection: rejection)
           end
 
-          def exhausted_rejection(session)
+          def exhausted_rejection(router)
+            used = router.maximum_attempts - router.attempts_remaining
             Legion::Extensions::Llm::Routing::Rejection.new(
               kind: :attempts_exhausted,
-              reason: "embedding attempts exhausted after #{session.attempt_count} attempts",
+              reason: "embedding attempts exhausted after #{used} attempts",
               inventory_generation: registry_snapshot.generation, candidate_counts: {}, http_status: 503
             )
           end
@@ -465,18 +448,13 @@ module Legion
 
           # Normalize the provider return into a flat Array of numeric vectors.
           #
-          # SSOT v3 callables return the provider-native
-          # Legion::Extensions::Llm::Embedding value object (the lex-llm
-          # parse_embedding_response contract). Like the chat path, which
-          # normalizes the native Message at the dispatch boundary
-          # (Inference::RouteAttempts -> Call::Dispatch.normalize_response),
-          # the native object is unwrapped HERE, at the embed consumer
-          # boundary — the callables stay raw. Its +vectors+ field is consumed
-          # exactly as the legacy Hash's +result:+ field: a flat numeric vector
-          # for a single input, an Array of them for a batch.
+          # 0.8.0 embed artifact (05 S3 / O07): the documented Hash
+          # { text:, model:, embedding: Array<Float>, usage: Canonical::Usage }
+          # is unwrapped HERE, at the embed consumer boundary — the callables
+          # stay raw. +embedding+ is a flat numeric vector for a single input,
+          # an Array of them for a batch.
           def provider_vectors(value)
-            value = value.vectors if value.respond_to?(:vectors)
-            raw = value.is_a?(Hash) ? value[:result] : value
+            raw = value.is_a?(Hash) ? value[:embedding] : value
             return [] if raw.nil?
             return [raw] if raw.is_a?(Array) && raw.first.is_a?(Numeric)
             return [value] if raw.is_a?(Array) == false
@@ -502,11 +480,9 @@ module Legion
             end
           end
 
+          # input_tokens from the documented embed artifact's +usage+
+          # (Canonical::Usage or a plain hash) — 0 when absent.
           def extract_tokens(value)
-            # The native Embedding value object carries input_tokens directly
-            # (no usage wrapper) — same duck guard as provider_vectors.
-            return value.input_tokens.to_i if value.respond_to?(:vectors) && value.respond_to?(:input_tokens)
-
             usage = value.is_a?(Hash) ? value[:usage] : nil
             return usage.input_tokens.to_i if usage.respond_to?(:input_tokens)
             return usage[:input_tokens].to_i if usage.is_a?(Hash) && usage.key?(:input_tokens)

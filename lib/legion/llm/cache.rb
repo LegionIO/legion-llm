@@ -17,20 +17,6 @@ module Legion
 
       def cache_namespace = ''
 
-      # Generates a deterministic SHA256 cache key from request parameters.
-      def key(model:, provider:, messages:, temperature: nil, tools: nil, schema: nil)
-        payload = Legion::JSON.dump({
-                                      schema_version: RESPONSE_CACHE_SCHEMA_VERSION,
-                                      model:          model.to_s,
-                                      provider:       provider.to_s,
-                                      messages:       messages,
-                                      temperature:    temperature,
-                                      tools:          tools,
-                                      schema:         schema
-                                    })
-        Digest::SHA256.hexdigest(payload)
-      end
-
       # SSOT v3 §20.1 response-cache identity. Built from the EXACT selected lane
       # (provider_family + selected model + authoritative immutable model revision,
       # or the exact instance_id when revision is unknown) plus every semantic

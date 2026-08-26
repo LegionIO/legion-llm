@@ -1,19 +1,18 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'legion/llm/router/request_requirements'
-require 'legion/llm/inference/routing_session'
+require 'legion/llm/router'
 
 # Context overflow escalation — SSOT v3 rewrite.
 #
 # INVARIANT (survives): ContextOverflow is NOT a non_provider_failure — it is
 # a provider-side signal that the payload was too large for THIS lane's context
 # window. ssot_v3_execute_attempt converts it to a :provider_error ProviderOutcome
-# (retryable), allowing the RoutingSession to retry on a different lane.
-# Only when all attempts are exhausted does the RoutingSession raise RoutingRejected.
+# (retryable), allowing the Router to retry on a different lane.
+# Only when all attempts are exhausted does the Router raise RoutingRejected.
 #
-# What changed in SSOT v3: there are no "tried_lanes", no classify_and_accumulate_exclusions,
-# and no Inventory.lanes scan to check context windows. The routing session simply
+# What changed in SSOT v4: there are no "tried_lanes", no classify_and_accumulate_exclusions,
+# and no Inventory.lanes scan to check context windows. The Router simply
 # retries the next eligible lane (consumed-target exclusion prevents reselecting
 # the same overflowed lane).
 RSpec.describe Legion::LLM::Inference::Executor, 'context overflow escalation' do
@@ -45,20 +44,17 @@ RSpec.describe Legion::LLM::Inference::Executor, 'context overflow escalation' d
     end
   end
 
-  describe 'RoutingSession retry after ContextOverflow', :ssot_v3 do
+  describe 'Router retry after ContextOverflow', :ssot_v3 do
     let(:model) { 'gemma4-context-test' }
 
-    def build_requirements
+    def build_router
       request = Legion::LLM::Inference::Request.build_for_test(
         routing_seed: 'ab' * 16,
         messages:     [{ role: :user, content: 'hello' }],
         routing:      { model: model }
       )
-      reqs = Legion::LLM::Router::RequestRequirements.build(
-        request: request, operation: :chat, required_capabilities: [],
-        estimated_input_bound: 10, required_output_tokens: 0
-      )
-      [request, reqs]
+      router = Legion::LLM::Router.new(request: request, operation: :chat, body_model: model)
+      [request, router]
     end
 
     it 'retries the next eligible lane after a context overflow, succeeding on the second attempt' do
@@ -68,9 +64,9 @@ RSpec.describe Legion::LLM::Inference::Executor, 'context overflow escalation' d
       activate(provider_family: 'vllm', instance_id: 'secondary',
                drafts: [offering_draft(model: model, supported: %i[chat], context: 1_048_576)])
 
-      request, reqs = build_requirements
+      request, router = build_router
       executor = executor_class.new(request)
-      executor.instance_variable_set(:@routing_requirements, reqs)
+      executor.instance_variable_set(:@router, router)
 
       call_count = 0
       allow(executor).to receive(:execute_provider_request) do
@@ -90,9 +86,9 @@ RSpec.describe Legion::LLM::Inference::Executor, 'context overflow escalation' d
       activate(provider_family: 'vllm', instance_id: 'only',
                drafts: [offering_draft(model: model, supported: %i[chat], context: 4096)])
 
-      request, reqs = build_requirements
+      request, router = build_router
       executor = executor_class.new(request)
-      executor.instance_variable_set(:@routing_requirements, reqs)
+      executor.instance_variable_set(:@router, router)
 
       allow(executor).to receive(:execute_provider_request).and_raise(
         Legion::LLM::ContextOverflow, 'context too long'

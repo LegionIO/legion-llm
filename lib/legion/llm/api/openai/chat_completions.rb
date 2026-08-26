@@ -80,6 +80,14 @@ module Legion
                     Legion::LLM::API::OpenAI::ChatCompletions.emit_reasoning_delta(
                       out, chunk, model, request_id, include_reasoning
                     )
+                    # ANNOTATE (G3/L4-family, legacy tree): the provider
+                    # boundary yields Canonical::Chunk — for a canonical
+                    # chunk the .to_s fallback leaks the chunk's Ruby
+                    # inspect string to the client as text (and
+                    # emit_reasoning_delta's .thinking read never fires for
+                    # canonical thinking_delta chunks). The flat legacy API
+                    # tree (register_legacy) is a coordinated-wave deletion
+                    # surface; fixed with the tree, not inline.
                     text = chunk.respond_to?(:content) ? chunk.content.to_s : chunk.to_s
                     next if text.empty?
 

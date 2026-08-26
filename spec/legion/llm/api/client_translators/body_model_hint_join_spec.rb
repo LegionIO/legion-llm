@@ -4,7 +4,7 @@ require 'spec_helper'
 require 'legion/llm/api/client_translators/anthropic_messages'
 require 'legion/llm/api/client_translators/openai_chat'
 require 'legion/llm/api/client_translators/openai_responses'
-require 'legion/llm/router/request_requirements'
+require 'legion/llm/router'
 
 # SSOT v3 D19 join point: the mounted API routes drive
 # translator.parse_request -> translator.build_inference_request ->
@@ -24,49 +24,56 @@ RSpec.describe 'client translator body-model hint join' do
       )
     end
 
-    def build_reqs(request)
-      Legion::LLM::Router::RequestRequirements.build(
-        request: request, operation: :chat, required_capabilities: [],
-        estimated_input_bound: 100, required_output_tokens: 50
+    # SSOT v4: the Request no longer carries a body-model-hint decision; the
+    # per-request Router computes it live in initialize from the raw client body
+    # model (carried by the translator into metadata[:client_model]) against the
+    # [:llm][:router] settings. The join this spec covers is therefore:
+    # translator.parse_request -> build_inference_request -> metadata[:client_model]
+    # -> Router.new(body_model:) -> router.body_model_hint_decision.
+    def build_router(request)
+      Legion::LLM::Router.new(
+        request: request, operation: :chat,
+        body_model: request.metadata[:client_model]
       )
     end
 
     def with_body_hint_settings(allow:, whitelist: [], blacklist: [])
-      settings = Legion::Settings[:llm][:routing]
+      settings = Legion::Settings[:llm][:router]
       settings[:allow_body_routing_hints] = allow
       settings[:body_model_hint_whitelist] = whitelist
       settings[:body_model_hint_blacklist] = blacklist
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::LLM::Routing::SettingsState.reset!
       yield
     ensure
-      settings = Legion::Settings[:llm][:routing]
+      settings = Legion::Settings[:llm][:router]
       settings[:allow_body_routing_hints] = false
       settings[:body_model_hint_whitelist] = []
       settings[:body_model_hint_blacklist] = []
-      Legion::LLM::Router::SettingsState.reset!
+      Legion::LLM::Routing::SettingsState.reset!
     end
 
     it 'honors the body model as a routing pin when hints are enabled and no trusted pin is present' do
       with_body_hint_settings(allow: true) do
         request = build_inference_request(body)
-        decision = request.body_model_hint_decision
+        router = build_router(request)
+        decision = router.body_model_hint_decision
 
         expect(decision.disposition).to eq(:honored)
         expect(decision.requested_model).to eq(body_model)
         expect(decision.model_constraint).to eq(body_model)
-        expect(build_reqs(request).model_pin).to eq(body_model)
+        expect(router.model_pin).to eq(body_model)
       end
     end
 
     it 'lets the X-Legion-Model trusted pin supersede the body model' do
       with_body_hint_settings(allow: true) do
         request = build_inference_request(body, header_env)
-        decision = request.body_model_hint_decision
+        reqs = build_router(request)
+        decision = reqs.body_model_hint_decision
 
         expect(decision.disposition).to eq(:superseded_by_explicit_model)
         expect(decision.requested_model).to eq(body_model)
         expect(decision.model_constraint).to be_nil
-        reqs = build_reqs(request)
         expect(reqs.model_pin).to eq(header_env['HTTP_X_LEGION_MODEL'])
         expect(reqs.body_model_hint_decision.disposition).to eq(:superseded_by_explicit_model)
       end
@@ -74,43 +81,47 @@ RSpec.describe 'client translator body-model hint join' do
 
     it 'ignores the body model when hints are disabled (the default)' do
       request = build_inference_request(body)
-      decision = request.body_model_hint_decision
+      router = build_router(request)
+      decision = router.body_model_hint_decision
 
       expect(decision.disposition).to eq(:ignored_disabled)
       expect(decision.requested_model).to eq(body_model)
-      expect(build_reqs(request).model_pin).to be_nil
+      expect(router.model_pin).to be_nil
     end
 
     it 'ignores a body model that the nonempty whitelist does not cover (no pin, no 400)' do
       with_body_hint_settings(allow: true, whitelist: %w[claude]) do
         request = build_inference_request(body)
-        decision = request.body_model_hint_decision
+        router = build_router(request)
+        decision = router.body_model_hint_decision
 
         expect(decision.disposition).to eq(:ignored_not_whitelisted)
         expect(decision.model_constraint).to be_nil
-        expect(build_reqs(request).model_pin).to be_nil
+        expect(router.model_pin).to be_nil
       end
     end
 
     it 'ignores a body model that the blacklist matches' do
       with_body_hint_settings(allow: true, blacklist: %w[gpt]) do
         request = build_inference_request(body)
-        decision = request.body_model_hint_decision
+        router = build_router(request)
+        decision = router.body_model_hint_decision
 
         expect(decision.disposition).to eq(:ignored_blacklisted)
         expect(decision.matched_blacklist).to eq('gpt')
         expect(decision.model_constraint).to be_nil
-        expect(build_reqs(request).model_pin).to be_nil
+        expect(router.model_pin).to be_nil
       end
     end
 
     it 'treats an auto-routing alias body model as you-pick intent, never a pin' do
       request = build_inference_request(auto_body)
-      decision = request.body_model_hint_decision
+      router = build_router(request)
+      decision = router.body_model_hint_decision
 
       expect(decision.disposition).to eq(:auto)
       expect(decision.requested_model).to eq('legionio')
-      expect(build_reqs(request).model_pin).to be_nil
+      expect(router.model_pin).to be_nil
     end
   end
 

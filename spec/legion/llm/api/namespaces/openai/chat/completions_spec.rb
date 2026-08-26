@@ -69,8 +69,10 @@ RSpec.describe 'Namespaces::OpenAI::Chat::Completions' do
     it 'streams data: chunks terminated by data: [DONE]' do
       allow(executor_double).to receive(:stream_preflight!).and_return(nil)
       allow(executor_double).to receive(:call_stream) do |&block|
-        block.call(double('Chunk', content: 'Hello '))
-        block.call(double('Chunk', content: 'world'))
+        # G3/L2: Canonical::Chunk only (the legacy double('Chunk') shape is
+        # gone; R15).
+        block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'Hello ', request_id: 'req_oc'))
+        block.call(Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'world', request_id: 'req_oc'))
         pipeline_response
       end
       post '/v1/chat/completions',

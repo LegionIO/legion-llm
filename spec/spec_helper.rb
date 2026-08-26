@@ -19,23 +19,51 @@ require_relative 'support/transport_stub'
 require 'legion/llm'
 require_relative 'support/ssot_v3_snapshot_factory'
 
+# Test-only: make Legion::Settings.reset! race-free.
+#
+# The stock reset! sets the Settings @loader to nil and relies on the next
+# merge_settings to recreate it. That nil window is racy: background threads
+# that legion-llm itself spawns (the executor's ASYNC_THREAD_POOL post-steps,
+# the audit Concurrent::Promises task, the metering spool) read Legion::Settings
+# while working. Any such read that lands inside the nil window triggers
+# Settings#load, which creates and assigns a brand-new Loader. If that
+# assignment lands AFTER the main thread's merge_settings, @loader points at a
+# loader that never received the :llm tree, so Settings[:llm] is nil for the
+# rest of the example — an order-dependent NoMethodError in later specs
+# (e.g. prompt_spec's pipeline steps dereferencing Settings[:llm][:tools]).
+#
+# Replacing the nil-window with a single atomic swap of a fresh,
+# default-populated loader means @loader is never nil, so background readers
+# never trigger a racy load. This is behaviorally identical to stock reset!
+# for the spec suite (the ivars stock reset! also clears — @schema,
+# @registered_libraries, @reload_callbacks, @loaded — are inert here: no spec
+# uses validate!/register_library/watch!/overlays, and @loaded is never set
+# because specs pass no config files).
+Legion::Settings.define_singleton_method(:reset!) do
+  fresh_loader = Legion::Settings::Loader.new
+  fresh_loader.load_env
+  Legion::Settings.loader = fresh_loader
+end
+
 def native_dispatch_result(content: 'test response', input_tokens: 10, output_tokens: 5, tool_calls: [])
   canonical = Legion::Extensions::Llm::Canonical
   usage = canonical::Usage.new(
     input_tokens: input_tokens, output_tokens: output_tokens,
-    cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {}
+    cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: 0, units: {},
+    metadata: {}
   )
   canonical_tool_calls = tool_calls.map do |tc|
     if tc.is_a?(canonical::ToolCall)
       tc
     else
-      canonical::ToolCall.new(
-        id: tc[:id] || "tc_#{SecureRandom.hex(4)}", exchange_id: nil,
-        name: tc[:name].to_s, arguments: tc[:arguments] || {},
-        source: tc[:source] || { type: :client }, status: tc[:status],
-        duration_ms: nil, result: tc[:result], error: nil,
-        started_at: nil, finished_at: nil, category: nil,
-        data_handling_classification: nil, policy_decision: nil
+      canonical::ToolCall.build(
+        # nil id lets ToolCall.build mint the canonical id — no tc_ fabrication.
+        id:        tc[:id],
+        name:      tc[:name].to_s,
+        arguments: tc[:arguments] || {},
+        source:    tc[:source]&.to_sym,
+        status:    tc[:status]&.to_sym,
+        result:    tc[:result]
       )
     end
   end
@@ -64,15 +92,16 @@ class SsotStubCallable
 
   def disconnect = (@disconnects += 1)
 
-  def chat(messages:, model:, **)
+  # 0.8.0 callable contract: positional messages (the real boundary shape).
+  def chat(messages, model:, **)
     _ = [messages, model]
     native_dispatch_result(content: @content, input_tokens: @input_tokens,
                            output_tokens: @output_tokens, tool_calls: @tool_calls)
   end
 
-  def stream_chat(messages:, model:, **, &block)
+  def stream_chat(messages, model:, **, &block)
     _ = [messages, model]
-    result = chat(messages: messages, model: model)
+    result = chat(messages, model: model)
     block&.call(Struct.new(:content).new(@content))
     result
   end
@@ -172,6 +201,16 @@ def seed_discovered_models(models)
   Legion::LLM::Inventory::Discovery.instance_variable_set(:@discovered_models, map)
 end
 
+# Apply [:llm] settings overrides WITHOUT wiping the rest of the tree. A plain
+# Legion::Settings.set_prop(:llm, {...}) REPLACES the whole [:llm] subtree, which
+# drops [:llm][:router] (and other defaults) and then breaks Request.build's
+# auto_routing_model? read. Shallow-merge the overrides onto the current tree so
+# the specified top-level keys are force-replaced (matching set_prop's intent)
+# while sibling keys such as [:llm][:router] survive.
+def merge_llm_settings(overrides)
+  Legion::Settings.set_prop(:llm, Legion::Settings[:llm].merge(overrides))
+end
+
 RSpec.configure do |config|
   config.before(:each) do
     Legion::Settings.reset!
@@ -180,7 +219,6 @@ RSpec.configure do |config|
       defined?(Legion::Transport::Settings)
     Legion::Settings[:logging][:level] = :fatal
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
-    Legion::LLM::Inventory::Discovery.reset! if defined?(Legion::LLM::Inventory::Discovery)
     # Re-register standard providers after reset so router resolution works
     if defined?(Legion::LLM::Call::Registry)
       %i[anthropic test bedrock openai ollama vllm azure_foundry gemini xai].each do |provider|

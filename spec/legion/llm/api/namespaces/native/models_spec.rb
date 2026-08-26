@@ -5,7 +5,7 @@ require 'rack/test'
 require 'sinatra/base'
 require 'sinatra/namespace'
 
-RSpec.describe 'Legion::LLM::API::Namespaces::Native::Models' do
+RSpec.describe 'Legion::LLM::API::Namespaces::Native::Models', :ssot_v3 do
   include Rack::Test::Methods
 
   before do
@@ -27,27 +27,23 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Models' do
     end
   end
 
-  let(:sample_offering) do
-    {
-      offering_id:     'ollama:local:inference:llama3.2',
-      model:           'llama3.2',
-      type:            :inference,
-      provider_family: 'ollama',
-      instance_id:     'local',
-      tier:            :local,
-      capabilities:    ['chat'],
-      limits:          { context_window: 128_000 },
-      enabled:         true
-    }
+  # D14: the models routes project the NEW Registry snapshot — publish a real
+  # lane through the Phase 1 registry API instead of stubbing the deleted
+  # Inventory.offerings read (the stub was inert: the route never read it).
+  def activate_llama_lane
+    activate(
+      provider_family: 'ollama', instance_id: 'local',
+      drafts: [offering_draft(model: 'llama3.2', tier: :local, supported: %i[chat])]
+    )
   end
 
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
-    allow(Legion::LLM::Inventory).to receive(:offerings).and_return([sample_offering])
   end
 
   describe 'GET /api/llm/models' do
     it 'returns 200 with models and offerings' do
+      activate_llama_lane
       get '/api/llm/models'
       expect(last_response.status).to eq(200)
       result = Legion::JSON.load(last_response.body)
@@ -57,7 +53,6 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Models' do
     end
 
     it 'includes legionio auto-routing model' do
-      allow(Legion::LLM::Inventory).to receive(:offerings).and_return([])
       get '/api/llm/models'
       result = Legion::JSON.load(last_response.body)
       model_ids = result[:data][:models].map { |m| m[:id] }
@@ -73,7 +68,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Models' do
 
   describe 'GET /api/llm/models/:id' do
     it 'returns 200 for known model' do
-      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(model: 'llama3.2')).and_return([sample_offering])
+      activate_llama_lane
       get '/api/llm/models/llama3.2'
       expect(last_response.status).to eq(200)
       result = Legion::JSON.load(last_response.body)
@@ -81,7 +76,6 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Models' do
     end
 
     it 'returns 200 for legionio auto-routing model' do
-      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(model: 'legionio')).and_return([])
       get '/api/llm/models/legionio'
       expect(last_response.status).to eq(200)
       result = Legion::JSON.load(last_response.body)
@@ -89,7 +83,6 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Models' do
     end
 
     it 'returns 404 for unknown model' do
-      allow(Legion::LLM::Inventory).to receive(:offerings).with(hash_including(model: 'nonexistent')).and_return([])
       get '/api/llm/models/nonexistent'
       expect(last_response.status).to eq(404)
       result = Legion::JSON.load(last_response.body)

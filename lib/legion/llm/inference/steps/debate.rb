@@ -87,7 +87,7 @@ module Legion
             @raw_response = debate_result[:synthetic_response]
             log.warn(
               "[llm][steps][debate] action=response_replaced request_id=#{@request&.id || 'none'} " \
-              "original_chars=#{original_chars} synthetic_chars=#{debate_result[:synthetic_response].content.to_s.length} " \
+              "original_chars=#{original_chars} synthetic_chars=#{debate_result[:synthetic_response].text.to_s.length} " \
               "rounds=#{debate_result[:rounds]}"
             )
             @applied_signals[:envelope_keys] << 'debate:applied' if @applied_signals.is_a?(Hash)
@@ -171,7 +171,13 @@ module Legion
               judge_model:        judge_model
             )
             judge_sections = parse_judge_output(judge_synthesis)
-            synthetic_response = SyntheticResponse.new(judge_sections[:final_answer])
+            # G3: the synthetic response is a Canonical::Response — @raw_response
+            # stays canonical through the pipeline (a Struct with a bare .content
+            # member was the split-world seam; downstream readers are canonical
+            # member reads).
+            synthetic_response = Legion::Extensions::Llm::Canonical::Response.build(
+              text: judge_sections[:final_answer].to_s
+            )
 
             {
               synthetic_response: synthetic_response,
@@ -184,12 +190,6 @@ module Legion
               )
             }
           end
-
-          SyntheticResponse = Struct.new(:content) do
-            def input_tokens  = nil
-            def output_tokens = nil
-          end
-          private_constant :SyntheticResponse
 
           private
 
@@ -208,21 +208,26 @@ module Legion
           end
 
           def extract_question(request)
-            request.messages.select { |m| m[:role].to_s == 'user' }
-                   .last&.dig(:content) || ''
+            # G3: canonical messages — the question is the last user
+            # message's canonical .text.
+            last_user = request.messages.select { |m| m.role.to_s == 'user' }.last
+            last_user ? last_user.text.to_s : ''
           end
 
+          # G3: the debate reads canonical responses. The advocate is the
+          # pipeline's Canonical::Response (.text); the challenger/judge role
+          # calls return the Inference::Response envelope (message Hash).
+          # No Hash/.content duck-typing — a shape that is neither is a
+          # contract fault, surfaced loud, never a Ruby inspect string.
           def extract_content(response)
+            return response.text.to_s if response.is_a?(Legion::Extensions::Llm::Canonical::Response)
+
             if response.is_a?(Legion::LLM::Inference::Response)
               msg = response.message
-              msg.is_a?(Hash) ? (msg[:content] || msg['content']).to_s : msg.to_s
-            elsif response.respond_to?(:content)
-              response.content.to_s
-            elsif response.is_a?(Hash)
-              (response[:content] || response['content']).to_s
-            else
-              response.to_s
+              return (msg.is_a?(Hash) ? (msg[:content] || msg['content']) : msg.to_s).to_s
             end
+
+            raise ArgumentError, "extract_content expects Canonical::Response or Inference::Response, got #{response.class}"
           end
 
           def select_debate_models(request)
