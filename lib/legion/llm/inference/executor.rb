@@ -1581,16 +1581,39 @@ module Legion
             timeline_data = tool_timeline[entry_key] || tool_timeline[tc_name] || {}
             pending_data = pending_tool_call_data(tc_id, tc_name)
 
+            # SSOT: executor resolves execution authority by tool NAME. The
+            # provider may omit source (vLLM/qwen does); pending_data carries
+            # source only if the tool loop already dispatched it; timeline_data
+            # carries source_type only for tools the step_tool_calls step ran.
+            # Final fallback: find_tool_source(tc_name) resolves from the
+            # request's tool map (builtin → :client via canonical_source_symbol).
+            source = canonical_source_symbol(
+              tool_call_field(tool_call, :source) || pending_data[:source] || timeline_data[:source_type] || find_tool_source(tc_name)
+            )
+
+            # G24 execution-proxy invariant: a client-actionable (:client source)
+            # tool call is PENDING at the response exit — the client executes it
+            # and returns the result on the next turn. It must NEVER inherit a
+            # server/passthrough result (the "Passthrough to client: <name>"
+            # placeholder the tool loop emits for event/audit bookkeeping lands
+            # in pending history). If it did, the client dialect can no longer
+            # tell a pending client call (result nil → stop_reason tool_use)
+            # from a completed one, so format_stop_reason falls through to the
+            # provider stop (e.g. end_turn) and the pending call is lost.
+            # Server-source tools (special/registry/extension/mcp) keep their
+            # executed result/status/error unchanged.
+            client_pending = source == :client
+
             Legion::Extensions::Llm::Canonical::ToolCall.build(
               name:        tc_name,
               id:          tc_id,
               arguments:   tc_args,
               exchange_id: tool_call_field(tool_call, :exchange_id) || pending_data[:exchange_id] || timeline_data[:exchange_id],
-              source:      canonical_source_symbol(tool_call_field(tool_call, :source) || pending_data[:source] || timeline_data[:source_type]),
-              status:      tool_call_field(tool_call, :status) || pending_data[:status] || timeline_data[:status],
+              source:      source,
+              status:      client_pending ? nil : (tool_call_field(tool_call, :status) || pending_data[:status] || timeline_data[:status]),
               duration_ms: tool_call_field(tool_call, :duration_ms) || pending_data[:duration_ms] || timeline_data[:duration_ms],
-              result:      tool_call_field(tool_call, :result) || pending_data[:result] || timeline_data[:result],
-              error:       tool_call_field(tool_call, :error) || pending_data[:error]
+              result:      client_pending ? nil : (tool_call_field(tool_call, :result) || pending_data[:result] || timeline_data[:result]),
+              error:       client_pending ? nil : (tool_call_field(tool_call, :error) || pending_data[:error])
             )
           end
         end

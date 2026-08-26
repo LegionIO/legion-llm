@@ -714,11 +714,14 @@ module Legion
               fn = symbolize(fn)
               next if fn[:name].to_s.empty?
 
+              # M5/H1: a client-declared tool carries NO source — source is
+              # explicit-or-absent, never fabricated. The dispatch-side source
+              # (:client) is stamped by build_tool_definitions (the OUTBOUND
+              # tool-definition builder), not on the canonical request tools.
               {
                 name:        fn[:name].to_s,
                 description: fn[:description].to_s,
-                parameters:  fn[:parameters] || {},
-                source:      { type: :client, executable: true }
+                parameters:  fn[:parameters] || {}
               }
             end
           end
@@ -744,18 +747,17 @@ module Legion
           def build_thinking(reasoning)
             return nil if reasoning.nil?
 
-            effort = if reasoning.is_a?(Hash)
-                       reasoning[:effort] || reasoning['effort']
-                     else
-                       reasoning
-                     end
+            # /v1/responses supplies ONLY the effort axis. The canonical
+            # Thinking::Config carries effort as a closed enum (the
+            # EFFORT_BUDGET keys); the effort→budget resolution belongs to the
+            # provider edge (Config#resolved_budget), NEVER a fabricated budget
+            # here. Preserve the drop-unknown-effort → nil behavior: an
+            # unrecognized effort would raise at Config construction, so it is
+            # dropped rather than forwarded.
+            effort = reasoning.is_a?(Hash) ? (reasoning[:effort] || reasoning['effort']) : reasoning
+            return nil unless Canonical::Thinking::Config::EFFORT_BUDGET.key?(effort.to_s)
 
-            case effort.to_s
-            when 'low'
-              { effort: effort.to_s, budget: 512 }
-            when 'medium', 'high'
-              { effort: effort.to_s, budget: 1024 }
-            end
+            { effort: effort.to_s }
           end
 
           def build_tool_definitions(canonical_tools)

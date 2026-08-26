@@ -465,15 +465,19 @@ module Legion
           def build_tools(raw)
             return nil unless raw.is_a?(Array) && !raw.empty?
 
+            # M5/H1: a client-declared tool carries NO source — source is
+            # explicit-or-absent, never fabricated. The dispatch-side source
+            # (:client) is stamped by build_tool_definitions (the OUTBOUND
+            # tool-definition builder), not on the canonical request tools.
             raw.filter_map do |tool|
               t = symbolize(tool)
               if t[:type].to_s == 'function'
                 fn = symbolize(t[:function])
                 next unless fn.is_a?(Hash) && fn[:name].to_s.length.positive?
 
-                { name: fn[:name].to_s, description: fn[:description].to_s, parameters: fn[:parameters] || {}, source: { type: :client, executable: true } }
+                { name: fn[:name].to_s, description: fn[:description].to_s, parameters: fn[:parameters] || {} }
               elsif t[:name].to_s.length.positive?
-                { name: t[:name].to_s, description: t[:description].to_s, parameters: t[:parameters] || {}, source: { type: :client, executable: true } }
+                { name: t[:name].to_s, description: t[:description].to_s, parameters: t[:parameters] || {} }
               end
             end
           end

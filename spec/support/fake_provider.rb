@@ -38,6 +38,8 @@ module FakeProvider
     stream_tool
     server_tool_legion
     server_tool_failure_with_client_passthrough
+    client_tool_passthrough_pending
+    client_tool_passthrough_pending_source_nil
     tool_degraded_args
     tool_leaked_token
     error
@@ -237,6 +239,10 @@ module FakeProvider
       when :server_tool_legion      then server_tool_legion_response(model)
       when :server_tool_failure_with_client_passthrough
         server_tool_failure_with_client_passthrough_response(model)
+      when :client_tool_passthrough_pending
+        client_tool_passthrough_pending_response(model)
+      when :client_tool_passthrough_pending_source_nil
+        client_tool_passthrough_pending_source_nil_response(model)
       when :tool_degraded_args then tool_degraded_args_response(model)
       when :tool_leaked_token  then tool_leaked_token_response(model)
       else text_response(model)
@@ -431,6 +437,56 @@ module FakeProvider
         stop_reason: :tool_use,
         model:       model.to_s,
         metadata:    { fake: true, scenario: :server_tool_failure_with_client_passthrough }
+      )
+    end
+
+    # Execution-proxy regression (G24 / TOOLS ROOT-2): a single client-declared
+    # (passthrough) tool call, and the provider reports stop_reason :end_turn —
+    # the exact vLLM/qwen capture where the model emits a tool call but the
+    # finish_reason canonicalizes to :end_turn, not :tool_use. A client-
+    # actionable call must exit the daemon PENDING (result nil) so the client
+    # dialect renders it as a pending tool_use with stop_reason 'tool_use',
+    # NEVER inheriting a fabricated passthrough result that would let the
+    # provider's :end_turn leak through. Before FIX 3 the daemon stamps a
+    # "Passthrough to client: <name>" result on the exit ToolCall, so
+    # format_stop_reason can no longer see a result-nil client call and falls
+    # through to the provider stop (end_turn). This scenario is the offline
+    # oracle for that regression.
+    def client_tool_passthrough_pending_response(model)
+      Canonical::Response.build(
+        text:        '',
+        tool_calls:  [tool_call(name: 'exec_command', args: { cmd: 'pwd' }, id: 'call_fake_client_only')],
+        usage:       usage(input: 5, output: 4),
+        stop_reason: :end_turn,
+        model:       model.to_s,
+        metadata:    { fake: true, scenario: :client_tool_passthrough_pending }
+      )
+    end
+
+    # Faithful vLLM reproduction: the provider translator does NOT stamp
+    # source on response tool calls. This is IDENTICAL to
+    # client_tool_passthrough_pending except the ToolCall carries NO source
+    # (source: nil) — the exact shape real vLLM/qwen returns. The executor
+    # must resolve source BY NAME via find_tool_source to detect the tool is
+    # client-actionable. Without the name-based fallback,
+    # canonical_source_symbol(nil) → nil, client_pending = false, and the
+    # tool inherits the "Passthrough to client: <name>" placeholder result
+    # from pending history → format_stop_reason never returns :tool_use.
+    def client_tool_passthrough_pending_source_nil_response(model)
+      Canonical::Response.build(
+        text:        '',
+        tool_calls:  [
+          Canonical::ToolCall.build(
+            id:         'call_fake_client_nosrc',
+            name:       'exec_command',
+            arguments:  { cmd: 'pwd' },
+            started_at: FROZEN_TIME
+          )
+        ],
+        usage:       usage(input: 5, output: 4),
+        stop_reason: :end_turn,
+        model:       model.to_s,
+        metadata:    { fake: true, scenario: :client_tool_passthrough_pending_source_nil }
       )
     end
 

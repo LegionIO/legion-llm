@@ -572,11 +572,14 @@ module Legion
 
             raw.map do |t|
               ts = symbolize(t)
+              # M5/H1: a client-declared tool carries NO source — source is
+              # explicit-or-absent, never fabricated. The dispatch-side source
+              # (:client) is stamped by build_tool_definitions (the OUTBOUND
+              # tool-definition builder), not on the canonical request tools.
               {
                 name:        ts[:name].to_s,
                 description: ts[:description].to_s,
-                parameters:  ts[:input_schema] || ts[:parameters] || {},
-                source:      { type: :client, executable: false }
+                parameters:  ts[:input_schema] || ts[:parameters] || {}
               }
             end
           end
