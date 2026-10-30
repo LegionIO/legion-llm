@@ -14,86 +14,59 @@ module Legion
     class EmbeddingUnavailableError < LLMError; end
 
     module Call
-      # SSOT v4 §21 — embeddings on the single execution engine.
-      #
-      # `generate`/`generate_batch` build a per-call Router
-      # (operation: :embed), select ONE exact lane via `Router#next_lane`, then
-      # dispatch the lane's EXACT callable via `Call::SelectionDispatch` — no
-      # `request_lane`, no configured default model/provider/instance, no
-      # `Call::Dispatch`. An omitted model is an UNCONSTRAINED selection, never a
-      # default. Selection happens BEFORE the cache lookup (§21.2): a hit is only
-      # served after a current Selection proves the request has an eligible
-      # embedding function. Typed routing errors (RoutingRejected) propagate to
-      # the caller — they are never converted to a nil/zero-vector/safe hash.
+      # The Router is the sole embedding selector. Select before consulting the
+      # function-identity cache, and retry malformed attempts through the same
+      # typed routing policy as provider failures.
       module Embeddings
         extend Legion::Logging::Helper
 
-        # Kept for reference/back-compat; the authoritative prefix table lives in
-        # settings (`:llm, :embedding, :prefix_registry`) and is model-keyed, so
-        # prefixing stays provider-neutral.
+        # The authoritative, provider-neutral prefix policy lives in settings.
         PREFIX_REGISTRY = {
           'nomic-embed-text'  => { document: 'search_document: ', query: 'search_query: ' },
           'mxbai-embed-large' => { query: 'Represent this sentence for searching relevant passages: ' }
         }.freeze
-
-        # Conservative provider-neutral estimate used ONLY for the preselection
-        # context bound and for post-selection chunk sizing. The router still
-        # authorizes lanes against the offering's authoritative context evidence;
-        # this estimate never retroactively authorizes an ineligible lane.
         CHARS_PER_TOKEN = 4
-        # Per-chunk conservative token bound (§21.1). A single embedding request
-        # is chunked so each chunk targets at most this many tokens; the selected
-        # offering's authoritative context can shrink the chunk further.
         EMBED_CHUNK_TARGET_TOKENS = 512
-        # Vector post-processing mode recorded in the cache-function identity.
-        # Vectors are returned exactly as the provider produced them (no L2
-        # normalization, no truncate/pad), so this is a stable constant.
         CACHE_NORMALIZATION = 'none'
 
         class << self
-          # @return [Hash] { vector:, model:, provider:, instance:, dimensions:, tokens:, chunks:, tier:, cache_hit: }
-          # @raise [Legion::LLM::Errors::RoutingRejected] when no eligible embedding function / attempts exhausted.
           def generate(text:, model: nil, dimensions: nil, task: :document,
                        provider: nil, instance: nil, request: nil, router: nil, routing_seed: nil, **)
-            return not_started_result(model) unless LLM.started?
+            return not_started_result(model: model) unless LLM.started?
 
-            coerced = coerce_text(text)
-            rtr = router || build_router(
-              model: model, provider: provider, instance: instance,
-              dimensions: dimensions, request: request, routing_seed: routing_seed
-            )
-            run_single(router: rtr, text: coerced, dimensions: dimensions, task: task)
+            task = embedding_task(task: task)
+            rtr = router || build_router(model: model, provider: provider, instance: instance,
+                                         dimensions: dimensions, request: request, routing_seed: routing_seed)
+            run_single(router: rtr, text: coerce_text(value: text),
+                       dimensions: rtr.requested_embedding_dimensions || dimensions, task: task)
           end
 
-          # @return [Array<Hash>] one entry per input, original order preserved (N -> N).
-          # @raise [Legion::LLM::Errors::RoutingRejected] on exhaustion / no eligible function.
           def generate_batch(texts:, model: nil, dimensions: nil, task: :document,
                              provider: nil, instance: nil, request: nil, router: nil, routing_seed: nil, **)
-            return texts.map { not_started_result(model) } unless LLM.started?
+            return texts.map { not_started_result(model: model) } unless LLM.started?
 
-            coerced = texts.map { |t| coerce_text(t) }
-            rtr = router || build_router(
-              model: model, provider: provider, instance: instance,
-              dimensions: dimensions, request: request, routing_seed: routing_seed
-            )
-            run_batch(router: rtr, texts: coerced, dimensions: dimensions, task: task)
+            task = embedding_task(task: task)
+            rtr = router || build_router(model: model, provider: provider, instance: instance,
+                                         dimensions: dimensions, request: request, routing_seed: routing_seed)
+            run_batch(router: rtr, texts: texts.map { |text| coerce_text(value: text) },
+                      dimensions: rtr.requested_embedding_dimensions || dimensions, task: task)
           end
 
           private
 
-          # ----------------------------------------------------------------
-          # Router construction (§21.1)
-          # ----------------------------------------------------------------
+          def embedding_task(task:, **)
+            return task.to_sym if %w[document query].include?(task.to_s)
 
-          def build_router(model:, provider:, instance:, dimensions:, request:, routing_seed:)
+            raise ArgumentError, 'embedding task must be document or query'
+          end
+
+          def build_router(model:, provider:, instance:, dimensions:, request:, routing_seed:, **)
             req = request || build_request(model: model, provider: provider, instance: instance,
                                            dimensions: dimensions, routing_seed: routing_seed)
             Legion::LLM::Router.new(request: req, operation: :embed, body_model: model)
           end
 
-          # A canonical Request carrying a trusted routing context. Prod uses a
-          # fresh server seed; specs inject a deterministic seed via routing_seed.
-          def build_request(model:, provider:, instance:, dimensions:, routing_seed:)
+          def build_request(model:, provider:, instance:, dimensions:, routing_seed:, **)
             routing = { model: model, provider: provider, instance: instance }.compact
             extra = dimensions ? { embedding_dimensions: dimensions } : {}
             if routing_seed
@@ -104,21 +77,16 @@ module Legion
             end
           end
 
-          # ----------------------------------------------------------------
-          # Single-input path (select -> cache -> dispatch -> chunk aggregate)
-          # ----------------------------------------------------------------
-
-          def run_single(router:, text:, dimensions:, task:)
+          def run_single(router:, text:, dimensions:, task:, **)
             router.maximum_attempts.times do
               attempt = router.next_attempt!
-              chunks = prepare_chunks(text, attempt_context: attempt, task: task)
-
+              chunks = prepare_chunks(text: text, attempt_context: attempt, task: task)
               key = cache_key(attempt_context: attempt, dimensions: dimensions, task: task, digest_source: text)
-              cached = cache_get(key)
+              cached = cache_get(key: key, attempt: attempt, dimensions: dimensions, task: task, chunks: chunks.size)
               return cached.merge(cache_hit: true) if cached
 
               result = Legion::LLM::Call::SelectionDispatch.call(
-                attempt_context: attempt, arguments: embed_arguments(chunks, dimensions)
+                attempt_context: attempt, arguments: embed_arguments(chunks: chunks, dimensions: dimensions)
               )
               unless result.success?
                 terminal = classify_failure(router: router, result: result, attempt: attempt)
@@ -127,37 +95,33 @@ module Legion
                 next
               end
 
-              vectors = provider_vectors(result.value)
-              retry_signal = malformed_retry(router: router, attempt: attempt,
-                                             expected: chunks.size, actual: vectors.size)
-              if retry_signal
-                raise retry_signal unless retry_signal == :retry
+              vectors = provider_vectors(value: result.value)
+              reason = vectors_error(vectors: vectors, expected: chunks.size, dimensions: dimensions)
+              vector = aggregate(vectors: vectors, weights: chunks.map(&:length)) unless reason
+              reason ||= 'aggregated embedding is not a finite nonzero vector' unless valid_vector?(vector: vector)
+              if reason
+                terminal = malformed_retry(router: router, attempt: attempt, reason: reason)
+                raise terminal if terminal
 
                 next
               end
 
-              vector = aggregate(vectors, chunks.map(&:length))
-              payload = build_single_result(attempt: attempt, vector: vector, dimensions: dimensions,
-                                            chunks: chunks.size, tokens: extract_tokens(result.value))
-              cache_set(key, payload)
+              payload = build_result(attempt: attempt, vector: vector, task: task, chunks: chunks.size)
+              payload[:tokens] = extract_tokens(value: result.value)
+              cache_set(key: key, payload: payload)
               return payload.merge(cache_hit: false)
             end
 
-            raise routing_rejected(exhausted_rejection(router))
+            raise routing_rejected(rejection: exhausted_rejection(router: router))
           end
 
-          # ----------------------------------------------------------------
-          # Batch path — one exact lane for all N inputs (§21.1/§21.3)
-          # ----------------------------------------------------------------
-
-          def run_batch(router:, texts:, dimensions:, task:)
+          def run_batch(router:, texts:, dimensions:, task:, **)
             router.maximum_attempts.times do
               attempt = router.next_attempt!
-              per_item_chunks = texts.map { |t| prepare_chunks(t, attempt_context: attempt, task: task) }
+              per_item_chunks = texts.map { |text| prepare_chunks(text: text, attempt_context: attempt, task: task) }
               flat = per_item_chunks.flatten(1)
-
               result = Legion::LLM::Call::SelectionDispatch.call(
-                attempt_context: attempt, arguments: embed_arguments(flat, dimensions)
+                attempt_context: attempt, arguments: embed_arguments(chunks: flat, dimensions: dimensions)
               )
               unless result.success?
                 terminal = classify_failure(router: router, result: result, attempt: attempt)
@@ -166,190 +130,143 @@ module Legion
                 next
               end
 
-              vectors = provider_vectors(result.value)
-              retry_signal = malformed_retry(router: router, attempt: attempt,
-                                             expected: flat.size, actual: vectors.size)
-              if retry_signal
-                raise retry_signal unless retry_signal == :retry
+              vectors = provider_vectors(value: result.value)
+              reason = vectors_error(vectors: vectors, expected: flat.size, dimensions: dimensions)
+              entries = reassemble_batch(per_item_chunks: per_item_chunks, flat_vectors: vectors, attempt: attempt, task: task) unless reason
+              reason = 'aggregated embedding is not a finite nonzero vector' if entries&.any? { |entry| !valid_vector?(vector: entry[:vector]) }
+              if reason
+                terminal = malformed_retry(router: router, attempt: attempt, reason: reason)
+                raise terminal if terminal
 
                 next
               end
 
-              return reassemble_batch(per_item_chunks: per_item_chunks, flat_vectors: vectors,
-                                      attempt: attempt, dimensions: dimensions)
+              return entries
             end
 
-            raise routing_rejected(exhausted_rejection(router))
+            raise routing_rejected(rejection: exhausted_rejection(router: router))
           end
 
-          def reassemble_batch(per_item_chunks:, flat_vectors:, attempt:, dimensions:)
+          def reassemble_batch(per_item_chunks:, flat_vectors:, attempt:, task:, **)
             cursor = 0
             per_item_chunks.each_with_index.map do |chunks, index|
-              slice = flat_vectors[cursor, chunks.size] || []
+              slice = flat_vectors[cursor, chunks.size]
               cursor += chunks.size
-              vector = aggregate(slice, chunks.map(&:length))
-              build_batch_entry(attempt: attempt, vector: vector, dimensions: dimensions,
-                                chunks: chunks.size, index: index)
+              vector = aggregate(vectors: slice, weights: chunks.map(&:length))
+              build_result(attempt: attempt, vector: vector, task: task, chunks: chunks.size).merge(index: index)
             end
           end
 
-          # ----------------------------------------------------------------
-          # Failure classification / retry (§21.3)
-          # ----------------------------------------------------------------
-
-          # Returns a RoutingRejected to raise (terminal) or nil (retry on the
-          # SAME router — the failed provider+instance+model stays consumed).
-          def classify_failure(router:, result:, attempt:)
+          def classify_failure(router:, result:, attempt:, **)
             action = router.classify(dispatch_result: result, attempt_context: attempt)
-            return routing_rejected(action.rejection) if action.terminal?
+            return routing_rejected(rejection: action.rejection) if action.terminal?
 
             nil
           end
 
-          # Discard every partial vector from a malformed attempt and retry the
-          # whole request on the same router. Returns :retry to continue, a
-          # RoutingRejected to raise, or nil when the count is correct.
-          def malformed_retry(router:, attempt:, expected:, actual:)
-            return nil if actual == expected
-
-            outcome = Legion::Extensions::Llm::Routing::ProviderOutcome.new(
-              kind: :malformed_output, reason: "expected #{expected} vectors, got #{actual}"
-            )
+          # Classify a complete malformed attempt, never keep a subset of chunks.
+          def malformed_retry(router:, attempt:, reason:, **)
+            outcome = Legion::Extensions::Llm::Routing::ProviderOutcome.new(kind: :malformed_output, reason: reason)
             failure = Legion::LLM::Call::SelectionDispatch::Result.failure(outcome: outcome)
-            terminal = classify_failure(router: router, result: failure, attempt: attempt)
-            terminal || :retry
+            classify_failure(router: router, result: failure, attempt: attempt)
           end
 
-          def embed_arguments(chunks, dimensions)
-            text = chunks.one? ? chunks.first : chunks
-            args = { text: text }
+          def embed_arguments(chunks:, dimensions:, **)
+            args = { text: chunks.one? ? chunks.first : chunks }
             args[:dimensions] = dimensions unless dimensions.nil?
             args
           end
 
-          def registry_snapshot
-            Legion::Extensions::Llm::Inventory::Registry.snapshot
-          end
-
-          def routing_rejected(rejection)
+          def routing_rejected(rejection:, **)
             Legion::LLM::Errors::RoutingRejected.new(rejection: rejection)
           end
 
-          def exhausted_rejection(router)
+          def exhausted_rejection(router:, **)
             used = router.maximum_attempts - router.attempts_remaining
             Legion::Extensions::Llm::Routing::Rejection.new(
               kind: :attempts_exhausted,
               reason: "embedding attempts exhausted after #{used} attempts",
-              inventory_generation: registry_snapshot.generation, candidate_counts: {}, http_status: 503
+              inventory_generation: Legion::Extensions::Llm::Inventory::Registry.snapshot.generation,
+              candidate_counts: {}, http_status: 503
             )
           end
 
-          # ----------------------------------------------------------------
-          # Result shaping
-          # ----------------------------------------------------------------
-
-          def build_single_result(attempt:, vector:, dimensions:, chunks:, tokens:)
-            raise Legion::LLM::ProviderError, 'embedding provider returned no usable vector' if vector.nil?
-
+          def build_result(attempt:, vector:, task:, chunks:, **)
             selection = attempt.selection
             {
-              vector:     vector,
-              model:      selection.model,
-              provider:   selection.provider_family,
-              instance:   selection.instance_id,
-              tier:       attempt.lane.tier,
-              dimensions: dimensions || vector.size,
-              tokens:     tokens,
-              chunks:     chunks
+              vector: vector, model: selection.model, provider: selection.provider_family,
+              instance: selection.instance_id, tier: attempt.lane.tier, dimensions: vector.size, chunks: chunks,
+              embedding_provenance: embedding_provenance(attempt: attempt, dimensions: vector.size, task: task)
             }
           end
 
-          def build_batch_entry(attempt:, vector:, dimensions:, chunks:, index:)
-            raise Legion::LLM::ProviderError, "embedding provider returned no usable vector (index #{index})" if vector.nil?
-
+          # A model's document/query prefix PAIR defines one space; task itself
+          # only scopes the input cache. Unknown revisions isolate exact instances.
+          def embedding_identity(attempt:, dimensions:, **)
             selection = attempt.selection
+            evidence = attempt.lane.model_revision_evidence
+            revision = evidence.value.to_s if evidence&.known? && !evidence.value.to_s.empty?
             {
-              vector:     vector,
-              model:      selection.model,
-              provider:   selection.provider_family,
-              instance:   selection.instance_id,
-              tier:       attempt.lane.tier,
-              dimensions: dimensions || vector.size,
-              chunks:     chunks,
-              index:      index
+              provider: selection.provider_family.to_s, model: selection.model.to_s,
+              model_revision: revision, identity_source: revision ? 'revision' : 'instance',
+              instance: revision ? nil : selection.instance_id.to_s,
+              dimensions: dimensions,
+              prefixes: { document: prefix_for(model: selection.model, task: :document).to_s,
+                          query:    prefix_for(model: selection.model, task: :query).to_s },
+              normalization: CACHE_NORMALIZATION
             }
           end
 
-          # ----------------------------------------------------------------
-          # Cache-function identity (§21.2) — NEVER lane/offering/tier/weight/seed
-          # ----------------------------------------------------------------
+          def embedding_provenance(attempt:, dimensions:, task:, **)
+            identity = embedding_identity(attempt: attempt, dimensions: dimensions)
+            identity.merge(space_id: Digest::SHA256.hexdigest(Legion::JSON.dump(identity)),
+                           instance: attempt.selection.instance_id.to_s, task: task.to_s)
+          end
 
-          def cache_key(attempt_context:, dimensions:, task:, digest_source:)
+          def cache_key(attempt_context:, dimensions:, task:, digest_source:, **)
             selection = attempt_context.selection
-            lane      = attempt_context.lane
-            revision  = revision_or_instance(lane: lane, instance_id: selection.instance_id)
-            dims      = dimensions || published_dimension(lane) || 0
-            prefix    = prefix_for(selection.model, task).to_s
-
-            identity = {
-              provider_family: selection.provider_family.to_s,
-              model:           selection.model.to_s,
-              model_revision:  revision.to_s,
-              dimensions:      dims,
-              task:            task.to_s,
-              prefix:          prefix,
-              normalization:   CACHE_NORMALIZATION,
-              input_digest:    Digest::SHA256.hexdigest(digest_source.to_s)
-            }
+            evidence = attempt_context.lane.embedding_dimensions_evidence
+            dims = dimensions || (Array(evidence.value).first if evidence&.known?) || 0
+            identity = embedding_identity(attempt: attempt_context, dimensions: dims)
+            identity[:task] = task.to_s
+            identity[:input_digest] = Digest::SHA256.hexdigest(digest_source.to_s)
             "#{cache_prefix}:#{selection.provider_family}:#{selection.model}:#{dims}:" \
               "#{Digest::SHA256.hexdigest(Legion::JSON.dump(identity))}"
           end
 
-          # Cross-instance cache reuse is allowed ONLY with authoritative immutable
-          # revision evidence; otherwise the exact instance_id scopes the key.
-          def revision_or_instance(lane:, instance_id:)
-            evidence = lane.model_revision_evidence
-            evidence&.known? ? evidence.value : instance_id
-          end
-
-          def published_dimension(lane)
-            evidence = lane.embedding_dimensions_evidence
-            evidence&.known? ? Array(evidence.value).first : nil
-          end
-
-          def cache_get(key)
+          def cache_get(key:, attempt:, dimensions:, task:, chunks:, **)
             return nil unless cache_enabled?
 
             value = Cache.get(key)
-            return nil if value.nil?
+            return nil unless value.is_a?(Hash)
 
-            symbolize_cached(value)
+            cached = value.transform_keys { |field| field.is_a?(String) ? field.to_sym : field }
+            return nil unless valid_vector?(vector: cached[:vector], dimensions: dimensions)
+            return nil if cached[:dimensions] && cached[:dimensions] != cached[:vector].size
+
+            payload = build_result(attempt: attempt, vector: cached[:vector], task: task, chunks: chunks)
+            previous = cached[:embedding_provenance]
+            return nil unless previous.is_a?(Hash)
+
+            previous = previous.transform_keys { |field| field.is_a?(String) ? field.to_sym : field }
+            return nil unless previous[:instance].is_a?(String) && !previous[:instance].empty?
+            return nil unless previous[:prefixes].is_a?(Hash)
+
+            previous[:prefixes] = previous[:prefixes].transform_keys { |field| field.is_a?(String) ? field.to_sym : field }
+            expected = payload[:embedding_provenance]
+            compatible = expected.all? do |field, value|
+              (field == :instance && expected[:identity_source] == 'revision') || previous[field] == value
+            end
+            return nil unless compatible
+
+            payload[:tokens] = cached[:tokens] || 0
+            payload
           end
 
-          def cache_set(key, payload)
+          def cache_set(key:, payload:, **)
             return unless cache_enabled?
 
-            Cache.set(key, cache_payload(payload), ttl: cache_ttl)
-          end
-
-          def cache_payload(payload)
-            {
-              vector:     payload[:vector],
-              model:      payload[:model],
-              provider:   payload[:provider]&.to_s,
-              instance:   payload[:instance],
-              tier:       payload[:tier]&.to_s,
-              dimensions: payload[:dimensions],
-              tokens:     payload[:tokens],
-              chunks:     payload[:chunks]
-            }.compact
-          end
-
-          def symbolize_cached(value)
-            hash = value.is_a?(Hash) ? value : {}
-            hash = hash.transform_keys { |k| k.respond_to?(:to_sym) ? k.to_sym : k } unless hash.keys.first.is_a?(Symbol)
-            hash[:provider] = hash[:provider].to_sym if hash[:provider].is_a?(String)
-            hash
+            Cache.set(key, payload.merge(provider: payload[:provider].to_s, tier: payload[:tier]&.to_s), ttl: cache_ttl)
           end
 
           def cache_enabled?
@@ -369,72 +286,62 @@ module Legion
             ttl.is_a?(Numeric) && ttl.positive? ? ttl.to_i : Cache::DEFAULT_TTL
           end
 
-          # ----------------------------------------------------------------
-          # Text prep / prefix / chunking (post-selection, offering-driven)
-          # ----------------------------------------------------------------
-
-          def coerce_text(value)
+          def coerce_text(value:, **)
             case value
             when String then value
             when Array
-              value.filter_map { |e| e.is_a?(Hash) ? (e[:text] || e[:content]) : e.to_s }
+              value.filter_map { |entry| entry.is_a?(Hash) ? (entry[:text] || entry[:content]) : entry.to_s }
                    .map(&:strip).reject(&:empty?).join("\n")
             when Hash then (value[:text] || value[:content] || value.values.first).to_s
             else value.to_s
             end
           end
 
-          # Chunk AFTER selection using the selected offering's authoritative
-          # context contract, then apply the model-specific prefix to each chunk.
-          def prepare_chunks(text, attempt_context:, task:)
-            model  = attempt_context.selection.model
-            prefix = prefix_for(model, task).to_s
-            budget = chunk_char_budget(attempt_context)
-            room   = budget.nil? ? nil : [budget - prefix.length, 1].max
-            chunk_text(text, room).map { |chunk| prefix.empty? ? chunk : "#{prefix}#{chunk}" }
+          def prepare_chunks(text:, attempt_context:, task:, **)
+            prefix = prefix_for(model: attempt_context.selection.model, task: task).to_s
+            budget = chunk_char_budget(attempt_context: attempt_context)
+            room = budget.nil? ? nil : [budget - prefix.length, 1].max
+            chunk_text(text: text, max_chars: room).map { |chunk| prefix.empty? ? chunk : "#{prefix}#{chunk}" }
           end
 
-          def chunk_char_budget(attempt_context)
-            evidence    = attempt_context.lane.context_evidence
-            context_tok = evidence&.known? ? evidence.value.to_i : EMBED_CHUNK_TARGET_TOKENS
-            tokens      = [context_tok, EMBED_CHUNK_TARGET_TOKENS].min
+          def chunk_char_budget(attempt_context:, **)
+            evidence = attempt_context.lane.context_evidence
+            context_tokens = evidence&.known? ? evidence.value.to_i : EMBED_CHUNK_TARGET_TOKENS
+            tokens = [context_tokens, EMBED_CHUNK_TARGET_TOKENS].min
             tokens.positive? ? tokens * CHARS_PER_TOKEN : nil
           end
 
-          def prefix_for(model, task)
+          def prefix_for(model:, task:, **)
             registry = Legion::Settings[:llm][:embedding][:prefix_registry]
-            model_prefixes = registry[model_base(model)] || registry[model_base(model).to_s] || {}
+            base = model.to_s.split(':').first
+            model_prefixes = registry[base] || registry[base.to_sym] || {}
             model_prefixes[task] || model_prefixes[task.to_s]
           end
 
-          def model_base(model)
-            model.to_s.split(':').first
-          end
-
-          def chunk_text(text, max_chars)
+          def chunk_text(text:, max_chars:, **)
             return [text] unless max_chars.to_i.positive?
             return [text] if text.length <= max_chars
 
             chunks = []
             remaining = text.dup
             until remaining.empty?
-              chunk, remaining = next_text_chunk(remaining, max_chars)
+              chunk, remaining = next_text_chunk(text: remaining, max_chars: max_chars)
               chunks << chunk unless chunk.empty?
             end
             chunks
           end
 
-          def next_text_chunk(text, max_chars)
+          def next_text_chunk(text:, max_chars:, **)
             return [text, ''] if text.length <= max_chars
 
             slice = text[0, max_chars]
-            boundary = chunk_boundary(slice, max_chars)
+            boundary = chunk_boundary(slice: slice, max_chars: max_chars)
             chunk = text[0, boundary].strip
             remaining = text[boundary..].to_s.strip
             [chunk.empty? ? text[0, max_chars] : chunk, remaining]
           end
 
-          def chunk_boundary(slice, max_chars)
+          def chunk_boundary(slice:, max_chars:, **)
             candidates = [slice.rindex("\n\n"), slice.rindex("\n"), slice.rindex('. '), slice.rindex(' ')]
             boundary = candidates.compact.max
             return max_chars unless boundary && boundary >= (max_chars * 0.5)
@@ -442,55 +349,59 @@ module Legion
             boundary + 1
           end
 
-          # ----------------------------------------------------------------
-          # Provider return handling
-          # ----------------------------------------------------------------
+          # Canonical provider artifacts use :embedding; LexLLMAdapter's defined
+          # callable contract uses :result. Do not guess at arbitrary objects or
+          # unwrap nested vectors (which would silently discard malformed data).
+          def provider_vectors(value:, **)
+            raw = if value.is_a?(Hash)
+                    value.key?(:embedding) ? value[:embedding] : value[:result]
+                  else
+                    value
+                  end
+            return [] unless raw.is_a?(Array)
+            return [raw] if raw.first.is_a?(Numeric)
 
-          # Normalize the provider return into a flat Array of numeric vectors.
-          #
-          # 0.8.0 embed artifact (05 S3 / O07): the documented Hash
-          # { text:, model:, embedding: Array<Float>, usage: Canonical::Usage }
-          # is unwrapped HERE, at the embed consumer boundary — the callables
-          # stay raw. +embedding+ is a flat numeric vector for a single input,
-          # an Array of them for a batch.
-          def provider_vectors(value)
-            raw = value.is_a?(Hash) ? value[:embedding] : value
-            return [] if raw.nil?
-            return [raw] if raw.is_a?(Array) && raw.first.is_a?(Numeric)
-            return [value] if raw.is_a?(Array) == false
-
-            raw.map { |vec| vec.is_a?(Array) && vec.first.is_a?(Array) ? vec.first : vec }
+            raw
           end
 
-          # Weighted average of chunk vectors. For a single vector this returns it
-          # unchanged. Never fabricates: returns nil when nothing is usable.
-          def aggregate(vectors, weights)
-            usable = vectors.each_with_index.filter_map do |vector, index|
-              next unless vector.is_a?(Array) && vector.first.is_a?(Numeric)
+          def valid_vector?(vector:, dimensions: nil, **)
+            return false unless vector.is_a?(Array) && !vector.empty?
+            return false if dimensions && vector.size != dimensions
+            return false unless vector.all? { |number| number.is_a?(Numeric) && number.real? && number.finite? }
 
-              [vector, [weights[index].to_i, 1].max]
-            end
-            return nil if usable.empty?
+            vector.any? { |number| !number.zero? }
+          end
 
-            dimensions = usable.first.first.size
-            usable.select! { |vector, _weight| vector.size == dimensions }
-            total_weight = usable.sum { |_vector, weight| weight }.to_f
-            Array.new(dimensions) do |index|
-              usable.sum { |vector, weight| vector[index].to_f * weight } / total_weight
+          def vectors_error(vectors:, expected:, dimensions:, **)
+            return "expected #{expected} vectors, got #{vectors.size}" unless vectors.size == expected
+            return 'embedding contains an invalid, nonfinite, or zero vector' unless vectors.all? { |vector| valid_vector?(vector: vector) }
+
+            size = dimensions || vectors.first&.size
+            return 'embedding dimensions do not match across the complete request' unless vectors.all? { |vector| vector.size == size }
+
+            nil
+          end
+
+          # All chunks have already been validated together. Never drop, truncate,
+          # pad, or normalize vectors. One chunk preserves the provider values.
+          def aggregate(vectors:, weights:, **)
+            return vectors.first if vectors.one?
+
+            total_weight = weights.sum { |weight| [weight, 1].max }.to_f
+            Array.new(vectors.first.size) do |index|
+              vectors.each_with_index.sum { |vector, chunk| vector[index] * ([weights[chunk], 1].max / total_weight) }
             end
           end
 
-          # input_tokens from the documented embed artifact's +usage+
-          # (Canonical::Usage or a plain hash) — 0 when absent.
-          def extract_tokens(value)
+          def extract_tokens(value:, **)
             usage = value.is_a?(Hash) ? value[:usage] : nil
-            return usage.input_tokens.to_i if usage.respond_to?(:input_tokens)
+            return usage.input_tokens.to_i if usage.is_a?(Legion::Extensions::Llm::Canonical::Usage)
             return usage[:input_tokens].to_i if usage.is_a?(Hash) && usage.key?(:input_tokens)
 
             0
           end
 
-          def not_started_result(model)
+          def not_started_result(model:, **)
             { vector: nil, model: model, provider: nil, error: 'LLM not started' }
           end
         end

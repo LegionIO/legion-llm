@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 require 'legion/llm/call/embeddings'
+require 'legion/llm/call/lex_llm_adapter'
 
 # M4: SSOT :embed routing (Call::Embeddings → Router.next_lane) is the SOLE
 # selection authority for embeddings. Discovery no longer selects a
@@ -58,12 +59,13 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
   # embed arguments it receives and, by default, echoes one 1024-d vector per
   # input with a fixed token count. Pass a block to override the response.
   def publish_embed(model: 'text-embedding-3-small', provider: 'openai', instance: 'primary',
-                    tier: :frontier, dims: [1024], context: 200_000, input_tokens: 5, &responder)
+                    tier: :frontier, dims: [1024], context: 200_000, input_tokens: 5, revision: nil, **, &responder)
     @dispatched ||= []
     responder ||= lambda do |_op, _args, kwargs, _block|
       @dispatched << kwargs
       texts = kwargs[:text]
-      vectors = texts.is_a?(Array) ? texts.map { Array.new(1024, 0.1) } : [Array.new(1024, 0.1)]
+      size = kwargs[:dimensions] || dims.first
+      vectors = texts.is_a?(Array) ? texts.map { Array.new(size, 0.1) } : [Array.new(size, 0.1)]
       { embedding: vectors, usage: { input_tokens: input_tokens } }
     end
     activate(
@@ -71,7 +73,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       callable: SsotV3SnapshotFactory::FactoryCallable.new(responder: responder),
       drafts: [offering_draft(model: model, tier: tier, supported: %i[embed],
                               capabilities: { embedding: :supported },
-                              embedding_dimensions: dims, context: context)]
+                              embedding_dimensions: dims, context: context, model_revision: revision)]
     )
   end
 
@@ -243,6 +245,24 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       expect(results.first[:vector].first).to eq(1.0)
       expect(results.last[:vector].first).to eq(2.0)
     end
+
+    it 'consumes the actual LexLLMAdapter result without trusting provider-reported identity' do
+      provider = double('embedding provider')
+      usage = Legion::Extensions::Llm::Canonical::Usage.build(input_tokens: 19)
+      allow(provider).to receive(:embed).and_return(
+        text: 'test', model: 'untrusted-response-model', embedding: [0.25, 0.75], usage: usage
+      )
+      adapter = Legion::LLM::Call::LexLLMAdapter.new(:openai, provider.class)
+      allow(adapter).to receive(:provider).and_return(provider)
+      publish_embed(model: 'adapter-model', dims: [2], revision: 'immutable-7') do |_op, _args, kwargs, _block|
+        adapter.embed(**kwargs)
+      end
+
+      result = described_class.generate(text: 'test', model: 'adapter-model', routing_seed: seed)
+      expect(result).to include(vector: [0.25, 0.75], model: 'adapter-model', tokens: 19)
+      expect(result[:embedding_provenance]).to include(model: 'adapter-model', provider: 'openai',
+                                                       model_revision: 'immutable-7', dimensions: 2)
+    end
   end
 
   describe '.generate chunking (offering context contract, §21.1)' do
@@ -283,6 +303,146 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       expect(results.first[:chunks]).to eq(1)
       expect(results.last[:chunks]).to eq(4)
       expect(results.map { |r| r[:index] }).to eq([0, 1])
+    end
+  end
+
+  describe 'durable embedding space provenance' do
+    it 'pairs document and query tasks while retaining their distinct prefix transformations' do
+      publish_embed(model: 'nomic-embed-text', dims: [2], revision: 'rev-1')
+      document = described_class.generate(text: 'same text', task: :document, routing_seed: seed)
+      query = described_class.generate(text: 'same text', task: :query, routing_seed: seed)
+      expect(document[:embedding_provenance]).to include(
+        space_id: match(/\A[0-9a-f]{64}\z/), task: 'document', identity_source: 'revision',
+        model_revision: 'rev-1', instance: 'primary', dimensions: 2, normalization: 'none',
+        prefixes: { document: 'search_document: ', query: 'search_query: ' }
+      )
+      expect(query[:embedding_provenance][:space_id]).to eq(document[:embedding_provenance][:space_id])
+      expect(query[:embedding_provenance][:task]).to eq('query')
+      expect(@dispatched.map { |arguments| arguments[:text] }).to eq(
+        ['search_document: same text', 'search_query: same text']
+      )
+    end
+
+    it 'changes document space when only the query prefix policy changes' do
+      publish_embed(model: 'nomic-embed-text', dims: [2])
+      before = described_class.generate(text: 'same text', routing_seed: seed)
+      Legion::Settings[:llm][:embedding][:prefix_registry]['nomic-embed-text'][:query] = 'new query: '
+      after = described_class.generate(text: 'same text', routing_seed: seed)
+      expect(after[:embedding_provenance][:space_id]).not_to eq(before[:embedding_provenance][:space_id])
+    end
+
+    it 'shares immutable revisions across instances but isolates changed revisions' do
+      publish_embed(model: 'space', instance: 'one', dims: [2], revision: 'rev-1')
+      publish_embed(model: 'space', instance: 'two', dims: [2], revision: 'rev-1')
+      publish_embed(model: 'space', instance: 'three', dims: [2], revision: 'rev-2')
+      results = %w[one two three].map do |instance|
+        described_class.generate(text: 'test', instance: instance, routing_seed: seed)[:embedding_provenance]
+      end
+      expect(results[0][:space_id]).to eq(results[1][:space_id])
+      expect(results[0][:space_id]).not_to eq(results[2][:space_id])
+      expect(results.map { |provenance| provenance[:instance] }).to eq(%w[one two three])
+    end
+
+    it 'isolates instances without revision evidence and records no invented revision' do
+      publish_embed(model: 'space', instance: 'one', dims: [2])
+      publish_embed(model: 'space', instance: 'two', dims: [2])
+      first = described_class.generate(text: 'test', instance: 'one', routing_seed: seed)[:embedding_provenance]
+      second = described_class.generate(text: 'test', instance: 'two', routing_seed: seed)[:embedding_provenance]
+      expect(first).to include(identity_source: 'instance', model_revision: nil)
+      expect(first[:space_id]).not_to eq(second[:space_id])
+    end
+
+    it 'separates instance identity from an identically named revision' do
+      publish_embed(model: 'space', instance: 'same', dims: [2])
+      publish_embed(model: 'space', instance: 'other', dims: [2], revision: 'same')
+      first = described_class.generate(text: 'test', instance: 'same', routing_seed: seed)
+      second = described_class.generate(text: 'test', instance: 'other', routing_seed: seed)
+      expect(first[:embedding_provenance][:space_id]).not_to eq(second[:embedding_provenance][:space_id])
+    end
+
+    it 'isolates actual dimensions of the same revision' do
+      publish_embed(model: 'space', dims: [2, 3], revision: 'rev-1')
+      short = described_class.generate(text: 'test', dimensions: 2, routing_seed: seed)
+      long = described_class.generate(text: 'test', dimensions: 3, routing_seed: seed)
+      expect(short[:embedding_provenance][:space_id]).not_to eq(long[:embedding_provenance][:space_id])
+      expect(short[:embedding_provenance][:dimensions]).to eq(short[:vector].size)
+      expect(long[:embedding_provenance][:dimensions]).to eq(long[:vector].size)
+    end
+
+    it 'attaches the same proven space to every batch result and single result' do
+      publish_embed(model: 'space', dims: [2], revision: 'rev-1')
+      single = described_class.generate(text: 'one', routing_seed: seed)
+      batch = described_class.generate_batch(texts: %w[one two], routing_seed: seed)
+      expect(batch.map { |entry| entry[:embedding_provenance] }).to eq([single[:embedding_provenance]] * 2)
+    end
+  end
+
+  describe 'complete vector validation' do
+    it 'rejects provider dimensions that disagree with the requested dimensions' do
+      publish_embed(dims: [2, 3]) { |_op, _args, _kwargs, _block| { embedding: [1.0, 2.0, 3.0] } }
+      expect { described_class.generate(text: 'test', dimensions: 2, routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
+    end
+
+    it 'rejects mixed chunk dimensions instead of dropping the nonmatching chunk' do
+      publish_embed(dims: [2], context: 1) { |_op, _args, _kwargs, _block| { embedding: [[1.0, 2.0], [3.0]] } }
+      expect { described_class.generate(text: 'abcdefgh', routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
+    end
+
+    it 'rejects missing chunks instead of returning a partial aggregate' do
+      publish_embed(dims: [2], context: 1) { |_op, _args, _kwargs, _block| { embedding: [[1.0, 2.0]] } }
+      expect { described_class.generate(text: 'abcdefgh', routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
+    end
+
+    it 'rejects extra nesting instead of discarding embedded vectors' do
+      publish_embed(dims: [2]) { |_op, _args, _kwargs, _block| { embedding: [[[1.0, 2.0], [3.0, 4.0]]] } }
+      expect { described_class.generate(text: 'test', routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
+    end
+
+    {
+      nonfinite: [1.0, Float::NAN], infinite: [1.0, Float::INFINITY], mixed: [1.0, '2'],
+      complex: [1.0, Complex(1, 2)], zero: [0.0, 0.0], empty: []
+    }.each do |name, vector|
+      it "rejects a #{name} vector in the complete batch" do
+        publish_embed(dims: [2]) { |_op, _args, _kwargs, _block| { embedding: [[1.0, 2.0], vector] } }
+        expect { described_class.generate_batch(texts: %w[one two], routing_seed: seed) }
+          .to raise_error(Legion::LLM::Errors::RoutingRejected)
+      end
+    end
+
+    it 'rejects a zero aggregate even when individual chunks are nonzero' do
+      publish_embed(dims: [2], context: 1) { |_op, _args, _kwargs, _block| { embedding: [[1.0, 2.0], [-1.0, -2.0]] } }
+      expect { described_class.generate(text: 'abcdefgh', routing_seed: seed) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
+    end
+
+    it 'enforces dimensions carried by the authoritative canonical request' do
+      publish_embed(dims: [2, 3]) { |_op, _args, _kwargs, _block| { embedding: [1.0, 2.0, 3.0] } }
+      request = Legion::LLM::Inference::Request.build_for_test(
+        routing_seed: seed, messages: [], extra: { embedding_dimensions: 2 }
+      )
+      expect { described_class.generate(text: 'test', request: request) }
+        .to raise_error(Legion::LLM::Errors::RoutingRejected)
+    end
+
+    it 'retries the whole malformed batch and reports only the successful lane provenance' do
+      Legion::Settings[:llm][:router][:max_attempts] = 2
+      attempted = []
+      %w[first second].each do |instance|
+        publish_embed(model: 'retry-model', instance: instance, dims: [2]) do |_op, _args, _kwargs, _block|
+          attempted << instance
+          vectors = attempted.one? ? [[1.0, 2.0], [3.0]] : [[4.0, 5.0], [6.0, 7.0]]
+          { embedding: vectors }
+        end
+      end
+      results = described_class.generate_batch(texts: %w[one two], routing_seed: seed)
+      expect(attempted.size).to eq(2)
+      expect(attempted.uniq.size).to eq(2)
+      expect(results.map { |entry| entry[:vector] }).to eq([[4.0, 5.0], [6.0, 7.0]])
+      expect(results.map { |entry| entry[:embedding_provenance][:instance] }).to eq([attempted.last] * 2)
     end
   end
 

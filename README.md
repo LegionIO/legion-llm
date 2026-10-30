@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.14.0-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.10-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -356,12 +356,18 @@ result = Legion::LLM.chat(
 ### Embeddings
 
 ```ruby
-embedding = Legion::LLM.embed("some text to embed")
-embedding.vectors  # -> Array of floats
+result = Legion::LLM::Call::Embeddings.generate(text: 'some text to embed', task: :document)
+result[:vector]                 # Array of finite numeric values
+result[:embedding_provenance]   # Durable vector-space identity
 
-# Specific model
-embedding = Legion::LLM.embed("text", model: "text-embedding-3-small")
+query = Legion::LLM::Call::Embeddings.generate(text: 'search text', task: :query)
 ```
+
+Fresh, batch, and cached usable results include `embedding_provenance`: provider, model, exact instance, optional authoritative `model_revision`, `identity_source` (`revision` or `instance`), actual dimensions, paired document/query prefixes, normalization, task, and stable `space_id`. Routing still selects the provider/model; optional `provider:`, `model:`, `instance:`, and `dimensions:` constrain that selection.
+
+The intended document/query pair shares one space ID; task records which side produced each vector. Changed model/revision, unknown-revision instance, dimension, prefix pair, or normalization means a different space. Persist provenance with vectors and compare only compatible spaces. Do not relabel historical vectors from their column width; regenerate them when their origin is unknown.
+
+Malformed, zero, nonfinite, incomplete, or dimension-inconsistent provider output rejects the complete attempt through routing failure handling. Embeddings are never padded or truncated to fit a schema. An unavailable/unstarted LLM does not return a usable vector/provenance pair.
 
 ### Tool Use
 
@@ -435,7 +441,7 @@ Legion::LLM (lib/legion/llm.rb)          # Thin facade — delegates to Inferenc
 │   ├── Providers        # Provider configuration, auto-detect, verify
 │   ├── Registry         # Thread-safe lex-* provider extension registry
 │   ├── Dispatch         # Native provider dispatch to registered lex-* extensions
-│   ├── Embeddings       # generate, generate_batch, default_model, fallback chain
+│   ├── Embeddings       # generate, generate_batch, routed vector-space provenance
 │   ├── StructuredOutput # JSON schema enforcement with native response_format and prompt fallback
 │   ├── DaemonClient     # HTTP routing to LegionIO daemon with 30s health cache
 │   ├── ClaudeConfigLoader # Import Claude CLI config from ~/.claude/settings.json
