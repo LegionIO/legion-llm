@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.16.10] - 2026-10-30
+
+### Added
+- Return durable `embedding_provenance` from fresh, batch, and cached embedding results, derived from the authoritative routed provider/model/revision or exact-instance identity, actual dimensions, paired document/query prefixes, and normalization.
+- Give intended document/query pairs one space ID while isolating changed revisions, unknown-revision instances, dimensions, or prefix policies.
+
+### Fixed
+- Consume the defined `LexLLMAdapter` embedding result shape as well as canonical provider artifacts.
+- Reject complete malformed, nonfinite, zero, mixed-dimension, missing-chunk, and requested-dimension-mismatched attempts through typed routing failures instead of dropping chunks, padding, or truncating vectors.
+- Validate cached vectors and reconstruct current selected-lane provenance; stale incompatible cache entries regenerate rather than returning unprovenanced success.
+
 ## [0.16.9] - 2026-08-20
 
 ### Changed

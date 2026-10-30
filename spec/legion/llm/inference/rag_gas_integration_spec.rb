@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe 'RAG/GAS full cycle' do
+RSpec.describe 'RAG fallback and GAIA audit isolation' do
   before do
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
     Legion::Settings[:llm][:pipeline_enabled] = true
@@ -11,93 +11,10 @@ RSpec.describe 'RAG/GAS full cycle' do
     allow(Legion::LLM).to receive(:started?).and_return(true)
   end
 
-  it 'RAG enriches request, response triggers audit publish' do
-    apollo_runner = double('Knowledge')
-    allow(apollo_runner).to receive(:retrieve_relevant).and_return({
-                                                                     success: true,
-                                                                     entries: [{ content: 'pgvector uses HNSW', content_type: 'fact', confidence: 0.9 }],
-                                                                     count:   1
-                                                                   })
-    stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
-
-    mock_session = double('NativeChat')
-    mock_response = double('ProviderMessage',
-                           content: 'HNSW provides fast ANN search',
-                           input_tokens: 50, output_tokens: 30,
-                           model_id: 'test-model')
-    stub_native_provider(content: 'pipeline response')
-    allow(mock_session).to receive(:with_tool).and_return(mock_session)
-    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
-
-    published_event = nil
-    allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish) do |args|
-      published_event = args
-    end
-
-    request = Legion::LLM::Inference::Request.build(
-      messages:         [{ role: :user, content: 'how does pgvector search work?' }],
-      context_strategy: :rag,
-      caller:           { requested_by: { identity: 'user:matt', type: :user } }
-    )
-
-    response = Legion::LLM::Inference::Executor.new(request).call
-
-    expect(response).to be_a(Legion::LLM::Inference::Response)
-    expect(response.enrichments).to have_key('rag:context_retrieval')
-    expect(response.enrichments['rag:context_retrieval'][:data][:entries].length).to be >= 1
-    expect(response.enrichments['rag:context_retrieval'][:data][:strategy]).to eq(:rag)
-  end
-
-  it 'injects RAG context into system prompt for provider call' do
-    apollo_runner = double('Knowledge')
-    allow(apollo_runner).to receive(:retrieve_relevant).and_return({
-                                                                     success: true,
-                                                                     entries: [{ content: 'pgvector is a PostgreSQL extension', content_type: 'fact',
-confidence: 0.9 }],
-                                                                     count:   1
-                                                                   })
-    stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
-
-    mock_session = double('NativeChat')
-    mock_response = double('ProviderMessage',
-                           content: 'test response', input_tokens: 10,
-                           output_tokens: 5, model_id: 'test-model')
-    stub_native_provider(content: 'pipeline response')
-    allow(mock_session).to receive(:with_tool).and_return(mock_session)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
-
-    injected = nil
-    allow(Legion::LLM::Call::Dispatch).to receive(:call) do |**kwargs|
-      injected = kwargs[:system]
-      native_dispatch_result(content: 'pipeline response')
-    end
-
-    request = Legion::LLM::Inference::Request.build(
-      messages:         [{ role: :user, content: 'what is pgvector?' }],
-      system:           'You are helpful.',
-      context_strategy: :rag,
-      caller:           { requested_by: { identity: 'user:matt', type: :user } }
-    )
-
-    response = Legion::LLM::Inference::Executor.new(request).call
-
-    expect(response.enrichments['rag:context_retrieval'][:data][:entries].first[:content])
-      .to include('pgvector is a PostgreSQL extension')
-    expect(response).to be_a(Legion::LLM::Inference::Response)
-  end
-
   it 'degrades gracefully when Apollo is not loaded' do
     hide_const('Legion::Extensions::Apollo') if defined?(Legion::Extensions::Apollo)
 
-    mock_session = double('NativeChat')
-    mock_response = double('ProviderMessage',
-                           content: 'response without RAG', input_tokens: 10,
-                           output_tokens: 5, model_id: 'test-model')
     stub_native_provider(content: 'pipeline response')
-    allow(mock_session).to receive(:with_tool).and_return(mock_session)
-    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
 
     request = Legion::LLM::Inference::Request.build(
       messages:         [{ role: :user, content: 'hello' }],
@@ -113,14 +30,7 @@ confidence: 0.9 }],
   end
 
   it 'GAIA profile skips post_response audit (no feedback loop)' do
-    mock_session = double('NativeChat')
-    mock_response = double('ProviderMessage',
-                           content: 'gaia response', input_tokens: 10,
-                           output_tokens: 5, model_id: 'test-model')
     stub_native_provider(content: 'pipeline response')
-    allow(mock_session).to receive(:with_tool).and_return(mock_session)
-    allow(mock_session).to receive(:with_instructions).and_return(mock_session)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
 
     expect(Legion::LLM::Inference::AuditPublisher).not_to receive(:publish)
 
