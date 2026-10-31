@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'uri'
+require 'legion/llm/errors'
+
 module Legion
   module LLM
     module API
@@ -59,40 +62,69 @@ module Legion
             end
           end
 
-          # One client content part → one canonical content block. Type
-          # aliases (input_text/output_text → text) and the OpenAI image_url
-          # envelope (→ image with data/media_type/source_type) are the two
-          # dialect shapes; anything else passes through and the canonical
-          # validation raises loudly on a wrong type.
+          # Client image spellings converge to the provider-neutral image block.
           def canonical_content_block(part)
             case part[:type].to_s
             when 'text', 'input_text', 'output_text'
-              { type: 'text', text: part[:text].to_s }
-            when 'image_url'
+              { type: 'text', text: part[:text].to_s, cache_control: part[:cache_control] }.compact
+            when 'image_url', 'input_image'
               canonical_image_block(part)
+            when 'image_generation_call'
+              raise Legion::LLM::Errors::InvalidRequest, 'Generated image history is not supported'
             else
               part
             end
           end
 
           def canonical_image_block(part)
-            image_url = part[:image_url]
-            image_url = image_url.is_a?(Hash) ? (image_url[:url] || image_url['url']) : image_url
-            url = image_url.to_s
-            if url.start_with?('data:')
-              media_type, data = url.sub('data:', '').split(',', 2)
-              {
-                type:        'image',
-                data:        data,
-                # Strip any ;parameters (e.g. ";base64") from the media type. Uses a
-                # plain string split rather than /;.*$/ — the latter is a polynomial
-                # ReDoS (rb/polynomial-redos) on attacker-controlled data URLs.
-                media_type:  (media_type || '').split(';', 2).first.to_s,
-                source_type: :base64
-              }
+            raise Legion::LLM::Errors::InvalidRequest, 'Image file_id references are not supported' if part.key?(:file_id)
+
+            envelope = part[:image_url]
+            envelope = envelope.transform_keys(&:to_sym) if envelope.is_a?(Hash)
+            raise Legion::LLM::Errors::InvalidRequest, 'Image file_id references are not supported' if envelope.is_a?(Hash) && envelope.key?(:file_id)
+
+            url = envelope.is_a?(Hash) ? envelope[:url] : envelope
+            detail = envelope.is_a?(Hash) ? envelope[:detail] : part[:detail]
+            raise Legion::LLM::Errors::InvalidRequest, 'Image URL must be a nonempty string' unless url.is_a?(String) && !url.empty?
+
+            image = if url.start_with?('data:')
+                      image_data_url_block(url: url)
+                    else
+                      image_source_block(source_type: 'url', data: url)
+                    end
+            image.merge(detail: detail, cache_control: part[:cache_control]).compact
+          end
+
+          def image_data_url_block(url:)
+            separator = url.index(',')
+            raise Legion::LLM::Errors::InvalidRequest, 'Malformed image data URL' unless separator
+
+            header = url.byteslice(5, separator - 5)
+            media_type, encoding = header.split(';', 2)
+            raise Legion::LLM::Errors::InvalidRequest, 'Image data URL must use base64 encoding' unless encoding == 'base64'
+
+            image_source_block(source_type: :base64, media_type: media_type, data: url.byteslice((separator + 1)..))
+          end
+
+          def image_source_block(source_type:, data:, media_type: nil)
+            raise Legion::LLM::Errors::InvalidRequest, 'Image source must be a nonempty string' unless data.is_a?(String) && !data.empty?
+
+            case source_type
+            when :base64
+              raise Legion::LLM::Errors::InvalidRequest, 'Image base64 source requires a supported image MIME type' unless %w[image/jpeg image/png image/gif image/webp].include?(media_type)
+              # A possessive scan validates the alphabet without decoding/copying
+              # the payload or backtracking over attacker-controlled input.
+              raise Legion::LLM::Errors::InvalidRequest, 'Malformed base64 image data' unless (data.bytesize % 4).zero? && %r{\A[A-Za-z0-9+/]*+={0,2}\z}.match?(data)
+            when 'url'
+              uri = URI.parse(data)
+              raise Legion::LLM::Errors::InvalidRequest, 'Image URL must be an absolute HTTP(S) URL' unless uri.is_a?(URI::HTTP) && uri.host && !uri.host.empty?
             else
-              { type: 'image', data: url, source_type: 'url' }
+              raise Legion::LLM::Errors::InvalidRequest, 'Unsupported image source type'
             end
+
+            { type: 'image', data: data, media_type: media_type, source_type: source_type }.compact
+          rescue URI::InvalidURIError
+            raise Legion::LLM::Errors::InvalidRequest, 'Malformed image URL'
           end
 
           # The pipeline envelope's tokens member is a plain Hash (or {} when

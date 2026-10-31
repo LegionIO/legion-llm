@@ -432,6 +432,12 @@ module Legion
         counts       = rejection_counts(candidates, pub_statuses)
         pins         = rejection_pins(model_pin)
 
+        # This method runs ONLY on the no-ready-candidate path, so one line
+        # here gives every typed rejection its per-axis diagnostic (which lanes
+        # are context_rejected vs capability_unknown vs availability_unknown).
+        log.warn("[llm][router] action=no_candidate candidates=#{candidates.size} " \
+                 "pub_statuses=#{pub_statuses.size} generation=#{gen} counts=#{counts.inspect}")
+
         # Step 0 — malformed/missing routing context.
         unless @routing_seed.is_a?(String) && @routing_seed.match?(SEED_PATTERN)
           log.warn('[llm][router] action=diagnose result=invalid_routing_context')

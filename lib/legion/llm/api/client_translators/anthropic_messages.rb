@@ -451,9 +451,8 @@ module Legion
 
           # Anthropic content blocks (assistant/user) map to canonical messages
           # one-to-one for assistant; user messages with tool_result blocks
-          # split into multiple :tool messages. Inference messages are still
-          # plain hashes today; we build Canonical::Message structs for the
-          # canonical request and convert in build_inference_request.
+          # split at tool-result boundaries. Canonical messages remain typed
+          # through the inference request.
           def extract_messages(raw_messages)
             raw_messages.flat_map { |m| normalize_message(m) }
           end
@@ -507,32 +506,49 @@ module Legion
             return [{ role: :user, content: content.to_s }] unless content.is_a?(Array)
 
             messages = []
-            text_parts = []
+            parts = []
 
             content.each do |block|
               bs = symbolize(block)
-              type = bs[:type].to_s
-              case type
-              when 'text'
-                text_parts << bs[:text].to_s
-              when 'tool_result'
-                if text_parts.any?
-                  messages << { role: :user, content: text_parts.join("\n\n") }
-                  text_parts = []
-                end
+              if bs[:type].to_s == 'tool_result'
+                messages << { role: :user, content: anthropic_user_content(parts: parts, separator: "\n\n") } unless parts.empty?
+                parts = []
                 result_content = bs[:content]
-                messages << if result_content.is_a?(Array)
-                              { role: :tool, tool_call_id: bs[:tool_use_id], content: result_content }
-                            else
-                              { role: :tool, tool_call_id: bs[:tool_use_id], content: result_content.to_s }
-                            end
+                result_content = if result_content.is_a?(Array)
+                                   result_content.map { |part| anthropic_content_block(part: symbolize(part)) }
+                                 else
+                                   result_content.to_s
+                                 end
+                messages << { role: :tool, tool_call_id: bs[:tool_use_id], content: result_content }
               else
-                text_parts << bs.to_s
+                parts << anthropic_content_block(part: bs)
               end
             end
 
-            messages << { role: :user, content: text_parts.join } if text_parts.any?
+            messages << { role: :user, content: anthropic_user_content(parts: parts, separator: '') } unless parts.empty?
             messages.empty? ? [{ role: :user, content: '' }] : messages
+          end
+
+          def anthropic_user_content(parts:, separator:)
+            return parts if parts.any? { |part| part[:type].to_s != 'text' || part[:cache_control] }
+
+            parts.map { |part| part[:text] }.join(separator)
+          end
+
+          # Both user images and tool-result images use the same source envelope.
+          def anthropic_content_block(part:)
+            return canonical_content_block(part) unless part[:type].to_s == 'image'
+
+            source = part[:source]
+            raise Legion::LLM::Errors::InvalidRequest, 'Image source must be an object' unless source.is_a?(Hash)
+
+            source = symbolize(source)
+            raise Legion::LLM::Errors::InvalidRequest, 'Image file sources are not supported' if source[:type].to_s == 'file' || source.key?(:file_id) || part.key?(:file_id)
+
+            source_type = source[:type].to_s == 'base64' ? :base64 : source[:type].to_s
+            data = source_type == 'url' ? source[:url] : source[:data]
+            image_source_block(source_type: source_type, data: data, media_type: source[:media_type])
+              .merge(cache_control: part[:cache_control]).compact
           end
 
           def extract_text_content(content)

@@ -17,9 +17,18 @@ RSpec.describe Legion::LLM::Audit do
       Legion::Settings[:transport][:connected] = true
       msg_instance = instance_double(Legion::LLM::Audit::PromptEvent)
       allow(Legion::LLM::Audit::PromptEvent).to receive(:new).and_return(msg_instance)
-      allow(msg_instance).to receive(:publish)
+      allow(msg_instance).to receive(:publish).with(return_result: true).and_return(accepted: true, status: :accepted)
 
       expect(described_class.emit_prompt(prompt_event)).to eq(:published)
+    end
+
+    it 'reports a spooled or rejected transport publish as dropped' do
+      Legion::Settings[:transport][:connected] = true
+      msg_instance = instance_double(Legion::LLM::Audit::PromptEvent)
+      allow(Legion::LLM::Audit::PromptEvent).to receive(:new).and_return(msg_instance)
+      allow(msg_instance).to receive(:publish).with(return_result: true).and_return(accepted: false, status: :spooled)
+
+      expect(described_class.emit_prompt(prompt_event)).to eq(:dropped)
     end
 
     it 'never raises' do

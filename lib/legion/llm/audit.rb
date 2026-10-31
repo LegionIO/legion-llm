@@ -22,9 +22,14 @@ module Legion
       def emit_prompt(event)
         event = attributed_event(event)
         if transport_connected? && defined?(Legion::LLM::Transport::Messages::PromptEvent)
-          Legion::LLM::Transport::Messages::PromptEvent.new(**event).publish
-          log.info('[llm][audit] published prompt audit')
-          :published
+          result = Legion::LLM::Transport::Messages::PromptEvent.new(**event).publish(return_result: true)
+          if result.is_a?(Hash) && result[:accepted] == true
+            log.info('[llm][audit] published prompt audit')
+            :published
+          else
+            log.warn("[llm][audit] dropped prompt audit: transport status=#{result.is_a?(Hash) ? result[:status] : 'unknown'}")
+            :dropped
+          end
         else
           log.warn('[llm][audit] disabled prompt audit: transport unavailable')
           :disabled

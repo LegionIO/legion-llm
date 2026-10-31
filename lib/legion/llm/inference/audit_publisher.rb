@@ -29,6 +29,11 @@ module Legion
           audit_data = response.audit || {}
           provider_payload = hash_value(audit_data, :provider_payload) || {}
 
+          fingerprints = {}.compare_by_identity
+          request_digest = semantic_message_digest(messages: request.messages, fingerprints: fingerprints)
+          capture = capture_metadata(message_count: request.messages.size)
+          capture[:request_digest_algorithm] = 'sha256/canonical-messages-v1'
+
           event = {
             request_id:        response.request_id,
             conversation_id:   response.conversation_id,
@@ -44,7 +49,7 @@ module Legion
             timeline:          compact_timeline(response.timeline),
             classification:    response.classification,
             tracing:           response.tracing,
-            messages:          current_turn_messages(request.messages),
+            messages:          audit_messages(messages: request.messages, capture: capture),
             response_content:  msg_content,
             response_thinking: response.thinking,
             tools_used:        tools_data,
@@ -52,7 +57,7 @@ module Legion
             request_type:      request.respond_to?(:request_type) ? request.request_type : 'chat',
             tier:              hash_value(response.routing, :tier),
             message_context:   build_message_context(request: request, response: response)
-          }
+          }.merge(capture: capture)
           # task_id rides on the request (the envelope message carries no
           # task identity of its own).
           event[:task_id] = request.respond_to?(:task_id) ? request.task_id : nil
@@ -66,24 +71,24 @@ module Legion
           event[:route_attempts] = Array(hash_value(routing, :route_attempts)).size
           event[:route_attempt_details] = hash_value(routing, :route_attempts) if hash_value(routing, :route_attempts)
           event[:escalation_chain] = hash_value(routing, :escalation_chain) if hash_value(routing, :escalation_chain)
-          event[:request_content_hash] = content_hash(request.messages)
+          event[:request_content_hash] = request_digest
           event[:response_content_hash] = content_hash(msg_content)
           provider_metrics = extract_provider_metrics(provider_payload)
           event[:provider_metrics] = provider_metrics if provider_metrics.any?
           event[:context_accounting] = hash_value(audit_data, :context_accounting) if hash_value(audit_data, :context_accounting)
           event[:agent_id] = request.agent_id if request.respond_to?(:agent_id) && request.agent_id
           event[:node_id] = Legion::LLM.node_id if Legion::LLM.respond_to?(:node_id) && Legion::LLM.node_id
-          event.compact
-          event
+          projected = project_value(value: event, binary_limit: audit_max_binary_data_bytes, capture: capture, fingerprints: fingerprints)
+          projected[:capture] = capture
+          projected
         end
 
         def publish(request:, response:)
           event = build_event(request: request, response: response)
-          Legion::LLM::Audit.emit_prompt(event)
-          event
+          { event: event, status: Legion::LLM::Audit.emit_prompt(event) }
         rescue StandardError => e
           handle_exception(e, level: :warn)
-          nil
+          { event: event, status: :dropped }
         end
 
         def finish_reason_value(response)
@@ -139,20 +144,119 @@ module Legion
           end
         end
 
-        def current_turn_messages(messages)
-          return messages unless messages.is_a?(Array)
-
-          max = audit_max_messages
-          return messages if messages.size <= max
-
-          truncated = messages.last(max)
-          full_hash = Digest::SHA256.hexdigest(messages.map { |m| (m[:content] || m['content']).to_s }.join)
-          truncated.unshift({ role: :system, content: "[audit: #{messages.size} messages, showing last #{max}, full_hash=#{full_hash}]" })
-          truncated
+        # This identity is intentionally separate from ContentHash's text-only
+        # embedding/RAG contract. Generated message IDs and timestamps are not
+        # content; roles, tool state and every media fingerprint are.
+        def semantic_message_digest(messages:, fingerprints:)
+          digest = Digest::SHA256.new
+          digest << '['
+          messages.each_with_index do |message, index|
+            digest << ',' unless index.zero?
+            semantic = project_value(value: message.to_h.except(:id, :timestamp),
+                                     binary_limit: -1, capture: nil, fingerprints: fingerprints)
+            update_semantic_digest(digest: digest, value: semantic)
+          end
+          digest << ']'
+          digest.hexdigest
         end
 
-        def audit_max_messages
-          Legion::Settings[:llm][:compliance][:audit_max_messages]
+        def update_semantic_digest(digest:, value:)
+          case value
+          when Hash
+            digest << '{'
+            value.keys.sort_by(&:to_s).each_with_index do |key, index|
+              digest << ',' unless index.zero?
+              digest << Legion::JSON.dump(key.to_s) << ':'
+              update_semantic_digest(digest: digest, value: value[key])
+            end
+            digest << '}'
+          when Array
+            digest << '['
+            value.each_with_index do |item, index|
+              digest << ',' unless index.zero?
+              update_semantic_digest(digest: digest, value: item)
+            end
+            digest << ']'
+          else
+            digest << Legion::JSON.dump(value)
+          end
+        end
+
+        def capture_metadata(message_count:)
+          {
+            mode: :full, original_message_count: message_count,
+            captured_message_count: message_count, omitted_message_count: 0,
+            redacted_binary_count: 0, redacted_binary_bytes: 0, omitted_field_count: 0,
+            reasons: []
+          }
+        end
+
+        def audit_messages(messages:, capture:)
+          max = [Legion::Settings[:llm][:compliance][:audit_max_messages], 0].max
+          retained = messages.last(max)
+          omitted = messages.size - retained.size
+          if omitted.positive?
+            capture[:captured_message_count] = retained.size
+            capture[:omitted_message_count] = omitted
+            mark_projection(capture: capture, reason: :message_limit)
+          end
+          retained.map(&:to_h)
+        end
+
+        # Canonical blocks can occur singly, in arrays, or inside tool results,
+        # arguments and metadata. Copy containers only; never modify inference
+        # objects or copy their binary strings. A fingerprint is not base64 data.
+        def project_value(value:, binary_limit:, capture:, fingerprints:, binary_type: nil)
+          case value
+          when Legion::Extensions::Llm::Canonical::Message,
+               Legion::Extensions::Llm::Canonical::ContentBlock,
+               Legion::Extensions::Llm::Canonical::ToolCall
+            project_value(value: value.to_h, binary_limit: binary_limit, capture: capture, fingerprints: fingerprints)
+          when Array
+            value.map do |item|
+              project_value(value: item, binary_limit: binary_limit, capture: capture, fingerprints: fingerprints)
+            end
+          when Hash
+            project_hash(value: value, binary_limit: binary_limit, capture: capture,
+                         fingerprints: fingerprints, binary_type: binary_type)
+          else
+            value
+          end
+        end
+
+        def project_hash(value:, binary_limit:, capture:, fingerprints:, binary_type:)
+          type = hash_value(value, :type).to_s
+          media = binary_type || (%w[image audio video].include?(type) && type)
+          projected = value.to_h do |key, item|
+            nested_media = media if key.to_s == 'source'
+            [key, project_value(value: item, binary_limit: binary_limit, capture: capture,
+                                fingerprints: fingerprints, binary_type: nested_media)]
+          end
+          data = hash_value(value, :data)
+          source_type = hash_value(value, :source_type) || (binary_type && hash_value(value, :type))
+          return projected unless media && source_type.to_s != 'url' && data.is_a?(String) && data.bytesize > binary_limit
+
+          fingerprint = fingerprints[data] ||= { bytes: data.bytesize, sha256: Digest::SHA256.hexdigest(data) }
+          projected.delete(:data)
+          projected.delete('data')
+          projected.delete(:source_type)
+          projected.delete('source_type')
+          projected[:binary_fingerprint] = fingerprint.merge(media_type: hash_value(value, :media_type), source_type: source_type).compact
+          if capture
+            capture[:redacted_binary_count] += 1
+            capture[:redacted_binary_bytes] += data.bytesize
+            mark_projection(capture: capture, reason: binary_limit.negative? ? :payload_limit : :binary_limit)
+          end
+          projected
+        end
+
+        def mark_projection(capture:, reason:)
+          capture[:mode] = :projected
+          capture[:reasons] |= [reason]
+        end
+
+        def audit_max_binary_data_bytes
+          Legion::Settings[:llm][:compliance][:audit_max_binary_data_bytes]
         end
 
         def build_message_context(request:, response:)

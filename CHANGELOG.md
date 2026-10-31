@@ -1,5 +1,16 @@
 # Legion LLM Changelog
 
+## [0.16.10] - 2026-10-30
+
+### Fixed
+- **Canonical prompt auditing.** Histories beyond `llm.compliance.audit_max_messages` no longer call Hash accessors on canonical messages. Audit projections retain the newest messages without changing inference history, and record original, captured, and omitted counts.
+- **Whole-event audit payload limits.** Prompt events account for attribution and encrypted wire size against `transport.max_payload_bytes`. Oversized binary content becomes explicit byte-count/SHA256 fingerprints, including nested image/audio/video content; aggregate overflow removes remaining binary content before older messages and bulky nonessential fields. An essential envelope that cannot fit is explicitly dropped.
+- **Multimodal audit identity.** Request audit hashes cover the full original message history, media fingerprints, roles, and tool state, excluding generated message IDs and timestamps. The text-only embedding/RAG hash contract is unchanged.
+- **Honest publication outcomes.** Post-response timelines distinguish published, disabled, and dropped audit delivery. GAIA can still observe the constructed local event when transport does not accept publication.
+- **Anthropic pasted images and tool results.** Normalize base64 and URL source envelopes at both user and tool-result boundaries, preserving mixed content order, tool association, and cache-control metadata.
+- **OpenAI image inputs.** Normalize Responses `input_image` and Chat `image_url` parts without dropping base64 MIME or image detail. Malformed image sources, provider-specific file references, and unsupported generated-image history return HTTP 400 before streaming begins.
+- **Canonical routing inputs.** Read image capabilities from canonical content blocks and estimate textual input without counting raw image bytes as text.
+
 ## [0.16.9] - 2026-08-20
 
 ### Changed

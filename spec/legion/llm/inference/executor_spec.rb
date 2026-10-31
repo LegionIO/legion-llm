@@ -98,7 +98,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
           { role: :assistant, content: 'test' }
         )
         allow(executor).to receive(:step_response_normalization).and_return(nil)
-        expect(Legion::LLM::Inference::AuditPublisher).to receive(:publish)
+        expect(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return(event: nil, status: :disabled)
         executor.call
       end
 

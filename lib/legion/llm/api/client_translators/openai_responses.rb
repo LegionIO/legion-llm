@@ -613,6 +613,8 @@ module Legion
             input.each do |item|
               item = symbolize(item)
               case item[:type].to_s
+              when 'image_generation_call'
+                raise Legion::LLM::Errors::InvalidRequest, 'Generated image history is not supported'
               when 'function_call'
                 pending_tool_calls << {
                   id:        item[:call_id] || item[:id],

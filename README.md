@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.14.0-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.10-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -163,6 +163,23 @@ response = client.messages.create(
 ```
 
 Requests flow through the full Inference pipeline — routing, metering, audit, quality checks — then the response is translated back into the caller's expected format.
+
+### Image inputs
+
+Anthropic `image` source envelopes, OpenAI Chat `image_url` parts, and Responses
+`input_image` parts normalize to canonical image blocks. Supported sources are
+absolute HTTP(S) URLs and nonempty base64 data with an explicit `image/jpeg`,
+`image/png`, `image/gif`, or `image/webp` MIME type.
+
+Mixed text/image order is preserved. Anthropic `tool_result` images retain their
+tool-call association. Image `detail` and `cache_control` survive the canonical
+inference boundary; their provider-wire rendering belongs to the selected
+`lex-llm-*` adapter. Image requests require a vision-capable routing candidate.
+
+Malformed sources, provider-specific `file_id` references, and Responses
+`image_generation_call` history are rejected with HTTP 400
+(`invalid_request_error`) before an event stream opens. They are not silently
+converted to empty images or discarded.
 
 ### Streaming
 
@@ -592,6 +609,33 @@ Legion::LLM.chat(
 ```
 
 System callers (type: `:system`) derive the `:system` profile, which skips governance steps to prevent recursion.
+
+### Prompt audit capture
+
+Prompt audit capture is a projection, not a replacement for inference history:
+
+- `llm.compliance.audit_max_messages` retains the newest 20 messages by default.
+- `llm.compliance.audit_max_binary_data_bytes` replaces individual binary values
+  larger than 131,072 bytes with `binary_fingerprint` metadata: byte count,
+  SHA256, MIME type, and original source type. These fingerprints are not
+  reusable base64 image data.
+- `transport.max_payload_bytes` also bounds the complete attributed prompt
+  event and its encoded/encrypted body. Aggregate overflow removes remaining
+  binary content first, then oldest messages, then bulky nonessential fields
+  with explicit size/digest omissions. Essential identifiers, routing, and
+  usage remain; an envelope that still cannot fit is dropped and logged.
+
+The emitted `capture` object reports `full` versus `projected` mode, message
+counts, binary redaction counts/bytes, omitted-field count, and reasons.
+`request_content_hash` identifies the full original semantic message history,
+including media and tool state, independently of projection or generated
+message IDs. The separate embedding/RAG content hash is unchanged.
+
+The post-response timeline records `published`, `disabled`, or `dropped`.
+GAIA observes the constructed local audit event even if delivery is disabled
+or dropped; additional transport-only compaction can make that local projection
+differ from the transmitted one. Consumers should use the transmitted `capture`
+metadata rather than assuming every event contains the full request.
 
 ### Routing
 

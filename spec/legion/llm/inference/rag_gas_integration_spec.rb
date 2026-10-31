@@ -30,10 +30,7 @@ RSpec.describe 'RAG/GAS full cycle' do
     allow(mock_session).to receive(:with_instructions).and_return(mock_session)
     allow(mock_session).to receive(:ask).and_return(mock_response)
 
-    published_event = nil
-    allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish) do |args|
-      published_event = args
-    end
+    allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return(event: nil, status: :disabled)
 
     request = Legion::LLM::Inference::Request.build(
       messages:         [{ role: :user, content: 'how does pgvector search work?' }],
