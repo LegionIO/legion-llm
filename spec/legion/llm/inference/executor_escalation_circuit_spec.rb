@@ -27,7 +27,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'escalation circuit guard', :ss
       messages:     [{ role: :user, content: 'hello' }],
       routing:      { model: model }
     )
-    router = Legion::LLM::Router.new(request: request, operation: :chat, body_model: model)
+    router = Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: request, operation: :chat, body_model: model))
     [request, router]
   end
 

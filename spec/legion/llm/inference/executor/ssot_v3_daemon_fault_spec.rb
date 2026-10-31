@@ -55,7 +55,7 @@ RSpec.describe 'SSOT v3 daemon and lease fault classification', :ssot_v3 do
     request = Legion::LLM::Inference::Request.build_for_test(
       messages: [], stream: true, routing: { model: 'gemma4' }, routing_seed: 'ab' * 16
     )
-    router = Legion::LLM::Router.new(request: request, operation: :stream_chat, body_model: 'gemma4')
+    router = Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: request, operation: :stream_chat, body_model: 'gemma4'))
     executor = Legion::LLM::Inference::Executor.new(request)
     executor.instance_variable_set(:@router, router)
     calls = 0
@@ -82,7 +82,7 @@ RSpec.describe 'SSOT v3 daemon and lease fault classification', :ssot_v3 do
     request = Legion::LLM::Inference::Request.build_for_test(
       messages: [], stream: true, routing: { model: 'gemma4' }, routing_seed: 'cd' * 16
     )
-    router = Legion::LLM::Router.new(request: request, operation: :stream_chat, body_model: 'gemma4')
+    router = Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: request, operation: :stream_chat, body_model: 'gemma4'))
     executor = Legion::LLM::Inference::Executor.new(request)
     executor.instance_variable_set(:@router, router)
     allow(Legion::Extensions::Llm::Inventory::Registry).to receive(:acquire)

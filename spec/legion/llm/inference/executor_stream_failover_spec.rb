@@ -50,10 +50,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'SSOT v3 streaming failover', :
   end
 
   def build_stream_router(request)
-    Legion::LLM::Router.new(
-      request: request, operation: :stream_chat,
-      body_model: request.metadata[:client_model]
-    )
+    Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: request, operation: :stream_chat, body_model: request.metadata[:client_model]))
   end
 
   def text_chunk(delta)

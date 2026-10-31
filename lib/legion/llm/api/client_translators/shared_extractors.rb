@@ -51,7 +51,7 @@ module Legion
           def canonicalize_content_parts(parts)
             return parts unless parts.is_a?(Array)
 
-            parts.map do |part|
+            normalized = parts.map do |part|
               if part.is_a?(String)
                 canonical_content_block({ type: 'text', text: part })
               elsif part.is_a?(Hash)
@@ -60,6 +60,19 @@ module Legion
                 part
               end
             end
+            canonical_message_content(parts: normalized)
+          end
+
+          # Text fragments carry their own whitespace. Collapse only unannotated
+          # text; media, cache boundaries and other block semantics stay ordered.
+          def canonical_message_content(parts:)
+            plain_text = parts.all? do |part|
+              part.is_a?(Hash) && part[:type].to_s == 'text' &&
+                part.each_key.all? { |key| %i[type text].include?(key) }
+            end
+            return parts unless plain_text
+
+            parts.map { |part| part[:text] }.join
           end
 
           # Client image spellings converge to the provider-neutral image block.
@@ -90,7 +103,7 @@ module Legion
             image = if url.start_with?('data:')
                       image_data_url_block(url: url)
                     else
-                      image_source_block(source_type: 'url', data: url)
+                      image_source_block(source_type: :url, data: url)
                     end
             image.merge(detail: detail, cache_control: part[:cache_control]).compact
           end
@@ -115,7 +128,7 @@ module Legion
               # A possessive scan validates the alphabet without decoding/copying
               # the payload or backtracking over attacker-controlled input.
               raise Legion::LLM::Errors::InvalidRequest, 'Malformed base64 image data' unless (data.bytesize % 4).zero? && %r{\A[A-Za-z0-9+/]*+={0,2}\z}.match?(data)
-            when 'url'
+            when :url
               uri = URI.parse(data)
               raise Legion::LLM::Errors::InvalidRequest, 'Image URL must be an absolute HTTP(S) URL' unless uri.is_a?(URI::HTTP) && uri.host && !uri.host.empty?
             else

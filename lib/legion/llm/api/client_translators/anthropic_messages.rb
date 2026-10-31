@@ -484,7 +484,7 @@ module Legion
               type = bs[:type].to_s
               case type
               when 'text'
-                text_parts << bs[:text].to_s
+                text_parts << canonical_content_block(bs)
               when 'tool_use'
                 tool_calls << { id: bs[:id], name: bs[:name], arguments: bs[:input] || {} }
               when 'thinking', 'redacted_thinking'
@@ -496,7 +496,7 @@ module Legion
               end
             end
 
-            msg = { role: :assistant, content: text_parts.join("\n\n") }
+            msg = { role: :assistant, content: canonical_message_content(parts: text_parts) }
             msg[:tool_calls] = tool_calls if tool_calls.any?
             [msg]
           end
@@ -511,11 +511,11 @@ module Legion
             content.each do |block|
               bs = symbolize(block)
               if bs[:type].to_s == 'tool_result'
-                messages << { role: :user, content: anthropic_user_content(parts: parts, separator: "\n\n") } unless parts.empty?
+                messages << { role: :user, content: canonical_message_content(parts: parts) } unless parts.empty?
                 parts = []
                 result_content = bs[:content]
                 result_content = if result_content.is_a?(Array)
-                                   result_content.map { |part| anthropic_content_block(part: symbolize(part)) }
+                                   canonical_message_content(parts: result_content.map { |part| anthropic_content_block(part: symbolize(part)) })
                                  else
                                    result_content.to_s
                                  end
@@ -525,14 +525,8 @@ module Legion
               end
             end
 
-            messages << { role: :user, content: anthropic_user_content(parts: parts, separator: '') } unless parts.empty?
+            messages << { role: :user, content: canonical_message_content(parts: parts) } unless parts.empty?
             messages.empty? ? [{ role: :user, content: '' }] : messages
-          end
-
-          def anthropic_user_content(parts:, separator:)
-            return parts if parts.any? { |part| part[:type].to_s != 'text' || part[:cache_control] }
-
-            parts.map { |part| part[:text] }.join(separator)
           end
 
           # Both user images and tool-result images use the same source envelope.
@@ -545,8 +539,8 @@ module Legion
             source = symbolize(source)
             raise Legion::LLM::Errors::InvalidRequest, 'Image file sources are not supported' if source[:type].to_s == 'file' || source.key?(:file_id) || part.key?(:file_id)
 
-            source_type = source[:type].to_s == 'base64' ? :base64 : source[:type].to_s
-            data = source_type == 'url' ? source[:url] : source[:data]
+            source_type = source[:type].to_s.to_sym
+            data = source_type == :url ? source[:url] : source[:data]
             image_source_block(source_type: source_type, data: data, media_type: source[:media_type])
               .merge(cache_control: part[:cache_control]).compact
           end

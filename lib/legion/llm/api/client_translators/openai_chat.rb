@@ -414,15 +414,15 @@ module Legion
               role = m[:role].to_sym
               case role
               when :system
-                system_content = extract_content(m[:content])
+                system_content = canonicalize_content_parts(m[:content])
               when :assistant
-                entry = { role: role, content: extract_content(m[:content]) }
+                entry = { role: role, content: canonicalize_content_parts(m[:content]) }
                 entry[:tool_calls] = normalize_assistant_tool_calls(m[:tool_calls]) if m[:tool_calls]
                 messages << entry
               when :tool
-                messages << { role: role, content: extract_content(m[:content]), tool_call_id: m[:tool_call_id] }.compact
+                messages << { role: role, content: canonicalize_content_parts(m[:content]), tool_call_id: m[:tool_call_id] }.compact
               else
-                messages << { role: role, content: extract_content(m[:content]) }
+                messages << { role: role, content: canonicalize_content_parts(m[:content]) }
               end
             end
             [messages, system_content]
@@ -446,20 +446,6 @@ module Legion
                                   operation: 'llm.client_translator.openai_chat.normalize_tool_call')
               nil
             end
-          end
-
-          def extract_content(content)
-            return content if content.is_a?(String)
-            return content unless content.is_a?(Array)
-
-            # String parts (corrupted ContentBlock#inspect output in history)
-            # wrap as text blocks so they never reach canonical_content_block
-            # or the [:type] lookup as bare strings.
-            normalized = content.map { |b| b.is_a?(String) ? { type: 'text', text: b } : symbolize(b) }
-            has_non_text = normalized.any? { |b| b[:type].to_s != 'text' }
-            return normalized.map { |b| canonical_content_block(b) } if has_non_text
-
-            normalized.filter_map { |b| b[:text] if b[:type].to_s == 'text' }.join("\n\n")
           end
 
           def build_tools(raw)

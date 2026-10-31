@@ -89,6 +89,7 @@ RSpec.describe Legion::LLM::Inference::Request do
       # SAME [:llm][:router] home the Router/Filter read — not the legacy
       # [:llm][:routing] tree. A custom alias configured there is recognized here.
       Legion::Settings[:llm][:router][:auto_routing_model_aliases] = %w[legionio autobot]
+      Legion::Settings[:llm][:router][:auto_routing_model_alias_metadata] = {}
       req = described_class.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  { model: 'autobot' }

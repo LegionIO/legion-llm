@@ -693,7 +693,7 @@ module Legion
               # assistant_content carries text that arrived AFTER the calls in the
               # same turn — keep it ON the tool_calls message so the turn stays one
               # message and the following tool results remain adjacent.
-              messages << { role: 'assistant', content: assistant_content.to_s, tool_calls: tool_calls }
+              messages << { role: 'assistant', content: assistant_content || '', tool_calls: tool_calls }
             end
             pending.clear
           end

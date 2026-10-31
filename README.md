@@ -181,6 +181,30 @@ Malformed sources, provider-specific `file_id` references, and Responses
 (`invalid_request_error`) before an event stream opens. They are not silently
 converted to empty images or discarded.
 
+### Canonical execution and routing ownership
+
+Equivalent text fragments preserve their exact whitespace across all three client
+dialects. Plain text converges to one string; annotated text and mixed media retain
+their ordered canonical blocks.
+
+`Routing::Requirements.build(request:, operation:, body_model:)` constructs the
+shared immutable `Legion::Extensions::Llm::Routing::RequestRequirements` before
+selection. It owns required capabilities, input/output bounds, modality, explicit
+pins, the body-model hint decision and the request attempt limit. Canonical tool
+history requires tool capability even when no new tool definitions are supplied.
+Request policy uses the settings generation captured at ingress.
+
+`Router.new(requirements:)` owns only routing and attempt state. Each decision reads
+one immutable live Inventory snapshot; filters compare request requirements with
+published evidence, ranking consumes stored weights, and dispatch preserves the
+resulting exact Selection. There is no request-derived fallback constructor.
+
+Fleet serialization preserves canonical media source enums through the shared
+rehydration boundary. Signed binding/media tampering and Inventory mismatches
+raise before provider execution. Boundary regressions exercise real provider
+callables and signed worker execution with only external HTTP/key provisioning
+substituted; they do not certify live model-service availability.
+
 ### Streaming
 
 Both formats supported with correct SSE shapes:
@@ -1063,7 +1087,7 @@ bundle exec rubocop -A
 | `legion-settings` | Configuration defaults and file overrides |
 | `legion-transport` (>= 1.4.31) | Encoded-payload validation and AMQP transport for fleet dispatch, metering, and audit |
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
-| `lex-llm` (>= 0.8.0) | Provider-neutral contract, `Canonical::Request`/`Canonical::Response`, model offerings, response normalization, fleet envelopes, and responder-side fleet execution helpers |
+| `lex-llm` (>= 0.8.6) | Shared Canonical types, immutable `Routing::RequestRequirements`, Inventory/Selection contracts, and exact fleet execution/rehydration |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 

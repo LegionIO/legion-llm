@@ -751,17 +751,14 @@ module Legion
         Inference::Request.from_chat_args(**args)
       end
 
-      # Mirror the executor's build_ssot_router so the probe selection uses
-      # the exact same routing derivation the dispatch will — including the raw
-      # body model source (metadata[:client_model], byte-for-byte with
-      # inference/executor/routing.rb). An explicit routing[:model] pin still
-      # reaches the Router as a trusted constraint, so no fallback is needed here.
+      # Build cache-probe requirements through the same owner as execution.
+      # Body-model metadata remains untrusted; explicit routing pins are already
+      # captured by the request's trusted constraints.
       def ssot_cache_router(request)
-        Legion::LLM::Router.new(
-          request:    request,
-          operation:  RESPONSE_CACHE_OPERATION,
-          body_model: request.metadata[:client_model]
+        requirements = Legion::LLM::Routing::Requirements.build(
+          request: request, operation: RESPONSE_CACHE_OPERATION, body_model: request.metadata[:client_model]
         )
+        Legion::LLM::Router.new(requirements: requirements)
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.ssot_cache_router')
         nil

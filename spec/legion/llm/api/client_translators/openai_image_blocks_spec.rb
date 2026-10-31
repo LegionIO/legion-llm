@@ -38,8 +38,8 @@ RSpec.describe 'OpenAI image ingress' do
     expect(image_wire_messages(request: request)).to eq([
                                                           { role: 'user', content: [
                                                             { type: 'text', text: 'compare' },
-                                                            { type: 'image_url', image_url: { url: image_url } },
-                                                            { type: 'image_url', image_url: { url: data_url } },
+                                                            { type: 'image_url', image_url: { url: image_url, detail: 'low' } },
+                                                            { type: 'image_url', image_url: { url: data_url, detail: 'high' } },
                                                             { type: 'text', text: 'these' }
                                                           ] }
                                                         ])
@@ -60,8 +60,8 @@ RSpec.describe 'OpenAI image ingress' do
     expect(image_wire_messages(request: request)).to eq([
                                                           { role: 'user', content: [
                                                             { type: 'text', text: 'compare' },
-                                                            { type: 'image_url', image_url: { url: data_url } },
-                                                            { type: 'image_url', image_url: { url: image_url } }
+                                                            { type: 'image_url', image_url: { url: data_url, detail: 'high' } },
+                                                            { type: 'image_url', image_url: { url: image_url, detail: 'low' } }
                                                           ] }
                                                         ])
     expect(request.messages.first.content.drop(1).map(&:detail)).to eq(%w[high low])
@@ -74,7 +74,7 @@ RSpec.describe 'OpenAI image ingress' do
                                       ])
 
     expect(image_wire_messages(request: request)).to eq([
-                                                          { role: 'user', content: [{ type: 'image_url', image_url: { url: 'http://example.com/image.gif' } }] }
+                                                          { role: 'user', content: [{ type: 'image_url', image_url: { url: 'http://example.com/image.gif', detail: 'high' } }] }
                                                         ])
     expect(request.messages.first.content.first.detail).to eq('high')
   end

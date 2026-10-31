@@ -9,11 +9,14 @@
 - **Honest publication outcomes.** Post-response timelines distinguish published, disabled, and dropped audit delivery. GAIA can still observe the constructed local event when transport does not accept publication.
 - **Anthropic pasted images and tool results.** Normalize base64 and URL source envelopes at both user and tool-result boundaries, preserving mixed content order, tool association, and cache-control metadata.
 - **OpenAI image inputs.** Normalize Responses `input_image` and Chat `image_url` parts without dropping base64 MIME or image detail. Malformed image sources, provider-specific file references, and unsupported generated-image history return HTTP 400 before streaming begins.
-- **Canonical routing inputs.** Read image capabilities from canonical content blocks and estimate textual input without counting raw image bytes as text.
+- **N×N text convergence.** All client dialects preserve text-fragment whitespace and converge to the same canonical text representation without collapsing annotated blocks.
+- **Request-owned routing facts.** Construct shared immutable `RequestRequirements` before routing, including canonical tool replay, capabilities, pins and context budgets. Router consumes those facts without reconstructing them.
+- **Real execution boundary coverage.** Exercise client ingress, Inventory selection, direct callable execution, signed fleet serialization/validation/rehydration, exact worker resolution, provider rendering and rejection of tampered bindings/media.
 
 ### Changed
 - Declare the vLLM renderer as a test dependency in standalone checkouts so image regressions run in CI as well as the multi-repo workspace. The RAG integration regression now observes the active provider boundary instead of the retired dispatch path.
 - Require `legion-transport >= 1.4.31` and use its encoded-payload validation boundary directly, removing the private pre-encoding validator override.
+- Require `lex-llm >= 0.8.6` and use `Router.new(requirements:)`; all executor, embedding, token-counting and cache consumers use the same requirements constructor.
 
 ## [0.16.9] - 2026-08-20
 

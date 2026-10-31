@@ -242,7 +242,7 @@ RSpec.describe Legion::LLM::Router, '#next_lane — fail-forward release bar (ne
   # Build a Router instance from a request. operation derived from stream flag.
   def build_router_for(request, body_model: nil)
     operation = request.stream == true ? :stream_chat : :chat
-    Legion::LLM::Router.new(request: request, operation: operation, body_model: body_model)
+    Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: request, operation: operation, body_model: body_model))
   end
 
   def next_lane_for(request, body_model: nil)
@@ -259,9 +259,9 @@ RSpec.describe Legion::LLM::Router, '#next_lane — fail-forward release bar (ne
       request = claude_cli_request(seed: SEED_MAIN)
       router  = build_router_for(request)
 
-      expect(router.operation).to eq(:stream_chat)
-      expect(router.required_capabilities).to include(:streaming, :tools, :thinking)
-      expect(router.provider_pin).to be_nil
+      expect(router.requirements.operation).to eq(:stream_chat)
+      expect(router.requirements.required_capabilities).to include(:streaming, :tools, :thinking)
+      expect(router.requirements.provider_pin).to be_nil
     end
 
     it 'routes to a vllm instance where the operator enable_thinking override satisfies :thinking' do
@@ -444,7 +444,7 @@ RSpec.describe Legion::LLM::Router, '#next_lane — fail-forward release bar (ne
         response_format: nil, stream: false, tokens: { max: 0 },
         extra: { embedding_dimensions: 768 }
       )
-      router = Legion::LLM::Router.new(request: request, operation: :embed, body_model: nil)
+      router = Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: request, operation: :embed, body_model: nil))
       result = router.next_lane
 
       expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)

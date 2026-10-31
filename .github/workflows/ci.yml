@@ -9,6 +9,9 @@ on:
 jobs:
   ci:
     uses: LegionIO/.github/.github/workflows/ci.yml@main
+    with:
+      companion-gems: >-
+        {"lex-llm":{"repository":"LegionIO/lex-llm","ref":"29e87f2dbeeac85007b31a58d0e89856afed542c"},"lex-llm-vllm":{"repository":"LegionIO/lex-llm-vllm","ref":"138541b677dcdd6b1bcedfebde79fec01d3132a8"}}
 
   lint:
     uses: LegionIO/.github/.github/workflows/lint-patterns.yml@main

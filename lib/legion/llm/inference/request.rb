@@ -19,11 +19,10 @@ module Legion
         :extra, :metadata, :enrichments, :predictions,
         :tracing, :classification, :caller, :agent,
         :billing, :test, :modality, :hooks,
-        # SSOT v3 §7.2: trusted per-request routing context (server-created seed),
-        # the sole body-model hint decision, the immutable routing settings
-        # generation captured at ingress, and the trusted X-Legion-*/internal
-        # constraints. `routing` is retained only as compatibility metadata.
-        :routing_context, :body_model_hint_decision, :routing_settings_snapshot, :trusted_constraints
+        # Trusted server routing context, the settings generation captured at
+        # ingress, and X-Legion-*/internal constraints. Requirements construction
+        # owns the body-model decision; `routing` remains compatibility metadata.
+        :routing_context, :routing_settings_snapshot, :trusted_constraints
       ) do
         # N x N law: Inference::Request#messages is Array<Canonical::Message>.
         # Every pipeline entry (client translators, native/inference APIs,
@@ -59,11 +58,9 @@ module Legion
           settings_snapshot = kwargs[:routing_settings_snapshot] || Legion::LLM::Routing::SettingsState.current
           trusted = kwargs[:trusted_constraints] || trusted_from_routing(routing, settings_snapshot)
 
-          # SSOT v4: the raw client body model is the sole input to the Router's
-          # body-model-hint ladder, which reads it from metadata[:client_model].
-          # Client translators pass it as the top-level client_model: kwarg, so
-          # fold that into metadata here (the single bridge point) — the Request
-          # no longer carries a precomputed body_model_hint_decision.
+          # Preserve the raw body-model metadata for Requirements construction.
+          # Client translators supply client_model:; this is its single bridge
+          # into the request, not a trusted routing pin.
           metadata = kwargs.fetch(:metadata, {})
           metadata = metadata.merge(client_model: kwargs[:client_model]) unless kwargs[:client_model].nil?
 
@@ -71,7 +68,6 @@ module Legion
             routing_context:           ctx,
             routing_settings_snapshot: settings_snapshot,
             trusted_constraints:       trusted,
-            body_model_hint_decision:  nil,
             id:                        kwargs[:id] || "req_#{SecureRandom.hex(12)}",
             conversation_id:           kwargs[:conversation_id],
             idempotency_key:           kwargs[:idempotency_key],

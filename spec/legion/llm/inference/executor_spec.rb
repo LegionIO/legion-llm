@@ -840,7 +840,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
       )
       ex = described_class.new(req)
       ex.send(:step_routing)
-      expect(ex.instance_variable_get(:@router).maximum_attempts).to eq(7)
+      expect(ex.instance_variable_get(:@router).requirements.maximum_attempts).to eq(7)
     end
 
     it 'honors native provider layer settings' do
