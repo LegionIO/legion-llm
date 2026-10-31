@@ -1,5 +1,23 @@
 # Legion LLM Changelog
 
+## [0.16.10] - 2026-10-30
+
+### Fixed
+- **Canonical prompt auditing.** Histories beyond `llm.compliance.audit_max_messages` no longer call Hash accessors on canonical messages. Audit projections retain the newest messages without changing inference history, and record original, captured, and omitted counts.
+- **Whole-event audit payload limits.** Prompt events account for attribution and encrypted wire size against `transport.max_payload_bytes`. Oversized binary content becomes explicit byte-count/SHA256 fingerprints, including nested image/audio/video content; aggregate overflow removes remaining binary content before older messages and bulky nonessential fields. An essential envelope that cannot fit is explicitly dropped.
+- **Multimodal audit identity.** Request audit hashes cover the full original message history, media fingerprints, roles, and tool state, excluding generated message IDs and timestamps. The text-only embedding/RAG hash contract is unchanged.
+- **Honest publication outcomes.** Post-response timelines distinguish published, disabled, and dropped audit delivery. GAIA can still observe the constructed local event when transport does not accept publication.
+- **Anthropic pasted images and tool results.** Normalize base64 and URL source envelopes at both user and tool-result boundaries, preserving mixed content order, tool association, and cache-control metadata.
+- **OpenAI image inputs.** Normalize Responses `input_image` and Chat `image_url` parts without dropping base64 MIME or image detail. Malformed image sources, provider-specific file references, and unsupported generated-image history return HTTP 400 before streaming begins.
+- **N×N text convergence.** All client dialects preserve text-fragment whitespace and converge to the same canonical text representation without collapsing annotated blocks.
+- **Request-owned routing facts.** Construct shared immutable `RequestRequirements` before routing, including canonical tool replay, capabilities, pins and context budgets. Router consumes those facts without reconstructing them.
+- **Real execution boundary coverage.** Exercise client ingress, Inventory selection, direct callable execution, signed fleet serialization/validation/rehydration, exact worker resolution, provider rendering and rejection of tampered bindings/media.
+
+### Changed
+- Declare the vLLM renderer as a test dependency in standalone checkouts so image regressions run in CI as well as the multi-repo workspace. The RAG integration regression now observes the active provider boundary instead of the retired dispatch path.
+- Require `legion-transport >= 1.4.31` and use its encoded-payload validation boundary directly, removing the private pre-encoding validator override.
+- Require `lex-llm >= 0.8.6` and use `Router.new(requirements:)`; all executor, embedding, token-counting and cache consumers use the same requirements constructor.
+
 ## [0.16.9] - 2026-08-20
 
 ### Changed

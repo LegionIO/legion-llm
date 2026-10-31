@@ -8,18 +8,31 @@ legion_settings_path = File.expand_path('../legion-settings', __dir__)
 gem 'legion-settings', path: legion_settings_path if Dir.exist?(legion_settings_path)
 
 group :test do
-  # The published lex-llm (>= 0.8.0, declared in the gemspec) provides the 0.8.0
-  # Canonical types and fleet protocol-v3 behavior these specs require. Use the
-  # local checkout when present (development); CI resolves the published gem via
-  # the gemspec dependency.
-  lex_llm_path = File.expand_path('../extensions-ai/lex-llm', __dir__)
+  # Immutable CI companions and adjacent development checkouts both consume the
+  # shared contract directly. Standalone installs use the gemspec dependency.
+  lex_llm_path = File.expand_path('.ci-dependencies/lex-llm', __dir__)
+  lex_llm_path = File.expand_path('../extensions-ai/lex-llm', __dir__) unless Dir.exist?(lex_llm_path)
   gem 'lex-llm', path: lex_llm_path if Dir.exist?(lex_llm_path)
+
+  # Execution regressions exercise real provider callables in every checkout.
+  vllm_path = File.expand_path('.ci-dependencies/lex-llm-vllm', __dir__)
+  vllm_path = File.expand_path('../extensions-ai/lex-llm-vllm', __dir__) unless Dir.exist?(vllm_path)
+  if Dir.exist?(vllm_path)
+    gem 'lex-llm-vllm', path: vllm_path
+  else
+    gem 'lex-llm-vllm', '>= 0.4.9'
+  end
+
+  openai_path = File.expand_path('../extensions-ai/lex-llm-openai', __dir__)
+  if Dir.exist?(openai_path)
+    gem 'lex-llm-openai', path: openai_path
+  else
+    gem 'lex-llm-openai', '>= 0.6.6'
+  end
 
   %w[
     lex-llm-ollama
-    lex-llm-vllm
     lex-llm-anthropic
-    lex-llm-openai
     lex-llm-gemini
     lex-llm-mlx
     lex-llm-bedrock

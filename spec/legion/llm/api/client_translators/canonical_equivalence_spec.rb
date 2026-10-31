@@ -3,6 +3,7 @@
 require 'spec_helper'
 require 'legion/llm/api/client_translators/anthropic_messages'
 require 'legion/llm/api/client_translators/openai_responses'
+require 'legion/llm/api/client_translators/openai_chat'
 
 # SSOT / one-oracle: the same logical request must parse to an IDENTICAL
 # Canonical::Request regardless of client dialect (Anthropic /v1/messages vs
@@ -16,6 +17,7 @@ require 'legion/llm/api/client_translators/openai_responses'
 RSpec.describe 'client translator canonical equivalence' do
   let(:anthropic) { Legion::LLM::API::ClientTranslators::AnthropicMessages.new }
   let(:responses) { Legion::LLM::API::ClientTranslators::OpenAIResponses.new }
+  let(:chat) { Legion::LLM::API::ClientTranslators::OpenAIChat.new }
   let(:env) { { 'HTTP_X_LEGION_PROVIDER' => 'vllm' } }
 
   # Compare the routing-relevant canonical shape (messages + system), ignoring
@@ -78,5 +80,61 @@ RSpec.describe 'client translator canonical equivalence' do
     )
 
     expect(canonical_shape(responses_req)).to eq(canonical_shape(anthropic_req))
+  end
+
+  it 'preserves exact text and canonical representation across all client dialects and roles' do
+    messages = %w[user assistant].map do |role|
+      { role: role, content: [{ type: 'text', text: 'hello' }, { type: 'text', text: " world\nnext" }] }
+    end
+    requests = [
+      anthropic.parse_request({ messages: messages }, {}),
+      chat.parse_request({ messages: messages }, {}),
+      responses.parse_request({ input: messages }, {})
+    ]
+
+    expect(requests.map { |request| canonical_shape(request) }.uniq).to eq([
+                                                                             { system: nil, messages: [
+                                                                               { role: 'user', content: "hello world\nnext" },
+                                                                               { role: 'assistant', content: "hello world\nnext" }
+                                                                             ] }
+                                                                           ])
+  end
+
+  it 'preserves annotated text boundaries instead of collapsing cache semantics' do
+    blocks = [
+      { type: 'text', text: 'before', cache_control: { type: 'ephemeral', ttl: '1h' } },
+      { type: 'text', text: ' after' }
+    ]
+    requests = [
+      anthropic.parse_request({ messages: [{ role: 'user', content: blocks }] }, {}),
+      chat.parse_request({ messages: [{ role: 'user', content: blocks }] }, {}),
+      responses.parse_request({ input: [{ role: 'user', content: blocks }] }, {})
+    ]
+
+    expect(requests.map { |request| canonical_shape(request) }.uniq.size).to eq(1)
+    expect(requests.first.messages.first.content.map { |block| [block.text, block.cache_control] }).to eq([
+                                                                                                            ['before', { type: 'ephemeral', ttl: '1h' }], [' after', nil]
+                                                                                                          ])
+  end
+
+  it 'does not insert whitespace when flushing text around a tool result' do
+    text = [{ type: 'text', text: 'hello' }, { type: 'text', text: ' world' }]
+    anthropic_request = anthropic.parse_request(
+      { messages: [{ role: 'user', content: text + [
+        { type: 'tool_result', tool_use_id: 'call-1', content: text },
+        { type: 'text', text: 'continue' }
+      ] }] }, {}
+    )
+    chat_request = chat.parse_request(
+      { messages: [
+        { role: 'user', content: text },
+        { role: 'tool', tool_call_id: 'call-1', content: text },
+        { role: 'user', content: 'continue' }
+      ] }, {}
+    )
+
+    expect(canonical_shape(anthropic_request)).to eq(canonical_shape(chat_request))
+    expect(anthropic_request.messages.map(&:text)).to eq(['hello world', 'hello world', 'continue'])
+    expect(anthropic_request.messages[1].tool_call_id).to eq('call-1')
   end
 end

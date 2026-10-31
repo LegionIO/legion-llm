@@ -15,7 +15,14 @@ module Legion
             response = current_response
             log_step_debug(:post_response, :publish_audit, provider: @resolved_provider || 'none', model: @resolved_model || 'none')
 
-            audit_event = AuditPublisher.publish(request: @request, response: response)
+            publication = AuditPublisher.publish(request: @request, response: response)
+            audit_event = publication[:event]
+            status = publication[:status]
+            @timeline.record(
+              category: :audit, key: 'audit:publish',
+              direction: :outbound, detail: "#{status} prompt audit",
+              from: 'pipeline', to: 'llm.audit', data: { status: status }
+            )
 
             if defined?(Legion::Gaia::AuditObserver) && audit_event
               log_step_debug(:post_response, :notify_gaia_audit_observer)
@@ -24,12 +31,7 @@ module Legion
               log_step_debug(:post_response, :gaia_audit_observer_skipped, reason: audit_event ? :observer_unavailable : :no_audit_event)
             end
 
-            @timeline.record(
-              category: :audit, key: 'audit:publish',
-              direction: :outbound, detail: 'published to llm.audit',
-              from: 'pipeline', to: 'llm.audit'
-            )
-            log_step_debug(:post_response, :complete, audit_event_present: !audit_event.nil?)
+            log_step_debug(:post_response, :complete, audit_event_present: !audit_event.nil?, audit_status: status)
           rescue StandardError => e
             @warnings << "post_response error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.post_response')

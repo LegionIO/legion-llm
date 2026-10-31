@@ -47,7 +47,7 @@ module Legion
           # the maintained route maps to the dialect HTTP status. No legacy
           # fallback, no HealthTracker mutation.
           def run_provider_call_engine
-            @router.maximum_attempts.times do
+            @router.requirements.maximum_attempts.times do
               attempt = @router.next_attempt!
               populate_ssot_v3_resolved_state(attempt)
               result = ssot_v3_execute_attempt
@@ -65,7 +65,7 @@ module Legion
               raise Legion::LLM::Errors::RoutingRejected.new(rejection: action.rejection) if action.disposition == :terminal
             end
             log.warn('[llm][executor] action=ssot_v3_attempts_exhausted kind=attempts_exhausted ' \
-                     "reason=maximum attempts (#{@router.maximum_attempts}) reached " \
+                     "reason=maximum attempts (#{@router.requirements.maximum_attempts}) reached " \
                      "http_status=503 generation=#{Legion::Extensions::Llm::Inventory::Registry.snapshot.generation}")
             raise Legion::LLM::Errors::RoutingRejected.new(rejection: attempts_exhausted_rejection)
           ensure
@@ -108,7 +108,7 @@ module Legion
           def attempts_exhausted_rejection
             Legion::Extensions::Llm::Routing::Rejection.new(
               kind:                 :attempts_exhausted,
-              reason:               "maximum attempts (#{@router.maximum_attempts}) reached",
+              reason:               "maximum attempts (#{@router.requirements.maximum_attempts}) reached",
               inventory_generation: Legion::Extensions::Llm::Inventory::Registry.snapshot.generation,
               candidate_counts:     {},
               http_status:          503
@@ -124,7 +124,7 @@ module Legion
           # never an SSE server_error. Always selects (single engine) — an empty
           # Registry yields a typed Rejection, never a legacy fallback.
           def ssot_v3_stream_preflight
-            @router.maximum_attempts.times do
+            @router.requirements.maximum_attempts.times do
               attempt_context = @router.next_attempt!
               begin
                 @preflight_lease = Legion::Extensions::Llm::Inventory::Registry.acquire(

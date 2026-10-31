@@ -555,17 +555,21 @@ module Legion
 
       def self.compliance_defaults
         {
-          classification_scan:   false,
-          encrypt_audit:         false,
-          encrypt_metering:      false,
-          phi_block_cloud:       false,
-          cloud_providers:       %w[bedrock anthropic openai gemini azure],
-          redact_pii:            false,
-          redaction_placeholder: '[REDACTED]',
-          strict_hipaa:          false,
-          standalone_email_pii:  false,
-          default_level:         :public,
-          audit_max_messages:    20
+          classification_scan:         false,
+          encrypt_audit:               false,
+          encrypt_metering:            false,
+          phi_block_cloud:             false,
+          cloud_providers:             %w[bedrock anthropic openai gemini azure],
+          redact_pii:                  false,
+          redaction_placeholder:       '[REDACTED]',
+          strict_hipaa:                false,
+          standalone_email_pii:        false,
+          default_level:               :public,
+          audit_max_messages:          20,
+          # Early compaction of individual image/audio/video data fields. The
+          # complete attributed prompt-audit body is also bounded at publish by
+          # transport.max_payload_bytes, even when every binary is below this.
+          audit_max_binary_data_bytes: 131_072
         }
       end
     end

@@ -215,6 +215,7 @@ RSpec.configure do |config|
   config.before(:each) do
     Legion::Settings.reset!
     Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+    Legion::LLM::Routing::SettingsState.reset!
     Legion::Settings.merge_settings('transport', Legion::Transport::Settings.default) if
       defined?(Legion::Transport::Settings)
     Legion::Settings[:logging][:level] = :fatal

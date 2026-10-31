@@ -9,12 +9,18 @@ on:
 jobs:
   ci:
     uses: LegionIO/.github/.github/workflows/ci.yml@main
+    with:
+      companion-gems: >-
+        {"lex-llm":{"repository":"LegionIO/lex-llm","ref":"eedf5172abe0bfda26501967c3f3f38b7c180095"},"lex-llm-vllm":{"repository":"LegionIO/lex-llm-vllm","ref":"7c74befe51681372cd292e7b643ceee0eb95bfb7"}}
 
   lint:
     uses: LegionIO/.github/.github/workflows/lint-patterns.yml@main
 
   security:
     uses: LegionIO/.github/.github/workflows/security-scan.yml@main
+    with:
+      companion-gems: >-
+        {"lex-llm":{"repository":"LegionIO/lex-llm","ref":"eedf5172abe0bfda26501967c3f3f38b7c180095"},"lex-llm-vllm":{"repository":"LegionIO/lex-llm-vllm","ref":"7c74befe51681372cd292e7b643ceee0eb95bfb7"}}
 
   version-changelog:
     uses: LegionIO/.github/.github/workflows/version-changelog.yml@main

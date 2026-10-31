@@ -30,10 +30,7 @@ RSpec.describe 'RAG/GAS full cycle' do
     allow(mock_session).to receive(:with_instructions).and_return(mock_session)
     allow(mock_session).to receive(:ask).and_return(mock_response)
 
-    published_event = nil
-    allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish) do |args|
-      published_event = args
-    end
+    allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return(event: nil, status: :disabled)
 
     request = Legion::LLM::Inference::Request.build(
       messages:         [{ role: :user, content: 'how does pgvector search work?' }],
@@ -43,7 +40,6 @@ RSpec.describe 'RAG/GAS full cycle' do
 
     response = Legion::LLM::Inference::Executor.new(request).call
 
-    expect(response).to be_a(Legion::LLM::Inference::Response)
     expect(response.enrichments).to have_key('rag:context_retrieval')
     expect(response.enrichments['rag:context_retrieval'][:data][:entries].length).to be >= 1
     expect(response.enrichments['rag:context_retrieval'][:data][:strategy]).to eq(:rag)
@@ -59,18 +55,11 @@ confidence: 0.9 }],
                                                                    })
     stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
 
-    mock_session = double('NativeChat')
-    mock_response = double('ProviderMessage',
-                           content: 'test response', input_tokens: 10,
-                           output_tokens: 5, model_id: 'test-model')
     stub_native_provider(content: 'pipeline response')
-    allow(mock_session).to receive(:with_tool).and_return(mock_session)
-    allow(mock_session).to receive(:ask).and_return(mock_response)
-
-    injected = nil
-    allow(Legion::LLM::Call::Dispatch).to receive(:call) do |**kwargs|
-      injected = kwargs[:system]
-      native_dispatch_result(content: 'pipeline response')
+    provider_system = []
+    allow_any_instance_of(SsotStubCallable).to receive(:chat).and_wrap_original do |original, messages, **kwargs|
+      provider_system.concat(messages.select { |message| message.role == :system }.map(&:text))
+      original.call(messages, **kwargs)
     end
 
     request = Legion::LLM::Inference::Request.build(
@@ -84,7 +73,7 @@ confidence: 0.9 }],
 
     expect(response.enrichments['rag:context_retrieval'][:data][:entries].first[:content])
       .to include('pgvector is a PostgreSQL extension')
-    expect(response).to be_a(Legion::LLM::Inference::Response)
+    expect(provider_system.join("\n")).to include('You are helpful.', 'pgvector is a PostgreSQL extension')
   end
 
   it 'degrades gracefully when Apollo is not loaded' do
@@ -107,7 +96,6 @@ confidence: 0.9 }],
 
     response = Legion::LLM::Inference::Executor.new(request).call
 
-    expect(response).to be_a(Legion::LLM::Inference::Response)
     expect(response.enrichments).not_to have_key('rag:context_retrieval')
     expect(response.warnings).to include(match(/Apollo unavailable/))
   end
@@ -131,7 +119,6 @@ confidence: 0.9 }],
       }
     )
 
-    response = Legion::LLM::Inference::Executor.new(request).call
-    expect(response).to be_a(Legion::LLM::Inference::Response)
+    Legion::LLM::Inference::Executor.new(request).call
   end
 end

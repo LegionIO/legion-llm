@@ -14,12 +14,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
                                                                                     ])
     end
 
-    # Helper: build the per-request Router and return it (carries operation,
-    # required_capabilities, input_bound, etc.).
+    # Exercise the executor's actual requirement-construction boundary.
     def build_reqs(request)
       executor = described_class.new(request)
       executor.send(:build_ssot_router)
-      executor.instance_variable_get(:@router)
+      executor.instance_variable_get(:@router).requirements
     end
 
     it 'does not require :tools for plain non-streaming requests just because pinned tools exist' do
@@ -101,9 +100,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'honors payload client_model only when body routing hints are enabled' do
-      # allow_body_routing_hints is read live from [:llm][:router] by the Router's
-      # body-model-hint ladder — no SettingsState snapshot rebuild needed.
       Legion::Settings[:llm][:router][:allow_body_routing_hints] = true
+      Legion::LLM::Routing::SettingsState.reset!
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  {},
