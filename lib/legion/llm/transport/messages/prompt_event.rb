@@ -27,9 +27,8 @@ module Legion
             super.merge(classification_headers).merge(caller_headers).merge(retention_headers).merge(tier_header)
           end
 
-          # The transport validates message before encoding. Prepare the exact
-          # attributed body here, then let its real gate validate that same body.
-          # Encryption expansion is also bounded, not merely the cleartext JSON.
+          # Project the attributed body before transport validates the encoded
+          # payload. Bound encryption expansion as well as cleartext JSON.
           def encode_message
             return @audit_encoded_message if @audit_encoded_message
 
@@ -68,11 +67,6 @@ module Legion
           end
 
           private
-
-          def validate_payload_size
-            encode_message
-            super
-          end
 
           def omit_oldest_audit_message(capture:)
             messages = @options[:messages]

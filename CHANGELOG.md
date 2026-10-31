@@ -11,6 +11,10 @@
 - **OpenAI image inputs.** Normalize Responses `input_image` and Chat `image_url` parts without dropping base64 MIME or image detail. Malformed image sources, provider-specific file references, and unsupported generated-image history return HTTP 400 before streaming begins.
 - **Canonical routing inputs.** Read image capabilities from canonical content blocks and estimate textual input without counting raw image bytes as text.
 
+### Changed
+- Declare the vLLM renderer as a test dependency in standalone checkouts so image regressions run in CI as well as the multi-repo workspace. The RAG integration regression now observes the active provider boundary instead of the retired dispatch path.
+- Require `legion-transport >= 1.4.31` and use its encoded-payload validation boundary directly, removing the private pre-encoding validator override.
+
 ## [0.16.9] - 2026-08-20
 
 ### Changed

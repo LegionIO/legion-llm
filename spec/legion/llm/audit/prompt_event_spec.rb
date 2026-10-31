@@ -172,7 +172,8 @@ RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
   describe 'whole prompt audit payload budget' do
     let(:canonical) { Legion::Extensions::Llm::Canonical }
     let(:published_bodies) { [] }
-    let(:audit_exchange) { double('AuditExchange', name: 'llm.audit') }
+    let(:audit_channel) { double('AuditChannel', using_publisher_confirmations?: false) }
+    let(:audit_exchange) { double('AuditExchange', name: 'llm.audit', type: 'topic', channel: audit_channel) }
 
     before do
       stub_process_identity
@@ -197,7 +198,6 @@ RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
       result = message.publish(return_result: true)
       expect(result[:accepted]).to be(true)
       expect(published_bodies.last.bytesize).to be <= Legion::Settings[:transport][:max_payload_bytes]
-      expect(Legion::JSON.dump(message.message).bytesize).to be <= Legion::Settings[:transport][:max_payload_bytes]
       Legion::JSON.load(published_bodies.last)
     end
 

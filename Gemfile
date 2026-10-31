@@ -15,9 +15,16 @@ group :test do
   lex_llm_path = File.expand_path('../extensions-ai/lex-llm', __dir__)
   gem 'lex-llm', path: lex_llm_path if Dir.exist?(lex_llm_path)
 
+  # Image ingress regressions exercise a real provider renderer in every checkout.
+  vllm_path = File.expand_path('../extensions-ai/lex-llm-vllm', __dir__)
+  if Dir.exist?(vllm_path)
+    gem 'lex-llm-vllm', path: vllm_path
+  else
+    gem 'lex-llm-vllm', '>= 0.4.8'
+  end
+
   %w[
     lex-llm-ollama
-    lex-llm-vllm
     lex-llm-anthropic
     lex-llm-openai
     lex-llm-gemini

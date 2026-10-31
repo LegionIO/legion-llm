@@ -1061,9 +1061,9 @@ bundle exec rubocop -A
 | `legion-json` | Legion JSON serialization |
 | `legion-logging` | Logging |
 | `legion-settings` | Configuration defaults and file overrides |
-| `legion-transport` (>= 1.4.14) | AMQP transport for fleet dispatch, metering, and audit |
+| `legion-transport` (>= 1.4.31) | Encoded-payload validation and AMQP transport for fleet dispatch, metering, and audit |
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
-| `lex-llm` (>= 0.5.4) | Provider-neutral contract, `Canonical::Request`/`Canonical::Response`, model offerings, response normalization, fleet envelopes, and responder-side fleet execution helpers |
+| `lex-llm` (>= 0.8.0) | Provider-neutral contract, `Canonical::Request`/`Canonical::Response`, model offerings, response normalization, fleet envelopes, and responder-side fleet execution helpers |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 
