@@ -27,7 +27,7 @@ group :test do
   if Dir.exist?(openai_path)
     gem 'lex-llm-openai', path: openai_path
   else
-    gem 'lex-llm-openai', '>= 0.6.7'
+    gem 'lex-llm-openai', '>= 0.6.6'
   end
 
   %w[
