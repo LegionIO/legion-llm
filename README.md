@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.16.10-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.11-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -403,6 +403,14 @@ embedding.vectors  # -> Array of floats
 # Specific model
 embedding = Legion::LLM.embed("text", model: "text-embedding-3-small")
 ```
+
+Embedding metering counts request workload on both cache misses and cache hits.
+A cache hit preserves the cached input-token count in `input_tokens` and
+`total_tokens`, while emitting `cache_hit: true`, `output_tokens: 0`, and
+`cost_usd: 0`. This lets ledger count every served request and calculate
+counterfactual spend and framework savings without charging for another provider
+execution. Request token totals therefore include cache-served work, not just
+fresh provider computation.
 
 ### Tool Use
 
