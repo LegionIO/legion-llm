@@ -123,7 +123,7 @@ module MatrixHelper
           supported:    %i[chat stream_chat embed count_tokens],
           capabilities: { streaming: :supported, tools: :supported,
                           thinking: :supported, vision: :supported,
-                          embedding: :supported },
+                          embedding: :supported, structured_output: :supported },
           context:      200_000,
           max_output:   16_384
         )
