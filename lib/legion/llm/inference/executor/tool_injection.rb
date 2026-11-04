@@ -31,8 +31,33 @@ module Legion
             options[:tools] = native_dispatch_tools if native_dispatch_tools.any?
             options[:tool_prefs] = native_tool_prefs if native_dispatch_tools.any? && native_tool_prefs
             options[:thinking] = native_dispatch_thinking if native_dispatch_thinking
+            response_format = native_dispatch_response_format
+            options[:params] = { response_format: response_format } if response_format
             apply_generation_params!(options)
             options.compact
+          end
+
+          # Forward the request's structured-output contract to the provider.
+          # Request#response_format was read for lane selection only, so no
+          # schema reached the wire. Normalized to the OpenAI wire shape, which
+          # the vLLM and OpenAI-compatible translators read from
+          # params.response_format.
+          def native_dispatch_response_format
+            rf = @request.response_format
+            return nil unless rf.is_a?(Hash)
+
+            rf = rf.transform_keys(&:to_sym)
+            type = rf[:type].to_s
+            return { type: 'json_object' } if type == 'json_object'
+            return nil unless type == 'json_schema'
+
+            inner = rf[:json_schema].is_a?(Hash) ? rf[:json_schema].transform_keys(&:to_sym) : nil
+            schema = inner ? inner[:schema] : rf[:schema]
+            return nil unless schema.is_a?(Hash) && !schema.empty?
+
+            wire = { name: (inner && inner[:name]) || 'response', schema: schema }
+            wire[:strict] = inner[:strict] if inner&.key?(:strict)
+            { type: 'json_schema', json_schema: wire }
           end
 
           def native_tool_loop_system(system)
