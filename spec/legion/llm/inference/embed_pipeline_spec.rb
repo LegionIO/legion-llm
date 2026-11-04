@@ -1,119 +1,89 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'legion/cache'
 require 'legion/llm/inference/embed_pipeline'
+require 'tmpdir'
 
-# SSOT v3 §21: EmbedPipeline is a slim governed entry over Call::Embeddings.
-# Selection, dispatch, and the content-addressed cache are owned by Call::Embeddings
-# (which selects the exact lane BEFORE any cache lookup, per §21.2).
-# EmbedPipeline no longer reads cache keys, calls Cache directly, or holds a
-# cache_key method. It normalizes the caller input, routes through
-# Call::Embeddings.generate, and emits the metering event.
-RSpec.describe Legion::LLM::Inference::EmbedPipeline do
-  let(:successful_result) do
-    {
-      vector:     [0.1, 0.2, 0.3],
-      model:      'mxbai-embed-large',
-      provider:   :ollama,
-      dimensions: 3,
-      tokens:     7,
-      chunks:     1,
-      tier:       'local',
-      cache_hit:  false
-    }
+RSpec.describe Legion::LLM::Inference::EmbedPipeline, :ssot_v3 do
+  let(:model) { 'mxbai-embed-large:latest' }
+  let(:seed) { '9f' * 16 }
+  let(:callable) do
+    SsotV3SnapshotFactory::FactoryCallable.new(responder: lambda do |*_args|
+      {
+        embedding: [0.1, 0.2, 0.3],
+        usage:     Legion::Extensions::Llm::Canonical::Usage.build(input_tokens: 37)
+      }
+    end)
+  end
+
+  around do |example|
+    Dir.mktmpdir('embedding_metering') do |directory|
+      @spool_path = File.join(directory, 'events.jsonl')
+      example.run
+    end
   end
 
   before do
-    allow(Legion::LLM::Metering).to receive(:emit).and_return(:published)
+    allow(Legion::LLM).to receive(:started?).and_return(true)
+    Legion::Cache.setup
+    Legion::Settings[:transport][:connected] = false
+    Legion::Settings[:llm][:compliance][:encrypt_spool] = false
+    Legion::Settings[:llm][:metering][:spool][:path] = @spool_path
+    activate(
+      provider_family: 'ollama', instance_id: 'primary', callable: callable,
+      drafts: [offering_draft(model: model, tier: :direct, supported: %i[embed],
+                              capabilities: { embedding: :supported },
+                              embedding_dimensions: [3], context: 512)]
+    )
   end
 
-  describe '.call — delegates to Call::Embeddings and emits metering' do
-    before do
-      allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(successful_result)
+  it 'counts cached request tokens for savings accounting without another provider execution' do
+    results = Array.new(2) do
+      described_class.call(text: 'hello world', model: model, dimensions: 3, routing_seed: seed)
     end
+    events = File.readlines(@spool_path).map { |line| Legion::JSON.load(line) }
 
-    it 'returns the same shape Call::Embeddings.generate returns' do
-      result = described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
-      expect(result[:vector]).to eq([0.1, 0.2, 0.3])
-      expect(result[:dimensions]).to eq(3)
-    end
-
-    it 'invokes the underlying provider call exactly once' do
-      expect(Legion::LLM::Call::Embeddings).to receive(:generate).once.and_return(successful_result)
-      described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
-    end
-
-    it 'emits metering with cache_hit: false' do
-      expect(Legion::LLM::Metering).to receive(:emit).with(hash_including(cache_hit: false, request_type: 'embedding'))
-      described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
-    end
+    expect(results.map { |result| result[:cache_hit] }).to eq([false, true])
+    expect(results.map { |result| result[:tokens] }).to eq([37, 37])
+    expect(callable.inference_calls).to eq(1)
+    expect(events.map { |event| event.slice(:request_type, :input_tokens, :output_tokens, :total_tokens, :cache_hit) }).to eq(
+      [
+        { request_type: 'embedding', input_tokens: 37, output_tokens: 0, total_tokens: 37, cache_hit: false },
+        { request_type: 'embedding', input_tokens: 37, output_tokens: 0, total_tokens: 37, cache_hit: true }
+      ]
+    )
+    expect(events.first).not_to have_key(:cost_usd)
+    expect(events.last[:cost_usd]).to eq(0)
   end
 
-  # SSOT v3 §21.2: the cache lives inside Call::Embeddings (select -> cache -> dispatch).
-  # EmbedPipeline surfaces the cache_hit: true signal from generate's return value
-  # and emits the appropriate zero-cost metering event — it never calls Cache directly.
-  describe '.call — cache hit path (Call::Embeddings returns cache_hit: true)' do
-    let(:cached_result) do
-      {
-        vector:     [0.9, 0.8, 0.7],
-        model:      'mxbai-embed-large',
-        provider:   :ollama,
-        dimensions: 3,
-        tokens:     11,
-        chunks:     1,
-        tier:       'local',
-        cache_hit:  true
-      }
-    end
+  it 'does not emit successful request accounting when routing rejects the embedding' do
+    Legion::Extensions::Llm::Inventory::Registry.reset!
 
-    before do
-      allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(cached_result)
-    end
+    expect do
+      described_class.call(text: 'hello world', model: model, dimensions: 3, routing_seed: seed)
+    end.to raise_error(Legion::LLM::Errors::RoutingRejected)
 
-    it 'returns the cached vector with cache_hit: true' do
-      result = described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
-      expect(result[:cache_hit]).to be(true)
-      expect(result[:vector]).to eq([0.9, 0.8, 0.7])
-      expect(result[:provider]).to eq(:ollama)
-    end
-
-    it 'emits metering with cost_usd: 0 and cache_hit: true' do
-      expect(Legion::LLM::Metering).to receive(:emit).with(
-        hash_including(cache_hit: true, cost_usd: 0, input_tokens: 0, output_tokens: 0)
-      )
-      described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
-    end
+    expect(callable.inference_calls).to eq(0)
+    expect(File.exist?(@spool_path)).to be(false)
   end
 
-  describe '.call — Call::Embeddings always invoked (cache is its responsibility)' do
-    before do
-      allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(successful_result)
+  context 'when provider execution raises a programming error' do
+    let(:provider_error) { TypeError.new('invalid embedding response') }
+    let(:callable) do
+      SsotV3SnapshotFactory::FactoryCallable.new(responder: ->(*_args) { raise provider_error })
     end
 
-    it 'calls the provider and returns its result' do
-      expect(Legion::LLM::Call::Embeddings).to receive(:generate).once.and_return(successful_result)
-      result = described_class.call(text: 'hello world', model: 'mxbai-embed-large', dimensions: 3)
-      expect(result[:vector]).to eq([0.1, 0.2, 0.3])
-    end
-  end
+    it 'logs and propagates the error without emitting successful accounting' do
+      expect(described_class).to receive(:handle_exception)
+        .with(provider_error, level: :warn, operation: 'llm.embed_pipeline.call').and_call_original
 
-  # SSOT v3: errors from Call::Embeddings propagate to the caller.
-  # LLMErrors are re-raised directly; other StandardErrors are logged then re-raised.
-  # EmbedPipeline never swallows an exception or returns an error hash.
-  describe '.call — error path' do
-    before do
-      allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_raise(StandardError.new('boom'))
-    end
+      expect do
+        described_class.call(text: 'hello world', model: model, dimensions: 3, routing_seed: seed)
+      end.to raise_error(provider_error)
 
-    it 'propagates the error to the caller (never swallows)' do
-      expect { described_class.call(text: 'hello world', model: 'mxbai-embed-large') }
-        .to raise_error(StandardError, 'boom')
-    end
-
-    it 'does not emit metering for a failed call' do
-      expect(Legion::LLM::Metering).not_to receive(:emit)
-      expect { described_class.call(text: 'hello world', model: 'mxbai-embed-large') }
-        .to raise_error(StandardError)
+      expect(callable.inference_calls).to eq(1)
+      expect(File.exist?(@spool_path)).to be(false)
     end
   end
 end
