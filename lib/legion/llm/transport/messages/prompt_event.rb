@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require_relative '../message'
-require_relative '../../inference/audit_publisher'
+require 'legion/llm/inference/audit_publisher'
 
 module Legion
   module LLM

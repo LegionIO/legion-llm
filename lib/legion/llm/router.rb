@@ -47,7 +47,7 @@ module Legion
 
       attr_reader :requirements, :affinity_strength_bps, :last_rejection
 
-      def initialize(requirements:)
+      def initialize(requirements:, **)
         raise ArgumentError, 'router requires Routing::RequestRequirements' unless requirements.is_a?(Legion::Extensions::Llm::Routing::RequestRequirements)
 
         @requirements = requirements

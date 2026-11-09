@@ -12,6 +12,8 @@
 - **N×N text convergence.** All client dialects preserve text-fragment whitespace and converge to the same canonical text representation without collapsing annotated blocks.
 - **Request-owned routing facts.** Construct shared immutable `RequestRequirements` before routing, including canonical tool replay, capabilities, pins and context budgets. Router consumes those facts without reconstructing them.
 - **Real execution boundary coverage.** Exercise client ingress, Inventory selection, direct callable execution, signed fleet serialization/validation/rehydration, exact worker resolution, provider rendering and rejection of tampered bindings/media.
+- **Router constructor kwargs.** Restore trailing `**` so `Router.new(requirements:)` accepts additional keyword arguments.
+- **Prompt audit require path.** Load `AuditPublisher` through its gem-rooted require path instead of `require_relative`.
 
 ### Changed
 - Declare the vLLM renderer as a test dependency in standalone checkouts so image regressions run in CI as well as the multi-repo workspace. The RAG integration regression now observes the active provider boundary instead of the retired dispatch path.
