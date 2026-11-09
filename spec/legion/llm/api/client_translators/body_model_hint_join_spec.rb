@@ -24,17 +24,10 @@ RSpec.describe 'client translator body-model hint join' do
       )
     end
 
-    # SSOT v4: the Request no longer carries a body-model-hint decision; the
-    # per-request Router computes it live in initialize from the raw client body
-    # model (carried by the translator into metadata[:client_model]) against the
-    # [:llm][:router] settings. The join this spec covers is therefore:
-    # translator.parse_request -> build_inference_request -> metadata[:client_model]
-    # -> Router.new(body_model:) -> router.body_model_hint_decision.
+    # Client ingress supplies raw model metadata and trusted header constraints;
+    # requirement construction resolves their precedence before Router selection.
     def build_router(request)
-      Legion::LLM::Router.new(
-        request: request, operation: :chat,
-        body_model: request.metadata[:client_model]
-      )
+      Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: request, operation: :chat, body_model: request.metadata[:client_model]))
     end
 
     def with_body_hint_settings(allow:, whitelist: [], blacklist: [])
@@ -56,19 +49,19 @@ RSpec.describe 'client translator body-model hint join' do
       with_body_hint_settings(allow: true) do
         request = build_inference_request(body)
         router = build_router(request)
-        decision = router.body_model_hint_decision
+        decision = router.requirements.body_model_hint_decision
 
         expect(decision.disposition).to eq(:honored)
         expect(decision.requested_model).to eq(body_model)
         expect(decision.model_constraint).to eq(body_model)
-        expect(router.model_pin).to eq(body_model)
+        expect(router.requirements.model_pin).to eq(body_model)
       end
     end
 
     it 'lets the X-Legion-Model trusted pin supersede the body model' do
       with_body_hint_settings(allow: true) do
         request = build_inference_request(body, header_env)
-        reqs = build_router(request)
+        reqs = build_router(request).requirements
         decision = reqs.body_model_hint_decision
 
         expect(decision.disposition).to eq(:superseded_by_explicit_model)
@@ -82,22 +75,22 @@ RSpec.describe 'client translator body-model hint join' do
     it 'ignores the body model when hints are disabled (the default)' do
       request = build_inference_request(body)
       router = build_router(request)
-      decision = router.body_model_hint_decision
+      decision = router.requirements.body_model_hint_decision
 
       expect(decision.disposition).to eq(:ignored_disabled)
       expect(decision.requested_model).to eq(body_model)
-      expect(router.model_pin).to be_nil
+      expect(router.requirements.model_pin).to be_nil
     end
 
     it 'ignores a body model that the nonempty whitelist does not cover (no pin, no 400)' do
       with_body_hint_settings(allow: true, whitelist: %w[claude]) do
         request = build_inference_request(body)
         router = build_router(request)
-        decision = router.body_model_hint_decision
+        decision = router.requirements.body_model_hint_decision
 
         expect(decision.disposition).to eq(:ignored_not_whitelisted)
         expect(decision.model_constraint).to be_nil
-        expect(router.model_pin).to be_nil
+        expect(router.requirements.model_pin).to be_nil
       end
     end
 
@@ -105,23 +98,23 @@ RSpec.describe 'client translator body-model hint join' do
       with_body_hint_settings(allow: true, blacklist: %w[gpt]) do
         request = build_inference_request(body)
         router = build_router(request)
-        decision = router.body_model_hint_decision
+        decision = router.requirements.body_model_hint_decision
 
         expect(decision.disposition).to eq(:ignored_blacklisted)
         expect(decision.matched_blacklist).to eq('gpt')
         expect(decision.model_constraint).to be_nil
-        expect(router.model_pin).to be_nil
+        expect(router.requirements.model_pin).to be_nil
       end
     end
 
     it 'treats an auto-routing alias body model as you-pick intent, never a pin' do
       request = build_inference_request(auto_body)
       router = build_router(request)
-      decision = router.body_model_hint_decision
+      decision = router.requirements.body_model_hint_decision
 
       expect(decision.disposition).to eq(:auto)
       expect(decision.requested_model).to eq('legionio')
-      expect(router.model_pin).to be_nil
+      expect(router.requirements.model_pin).to be_nil
     end
   end
 

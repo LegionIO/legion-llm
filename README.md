@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.14.0-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.10-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -163,6 +163,47 @@ response = client.messages.create(
 ```
 
 Requests flow through the full Inference pipeline — routing, metering, audit, quality checks — then the response is translated back into the caller's expected format.
+
+### Image inputs
+
+Anthropic `image` source envelopes, OpenAI Chat `image_url` parts, and Responses
+`input_image` parts normalize to canonical image blocks. Supported sources are
+absolute HTTP(S) URLs and nonempty base64 data with an explicit `image/jpeg`,
+`image/png`, `image/gif`, or `image/webp` MIME type.
+
+Mixed text/image order is preserved. Anthropic `tool_result` images retain their
+tool-call association. Image `detail` and `cache_control` survive the canonical
+inference boundary; their provider-wire rendering belongs to the selected
+`lex-llm-*` adapter. Image requests require a vision-capable routing candidate.
+
+Malformed sources, provider-specific `file_id` references, and Responses
+`image_generation_call` history are rejected with HTTP 400
+(`invalid_request_error`) before an event stream opens. They are not silently
+converted to empty images or discarded.
+
+### Canonical execution and routing ownership
+
+Equivalent text fragments preserve their exact whitespace across all three client
+dialects. Plain text converges to one string; annotated text and mixed media retain
+their ordered canonical blocks.
+
+`Routing::Requirements.build(request:, operation:, body_model:)` constructs the
+shared immutable `Legion::Extensions::Llm::Routing::RequestRequirements` before
+selection. It owns required capabilities, input/output bounds, modality, explicit
+pins, the body-model hint decision and the request attempt limit. Canonical tool
+history requires tool capability even when no new tool definitions are supplied.
+Request policy uses the settings generation captured at ingress.
+
+`Router.new(requirements:)` owns only routing and attempt state. Each decision reads
+one immutable live Inventory snapshot; filters compare request requirements with
+published evidence, ranking consumes stored weights, and dispatch preserves the
+resulting exact Selection. There is no request-derived fallback constructor.
+
+Fleet serialization preserves canonical media source enums through the shared
+rehydration boundary. Signed binding/media tampering and Inventory mismatches
+raise before provider execution. Boundary regressions exercise real provider
+callables and signed worker execution with only external HTTP/key provisioning
+substituted; they do not certify live model-service availability.
 
 ### Streaming
 
@@ -593,6 +634,33 @@ Legion::LLM.chat(
 
 System callers (type: `:system`) derive the `:system` profile, which skips governance steps to prevent recursion.
 
+### Prompt audit capture
+
+Prompt audit capture is a projection, not a replacement for inference history:
+
+- `llm.compliance.audit_max_messages` retains the newest 20 messages by default.
+- `llm.compliance.audit_max_binary_data_bytes` replaces individual binary values
+  larger than 131,072 bytes with `binary_fingerprint` metadata: byte count,
+  SHA256, MIME type, and original source type. These fingerprints are not
+  reusable base64 image data.
+- `transport.max_payload_bytes` also bounds the complete attributed prompt
+  event and its encoded/encrypted body. Aggregate overflow removes remaining
+  binary content first, then oldest messages, then bulky nonessential fields
+  with explicit size/digest omissions. Essential identifiers, routing, and
+  usage remain; an envelope that still cannot fit is dropped and logged.
+
+The emitted `capture` object reports `full` versus `projected` mode, message
+counts, binary redaction counts/bytes, omitted-field count, and reasons.
+`request_content_hash` identifies the full original semantic message history,
+including media and tool state, independently of projection or generated
+message IDs. The separate embedding/RAG content hash is unchanged.
+
+The post-response timeline records `published`, `disabled`, or `dropped`.
+GAIA observes the constructed local audit event even if delivery is disabled
+or dropped; additional transport-only compaction can make that local projection
+differ from the transmitted one. Consumers should use the transmitted `capture`
+metadata rather than assuming every event contains the full request.
+
 ### Routing
 
 legion-llm includes a dynamic weighted routing engine that dispatches requests across local, fleet, OpenAI-compatible, cloud, and frontier tiers based on caller intent, priority rules, time schedules, cost multipliers, and real-time provider health. Routing is enabled by default; set `routing.enabled: false` to bypass routing and call the configured provider directly.
@@ -1017,9 +1085,9 @@ bundle exec rubocop -A
 | `legion-json` | Legion JSON serialization |
 | `legion-logging` | Logging |
 | `legion-settings` | Configuration defaults and file overrides |
-| `legion-transport` (>= 1.4.14) | AMQP transport for fleet dispatch, metering, and audit |
+| `legion-transport` (>= 1.4.31) | Encoded-payload validation and AMQP transport for fleet dispatch, metering, and audit |
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
-| `lex-llm` (>= 0.5.4) | Provider-neutral contract, `Canonical::Request`/`Canonical::Response`, model offerings, response normalization, fleet envelopes, and responder-side fleet execution helpers |
+| `lex-llm` (>= 0.8.6) | Shared Canonical types, immutable `Routing::RequestRequirements`, Inventory/Selection contracts, and exact fleet execution/rehydration |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 

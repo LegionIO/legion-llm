@@ -66,11 +66,7 @@ module Legion
                   routing:  { model: model },
                   tools:    tools || []
                 )
-                router = Legion::LLM::Router.new(
-                  request:    request,
-                  operation:  :count_tokens,
-                  body_model: model
-                )
+                router = Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: request, operation: :count_tokens, body_model: model))
                 attempt = router.next_attempt
                 return nil if attempt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
 

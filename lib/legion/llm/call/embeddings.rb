@@ -88,7 +88,7 @@ module Legion
           def build_router(model:, provider:, instance:, dimensions:, request:, routing_seed:)
             req = request || build_request(model: model, provider: provider, instance: instance,
                                            dimensions: dimensions, routing_seed: routing_seed)
-            Legion::LLM::Router.new(request: req, operation: :embed, body_model: model)
+            Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: req, operation: :embed, body_model: model))
           end
 
           # A canonical Request carrying a trusted routing context. Prod uses a
@@ -109,7 +109,7 @@ module Legion
           # ----------------------------------------------------------------
 
           def run_single(router:, text:, dimensions:, task:)
-            router.maximum_attempts.times do
+            router.requirements.maximum_attempts.times do
               attempt = router.next_attempt!
               chunks = prepare_chunks(text, attempt_context: attempt, task: task)
 
@@ -151,7 +151,7 @@ module Legion
           # ----------------------------------------------------------------
 
           def run_batch(router:, texts:, dimensions:, task:)
-            router.maximum_attempts.times do
+            router.requirements.maximum_attempts.times do
               attempt = router.next_attempt!
               per_item_chunks = texts.map { |t| prepare_chunks(t, attempt_context: attempt, task: task) }
               flat = per_item_chunks.flatten(1)
@@ -236,7 +236,7 @@ module Legion
           end
 
           def exhausted_rejection(router)
-            used = router.maximum_attempts - router.attempts_remaining
+            used = router.requirements.maximum_attempts - router.attempts_remaining
             Legion::Extensions::Llm::Routing::Rejection.new(
               kind: :attempts_exhausted,
               reason: "embedding attempts exhausted after #{used} attempts",

@@ -55,10 +55,8 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
       # Router#input_bound counts UTF-8 bytes of all textual content blocks.
       # 20 messages × ~400 words × ~5 bytes/word is tens of thousands of bytes;
       # a naive [:content].to_s estimator on an Array returns near-zero.
-      router = Legion::LLM::Router.new(
-        request: request, operation: :chat, body_model: request.metadata[:client_model]
-      )
-      expect(router.input_bound).to be > 5_000
+      router = Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: request, operation: :chat, body_model: request.metadata[:client_model]))
+      expect(router.requirements.input_bound).to be > 5_000
     end
 
     it 'routing input bound is never materially below dispatch token estimate' do
@@ -67,7 +65,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
       # This guards against any regression that would make routing UNDER-count
       # the payload (the original bug that shipped ContextOverflow at dispatch).
       executor.send(:build_ssot_router)
-      routing_bound = executor.instance_variable_get(:@router).input_bound
+      routing_bound = executor.instance_variable_get(:@router).requirements.input_bound
 
       dispatch_messages = executor.send(:native_dispatch_messages)
       dispatch_options  = executor.send(:native_dispatch_options)
@@ -116,7 +114,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
       router = executor.instance_variable_get(:@router)
 
       # Routing bound must exceed the small lane's effective headroom.
-      expect(router.input_bound).to be > (8_192 * 0.9)
+      expect(router.requirements.input_bound).to be > (8_192 * 0.9)
 
       result = router.next_lane
       expect(result).to be_a(Legion::Extensions::Llm::Routing::Selection)

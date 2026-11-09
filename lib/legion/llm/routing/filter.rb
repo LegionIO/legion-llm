@@ -273,69 +273,6 @@ module Legion
           { min: min_v, max: max_v }.freeze
         end
 
-        # ------------------------------------------------------------------ #
-        # Body-model-hint ladder (D11 — the ONLY copy; 7 dispositions)       #
-        # ------------------------------------------------------------------ #
-
-        # The SOLE body-model hint decision (SSOT v3 §17.1 / D19). Given the
-        # untrusted request-body model value and any trusted explicit model, it
-        # returns one immutable BodyModelHintDecision. It never returns a lane,
-        # substitute model, or alias; only a :honored decision carries a model
-        # constraint. The Router calls this ONCE in initialize.
-        def body_model_hint_decision_for(body_model:, trusted_model:, **)
-          requested = normalize(body_model)
-          router_cfg = Legion::Settings[:llm][:router]
-
-          # 1. missing/blank body model → absent
-          if requested.nil?
-            return build_hint_decision(requested_model: nil, disposition: :absent,
-                                       settings_generation: 0)
-          end
-
-          # 2. body + trusted explicit model → trusted wins, body is metadata only
-          unless normalize(trusted_model).nil?
-            return build_hint_decision(requested_model: requested, disposition: :superseded_by_explicit_model,
-                                       settings_generation: 0)
-          end
-
-          # 3. auto-routing alias → auto (you-pick intent, no constraint)
-          aliases = router_cfg[:auto_routing_model_aliases]
-          if auto_alias?(requested, aliases)
-            return build_hint_decision(requested_model: requested, disposition: :auto,
-                                       settings_generation: 0)
-          end
-
-          # 4. body hints globally disabled → ignored
-          unless router_cfg[:allow_body_routing_hints]
-            return build_hint_decision(requested_model: requested, disposition: :ignored_disabled,
-                                       settings_generation: 0)
-          end
-
-          whitelist = router_cfg[:body_model_hint_whitelist]
-          blacklist = router_cfg[:body_model_hint_blacklist]
-
-          # 5. nonempty whitelist with no match → ignored_not_whitelisted
-          if !whitelist.empty? && substring_match(requested, whitelist).nil?
-            return build_hint_decision(requested_model: requested, disposition: :ignored_not_whitelisted,
-                                       settings_generation: 0)
-          end
-
-          # 6. any blacklist match → ignored_blacklisted (blacklist wins over whitelist)
-          matched_black = substring_match(requested, blacklist)
-          unless matched_black.nil?
-            return build_hint_decision(requested_model: requested, disposition: :ignored_blacklisted,
-                                       matched_blacklist: matched_black,
-                                       matched_whitelist: substring_match(requested, whitelist),
-                                       settings_generation: 0)
-          end
-
-          # 7. honored → exact body model becomes the model constraint
-          build_hint_decision(requested_model: requested, disposition: :honored,
-                              model_constraint: requested,
-                              matched_whitelist: substring_match(requested, whitelist),
-                              settings_generation: 0)
-        end
-
         private
 
         # Axis state for one required capability. The operator's cascaded
@@ -365,40 +302,6 @@ module Legion
           return prov_hash[key] if prov_hash.key?(key)
 
           ext_llm.key?(key) ? ext_llm[key] : nil
-        end
-
-        # Build the immutable BodyModelHintDecision record.
-        def build_hint_decision(requested_model:, disposition:, settings_generation:,
-                                model_constraint: nil, matched_whitelist: nil, matched_blacklist: nil, **)
-          Legion::Extensions::Llm::Routing::BodyModelHintDecision.new(
-            requested_model:     requested_model,
-            disposition:         disposition,
-            model_constraint:    model_constraint,
-            matched_whitelist:   matched_whitelist,
-            matched_blacklist:   matched_blacklist,
-            settings_generation: settings_generation
-          )
-        end
-
-        # Normalize a model string: nil/blank → nil, else trimmed.
-        def normalize(value, **)
-          return nil if value.nil?
-
-          trimmed = value.to_s.strip
-          trimmed.empty? ? nil : trimmed
-        end
-
-        # Auto aliases match by trimmed case-insensitive EXACT equality.
-        def auto_alias?(model, aliases, **)
-          down = model.downcase
-          aliases.any? { |a| a.to_s.strip.downcase == down }
-        end
-
-        # Whitelist/blacklist use trimmed case-insensitive SUBSTRING matching
-        # (never regex/glob). Returns the matched configured entry or nil.
-        def substring_match(model, list, **)
-          down = model.downcase
-          list.find { |entry| down.include?(entry.to_s.strip.downcase) }
         end
       end
     end

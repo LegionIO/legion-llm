@@ -100,6 +100,9 @@ module Legion
     end
 
     module Errors
+      # Malformed or unsupported client content, rejected before provider dispatch.
+      class InvalidRequest < LLMError; end
+
       # request_lane returned nil on the very first try — filters/health/policy excluded
       # everything; no dispatch was attempted. HTTP 400 semantics (caller can fix by
       # adjusting filters). Distinct from EscalationExhausted: "nothing to call" vs "tried, failed".

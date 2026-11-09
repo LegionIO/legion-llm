@@ -121,6 +121,9 @@ module Legion
                   Legion::JSON.dump(formatted)
                 end
               end
+            rescue Legion::LLM::Errors::InvalidRequest => e
+              handle_exception(e, level: :warn, handled: true, operation: 'llm.ns.anthropic.messages.invalid_request')
+              anthropic_error('invalid_request_error', e.message, status_code: 400)
             rescue Legion::LLM::Errors::NoLaneAvailable => e
               translate_no_lane_available(e, operation: 'llm.ns.anthropic.messages.no_lane', client: :anthropic)
             rescue Legion::LLM::Errors::EscalationExhausted => e

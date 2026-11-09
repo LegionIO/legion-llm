@@ -30,7 +30,7 @@ RSpec.describe Legion::LLM::Router, 'instance-recovery regression (class API)', 
 
   def build_router(request: nil, operation: :chat, body_model: nil, **request_kwargs)
     req = request || build_request(**request_kwargs)
-    Legion::LLM::Router.new(request: req, operation: operation, body_model: body_model)
+    Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: req, operation: operation, body_model: body_model))
   end
 
   def activate_peer(instance_id)

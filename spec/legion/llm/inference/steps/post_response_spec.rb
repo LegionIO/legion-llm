@@ -55,20 +55,17 @@ RSpec.describe Legion::LLM::Inference::Steps::PostResponse do
   end
 
   describe '#step_post_response' do
-    it 'calls AuditPublisher.publish' do
-      step = klass.new(request)
-      expect(Legion::LLM::Inference::AuditPublisher).to receive(:publish)
-        .with(hash_including(request: request))
-      step.step_post_response
-    end
+    %i[published disabled dropped].each do |status|
+      it "records the actual #{status} publication outcome without failing the request" do
+        step = klass.new(request)
+        allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return(event: nil, status: status)
 
-    it 'records timeline event' do
-      step = klass.new(request)
-      allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish)
-      step.step_post_response
+        step.step_post_response
 
-      keys = step.timeline.events.map { |e| e[:key] }
-      expect(keys).to include('audit:publish')
+        publication = step.timeline.events.find { |event| event[:key] == 'audit:publish' }
+        expect(publication[:data]).to eq(status: status)
+        expect(step.warnings).to be_empty
+      end
     end
 
     it 'does not raise when AuditPublisher raises' do
@@ -79,8 +76,6 @@ RSpec.describe Legion::LLM::Inference::Steps::PostResponse do
     end
 
     context 'when Legion::Gaia::AuditObserver is defined' do
-      let(:fake_observer) { instance_double('FakeObserver') }
-
       before do
         stub_const('Legion::Gaia::AuditObserver', Class.new do
           def self.instance
@@ -91,22 +86,29 @@ RSpec.describe Legion::LLM::Inference::Steps::PostResponse do
         end)
       end
 
-      it 'calls AuditObserver.instance.process_event with the audit event' do
-        audit_event = { caller: { requested_by: { identity: 'user:matt' } }, routing: { provider: :anthropic, model: 'claude-sonnet-4-6' },
-timestamp: Time.now }
-        allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return(audit_event)
-        observer = Legion::Gaia::AuditObserver.instance
-        expect(observer).to receive(:process_event).with(audit_event)
-        step = klass.new(request)
-        step.step_post_response
+      %i[disabled dropped].each do |status|
+        it "observes the built event locally even when transport is #{status}" do
+          audit_event = { caller: { requested_by: { identity: 'user:matt' } }, response_content: 'answer' }
+          allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return(event: audit_event, status: status)
+          observer = Legion::Gaia::AuditObserver.instance
+          expect(observer).to receive(:process_event).with(audit_event)
+          step = klass.new(request)
+
+          step.step_post_response
+
+          expect(step.timeline.events.last[:data]).to eq(status: status)
+          expect(step.warnings).to be_empty
+        end
       end
     end
 
     context 'when Legion::Gaia::AuditObserver is not defined' do
       it 'skips AuditObserver gracefully' do
-        allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return({ timestamp: Time.now })
+        allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return(event: { timestamp: Time.now }, status: :published)
         step = klass.new(request)
-        expect { step.step_post_response }.not_to raise_error
+        step.step_post_response
+        expect(step.warnings).to be_empty
+        expect(step.timeline.events.last[:data]).to eq(status: :published)
       end
     end
   end
