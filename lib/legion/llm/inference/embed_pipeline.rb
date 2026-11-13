@@ -59,14 +59,16 @@ module Legion
           return unless result.is_a?(Hash) && !result[:error]
 
           tokens = result[:tokens].to_i
+          # Tokens measure request workload, including cache hits; cost records
+          # actual spend so ledger can calculate the framework's avoided cost.
           event = {
             provider:      result[:provider],
             model_id:      result[:model],
             request_type:  'embedding',
             tier:          (result[:tier] || 'direct').to_s,
-            input_tokens:  cache_hit ? 0 : tokens,
+            input_tokens:  tokens,
             output_tokens: 0,
-            total_tokens:  cache_hit ? 0 : tokens,
+            total_tokens:  tokens,
             event_type:    'llm_embedding',
             status:        'success',
             cache_hit:     cache_hit,
