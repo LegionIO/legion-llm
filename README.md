@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.16.17-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.18-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -427,11 +427,25 @@ result = Legion::LLM.chat(
 
 ```ruby
 embedding = Legion::LLM.embed("some text to embed")
-embedding.vectors  # -> Array of floats
+embedding[:vector]  # -> Array of numbers
+embedding[:embedding_provenance][:space_id]  # -> Stable identity for comparison
 
 # Specific model
 embedding = Legion::LLM.embed("text", model: "text-embedding-3-small")
 ```
+
+Fresh, batch, and cached Ruby results include `embedding_provenance` with the
+routed provider/model, selected instance, authoritative model revision when
+available, actual dimensions, document/query prefix pair, normalization, task,
+and `space_id`. Document and query tasks share a space when their prefix policy
+matches. Instances share a space only when they publish matching revision
+evidence; unknown revisions remain isolated by instance. Persist this provenance
+with vectors and compare only compatible spaces.
+
+The embedding path validates every vector and chunk before returning a result.
+Malformed output is retried through the existing Router policy rather than
+silently dropping chunks. Legacy cache entries without provenance and entries
+with incompatible provenance or invalid vectors are regenerated.
 
 Embedding metering counts served request workload on both cache misses and cache
 hits. A cache hit preserves the cached input-token count in `input_tokens` and

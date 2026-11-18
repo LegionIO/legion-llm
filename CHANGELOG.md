@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.16.18] - 2026-11-18
+
+### Fixed
+- Preserve routed embedding provenance on fresh, batch, and cached results: provider/model, selected instance, authoritative revision when available, actual dimensions, document/query prefix pair, normalization, task, and stable space ID. Share a space across instances only with matching revision evidence; isolate unknown revisions by instance ([#199](https://github.com/LegionIO/legion-llm/pull/199), incorporated into #200).
+- Validate complete embedding attempts before returning or caching vectors. Reject missing, nested, nonnumeric, nonfinite, zero, and inconsistent-dimension vectors through the existing routing retry policy; never discard malformed chunks or label vectors with dimensions they do not have. Consume both canonical embedding artifacts and the defined `LexLLMAdapter` result shape.
+- Regenerate legacy or incompatible cache entries instead of assigning them new provenance. Compatible hits preserve cached token accounting and identify the currently selected instance; changing either task prefix invalidates the shared embedding space.
+
 ## [0.16.17] - 2026-11-18
 
 ### Fixed
