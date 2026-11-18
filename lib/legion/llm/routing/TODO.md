@@ -1,8 +1,8 @@
 # Routing ownership and execution
 
 The governing contract is the repository's `RULES.md` (N×N architecture law).
-This replaces the historical migration instructions, including the conflicting
-“No RequestRequirements record” decision and Router-side requirement derivation.
+Requirements behavior is included into the per-request Router; callers construct
+the Router directly and read request facts through its public accessors.
 
 ## Ownership
 
@@ -11,8 +11,8 @@ This replaces the historical migration instructions, including the conflicting
 | Client dialect normalization | `api/client_translators/` |
 | Typed execution messages and media source enums | Shared `lex-llm` Canonical constructors |
 | Trusted header constraints and settings generation | Request ingress |
-| Required capabilities, modality, context/input/output bounds, explicit pins and body-model disposition | `Routing::Requirements.build` |
-| Immutable request facts | Shared `Legion::Extensions::Llm::Routing::RequestRequirements` |
+| Required capabilities, modality, context/input/output bounds, explicit pins and body-model disposition | `Routing::Requirements`, included into Router |
+| Request-fact validation and immutable values | Shared `Legion::Extensions::Llm::Routing::RequestRequirements`, projected once into Router instance fields |
 | Published identities, executable evidence, availability and stored weights | Shared Inventory publication/reconciliation |
 | Candidate eligibility | `Routing::Filter`, orchestrated by Router |
 | Ranking | `Routing::Rank`, using published weights |
@@ -23,9 +23,10 @@ This replaces the historical migration instructions, including the conflicting
 ## Request lifecycle
 
 1. Translate client wire into Canonical, then construct the inference request.
-2. Build requirements once from that request, its operation and raw body-model
-   metadata. Use the ingress settings generation for request policy.
-3. Construct one `Router.new(requirements:)` for the logical request.
+2. Construct one `Router.new(request:, operation:, body_model:, **)` for the logical
+   request. The included Requirements module initializes its request facts once.
+3. Validate and freeze those facts through the shared contract, retaining the
+   resulting values on the Router. Use the ingress settings generation for request policy.
 4. Each lane decision reads one current immutable Inventory snapshot and returns
    one authoritative Selection or typed Rejection.
 5. Dispatch preserves that Selection. Fleet projection signs its exact binding;

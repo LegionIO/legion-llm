@@ -8,10 +8,10 @@
 # reproduced into the routing/ mixins (Legion::LLM::Routing::*) and this class,
 # then removed.
 #
-# One Router owns attempt state for one immutable RequestRequirements value.
-# Requirements are constructed before routing; this class never derives request
-# semantics. Each decision reads one live immutable Inventory snapshot and
-# returns one authoritative Selection or typed Rejection.
+# One Router owns immutable request facts and attempt state for one request.
+# The Requirements mixin initializes those facts once during construction.
+# Each decision reads one live immutable Inventory snapshot and returns one
+# authoritative Selection or typed Rejection.
 # ============================================================================
 
 require 'legion/logging/helper'
@@ -41,16 +41,15 @@ module Legion
       include Routing::Rank
       include Routing::Fleet
       include Routing::Outcome
+      include Legion::LLM::Routing::Requirements
 
       # Tiers gated by enterprise privacy mode.
       TIER_EXTERNAL = %i[cloud frontier].freeze
 
-      attr_reader :requirements, :affinity_strength_bps, :last_rejection
+      attr_reader :affinity_strength_bps, :last_rejection
 
-      def initialize(requirements:, **)
-        raise ArgumentError, 'router requires Routing::RequestRequirements' unless requirements.is_a?(Legion::Extensions::Llm::Routing::RequestRequirements)
-
-        @requirements = requirements
+      def initialize(request:, operation:, body_model:, **)
+        requirements_initialize(request: request, operation: operation, body_model: body_model)
 
         # Attempt state (absorbed from inference/routing_session.rb — D9).
         @exclusions       = []
@@ -116,7 +115,7 @@ module Legion
 
       # Targets remaining before the attempt budget is spent.
       def attempts_remaining(**)
-        [@requirements.maximum_attempts - @attempts_used, 0].max
+        [@maximum_attempts - @attempts_used, 0].max
       end
 
       # True when value is a typed Routing::Rejection (never a Selection).
@@ -139,7 +138,7 @@ module Legion
       # inventory.
       def next_attempt(**)
         snapshot = current_inventory
-        return attempts_exhausted(snapshot) if @attempts_used >= @requirements.maximum_attempts
+        return attempts_exhausted(snapshot) if @attempts_used >= @maximum_attempts
 
         selection = selection_for(snapshot)
         return selection if rejection?(selection)
@@ -218,7 +217,7 @@ module Legion
       def attempts_exhausted(snapshot, **)
         Legion::Extensions::Llm::Routing::Rejection.new(
           kind: :attempts_exhausted,
-          reason: "maximum attempts (#{@requirements.maximum_attempts}) reached",
+          reason: "maximum attempts (#{@maximum_attempts}) reached",
           inventory_generation: snapshot.generation, candidate_counts: {}, http_status: 503
         )
       end
@@ -245,12 +244,12 @@ module Legion
       # falls back — explicit pins stay hard, and their miss stands as a real
       # no-lane rejection.
       def selection_for(snapshot, **)
-        model_pin      = @requirements.model_pin
+        model_pin      = @model_pin
         evaluation_set = evaluate_snapshot(snapshot: snapshot, model_pin: model_pin)
         ranked         = rank_ready(evaluation_set)
 
         if ranked.nil? && hint_model_pin_active?
-          log.info("[llm][router] action=model_hint_miss model=#{@requirements.model_pin} falling_back=weighted_selection")
+          log.info("[llm][router] action=model_hint_miss model=#{@model_pin} falling_back=weighted_selection")
           model_pin      = nil
           evaluation_set = evaluate_snapshot(snapshot: snapshot, model_pin: model_pin)
           ranked         = rank_ready(evaluation_set)
@@ -266,8 +265,8 @@ module Legion
       # pin supersedes the hint and never qualifies — explicit pins stay hard and
       # their miss is a caller error, not a fallback.
       def hint_model_pin_active?(**)
-        @requirements.body_model_hint_decision.disposition == :honored &&
-          @requirements.body_model_hint_decision.model_constraint == @requirements.model_pin
+        @body_model_hint_decision.disposition == :honored &&
+          @body_model_hint_decision.model_constraint == @model_pin
       end
 
       # Rank the ready lanes of an evaluation set. The class does the filtering;
@@ -275,10 +274,10 @@ module Legion
       def rank_ready(evaluation_set, **)
         rank(
           lanes:                       evaluation_set.ready_candidates.map(&:lane),
-          routing_seed:                @requirements.routing_seed,
+          routing_seed:                @routing_seed,
           routing_affinities:          [],
           affinity_strength_bps:       @affinity_strength_bps,
-          context_budget:              @requirements.context_budget,
+          context_budget:              @context_budget,
           preferred_context_range_for: ->(lane) { preferred_context_range_for(lane: lane) }
         )
       end
@@ -314,13 +313,13 @@ module Legion
           lane:                 lane,
           instance:             instance,
           publication_status:   pub_status,
-          operation_state:      filter_operation(lane: lane, operation: @requirements.operation),
-          pin_state:            filter_pins(lane: lane, provider_pin: @requirements.provider_pin, instance_pin: @requirements.instance_pin,
-                                            model_pin: model_pin, tier_constraint: @requirements.tier_pin),
+          operation_state:      filter_operation(lane: lane, operation: @operation),
+          pin_state:            filter_pins(lane: lane, provider_pin: @provider_pin, instance_pin: @instance_pin,
+                                            model_pin: model_pin, tier_constraint: @tier_pin),
           policy_state:         filter_policy(lane: lane, whitelist: policy[:whitelist], blacklist: policy[:blacklist]),
-          capability_state:     evaluate_capabilities(lane: lane, required_capabilities: @requirements.required_capabilities),
-          context_state:        evaluate_context(lane: lane, budget: @requirements.context_budget),
-          dimension_state:      evaluate_dimensions(lane: lane, requested_dimensions: @requirements.requested_embedding_dimensions),
+          capability_state:     evaluate_capabilities(lane: lane, required_capabilities: @required_capabilities),
+          context_state:        evaluate_context(lane: lane, budget: @context_budget),
+          dimension_state:      evaluate_dimensions(lane: lane, requested_dimensions: @requested_embedding_dimensions),
           availability_state:   filter_availability(instance: instance),
           exclusion_state:      filter_exclusions(lane: lane, exclusions: exclusions),
           fleet_contract_state: filter_fleet(lane: lane),
@@ -343,7 +342,7 @@ module Legion
           provider_family:      lane.provider_family,
           instance_id:          lane.instance_id,
           model:                lane.model,
-          operation:            @requirements.operation,
+          operation:            @operation,
           callable_handle:      lane.callable_handle,
           publisher_token_id:   instance.publisher_token_id,
           capability_evidence:  lane.capability_evidence,
@@ -547,10 +546,10 @@ module Legion
       # hint-miss fallback, so a genuine no-lane is not reported as a pin miss).
       def rejection_pins(model_pin, **)
         {
-          provider: @requirements.provider_pin,
-          instance: @requirements.instance_pin,
+          provider: @provider_pin,
+          instance: @instance_pin,
           model:    model_pin,
-          tier:     @requirements.tier_pin
+          tier:     @tier_pin
         }.compact.freeze
       end
     end

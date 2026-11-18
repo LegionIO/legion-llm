@@ -27,7 +27,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
   # Build a Router instance with sensible defaults. Callers override individual kwargs.
   def build_router(request: nil, operation: :chat, body_model: nil, **request_kwargs)
     req = request || build_request(**request_kwargs)
-    Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: req, operation: operation, body_model: body_model))
+    Legion::LLM::Router.new(request: req, operation: operation, body_model: body_model)
   end
 
   # Activate a lane in the Registry via the snapshot factory.
@@ -118,59 +118,59 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
     context 'model_pin resolution' do
       it 'uses trusted model when present' do
         router = build_router(routing: { model: 'explicit-model' })
-        expect(router.requirements.model_pin).to eq('explicit-model')
+        expect(router.model_pin).to eq('explicit-model')
       end
 
       it 'uses honored body-model hint when no trusted model' do
         Legion::Settings[:llm][:router][:allow_body_routing_hints] = true
         router = build_router(client_model: 'hint-model', body_model: 'hint-model')
-        expect(router.requirements.model_pin).to eq('hint-model')
+        expect(router.model_pin).to eq('hint-model')
       ensure
         Legion::Settings[:llm][:router][:allow_body_routing_hints] = false
       end
 
       it 'is nil when unconstrained' do
         router = build_router
-        expect(router.requirements.model_pin).to be_nil
+        expect(router.model_pin).to be_nil
       end
     end
 
     context 'required_capabilities derivation' do
       it 'includes :streaming for :stream_chat' do
         router = build_router(operation: :stream_chat)
-        expect(router.requirements.required_capabilities).to include(:streaming)
+        expect(router.required_capabilities).to include(:streaming)
       end
 
       it 'includes :embedding for :embed' do
         router = build_router(operation: :embed)
-        expect(router.requirements.required_capabilities).to include(:embedding)
+        expect(router.required_capabilities).to include(:embedding)
       end
 
       it 'includes :tools when request has tools' do
         router = build_router(tools: [{ name: 'search', description: 'Search' }])
-        expect(router.requirements.required_capabilities).to include(:tools)
+        expect(router.required_capabilities).to include(:tools)
       end
 
       it 'includes :thinking when thinking is enabled' do
         router = build_router(thinking: { enabled: true, budget_tokens: 1024 })
-        expect(router.requirements.required_capabilities).to include(:thinking)
+        expect(router.required_capabilities).to include(:thinking)
       end
 
       it 'includes :vision when messages contain image blocks' do
         messages = [{ role: :user, content: [{ type: :image, source_type: :url, data: 'https://example.com/img.png', media_type: 'image/png' }] }]
         router = build_router(messages: messages)
-        expect(router.requirements.required_capabilities).to include(:vision)
+        expect(router.required_capabilities).to include(:vision)
       end
 
       it 'includes :structured_output when response_format is json_object' do
         router = build_router(response_format: { type: :json_object })
-        expect(router.requirements.required_capabilities).to include(:structured_output)
+        expect(router.required_capabilities).to include(:structured_output)
       end
 
       it 'returns an empty frozen array for a plain chat' do
         router = build_router
-        expect(router.requirements.required_capabilities).to eq([])
-        expect(router.requirements.required_capabilities).to be_frozen
+        expect(router.required_capabilities).to eq([])
+        expect(router.required_capabilities).to be_frozen
       end
 
       # ---------------------------------------------------------------
@@ -179,32 +179,32 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
       it 'includes :image for :image operation' do
         router = build_router(operation: :image)
-        expect(router.requirements.required_capabilities).to include(:image)
+        expect(router.required_capabilities).to include(:image)
       end
 
       it 'includes :audio_transcription for :transcribe operation' do
         router = build_router(operation: :transcribe)
-        expect(router.requirements.required_capabilities).to include(:audio_transcription)
+        expect(router.required_capabilities).to include(:audio_transcription)
       end
 
       it 'returns [] for :translate operation (no base capabilities)' do
         router = build_router(operation: :translate)
-        expect(router.requirements.required_capabilities).to eq([])
+        expect(router.required_capabilities).to eq([])
       end
 
       it 'includes :audio_speech for :speak operation' do
         router = build_router(operation: :speak)
-        expect(router.requirements.required_capabilities).to include(:audio_speech)
+        expect(router.required_capabilities).to include(:audio_speech)
       end
 
       it 'includes :moderation for :moderate operation' do
         router = build_router(operation: :moderate)
-        expect(router.requirements.required_capabilities).to include(:moderation)
+        expect(router.required_capabilities).to include(:moderation)
       end
 
       it 'returns [] for :count_tokens operation (no base capabilities)' do
         router = build_router(operation: :count_tokens)
-        expect(router.requirements.required_capabilities).to eq([])
+        expect(router.required_capabilities).to eq([])
       end
 
       # ---------------------------------------------------------------
@@ -213,22 +213,22 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
       it 'includes :tools when tool_choice mode is :tool with a name' do
         router = build_router(tool_choice: { mode: :tool, name: 'web_search' })
-        expect(router.requirements.required_capabilities).to include(:tools)
+        expect(router.required_capabilities).to include(:tools)
       end
 
       it 'includes :tools when tool_choice mode is :any' do
         router = build_router(tool_choice: { mode: :any })
-        expect(router.requirements.required_capabilities).to include(:tools)
+        expect(router.required_capabilities).to include(:tools)
       end
 
       it 'does not include :tools when tool_choice mode is :auto (without tools array)' do
         router = build_router(tools: nil, tool_choice: { mode: :auto })
-        expect(router.requirements.required_capabilities).not_to include(:tools)
+        expect(router.required_capabilities).not_to include(:tools)
       end
 
       it 'does not include :tools when tool_choice mode is :none (without tools array)' do
         router = build_router(tools: nil, tool_choice: { mode: :none })
-        expect(router.requirements.required_capabilities).not_to include(:tools)
+        expect(router.required_capabilities).not_to include(:tools)
       end
 
       # ---------------------------------------------------------------
@@ -242,7 +242,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
           ] }
         ]
         router = build_router(messages: messages)
-        expect(router.requirements.required_capabilities).to include(:tools)
+        expect(router.required_capabilities).to include(:tools)
       end
 
       it 'includes :tools when messages contain a :tool_result content block' do
@@ -252,13 +252,13 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
           ] }
         ]
         router = build_router(messages: messages)
-        expect(router.requirements.required_capabilities).to include(:tools)
+        expect(router.required_capabilities).to include(:tools)
       end
 
       it 'does not include :tools when messages have only :text content blocks' do
         messages = [{ role: :user, content: [{ type: :text, text: 'Hello world' }] }]
         router = build_router(messages: messages)
-        expect(router.requirements.required_capabilities).not_to include(:tools)
+        expect(router.required_capabilities).not_to include(:tools)
       end
 
       # ---------------------------------------------------------------
@@ -267,12 +267,12 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
       it 'includes :thinking when thinking has budget_tokens but no :enabled key' do
         router = build_router(thinking: { budget_tokens: 2048 })
-        expect(router.requirements.required_capabilities).to include(:thinking)
+        expect(router.required_capabilities).to include(:thinking)
       end
 
       it 'does not include :thinking when thinking is explicitly disabled' do
         router = build_router(thinking: { enabled: false })
-        expect(router.requirements.required_capabilities).not_to include(:thinking)
+        expect(router.required_capabilities).not_to include(:thinking)
       end
 
       it 'includes :thinking when messages contain a :thinking content block' do
@@ -282,7 +282,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
           ] }
         ]
         router = build_router(messages: messages)
-        expect(router.requirements.required_capabilities).to include(:thinking)
+        expect(router.required_capabilities).to include(:thinking)
       end
 
       # ---------------------------------------------------------------
@@ -292,13 +292,13 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
       it 'does not include :vision when messages have only :text content blocks' do
         messages = [{ role: :user, content: [{ type: :text, text: 'describe this image' }] }]
         router = build_router(messages: messages)
-        expect(router.requirements.required_capabilities).not_to include(:vision)
+        expect(router.required_capabilities).not_to include(:vision)
       end
 
       it 'does not include :vision when message content is a plain String' do
         messages = [{ role: :user, content: 'just a plain string' }]
         router = build_router(messages: messages)
-        expect(router.requirements.required_capabilities).not_to include(:vision)
+        expect(router.required_capabilities).not_to include(:vision)
       end
 
       # ---------------------------------------------------------------
@@ -307,22 +307,22 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
       it 'includes :structured_output when response_format type is :json_schema' do
         router = build_router(response_format: { type: :json_schema, schema: { type: 'object' } })
-        expect(router.requirements.required_capabilities).to include(:structured_output)
+        expect(router.required_capabilities).to include(:structured_output)
       end
 
       it 'includes :structured_output when response_format has nonempty schema without type field' do
         router = build_router(response_format: { schema: { properties: { name: { type: 'string' } } } })
-        expect(router.requirements.required_capabilities).to include(:structured_output)
+        expect(router.required_capabilities).to include(:structured_output)
       end
 
       it 'does not include :structured_output when response_format type is :text' do
         router = build_router(response_format: { type: :text })
-        expect(router.requirements.required_capabilities).not_to include(:structured_output)
+        expect(router.required_capabilities).not_to include(:structured_output)
       end
 
       it 'does not include :structured_output when response_format schema is empty' do
         router = build_router(response_format: { type: :text, schema: {} })
-        expect(router.requirements.required_capabilities).not_to include(:structured_output)
+        expect(router.required_capabilities).not_to include(:structured_output)
       end
 
       # ---------------------------------------------------------------
@@ -334,12 +334,12 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
           { role: :assistant, content: [{ type: :tool_use, id: 'tu_1', name: 'search', input: {} }] }
         ]
         router = build_router(tools: [{ name: 'search', description: 'Search' }], messages: messages)
-        expect(router.requirements.required_capabilities.count(:tools)).to eq(1)
+        expect(router.required_capabilities.count(:tools)).to eq(1)
       end
 
       it 'deduplicates :streaming (appears once even for stream_chat)' do
         router = build_router(operation: :stream_chat)
-        expect(router.requirements.required_capabilities.count(:streaming)).to eq(1)
+        expect(router.required_capabilities.count(:streaming)).to eq(1)
       end
 
       # ---------------------------------------------------------------
@@ -348,17 +348,17 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
       it 'never includes :responses for a chat request' do
         router = build_router(messages: [{ role: :user, content: 'hello' }])
-        expect(router.requirements.required_capabilities).not_to include(:responses)
+        expect(router.required_capabilities).not_to include(:responses)
       end
 
       it 'never includes :responses for a stream_chat request' do
         router = build_router(operation: :stream_chat, messages: [{ role: :user, content: 'hello' }], stream: true)
-        expect(router.requirements.required_capabilities).not_to include(:responses)
+        expect(router.required_capabilities).not_to include(:responses)
       end
 
       it 'never includes :responses even with tools present' do
         router = build_router(tools: [{ name: 'code_interpreter', description: 'Runs code' }])
-        expect(router.requirements.required_capabilities).not_to include(:responses)
+        expect(router.required_capabilities).not_to include(:responses)
       end
 
       # ---------------------------------------------------------------
@@ -379,7 +379,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
           response_format: { type: :json_schema, schema: { type: 'object' } },
           messages:        messages
         )
-        router.requirements.required_capabilities.each do |cap|
+        router.required_capabilities.each do |cap|
           expect(canonical).to include(cap), "#{cap.inspect} is not a canonical capability"
         end
       end
@@ -389,13 +389,13 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
       it 'includes framing overhead' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 512
         router = build_router(messages: [], system: nil)
-        expect(router.requirements.input_bound).to be >= 512
+        expect(router.input_bound).to be >= 512
       end
 
       it 'sums system + messages byte lengths + overhead' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         router = build_router(system: 'hello', messages: [{ role: :user, content: 'world' }])
-        expect(router.requirements.input_bound).to eq('hello'.bytesize + 'world'.bytesize)
+        expect(router.input_bound).to eq('hello'.bytesize + 'world'.bytesize)
       end
 
       # ---------------------------------------------------------------
@@ -405,19 +405,19 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
       it 'returns 0 when all content is nil/empty and overhead is 0' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         router = build_router(system: nil, messages: [])
-        expect(router.requirements.input_bound).to eq(0)
+        expect(router.input_bound).to eq(0)
       end
 
       it 'always returns an Integer' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         router = build_router(system: 'test', messages: [{ role: :user, content: 'hi' }])
-        expect(router.requirements.input_bound).to be_a(Integer)
+        expect(router.input_bound).to be_a(Integer)
       end
 
       it 'always returns a non-negative Integer' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         router = build_router(system: nil, messages: [])
-        expect(router.requirements.input_bound).to be >= 0
+        expect(router.input_bound).to be >= 0
       end
 
       # ---------------------------------------------------------------
@@ -427,23 +427,23 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
       it 'counts euro sign (U+20AC) as 3 bytes, not 1 char' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         router = build_router(system: '€', messages: [])
-        expect(router.requirements.input_bound).to eq(3)
-        expect(router.requirements.input_bound).not_to eq(1)
+        expect(router.input_bound).to eq(3)
+        expect(router.input_bound).not_to eq(1)
       end
 
       it 'counts emoji (U+1F600) as 4 bytes, not 1 char' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         router = build_router(system: "\u{1F600}", messages: [])
-        expect(router.requirements.input_bound).to eq(4)
-        expect(router.requirements.input_bound).not_to eq(1)
+        expect(router.input_bound).to eq(4)
+        expect(router.input_bound).not_to eq(1)
       end
 
       it 'counts Japanese text by bytes: 日本語 = 9 bytes, not 3 chars' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         japanese = '日本語'
         router = build_router(messages: [{ role: :user, content: japanese }])
-        expect(router.requirements.input_bound).to eq(9)
-        expect(router.requirements.input_bound).not_to eq(3)
+        expect(router.input_bound).to eq(9)
+        expect(router.input_bound).not_to eq(3)
       end
 
       # ---------------------------------------------------------------
@@ -454,7 +454,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         messages = [{ role: :user, content: [{ type: :text, text: 'hi there' }] }]
         router = build_router(messages: messages)
-        expect(router.requirements.input_bound).to eq('hi there'.bytesize)
+        expect(router.input_bound).to eq('hi there'.bytesize)
       end
 
       it 'counts tool_use blocks as name.bytesize + JSON.dump(input).bytesize' do
@@ -466,7 +466,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
         ]
         router = build_router(messages: messages)
         expected = 'my_tool'.bytesize + Legion::JSON.dump({ x: 1 }).bytesize
-        expect(router.requirements.input_bound).to eq(expected)
+        expect(router.input_bound).to eq(expected)
       end
 
       it 'counts tool_result blocks by content byte length' do
@@ -477,7 +477,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
           ] }
         ]
         router = build_router(messages: messages)
-        expect(router.requirements.input_bound).to eq('the result string'.bytesize)
+        expect(router.input_bound).to eq('the result string'.bytesize)
       end
 
       it 'counts image blocks as 0 bytes' do
@@ -490,7 +490,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
         ]
         router = build_router(messages: messages)
         # Only text block contributes; image block is 0
-        expect(router.requirements.input_bound).to eq('hello'.bytesize)
+        expect(router.input_bound).to eq('hello'.bytesize)
       end
 
       # ---------------------------------------------------------------
@@ -504,7 +504,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
         router_with    = build_router(tools: tools, messages: [])
         router_without = build_router(tools: nil, messages: [])
-        expect(router_with.requirements.input_bound - router_without.requirements.input_bound).to eq(serialized)
+        expect(router_with.input_bound - router_without.input_bound).to eq(serialized)
       end
 
       it 'adds tool_choice serialized bytes when provided' do
@@ -514,7 +514,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
         router_with    = build_router(tool_choice: tc, messages: [])
         router_without = build_router(tool_choice: nil, messages: [])
-        expect(router_with.requirements.input_bound - router_without.requirements.input_bound).to eq(serialized)
+        expect(router_with.input_bound - router_without.input_bound).to eq(serialized)
       end
 
       it 'adds thinking config serialized bytes when provided' do
@@ -524,7 +524,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
         router_with    = build_router(thinking: thinking, messages: [])
         router_without = build_router(thinking: nil, messages: [])
-        expect(router_with.requirements.input_bound - router_without.requirements.input_bound).to eq(serialized)
+        expect(router_with.input_bound - router_without.input_bound).to eq(serialized)
       end
 
       it 'adds response_format serialized bytes when provided' do
@@ -534,7 +534,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
         router_with    = build_router(response_format: rf, messages: [])
         router_without = build_router(response_format: nil, messages: [])
-        expect(router_with.requirements.input_bound - router_without.requirements.input_bound).to eq(serialized)
+        expect(router_with.input_bound - router_without.input_bound).to eq(serialized)
       end
 
       it 'adds request.extra serialized bytes when extra is nonempty' do
@@ -544,7 +544,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
         router_with    = build_router(extra: extra_payload, messages: [])
         router_without = build_router(extra: {}, messages: [])
-        expect(router_with.requirements.input_bound - router_without.requirements.input_bound).to eq(serialized)
+        expect(router_with.input_bound - router_without.input_bound).to eq(serialized)
       end
 
       # ---------------------------------------------------------------
@@ -555,8 +555,8 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         long_ascii = 'a' * 1000
         router = build_router(system: long_ascii, messages: [])
-        expect(router.requirements.input_bound).to eq(1000)
-        expect(router.requirements.input_bound).not_to eq(250)
+        expect(router.input_bound).to eq(1000)
+        expect(router.input_bound).not_to eq(250)
       end
 
       # ---------------------------------------------------------------
@@ -572,7 +572,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = overhead
         router = build_router(system: system_text, messages: [{ role: :user, content: msg_text }], tools: tools)
         expected = system_text.bytesize + msg_text.bytesize + Legion::JSON.dump(tools).bytesize + overhead
-        expect(router.requirements.input_bound).to eq(expected)
+        expect(router.input_bound).to eq(expected)
       end
 
       # ---------------------------------------------------------------
@@ -582,13 +582,13 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
       it 'adds exact framing overhead from settings to the byte total' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 1024
         router = build_router(system: nil, messages: [])
-        expect(router.requirements.input_bound).to eq(1024)
+        expect(router.input_bound).to eq(1024)
       end
 
       it 'accounts for framing overhead on top of content bytes' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 512
         router = build_router(system: 'test', messages: [])
-        expect(router.requirements.input_bound).to eq('test'.bytesize + 512)
+        expect(router.input_bound).to eq('test'.bytesize + 512)
       end
     end
 
@@ -596,8 +596,8 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
       it 'equals input_bound + required_output_tokens' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
         router = build_router(system: 'x', messages: [], tokens: { max: 100 })
-        expect(router.requirements.context_budget).to eq(router.requirements.input_bound + router.requirements.required_output_tokens)
-        expect(router.requirements.required_output_tokens).to eq(100)
+        expect(router.context_budget).to eq(router.input_bound + router.required_output_tokens)
+        expect(router.required_output_tokens).to eq(100)
       end
     end
   end
@@ -1255,9 +1255,9 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
       selection = router.next_lane
       expect(selection).to be_a(Legion::Extensions::Llm::Routing::Selection)
 
-      expect(router.attempts_remaining).to eq(router.requirements.maximum_attempts)
+      expect(router.attempts_remaining).to eq(router.maximum_attempts)
       router.consume!(selection)
-      expect(router.attempts_remaining).to eq(router.requirements.maximum_attempts - 1)
+      expect(router.attempts_remaining).to eq(router.maximum_attempts - 1)
       expect(router.consumed_targets).to include(selection.attempt_target_key)
     end
   end

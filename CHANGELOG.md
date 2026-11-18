@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.16.11] - 2026-11-17
+
+### Fixed
+- **Request-scoped routing requirements.** Include `Routing::Requirements` in Router so each instance initializes its own request facts once and exposes direct readers such as `maximum_attempts`. Preserve shared immutable-value validation, canonical tool replay, capabilities, pins, context budgets and ingress policy generation.
+- **Router constructor kwargs.** Restore trailing `**` so `Router.new(request:, operation:, body_model:)` accepts additional keyword arguments.
+
+### Changed
+- Require `lex-llm >= 0.8.6` for shared request-fact validation; executor, embedding, token-counting and cache consumers construct the per-request Router directly.
+
 ## [0.16.10] - 2026-10-30
 
 ### Fixed

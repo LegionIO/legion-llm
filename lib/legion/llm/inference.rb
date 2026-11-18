@@ -751,14 +751,13 @@ module Legion
         Inference::Request.from_chat_args(**args)
       end
 
-      # Build cache-probe requirements through the same owner as execution.
+      # Build the cache-probe Router through the same owner as execution.
       # Body-model metadata remains untrusted; explicit routing pins are already
       # captured by the request's trusted constraints.
       def ssot_cache_router(request)
-        requirements = Legion::LLM::Routing::Requirements.build(
+        Legion::LLM::Router.new(
           request: request, operation: RESPONSE_CACHE_OPERATION, body_model: request.metadata[:client_model]
         )
-        Legion::LLM::Router.new(requirements: requirements)
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'llm.inference.ssot_cache_router')
         nil

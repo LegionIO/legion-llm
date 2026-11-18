@@ -69,20 +69,20 @@ module Legion
             @timeline.record(
               category: :audit, key: 'routing:requirements',
               direction: :internal,
-              detail: "operation=#{@router.requirements.operation} caps=#{@router.requirements.required_capabilities.inspect}",
+              detail: "operation=#{@router.operation} caps=#{@router.required_capabilities.inspect}",
               from: 'router', to: 'pipeline'
             )
           end
 
-          # Build immutable requirements before the per-request Router. An empty
+          # Build immutable requirements within the per-request Router. An empty
           # Registry is not a construction gate: routing returns a typed rejection
           # from next_lane, never a fabricated lane or a legacy fallback.
           def build_ssot_router
             operation = @request.stream == true ? :stream_chat : :chat
             body_model = @request.metadata[:client_model]
-            @router = Legion::LLM::Router.new(requirements: Legion::LLM::Routing::Requirements.build(request: @request, operation: operation, body_model: body_model))
+            @router = Legion::LLM::Router.new(request: @request, operation: operation, body_model: body_model)
             log.debug "[llm][executor] action=ssot_router_built operation=#{operation} " \
-                      "output_tokens=#{@router.requirements.required_output_tokens}"
+                      "output_tokens=#{@router.required_output_tokens}"
           end
 
           # Requested max output tokens — sourced from the canonical request token

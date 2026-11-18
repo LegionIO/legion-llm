@@ -187,17 +187,21 @@ Equivalent text fragments preserve their exact whitespace across all three clien
 dialects. Plain text converges to one string; annotated text and mixed media retain
 their ordered canonical blocks.
 
-`Routing::Requirements.build(request:, operation:, body_model:)` constructs the
-shared immutable `Legion::Extensions::Llm::Routing::RequestRequirements` before
-selection. It owns required capabilities, input/output bounds, modality, explicit
-pins, the body-model hint decision and the request attempt limit. Canonical tool
-history requires tool capability even when no new tool definitions are supplied.
-Request policy uses the settings generation captured at ingress.
+`Router.new(request:, operation:, body_model:, **)` creates one Router for the
+logical request. Its included `Routing::Requirements` module initializes required
+capabilities, input/output bounds, modality, explicit pins, the body-model hint
+decision and the attempt limit once during construction. The shared
+`Legion::Extensions::Llm::Routing::RequestRequirements` contract validates and
+freezes those values before they become Router instance fields. Callers use direct
+readers such as `router.maximum_attempts` and `router.required_capabilities`; there
+is no standalone requirements builder or nested requirements API.
 
-`Router.new(requirements:)` owns only routing and attempt state. Each decision reads
-one immutable live Inventory snapshot; filters compare request requirements with
-published evidence, ranking consumes stored weights, and dispatch preserves the
-resulting exact Selection. There is no request-derived fallback constructor.
+Canonical tool history requires tool capability even when no new tool definitions
+are supplied. Request policy uses the settings generation captured at ingress.
+Each lane decision reads one immutable live Inventory snapshot; filters compare
+the Router's request facts with published evidence, ranking consumes stored weights,
+and dispatch preserves the resulting exact Selection. Retries retain the same
+Router, immutable facts and request-local attempt state.
 
 Fleet serialization preserves canonical media source enums through the shared
 rehydration boundary. Signed binding/media tampering and Inventory mismatches

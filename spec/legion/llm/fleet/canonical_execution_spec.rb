@@ -81,8 +81,7 @@ RSpec.describe 'Canonical exact execution across clients, providers and fleet', 
   end
 
   def execution_for(request:)
-    requirements = Legion::LLM::Routing::Requirements.build(request: request, operation: :chat, body_model: nil)
-    router = Legion::LLM::Router.new(requirements: requirements)
+    router = Legion::LLM::Router.new(request: request, operation: :chat, body_model: nil)
     attempt = router.next_attempt!
     executor = Legion::LLM::Inference::Executor.new(request)
     executor.send(:populate_ssot_v3_resolved_state, attempt)
