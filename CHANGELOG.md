@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.16.13] - 2026-11-18
+
+### Fixed
+- Preserve canonical thinking-token usage through the shared executor and stream assembler. Responses clients receive provider-reported reasoning counts in both synchronous usage and stream trailers, even when no thinking text is returned, without inventing a reasoning block or double-counting output tokens.
+- Retain canonical usage during post-response extraction and carry its thinking count into metering. Ledger totals count input plus output once; thinking remains an output-token breakdown.
+
 ## [0.16.12] - 2026-11-17
 
 ### Fixed

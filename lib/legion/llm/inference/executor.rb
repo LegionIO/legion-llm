@@ -931,6 +931,7 @@ module Legion
                                 end,
             input_tokens:       input_tokens,
             output_tokens:      output_tokens,
+            thinking_tokens:    provider_thinking_tokens_for_accounting,
             latency_ms:         latency_ms,
             wall_clock_ms:      wall_clock_ms,
             cost_usd:           cost_usd,
@@ -1285,9 +1286,6 @@ module Legion
           @extracted_tokens ||= extract_tokens
           return @extracted_tokens.thinking_tokens.to_i if @extracted_tokens.respond_to?(:thinking_tokens)
 
-          details = @extracted_tokens.output_tokens_details if @extracted_tokens.respond_to?(:output_tokens_details)
-          return details[:reasoning_tokens].to_i if details.is_a?(Hash) && details[:reasoning_tokens]
-
           0
         end
 
@@ -1415,10 +1413,8 @@ module Legion
             total:              input + output
           }
 
-          # Preserve output token breakdown (e.g. reasoning_tokens from Responses API)
-          if tokens.respond_to?(:output_tokens_details) && tokens.output_tokens_details.is_a?(Hash) && !tokens.output_tokens_details.empty?
-            result[:output_tokens_details] = tokens.output_tokens_details
-          end
+          # Preserve canonical accounting; client translators own wire spellings.
+          result[:thinking_tokens] = tokens.thinking_tokens if tokens.respond_to?(:thinking_tokens) && !tokens.thinking_tokens.nil?
 
           context_window = @resolved_offering_metadata&.dig(:limits, :context_window) ||
                            @resolved_offering_metadata&.dig(:context_window)

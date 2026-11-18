@@ -57,22 +57,18 @@ module Legion
             cache_read  = usage_source.respond_to?(:cache_read_tokens) ? usage_source.cache_read_tokens.to_i : 0
             cache_write = usage_source.respond_to?(:cache_write_tokens) ? usage_source.cache_write_tokens.to_i : 0
 
-            details = if usage_source.respond_to?(:output_tokens_details) && usage_source.output_tokens_details.is_a?(Hash)
-                        usage_source.output_tokens_details
-                      else
-                        {}
-                      end
+            thinking = usage_source.thinking_tokens if usage_source.respond_to?(:thinking_tokens)
 
             log_step_debug(:post_response, :tokens_extracted, input: input, output: output,
                                                               cache_read: cache_read, cache_write: cache_write)
             log_zero_token_usage(input, output)
 
-            Usage.new(
-              input_tokens:          input,
-              output_tokens:         output,
-              cache_read_tokens:     cache_read,
-              cache_write_tokens:    cache_write,
-              output_tokens_details: details
+            Legion::Extensions::Llm::Canonical::Usage.build(
+              input_tokens:       input,
+              output_tokens:      output,
+              cache_read_tokens:  cache_read,
+              cache_write_tokens: cache_write,
+              thinking_tokens:    thinking
             )
           end
 

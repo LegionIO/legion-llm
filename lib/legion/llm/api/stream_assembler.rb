@@ -679,9 +679,10 @@ module Legion
         def final_response_usage(final_response)
           tokens = final_response.respond_to?(:tokens) ? final_response.tokens : nil
           {
-            input_tokens:  token_value(tokens, :input, :input_tokens) || @input_tokens,
-            output_tokens: token_value(tokens, :output, :output_tokens) || 0
-          }
+            input_tokens:    token_value(tokens, :input, :input_tokens) || @input_tokens,
+            output_tokens:   token_value(tokens, :output, :output_tokens) || 0,
+            thinking_tokens: token_value(tokens, :thinking_tokens)
+          }.compact
         end
 
         def token_value(tokens, *keys)

@@ -29,6 +29,27 @@ module Legion
 
           Canonical = Legion::Extensions::Llm::Canonical
 
+          # One usage projection for synchronous responses and stream trailers.
+          module UsageRendering
+            include SharedExtractors
+
+            private
+
+            def format_usage(tokens)
+              i = token_value(tokens, :input_tokens, :input).to_i
+              o = token_value(tokens, :output_tokens, :output).to_i
+              result = { input_tokens: i, output_tokens: o, total_tokens: i + o }
+              details = tokens.is_a?(Hash) ? (tokens[:output_tokens_details] || tokens['output_tokens_details']) : nil
+              details = details.is_a?(Hash) ? details.transform_keys(&:to_sym) : {}
+              thinking = tokens.is_a?(Hash) ? (tokens[:thinking_tokens] || tokens['thinking_tokens']) : nil
+              details[:reasoning_tokens] = thinking.to_i unless thinking.nil?
+              result[:output_tokens_details] = details unless details.empty?
+              result
+            end
+          end
+
+          include UsageRendering
+
           # G24 — declares which execution-proxy contract shape this translator
           # surfaces. Consumed by the lex-llm conformance shared examples.
           def g24_format
@@ -186,7 +207,7 @@ module Legion
               created_at: Time.now.to_i,
               model:      resolved_model,
               output:     output,
-              usage:      build_usage(tokens),
+              usage:      format_usage(tokens),
               status:     format_response_status(pipeline_response)
             }
           end
@@ -276,6 +297,7 @@ module Legion
           # following the OpenAI Responses API spec.
           class Events
             include Legion::Logging::Helper
+            include UsageRendering
 
             def initialize(out:, request_id:, model:, conv_id: nil)
               @out = out
@@ -541,14 +563,6 @@ module Legion
                      output_index: output_index, item: @thinking_state
                    })
               @thinking_state = nil
-            end
-
-            def format_usage(usage)
-              return { input_tokens: 0, output_tokens: 0, total_tokens: 0 } if usage.nil?
-
-              i = usage[:input_tokens].to_i
-              o = usage[:output_tokens].to_i
-              { input_tokens: i, output_tokens: o, total_tokens: i + o }
             end
           end
 
@@ -892,17 +906,6 @@ module Legion
               content: [{ type: 'output_text', text: text }],
               status:  'completed'
             }]
-          end
-
-          def build_usage(tokens)
-            i = token_value(tokens, :input_tokens, :input).to_i
-            o = token_value(tokens, :output_tokens, :output).to_i
-            result = { input_tokens: i, output_tokens: o, total_tokens: i + o }
-            # G3: the envelope's tokens member is a plain Hash (or {}) — one
-            # shape, no dual reader.
-            details = tokens.is_a?(Hash) ? (tokens[:output_tokens_details] || tokens['output_tokens_details']) : nil
-            result[:output_tokens_details] = details if details.is_a?(Hash) && !details.empty?
-            result
           end
         end
       end
