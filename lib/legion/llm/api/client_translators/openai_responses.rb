@@ -377,9 +377,8 @@ module Legion
               @pending_tool_calls[block_index] = {
                 id:            tc_id,
                 name:          tool_call[:name].to_s,
-                arguments_str: '',
-                output_index:  idx,
-                args_emitted:  +''
+                arguments_str: +'',
+                output_index:  idx
               }
               emit('response.output_item.added', {
                      type: 'response.output_item.added', sequence_number: next_seq,
@@ -391,20 +390,12 @@ module Legion
               state = @pending_tool_calls[block_index]
               return if state.nil?
 
-              # If the assembler hands us a cumulative string (buffered close)
-              # only emit the diff vs already emitted.
-              new_part = if partial_arguments_json.start_with?(state[:args_emitted])
-                           partial_arguments_json[state[:args_emitted].length..]
-                         else
-                           partial_arguments_json
-                         end
-              return if new_part.to_s.empty?
+              return if partial_arguments_json.empty?
 
-              state[:args_emitted] << new_part
-              state[:arguments_str] = state[:args_emitted]
+              state[:arguments_str] << partial_arguments_json
               emit('response.function_call_arguments.delta', {
                      type: 'response.function_call_arguments.delta', sequence_number: next_seq,
-                     output_index: state[:output_index], item_id: state[:id], delta: new_part
+                     output_index: state[:output_index], item_id: state[:id], delta: partial_arguments_json
                    })
             end
 

@@ -8,6 +8,11 @@
 - **Tool-result citation preservation.** Retain text-block citations and other metadata before canonical construction instead of dropping annotations and collapsing the result to a string. Normalization does not mutate the client's metadata.
 - **Cached system instructions.** Normalize OpenAI Chat system text to the canonical string contract, preserving exact newlines instead of injecting Ruby hash representations into the prompt.
 - **Cached history safeguards.** Strip leading thinking across adjacent annotated text blocks and enforce one historical tool-result text cap across blocks, retaining surviving annotations, media, tool associations, and current-turn content.
+- **Streaming tool identity.** Preserve Hash and typed Canonical tool-call fragments, correlate parallel argument deltas by provider index, and reset that index mapping between provider rounds without fabricating client-side identities.
+- **Live server-tool delivery.** Publish execution-owned tool calls and results through the shared stream observer before continuation completes, upgrade unresolved source classification, and avoid duplicate call/result events during finalization.
+- **Named tool-choice lifecycle.** Release a named tool choice only after that server-side call completes, allowing continuation without forcing the same tool again while leaving the original request and unrelated choice modes unchanged.
+- **Typed streaming tool snapshots.** Hold replaceable Hash argument snapshots until tool-call completion instead of emitting contradictory append-only JSON. Raw JSON fragments still stream incrementally, and Anthropic Messages, Chat Completions, and Responses all receive valid final arguments and terminal events.
+- **Anthropic streaming tool input.** Start tool blocks with an empty input object; argument snapshots and raw JSON fragments are delivered only through `input_json_delta`, preventing intermediate values or partial JSON strings from leaking through `content_block_start`.
 
 ### Changed
 - Require `lex-llm >= 0.8.6` for shared request-fact validation; executor, embedding, token-counting and cache consumers construct the per-request Router directly.

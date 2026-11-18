@@ -22,6 +22,7 @@ module Legion
         end
 
         def dispatch_provider_request(capability:, operation:, messages:, stream_block: nil)
+          @stream_observer&.provider_round_started if stream_block
           raw_options = native_dispatch_options
           dispatch_messages, dispatch_options = if @current_attempt_context
                                                   project_dispatch_arguments(

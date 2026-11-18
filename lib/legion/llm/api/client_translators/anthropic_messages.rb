@@ -278,7 +278,7 @@ module Legion
                        type:  server_tool ? 'server_tool_use' : 'tool_use',
                        id:    tool_call[:id] || (server_tool ? "srvtoolu_#{SecureRandom.hex(12)}" : "toolu_#{SecureRandom.hex(12)}"),
                        name:  tool_call[:name],
-                       input: tool_call[:arguments] || {}
+                       input: {}
                      }
                    })
             end

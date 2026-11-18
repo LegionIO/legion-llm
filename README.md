@@ -223,6 +223,22 @@ Both formats supported with correct SSE shapes:
 - **Anthropic**: Typed events — `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`
 - **Native**: `/api/llm/inference` streams `text-delta`, optional `thinking-delta` events when `include_thinking: true`, tool lifecycle events, and a final `done` event. Structured provider content blocks are flattened to plain text in both streaming and non-streaming native responses so `content` remains a string for daemon clients.
 
+Server-executed tool calls and results reach the shared stream observer as typed
+Canonical tool calls when execution starts and completes. Responses and Anthropic
+emit their corresponding lifecycle events before any subsequent model round
+finishes; finalization does not replay already delivered events. Client-owned
+calls never receive fabricated server results.
+
+Tool-call fragments retain their authoritative IDs, names and incremental JSON
+arguments. Provider-index correlation resets for each completion. An explicit
+named tool choice remains enforced until the matching server call completes,
+then continuation uses automatic choice without mutating the original request.
+Typed Hash arguments are replaceable snapshots: their final value is emitted at
+tool-call completion. Raw JSON argument fragments continue streaming incrementally;
+an intermediate snapshot cannot prematurely close the client's argument JSON.
+Anthropic tool blocks start with an empty `input` object; their arguments arrive
+through `input_json_delta`, never through a premature opening snapshot.
+
 ### API Authentication
 
 Config-driven via `settings[:llm][:api][:auth]`. Disabled by default for local dev and lite mode.

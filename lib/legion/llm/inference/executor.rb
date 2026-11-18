@@ -681,6 +681,7 @@ module Legion
           Thread.current[:legion_current_tool_name] = tc_name
           Thread.current[:legion_current_tool_started_at] = started_at
 
+          @stream_observer&.server_tool_started(tool_call: typed_call)
           @tool_event_handler&.call(
             type: :tool_call, tool_call_id: tc_id, tool_name: tc_name,
             arguments: tc_args, round: round, started_at: started_at
@@ -701,7 +702,7 @@ module Legion
           result_str = result_str.delete("\x00")
           is_error = status.to_s == 'error' || (raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false)
 
-          @pending_tool_history_mutex.synchronize do
+          completed_call = @pending_tool_history_mutex.synchronize do
             entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id && e[:result].nil? }
             entry ||= @pending_tool_history[Thread.current[:legion_current_tool_history_index]]
             if entry
@@ -728,6 +729,7 @@ module Legion
           )
 
           publish_tool_audit(tc_id, tc_name, result_str, is_error, duration_ms, started_at, finished_at)
+          @stream_observer&.server_tool_completed(tool_call: completed_call)
         end
 
         def publish_tool_audit(tc_id, tc_name, result_str, is_error, duration_ms, started_at, finished_at)

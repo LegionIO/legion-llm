@@ -2,6 +2,7 @@
 
 require 'legion/logging/helper'
 require 'legion/extensions/llm/taxonomies'
+require 'legion/extensions/llm/responses/tool_arguments'
 require 'legion/llm/api/client_translators/shared_extractors'
 
 module Legion
@@ -107,6 +108,8 @@ module Legion
           @full_thinking = +''
           @full_thinking_signature = nil
           @open_tool_calls = {} # tool_call_id => { block_index:, name:, server_tool:, last_args_str: }
+          @tool_call_ids_by_index = {}
+          @latest_tool_call_id = nil
           @last_keep_alive_at = nil
         end
 
@@ -155,6 +158,38 @@ module Legion
 
           mark_closed!(e)
           raise StreamClosed, e.message
+        end
+
+        # Provider indices restart for each completion, not for the logical request.
+        # Completed calls remain available to deduplicate final response emission.
+        def provider_round_started(**)
+          @tool_call_ids_by_index.clear
+          @latest_tool_call_id = nil
+        end
+
+        def server_tool_started(tool_call:, **)
+          raise ArgumentError, 'server tool events require Canonical::ToolCall' unless tool_call.is_a?(Legion::Extensions::Llm::Canonical::ToolCall)
+          return unless server_tool_source?(tool_call.source)
+          raise StreamClosed if @closed
+
+          start!
+          close_text_block
+          close_thinking_block
+          emit_terminal_tool_call(tool_call.to_h.merge(server_tool: true))
+          raise StreamClosed if @closed
+        end
+
+        def server_tool_completed(tool_call:, **)
+          raise ArgumentError, 'server tool events require Canonical::ToolCall' unless tool_call.is_a?(Legion::Extensions::Llm::Canonical::ToolCall)
+          return unless server_tool_source?(tool_call.source)
+          raise ArgumentError, 'completed server tool event requires a result' if tool_call.result.nil?
+          raise StreamClosed if @closed
+
+          start!
+          close_text_block
+          close_thinking_block
+          emit_terminal_tool_call(tool_call.to_h.merge(server_tool: true))
+          raise StreamClosed if @closed
         end
 
         # Close the SSE stream. No-ops on a closed stream (per R5).
@@ -354,12 +389,13 @@ module Legion
         end
 
         def abort_open_tool_calls(reason:)
-          @open_tool_calls.each_value do |state|
-            next if @tool_call_buffering == :buffered
+          @open_tool_calls.delete_if do |_id, state|
+            next false if state[:call_closed]
 
-            guard { @emitter.on_tool_call_abort(block_index: state[:block_index], reason: reason) } if @emitter.respond_to?(:on_tool_call_abort)
+            guard { @emitter.on_tool_call_abort(block_index: state[:block_index], reason: reason) } if state[:opened]
+            true
           end
-          @open_tool_calls.clear
+          provider_round_started
         end
 
         def guard
@@ -435,54 +471,79 @@ module Legion
         end
 
         def handle_tool_call_delta(tool_call)
-          tc_id = tool_call[:id] || "call_#{tool_call[:name]}_#{@next_block_index}"
+          index = tool_call[:index]
+          tc_id = tool_call[:id]
+          tc_id ||= index.nil? ? @latest_tool_call_id : @tool_call_ids_by_index[index]
+          # An initial fragment without an authoritative id cannot be exposed yet.
+          # The provider accumulator supplies its complete ToolCall at completion.
+          return unless tc_id
+
+          @tool_call_ids_by_index[index] = tc_id unless index.nil?
+          @latest_tool_call_id = tc_id
           state = @open_tool_calls[tc_id]
-
           if state.nil?
-            block_index = @next_block_index
-            @next_block_index += 1
-            server_tool = tool_call[:server_tool] == true
             state = {
-              block_index:   block_index,
-              id:            tc_id,
-              name:          tool_call[:name],
-              server_tool:   server_tool,
-              last_args_str: '',
-              arguments:     tool_call[:arguments] || {},
-              result:        tool_call[:result]
+              block_index: @next_block_index, id: tc_id, name: tool_call[:name],
+              server_tool: false, arguments: +'', last_args_str: '',
+              opened: false, call_closed: false, result_emitted: false, result: nil
             }
+            @next_block_index += 1
             @open_tool_calls[tc_id] = state
-            @phase = :mid_tool_call
+          end
+          state[:name] = tool_call[:name] if tool_call[:name]
+          state[:server_tool] ||= tool_call[:server_tool] == true
+          state[:result] = tool_call[:result] unless tool_call[:result].nil?
+          case tool_call[:arguments]
+          when String
+            state[:arguments] = +'' unless state[:arguments].is_a?(String)
+            state[:arguments] << tool_call[:arguments]
+          when Hash
+            state[:arguments] = tool_call[:arguments]
+          end
+          @phase = :mid_tool_call
 
-            if @tool_call_buffering == :buffered
-              # Buffered: don't open the block until close — keep client alive.
-              keep_alive!
-              return
-            end
+          if @tool_call_buffering == :buffered
+            keep_alive! unless state[:call_closed]
+          elsif !state[:call_closed] && state[:name]
+            open_tool_call(state)
+            # Hash arguments are replaceable snapshots, not append-only JSON
+            # fragments. Publish their final value only at tool-call completion.
+            emit_tool_arguments(state, state[:arguments]) if state[:arguments].is_a?(String)
+          end
+          state
+        end
 
-            guard do
-              @emitter.on_tool_call_open(
-                block_index: block_index,
-                tool_call:   { id: tc_id, name: tool_call[:name], arguments: state[:arguments] },
-                server_tool: server_tool
-              )
-            end
+        def open_tool_call(state)
+          return if state[:opened] || @closed
+
+          guard do
+            @emitter.on_tool_call_open(
+              block_index: state[:block_index],
+              tool_call:   { id: state[:id], name: state[:name], arguments: state[:arguments] },
+              server_tool: state[:server_tool]
+            )
+          end
+          state[:opened] = true
+        end
+
+        def emit_tool_arguments(state, arguments)
+          return if @closed
+
+          emitted = state[:last_args_str]
+          unless arguments.start_with?(emitted)
+            # Final canonical arguments may normalize whitespace in JSON already
+            # sent as fragments. Equal values need no second copy on the wire.
+            parser = Legion::Extensions::Llm::Responses::ToolArguments
+            return if parser.parse!(arguments) == parser.parse!(emitted)
+
+            raise ArgumentError, 'completed tool arguments contradict emitted fragments'
           end
 
-          # Update accumulated arguments (canonical chunks send the cumulative
-          # arguments hash on every delta — see fixture
-          # canonical_streaming_tool_call_chunks.json A7 note).
-          state[:arguments] = tool_call[:arguments] || state[:arguments]
-          state[:result]    = tool_call[:result]    if tool_call.key?(:result)
+          delta = arguments[emitted.length..]
+          return if delta.empty?
 
-          return if @tool_call_buffering == :buffered
-
-          # Unbuffered: emit incremental delta. Compute string diff against
-          # last emitted args so partial JSON doesn't repeat.
-          args_str = serialize_args(state[:arguments])
-          delta = args_str.start_with?(state[:last_args_str]) ? args_str[state[:last_args_str].length..] : args_str
-          state[:last_args_str] = args_str
           guard { @emitter.on_tool_call_delta(block_index: state[:block_index], partial_arguments_json: delta) }
+          state[:last_args_str] = arguments.dup
         end
 
         def close_text_block
@@ -531,69 +592,31 @@ module Legion
           guard { @emitter.on_thinking_delta(block_index: @thinking_block_index, text: text, signature: signature) } unless text.empty?
         end
 
-        # Emits the final tool-use block(s) for tool calls extracted from the
-        # final response. For buffered tool calls this is the only emission;
-        # for unbuffered this finalizes any open ones.
+        # Both live executor events and final response replay use this lifecycle.
+        # An execution-owned server classification supersedes an unknown fragment.
         def emit_terminal_tool_call(tool_call)
-          existing = @open_tool_calls.values.find { |s| s[:id] == tool_call[:id] }
+          state = handle_tool_call_delta(tool_call)
+          return unless state
 
-          if existing && @tool_call_buffering == :buffered
-            guard do
-              @emitter.on_tool_call_open(
-                block_index: existing[:block_index],
-                tool_call:   { id: existing[:id], name: existing[:name], arguments: tool_call[:arguments] || existing[:arguments] },
-                server_tool: existing[:server_tool]
-              )
-            end
-            guard do
-              @emitter.on_tool_call_delta(
-                block_index:            existing[:block_index],
-                partial_arguments_json: serialize_args(tool_call[:arguments] || existing[:arguments])
-              )
-            end
-            guard { @emitter.on_tool_call_close(block_index: existing[:block_index]) }
-            block_index = existing[:block_index]
-            server_tool = existing[:server_tool]
-          elsif existing
-            guard do
-              @emitter.on_tool_call_delta(
-                block_index:            existing[:block_index],
-                partial_arguments_json: serialize_args(tool_call[:arguments] || existing[:arguments])
-              )
-            end
-            guard { @emitter.on_tool_call_close(block_index: existing[:block_index]) }
-            block_index = existing[:block_index]
-            server_tool = existing[:server_tool]
-          else
-            block_index = @next_block_index
-            @next_block_index += 1
-            server_tool = tool_call[:server_tool] == true
-            guard do
-              @emitter.on_tool_call_open(
-                block_index: block_index,
-                tool_call:   tool_call,
-                server_tool: server_tool
-              )
-            end
-            guard { @emitter.on_tool_call_delta(block_index: block_index, partial_arguments_json: serialize_args(tool_call[:arguments] || {})) }
-            guard { @emitter.on_tool_call_close(block_index: block_index) }
+          unless state[:call_closed]
+            open_tool_call(state)
+            emit_tool_arguments(state, serialize_args(state[:arguments]))
+            guard { @emitter.on_tool_call_close(block_index: state[:block_index]) } unless @closed
+            state[:call_closed] = true
           end
 
-          # Server tool result inline emission (Anthropic server_tool_result).
-          return unless server_tool
-
-          result = tool_call[:result]
-          return if result.nil?
+          return unless state[:server_tool] && !state[:result].nil? && !state[:result_emitted]
+          return if @closed
 
           result_block = @next_block_index
           @next_block_index += 1
           guard do
             @emitter.on_server_tool_result(
-              block_index:  result_block,
-              tool_call_id: tool_call[:id],
-              result_text:  serialize_result(result)
+              block_index: result_block, tool_call_id: state[:id],
+              result_text: serialize_result(state[:result])
             )
           end
+          state[:result_emitted] = true
         end
 
         # G3: the envelope carries Array<Canonical::ToolCall> — member reads
@@ -708,6 +731,8 @@ module Legion
         private_constant :AdaptedChunk
 
         module ChunkAdapter
+          extend Legion::LLM::API::ClientTranslators::SharedExtractors
+
           module_function
 
           def normalize(chunk)
@@ -741,13 +766,14 @@ module Legion
               tc = chunk.tool_call
               return AdaptedChunk.new if tc.nil?
 
-              source = tc.respond_to?(:source) ? tc.source : nil
+              source = tool_fragment_field(tc, :source)
               AdaptedChunk.new(
                 tool_calls: [{
-                  id:          tc.respond_to?(:id) ? tc.id : nil,
-                  name:        tc.respond_to?(:name) ? tc.name : nil,
-                  arguments:   tc.respond_to?(:arguments) ? tc.arguments : {},
-                  result:      tc.respond_to?(:result) ? tc.result : nil,
+                  id:          tool_fragment_field(tc, :id),
+                  name:        tool_fragment_field(tc, :name),
+                  arguments:   tool_fragment_field(tc, :arguments),
+                  index:       tool_fragment_field(tc, :index) || chunk.block_index || chunk.index,
+                  result:      tool_fragment_field(tc, :result),
                   server_tool: server_tool_source?(source)
                 }]
               )
