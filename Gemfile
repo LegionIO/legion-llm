@@ -30,12 +30,19 @@ group :test do
     gem 'lex-llm-openai', '>= 0.6.6'
   end
 
+  bedrock_path = File.expand_path('.ci-dependencies/lex-llm-bedrock', __dir__)
+  bedrock_path = File.expand_path('../extensions-ai/lex-llm-bedrock', __dir__) unless Dir.exist?(bedrock_path)
+  if Dir.exist?(bedrock_path)
+    gem 'lex-llm-bedrock', path: bedrock_path
+  else
+    gem 'lex-llm-bedrock', '>= 0.5.9'
+  end
+
   %w[
     lex-llm-ollama
     lex-llm-anthropic
     lex-llm-gemini
     lex-llm-mlx
-    lex-llm-bedrock
     lex-llm-azure-foundry
     lex-llm-vertex
   ].each do |provider_gem|
