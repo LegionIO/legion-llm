@@ -36,7 +36,7 @@ RSpec.describe '[matrix] Responses terminal status', type: :request do
         expect(last_response.status).to eq(200)
         if stream
           events = MatrixHelper.parse_sse(last_response.body)
-          terminal_events = events.slice('response.completed', 'response.incomplete', 'response.failed')
+          terminal_events = events.select { |event| %w[response.completed response.incomplete response.failed].include?(event.first) }
           expect(terminal_events.map(&:first)).to eq(["response.#{status}"])
           body = terminal_events.first.last.fetch(:response)
           done_item = events.find { |name, data| name == 'response.output_item.done' && data.dig(:item, :type) == 'message' }.last[:item]
