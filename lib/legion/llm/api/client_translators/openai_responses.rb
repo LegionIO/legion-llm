@@ -587,7 +587,7 @@ module Legion
             raw.each do |m|
               role = (m[:role] || m['role']).to_s
               if role == 'system'
-                system_parts << (m[:content] || m['content']).to_s
+                system_parts << extract_system_text(m[:content] || m['content'])
               else
                 messages << m
               end
@@ -602,7 +602,7 @@ module Legion
               }.compact
             end
 
-            system = system_parts.reject(&:empty?).join("\n\n")
+            system = system_parts.compact.reject(&:empty?).join("\n\n")
             [system.empty? ? nil : system, normalized]
           end
 
@@ -649,6 +649,16 @@ module Legion
                 next unless role
 
                 role = 'system' if role == 'developer'
+
+                if role == 'system'
+                  # System items keep their RAW content — build_system_and_messages
+                  # converges them through the shared extract_system_text owner
+                  # (the "\n\n" join). Canonicalizing here would pre-collapse the
+                  # fragments with the message-content join before the system
+                  # owner ever sees them.
+                  messages << { role: role, content: item[:content] }
+                  next
+                end
 
                 content = canonicalize_content_parts(item[:content])
                 content = content.to_s if content && !content.is_a?(Array)

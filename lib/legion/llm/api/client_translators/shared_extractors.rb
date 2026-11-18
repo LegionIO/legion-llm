@@ -7,9 +7,10 @@ module Legion
   module LLM
     module API
       module ClientTranslators
-        # Token-count and thinking-text extraction shared by all client translators.
-        # Single source of truth — replaces the 3-way duplicate that lived in
-        # AnthropicMessages, OpenAIChat, and OpenAIResponses (P6 dedup).
+        # System-text, token-count, and thinking-text extraction shared by all
+        # client translators. Single source of truth — replaces the 3-way
+        # duplicate that lived in AnthropicMessages, OpenAIChat, and
+        # OpenAIResponses (P6 dedup).
         module SharedExtractors
           # Client-wire params spellings per canonical member (03 O03a).
           # Canonical::Params accepts canonical keys and types ONLY; the
@@ -79,7 +80,10 @@ module Legion
           def canonical_content_block(part)
             case part[:type].to_s
             when 'text', 'input_text', 'output_text'
-              { type: 'text', text: part[:text].to_s, cache_control: part[:cache_control] }.compact
+              normalized = part.merge(type: 'text', text: part[:text].to_s)
+              normalized.delete(:cache_control) if normalized[:cache_control].nil?
+              normalized[:metadata] = part[:metadata].dup if part[:metadata].is_a?(Hash)
+              normalized
             when 'image_url', 'input_image'
               canonical_image_block(part)
             when 'image_generation_call'
@@ -155,6 +159,33 @@ module Legion
           # G3: the envelope carries the provider's Canonical::Thinking — the
           # thinking text is the .content member (the former String/Hash/
           # duck-typed branches were the split-world seam).
+          # System content converges to the canonical string contract
+          # (release v0.16.9 convention, RULES.md rule 13): text fragments
+          # joined with "\n\n". Cache annotations and non-text parts are
+          # dropped at this client edge — the joined string is what every
+          # provider consumes, so no block structure or Ruby inspect output
+          # may ever reach the prompt. Every client dialect and client-facing
+          # route uses this one owner; per-translator joins are how the
+          # post-v0.16.9 divergence happened.
+          def extract_system_text(sys)
+            return nil if sys.nil?
+            return sys if sys.is_a?(String)
+
+            if sys.is_a?(Array)
+              sys.filter_map do |part|
+                next part if part.is_a?(String)
+                next unless part.is_a?(Hash)
+
+                normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+                next unless text_content_type?(normalized[:type])
+
+                normalized[:text].to_s
+              end.join("\n\n")
+            else
+              sys.to_s
+            end
+          end
+
           def extract_thinking_text(value)
             return '' if value.nil?
 

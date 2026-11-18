@@ -30,7 +30,10 @@ module Legion
                 result = CountTokens.count_tokens_result(
                   messages: body[:messages],
                   model:    body[:model],
-                  system:   body[:system],
+                  # The Anthropic wire allows an array system; converge it
+                  # through the shared client-edge owner so the raw wire value
+                  # never reaches estimation or the pipeline envelope.
+                  system:   extract_system_text(body[:system]),
                   tools:    body[:tools]
                 )
 

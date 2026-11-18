@@ -187,6 +187,13 @@ Equivalent text fragments preserve their exact whitespace across all three clien
 dialects. Plain text converges to one string; annotated text and mixed media retain
 their ordered canonical blocks.
 
+Text-block citations and metadata survive ingress without changing the original
+client history. System instructions use the canonical string contract, including
+cached OpenAI Chat system text. History reduction applies leading-thinking removal
+and `tools.result_max_dispatch_chars` to both strings and annotated text blocks;
+surviving blocks retain their metadata and media remain in order. The tool-result
+cap is shared across text blocks in a message, not applied separately to each block.
+
 `Router.new(request:, operation:, body_model:, **)` creates one Router for the
 logical request. Its included `Routing::Requirements` module initializes required
 capabilities, input/output bounds, modality, explicit pins, the body-model hint

@@ -137,4 +137,94 @@ RSpec.describe 'client translator canonical equivalence' do
     expect(anthropic_request.messages.map(&:text)).to eq(['hello world', 'hello world', 'continue'])
     expect(anthropic_request.messages[1].tool_call_id).to eq('call-1')
   end
+
+  it 'keeps cached system instructions as exact canonical text through inference construction' do
+    instruction = "Preserve this newline.\nAnd this second line."
+    request = chat.parse_request({
+                                   messages: [
+                                     { role: 'system', content: [{ type: 'text', text: instruction, cache_control: { type: 'ephemeral' } }] },
+                                     { role: 'user', content: 'Acknowledge.' }
+                                   ]
+                                 }, {})
+    inference = chat.build_inference_request(request, request_id: 'cached-system', server_caller: { source: 'test' })
+
+    expect(request.system).to eq(instruction)
+    expect(inference.system).to eq(instruction)
+  end
+
+  # RULES.md rule 13: equivalent client semantics produce equivalent Canonical
+  # state. A two-part system prompt must converge to the SAME canonical string
+  # from every dialect — the release v0.16.9 convention ("\n\n" join) — and
+  # cache_control annotations must never leak block structure (or Ruby inspect
+  # output) into canonical `system`.
+  it 'two-part system: all three dialects converge to the same canonical string' do
+    anthropic_req = anthropic.parse_request(
+      { system:   [{ type: 'text', text: 'Rule A' }, { type: 'text', text: 'Rule B' }],
+        messages: [{ role: 'user', content: 'hi' }] }, {}
+    )
+    chat_req = chat.parse_request(
+      { messages: [
+        { role: 'system', content: [{ type: 'text', text: 'Rule A' }, { type: 'text', text: 'Rule B' }] },
+        { role: 'user', content: 'hi' }
+      ] }, {}
+    )
+    responses_item_req = responses.parse_request(
+      { input: [
+        { role: 'system', content: [{ type: 'input_text', text: 'Rule A' }, { type: 'input_text', text: 'Rule B' }] },
+        { role: 'user', content: 'hi' }
+      ] }, {}
+    )
+    responses_instr_req = responses.parse_request(
+      { instructions: "Rule A\n\nRule B",
+        input:        [{ role: 'user', content: 'hi' }] }, {}
+    )
+
+    [anthropic_req, chat_req, responses_item_req, responses_instr_req].each do |req|
+      expect(req.system).to be_a(String)
+      expect(req.system).to eq("Rule A\n\nRule B")
+    end
+  end
+
+  it 'cache_control on system: all three dialects converge to the same canonical string' do
+    anthropic_req = anthropic.parse_request(
+      { system:   [{ type: 'text', text: 'Rule A', cache_control: { type: 'ephemeral' } },
+                   { type: 'text', text: 'Rule B' }],
+        messages: [{ role: 'user', content: 'hi' }] }, {}
+    )
+    chat_req = chat.parse_request(
+      { messages: [
+        { role: 'system', content: [{ type: 'text', text: 'Rule A', cache_control: { type: 'ephemeral' } },
+                                    { type: 'text', text: 'Rule B' }] },
+        { role: 'user', content: 'hi' }
+      ] }, {}
+    )
+    responses_item_req = responses.parse_request(
+      { input: [
+        { role: 'system', content: [{ type: 'input_text', text: 'Rule A', cache_control: { type: 'ephemeral' } },
+                                    { type: 'input_text', text: 'Rule B' }] },
+        { role: 'user', content: 'hi' }
+      ] }, {}
+    )
+
+    [anthropic_req, chat_req, responses_item_req].each do |req|
+      expect(req.system).to be_a(String)
+      expect(req.system).to eq("Rule A\n\nRule B")
+    end
+  end
+
+  it 'preserves cited tool-result text and existing metadata without mutating the client history' do
+    citations = [{ type: 'char_location', cited_text: 'answer', document_index: 0, start_char_index: 0, end_char_index: 6 }]
+    payload = { messages: [{ role: 'user', content: [{
+      type: 'tool_result', tool_use_id: 'lookup-1',
+      content: [{ type: 'text', text: 'answer', citations: citations, metadata: { origin: 'lookup' } }]
+    }] }] }
+    original = Legion::JSON.dump(payload)
+    request = anthropic.parse_request(payload, {})
+    result = request.messages.first
+
+    expect(result.tool_call_id).to eq('lookup-1')
+    expect(result.content.first.text).to eq('answer')
+    expect(result.content.first.metadata).to eq(origin: 'lookup', citations: citations)
+    expect(Legion::JSON.dump(payload)).to eq(original)
+  end
 end

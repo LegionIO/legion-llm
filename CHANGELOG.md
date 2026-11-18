@@ -5,6 +5,9 @@
 ### Fixed
 - **Request-scoped routing requirements.** Include `Routing::Requirements` in Router so each instance initializes its own request facts once and exposes direct readers such as `maximum_attempts`. Preserve shared immutable-value validation, canonical tool replay, capabilities, pins, context budgets and ingress policy generation.
 - **Router constructor kwargs.** Restore trailing `**` so `Router.new(request:, operation:, body_model:)` accepts additional keyword arguments.
+- **Tool-result citation preservation.** Retain text-block citations and other metadata before canonical construction instead of dropping annotations and collapsing the result to a string. Normalization does not mutate the client's metadata.
+- **Cached system instructions.** Normalize OpenAI Chat system text to the canonical string contract, preserving exact newlines instead of injecting Ruby hash representations into the prompt.
+- **Cached history safeguards.** Strip leading thinking across adjacent annotated text blocks and enforce one historical tool-result text cap across blocks, retaining surviving annotations, media, tool associations, and current-turn content.
 
 ### Changed
 - Require `lex-llm >= 0.8.6` for shared request-fact validation; executor, embedding, token-counting and cache consumers construct the per-request Router directly.

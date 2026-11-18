@@ -134,9 +134,7 @@ module Legion
               next msg unless cw_role(msg) == 'assistant'
 
               content = cw_content(msg)
-              next msg unless content.is_a?(String)
-
-              cleaned = strip_leading_thinking_block(content)
+              cleaned = strip_leading_thinking_content(content: content)
               next msg if cleaned == content
 
               cw_with_content(msg, cleaned)
@@ -180,6 +178,32 @@ module Legion
             text
           end
 
+          def strip_leading_thinking_content(content:)
+            return content if content.nil?
+            return strip_leading_thinking_block(content) if content.is_a?(String)
+
+            blocks = content.is_a?(Array) ? content : [content]
+            prefix = blocks.take_while(&:text?).map { |block| block.text.to_s }.join
+            cleaned = strip_leading_thinking_block(prefix)
+            remaining = prefix.length - cleaned.length
+            return content if remaining.zero?
+
+            stripped = blocks.filter_map do |block|
+              next block if remaining.zero? || !block.text?
+
+              text = block.text.to_s
+              if remaining >= text.length
+                remaining -= text.length
+                next
+              end
+
+              replacement = block.with(text: text[remaining..])
+              remaining = 0
+              replacement
+            end
+            content.is_a?(Array) ? stripped : stripped.first
+          end
+
           # Pure oversized-tool-result trim. Shared by trim_oversized_tool_results
           # (which adds logging) and reduce_messages_for_dispatch.
           def trim_oversized_tool_results_pure(messages)
@@ -192,12 +216,33 @@ module Legion
               next msg unless tool_result_message?(msg)
 
               content = cw_content(msg)
-              next msg unless content.is_a?(String) && content.length > max_chars
+              text_length = cw_text(msg).length
+              next msg unless text_length > max_chars
 
-              cw_with_content(msg, "#{content[0, max_chars]}\n\n[TRUNCATED: showing first #{max_chars} of #{content.length} chars. " \
-                                   'If you need more content, make multiple smaller targeted requests ' \
-                                   '(e.g. read specific line ranges, grep for specific patterns, or request smaller sections).]')
+              cw_with_content(msg, trim_tool_result_content(content: content, max_chars: max_chars, original_length: text_length))
             end
+          end
+
+          def trim_tool_result_content(content:, max_chars:, original_length:)
+            suffix = "\n\n[TRUNCATED: showing first #{max_chars} of #{original_length} chars. " \
+                     'If you need more content, make multiple smaller targeted requests ' \
+                     '(e.g. read specific line ranges, grep for specific patterns, or request smaller sections).]'
+            return "#{content[0, max_chars]}#{suffix}" if content.is_a?(String)
+
+            blocks = content.is_a?(Array) ? content : [content]
+            remaining = max_chars
+            trimmed = blocks.filter_map do |block|
+              next block unless block.text?
+              next if remaining.zero?
+
+              text = block.text.to_s
+              kept = text[0, remaining]
+              remaining -= kept.length
+              next block if remaining.positive?
+
+              block.with(text: "#{kept}#{suffix}")
+            end
+            content.is_a?(Array) ? trimmed : trimmed.first
           end
 
           def trim_oversized_tool_results(messages)
@@ -222,7 +267,12 @@ module Legion
             return false unless cw_role(msg) == 'assistant'
 
             content = cw_content(msg)
-            has_content = content.is_a?(String) ? !content.strip.empty? : !content.nil?
+            has_content = if content.nil? || content.is_a?(String)
+                            !content.to_s.strip.empty?
+                          else
+                            blocks = content.is_a?(Array) ? content : [content]
+                            blocks.any? { |block| !block.text? || !block.text.to_s.strip.empty? }
+                          end
             return false if has_content
 
             tool_calls = cw_tool_calls(msg)

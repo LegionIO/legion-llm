@@ -56,7 +56,7 @@ module Legion
             body = symbolize(body)
 
             messages = extract_messages(body[:messages] || [])
-            system = extract_system(body[:system])
+            system = extract_system_text(body[:system])
             tools = extract_tools(body[:tools])
             params = extract_params(body)
             thinking = extract_thinking(body[:thinking])
@@ -553,26 +553,6 @@ module Legion
               bs = symbolize(block)
               bs[:text].to_s if bs[:type].to_s == 'text'
             end.join
-          end
-
-          def extract_system(sys)
-            return nil if sys.nil?
-            return sys if sys.is_a?(String)
-
-            if sys.is_a?(Array)
-              text_blocks = sys.select { |b| symbolize(b)[:type].to_s == 'text' }
-              has_cache_control = text_blocks.any? { |b| symbolize(b)[:cache_control] }
-              if has_cache_control
-                text_blocks.map do |b|
-                  s = symbolize(b)
-                  { text: s[:text], cache_control: s[:cache_control] }.compact
-                end
-              else
-                text_blocks.map { |b| symbolize(b)[:text] }.join("\n\n")
-              end
-            else
-              sys.to_s
-            end
           end
 
           # Anthropic tool definitions use `input_schema`; canonicalize to

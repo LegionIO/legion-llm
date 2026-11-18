@@ -414,7 +414,7 @@ module Legion
               role = m[:role].to_sym
               case role
               when :system
-                system_content = canonicalize_content_parts(m[:content])
+                system_content = extract_system_text(m[:content])
               when :assistant
                 entry = { role: role, content: canonicalize_content_parts(m[:content]) }
                 entry[:tool_calls] = normalize_assistant_tool_calls(m[:tool_calls]) if m[:tool_calls]
