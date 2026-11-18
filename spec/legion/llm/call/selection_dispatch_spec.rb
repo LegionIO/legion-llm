@@ -70,6 +70,55 @@ RSpec.describe Legion::LLM::Call::SelectionDispatch, :ssot_v3 do
     end
   end
 
+  describe 'stream consumer failures' do
+    %i[swallowed wrapped].each do |handling|
+      it "preserves the consumer failure when the provider #{handling} it" do
+        callable = Class.new(SsotV3SnapshotFactory::FactoryCallable) do
+          include Legion::Logging::Helper
+
+          attr_accessor :handling
+
+          def stream_chat(_messages, **)
+            yield Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'hello', request_id: 'consumer-regression')
+          rescue Legion::JSON::ParseError => e
+            raise IOError, 'provider wrapper' if handling == :wrapped
+
+            handle_exception(e, level: :warn, handled: true, operation: 'spec.consumer_failure')
+            :provider_returned_success
+          end
+        end.new
+        callable.handling = handling
+        context = message_operation_contexts(callable: callable).fetch(:stream_chat)
+        error = Legion::JSON::ParseError.new('consumer failed')
+        expect(callable).not_to receive(:normalize_dispatch_error)
+
+        expect do
+          described.call(attempt_context: context, arguments: { messages: [] }) { raise error }
+        end.to(raise_error { |raised| expect(raised).to equal(error) })
+        expect(context.selection.callable_handle.reference_count).to eq(0)
+      end
+    end
+
+    [IOError, RuntimeError, Legion::JSON::ParseError,
+     Legion::LLM::API::StreamAssembler::StreamClosed].each do |error_class|
+      it "propagates #{error_class} from the consumer without normalizing it as a provider failure" do
+        callable = Class.new(SsotV3SnapshotFactory::FactoryCallable) do
+          def stream_chat(_messages, **)
+            yield Legion::Extensions::Llm::Canonical::Chunk.text_delta(delta: 'hello', request_id: 'consumer-regression')
+          end
+        end.new
+        context = message_operation_contexts(callable: callable).fetch(:stream_chat)
+        error = error_class.new('consumer failed')
+        expect(callable).not_to receive(:normalize_dispatch_error)
+
+        expect do
+          described.call(attempt_context: context, arguments: { messages: [] }) { raise error }
+        end.to(raise_error { |raised| expect(raised).to equal(error) })
+        expect(context.selection.callable_handle.reference_count).to eq(0)
+      end
+    end
+  end
+
   it 'acquires the exact handle, invokes chat, returns success, and releases the lease' do
     ctx = chat_context
     handle = ctx.selection.callable_handle

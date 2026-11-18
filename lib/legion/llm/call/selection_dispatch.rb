@@ -52,8 +52,19 @@ module Legion
           raise ArgumentError, 'arguments must be a Hash' unless arguments.is_a?(Hash)
 
           selection = attempt_context.selection
+          consumer_error = nil
+          consumer = if block
+                       lambda do |chunk|
+                         raise consumer_error if consumer_error
+
+                         block.call(chunk)
+                       rescue StandardError => e
+                         consumer_error = e
+                         raise
+                       end
+                     end
           invocation = plan_invocation(operation: selection.operation, model: selection.model,
-                                       arguments: arguments, block: block)
+                                       arguments: arguments, block: consumer)
 
           owned_lease = dispatch_lease.nil?
           lease = dispatch_lease || Legion::Extensions::Llm::Inventory::Registry.acquire(
@@ -64,10 +75,14 @@ module Legion
           callable = lease.callable
 
           begin
-            Result.success(value: invocation.call(callable))
+            value = invocation.call(callable)
+            raise consumer_error if consumer_error
+
+            Result.success(value: value)
           rescue StandardError => e
             log.warn("[llm][selection_dispatch] action=dispatch_failed class=#{e.class.name} " \
                      "message=#{e.message.to_s[0, 200]}")
+            raise consumer_error if consumer_error
             raise if daemon_fault?(e)
 
             Result.failure(outcome: normalize(callable: callable, error: e))

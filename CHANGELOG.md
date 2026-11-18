@@ -13,6 +13,8 @@
 - **Named tool-choice lifecycle.** Release a named tool choice only after that server-side call completes, allowing continuation without forcing the same tool again while leaving the original request and unrelated choice modes unchanged.
 - **Typed streaming tool snapshots.** Hold replaceable Hash argument snapshots until tool-call completion instead of emitting contradictory append-only JSON. Raw JSON fragments still stream incrementally, and Anthropic Messages, Chat Completions, and Responses all receive valid final arguments and terminal events.
 - **Anthropic streaming tool input.** Start tool blocks with an empty input object; argument snapshots and raw JSON fragments are delivered only through `input_json_delta`, preventing intermediate values or partial JSON strings from leaking through `content_block_start`.
+- Preserve shared registry trigger words during request matching. Repeated requests no longer append matching aliases to registered tools or inflate server-tool inventory responses.
+- Propagate stream-consumer exceptions unchanged through exact callable dispatch, releasing the lease without misclassifying client disconnects or translation errors as provider failures.
 
 ### Changed
 - Require `lex-llm >= 0.8.6` for shared request-fact validation; executor, embedding, token-counting and cache consumers construct the per-request Router directly.

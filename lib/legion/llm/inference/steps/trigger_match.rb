@@ -151,7 +151,7 @@ module Legion
           end
 
           def trigger_words_for_entry(entry)
-            values = Array(entry[:trigger_words])
+            values = Array(entry[:trigger_words]).dup
             values << trigger_tool_name_for_word_match(entry[:name])
             values << entry[:extension]
             values << entry[:runner]
