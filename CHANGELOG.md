@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.17] - 2026-11-18
+
+### Fixed
+- Preserve embedding request `input_tokens` and `total_tokens` on cache hits so ledger can account for served workload and counterfactual savings. Cached requests retain `cache_hit: true`, zero output tokens, and `cost_usd: 0` without another provider execution. Missing provider usage remains zero. Regression coverage verifies serialized miss/hit events through real selection, caching, and metering, alongside routing and provider-error paths ([#201](https://github.com/LegionIO/legion-llm/issues/201)).
+
 ## [0.16.16] - 2026-11-18
 
 ### Fixed
