@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.15] - 2026-11-18
+
+### Fixed
+- Require thinking-capable inventory lanes when canonical thinking is enabled. Native request input uses the shared canonical normalizer at ingress; routing reads the canonical flag rather than looking for a Hash, preserving explicit budget and effort independently. Disabled or absent thinking leaves text-only lanes eligible.
+
 ## [0.16.14] - 2026-11-18
 
 ### Fixed

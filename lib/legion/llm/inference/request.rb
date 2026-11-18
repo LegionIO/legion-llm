@@ -80,7 +80,7 @@ module Legion
             tokens:                    kwargs.fetch(:tokens, { max: 4096 }),
             stop:                      kwargs.fetch(:stop, { sequences: [] }),
             generation:                kwargs.fetch(:generation, {}),
-            thinking:                  kwargs[:thinking],
+            thinking:                  Legion::Extensions::Llm::Canonical::Request.normalize_thinking!(kwargs[:thinking], 'Inference::Request.build'),
             response_format:           kwargs.fetch(:response_format, { type: :text }),
             stream:                    kwargs.fetch(:stream, false),
             fork:                      kwargs[:fork],

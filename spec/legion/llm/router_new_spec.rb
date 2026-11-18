@@ -519,7 +519,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
       it 'adds thinking config serialized bytes when provided' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
-        thinking = { enabled: true, budget_tokens: 4096 }
+        thinking = Legion::Extensions::Llm::Canonical::Thinking::Config.build(budget: 4096)
         serialized = Legion::JSON.dump(thinking).bytesize
 
         router_with    = build_router(thinking: thinking, messages: [])

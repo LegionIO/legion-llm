@@ -79,8 +79,7 @@ module Legion
         def requirements_capabilities(request:, operation:)
           caps = OPERATION_BASE.fetch(operation).dup
           caps << :tools if requirements_tools?(request: request)
-          thinking = request.thinking
-          caps << :thinking if (thinking.is_a?(Hash) && !thinking.empty? && thinking[:enabled] != false) ||
+          caps << :thinking if request.thinking&.enabled? ||
                                requirements_messages_contain_type?(messages: request.messages, type: :thinking)
           caps << :vision if requirements_messages_contain_type?(messages: request.messages, type: :image)
           format = request.response_format

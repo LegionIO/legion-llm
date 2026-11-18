@@ -4,6 +4,19 @@ require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inference::Request do
   describe '.build' do
+    it 'normalizes native thinking input once without inventing its missing intent axis' do
+      request = described_class.build(thinking: { budget: 1024 })
+
+      expect(request.thinking).to be_a(Legion::Extensions::Llm::Canonical::Thinking::Config)
+      expect(request.thinking.enabled?).to be(true)
+      expect(request.thinking.budget).to eq(1024)
+      expect(request.thinking.effort).to be_nil
+    end
+
+    it 'rejects noncanonical thinking input at ingress' do
+      expect { described_class.build(thinking: 'high') }.to raise_error(ArgumentError, /thinking/)
+    end
+
     it 'creates a request with defaults' do
       req = described_class.build(messages: [{ role: :user, content: 'hello' }])
       expect(req.id).to start_with('req_')

@@ -22,7 +22,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     context 'when @request.thinking is set' do
-      let(:thinking_config) { { type: :enabled, budget_tokens: 5000 } }
+      let(:thinking_config) { Legion::Extensions::Llm::Canonical::Thinking::Config.build(budget: 5000) }
 
       let(:request) do
         Legion::LLM::Inference::Request.build(
@@ -37,7 +37,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
         executor.instance_variable_set(:@resolved_provider, :anthropic)
         executor.instance_variable_set(:@resolved_model, 'claude-opus-4-6')
         opts = executor.send(:native_dispatch_chat_options)
-        expect(opts[:thinking]).to eq(thinking_config)
+        expect(opts[:thinking]).to equal(thinking_config)
       end
     end
   end

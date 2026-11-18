@@ -3,16 +3,51 @@
 require 'spec_helper'
 require 'legion/llm/routing/requirements'
 require 'legion/llm/router'
+require 'legion/llm/api/client_translators/anthropic_messages'
+require 'legion/llm/api/client_translators/openai_responses'
 
 RSpec.describe Legion::LLM::Router, :ssot_v3 do
-  def publish_lane(instance:, capabilities:)
+  def publish_lane(instance:, capabilities:, provider: :vllm)
     SsotV3SnapshotFactory.activate(
-      provider_family: :vllm, instance_id: instance,
+      provider_family: provider, instance_id: instance,
       drafts: [SsotV3SnapshotFactory.offering_draft(
         model: 'test-model', capabilities: capabilities, context: 32_768,
         weight_inputs: { tier: 100, provider: 100, instance: 100, model_or_offering: 100 }, base_weight: 100_000_000
       )]
     )
+  end
+
+  %i[vllm bedrock].each do |provider|
+    {
+      anthropic_messages: { messages: [{ role: 'user', content: 'think' }], thinking: { type: 'enabled', budget_tokens: 1024 } },
+      openai_responses:   { input: 'think', reasoning: { effort: 'medium' } }
+    }.each do |dialect, body|
+      it "requires thinking support for #{dialect} requests routed to #{provider}" do
+        publish_lane(provider: provider, instance: 'thinking', capabilities: { thinking: :supported })
+        publish_lane(provider: provider, instance: 'text-only', capabilities: { thinking: :unsupported })
+        translators = Legion::LLM::API::ClientTranslators
+        translator = (dialect == :anthropic_messages ? translators::AnthropicMessages : translators::OpenAIResponses).new
+        canonical = translator.parse_request(body, {})
+        request = translator.build_inference_request(canonical, request_id: 'req_thinking', server_caller: { source: 'spec' })
+        router = described_class.new(request: request, operation: :chat, body_model: nil)
+
+        expect(request.thinking).to equal(canonical.thinking)
+        expect(router.required_capabilities).to eq([:thinking])
+        expect(router.next_attempt!.selection.instance_id).to eq('thinking')
+        expect(router.next_lane).to be_a(Legion::Extensions::Llm::Routing::Rejection)
+      end
+    end
+  end
+
+  [nil, Legion::Extensions::Llm::Canonical::Thinking::Config.build(enabled: false)].each do |thinking|
+    it "allows a text-only lane when thinking is #{thinking.nil? ? 'absent' : 'disabled'}" do
+      publish_lane(instance: 'text-only', capabilities: { thinking: :unsupported })
+      request = Legion::LLM::Inference::Request.build(messages: ['hello'], thinking: thinking)
+      router = described_class.new(request: request, operation: :chat, body_model: nil)
+
+      expect(router.required_capabilities).to be_empty
+      expect(router.next_lane.instance_id).to eq('text-only')
+    end
   end
 
   it 'routes from captured request facts rather than reinterpreting mutated request data' do
