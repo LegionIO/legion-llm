@@ -11,7 +11,7 @@ jobs:
     uses: LegionIO/.github/.github/workflows/ci.yml@main
     with:
       companion-gems: >-
-        {"lex-llm":{"repository":"LegionIO/lex-llm","ref":"cd010e9a5ca3989d35ee311f3ff9dbd3f949599e"},"lex-llm-vllm":{"repository":"LegionIO/lex-llm-vllm","ref":"7c74befe51681372cd292e7b643ceee0eb95bfb7"},"lex-llm-bedrock":{"repository":"LegionIO/lex-llm-bedrock","ref":"2a13952abf18ca9b1a0c2d75fe47b53bc625580f"}}
+        {"lex-llm":{"repository":"LegionIO/lex-llm","ref":"d1f3e97d18af3f21cc8e15de76c76a6fd53b18da"},"lex-llm-vllm":{"repository":"LegionIO/lex-llm-vllm","ref":"7c74befe51681372cd292e7b643ceee0eb95bfb7"},"lex-llm-bedrock":{"repository":"LegionIO/lex-llm-bedrock","ref":"2a13952abf18ca9b1a0c2d75fe47b53bc625580f"}}
 
   lint:
     uses: LegionIO/.github/.github/workflows/lint-patterns.yml@main
@@ -20,7 +20,7 @@ jobs:
     uses: LegionIO/.github/.github/workflows/security-scan.yml@main
     with:
       companion-gems: >-
-        {"lex-llm":{"repository":"LegionIO/lex-llm","ref":"cd010e9a5ca3989d35ee311f3ff9dbd3f949599e"},"lex-llm-vllm":{"repository":"LegionIO/lex-llm-vllm","ref":"7c74befe51681372cd292e7b643ceee0eb95bfb7"},"lex-llm-bedrock":{"repository":"LegionIO/lex-llm-bedrock","ref":"2a13952abf18ca9b1a0c2d75fe47b53bc625580f"}}
+        {"lex-llm":{"repository":"LegionIO/lex-llm","ref":"d1f3e97d18af3f21cc8e15de76c76a6fd53b18da"},"lex-llm-vllm":{"repository":"LegionIO/lex-llm-vllm","ref":"7c74befe51681372cd292e7b643ceee0eb95bfb7"},"lex-llm-bedrock":{"repository":"LegionIO/lex-llm-bedrock","ref":"2a13952abf18ca9b1a0c2d75fe47b53bc625580f"}}
 
   version-changelog:
     uses: LegionIO/.github/.github/workflows/version-changelog.yml@main
