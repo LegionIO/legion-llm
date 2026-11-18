@@ -4,9 +4,9 @@
 #
 # Mirrors the legionio-e2e codex/* and codex/responses/* scenarios but runs
 # in-process against the deterministic FakeProvider. Asserts the Responses
-# protocol: status is always `completed` (there is no `requires_action`/
-# `response.done` — those are Assistants API concepts that real Responses
-# clients like Codex reject, closing the stream "before response.completed").
+# protocol: successful turns, including client tool handoffs, are `completed`.
+# Truncated turns use `incomplete` (covered by responses_terminal_status_matrix).
+# `requires_action` and `response.done` are Assistants API concepts.
 # Client-callable calls ride in output[] as function_call items; the client
 # executes them and continues via function_call_output. Also asserts output[]
 # item types (message / function_call / message+phase=reasoning), tool_call

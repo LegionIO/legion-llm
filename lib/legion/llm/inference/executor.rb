@@ -5,6 +5,7 @@ require 'faraday'
 
 require_relative '../publisher_identity'
 require_relative '../tools/special'
+require_relative '../tools/mcp_execution'
 require_relative 'native_tool_loop'
 require_relative 'route_attempts'
 require_relative 'executor/routing'
@@ -498,11 +499,12 @@ module Legion
           normalized_call = normalize_native_tool_call(tool_call)
           source = find_tool_source(normalized_call[:name])
           log.debug "[llm][executor] action=dispatch_native_tool_call round=#{round} tool=#{normalized_call[:name]} source_type=#{source[:type]}"
-          emit_tool_call_event(normalized_call, round, source: source)
+          emit_tool_call_event(normalized_call, round, source: source, metadata: Tools::MCPExecution.metadata_for(source))
           tool_exchange_id = Tracing.exchange_id
-          result = ToolDispatcher.dispatch(
+          result = Tools::MCPExecution.dispatch(
             tool_call:   normalized_call,
             source:      source,
+            definition:  native_dispatch_tools[normalized_call[:name].to_sym],
             exchange_id: tool_exchange_id
           )
           record_tool_execution(tool_call_id: normalized_call[:id], tool_name: normalized_call[:name],
@@ -647,7 +649,7 @@ module Legion
           text_parts.empty? ? nil : text_parts.join("\n\n")
         end
 
-        def emit_tool_call_event(tool_call, round, source: nil)
+        def emit_tool_call_event(tool_call, round, source: nil, metadata: {})
           tc_id   = tool_call_field(tool_call, :id)
           tc_name = tool_call_field(tool_call, :name)
           tc_args = tool_call_field(tool_call, :arguments)
@@ -660,7 +662,7 @@ module Legion
           typed_call = Legion::Extensions::Llm::Canonical::ToolCall.build(
             name: tc_name, id: tc_id, arguments: tc_args,
             source: canonical_source_symbol(source),
-            exchange_id: @exchange_id, started_at: started_at
+            exchange_id: @exchange_id, started_at: started_at, metadata: metadata
           )
 
           log.debug("[pipeline][tool-call] action=emit round=#{round} id=#{tc_id} tool=#{tc_name}")
@@ -714,7 +716,7 @@ module Legion
               entry[:error]  = is_error
               if entry[:typed_call]
                 entry[:typed_call] = entry[:typed_call].with_result(
-                  result:      result_str[0, 4096],
+                  result:      result_str,
                   status:      is_error ? :error : :success,
                   duration_ms: duration_ms,
                   finished_at: finished_at
@@ -1552,15 +1554,13 @@ module Legion
 
         def response_tool_calls
           raw_tool_calls = @raw_response.respond_to?(:tool_calls) ? @raw_response.tool_calls : nil
-          return build_response_tool_calls(raw_tool_calls) if raw_tool_calls&.any?
-
-          # Fall back to typed ToolCall objects from pending history when the final
-          # model response completed after server-side tool execution.
-          typed_from_history = @pending_tool_history
-                               .filter_map { |entry| entry[:typed_call] }
-          return typed_from_history if typed_from_history.any?
-
-          []
+          current = raw_tool_calls&.any? ? build_response_tool_calls(raw_tool_calls) : []
+          # Earlier server rounds remain visible when the last round asks the
+          # client to execute a different tool. Execution IDs, not names, dedupe.
+          executed = @pending_tool_history.filter_map { |entry| entry[:typed_call] }
+                                          .select { |call| %i[special registry extension mcp].include?(call.source) && !call.result.nil? }
+          executed_ids = executed.map(&:id)
+          executed + current.reject { |call| executed_ids.include?(call.id) }
         end
 
         # G3: the response exit carries Canonical::ToolCall — one tool-call
@@ -1615,7 +1615,8 @@ module Legion
               status:      client_pending ? nil : (tool_call_field(tool_call, :status) || pending_data[:status] || timeline_data[:status]),
               duration_ms: tool_call_field(tool_call, :duration_ms) || pending_data[:duration_ms] || timeline_data[:duration_ms],
               result:      client_pending ? nil : (tool_call_field(tool_call, :result) || pending_data[:result] || timeline_data[:result]),
-              error:       client_pending ? nil : (tool_call_field(tool_call, :error) || pending_data[:error])
+              error:       client_pending ? nil : (tool_call_field(tool_call, :error) || pending_data[:error]),
+              metadata:    (tool_call_field(tool_call, :metadata) || {}).merge(pending_data[:metadata] || {})
             )
           end
         end
@@ -1633,7 +1634,8 @@ module Legion
             status:      typed_call&.status,
             duration_ms: typed_call&.duration_ms,
             result:      typed_call&.result || entry[:result],
-            error:       typed_call&.error || (entry[:result] if entry[:error])
+            error:       typed_call&.error || (entry[:result] if entry[:error]),
+            metadata:    typed_call&.metadata
           }.compact
         end
 

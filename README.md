@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.16.15-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.16-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -60,6 +60,8 @@ The result: **any client → any provider, in every direction.** A Claude Code s
 ### Execution proxy, not a passthrough
 
 To the **client**, Legion looks like a server-side execution surface: LegionIO-resolved tools run *server-side* and appear in canonical server-tool shapes — the client never sees a pending action for a tool Legion already executed. To the **provider**, Legion looks like the client: the same tool-use/tool-result exchange shows up in the next turn in that provider's wire format, so the model always knows what happened. This "always translate, never passthrough" contract is verified on every test run by an in-process matrix harness that replays the full client × scenario matrix in milliseconds.
+
+Local tools use the MCP SDK adapter in-process. `/v1/responses` exposes these executions as documented `mcp_call` items with arguments, results, and streaming lifecycle events. `/v1/messages` retains its server-tool blocks; `/v1/chat/completions` includes a visible call/result transcript in assistant content. Tool execution makes no HTTP request back into the daemon.
 
 ### Context curation that actually works
 

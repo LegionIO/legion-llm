@@ -47,6 +47,7 @@ module Legion
               tool_call_id = tc.id
               source = find_tool_source(tool_name)
               next unless source
+              next unless tc.result.nil?
 
               if client_passthrough_source?(source)
                 log.info(
@@ -76,9 +77,11 @@ module Legion
               # The dispatcher is a daemon-internal Hash-consumer (registry/
               # extension/mcp execution) — the canonical tool call projects to
               # its wire shape at this boundary (member reads; G3).
-              result = ToolDispatcher.dispatch(
+              definition = native_dispatch_tools[tool_name.to_sym] if Tools::MCPExecution::LOCAL_SOURCES.include?(source[:type])
+              result = Tools::MCPExecution.dispatch(
                 tool_call:   { id: tool_call_id, name: tool_name, arguments: tc.arguments },
                 source:      source,
+                definition:  definition,
                 exchange_id: tool_exchange_id
               )
 
@@ -94,7 +97,10 @@ module Legion
                     args:          tc.arguments,
                     result:        result_string,
                     error:         result[:status] == :error,
-                    runner_key:    runner_key
+                    runner_key:    runner_key,
+                    typed_call:    tc.with(source: canonical_source_symbol(source), metadata: Tools::MCPExecution.metadata_for(source))
+                                     .with_result(result: result_string, status: result[:status] == :error ? :error : :success,
+                                                  duration_ms: result[:duration_ms])
                   }
                 end
               end
@@ -242,7 +248,7 @@ module Legion
             duration_ms = typed_call&.duration_ms || tool_call_value(tool_call, :duration_ms)
 
             if tool_call.respond_to?(:with_result)
-              base = tool_call.respond_to?(:with) ? tool_call.with(source: source) : tool_call
+              base = tool_call.respond_to?(:with) ? tool_call.with(source: source, metadata: tool_call.metadata.merge(typed_call&.metadata || {})) : tool_call
               return base.with_result(
                 result:      entry[:result],
                 status:      status,

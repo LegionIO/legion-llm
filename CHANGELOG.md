@@ -1,5 +1,13 @@
 # Legion LLM Changelog
 
+## [0.16.16] - 2026-11-18
+
+### Fixed
+- Execute local Legion tools through the existing MCP SDK adapter in-process, without an HTTP hop or daemon re-entry. Render documented `mcp_call` items and lifecycle events in OpenAI Responses, preserve full results and replay their call/result history. Chat Completions retains visible assistant transcript content; executable function calls remain reserved for client-owned tools. Preserve the Anthropic server-tool representation and withhold unclassified streaming fragments until ownership is known.
+- Preserve complete server-tool results in canonical execution records delivered to stream observers and final responses. Diagnostic event previews remain bounded without truncating the client-visible execution result.
+- Retain earlier server executions when a later provider round hands off a client tool, and prevent completed tool calls from executing again in the post-response step.
+- Render the same terminal state in synchronous and streaming Responses: token exhaustion and content filtering include the documented incomplete reason, and streams emit `response.incomplete` instead of claiming completion. Preserve already-completed MCP results when a later answer is truncated.
+
 ## [0.16.15] - 2026-11-18
 
 ### Fixed

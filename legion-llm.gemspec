@@ -35,6 +35,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'legion-cache', '>= 1.4.2'
   spec.add_dependency 'legion-json', '>= 1.2.0'
   spec.add_dependency 'legion-logging', '>= 1.2.8'
+  spec.add_dependency 'legion-mcp', '>= 0.9.3'
   spec.add_dependency 'legion-settings', '>= 1.4.2'
   spec.add_dependency 'legion-transport', '>= 1.4.31'
   spec.add_dependency 'lex-knowledge'

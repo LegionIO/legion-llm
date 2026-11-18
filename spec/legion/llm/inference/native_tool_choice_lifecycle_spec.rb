@@ -125,6 +125,27 @@ RSpec.describe 'Native tool choice lifecycle' do
     end
   end
 
+  describe 'canonical execution results' do
+    it 'preserves the full result and ownership for the stream observer and final response' do
+      result = Legion::JSON.dump({ tools: Array.new(400) { |index| "tool_#{index}" }, tail: 'inventory_end' })
+      observer = double('stream observer', server_tool_started: nil)
+      executor.instance_variable_set(:@stream_observer, observer)
+      expect(observer).to receive(:server_tool_completed) do |tool_call:|
+        expect(tool_call).to be_a(Legion::Extensions::Llm::Canonical::ToolCall)
+        expect(tool_call.id).to eq('call_inventory')
+        expect(tool_call.source).to eq(:special)
+        expect(tool_call.status).to eq(:success)
+        expect(tool_call.result).to eq(result)
+      end
+
+      record_server_call(executor, name: 'inventory', source: :special, result: result)
+
+      recorded = executor.instance_variable_get(:@pending_tool_history).last.fetch(:typed_call)
+      expect(recorded.result).to eq(result)
+      expect(Legion::JSON.load(recorded.result)).to include(tail: 'inventory_end')
+    end
+  end
+
   describe 'the round-zero text mention heuristic' do
     before do
       @previous_explicit_tool_choice = Legion::Settings[:llm][:tools][:explicit_tool_choice]

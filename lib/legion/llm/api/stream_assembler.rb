@@ -484,15 +484,17 @@ module Legion
           if state.nil?
             state = {
               block_index: @next_block_index, id: tc_id, name: tool_call[:name],
-              server_tool: false, arguments: +'', last_args_str: '',
+              server_tool: nil, arguments: +'', last_args_str: '',
               opened: false, call_closed: false, result_emitted: false, result: nil
             }
             @next_block_index += 1
             @open_tool_calls[tc_id] = state
           end
           state[:name] = tool_call[:name] if tool_call[:name]
-          state[:server_tool] ||= tool_call[:server_tool] == true
+          state[:server_tool] ||= tool_call[:server_tool] unless tool_call[:server_tool].nil?
           state[:result] = tool_call[:result] unless tool_call[:result].nil?
+          state[:metadata] = tool_call[:metadata] if tool_call[:metadata]
+          state[:error] = tool_call[:error] if tool_call[:error]
           case tool_call[:arguments]
           when String
             state[:arguments] = +'' unless state[:arguments].is_a?(String)
@@ -504,7 +506,7 @@ module Legion
 
           if @tool_call_buffering == :buffered
             keep_alive! unless state[:call_closed]
-          elsif !state[:call_closed] && state[:name]
+          elsif !state[:call_closed] && state[:name] && !state[:server_tool].nil?
             open_tool_call(state)
             # Hash arguments are replaceable snapshots, not append-only JSON
             # fragments. Publish their final value only at tool-call completion.
@@ -519,7 +521,7 @@ module Legion
           guard do
             @emitter.on_tool_call_open(
               block_index: state[:block_index],
-              tool_call:   { id: state[:id], name: state[:name], arguments: state[:arguments] },
+              tool_call:   { id: state[:id], name: state[:name], arguments: state[:arguments], metadata: state[:metadata] || {} },
               server_tool: state[:server_tool]
             )
           end
@@ -613,7 +615,7 @@ module Legion
           guard do
             @emitter.on_server_tool_result(
               block_index: result_block, tool_call_id: state[:id],
-              result_text: serialize_result(state[:result])
+              result_text: serialize_result(state[:result]), error: state[:error]
             )
           end
           state[:result_emitted] = true
@@ -632,6 +634,8 @@ module Legion
               name:        tc.name,
               arguments:   tc.arguments,
               result:      tc.result,
+              error:       tc.error,
+              metadata:    tc.metadata,
               server_tool: server_tool_source?(tc.source)
             }
           end
@@ -775,7 +779,9 @@ module Legion
                   arguments:   tool_fragment_field(tc, :arguments),
                   index:       tool_fragment_field(tc, :index) || chunk.block_index || chunk.index,
                   result:      tool_fragment_field(tc, :result),
-                  server_tool: server_tool_source?(source)
+                  error:       tool_fragment_field(tc, :error),
+                  metadata:    tool_fragment_field(tc, :metadata),
+                  server_tool: source.nil? ? nil : server_tool_source?(source)
                 }]
               )
             else

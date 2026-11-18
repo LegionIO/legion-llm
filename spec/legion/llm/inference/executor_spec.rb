@@ -778,9 +778,12 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
       response = described_class.new(mixed_tool_request).call
 
-      expect(response.tools.map(&:name)).to eq(['git'])
-      expect(response.tools.first.id).to eq('tc_git')
-      expect(response.tools.first.arguments).to eq({ command: 'status' })
+      expect(response.tools.map(&:name)).to eq(%w[lookup git])
+      expect(response.tools.first).to have_attributes(id: 'tc_lookup', source: :registry, status: :success)
+      expect(response.tools.first.metadata).to include(mcp_server_label: 'legion')
+      expect(response.tools.last.id).to eq('tc_git')
+      expect(response.tools.last.arguments).to eq({ command: 'status' })
+      expect(response.tools.last.result).to be_nil
     end
 
     it 'matches explicit tool choice even when client tools are present' do

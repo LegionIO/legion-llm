@@ -7,6 +7,9 @@ gemspec
 legion_settings_path = File.expand_path('../legion-settings', __dir__)
 gem 'legion-settings', path: legion_settings_path if Dir.exist?(legion_settings_path)
 
+legion_mcp_path = File.expand_path('../legion-mcp', __dir__)
+gem 'legion-mcp', path: legion_mcp_path if Dir.exist?(legion_mcp_path)
+
 group :test do
   # Immutable CI companions and adjacent development checkouts both consume the
   # shared contract directly. Standalone installs use the gemspec dependency.

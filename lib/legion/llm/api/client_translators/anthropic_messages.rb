@@ -300,12 +300,14 @@ module Legion
               # Partial tool call was buffered and never emitted, or discarded.
             end
 
-            def on_server_tool_result(block_index:, tool_call_id:, result_text:)
+            def on_server_tool_result(block_index:, tool_call_id:, result_text:, error: nil)
+              content_block = { type: 'server_tool_result', id: tool_call_id,
+                                content: [{ type: 'text', text: result_text }] }
+              content_block[:is_error] = true if error
               emit('content_block_start', {
                      type:          'content_block_start',
                      index:         block_index,
-                     content_block: { type: 'server_tool_result', id: tool_call_id,
-                                      content: [{ type: 'text', text: result_text }] }
+                     content_block: content_block
                    })
               emit('content_block_stop', { type: 'content_block_stop', index: block_index })
             end

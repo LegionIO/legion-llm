@@ -53,7 +53,7 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
     assembler = new_assembler(Legion::LLM::API::ClientTranslators::OpenAIResponses, out)
 
     assembler.push(tool_chunk(
-                     { id: 'call_hash', name: 'lookup', arguments: '{"payload": ', index: 0 },
+                     { id: 'call_hash', name: 'lookup', arguments: '{"payload": ', source: :client, index: 0 },
                      index: 0
                    ))
     assembler.push(tool_chunk(
@@ -80,10 +80,10 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
     assembler = new_assembler(Legion::LLM::API::ClientTranslators::OpenAIResponses, out)
 
     assembler.push(tool_chunk(
-                     { id: 'call_first', name: 'first', arguments: '{"a":', index: 0 }, index: 0
+                     { id: 'call_first', name: 'first', arguments: '{"a":', source: :client, index: 0 }, index: 0
                    ))
     assembler.push(tool_chunk(
-                     { id: 'call_second', name: 'second', arguments: '{"b":', index: 1 }, index: 1
+                     { id: 'call_second', name: 'second', arguments: '{"b":', source: :client, index: 1 }, index: 1
                    ))
     assembler.push(tool_chunk(
                      { arguments: '1}', index: 0 }, index: 0
@@ -113,7 +113,7 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
     assembler = new_assembler(Legion::LLM::API::ClientTranslators::OpenAIResponses, out)
 
     assembler.push(tool_chunk(
-                     { id: 'call_old', name: 'old_lookup', arguments: '{"old":', index: 0 }, index: 0
+                     { id: 'call_old', name: 'old_lookup', arguments: '{"old":', source: :client, index: 0 }, index: 0
                    ))
     assembler.provider_round_started
     assembler.push(tool_chunk(
@@ -161,15 +161,11 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
     call_events = events.select do |event|
       event[:type] == 'response.output_item.added' && event.dig(:item, :type) == 'function_call'
     end
-    result_events = events.select do |event|
-      event[:type] == 'response.output_item.added' && event.dig(:item, :type) == 'function_call_output'
-    end
+    text = events.select { |event| event[:type] == 'response.output_text.delta' }.map { |event| event[:delta] }.join
 
-    expect(call_events.length).to eq(1)
-    expect(result_events.length).to eq(1)
-
-    expect(result_events.first.dig(:item, :call_id)).to eq('server_unknown')
-    expect(result_events.first.dig(:item, :output)).to eq('{"answer":"found"}')
+    expect(call_events).to be_empty
+    expect(text).to include('"id":"server_unknown"', '"name":"lookup"', '"arguments":{"query":"alpha"}')
+    expect(text).to include('LegionIO server tool result (server_unknown):', '{"answer":"found"}')
   end
 
   it 'emits a server call and result before finalize and never repeats either at finalize' do
@@ -185,22 +181,19 @@ RSpec.describe Legion::LLM::API::StreamAssembler do
     assembler.server_tool_completed(tool_call: completed)
     before_finalize = sse_events(out)
 
-    expect(before_finalize.any? do |event|
-      event[:type] == 'response.output_item.added' && event.dig(:item, :type) == 'function_call'
-    end).to be(true)
-    expect(before_finalize.count do |event|
-      event[:type] == 'response.output_item.added' && event.dig(:item, :type) == 'function_call_output'
-    end).to eq(1)
+    before_text = before_finalize.select { |event| event[:type] == 'response.output_text.delta' }.map { |event| event[:delta] }.join
+    expect(before_text.scan('LegionIO server tool call:').length).to eq(1)
+    expect(before_text.scan('LegionIO server tool result (server_once):').length).to eq(1)
+    expect(before_text).to include('"name":"lookup"', '"arguments":{"query":"alpha"}', '{"answer":"found"}')
 
     assembler.finalize(final_response([completed]))
     after_finalize = sse_events(out)
 
     expect(after_finalize.count do |event|
       event[:type] == 'response.output_item.added' && event.dig(:item, :type) == 'function_call'
-    end).to eq(1)
-    expect(after_finalize.count do |event|
-      event[:type] == 'response.output_item.added' && event.dig(:item, :type) == 'function_call_output'
-    end).to eq(1)
+    end).to eq(0)
+    after_text = after_finalize.select { |event| event[:type] == 'response.output_text.delta' }.map { |event| event[:delta] }.join
+    expect(after_text).to eq(before_text)
   end
 
   it 'does not fabricate a result for a client-owned tool call' do
