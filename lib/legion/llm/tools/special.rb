@@ -68,9 +68,16 @@ module Legion
         end
 
         def inventory
+          special_tools = special_tool_summaries
+          extension_tools = settings_extensions_tools
           {
-            special_tools:             special_tool_summaries,
-            settings_extensions_tools: settings_extensions_tools,
+            counts:                    {
+              total:                     (special_tools + extension_tools).map { |tool| tool[:name] }.uniq.size,
+              special_tools:             special_tools.size,
+              settings_extensions_tools: extension_tools.size
+            },
+            special_tools:             special_tools,
+            settings_extensions_tools: extension_tools,
             runtime:                   runtime_inventory
           }
         end

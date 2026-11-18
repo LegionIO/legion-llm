@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.14] - 2026-11-18
+
+### Fixed
+- Include tool counts in `legion_list_special_tools` results so callers can answer inventory-size questions without enumerating every definition. Counts come from the same returned snapshot, total distinct callable names, and preserve both complete tool lists and runtime details.
+
 ## [0.16.13] - 2026-11-18
 
 ### Fixed
