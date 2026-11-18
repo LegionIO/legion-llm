@@ -65,7 +65,8 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
       # projected onto the dispatch options (it is not populated in the SSOT
       # dispatch path, and caller headers are not fleet wire).
       expect(options.keys).to contain_exactly(:tools, :temperature, :params, :schema, :thinking, :tool_prefs)
-      expect(options[:params]).to eq(provider_flag: true, top_p: 0.7, seed: 42)
+      expect(options[:params]).to be_a(canonical::Params)
+      expect(options[:params].to_h).to include(metadata: { provider_flag: true }, top_p: 0.7, seed: 42)
       expect(options).not_to include(:system, :offering_id, :offering_metadata, :top_p, :seed, :headers)
     end
   end
@@ -115,7 +116,7 @@ RSpec.describe Legion::LLM::Inference::RouteAttempts, :ssot_v3 do
     malformed = harness(fleet: false, context: Object.new, raw_options: raw_options.merge(params: false))
     expect do
       malformed.send(:dispatch_provider_request, capability: :chat, operation: :chat, messages: messages)
-    end.to raise_error(ArgumentError, /dispatch params must be a Hash/)
+    end.to raise_error(ArgumentError, /dispatch params must be Canonical::Params or a Hash/)
   end
 
   it 'rejects a fleet selection/lane operation TYPE mismatch and preserves legacy fleet operation' do

@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/inventory'
+require 'legion/llm/call/registry'
 
 module Legion
   module LLM
@@ -16,19 +18,13 @@ module Legion
               log.debug('[llm][api][providers] action=list_providers')
               require_llm!
 
-              # A registry read FAULT must not masquerade as an empty
-              # registry (a 200 with []). The fault propagates to the route's
-              # 500 handler — logged there, error-shaped to the caller.
-              instances = Legion::LLM::Call::Registry.all_instances
-
-              provider_list = instances.map do |entry|
-                Legion::LLM::API::Native::Providers.instance_to_hash(entry)
-              end
+              snapshot = Legion::LLM::Inventory.snapshot
+              provider_list = Legion::LLM::API::Native::Providers.instances(snapshot: snapshot)
 
               summary = {
                 total:           provider_list.size,
                 native:          provider_list.count { |p| p[:native] },
-                routing_enabled: Legion::LLM::Router.routing_enabled?
+                routing_enabled: provider_list.any?
               }
 
               log.debug("[llm][api][providers] action=listed count=#{provider_list.size}")
@@ -43,14 +39,8 @@ module Legion
               require_llm!
 
               provider_name = params[:name].to_s
-              provider_sym = provider_name.to_sym
-
-              # A registry read FAULT must not masquerade as an empty
-              # registry (a 200 with []). The fault propagates to the route's
-              # 500 handler — logged there, error-shaped to the caller.
-              instances = Legion::LLM::Call::Registry.all_instances
-
-              family = instances.select { |entry| entry[:provider].to_sym == provider_sym }
+              snapshot = Legion::LLM::Inventory.snapshot
+              family = Legion::LLM::API::Native::Providers.instances(snapshot: snapshot, provider: provider_name)
 
               unless family.any?
                 log.debug("[llm][api][providers] action=not_found name=#{params[:name]}")
@@ -59,9 +49,7 @@ module Legion
                                 status_code: 404)
               end
 
-              provider_list = family.map do |entry|
-                Legion::LLM::API::Native::Providers.instance_to_hash(entry)
-              end
+              provider_list = family
 
               log.debug("[llm][api][providers] action=found name=#{params[:name]} instances=#{provider_list.size}")
               json_response({ provider: provider_name, instances: provider_list })
@@ -73,76 +61,42 @@ module Legion
             log.debug('[llm][api][providers] provider routes registered')
           end
 
-          # Providers surface in the listing from the Registry snapshot even
-          # when they are absent from the call registry (deduped by
-          # provider+instance).
-          def self.union_ssot_providers(provider_list)
-            return provider_list unless defined?(Legion::Extensions::Llm::Inventory::Registry)
+          # Configuration and adapter registration are not executable inventory.
+          # Both route trees project the same immutable, complete publication.
+          def self.instances(snapshot:, provider: nil)
+            snapshot.each_instance.filter_map do |record|
+              next if provider && record.instance_key.provider_family.to_s != provider.to_s
 
-            snapshot = begin
-              Legion::Extensions::Llm::Inventory::Registry.snapshot
-            rescue StandardError => e
-              handle_exception(e, level: :warn, handled: true, operation: 'llm.api.providers.ssot_snapshot_read')
-              nil
+              instance_to_hash(record)
             end
-            return provider_list if snapshot.nil?
-
-            seen = provider_list.to_set { |p| [p[:provider].to_sym, p[:instance].to_sym] }
-            snapshot.each_instance do |record|
-              family = record.instance_key.provider_family.to_sym
-              instance_id = record.instance_key.instance_id.to_sym
-              next if seen.include?([family, instance_id])
-
-              seen << [family, instance_id]
-              lanes = record.lanes_by_id.values
-              capabilities = lanes.first&.capability_evidence&.select do |_cap, evidence|
-                evidence.status == :supported
-              end&.keys&.map(&:to_s) || []
-              provider_list << {
-                provider:     family.to_s,
-                instance:     instance_id.to_s,
-                tier:         lanes.first&.tier&.to_s,
-                capabilities: capabilities,
-                health:       { state: record.availability.state.to_s },
-                native:       true,
-                source:       'ssot'
-              }
-            end
-            provider_list
           end
 
-          def self.instance_to_hash(entry)
-            provider_key = entry[:provider].to_sym
-            instance_key = entry[:instance].to_sym
-
-            # Display health/capabilities live in the per-instance settings
-            # hash the provider's discovery actor writes after each registry
-            # commit (the visibility surface). The Registry AvailabilityFact
-            # remains the routing authority. entry[:instance] is the config name
-            # (Call::Registry keys instances by the operator config name), which
-            # is exactly the settings key the actor writes under.
-            instance_settings = begin
-              cfg = Legion::Settings.dig(:extensions, :llm, provider_key, :instances, instance_key)
-              cfg.is_a?(Hash) ? cfg : {}
-            rescue StandardError => e
-              handle_exception(e, level: :warn, handled: true, operation: 'api.providers.instance_settings')
-              {}
-            end
-
-            tier = instance_settings[:tier] || entry.dig(:metadata, :tier)
-            capabilities = Array(instance_settings[:capabilities]).map(&:to_s)
-            capabilities = Array(entry.dig(:metadata, :capabilities)).map(&:to_s) if capabilities.empty?
-
+          def self.instance_to_hash(record)
+            key = record.instance_key
+            lanes = record.lanes_by_id.values
+            availability = record.availability
+            # Provenance is diagnostic metadata, never a source of catalog,
+            # capability, tier or health facts.
+            metadata = Legion::LLM::Call::Registry.metadata_for(key.provider_family, key.instance_id)
+            capabilities = lanes.flat_map do |lane|
+              lane.capability_evidence.filter_map { |capability, evidence| capability.to_s if evidence.supported? }
+            end.uniq.sort
             result = {
-              provider:     entry[:provider].to_s,
-              instance:     entry[:instance].to_s,
-              tier:         tier&.to_s,
+              provider:     key.provider_family.to_s,
+              instance:     key.instance_id,
+              tier:         lanes.first&.tier&.to_s,
               capabilities: capabilities,
-              health:       instance_settings[:health] || {},
+              health:       {
+                state:              availability.state.to_s,
+                reason:             availability.reason,
+                observed_at:        availability.observed_at.iso8601,
+                last_probe_outcome: availability.last_probe_outcome&.to_s,
+                source:             availability.source.to_s
+              },
               native:       true
             }
-            result[:source] = entry.dig(:metadata, :source) if entry.dig(:metadata, :source)
-            result[:credential_fingerprint] = entry.dig(:metadata, :credential_fingerprint) if entry.dig(:metadata, :credential_fingerprint)
+            result[:source] = metadata[:source] if metadata[:source]
+            result[:credential_fingerprint] = metadata[:credential_fingerprint] if metadata[:credential_fingerprint]
             result
           end
         end

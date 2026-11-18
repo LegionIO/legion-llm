@@ -8,7 +8,7 @@ rescue LoadError
 end
 
 if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
-  RSpec.describe 'LLM native provider routes' do
+  RSpec.describe 'LLM native provider routes', :ssot_v3 do
     let(:test_app) do
       Class.new(Sinatra::Base) do
         set :show_exceptions, false
@@ -38,22 +38,22 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       Legion::LLM::Call::Registry.reset!
     end
 
-    it 'lists providers from Registry' do
-      stub_mod = Module.new
-      Legion::LLM::Call::Registry.register(:bedrock, stub_mod, instance: :default,
-                                                               metadata: { tier:         :cloud,
-                                                                           capabilities: [:chat] })
+    def publish_provider(provider, instance, tier: :cloud, capabilities: {})
+      activate(provider_family: provider, instance_id: instance, drafts: [
+                 offering_draft(model: 'test-model', tier: tier, capabilities: capabilities)
+               ])
+    end
 
+    it 'lists providers from Inventory' do
+      publish_provider('bedrock', 'default')
       response = get_json('/api/llm/providers')
       body = Legion::JSON.load(response.body)
 
       expect(response.status).to eq(200)
-      expect(body[:data][:providers]).to include(hash_including(provider: 'bedrock',
-                                                                instance: 'default',
-                                                                native:   true))
+      expect(body[:data][:providers]).to include(hash_including(provider: 'bedrock', instance: 'default', native: true))
     end
 
-    it 'returns empty list when no providers are registered' do
+    it 'returns an empty list when no instances have been published' do
       response = get_json('/api/llm/providers')
       body = Legion::JSON.load(response.body)
 
@@ -62,27 +62,18 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(body[:data][:summary][:total]).to eq(0)
     end
 
-    it 'includes tier and capabilities from metadata' do
-      stub_mod = Module.new
-      Legion::LLM::Call::Registry.register(:ollama, stub_mod, instance: :local1,
-                                                              metadata: { tier:         :local,
-                                                                          capabilities: %i[chat embeddings] })
-
+    it 'reads tier and capabilities from published evidence' do
+      publish_provider('ollama', 'local1', tier: :local, capabilities: { completion: :supported, embedding: :supported })
       response = get_json('/api/llm/providers')
-      body = Legion::JSON.load(response.body)
+      entry = Legion::JSON.load(response.body).dig(:data, :providers).first
 
-      entry = body[:data][:providers].find { |p| p[:provider] == 'ollama' }
       expect(entry[:tier]).to eq('local')
-      expect(entry[:capabilities]).to include('chat', 'embeddings')
+      expect(entry[:capabilities]).to include('completion', 'embedding')
     end
 
-    it 'returns provider instances by name' do
-      stub_mod = Module.new
-      Legion::LLM::Call::Registry.register(:bedrock, stub_mod, instance: :east,
-                                                               metadata: { tier: :cloud })
-      Legion::LLM::Call::Registry.register(:bedrock, stub_mod, instance: :west,
-                                                               metadata: { tier: :cloud })
-
+    it 'returns published provider instances by name' do
+      publish_provider('bedrock', 'east')
+      publish_provider('bedrock', 'west')
       response = get_json('/api/llm/providers/bedrock')
       body = Legion::JSON.load(response.body)
 
@@ -91,59 +82,31 @@ if defined?(Sinatra::Base) && defined?(Legion::LLM::Routes)
       expect(body[:data][:instances].size).to eq(2)
     end
 
-    it 'returns 404 for unknown provider' do
+    it 'returns 404 for unknown providers' do
       response = get_json('/api/llm/providers/nonexistent')
-      body = Legion::JSON.load(response.body)
-
       expect(response.status).to eq(404)
-      expect(body[:error][:code]).to eq('provider_not_found')
+      expect(Legion::JSON.load(response.body).dig(:error, :code)).to eq('provider_not_found')
     end
 
-    # D14: display health/capabilities come from the per-instance settings hash
-    # the provider's discovery actor writes after each registry commit — not
-    # the (no longer populated) legacy lane store.
-    it 'surfaces the actor-written settings health hash and capabilities' do
-      stub_mod = Module.new
-      Legion::LLM::Call::Registry.register(:vllm, stub_mod, instance: :apollo,
-                                                            metadata: { tier: :fleet, capabilities: %i[chat] })
-      extensions = Legion::Settings.loader.settings[:extensions] ||= {}
-      extensions[:llm] ||= {}
-      extensions[:llm][:vllm] = {
-        instances: {
-          apollo: {
-            tier:         :fleet,
-            health:       {
-              circuit_state: :open, denied: false, available: false, adjustment: -50,
-              reason: 'Vertex models-list returned 403', last_probe_outcome: :failure, source: :ssot_discovery_actor
-            },
-            capabilities: %w[completion streaming embedding]
-          }
-        }
-      }
-
+    it 'reflects unavailable published instances without depending on settings writeback' do
+      publish_provider('vllm', 'primary', tier: :direct, capabilities: { streaming: :supported })
+      mark_unavailable(provider_family: 'vllm', instance_id: 'primary',
+                       publisher_token_id: snapshot.instance(instance_key: instance_key(provider_family: 'vllm', instance_id: 'primary')).publisher_token_id)
       response = get_json('/api/llm/providers/vllm')
-      body = Legion::JSON.load(response.body)
+      entry = Legion::JSON.load(response.body).dig(:data, :instances).first
 
       expect(response.status).to eq(200)
-      entry = body[:data][:instances].find { |p| p[:instance] == 'apollo' }
-      expect(entry[:health]).to include(
-        available: false, circuit_state: 'open', adjustment: -50, source: 'ssot_discovery_actor'
-      )
-      expect(entry[:capabilities]).to eq(%w[completion streaming embedding])
-      expect(entry[:tier]).to eq('fleet')
+      expect(entry[:health]).to include(state: 'unavailable', source: 'dispatch')
+      expect(entry[:capabilities]).to include('streaming')
+      expect(entry[:tier]).to eq('direct')
     end
 
-    it 'reports empty health before the actor has committed (cold boot)' do
-      stub_mod = Module.new
-      Legion::LLM::Call::Registry.register(:bedrock, stub_mod, instance: :cold,
-                                                               metadata: { tier: :cloud })
-
+    it 'keeps an unactivated claim outside the published provider catalog' do
+      claim_only(provider_family: 'bedrock', instance_id: 'cold')
       response = get_json('/api/llm/providers/bedrock')
-      body = Legion::JSON.load(response.body)
 
-      entry = body[:data][:instances].find { |p| p[:instance] == 'cold' }
-      expect(entry[:health]).to eq({})
-      expect(entry[:capabilities]).to eq([])
+      expect(response.status).to eq(404)
+      expect(Legion::JSON.load(response.body).dig(:error, :code)).to eq('provider_not_found')
     end
   end
 end

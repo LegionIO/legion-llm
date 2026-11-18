@@ -320,12 +320,15 @@ module Legion
                    end
           projected = options.slice(*CONTRACT_OPTION_KEYS)
           params = projected[:params]
-          raise ArgumentError, "dispatch params must be a Hash, got #{params.class}" unless params.nil? || params.is_a?(Hash)
+          params_class = Legion::Extensions::Llm::Canonical::Params
+          raise ArgumentError, "dispatch params must be Canonical::Params or a Hash, got #{params.class}" unless params.nil? || params.is_a?(Hash) || params.is_a?(params_class)
+
+          params = params_class.from_hash(params || {}) unless params.is_a?(params_class)
 
           extras = NONCONTRACT_GENERATION_KEYS.each_with_object({}) do |key, acc|
             acc[key] = options[key] if options.key?(key) && !options[key].nil?
           end
-          projected[:params] = (params || {}).merge(extras) unless extras.empty?
+          projected[:params] = extras.empty? ? params : params.with(**extras)
           [folded, projected]
         end
 

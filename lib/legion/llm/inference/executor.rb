@@ -499,11 +499,15 @@ module Legion
           source = find_tool_source(normalized_call[:name])
           log.debug "[llm][executor] action=dispatch_native_tool_call round=#{round} tool=#{normalized_call[:name]} source_type=#{source[:type]}"
           emit_tool_call_event(normalized_call, round, source: source)
+          tool_exchange_id = Tracing.exchange_id
           result = ToolDispatcher.dispatch(
             tool_call:   normalized_call,
             source:      source,
-            exchange_id: Tracing.exchange_id
+            exchange_id: tool_exchange_id
           )
+          record_tool_execution(tool_call_id: normalized_call[:id], tool_name: normalized_call[:name],
+                                arguments: normalized_call[:arguments], source: source, result: result,
+                                exchange_id: tool_exchange_id)
           if result[:status] == :error
             err_detail = Legion::LLM::Tools::Dispatcher.error_log_detail(result)
             log.warn "[llm][native_tool_loop] action=tool_call_failed round=#{round} " \

@@ -158,14 +158,14 @@ module FakeProvider
       mod.define_singleton_method(:chat) do |messages, model:, **opts|
         FakeProvider.record_call(kind: :chat, model: model, messages: messages,
                                  tool_prefs: opts[:tool_prefs], tools: opts[:tools],
-                                 temperature: opts[:temperature])
+                                 temperature: opts[:temperature] || opts[:params]&.temperature)
         scenario = FakeProvider.resolve_scenario(messages)
         ext.chat_response(scenario, model: model, messages: messages)
       end
       mod.define_singleton_method(:stream) do |model:, messages:, **opts, &block|
         FakeProvider.record_call(kind: :stream, model: model, messages: messages,
                                  tool_prefs: opts[:tool_prefs], tools: opts[:tools],
-                                 temperature: opts[:temperature])
+                                 temperature: opts[:temperature] || opts[:params]&.temperature)
         scenario = FakeProvider.resolve_scenario(messages)
         ext.stream_response(scenario, model: model, messages: messages, &block)
       end
@@ -174,7 +174,7 @@ module FakeProvider
       mod.define_singleton_method(:stream_chat) do |messages, model:, **opts, &block|
         FakeProvider.record_call(kind: :stream_chat, model: model, messages: messages,
                                  tool_prefs: opts[:tool_prefs], tools: opts[:tools],
-                                 temperature: opts[:temperature])
+                                 temperature: opts[:temperature] || opts[:params]&.temperature)
         scenario = FakeProvider.resolve_scenario(messages)
         ext.stream_response(scenario, model: model, messages: messages, &block)
       end
@@ -197,7 +197,7 @@ module FakeProvider
       mod.define_singleton_method(:responses) do |body:, messages:, stream:, **opts, &block|
         FakeProvider.record_call(kind: :responses, model: body[:model] || body['model'],
                                  messages: messages, tool_prefs: opts[:tool_prefs], tools: opts[:tools],
-                                 temperature: opts[:temperature])
+                                 temperature: opts[:temperature] || opts[:params]&.temperature)
         scenario = FakeProvider.resolve_scenario(messages)
         if stream
           ext.stream_response(scenario, model: body[:model] || body['model'], messages: messages, &block)
@@ -256,7 +256,8 @@ module FakeProvider
       case scenario
       when :stream_thinking, :thinking then stream_thinking(model, &)
       when :stream_tool, :tool_single  then stream_tool(model, &)
-      when :multi_turn_continuation    then stream_text(model, prefix: 'turn-2 ', &)
+      when :server_tool_legion then stream_server_tool_legion(model, &)
+      when :multi_turn_continuation then stream_text(model, prefix: 'turn-2 ', &)
       else
         stream_text(model, &)
       end
@@ -420,6 +421,17 @@ module FakeProvider
           metadata:    { fake: true, scenario: :server_tool_legion, round: 2 }
         )
       end
+    end
+
+    def stream_server_tool_legion(model)
+      response = server_tool_legion_response(model)
+      request_id = 'fake-server-execution'
+      response.tool_calls.each do |call|
+        yield Canonical::Chunk.tool_call_delta(tool_call: call, request_id: request_id, block_index: 0, item_id: call.id)
+      end
+      yield Canonical::Chunk.text_delta(delta: response.text, request_id: request_id) unless response.text.empty?
+      yield Canonical::Chunk.done(request_id: request_id, usage: response.usage, stop_reason: response.stop_reason)
+      response
     end
 
     # Regression shape from Codex/vLLM live failure:

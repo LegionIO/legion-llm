@@ -11,6 +11,21 @@ module Legion
           include Legion::Logging::Helper
           include Steps::Logging
 
+          def record_tool_execution(tool_call_id:, tool_name:, arguments:, source:, result:, exchange_id:)
+            @timeline.record(
+              category: :tool, key: "tool:execute:#{tool_name}",
+              exchange_id: exchange_id, direction: :outbound,
+              detail: "#{result[:status]} via #{source[:type]}",
+              from: 'pipeline', to: "tool:#{tool_name}",
+              duration_ms: result[:duration_ms],
+              data: {
+                tool_call_id: tool_call_id, arguments: arguments,
+                source: describe_tool_source(source), source_type: source[:type]&.to_sym,
+                status: result[:status]
+              }
+            )
+          end
+
           def step_tool_calls
             unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
               log_step_debug(:tool_calls, :skipped, reason: :no_tool_calls)
@@ -87,20 +102,8 @@ module Legion
               # :source is the display string (native SSE surface);
               # :source_type is the canonical dispatch-type enum consumed by
               # the response-exit reconstruction (G3).
-              @timeline.record(
-                category: :tool, key: "tool:execute:#{tool_name}",
-                exchange_id: tool_exchange_id, direction: :outbound,
-                detail: "#{result[:status]} via #{source[:type]}",
-                from: 'pipeline', to: "tool:#{tool_name}",
-                duration_ms: result[:duration_ms],
-                data: {
-                  tool_call_id: tool_call_id,
-                  arguments:    tc.arguments,
-                  source:       describe_tool_source(source),
-                  source_type:  source[:type]&.to_sym,
-                  status:       result[:status]
-                }
-              )
+              record_tool_execution(tool_call_id: tool_call_id, tool_name: tool_name, arguments: tc.arguments,
+                                    source: source, result: result, exchange_id: tool_exchange_id)
 
               @timeline.record(
                 category: :tool, key: "tool:result:#{tool_name}",

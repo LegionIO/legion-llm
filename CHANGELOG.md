@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.16.12] - 2026-11-17
+
+### Fixed
+- Preserve output-token limits, stop sequences and sampling parameters as canonical dispatch params across all client dialects and both direct/fleet execution paths.
+- Record native server-tool executions in the shared execution timeline so completion summaries and audit evidence agree with actual tool calls.
+- Read provider listings and family details from one authoritative Inventory snapshot. Pending configuration claims no longer masquerade as published instances; health and capabilities come from the published records in both API route trees.
+
 ## [0.16.11] - 2026-11-17
 
 ### Fixed

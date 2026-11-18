@@ -5,7 +5,7 @@ require 'rack/test'
 require 'sinatra/base'
 require 'sinatra/namespace'
 
-RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
+RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers', :ssot_v3 do
   include Rack::Test::Methods
 
   before do
@@ -27,25 +27,11 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
     end
   end
 
-  let(:registry_instances) do
-    [
-      {
-        provider: :ollama,
-        instance: :local,
-        metadata: {
-          tier:         :local,
-          capabilities: [:chat],
-          source:       'ollama_discovery'
-        }
-      }
-    ]
-  end
-
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
-    allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_return(registry_instances)
-    allow(Legion::LLM::Router).to receive(:routing_enabled?).and_return(false)
-    allow(Legion::LLM::Router).to receive(:health_tracker).and_return(nil)
+    activate(provider_family: 'ollama', instance_id: 'local', drafts: [
+               offering_draft(model: 'test-model', tier: :local, supported: %i[chat])
+             ])
   end
 
   describe 'GET /api/llm/providers' do
@@ -60,7 +46,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
     it 'includes routing_enabled in summary' do
       get '/api/llm/providers'
       result = Legion::JSON.load(last_response.body)
-      expect(result[:data][:summary][:routing_enabled]).to eq(false)
+      expect(result[:data][:summary][:routing_enabled]).to eq(true)
     end
 
     it 'returns 503 when LLM not started' do
@@ -73,7 +59,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Providers' do
     # (200 with []). The fault surfaces error-shaped (500), logged by the
     # route handler.
     it 'returns 500 when the registry read faults' do
-      allow(Legion::LLM::Call::Registry).to receive(:all_instances).and_raise(StandardError, 'registry down')
+      allow(Legion::Extensions::Llm::Inventory::Registry).to receive(:snapshot).and_raise(StandardError, 'registry down')
       get '/api/llm/providers'
       expect(last_response.status).to eq(500)
       result = Legion::JSON.load(last_response.body)
