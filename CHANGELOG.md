@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.22] - 2026-11-19
+
+### Fixed
+- Resolve omitted inference output limits once from `llm.max_output_tokens`, preserving explicit client limits through routing and canonical provider dispatch instead of enforcing an inline 4096-token fallback. Fixes #225.
+
 ## [0.16.21] - 2026-11-19
 
 ### Fixed
